@@ -1,0 +1,47 @@
+# Build output / cache
+build/
+build_*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/*.cmake.user
+compile_commands.json
+
+# C/C++
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.map
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+cmake-build-*/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Secrets / local config
+.env
+*.key
+*.pem
+*.pfx
+credentials*.json
+
+# App local state / logs
+Smatchet_LocalCache.sqlite
+*.log
+imgui.ini
+smatchet_config.json
+smatchet_views.json
+
