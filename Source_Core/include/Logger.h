@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <atomic>
 #include <cstddef>
 
 // Simple log4cxx-style levels.
@@ -23,6 +24,19 @@ struct LogEntry {
 class Logger {
 public:
     static Logger& Instance();
+
+    /** Parse "trace"|"debug"|"info"|"warn"|"error" (case-insensitive); fallback @p fallback. */
+    static LogLevel ParseLogLevelString(const std::string& s, LogLevel fallback = LogLevel::Info);
+    static const char* LogLevelToString(LogLevel level);
+
+    void SetMinLevel(LogLevel minLevel);
+    LogLevel GetMinLevel() const;
+
+    /** When true, JiraClient may log truncated HTTP response bodies at Trace. */
+    void SetLogJiraHttpBodies(bool enabled);
+    bool GetLogJiraHttpBodies() const;
+
+    bool ShouldLog(LogLevel level) const;
 
     // Core logging API
     void Log(LogLevel level, const std::string& message);
@@ -48,6 +62,8 @@ private:
 
     mutable std::mutex m_mutex;
     std::vector<LogEntry> m_entries;
+    std::atomic<int> m_minLevelInt{static_cast<int>(LogLevel::Info)};
+    std::atomic<bool> m_logJiraHttpBodies{false};
     static constexpr std::size_t kMaxEntries = 1000;
 };
 

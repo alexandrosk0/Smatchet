@@ -1,0 +1,10 @@
+// Windows resource script template for embedding the application icon.
+//
+// CMake will generate a real `.rc` file from this template at configure time.
+//
+// The placeholder `@SMATCHET_ICO_PATH@` is replaced by the absolute .ico path.
+//
+// IMPORTANT: We use the numeric ID directly (32512 == IDI_APPLICATION) instead
+// of relying on `IDI_APPLICATION` being defined in the RC compiler environment.
+32512 ICON "@SMATCHET_ICO_PATH@"
+

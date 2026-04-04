@@ -39,6 +39,17 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
     transaction.commit();
 }
 
+void LocalCacheManager::DeleteTicket(const std::string& ticketId) {
+    SQLite::Transaction transaction(db);
+    SQLite::Statement deleteFields(db, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
+    deleteFields.bind(1, ticketId);
+    deleteFields.exec();
+    SQLite::Statement deleteTicket(db, "DELETE FROM tickets WHERE id = ?");
+    deleteTicket.bind(1, ticketId);
+    deleteTicket.exec();
+    transaction.commit();
+}
+
 std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
     std::vector<CachedTicket> results;
     SQLite::Statement query(db, "SELECT id FROM tickets");

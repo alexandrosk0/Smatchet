@@ -5,7 +5,7 @@
 #include <cstdint>
 
 namespace cpr {
-struct Response;
+class Response;
 }
 
 enum class HttpTrafficKind {

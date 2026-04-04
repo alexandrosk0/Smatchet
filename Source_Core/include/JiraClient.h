@@ -25,6 +25,8 @@ struct JiraField {
     bool IsCustom = false;
     std::vector<std::string> AllowedValues;
     std::vector<JiraFieldOption> AllowedValueOptions;
+    /** Pretty JSON object from GET /rest/api/3/field for this id (empty if unknown / synthetic). */
+    std::string RestFieldDefinitionJson;
 };
 
 struct JiraComponent {
@@ -38,6 +40,9 @@ struct JiraUser {
     std::string EmailAddress;
     bool Active = true;
 };
+
+/** Jira-style duration (e.g. "2h 30m"); empty if seconds <= 0. */
+std::string FormatWorkDurationFromSeconds(long long seconds);
 
 class JiraClient : public ITrackerClient {
 public:
@@ -54,7 +59,28 @@ public:
                            std::vector<JiraComponent>& outComponents,
                            std::string& outError);
 
-    std::vector<CachedTicket> FetchIssues() override;
+    /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
+    bool FetchIssueWatchers(const JiraConfig& cfg,
+                            const std::string& issueKey,
+                            std::vector<JiraUser>& outWatchers,
+                            std::string& outError);
+
+    /**
+     * GET /rest/api/3/issue/{issueKey}/votes — fills voter users when `voters` is present.
+     * On success, optional out-pointers are set from JSON (omit or null to ignore).
+     * If `voters` is missing (e.g. permissions), outVoters stays empty and *outVotersArrayInResponse is false.
+     */
+    bool FetchIssueVotes(const JiraConfig& cfg,
+                         const std::string& issueKey,
+                         std::vector<JiraUser>& outVoters,
+                         std::string& outError,
+                         int* outVoteCount = nullptr,
+                         bool* outHasVoted = nullptr,
+                         bool* outVotersArrayInResponse = nullptr);
+
+    std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
+                                            const JiraConfig* configOverride = nullptr,
+                                            const ViewsStore* viewsOverride = nullptr) override;
 };
 
 #endif

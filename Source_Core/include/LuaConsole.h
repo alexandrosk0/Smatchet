@@ -16,13 +16,8 @@ public:
         Items.push_back(log);
     }
 
-    void Draw(const char* title, bool* p_open = nullptr) {
-        ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin(title, p_open)) {
-            ImGui::End();
-            return;
-        }
-
+    /** Toolbar + log scroll area (use inside an existing ImGui window). */
+    void DrawPanelContents() {
         if (ImGui::Button("Clear")) ClearLog();
         ImGui::SameLine();
         bool copy_to_clipboard = ImGui::Button("Copy to Clipboard");
@@ -30,16 +25,18 @@ public:
         ImGui::Checkbox("Auto-scroll", &AutoScroll);
         ImGui::Separator();
 
-        // Reserve space for a simple footer
-        const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-        if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false, ImGuiWindowFlags_HorizontalScrollbar)) {
+        const float footer_height_to_reserve =
+            ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+        if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
             if (copy_to_clipboard) ImGui::LogToClipboard();
 
             for (const auto& item : Items) {
-                // Color code the output
-                ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // Default white
-                if (item.find("[ERROR]") != std::string::npos) color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // Red
-                else if (item.find("[LUA]") != std::string::npos) color = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);  // Cyan
+                ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+                if (item.find("[ERROR]") != std::string::npos)
+                    color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                else if (item.find("[LUA]") != std::string::npos)
+                    color = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
                 ImGui::TextUnformatted(item.c_str());
@@ -53,9 +50,18 @@ public:
             }
         }
         ImGui::EndChild();
-        
+
         ImGui::Separator();
         ImGui::TextDisabled("Smatchet Automation Output");
+    }
+
+    void Draw(const char* title, bool* p_open = nullptr) {
+        ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin(title, p_open)) {
+            ImGui::End();
+            return;
+        }
+        DrawPanelContents();
         ImGui::End();
     }
 };

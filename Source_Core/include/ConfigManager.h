@@ -21,6 +21,10 @@ struct JiraConfig {
     std::vector<std::string> SelectedFields;
     // When true, show tooltips for clipped/multiline field values.
     bool EnableFieldOverflowTooltips = true;
+    // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
+    std::string LogMinLevel = "info";
+    // When true, JiraClient logs truncated HTTP response bodies at Trace.
+    bool LogJiraHttpBodies = false;
 };
 
 struct ViewSortSpec {
@@ -53,6 +57,9 @@ public:
         GetBaseDirectoryRef() = baseDir;
     }
 
+    /** Directory used for config/views (trailing separator if set). Empty if unset. */
+    static const std::string& GetFilesBaseDirectory() { return GetBaseDirectoryRef(); }
+
     static void Save(const JiraConfig& config) {
         nlohmann::json j;
         j["domain"] = config.Domain;
@@ -61,6 +68,8 @@ public:
         j["project_key"] = config.ProjectKey;
         j["jql"]   = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
+        j["log_min_level"] = config.LogMinLevel;
+        j["log_jira_http_bodies"] = config.LogJiraHttpBodies;
 
         std::ofstream file(GetConfigPath());
         file << j.dump(4);
@@ -83,6 +92,8 @@ public:
             cfg.ProjectKey = j.value("project_key", std::string{});
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+            cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
+            cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
             return cfg;
         } catch (...) {
             return {};

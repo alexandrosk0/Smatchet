@@ -13,10 +13,8 @@ private:
 
     void drawEnsureCatalogAndInitialSync(AppController& app);
     void drawMainMenuBar();
-    void drawNetworkStatsWindow();
     void drawJiraCredentialsModal(AppController& app);
     void drawViewsDashboardWindow(AppController& app);
-    void drawLuaAutomationWindow(AppController& app);
     void drawActiveProjectWindow(AppController& app);
     void drawAIAssistantWindow(AppController& app);
     void drawLogWindow();

@@ -19,6 +19,7 @@ public:
     LocalCacheManager(const std::string& dbPath);
     
     void SaveTicket(const CachedTicket& ticket);
+    void DeleteTicket(const std::string& ticketId);
     std::vector<CachedTicket> GetAllTickets();
 
 private:

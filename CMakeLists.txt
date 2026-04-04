@@ -9,20 +9,31 @@ if(POLICY CMP0169)
 endif()
 
 # Use Ninja from PATH when using Ninja generator (avoids stale WinGet path from another user)
-find_program(_NINJA_FROM_PATH ninja PATHS ENV PATH)
-if(_NINJA_FROM_PATH)
-    set(CMAKE_MAKE_PROGRAM "${_NINJA_FROM_PATH}" CACHE FILEPATH "Ninja executable" FORCE)
+if(CMAKE_GENERATOR MATCHES "Ninja")
+    find_program(_NINJA_FROM_PATH ninja PATHS ENV PATH)
+    if(_NINJA_FROM_PATH)
+        set(CMAKE_MAKE_PROGRAM "${_NINJA_FROM_PATH}" CACHE FILEPATH "Ninja executable" FORCE)
+    endif()
+    unset(_NINJA_FROM_PATH CACHE)
 endif()
-unset(_NINJA_FROM_PATH CACHE)
 
 project(SmatchetApp VERSION 1.0 LANGUAGES C CXX)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Force static libraries" FORCE)
 set(CPR_FORCE_USE_SYSTEM_CURL OFF CACHE BOOL "Use internal cURL" FORCE)
 
+# Enable Windows resource compilation (windres) so `.rc` files are processed.
+if(WIN32)
+    enable_language(RC)
+endif()
+
 # SET TO C++14 FOR MAXIMUM ENGINE COMPATIBILITY
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(SMATCHET_UNREAL_THIRDPARTY_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+    CACHE PATH "Output directory for Unreal ThirdParty Smatchet artifacts")
 
 # ==============================================================================
 # 1. FETCH ALL DEPENDENCIES (Zero manual downloads required)
@@ -41,7 +52,25 @@ message(STATUS "Fetching SQLiteCpp...")
 set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "Disable linting" FORCE)
 set(SQLITECPP_RUN_CPPCHECK OFF CACHE BOOL "Disable cppcheck" FORCE)
 FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG 3.3.1)
-FetchContent_MakeAvailable(sqlitecpp)
+# Fetch + patch to avoid CMake deprecation warnings about < 3.10 compatibility.
+FetchContent_GetProperties(sqlitecpp)
+if(NOT sqlitecpp_POPULATED)
+    FetchContent_Populate(sqlitecpp)
+endif()
+
+set(_sqlitecpp_cmakelists "${sqlitecpp_SOURCE_DIR}/CMakeLists.txt")
+if(EXISTS "${_sqlitecpp_cmakelists}")
+    file(READ "${_sqlitecpp_cmakelists}" _sqlitecpp_cmakelists_contents)
+    string(REPLACE "cmake_minimum_required(VERSION 3.5)"
+                   "cmake_minimum_required(VERSION 3.10)"
+                   _sqlitecpp_patched_contents
+                   "${_sqlitecpp_cmakelists_contents}")
+    if(NOT _sqlitecpp_patched_contents STREQUAL _sqlitecpp_cmakelists_contents)
+        file(WRITE "${_sqlitecpp_cmakelists}" "${_sqlitecpp_patched_contents}")
+    endif()
+endif()
+
+add_subdirectory("${sqlitecpp_SOURCE_DIR}" "${sqlitecpp_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 message(STATUS "Fetching cpp-httplib...")
 FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.14.1)
@@ -49,8 +78,33 @@ FetchContent_MakeAvailable(httplib)
 
 
 message(STATUS "Fetching ghc::filesystem (C++14 Polyfill)...")
-FetchContent_Declare(ghc_filesystem GIT_REPOSITORY https://github.com/gulrak/filesystem.git GIT_TAG v1.5.14)
-FetchContent_MakeAvailable(ghc_filesystem)
+FetchContent_Declare(ghc_filesystem
+    GIT_REPOSITORY https://github.com/gulrak/filesystem.git
+    GIT_TAG v1.5.14
+)
+
+# FIX: CMake <3.10 compatibility removal warning
+# The upstream ghc_filesystem CMakeLists starts with:
+#   cmake_minimum_required(VERSION 3.7.2)
+# Newer CMake versions emit a deprecation warning for this.
+FetchContent_GetProperties(ghc_filesystem)
+if(NOT ghc_filesystem_POPULATED)
+    FetchContent_Populate(ghc_filesystem)
+endif()
+
+set(_ghc_filesystem_cmakelists "${ghc_filesystem_SOURCE_DIR}/CMakeLists.txt")
+if(EXISTS "${_ghc_filesystem_cmakelists}")
+    file(READ "${_ghc_filesystem_cmakelists}" _ghc_filesystem_cmakelists_contents)
+    string(REPLACE "cmake_minimum_required(VERSION 3.7.2)"
+                   "cmake_minimum_required(VERSION 3.10)"
+                   _ghc_filesystem_cmakelists_contents_patched
+                   "${_ghc_filesystem_cmakelists_contents}")
+    if(NOT _ghc_filesystem_cmakelists_contents_patched STREQUAL _ghc_filesystem_cmakelists_contents)
+        file(WRITE "${_ghc_filesystem_cmakelists}" "${_ghc_filesystem_cmakelists_contents_patched}")
+    endif()
+endif()
+
+add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 message(STATUS "Fetching whisper.cpp...")
 FetchContent_Declare(whisper GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git GIT_TAG v1.5.4)
@@ -99,7 +153,34 @@ set(LUA_LIBRARIES Smatchet_Lua_Internal CACHE STRING "" FORCE)
 set(SOL2_BUILD_LUA OFF CACHE BOOL "" FORCE) # Tell sol2 NOT to try building its own Lua
 
 FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG v2.20.6)
-FetchContent_MakeAvailable(sol2)
+
+# FIX: Silence the FetchContent deprecation warning emitted by sol2's
+# fetched CMakeLists.txt (it uses cmake_minimum_required(VERSION 3.5.0)).
+# Newer CMake versions deprecate compatibility with CMake < 3.10.
+FetchContent_GetProperties(sol2)
+if(NOT sol2_POPULATED)
+    FetchContent_Populate(sol2)
+endif()
+
+set(_sol2_cmakelists "${sol2_SOURCE_DIR}/CMakeLists.txt")
+if(EXISTS "${_sol2_cmakelists}")
+    file(READ "${_sol2_cmakelists}" _sol2_cmakelists_contents)
+
+    string(REPLACE "cmake_minimum_required(VERSION 3.5.0)"
+                   "cmake_minimum_required(VERSION 3.10.0)"
+                   _sol2_patched_contents
+                   "${_sol2_cmakelists_contents}")
+    string(REPLACE "cmake_minimum_required(VERSION 3.5)"
+                   "cmake_minimum_required(VERSION 3.10.0)"
+                   _sol2_patched_contents
+                   "${_sol2_patched_contents}")
+
+    if(NOT _sol2_patched_contents STREQUAL _sol2_cmakelists_contents)
+        file(WRITE "${_sol2_cmakelists}" "${_sol2_patched_contents}")
+    endif()
+endif()
+
+add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 
 
@@ -120,10 +201,22 @@ target_include_directories(ImGuiLib PUBLIC
         ${glfw_SOURCE_DIR}/include
 )
 
+# Dear ImGui variant for Unreal/DX12 embedding (no GLFW/OpenGL dependency).
+if(WIN32)
+    file(GLOB IMGUI_DX12_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
+    list(APPEND IMGUI_DX12_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp")
+    add_library(ImGuiLib_DX12 STATIC ${IMGUI_DX12_SOURCES})
+    target_include_directories(ImGuiLib_DX12 PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+    )
+endif()
+
 # ==============================================================================
 # 3. SMATCHET CORE LIBRARY (Engine-Agnostic)
 # ==============================================================================
 file(GLOB_RECURSE CORE_SOURCES "Source_Core/src/*.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHost.cpp")
 add_library(SmatchetCore STATIC ${CORE_SOURCES})
 
 # FIX: Explicitly define the sol2 and lua paths because FetchContent variables
@@ -159,11 +252,180 @@ target_link_libraries(SmatchetCore PRIVATE
         ImGuiLib
         glfw
 )
+
+if(WIN32)
+    add_library(SmatchetCore_DX12 STATIC ${CORE_SOURCES})
+    target_include_directories(SmatchetCore_DX12 PUBLIC
+            Source_Core/include
+            ${sqlitecpp_SOURCE_DIR}/include
+            ${LUA_SRC_DIR}/src
+            ${sol2_SOURCE_DIR}/single
+    )
+    target_include_directories(SmatchetCore_DX12 PRIVATE
+            Source_Core/src
+            ${stb_SOURCE_DIR}
+            ${imgui_markdown_SOURCE_DIR}
+            ${sol2_SOURCE_DIR}/single
+            ${LUA_SRC_DIR}/src
+    )
+    target_link_libraries(SmatchetCore_DX12 PUBLIC
+            nlohmann_json::nlohmann_json
+            SQLiteCpp
+            cpr::cpr
+            httplib::httplib
+    )
+    target_link_libraries(SmatchetCore_DX12 PRIVATE
+            Smatchet_Lua_Internal
+            ghc_filesystem
+            whisper
+            ImGuiLib_DX12
+            d3d12
+            dxgi
+    )
+endif()
+
+# ==============================================================================
+# 3b. STATIC PLUGINS (same IPlugin contract as future DLLs)
+# ==============================================================================
+add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp)
+target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCore)
+
+add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
+target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCore ImGuiLib)
+
+if(WIN32)
+    add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
+    target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12)
+
+    add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
+    target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+    target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
+
+    add_library(SmatchetImGuiHost_DX12 STATIC
+            Source_Core/src/SmatchetImGuiHost.cpp
+            Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp
+    )
+    target_include_directories(SmatchetImGuiHost_DX12 PUBLIC
+            Source_Core/include
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
+    )
+    target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC
+            SmatchetCore_DX12
+            SmatchetPlugin_Mcp_DX12
+            SmatchetPlugin_LuaConsole_DX12
+            ImGuiLib_DX12
+            d3d12
+            dxgi
+    )
+
+    # Package DX12 libs + public host header directly into Unreal plugin ThirdParty layout.
+    set(_SMATCHET_UNREAL_INCLUDE_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/include")
+    set(_SMATCHET_UNREAL_LIB_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/lib/Win64/$<IF:$<CONFIG:Debug>,Debug,Development>")
+    add_custom_target(SmatchetPackageUnrealLibs_DX12
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_LIB_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHost.h"
+                "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHost.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHostC.h"
+                "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHostC.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${imgui_SOURCE_DIR}/imgui.h"
+                "${_SMATCHET_UNREAL_INCLUDE_DIR}/imgui.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${imgui_SOURCE_DIR}/imconfig.h"
+                "${_SMATCHET_UNREAL_INCLUDE_DIR}/imconfig.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:SmatchetImGuiHost_DX12>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetImGuiHost_DX12>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_Mcp_DX12>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:SmatchetPlugin_LuaConsole_DX12>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_LuaConsole_DX12>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:SmatchetCore_DX12>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetCore_DX12>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:ImGuiLib_DX12>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:ImGuiLib_DX12>"
+        # Static dependencies needed by the core when linked from Unreal.
+        # (Static library link-time deps are not automatically pulled by UBT.)
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:cpr>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:cpr>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:SQLiteCpp>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SQLiteCpp>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:sqlite3>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:sqlite3>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:Smatchet_Lua_Internal>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:Smatchet_Lua_Internal>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:libcurl>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:libcurl>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:whisper>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:whisper>"
+        DEPENDS
+            SmatchetImGuiHost_DX12
+            SmatchetPlugin_Mcp_DX12
+            SmatchetPlugin_LuaConsole_DX12
+            SmatchetCore_DX12
+            ImGuiLib_DX12
+        COMMENT "Packaging Smatchet DX12 artifacts for Unreal plugin"
+    )
+endif()
+
 # ==============================================================================
 # 4. SMATCHET STANDALONE EXECUTABLE
 # ==============================================================================
 file(GLOB STANDALONE_SOURCES "Target_Standalone/*.cpp")
+
+if(WIN32)
+    # Copy the icon into the repo (only if it doesn't already exist).
+    # This keeps the build working even if the icon only exists locally.
+    set(_SMATCHET_ICO_SRC "C:/Users/alexk/Downloads/smatchet.ico")
+    set(_SMATCHET_ICO_DEST "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone/smatchet.ico")
+
+    if(NOT EXISTS "${_SMATCHET_ICO_DEST}")
+        if(EXISTS "${_SMATCHET_ICO_SRC}")
+            file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone")
+            file(COPY "${_SMATCHET_ICO_SRC}" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone")
+            message(STATUS "Copied smatchet.ico into repo at: ${_SMATCHET_ICO_DEST}")
+        else()
+            message(FATAL_ERROR "smatchet.ico not found. Expected either at '${_SMATCHET_ICO_DEST}' or '${_SMATCHET_ICO_SRC}'.")
+        endif()
+    endif()
+
+    # Generate a `.rc` file with an embedded absolute icon path.
+    file(TO_CMAKE_PATH "${_SMATCHET_ICO_DEST}" _SMATCHET_ICO_PATH_CMAKE)
+    set(SMATCHET_ICO_PATH "${_SMATCHET_ICO_PATH_CMAKE}")
+
+    set(_SMATCHET_RC_IN "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone/smatchet.rc.in")
+    set(_SMATCHET_RC_OUT "${CMAKE_CURRENT_BINARY_DIR}/generated/smatchet.rc")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+    configure_file("${_SMATCHET_RC_IN}" "${_SMATCHET_RC_OUT}" @ONLY)
+
+    list(APPEND STANDALONE_SOURCES "${_SMATCHET_RC_OUT}")
+endif()
+
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES})
+
+set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+add_custom_command(TARGET SmatchetStandalone POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
+        COMMENT "Copy Scripts/*.lua next to SmatchetStandalone"
+        VERBATIM)
 
 target_include_directories(SmatchetStandalone PRIVATE ${miniaudio_SOURCE_DIR})
 
@@ -178,6 +440,8 @@ endif()
 
 target_link_libraries(SmatchetStandalone PRIVATE
         SmatchetCore
+        SmatchetPlugin_Mcp
+        SmatchetPlugin_LuaConsole
         ImGuiLib
         glfw
 )

@@ -31,6 +31,46 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
+        },
+        {
+            "name": "ninja-unreal-dx12",
+            "displayName": "Ninja Unreal DX12",
+            "description": "Debug DX12 artifacts packaged for Unreal plugin",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
+        },
+        {
+            "name": "ninja-unreal-dx12-release",
+            "displayName": "Ninja Unreal DX12 Release",
+            "description": "Release DX12 artifacts packaged for Unreal plugin",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12-release",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
+        },
+        {
+            "name": "vs-unreal-dx12-release",
+            "displayName": "MSVC Unreal DX12 Release",
+            "description": "Release DX12 artifacts packaged for Unreal plugin (MSVC ABI compatible)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/vs-unreal-dx12-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
         }
     ],
     "buildPresets": [
@@ -41,6 +81,28 @@
         {
             "name": "ninja-release",
             "configurePreset": "ninja-release"
+        },
+        {
+            "name": "ninja-unreal-dx12",
+            "configurePreset": "ninja-unreal-dx12",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
+        },
+        {
+            "name": "ninja-unreal-dx12-release",
+            "configurePreset": "ninja-unreal-dx12-release",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
+        },
+        {
+            "name": "vs-unreal-dx12-release",
+            "configurePreset": "vs-unreal-dx12-release",
+            "configuration": "Release",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
         }
     ]
 }

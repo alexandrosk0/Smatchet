@@ -16,8 +16,37 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <cstddef>
+
+// Defined below; used by timetracking formatting in the anonymous namespace.
+std::string FormatWorkDurationFromSeconds(long long seconds);
 
 namespace {
+constexpr std::size_t kMaxJiraHttpBodyLogBytes = 65536;
+
+void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Response& response) {
+    LOG_DEBUG("JiraClient: %s %s -> HTTP %d (%zu bytes)",
+              method,
+              url.c_str(),
+              static_cast<int>(response.status_code),
+              response.text.size());
+    if (!Logger::Instance().GetLogJiraHttpBodies()) {
+        return;
+    }
+    if (!Logger::Instance().ShouldLog(LogLevel::Trace)) {
+        return;
+    }
+    std::string body = response.text;
+    std::string suffix;
+    if (body.size() > kMaxJiraHttpBodyLogBytes) {
+        body.resize(kMaxJiraHttpBodyLogBytes);
+        suffix = "\n[truncated…]";
+    }
+    Logger::Instance().Log(LogLevel::Trace,
+                           std::string("JiraClient: ") + method + " response body (" + url + "):\n" + body +
+                               suffix);
+}
+
 // Simple URL-encoder that is C++14 friendly.
 std::string UrlEncode(const std::string& value) {
     std::ostringstream escaped;
@@ -89,6 +118,22 @@ std::string JoinStrings(const std::vector<std::string>& items, const std::string
     return out;
 }
 
+// nlohmann::value("k", std::string()) throws type_error.302 if "k" exists but is not a string.
+std::string JsonGetStringIfString(const nlohmann::json& j, const char* key) {
+    const auto it = j.find(key);
+    if (it == j.end() || !it->is_string()) {
+        return {};
+    }
+    return it->get<std::string>();
+}
+
+std::string TruncateForLog(const std::string& s, std::size_t maxLen = 600) {
+    if (s.size() <= maxLen) {
+        return s;
+    }
+    return s.substr(0, maxLen) + "...";
+}
+
 std::string TrimTrailingZeros(const std::string& number) {
     if (number.find('.') == std::string::npos) {
         return number;
@@ -145,7 +190,7 @@ void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out)
         return;
     }
 
-    const std::string nodeType = node.value("type", std::string());
+    const std::string nodeType = JsonGetStringIfString(node, "type");
 
     if (nodeType == "hardBreak") {
         out << "\n";
@@ -365,9 +410,10 @@ std::string ParseChangelog(const nlohmann::json& histories) {
             if (!changeItem.is_object()) {
                 continue;
             }
-            std::string fieldName = changeItem.value("field", std::string());
-            if (changeItem.contains("field") && changeItem["field"].is_string()) {
-                fieldName = changeItem["field"].get<std::string>();
+            std::string fieldName;
+            if (changeItem.contains("field") && !changeItem["field"].is_null()) {
+                const auto& f = changeItem["field"];
+                fieldName = f.is_string() ? f.get<std::string>() : f.dump();
             }
 
             std::string fromValue = safeValueString(changeItem, "fromString", "from");
@@ -413,35 +459,6 @@ std::string ParseChangelog(const nlohmann::json& histories) {
     }
 
     return std::string();
-}
-
-std::string FormatWorkDurationFromSeconds(long long seconds) {
-    if (seconds <= 0) {
-        return std::string();
-    }
-
-    const long long minutesTotal = seconds / 60;
-    const long long minutes = minutesTotal % 60;
-    const long long hoursTotal = minutesTotal / 60;
-    const long long hours = hoursTotal % 8;
-    const long long daysTotal = hoursTotal / 8;
-    const long long days = daysTotal % 5;
-    const long long weeks = daysTotal / 5;
-
-    std::string out;
-    if (weeks > 0) {
-        out += std::to_string(weeks) + "w ";
-    }
-    if (days > 0) {
-        out += std::to_string(days) + "d ";
-    }
-    if (hours > 0 || out.empty()) {
-        out += std::to_string(hours) + "h ";
-    }
-    if (minutes > 0) {
-        out += std::to_string(minutes) + "m";
-    }
-    return TrimCopy(out);
 }
 
 long long ParseWorkDurationToSeconds(const std::string& input) {
@@ -498,6 +515,71 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
     return total;
 }
 
+bool JsonLooksLikeJiraTimetracking(const nlohmann::json& o) {
+    if (!o.is_object()) {
+        return false;
+    }
+    static const char* keys[] = {"originalEstimate",
+                                 "originalEstimateSeconds",
+                                 "remainingEstimate",
+                                 "remainingEstimateSeconds",
+                                 "timeSpent",
+                                 "timeSpentSeconds"};
+    for (const char* k : keys) {
+        if (o.contains(k)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Jira returns timetracking as an object with human strings and parallel *Seconds fields.
+std::string FormatJiraTimetrackingDisplay(const nlohmann::json& o) {
+    if (!o.is_object()) {
+        return o.dump();
+    }
+
+    auto scalar = [&](const char* strKey, const char* secKey) -> std::string {
+        if (o.contains(strKey) && o[strKey].is_string()) {
+            std::string s = TrimCopy(o[strKey].get<std::string>());
+            if (!s.empty()) {
+                return s;
+            }
+        }
+        if (!o.contains(secKey) || o[secKey].is_null()) {
+            return {};
+        }
+        long long sec = 0;
+        if (o[secKey].is_number_integer()) {
+            sec = o[secKey].get<long long>();
+        } else if (o[secKey].is_number_unsigned()) {
+            sec = static_cast<long long>(o[secKey].get<unsigned long long>());
+        } else {
+            return {};
+        }
+        return FormatWorkDurationFromSeconds(sec);
+    };
+
+    std::vector<std::string> bits;
+    const std::string orig = scalar("originalEstimate", "originalEstimateSeconds");
+    if (!orig.empty()) {
+        bits.push_back("Original estimate " + orig);
+    }
+    const std::string spent = scalar("timeSpent", "timeSpentSeconds");
+    if (!spent.empty()) {
+        bits.push_back("Spent " + spent);
+    }
+    const std::string rem = scalar("remainingEstimate", "remainingEstimateSeconds");
+    if (!rem.empty()) {
+        bits.push_back("Remaining " + rem);
+    }
+    if (!bits.empty()) {
+        return JoinStrings(bits, " | ");
+    }
+    // Empty {} or object with no usable estimates/spent (show blank cell, not "{}" or raw JSON).
+    return {};
+}
+
 std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
     if (value.is_null()) {
         return std::string();
@@ -523,7 +605,10 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
         if (value.contains("comments") && value["comments"].is_array()) {
             return ParseComments(value["comments"]);
         }
-        if (value.value("type", std::string()) == "doc" && value.contains("content") && value["content"].is_array()) {
+        const auto typeIt = value.find("type");
+        const bool isDoc = typeIt != value.end() && typeIt->is_string() &&
+                           typeIt->get_ref<const std::string&>() == "doc";
+        if (isDoc && value.contains("content") && value["content"].is_array()) {
             std::ostringstream out;
             ExtractAdfTextToStream(value, out);
             return TrimCopy(out.str());
@@ -557,13 +642,37 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
             return displayName.empty() ? value["accountId"].get<std::string>() : displayName;
         }
         if (value.contains("displayName") && value["displayName"].is_string()) {
-            return value["displayName"].get<std::string>();
+            const std::string dn = value["displayName"].get<std::string>();
+            if (!dn.empty()) {
+                return dn;
+            }
         }
         if (value.contains("value") && value["value"].is_string()) {
-            return value["value"].get<std::string>();
+            const std::string vv = value["value"].get<std::string>();
+            if (!vv.empty()) {
+                return vv;
+            }
         }
         if (value.contains("name") && value["name"].is_string()) {
-            return value["name"].get<std::string>();
+            const std::string nm = value["name"].get<std::string>();
+            if (!nm.empty()) {
+                return nm;
+            }
+        }
+        if (value.contains("id")) {
+            if (value["id"].is_string()) {
+                const std::string sid = value["id"].get<std::string>();
+                if (!sid.empty()) {
+                    return sid;
+                }
+            } else if (value["id"].is_number_integer()) {
+                return std::to_string(value["id"].get<long long>());
+            } else if (value["id"].is_number_unsigned()) {
+                return std::to_string(value["id"].get<unsigned long long>());
+            }
+        }
+        if (JsonLooksLikeJiraTimetracking(value)) {
+            return FormatJiraTimetrackingDisplay(value);
         }
         return value.dump();
     }
@@ -580,6 +689,45 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
     return value.dump();
 }
 } // namespace
+
+std::string FormatWorkDurationFromSeconds(long long seconds) {
+    if (seconds <= 0) {
+        return std::string();
+    }
+
+    const long long minutesTotal = seconds / 60;
+    const long long minutes = minutesTotal % 60;
+    const long long hoursTotal = minutesTotal / 60;
+    const long long hours = hoursTotal % 8;
+    const long long daysTotal = hoursTotal / 8;
+    const long long days = daysTotal % 5;
+    const long long weeks = daysTotal / 5;
+
+    std::string out;
+    if (weeks > 0) {
+        out += std::to_string(weeks) + "w ";
+    }
+    if (days > 0) {
+        out += std::to_string(days) + "d ";
+    }
+    if (hours > 0 || out.empty()) {
+        out += std::to_string(hours) + "h ";
+    }
+    if (minutes > 0) {
+        out += std::to_string(minutes) + "m";
+    }
+    size_t start = 0;
+    size_t end = out.size();
+    while (start < end &&
+           (out[start] == ' ' || out[start] == '\t' || out[start] == '\n' || out[start] == '\r')) {
+        ++start;
+    }
+    while (end > start && (out[end - 1] == ' ' || out[end - 1] == '\t' || out[end - 1] == '\n' ||
+                           out[end - 1] == '\r')) {
+        --end;
+    }
+    return out.substr(start, end - start);
+}
 
 bool JiraClient::FetchUsers(const JiraConfig& cfg,
                             std::vector<JiraUser>& outUsers,
@@ -604,10 +752,10 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg,
 
     const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
     auto usersResponse = cpr::Get(cpr::Url{usersUrl}, headers, redirect);
+    LogJiraHttpResult("GET", usersUrl, usersResponse);
     if (usersResponse.status_code != 200) {
         outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
-        LOG_DEBUG("JiraClient: /users/search response body:\n%s", usersResponse.text.c_str());
         return false;
     }
 
@@ -654,6 +802,209 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg,
         });
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse users response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg,
+                                    const std::string& issueKey,
+                                    std::vector<JiraUser>& outWatchers,
+                                    std::string& outError) {
+    outWatchers.clear();
+    outError.clear();
+
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/watchers";
+    auto response = cpr::Get(cpr::Url{url}, headers, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        NetworkUsageTracker::kEstimatedGetUploadBytes, response);
+    LogJiraHttpResult("GET", url, response);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch watchers: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        const auto j = nlohmann::json::parse(response.text);
+        if (!j.is_object()) {
+            outError = "Invalid watchers response format.";
+            return false;
+        }
+        const auto watchers = j.value("watchers", nlohmann::json::array());
+        if (!watchers.is_array()) {
+            outError = "Invalid watchers array in response.";
+            return false;
+        }
+        for (const auto& w : watchers) {
+            if (!w.is_object()) {
+                continue;
+            }
+            JiraUser u;
+            u.AccountId = w.value("accountId", std::string());
+            u.DisplayName = w.value("displayName", std::string());
+            u.EmailAddress = w.value("emailAddress", std::string());
+            u.Active = w.value("active", true);
+            if (!u.AccountId.empty() || !u.DisplayName.empty()) {
+                outWatchers.push_back(std::move(u));
+            }
+        }
+        std::sort(outWatchers.begin(), outWatchers.end(), [](const JiraUser& a, const JiraUser& b) {
+            const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
+            const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
+            return std::lexicographical_compare(
+                lhs.begin(), lhs.end(),
+                rhs.begin(), rhs.end(),
+                [](unsigned char ca, unsigned char cb) {
+                    return std::tolower(ca) < std::tolower(cb);
+                });
+        });
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse watchers response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueVotes(const JiraConfig& cfg,
+                                 const std::string& issueKey,
+                                 std::vector<JiraUser>& outVoters,
+                                 std::string& outError,
+                                 int* outVoteCount,
+                                 bool* outHasVoted,
+                                 bool* outVotersArrayInResponse) {
+    outVoters.clear();
+    outError.clear();
+    if (outVoteCount) {
+        *outVoteCount = 0;
+    }
+    if (outHasVoted) {
+        *outHasVoted = false;
+    }
+    if (outVotersArrayInResponse) {
+        *outVotersArrayInResponse = false;
+    }
+
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/votes";
+    auto response = cpr::Get(cpr::Url{url}, headers, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        NetworkUsageTracker::kEstimatedGetUploadBytes, response);
+    LogJiraHttpResult("GET", url, response);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch votes: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        const auto j = nlohmann::json::parse(response.text);
+        if (!j.is_object()) {
+            outError = "Invalid votes response format.";
+            return false;
+        }
+
+        if (outVoteCount && j.contains("votes")) {
+            const auto& vc = j["votes"];
+            if (vc.is_number_integer()) {
+                *outVoteCount = static_cast<int>(vc.get<long long>());
+            } else if (vc.is_number_unsigned()) {
+                *outVoteCount = static_cast<int>(vc.get<unsigned long long>());
+            } else if (vc.is_number_float()) {
+                *outVoteCount = static_cast<int>(vc.get<double>());
+            } else if (vc.is_string()) {
+                try {
+                    *outVoteCount = std::stoi(vc.get<std::string>());
+                } catch (...) {}
+            }
+            if (*outVoteCount < 0) {
+                *outVoteCount = 0;
+            }
+        }
+
+        if (outHasVoted && j.contains("hasVoted")) {
+            const auto& hv = j["hasVoted"];
+            if (hv.is_boolean()) {
+                *outHasVoted = hv.get<bool>();
+            } else if (hv.is_number_integer()) {
+                *outHasVoted = (hv.get<long long>() != 0);
+            }
+        }
+
+        if (j.contains("voters")) {
+            if (outVotersArrayInResponse) {
+                *outVotersArrayInResponse = j["voters"].is_array();
+            }
+            const auto voters = j.value("voters", nlohmann::json::array());
+            if (voters.is_array()) {
+                for (const auto& w : voters) {
+                    if (!w.is_object()) {
+                        continue;
+                    }
+                    JiraUser u;
+                    u.AccountId = w.value("accountId", std::string());
+                    u.DisplayName = w.value("displayName", std::string());
+                    u.EmailAddress = w.value("emailAddress", std::string());
+                    u.Active = w.value("active", true);
+                    if (!u.AccountId.empty() || !u.DisplayName.empty()) {
+                        outVoters.push_back(std::move(u));
+                    }
+                }
+                std::sort(outVoters.begin(), outVoters.end(), [](const JiraUser& a, const JiraUser& b) {
+                    const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
+                    const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
+                    return std::lexicographical_compare(
+                        lhs.begin(), lhs.end(),
+                        rhs.begin(), rhs.end(),
+                        [](unsigned char ca, unsigned char cb) {
+                            return std::tolower(ca) < std::tolower(cb);
+                        });
+                });
+            }
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse votes response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
@@ -737,10 +1088,10 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
         auto transitionsResp = cpr::Get(cpr::Url{transitionsUrl}, headers, redirect);
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
             NetworkUsageTracker::kEstimatedGetUploadBytes, transitionsResp);
+        LogJiraHttpResult("GET", transitionsUrl, transitionsResp);
         if (transitionsResp.status_code != 200) {
             outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
-            LOG_DEBUG("JiraClient: transitions response body:\n%s", transitionsResp.text.c_str());
             return false;
         }
 
@@ -817,10 +1168,10 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
         );
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
             static_cast<std::uint64_t>(transitionBodyStr.size()), transitionResp);
+        LogJiraHttpResult("POST", transitionsUrl, transitionResp);
         if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
             outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
-            LOG_DEBUG("JiraClient: transition response body:\n%s", transitionResp.text.c_str());
             return false;
         }
 
@@ -863,12 +1214,12 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
     );
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
         static_cast<std::uint64_t>(putBodyStr.size()), response);
+    LogJiraHttpResult("PUT", updateUrl, response);
 
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
         LOG_DEBUG("JiraClient: update payload:\n%s", body.dump(2).c_str());
-        LOG_DEBUG("JiraClient: update response body:\n%s", response.text.c_str());
         return false;
     }
 
@@ -899,13 +1250,14 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     };
     cpr::Redirect redirect(true, true);
 
-    auto fieldsResponse = cpr::Get(cpr::Url{base + "/rest/api/3/field"}, headers, redirect);
+    const std::string fieldsListUrl = base + "/rest/api/3/field";
+    auto fieldsResponse = cpr::Get(cpr::Url{fieldsListUrl}, headers, redirect);
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
         NetworkUsageTracker::kEstimatedGetUploadBytes, fieldsResponse);
+    LogJiraHttpResult("GET", fieldsListUrl, fieldsResponse);
     if (fieldsResponse.status_code != 200) {
         outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
-        LOG_DEBUG("JiraClient: /field response body:\n%s", fieldsResponse.text.c_str());
         return false;
     }
 
@@ -951,6 +1303,11 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
             }
 
             jiraField.IsCustom = (fieldId.find("customfield_") == 0);
+            try {
+                jiraField.RestFieldDefinitionJson = field.dump(2);
+            } catch (...) {
+                jiraField.RestFieldDefinitionJson.clear();
+            }
             outFields.push_back(std::move(jiraField));
         }
     } catch (const std::exception& ex) {
@@ -975,16 +1332,12 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     auto metaResponse = cpr::Get(cpr::Url{metaUrl}, headers, redirect);
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
         NetworkUsageTracker::kEstimatedGetUploadBytes, metaResponse);
-    if (metaResponse.status_code != 200) {
-        LOG_WARN("JiraClient: createmeta enrichment failed. HTTP %d", metaResponse.status_code);
-        LOG_DEBUG("JiraClient: createmeta response body:\n%s", metaResponse.text.c_str());
-        return true;
-    }
-
-    try {
-        auto metaJson = nlohmann::json::parse(metaResponse.text);
-        std::set<std::string> uniqueIssueTypes;
-        std::set<std::string> uniqueComponentIds;
+    LogJiraHttpResult("GET", metaUrl, metaResponse);
+    std::set<std::string> uniqueIssueTypes;
+    if (metaResponse.status_code == 200) {
+        try {
+            auto metaJson = nlohmann::json::parse(metaResponse.text);
+            std::set<std::string> uniqueComponentIds;
 
         if (metaJson.contains("projects") && metaJson["projects"].is_array()) {
             for (const auto& project : metaJson["projects"]) {
@@ -1028,6 +1381,12 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
 
                         const auto indexIt = fieldIndexById.find(fieldId);
                         if (indexIt == fieldIndexById.end()) {
+                            continue;
+                        }
+
+                        // issuetype allowedValues in createmeta are per-screen (e.g. Epic may only list Epic).
+                        // Use the full project issue type name set after this loop instead.
+                        if (fieldId == "issuetype") {
                             continue;
                         }
 
@@ -1077,11 +1436,75 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                 }
             }
         }
+        } catch (const std::exception& ex) {
+            LOG_WARN("JiraClient: createmeta parse failed: %s", ex.what());
+        }
+    } else {
+        LOG_WARN("JiraClient: createmeta enrichment failed. HTTP %d", metaResponse.status_code);
+    }
 
-        if (!uniqueIssueTypes.empty()) {
-            const auto issueTypeIt = fieldIndexById.find("issuetype");
-            if (issueTypeIt != fieldIndexById.end()) {
-                JiraField& issueTypeField = outFields[issueTypeIt->second];
+    // Issue type: createmeta often lists only one type (e.g. Epic). Prefer GET /project/{key}
+    // issueTypes (full list + real ids for PUT). Fall back to createmeta names if needed.
+    {
+        const auto issueTypeIt = fieldIndexById.find("issuetype");
+        if (issueTypeIt != fieldIndexById.end()) {
+            JiraField& issueTypeField = outFields[issueTypeIt->second];
+            bool filledFromProject = false;
+            try {
+                const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey);
+                auto projectResp = cpr::Get(cpr::Url{projectUrl}, headers, redirect);
+                NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+                    NetworkUsageTracker::kEstimatedGetUploadBytes, projectResp);
+                LogJiraHttpResult("GET", projectUrl, projectResp);
+                if (projectResp.status_code == 200) {
+                    auto projectJson = nlohmann::json::parse(projectResp.text);
+                    if (projectJson.contains("issueTypes") && projectJson["issueTypes"].is_array()) {
+                        std::vector<JiraFieldOption> opts;
+                        for (const auto& it : projectJson["issueTypes"]) {
+                            if (!it.is_object()) {
+                                continue;
+                            }
+                            std::string tid;
+                            if (it.contains("id")) {
+                                if (it["id"].is_string()) {
+                                    tid = it["id"].get<std::string>();
+                                } else if (it["id"].is_number_integer()) {
+                                    tid = std::to_string(it["id"].get<long long>());
+                                } else if (it["id"].is_number_unsigned()) {
+                                    tid = std::to_string(it["id"].get<unsigned long long>());
+                                }
+                            }
+                            const std::string tname = it.value("name", std::string());
+                            if (tid.empty() || tname.empty()) {
+                                continue;
+                            }
+                            JiraFieldOption option;
+                            option.Id = std::move(tid);
+                            option.Value = tname;
+                            opts.push_back(std::move(option));
+                        }
+                        if (!opts.empty()) {
+                            std::sort(opts.begin(), opts.end(),
+                                      [](const JiraFieldOption& a, const JiraFieldOption& b) {
+                                          return a.Value < b.Value;
+                                      });
+                            issueTypeField.AllowedValueOptions = std::move(opts);
+                            issueTypeField.AllowedValues.clear();
+                            for (const auto& o : issueTypeField.AllowedValueOptions) {
+                                issueTypeField.AllowedValues.push_back(o.Value);
+                            }
+                            filledFromProject = true;
+                        }
+                    }
+                } else {
+                    LOG_WARN("JiraClient: project fetch for issue types failed. HTTP %d",
+                             projectResp.status_code);
+                }
+            } catch (const std::exception& ex) {
+                LOG_WARN("JiraClient: project issueTypes parse failed: %s", ex.what());
+            }
+
+            if (!filledFromProject && !uniqueIssueTypes.empty()) {
                 issueTypeField.AllowedValues.assign(uniqueIssueTypes.begin(), uniqueIssueTypes.end());
                 std::sort(issueTypeField.AllowedValues.begin(), issueTypeField.AllowedValues.end());
                 issueTypeField.AllowedValueOptions.clear();
@@ -1093,17 +1516,17 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                 }
             }
         }
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: createmeta parse failed: %s", ex.what());
     }
 
     // Enrich status options so the UI renders a dropdown.
     try {
         const auto statusFieldIt = fieldIndexById.find("status");
         if (statusFieldIt != fieldIndexById.end()) {
-            auto statusResp = cpr::Get(cpr::Url{base + "/rest/api/3/status"}, headers, redirect);
+            const std::string statusCatalogUrl = base + "/rest/api/3/status";
+            auto statusResp = cpr::Get(cpr::Url{statusCatalogUrl}, headers, redirect);
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
                 NetworkUsageTracker::kEstimatedGetUploadBytes, statusResp);
+            LogJiraHttpResult("GET", statusCatalogUrl, statusResp);
             if (statusResp.status_code == 200) {
                 auto statusJson = nlohmann::json::parse(statusResp.text);
                 if (statusJson.is_array()) {
@@ -1149,8 +1572,21 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     return true;
 }
 
-std::vector<CachedTicket> JiraClient::FetchIssues() {
-    JiraConfig cfg = ConfigManager::Load();
+std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
+                                                  const JiraConfig* configOverride,
+                                                  const ViewsStore* viewsOverride) {
+    if (outFullSyncCompleted) {
+        *outFullSyncCompleted = false;
+    }
+
+    JiraConfig cfgStorage;
+    const JiraConfig* cfgPtr = configOverride;
+    if (!cfgPtr) {
+        cfgStorage = ConfigManager::Load();
+        cfgPtr = &cfgStorage;
+    }
+    const JiraConfig& cfg = *cfgPtr;
+
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         LOG_WARN("JiraClient: missing API token or domain; skipping FetchIssues.");
         return {};
@@ -1171,7 +1607,14 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
     std::unordered_set<std::string> seenSelectedFields;
 
     // Prefer the active view's field list as the single source of truth.
-    ViewsStore viewStore = ConfigManager::LoadViewsOrBootstrap(cfg);
+    ViewsStore viewsStorage;
+    const ViewsStore* viewsPtr = viewsOverride;
+    if (!viewsPtr) {
+        viewsStorage = ConfigManager::LoadViewsOrBootstrap(cfg);
+        viewsPtr = &viewsStorage;
+    }
+    const ViewsStore& viewStore = *viewsPtr;
+
     const ViewDefinition* activeViewDef = nullptr;
     for (const auto& view : viewStore.Views) {
         if (view.Id == viewStore.ActiveViewId) {
@@ -1256,10 +1699,10 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
             auto commentsResp = cpr::Get(cpr::Url{commentsUrl}, headers, redirect);
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
                 NetworkUsageTracker::kEstimatedGetUploadBytes, commentsResp);
+            LogJiraHttpResult("GET", commentsUrl, commentsResp);
             if (commentsResp.status_code != 200) {
                 LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d",
                          issueKey.c_str(), commentsResp.status_code);
-                LOG_DEBUG("JiraClient: comments response body:\n%s", commentsResp.text.c_str());
                 return !outComments.empty();
             }
 
@@ -1285,7 +1728,6 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
                 }
             } catch (const std::exception& ex) {
                 LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), ex.what());
-                LOG_DEBUG("JiraClient: comments response body:\n%s", commentsResp.text.c_str());
                 return !outComments.empty();
             }
         }
@@ -1297,6 +1739,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
     std::string lastResponseBody;
     const int kMaxPages = 50;
     int fetchedPages = 0;
+    bool syncEndedCleanly = false;
 
     for (int page = 1; page <= kMaxPages; ++page) {
         std::string pageUrl = baseSearchUrl;
@@ -1308,6 +1751,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
         auto response = cpr::Get(cpr::Url{pageUrl}, headers, redirect);
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
             NetworkUsageTracker::kEstimatedGetUploadBytes, response);
+        LogJiraHttpResult("GET", pageUrl, response);
         lastResponseBody = response.text;
         if (response.status_code != 200) {
             LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.",
@@ -1317,7 +1761,6 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
                 LOG_WARN("JiraClient: login failed. Check Email and API token in Settings -> Jira Credentials.");
             }
             LOG_DEBUG("JiraClient: response error message: %s", response.error.message.c_str());
-            LOG_DEBUG("JiraClient: full response.text:\n%s", response.text.c_str());
             break;
         }
 
@@ -1327,13 +1770,15 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
             if (!json.contains("issues")) {
                 LOG_WARN("JiraClient: page %d response has no 'issues' key. Full response.text:\n%s",
                          page, response.text.c_str());
+                syncEndedCleanly = false;
                 break;
             }
 
             const size_t before = results.size();
             for (auto& issue : json["issues"]) {
+                try {
                 CachedTicket ticket;
-                ticket.id = issue.value("key", std::string());
+                ticket.id = JsonGetStringIfString(issue, "key");
 
                 nlohmann::json issueFields = issue.value("fields", nlohmann::json::object());
                 const auto stringifyForGrid = [&](const nlohmann::json& v) -> std::string {
@@ -1381,6 +1826,12 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
                             } else {
                                 ticket.fieldValues[fieldKey] = std::string();
                             }
+                        } else if (fieldKey == "timetracking" || fieldKey == "aggregatetimetracking") {
+                            if (rawValue.is_object()) {
+                                ticket.fieldValues[fieldKey] = FormatJiraTimetrackingDisplay(rawValue);
+                            } else {
+                                ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
+                            }
                         } else if (fieldKey == "timeoriginalestimate" ||
                                    fieldKey == "timeestimate" ||
                                    fieldKey == "timespent" ||
@@ -1401,30 +1852,59 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
                         ticket.fieldValues[fieldKey] = std::string();
                     }
                 }
+                // Always persist issuetype when Jira returned it (search includes it in `fields=` even if
+                // the active view did not list it in selectedFields, so maps stay consistent for the grid).
+                if (issueFields.contains("issuetype")) {
+                    ticket.fieldValues["issuetype"] = NormalizeJiraFieldValue(issueFields["issuetype"]);
+                }
                 results.push_back(std::move(ticket));
+                } catch (const std::exception& ex) {
+                    const std::string issueKey = issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
+                    LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s: %s",
+                              page,
+                              issueKey.empty() ? "(unknown key)" : issueKey.c_str(),
+                              ex.what());
+                    syncEndedCleanly = false;
+                    continue;
+                }
             }
             const size_t added = results.size() - before;
             LOG_INFO("JiraClient: fetched page %d with %zu issues (total=%zu).", page, added, results.size());
 
             const bool isLast = json.value("isLast", true);
-            const std::string newToken = json.value("nextPageToken", std::string());
+            std::string newToken = JsonGetStringIfString(json, "nextPageToken");
+            if (json.contains("nextPageToken") && !json["nextPageToken"].is_null() &&
+                !json["nextPageToken"].is_string()) {
+                LOG_WARN("JiraClient: page %d nextPageToken is not a string (JSON type: %s); pagination may stop.",
+                         page,
+                         json["nextPageToken"].type_name());
+            }
             if (isLast) {
+                syncEndedCleanly = true;
                 break;
             }
             if (newToken.empty()) {
                 LOG_WARN("JiraClient: page %d indicates more pages but nextPageToken is empty. Stopping pagination.", page);
+                syncEndedCleanly = false;
                 break;
             }
             nextPageToken = newToken;
         } catch (const std::exception& ex) {
-            LOG_ERROR("JiraClient: JSON parse error on page %d: %s", page, ex.what());
-            LOG_DEBUG("JiraClient: full response.text:\n%s", response.text.c_str());
+            LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s",
+                      page,
+                      ex.what(),
+                      TruncateForLog(lastResponseBody).c_str());
+            syncEndedCleanly = false;
             break;
         }
     }
 
     if (fetchedPages >= kMaxPages && !nextPageToken.empty()) {
         LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);
+    }
+
+    if (outFullSyncCompleted) {
+        *outFullSyncCompleted = syncEndedCleanly && fetchedPages > 0;
     }
 
     if (results.empty()) {
@@ -1435,6 +1915,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
         auto myselfResp = cpr::Get(cpr::Url{myselfUrl}, headers, redirect);
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
             NetworkUsageTracker::kEstimatedGetUploadBytes, myselfResp);
+        LogJiraHttpResult("GET", myselfUrl, myselfResp);
         if (myselfResp.status_code == 200) {
             try {
                 auto me = nlohmann::json::parse(myselfResp.text);
@@ -1454,9 +1935,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues() {
                      "This usually means the app sent invalid credentials (often a truncated API token). "
                      "Re-open Settings -> Jira Credentials and paste the full API token.",
                      myselfResp.status_code);
-            LOG_DEBUG("JiraClient: /myself response body:\n%s", myselfResp.text.c_str());
         }
-        LOG_DEBUG("JiraClient: full last response.text:\n%s", lastResponseBody.c_str());
     }
     return results;
 }

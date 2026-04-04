@@ -1,10 +1,14 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "JiraGridFieldDisplay.h"
+#include "SmatchetFieldRender.h"
+#include "CompactDateFormat.h"
 #include "SpreadsheetState.h"
 #include "AiController.h"
 #include "Logger.h"
-#include "NetworkUsageTracker.h"
+#include "UiPerfMonitor.h"
+#include "SmatchetPerfUi.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <cctype>
@@ -17,25 +21,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <cstdlib>
 #include <cstdio>
+#include <string>
 
 namespace {
-std::string FormatNetworkBytes(std::uint64_t n) {
-    if (n < 1024u) {
-        return std::to_string(n) + " B";
-    }
-    const double kb = static_cast<double>(n) / 1024.0;
-    if (kb < 1024.0) {
-        char b[48];
-        std::snprintf(b, sizeof(b), "%.2f KB", kb);
-        return std::string(b);
-    }
-    char b[48];
-    std::snprintf(b, sizeof(b), "%.2f MB", kb / 1024.0);
-    return std::string(b);
-}
-
 std::string JoinCsv(const std::vector<std::string>& values) {
     std::string out;
     for (size_t i = 0; i < values.size(); ++i) {
@@ -229,6 +218,26 @@ int CompareFieldValuesForSort(const std::string& fieldId,
     return ciCompare(aVal, bVal);
 }
 
+bool IsJiraDateOrDateTimeField(const std::string& fieldId, const JiraField* field) {
+    if (kDateFieldIds.count(fieldId)) {
+        return true;
+    }
+    if (field && (field->Type == "date" || field->Type == "datetime")) {
+        return true;
+    }
+    return false;
+}
+
+std::string DisplayValueForJiraDateField(const std::string& fieldId,
+                                         const JiraField* field,
+                                         const std::string& currentValue) {
+    if (!IsJiraDateOrDateTimeField(fieldId, field)) {
+        return currentValue;
+    }
+    const std::string compact = FormatCompactJiraDateForDisplay(currentValue);
+    return compact.empty() ? currentValue : compact;
+}
+
 struct JiraFieldCatalogIndex {
     explicit JiraFieldCatalogIndex(const std::vector<JiraField>& fields) {
         for (const auto& field : fields) {
@@ -357,7 +366,7 @@ struct UiDrawSession {
 
     bool showJiraSettings = false;
     bool showViewsDashboard = true;
-    bool showNetworkStats = false;
+    bool showPerformance = false;
 
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
@@ -394,13 +403,76 @@ struct UiDrawSession {
 
     std::string lastGridActiveViewId;
 
+    /** Seconds at vertical end before wheel maps to horizontal scroll (see RouteVerticalWheelToHorizontalAtTableVerticalEnds). */
+    float gridBottomHorizontalWheelPauseTimer = 0.f;
+
     std::string aiResponse;
     bool aiIsThinking = false;
 
     std::vector<char> logBuffer;
+
+    JiraGridFieldAsyncState jiraGridAsync;
 };
 
 static UiDrawSession g_ui;
+static SmatchetPerfUi g_perfUi;
+
+/** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll after a short pause at the end. */
+static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table) {
+    constexpr float kBottomHorizontalWheelPauseSec = 0.12f;
+
+    if (!table) {
+        return;
+    }
+    ImGuiWindow* inner = table->InnerWindow;
+    ImGuiWindow* outer = table->OuterWindow;
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (!inner ||
+        std::abs(io.MouseWheel) <= 0.0f ||
+        std::abs(io.MouseWheelH) >= 0.0001f ||
+        inner->ScrollMax.x <= 0.0f) {
+        return;
+    }
+
+    const float eps = 1.0f;
+    const bool atBottom = inner->Scroll.y >= inner->ScrollMax.y - eps;
+    const bool atTop = inner->Scroll.y <= eps;
+    const bool noVerticalScroll = inner->ScrollMax.y <= eps;
+
+    bool allowRoute = false;
+    if (noVerticalScroll) {
+        g_ui.gridBottomHorizontalWheelPauseTimer = kBottomHorizontalWheelPauseSec;
+        allowRoute = true;
+    } else if (atBottom || atTop) {
+        g_ui.gridBottomHorizontalWheelPauseTimer += io.DeltaTime;
+        allowRoute = g_ui.gridBottomHorizontalWheelPauseTimer >= kBottomHorizontalWheelPauseSec;
+    } else {
+        g_ui.gridBottomHorizontalWheelPauseTimer = 0.f;
+    }
+
+    if (outer) {
+        const ImRect tableRect = outer->Rect();
+        if (!ImGui::IsMouseHoveringRect(tableRect.Min, tableRect.Max, false)) {
+            return;
+        }
+    }
+
+    if (!allowRoute) {
+        return;
+    }
+
+    const float wheelToScrollX = -io.MouseWheel * (ImGui::GetTextLineHeightWithSpacing() * 3.0f);
+    float targetX = inner->Scroll.x + wheelToScrollX;
+    if (targetX < 0.0f) {
+        targetX = 0.0f;
+    }
+    if (targetX > inner->ScrollMax.x) {
+        targetX = inner->ScrollMax.x;
+    }
+    ImGui::SetScrollX(inner, targetX);
+}
+
 
 std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) {
     return issueId + "|" + fieldId;
@@ -436,42 +508,6 @@ static void OpenUrlInDefaultBrowser(const std::string& url) {
 #endif
 }
 
-void RenderClippedFieldText(const std::string& rawValue,
-                            float availWidth,
-                            bool tooltipsEnabled,
-                            bool disabled) {
-    const std::string& displayValue = rawValue;
-
-    bool hasNewline = false;
-    std::string singleLine = displayValue;
-    for (size_t i = 0; i < singleLine.size(); ++i) {
-        if (singleLine[i] == '\n' || singleLine[i] == '\r') {
-            singleLine.erase(i);
-            hasNewline = true;
-            break;
-        }
-    }
-
-    const ImVec2 textSize = ImGui::CalcTextSize(singleLine.c_str());
-    const bool horizontallyClipped = (availWidth > 0.0f && textSize.x > availWidth + 1.0f);
-
-    if (disabled) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    }
-    ImGui::TextUnformatted(singleLine.c_str());
-    if (disabled) {
-        ImGui::PopStyleColor();
-    }
-
-    if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-        ImGui::TextUnformatted(displayValue.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-    }
-}
-
 class TicketEditService {
 public:
     explicit TicketEditService(AppController& appController) : App(appController) {}
@@ -486,20 +522,92 @@ private:
 
 class TicketFieldEditor {
 public:
-    static void RenderFieldCell(const CachedTicket& ticket,
+    static void RenderFieldCell(AppController& app,
+                                const CachedTicket& ticket,
+                                const std::string& fieldId,
                                 const JiraField* field,
                                 const std::string& currentValue,
                                 float availWidth,
                                 bool tooltipsEnabled,
                                 SpreadsheetState& state,
-                                std::vector<PendingFieldEdit>& pendingEdits) {
+                                std::vector<PendingFieldEdit>& pendingEdits,
+                                JiraGridFieldAsyncState& jiraGridAsync) {
+        if (app.TryLuaFieldDisplay(fieldId, ticket, currentValue, availWidth, field)) {
+            return;
+        }
         if (!field) {
-            RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, false);
+            if (JiraGridFieldDisplay::IsWatchersColumnId(fieldId)) {
+                JiraGridFieldDisplay::RenderWatchersField(
+                    ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
+                return;
+            }
+            if (JiraGridFieldDisplay::IsVotesColumnId(fieldId)) {
+                JiraGridFieldDisplay::RenderVotesField(
+                    ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
+                return;
+            }
+            if (JiraGridFieldDisplay::IsWorklogColumnId(fieldId)) {
+                JiraGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
+                return;
+            }
+            if (JiraGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
+                if (JiraGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
+                    return;
+                }
+            }
+            if (JiraGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
+                if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(
+                        currentValue, availWidth, tooltipsEnabled)) {
+                    return;
+                }
+            }
+            const std::string display = DisplayValueForJiraDateField(fieldId, nullptr, currentValue);
+            const std::string* tip =
+                IsJiraDateOrDateTimeField(fieldId, nullptr) ? &currentValue : nullptr;
+            RenderClippedFieldText(display, availWidth, tooltipsEnabled, false, tip);
             return;
         }
 
+        if (field->Id == "attachment") {
+            JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
+            return;
+        }
+
+        if (JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+            JiraGridFieldDisplay::RenderWatchersField(
+                ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
+            return;
+        }
+
+        if (JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
+            JiraGridFieldDisplay::RenderVotesField(
+                ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
+            return;
+        }
+
+        if (JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+            JiraGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
+            return;
+        }
+
+        if (JiraGridFieldDisplay::IsProgressDisplayField(field)) {
+            if (JiraGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
+                return;
+            }
+        }
+
+        if (JiraGridFieldDisplay::IsIssueRestrictionField(field)) {
+            if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(
+                    currentValue, availWidth, tooltipsEnabled)) {
+                return;
+            }
+        }
+
         if (field->ReadOnly) {
-            RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
+            const std::string display = DisplayValueForJiraDateField(field->Id, field, currentValue);
+            const std::string* tip =
+                IsJiraDateOrDateTimeField(field->Id, field) ? &currentValue : nullptr;
+            RenderClippedFieldText(display, availWidth, tooltipsEnabled, true, tip);
             return;
         }
 
@@ -557,9 +665,13 @@ private:
         return ids;
     }
 
+    static const char* EmptySelectPreviewLabel(const JiraField& field) {
+        return field.IsUserType ? "Unassigned" : "<none>";
+    }
+
     static std::string BuildSelectionPreview(const JiraField& field, const std::vector<std::string>& selectedIds) {
         if (selectedIds.empty()) {
-            return "<none>";
+            return field.IsUserType ? std::string("Unassigned") : std::string("<none>");
         }
         std::vector<std::string> labels;
         labels.reserve(selectedIds.size());
@@ -591,8 +703,9 @@ private:
             return;
         }
 
+        const std::string valueForDisplay = DisplayValueForJiraDateField(field.Id, &field, currentValue);
         bool hasNewline = false;
-        std::string singleLine = currentValue;
+        std::string singleLine = valueForDisplay;
         for (size_t i = 0; i < singleLine.size(); ++i) {
             if (singleLine[i] == '\n' || singleLine[i] == '\r') {
                 singleLine.erase(i);
@@ -617,7 +730,7 @@ private:
         const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo(comboId.c_str(),
-                              preview.empty() ? "<none>" : preview.c_str(),
+                              preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str(),
                               ImGuiComboFlags_NoArrowButton)) {
             const bool selectedNone = currentId.empty();
             if (ImGui::Selectable("<clear>", selectedNone)) {
@@ -667,27 +780,260 @@ private:
         }
     }
 };
+
+/**
+ * Right-click on the cell group: Copy (plain RMB). Shift+RMB: full raw cached value panel.
+ * Uses OpenPopup — not BeginPopupContextItem — so Shift+RMB is not swallowed by the Copy menu.
+ */
+static void DrawGridCellRightClickPopups(const std::string& imguiStackId,
+                                         const std::string& issueKey,
+                                         const std::string& fieldId,
+                                         const std::string& fieldLabel,
+                                         const std::string& rawValue) {
+    ImGui::PushID(imguiStackId.c_str());
+    if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        if (ImGui::GetIO().KeyShift) {
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 300.0f), ImGuiCond_FirstUseEver);
+            ImGui::OpenPopup("cell_raw_cached");
+        } else {
+            ImGui::OpenPopup("cell_copy_quick");
+        }
+    }
+    if (ImGui::BeginPopup("cell_raw_cached")) {
+        ImGui::TextUnformatted("Raw cached value");
+        ImGui::Separator();
+        ImGui::Text("Issue: %s", issueKey.c_str());
+        if (!fieldId.empty()) {
+            ImGui::Text("Field: %s (%s)", fieldLabel.c_str(), fieldId.c_str());
+        } else {
+            ImGui::Text("Field: %s", fieldLabel.c_str());
+        }
+        ImGui::TextUnformatted("Value:");
+        if (rawValue.empty()) {
+            ImGui::TextDisabled("(empty)");
+        } else {
+            ImGui::BeginChild("cell_raw_cached_body", ImVec2(0, 140.0f), true,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+            ImGui::TextUnformatted(rawValue.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
+        if (ImGui::MenuItem("Copy value")) {
+            ImGui::SetClipboardText(rawValue.c_str());
+        }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("cell_copy_quick")) {
+        if (ImGui::MenuItem("Copy")) {
+            ImGui::SetClipboardText(rawValue.c_str());
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const JiraField* meta) {
+    // Power-user only: Shift + right-click on header (plain RMB keeps default table header behavior).
+    if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+        ImGui::GetIO().KeyShift) {
+        ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
+        ImGui::OpenPopup("grid_hdr_meta");
+    }
+    if (!ImGui::BeginPopup("grid_hdr_meta")) {
+        return;
+    }
+
+    if (col.ColumnKind == TicketGridColumn::Kind::Id) {
+        ImGui::TextUnformatted("Issue key column (not a Jira field)");
+        ImGui::Separator();
+        ImGui::Text("Key: %s", col.Key.c_str());
+        ImGui::Text("Label: %s", col.Label.c_str());
+        if (ImGui::MenuItem("Copy column key")) {
+            ImGui::SetClipboardText(col.Key.c_str());
+        }
+        ImGui::EndPopup();
+        return;
+    }
+
+    ImGui::TextUnformatted("Jira field (catalog)");
+    ImGui::Separator();
+
+    const std::string& fieldIdForCopy = meta ? meta->Id : col.FieldId;
+    if (ImGui::MenuItem("Copy field id")) {
+        ImGui::SetClipboardText(fieldIdForCopy.c_str());
+    }
+
+    if (meta) {
+        ImGui::Text("Id: %s", meta->Id.c_str());
+        ImGui::Text("Name: %s", meta->Name.c_str());
+        ImGui::Text("Type: %s", meta->Type.c_str());
+        ImGui::Text("ReadOnly: %s", meta->ReadOnly ? "true" : "false");
+        ImGui::Text("IsCustom: %s", meta->IsCustom ? "true" : "false");
+        ImGui::Text("IsArray: %s", meta->IsArray ? "true" : "false");
+        ImGui::Text("ItemsType: %s", meta->ItemsType.empty() ? "(none)" : meta->ItemsType.c_str());
+        ImGui::Text("IsUserType: %s", meta->IsUserType ? "true" : "false");
+        ImGui::Text("AllowedValues count: %d", static_cast<int>(meta->AllowedValues.size()));
+        ImGui::Text("AllowedValueOptions count: %d", static_cast<int>(meta->AllowedValueOptions.size()));
+
+        const int optCount = static_cast<int>(meta->AllowedValueOptions.size());
+        if (optCount > 0) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("AllowedValueOptions (scroll)");
+            ImGui::BeginChild("hdr_allowed_opts", ImVec2(0, 100.0f), true);
+            const int show = (optCount < 200) ? optCount : 200;
+            for (int i = 0; i < show; ++i) {
+                const JiraFieldOption& o = meta->AllowedValueOptions[static_cast<size_t>(i)];
+                ImGui::BulletText("id=%s  value=%s", o.Id.c_str(), o.Value.c_str());
+            }
+            if (optCount > show) {
+                ImGui::TextDisabled("... %d more", optCount - show);
+            }
+            ImGui::EndChild();
+        }
+
+        const int valCount = static_cast<int>(meta->AllowedValues.size());
+        if (valCount > 0 && meta->AllowedValueOptions.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("AllowedValues (scroll)");
+            ImGui::BeginChild("hdr_allowed_vals", ImVec2(0, 80.0f), true);
+            const int show = (valCount < 200) ? valCount : 200;
+            for (int i = 0; i < show; ++i) {
+                ImGui::BulletText("%s", meta->AllowedValues[static_cast<size_t>(i)].c_str());
+            }
+            if (valCount > show) {
+                ImGui::TextDisabled("... %d more", valCount - show);
+            }
+            ImGui::EndChild();
+        }
+    } else {
+        ImGui::TextDisabled("No catalog entry for field id: %s", col.FieldId.c_str());
+        ImGui::Text("Column key: %s", col.Key.c_str());
+        ImGui::Text("Header label: %s", col.Label.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("GET /rest/api/3/field (raw object)");
+    if (meta && !meta->RestFieldDefinitionJson.empty()) {
+        if (ImGui::MenuItem("Copy raw JSON")) {
+            ImGui::SetClipboardText(meta->RestFieldDefinitionJson.c_str());
+        }
+        ImGui::BeginChild("hdr_raw_json", ImVec2(0, 140.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+        ImGui::TextUnformatted(meta->RestFieldDefinitionJson.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    } else {
+        ImGui::TextDisabled("(not available — refresh field catalog or synthetic field)");
+    }
+
+    ImGui::EndPopup();
+}
+
+}
+
+void RenderClippedFieldText(const std::string& rawValue,
+                            float availWidth,
+                            bool tooltipsEnabled,
+                            bool disabled,
+                            const std::string* rawForTooltip) {
+    const std::string& displayValue = rawValue;
+
+    bool hasNewline = false;
+    std::string singleLine = displayValue;
+    for (size_t i = 0; i < singleLine.size(); ++i) {
+        if (singleLine[i] == '\n' || singleLine[i] == '\r') {
+            singleLine.erase(i);
+            hasNewline = true;
+            break;
+        }
+    }
+
+    const ImVec2 textSize = ImGui::CalcTextSize(singleLine.c_str());
+    const bool horizontallyClipped = (availWidth > 0.0f && textSize.x > availWidth + 1.0f);
+
+    if (disabled) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    }
+    ImGui::TextUnformatted(singleLine.c_str());
+    if (disabled) {
+        ImGui::PopStyleColor();
+    }
+
+    const std::string& tipSource =
+        (rawForTooltip && !rawForTooltip->empty()) ? *rawForTooltip : displayValue;
+    if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+        ImGui::TextUnformatted(tipSource.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+static void ApplyLoggingSettingsFromConfig(const JiraConfig& cfg) {
+    Logger::Instance().SetMinLevel(Logger::ParseLogLevelString(cfg.LogMinLevel, LogLevel::Info));
+    Logger::Instance().SetLogJiraHttpBodies(cfg.LogJiraHttpBodies);
 }
 
 void SmatchetUI::Draw(AppController& app) {
     if (!g_ui.cfgInitialized) {
         g_ui.cfg = ConfigManager::Load();
         g_ui.cfgInitialized = true;
+        ApplyLoggingSettingsFromConfig(g_ui.cfg);
     }
-    ViewState.EnsureLoaded(g_ui.cfg);
-    drawEnsureCatalogAndInitialSync(app);
-    drawMainMenuBar();
-    drawNetworkStatsWindow();
+    UiPerfMonitor::Instance().BeginFrame();
+    SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
+    {
+        SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
+        ViewState.EnsureLoaded(g_ui.cfg);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
+        drawEnsureCatalogAndInitialSync(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
+        drawMainMenuBar();
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("SmatchetPerfUi::DrawWindow");
+        g_perfUi.DrawWindow(&g_ui.showPerformance);
+    }
     if (g_ui.showJiraSettings) {
         ImGui::OpenPopup("JiraSetup");
         g_ui.showJiraSettings = false;
     }
-    drawJiraCredentialsModal(app);
-    drawViewsDashboardWindow(app);
-    drawLuaAutomationWindow(app);
-    drawActiveProjectWindow(app);
-    drawAIAssistantWindow(app);
-    drawLogWindow();
+    {
+        SMATCHET_UI_PERF_SCOPE("drawJiraCredentialsModal");
+        drawJiraCredentialsModal(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawViewsDashboardWindow");
+        drawViewsDashboardWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawActiveProjectWindow");
+        drawActiveProjectWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawWatchersListWindow");
+        JiraGridFieldDisplay::DrawWatchersListWindow(g_ui.jiraGridAsync);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawVotesListWindow");
+        JiraGridFieldDisplay::DrawVotesListWindow(g_ui.jiraGridAsync);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawAIAssistantWindow");
+        drawAIAssistantWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawLogWindow");
+        drawLogWindow();
+    }
 }
 
 void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
@@ -771,7 +1117,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
             d.cfg.SelectedFields = activeView->Fields;
             ConfigManager::Save(d.cfg);
         }
-        app.SyncWithBackend();
+        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
         d.appliedInitialView = true;
     }
 }
@@ -786,43 +1132,13 @@ void SmatchetUI::drawMainMenuBar() {
             if (ImGui::MenuItem("Views Dashboard...")) {
                 d.showViewsDashboard = true;
             }
-            if (ImGui::MenuItem("Network statistics...")) {
-                d.showNetworkStats = true;
+            if (ImGui::MenuItem("Performance...")) {
+                d.showPerformance = true;
             }
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
     }
-}
-
-void SmatchetUI::drawNetworkStatsWindow() {
-    auto& d = g_ui;
-    if (!d.showNetworkStats) {
-        return;
-    }
-    ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Network statistics", &d.showNetworkStats)) {
-        const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
-        ImGui::TextWrapped(
-            "HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
-            "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
-            static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
-        ImGui::Separator();
-        ImGui::TextUnformatted("Jira API");
-        ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.jiraRequests));
-        ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.jiraUploadBytes).c_str());
-        ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.jiraDownloadBytes).c_str());
-        ImGui::Separator();
-        ImGui::TextUnformatted("OpenAI API");
-        ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.openAiRequests));
-        ImGui::BulletText("Uploaded: %s", FormatNetworkBytes(snap.openAiUploadBytes).c_str());
-        ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.openAiDownloadBytes).c_str());
-        ImGui::Separator();
-        if (ImGui::Button("Reset counters")) {
-            NetworkUsageTracker::Instance().Reset();
-        }
-    }
-    ImGui::End();
 }
 
 void SmatchetUI::drawJiraCredentialsModal(AppController& app) {
@@ -880,7 +1196,7 @@ void SmatchetUI::drawJiraCredentialsModal(AppController& app) {
             ConfigManager::Save(d.cfg);
             LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
             d.triggerCatalogRefetch = true;
-            app.SyncWithBackend();
+            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
 
             d.jiraBuffersInitialized = false;
             ImGui::CloseCurrentPopup();
@@ -952,7 +1268,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                                 d.cfg.JqlQuery = nowActive->Jql;
                                 d.cfg.SelectedFields = nowActive->Fields;
                                 ConfigManager::Save(d.cfg);
-                                app.SyncWithBackend();
+                                app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
                             }
                         }
                     }
@@ -978,7 +1294,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                     d.cfg.JqlQuery = updated.Jql;
                     d.cfg.SelectedFields = updated.Fields;
                     ConfigManager::Save(d.cfg);
-                    app.SyncWithBackend();
+                    app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
                 }
             }
             ImGui::SameLine();
@@ -1007,7 +1323,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                         d.cfg.JqlQuery = nowActive->Jql;
                         d.cfg.SelectedFields = nowActive->Fields;
                         ConfigManager::Save(d.cfg);
-                        app.SyncWithBackend();
+                        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
                     }
                 }
             }
@@ -1252,15 +1568,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
     ImGui::End();
 }
 
-void SmatchetUI::drawLuaAutomationWindow(AppController& app) {
-    ImGui::Begin("Lua");
-    if (ImGui::Button("Run Lua Automation")) {
-        app.RunAutoScript("Automation.lua");
-    }
-    ImGui::TextDisabled("Runs Automation.lua for each active ticket.");
-    ImGui::End();
-}
-
 void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     auto& d = g_ui;
     ImGui::Begin("Smatchet - Active Project");
@@ -1274,7 +1581,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             d.cfg.JqlQuery = activeView->Jql;
             d.cfg.SelectedFields = activeView->Fields;
             ConfigManager::Save(d.cfg);
-            app.SyncWithBackend();
+            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
         }
         ImGui::SameLine();
         if (ImGui::Button("Open Views")) {
@@ -1339,7 +1646,17 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                 ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
             }
         }
-        ImGui::TableHeadersRow();
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
+            ImGui::TableSetColumnIndex(hci);
+            const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
+            ImGui::PushID(hci);
+            ImGui::TableHeader(hcol.Label.c_str());
+            const JiraField* hdrMeta =
+                (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
+            DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
+            ImGui::PopID();
+        }
 
         // When the active view changes, the table still holds the previous view's sort; clear and apply
         // the new view's sort so we don't persist the old sort into the new view.
@@ -1415,6 +1732,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                 ImGui::TableSetColumnIndex(colIndex);
 
                 if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+                    ImGui::BeginGroup();
                     if (ImGui::Selectable(ticket.id.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
                         d.gridState.SelectRow(ticket.id);
                         if (ImGui::IsMouseDoubleClicked(0)) {
@@ -1422,6 +1740,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                             OpenUrlInDefaultBrowser(url);
                         }
                     }
+                    ImGui::EndGroup();
+                    DrawGridCellRightClickPopups(
+                        BuildCellKey(ticket.id, "id"),
+                        ticket.id,
+                        std::string(),
+                        column.Label,
+                        ticket.id);
                     continue;
                 }
 
@@ -1460,16 +1785,32 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                     badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
                     badgeText = "...";
                     badgeTooltip = "Saving...";
-                    RenderClippedFieldText(currentValue, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true);
+                    ImGui::BeginGroup();
+                    const std::string saveDisplay =
+                        DisplayValueForJiraDateField(column.FieldId, fieldMeta, currentValue);
+                    const std::string* saveTip =
+                        IsJiraDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
+                    RenderClippedFieldText(
+                        saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
+                    ImGui::EndGroup();
+                    DrawGridCellRightClickPopups(
+                        cellKey, ticket.id, column.FieldId, column.Label, currentValue);
                 } else {
+                    ImGui::BeginGroup();
                     TicketFieldEditor::RenderFieldCell(
+                        app,
                         ticket,
+                        column.FieldId,
                         fieldMeta,
                         currentValue,
                         valueAvailWidth,
                         d.cfg.EnableFieldOverflowTooltips,
                         d.gridState,
-                        pendingEdits);
+                        pendingEdits,
+                        d.jiraGridAsync);
+                    ImGui::EndGroup();
+                    DrawGridCellRightClickPopups(
+                        cellKey, ticket.id, column.FieldId, column.Label, currentValue);
                 }
 
                 if (showBadge) {
@@ -1485,6 +1826,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                 }
             }
         }
+
+        RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable());
 
         // Persist column widths and sort specs back to the active view.
         if (activeViewForGrid) {
@@ -1633,12 +1976,17 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app) {
                 ImGui::Spacing();
                 ImGui::Text("Selected Jira Fields");
                 ImGui::Separator();
+                JiraFieldCatalogIndex aiCatalog(app.GetAvailableJiraFields());
                 for (const auto& kv : it->fieldValues) {
+                    const JiraField* f = aiCatalog.Find(kv.first);
+                    const std::string display = DisplayValueForJiraDateField(kv.first, f, kv.second);
+                    const std::string* tip =
+                        IsJiraDateOrDateTimeField(kv.first, f) ? &kv.second : nullptr;
                     const std::string label = kv.first + ": ";
                     ImGui::TextUnformatted(label.c_str());
                     ImGui::SameLine();
                     const float valueAvail = ImGui::GetContentRegionAvail().x;
-                    RenderClippedFieldText(kv.second, valueAvail, d.cfg.EnableFieldOverflowTooltips, false);
+                    RenderClippedFieldText(display, valueAvail, d.cfg.EnableFieldOverflowTooltips, false, tip);
                 }
             }
             ImGui::Spacing();
@@ -1673,6 +2021,42 @@ void SmatchetUI::drawLogWindow() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(showing application log messages)");
+
+    static const LogLevel kLogLevels[] = {
+        LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
+    LogLevel parsedLevel = Logger::ParseLogLevelString(d.cfg.LogMinLevel, LogLevel::Info);
+    int levelComboIndex = 2;
+    for (int i = 0; i < 5; ++i) {
+        if (kLogLevels[i] == parsedLevel) {
+            levelComboIndex = i;
+            break;
+        }
+    }
+    ImGui::Separator();
+    ImGui::TextUnformatted("Min log level");
+    ImGui::SameLine();
+    if (ImGui::Combo(
+            "##LogMinLevel",
+            &levelComboIndex,
+            "Trace\0"
+            "Debug\0"
+            "Info\0"
+            "Warn\0"
+            "Error\0"
+            "\0")) {
+        d.cfg.LogMinLevel = Logger::LogLevelToString(kLogLevels[levelComboIndex]);
+        Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
+        ConfigManager::Save(d.cfg);
+    }
+    bool jiraBodies = d.cfg.LogJiraHttpBodies;
+    if (ImGui::Checkbox("Log Jira HTTP bodies (truncated)", &jiraBodies)) {
+        d.cfg.LogJiraHttpBodies = jiraBodies;
+        Logger::Instance().SetLogJiraHttpBodies(jiraBodies);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Verbose: logs response text (capped per request). May include issue summaries and user-visible data.");
+    }
 
     ImGui::Separator();
 

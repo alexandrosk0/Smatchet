@@ -1,0 +1,268 @@
+#include "SmatchetPerfUi.h"
+
+#include "NetworkUsageTracker.h"
+#include "UiPerfMonitor.h"
+#include "imgui.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+namespace {
+
+std::string FormatNetworkBytes(std::uint64_t n) {
+    if (n < 1024u) {
+        return std::to_string(n) + " B";
+    }
+    const double kb = static_cast<double>(n) / 1024.0;
+    if (kb < 1024.0) {
+        char b[48];
+        std::snprintf(b, sizeof(b), "%.2f KB", kb);
+        return std::string(b);
+    }
+    char b[48];
+    std::snprintf(b, sizeof(b), "%.2f MB", kb / 1024.0);
+    return std::string(b);
+}
+
+enum class PerfTableCol : ImGuiID {
+    Scope = 1,
+    Last,
+    Avg,
+    Ema,
+    Max,
+    Calls,
+};
+
+int CompareRoundedMs(double x, double y) {
+    const auto qx = static_cast<long long>(std::llround(x * 100.0));
+    const auto qy = static_cast<long long>(std::llround(y * 100.0));
+    if (qx < qy) {
+        return -1;
+    }
+    if (qx > qy) {
+        return 1;
+    }
+    return 0;
+}
+
+void SortUiPerfRows(std::vector<UiPerfRow>& rows, const ImGuiTableSortSpecs* sort_specs) {
+    if (!sort_specs || sort_specs->SpecsCount <= 0) {
+        return;
+    }
+    const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
+    const bool asc = spec.SortDirection == ImGuiSortDirection_Ascending;
+    std::sort(rows.begin(), rows.end(), [&](const UiPerfRow& a, const UiPerfRow& b) {
+        int cmp = 0;
+        switch (static_cast<PerfTableCol>(spec.ColumnUserID)) {
+        case PerfTableCol::Scope:
+            cmp = a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+            break;
+        case PerfTableCol::Last:
+            cmp = CompareRoundedMs(a.lastTotalMs, b.lastTotalMs);
+            break;
+        case PerfTableCol::Avg:
+            cmp = CompareRoundedMs(a.avgPerCallMs, b.avgPerCallMs);
+            break;
+        case PerfTableCol::Ema:
+            cmp = CompareRoundedMs(a.emaAvgMs, b.emaAvgMs);
+            break;
+        case PerfTableCol::Max:
+            cmp = CompareRoundedMs(a.maxMs, b.maxMs);
+            break;
+        case PerfTableCol::Calls:
+            cmp = a.calls < b.calls ? -1 : (a.calls > b.calls ? 1 : 0);
+            break;
+        default:
+            cmp = 0;
+            break;
+        }
+        if (cmp == 0) {
+            return a.name < b.name;
+        }
+        return asc ? (cmp < 0) : (cmp > 0);
+    });
+}
+
+} // namespace
+
+namespace {
+
+/// Seconds; larger = calmer readout (63% toward target after this many seconds).
+constexpr double kCpuSmoothTauSec = 3.5;
+constexpr double kFpsSmoothTauSec = 2.5;
+constexpr double kSmoothDtClampSec = 0.2;
+
+double SmoothingAlpha(double dtSec, double tauSec) {
+    if (tauSec <= 0.0) {
+        return 1.0;
+    }
+    if (dtSec <= 0.0) {
+        return 0.0;
+    }
+    double dt = dtSec;
+    if (dt > kSmoothDtClampSec) {
+        dt = kSmoothDtClampSec;
+    }
+    double a = 1.0 - std::exp(-dt / tauSec);
+    if (a > 1.0) {
+        a = 1.0;
+    }
+    if (a < 1e-9) {
+        a = 1e-9;
+    }
+    return a;
+}
+
+} // namespace
+
+void SmatchetPerfUi::buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std::vector<UiPerfRow>& out,
+    double dtSec) {
+    out.clear();
+    out.reserve(raw.size());
+
+    std::unordered_set<std::string> present;
+    present.reserve(raw.size() * 2 + 1);
+    for (const UiPerfRow& r : raw) {
+        present.insert(r.name);
+    }
+
+    for (auto it = cpuSmooth_.begin(); it != cpuSmooth_.end();) {
+        if (present.find(it->first) == present.end()) {
+            it = cpuSmooth_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    const double a = SmoothingAlpha(dtSec, kCpuSmoothTauSec);
+    const double inv = 1.0 - a;
+
+    for (const UiPerfRow& r : raw) {
+        CpuSmoothBucket& b = cpuSmooth_[r.name];
+        if (!b.hasValue) {
+            b.lastTotalMs = r.lastTotalMs;
+            b.avgPerCallMs = r.avgPerCallMs;
+            b.emaAvgMs = r.emaAvgMs;
+            b.maxMs = r.maxMs;
+            b.hasValue = true;
+        } else {
+            b.lastTotalMs = a * r.lastTotalMs + inv * b.lastTotalMs;
+            b.avgPerCallMs = a * r.avgPerCallMs + inv * b.avgPerCallMs;
+            b.emaAvgMs = a * r.emaAvgMs + inv * b.emaAvgMs;
+            b.maxMs = a * r.maxMs + inv * b.maxMs;
+        }
+
+        UiPerfRow d;
+        d.name = r.name;
+        d.lastTotalMs = b.lastTotalMs;
+        d.avgPerCallMs = b.avgPerCallMs;
+        d.emaAvgMs = b.emaAvgMs;
+        d.maxMs = b.maxMs;
+        d.calls = r.calls;
+        out.push_back(std::move(d));
+    }
+}
+
+void SmatchetPerfUi::DrawWindow(bool* pOpen) {
+    if (!pOpen || !*pOpen) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(520, 380), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Performance", pOpen)) {
+        const ImGuiIO& io = ImGui::GetIO();
+        const double dt = static_cast<double>(io.DeltaTime);
+        const double fps = static_cast<double>(io.Framerate);
+        const double frameMs = dt > 0.0 ? dt * 1000.0 : 0.0;
+        if (!fpsSmoothInit_) {
+            smoothFps_ = fps;
+            smoothFrameMs_ = frameMs;
+            fpsSmoothInit_ = true;
+        } else {
+            const double fa = SmoothingAlpha(dt, kFpsSmoothTauSec);
+            smoothFps_ = fa * fps + (1.0 - fa) * smoothFps_;
+            smoothFrameMs_ = fa * frameMs + (1.0 - fa) * smoothFrameMs_;
+        }
+        ImGui::Text("FPS: %.1f    Frame: %.2f ms (smoothed)", smoothFps_, smoothFrameMs_);
+        ImGui::Separator();
+
+        if (ImGui::BeginTabBar("PerformanceTabs")) {
+            if (ImGui::BeginTabItem("CPU")) {
+                ImGui::TextUnformatted(
+                    "Wall time per scoped UI path; nested scopes overlap (not additive). "
+                    "Values use heavy time-based smoothing (~few second response) and 2 decimal places.");
+                ImGui::Separator();
+                std::vector<UiPerfRow> rows;
+                buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dt);
+                if (ImGui::BeginTable("UiPerfTable", 6,
+                        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
+                            | ImGuiTableFlags_Sortable)) {
+                    ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_None, 0.0f,
+                        static_cast<ImGuiID>(PerfTableCol::Scope));
+                    ImGui::TableSetupColumn("Last (ms)",
+                        ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
+                        0.0f, static_cast<ImGuiID>(PerfTableCol::Last));
+                    ImGui::TableSetupColumn("Avg/call (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                        static_cast<ImGuiID>(PerfTableCol::Avg));
+                    ImGui::TableSetupColumn("EMA avg (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                        static_cast<ImGuiID>(PerfTableCol::Ema));
+                    ImGui::TableSetupColumn("Max (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                        static_cast<ImGuiID>(PerfTableCol::Max));
+                    ImGui::TableSetupColumn("Calls", ImGuiTableColumnFlags_None, 0.0f,
+                        static_cast<ImGuiID>(PerfTableCol::Calls));
+                    ImGui::TableHeadersRow();
+                    if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
+                        if (sort_specs->SpecsDirty) {
+                            SortUiPerfRows(rows, sort_specs);
+                            sort_specs->SpecsDirty = false;
+                        }
+                    }
+                    for (const UiPerfRow& r : rows) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(r.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.2f", r.lastTotalMs);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.2f", r.avgPerCallMs);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.2f", r.emaAvgMs);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.2f", r.maxMs);
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%u", r.calls);
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Network")) {
+                const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
+                ImGui::TextWrapped(
+                    "HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
+                    "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
+                    static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
+                ImGui::Separator();
+                ImGui::TextUnformatted("Jira API");
+                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.jiraRequests));
+                ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.jiraUploadBytes).c_str());
+                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.jiraDownloadBytes).c_str());
+                ImGui::Separator();
+                ImGui::TextUnformatted("OpenAI API");
+                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.openAiRequests));
+                ImGui::BulletText("Uploaded: %s", FormatNetworkBytes(snap.openAiUploadBytes).c_str());
+                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.openAiDownloadBytes).c_str());
+                ImGui::Separator();
+                if (ImGui::Button("Reset counters")) {
+                    NetworkUsageTracker::Instance().Reset();
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+    ImGui::End();
+}
