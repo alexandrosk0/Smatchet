@@ -72,6 +72,14 @@ bool Logger::GetLogJiraHttpBodies() const {
     return m_logJiraHttpBodies.load(std::memory_order_acquire);
 }
 
+void Logger::SetLogP4Io(bool enabled) {
+    m_logP4Io.store(enabled, std::memory_order_release);
+}
+
+bool Logger::GetLogP4Io() const {
+    return m_logP4Io.load(std::memory_order_acquire);
+}
+
 bool Logger::ShouldLog(LogLevel level) const {
     return static_cast<int>(level) >= m_minLevelInt.load(std::memory_order_relaxed);
 }

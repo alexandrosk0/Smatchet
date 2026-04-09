@@ -108,6 +108,29 @@ public:
                             std::vector<JiraUser>& outWatchers,
                             std::string& outError) const;
 
+    bool JiraSearchUsersByQuery(const std::string& query,
+                                std::vector<JiraUser>& outUsers,
+                                std::string& outError) const;
+
+    bool JiraAddIssueCommentPlain(const std::string& issueKey,
+                                  const std::string& plainText,
+                                  std::string& outError);
+
+    bool JiraAddIssueCommentBlameContext(const std::string& issueKey,
+                                         const std::string& p4User,
+                                         const std::string& functionName,
+                                         const std::string& filePath,
+                                         int lineNumber,
+                                         const std::string& changelist,
+                                         const std::string& date,
+                                         bool approximated,
+                                         const std::string& codeSnippet,
+                                         std::string& outError);
+
+    bool JiraFetchUserGroupNames(const std::string& accountId,
+                                 std::vector<std::string>& outGroupNames,
+                                 std::string& outError) const;
+
 private:
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerClient> Backend;

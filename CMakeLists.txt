@@ -35,6 +35,44 @@ set(SMATCHET_UNREAL_THIRDPARTY_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
     CACHE PATH "Output directory for Unreal ThirdParty Smatchet artifacts")
 
+# Stronger warnings on first-party targets only (FetchContent deps keep their own flags).
+option(SMATCHET_ENABLE_STRICT_WARNINGS
+    "Apply /W4 or -Wall -Wextra -Wunused-* to Smatchet libraries and standalone (not ImGui/GLFW)"
+    ON)
+option(SMATCHET_WARNINGS_AS_ERRORS
+    "Treat the above warnings as errors (useful for CI)"
+    OFF)
+
+function(smatchet_apply_strict_warnings _target)
+    if(NOT SMATCHET_ENABLE_STRICT_WARNINGS)
+        return()
+    endif()
+    if(NOT TARGET "${_target}")
+        return()
+    endif()
+    if(MSVC)
+        target_compile_options("${_target}" PRIVATE /W4)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # Omit -Wunused-parameter: callback-heavy UI code (ImGui, etc.) is very noisy.
+        target_compile_options(
+            "${_target}"
+            PRIVATE
+            -Wall
+            -Wextra
+            -Wunused-function
+            -Wunused-variable
+            $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wunused-but-set-variable>
+        )
+    endif()
+    if(SMATCHET_WARNINGS_AS_ERRORS)
+        if(MSVC)
+            target_compile_options("${_target}" PRIVATE /WX)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options("${_target}" PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
 # ==============================================================================
 # 1. FETCH ALL DEPENDENCIES (Zero manual downloads required)
 # ==============================================================================
@@ -105,22 +143,6 @@ if(EXISTS "${_ghc_filesystem_cmakelists}")
 endif()
 
 add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" EXCLUDE_FROM_ALL)
-
-message(STATUS "Fetching whisper.cpp...")
-FetchContent_Declare(whisper GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git GIT_TAG v1.5.4)
-FetchContent_MakeAvailable(whisper)
-
-message(STATUS "Fetching stb_image...")
-FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb.git GIT_TAG master)
-FetchContent_Populate(stb)
-
-message(STATUS "Fetching miniaudio...")
-FetchContent_Declare(miniaudio GIT_REPOSITORY https://github.com/mackron/miniaudio.git GIT_TAG master)
-FetchContent_Populate(miniaudio)
-
-message(STATUS "Fetching imgui_markdown...")
-FetchContent_Declare(imgui_markdown GIT_REPOSITORY https://github.com/juliettef/imgui_markdown.git GIT_TAG main)
-FetchContent_Populate(imgui_markdown)
 
 message(STATUS "Fetching GLFW...")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -215,8 +237,18 @@ endif()
 # ==============================================================================
 # 3. SMATCHET CORE LIBRARY (Engine-Agnostic)
 # ==============================================================================
-file(GLOB_RECURSE CORE_SOURCES "Source_Core/src/*.cpp")
+file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHost.cpp")
+# GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
+set(_SMATCHET_BLAME_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/BlameSyntaxHighlight.cpp")
+if(EXISTS "${_SMATCHET_BLAME_SYNTAX}")
+    list(FIND CORE_SOURCES "${_SMATCHET_BLAME_SYNTAX}" _smatchet_blame_syntax_idx)
+    if(_smatchet_blame_syntax_idx EQUAL -1)
+        list(APPEND CORE_SOURCES "${_SMATCHET_BLAME_SYNTAX}")
+    endif()
+endif()
+unset(_smatchet_blame_syntax_idx)
+unset(_SMATCHET_BLAME_SYNTAX)
 add_library(SmatchetCore STATIC ${CORE_SOURCES})
 
 # FIX: Explicitly define the sol2 and lua paths because FetchContent variables
@@ -232,8 +264,6 @@ target_include_directories(SmatchetCore PUBLIC
 )
 target_include_directories(SmatchetCore PRIVATE
         Source_Core/src
-        ${stb_SOURCE_DIR}
-        ${imgui_markdown_SOURCE_DIR}
         ${sol2_SOURCE_DIR}/single
         ${LUA_SRC_DIR}/src
 )
@@ -248,10 +278,13 @@ target_link_libraries(SmatchetCore PUBLIC
 target_link_libraries(SmatchetCore PRIVATE
         Smatchet_Lua_Internal  # This provides the actual Lua symbols
         ghc_filesystem
-        whisper
         ImGuiLib
         glfw
 )
+if(WIN32)
+    target_link_libraries(SmatchetCore PRIVATE shell32)
+endif()
+smatchet_apply_strict_warnings(SmatchetCore)
 
 if(WIN32)
     add_library(SmatchetCore_DX12 STATIC ${CORE_SOURCES})
@@ -263,8 +296,6 @@ if(WIN32)
     )
     target_include_directories(SmatchetCore_DX12 PRIVATE
             Source_Core/src
-            ${stb_SOURCE_DIR}
-            ${imgui_markdown_SOURCE_DIR}
             ${sol2_SOURCE_DIR}/single
             ${LUA_SRC_DIR}/src
     )
@@ -277,11 +308,12 @@ if(WIN32)
     target_link_libraries(SmatchetCore_DX12 PRIVATE
             Smatchet_Lua_Internal
             ghc_filesystem
-            whisper
             ImGuiLib_DX12
             d3d12
             dxgi
+            shell32
     )
+    smatchet_apply_strict_warnings(SmatchetCore_DX12)
 endif()
 
 # ==============================================================================
@@ -294,6 +326,8 @@ target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCore)
 add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
 target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
 target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCore ImGuiLib)
+smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
+smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
 
 if(WIN32)
     add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
@@ -303,6 +337,8 @@ if(WIN32)
     add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
     target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
     target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
+    smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
+    smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole_DX12)
 
     add_library(SmatchetImGuiHost_DX12 STATIC
             Source_Core/src/SmatchetImGuiHost.cpp
@@ -321,6 +357,7 @@ if(WIN32)
             d3d12
             dxgi
     )
+    smatchet_apply_strict_warnings(SmatchetImGuiHost_DX12)
 
     # Package DX12 libs + public host header directly into Unreal plugin ThirdParty layout.
     set(_SMATCHET_UNREAL_INCLUDE_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/include")
@@ -372,9 +409,6 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:libcurl>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:libcurl>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:whisper>"
-                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:whisper>"
         DEPENDS
             SmatchetImGuiHost_DX12
             SmatchetPlugin_Mcp_DX12
@@ -420,14 +454,13 @@ if(WIN32)
 endif()
 
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES})
+smatchet_apply_strict_warnings(SmatchetStandalone)
 
 set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
 add_custom_command(TARGET SmatchetStandalone POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
         COMMENT "Copy Scripts/*.lua next to SmatchetStandalone"
         VERBATIM)
-
-target_include_directories(SmatchetStandalone PRIVATE ${miniaudio_SOURCE_DIR})
 
 # Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket in Debug
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

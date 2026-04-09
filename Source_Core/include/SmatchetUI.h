@@ -2,6 +2,8 @@
 
 #include "Views.h"
 
+#include "BlameAnalysisUi.h"
+
 class AppController; // Forward declaration
 
 class SmatchetUI {
@@ -10,6 +12,7 @@ public:
 
 private:
     Views ViewState;
+    BlameAnalysisUi blameAnalysisUi_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app);
     void drawMainMenuBar();

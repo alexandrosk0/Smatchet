@@ -33,6 +33,19 @@
             }
         },
         {
+            "name": "ninja-clang-debug",
+            "displayName": "Ninja Debug (Clang)",
+            "description": "Debug + compile_commands.json using clang/clang++ on PATH (best match for clang-tidy)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-clang-debug",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
             "name": "ninja-unreal-dx12",
             "displayName": "Ninja Unreal DX12",
             "description": "Debug DX12 artifacts packaged for Unreal plugin",
@@ -81,6 +94,10 @@
         {
             "name": "ninja-release",
             "configurePreset": "ninja-release"
+        },
+        {
+            "name": "ninja-clang-debug",
+            "configurePreset": "ninja-clang-debug"
         },
         {
             "name": "ninja-unreal-dx12",

@@ -81,6 +81,39 @@ public:
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                             const JiraConfig* configOverride = nullptr,
                                             const ViewsStore* viewsOverride = nullptr) override;
+
+    /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
+    bool SearchUsersByQuery(const JiraConfig& cfg,
+                            const std::string& query,
+                            std::vector<JiraUser>& outUsers,
+                            std::string& outError);
+
+    /** POST /rest/api/3/issue/{key}/comment with Atlassian Document Format body. */
+    bool AddIssueCommentPlain(const JiraConfig& cfg,
+                              const std::string& issueKey,
+                              const std::string& plainText,
+                              std::string& outError);
+
+    /** Blame-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
+    bool AddIssueCommentBlameContext(const JiraConfig& cfg,
+                                     const std::string& issueKey,
+                                     const std::string& p4User,
+                                     const std::string& functionName,
+                                     const std::string& filePath,
+                                     int lineNumber,
+                                     const std::string& changelist,
+                                     const std::string& date,
+                                     bool approximated,
+                                     const std::string& codeSnippet,
+                                     std::string& outError);
+
+    /**
+     * Best-effort group names for a user (Cloud may return 403; then outGroupNames stays empty).
+     */
+    bool FetchUserGroupNames(const JiraConfig& cfg,
+                             const std::string& accountId,
+                             std::vector<std::string>& outGroupNames,
+                             std::string& outError);
 };
 
 #endif

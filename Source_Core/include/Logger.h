@@ -36,6 +36,10 @@ public:
     void SetLogJiraHttpBodies(bool enabled);
     bool GetLogJiraHttpBodies() const;
 
+    /** When true, P4Blame may log truncated p4 stdout at Trace (stderr always logged on failure). */
+    void SetLogP4Io(bool enabled);
+    bool GetLogP4Io() const;
+
     bool ShouldLog(LogLevel level) const;
 
     // Core logging API
@@ -64,6 +68,7 @@ private:
     std::vector<LogEntry> m_entries;
     std::atomic<int> m_minLevelInt{static_cast<int>(LogLevel::Info)};
     std::atomic<bool> m_logJiraHttpBodies{false};
+    std::atomic<bool> m_logP4Io{false};
     static constexpr std::size_t kMaxEntries = 1000;
 };
 

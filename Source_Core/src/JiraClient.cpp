@@ -1940,3 +1940,269 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
     return results;
 }
 
+namespace {
+
+nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
+    nlohmann::json content = nlohmann::json::array();
+    std::string line;
+    std::istringstream iss(plainText);
+    while (std::getline(iss, line)) {
+        nlohmann::json para = nlohmann::json::object();
+        para["type"] = "paragraph";
+        nlohmann::json inner = nlohmann::json::array();
+        nlohmann::json textNode = nlohmann::json::object();
+        textNode["type"] = "text";
+        textNode["text"] = line;
+        inner.push_back(std::move(textNode));
+        para["content"] = std::move(inner);
+        content.push_back(std::move(para));
+    }
+    if (content.empty()) {
+        nlohmann::json para = nlohmann::json::object();
+        para["type"] = "paragraph";
+        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
+        content.push_back(std::move(para));
+    }
+    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
+}
+
+void ParseJiraUserObject(const nlohmann::json& user, JiraUser& out) {
+    out.AccountId = user.value("accountId", std::string());
+    out.DisplayName = user.value("displayName", std::string());
+    out.EmailAddress = user.value("emailAddress", std::string());
+    out.Active = user.value("active", true);
+}
+
+} // namespace
+
+bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg,
+                                    const std::string& query,
+                                    std::vector<JiraUser>& outUsers,
+                                    std::string& outError) {
+    outUsers.clear();
+    outError.clear();
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (query.empty()) {
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    const std::string url =
+        base + "/rest/api/3/user/search?query=" + UrlEncode(query) + "&maxResults=100";
+    auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        NetworkUsageTracker::kEstimatedGetUploadBytes, resp);
+    LogJiraHttpResult("GET", url, resp);
+    if (resp.status_code != 200) {
+        outError = "user/search failed: HTTP " + std::to_string(resp.status_code);
+        return false;
+    }
+
+    try {
+        auto arr = nlohmann::json::parse(resp.text);
+        if (!arr.is_array()) {
+            outError = "user/search: expected array.";
+            return false;
+        }
+        std::unordered_set<std::string> seen;
+        for (const auto& node : arr) {
+            if (!node.is_object()) {
+                continue;
+            }
+            JiraUser u;
+            ParseJiraUserObject(node, u);
+            if (u.AccountId.empty() || !u.Active || !seen.insert(u.AccountId).second) {
+                continue;
+            }
+            outUsers.push_back(std::move(u));
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("user/search parse error: ") + ex.what();
+        return false;
+    }
+    return true;
+}
+
+bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg,
+                                      const std::string& issueKey,
+                                      const std::string& plainText,
+                                      std::string& outError) {
+    outError.clear();
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Content-Type", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    nlohmann::json body = nlohmann::json::object();
+    body["body"] = AdfDocumentFromPlainText(plainText);
+    const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
+    const std::string bodyStr = body.dump();
+    auto response = cpr::Post(cpr::Url{postUrl}, headers, cpr::Body{bodyStr}, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        static_cast<std::uint64_t>(bodyStr.size()), response);
+    LogJiraHttpResult("POST", postUrl, response);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Add comment failed: HTTP " + std::to_string(response.status_code);
+        return false;
+    }
+    return true;
+}
+
+bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg,
+                                             const std::string& issueKey,
+                                             const std::string& p4User,
+                                             const std::string& functionName,
+                                             const std::string& filePath,
+                                             const int lineNumber,
+                                             const std::string& changelist,
+                                             const std::string& date,
+                                             const bool approximated,
+                                             const std::string& codeSnippet,
+                                             std::string& outError) {
+    outError.clear();
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Content-Type", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    auto para = [](const std::string& text) {
+        nlohmann::json p = nlohmann::json::object();
+        p["type"] = "paragraph";
+        p["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", text}}});
+        return p;
+    };
+
+    nlohmann::json content = nlohmann::json::array();
+    std::string head = "Blame Analysis — " + p4User + " | " + functionName + " | " + filePath + ":" +
+                       std::to_string(lineNumber) + " | CL " + changelist + " | " + date;
+    content.push_back(para(head));
+    if (approximated) {
+        content.push_back(para("Note: blame is approximated (exact line not found in annotate)."));
+    }
+    std::string blockBody = "L" + std::to_string(lineNumber) + "  CL:" + changelist + "  " + p4User + "\n" + codeSnippet;
+    nlohmann::json codeBlock = nlohmann::json::object();
+    codeBlock["type"] = "codeBlock";
+    codeBlock["attrs"] = nlohmann::json::object();
+    codeBlock["attrs"]["language"] = "cpp";
+    codeBlock["content"] =
+        nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", blockBody}}});
+    content.push_back(std::move(codeBlock));
+
+    nlohmann::json doc = nlohmann::json::object();
+    doc["type"] = "doc";
+    doc["version"] = 1;
+    doc["content"] = std::move(content);
+
+    nlohmann::json body = nlohmann::json::object();
+    body["body"] = std::move(doc);
+    const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
+    const std::string bodyStr = body.dump();
+    auto response = cpr::Post(cpr::Url{postUrl}, headers, cpr::Body{bodyStr}, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        static_cast<std::uint64_t>(bodyStr.size()), response);
+    LogJiraHttpResult("POST", postUrl, response);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
+        return false;
+    }
+    return true;
+}
+
+bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
+                                     const std::string& accountId,
+                                     std::vector<std::string>& outGroupNames,
+                                     std::string& outError) {
+    outGroupNames.clear();
+    outError.clear();
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (accountId.empty()) {
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", "Smatchet/1.0 Jira-Client"}
+    };
+    cpr::Redirect redirect(true, true);
+
+    const std::string url =
+        base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
+    auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+        NetworkUsageTracker::kEstimatedGetUploadBytes, resp);
+    LogJiraHttpResult("GET", url, resp);
+    if (resp.status_code != 200) {
+        outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
+        return false;
+    }
+
+    try {
+        auto j = nlohmann::json::parse(resp.text);
+        if (j.contains("groups") && j["groups"].is_object()) {
+            const auto& g = j["groups"];
+            if (g.contains("items") && g["items"].is_array()) {
+                for (const auto& item : g["items"]) {
+                    if (item.is_object() && item.contains("name") && item["name"].is_string()) {
+                        outGroupNames.push_back(item["name"].get<std::string>());
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("user parse error: ") + ex.what();
+        return false;
+    }
+    return true;
+}
+

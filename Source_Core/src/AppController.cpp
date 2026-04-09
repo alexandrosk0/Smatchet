@@ -624,3 +624,61 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey,
     return JiraBackend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
 }
 
+bool AppController::JiraSearchUsersByQuery(const std::string& query,
+                                           std::vector<JiraUser>& outUsers,
+                                           std::string& outError) const {
+    outUsers.clear();
+    outError.clear();
+    if (!JiraBackend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    const JiraConfig cfg = ConfigManager::Load();
+    return JiraBackend->SearchUsersByQuery(cfg, query, outUsers, outError);
+}
+
+bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey,
+                                             const std::string& plainText,
+                                             std::string& outError) {
+    outError.clear();
+    if (!JiraBackend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    const JiraConfig cfg = ConfigManager::Load();
+    return JiraBackend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+}
+
+bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
+                                                    const std::string& p4User,
+                                                    const std::string& functionName,
+                                                    const std::string& filePath,
+                                                    const int lineNumber,
+                                                    const std::string& changelist,
+                                                    const std::string& date,
+                                                    const bool approximated,
+                                                    const std::string& codeSnippet,
+                                                    std::string& outError) {
+    outError.clear();
+    if (!JiraBackend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    const JiraConfig cfg = ConfigManager::Load();
+    return JiraBackend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
+                                                    changelist, date, approximated, codeSnippet, outError);
+}
+
+bool AppController::JiraFetchUserGroupNames(const std::string& accountId,
+                                            std::vector<std::string>& outGroupNames,
+                                            std::string& outError) const {
+    outGroupNames.clear();
+    outError.clear();
+    if (!JiraBackend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    const JiraConfig cfg = ConfigManager::Load();
+    return JiraBackend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+}
+

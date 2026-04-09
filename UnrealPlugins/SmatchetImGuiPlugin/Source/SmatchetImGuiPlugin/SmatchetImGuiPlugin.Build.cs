@@ -8,6 +8,13 @@ public class SmatchetImGuiPlugin : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Surface dead-code-adjacent issues in plugin .cpp/.h without changing engine modules.
+        // (IWYU enforcement is optional: turn on when you want to pay down monolithic includes.)
+        ShadowVariableWarningLevel = WarningLevel.Warning;
+        UnsafeTypeCastWarningLevel = WarningLevel.Warning;
+        bEnableUndefinedIdentifierWarnings = true;
+        bEnforceIWYU = false;
+
         PublicDependencyModuleNames.AddRange(
             new[]
             {
@@ -35,6 +42,9 @@ public class SmatchetImGuiPlugin : ModuleRules
 
         if (isWin64)
         {
+            // Helps MSVC drop unreferenced internal linkage / inline candidates (link-time hygiene).
+            bVcRemoveUnreferencedComdat = true;
+
             // D3D12RHI headers require access to its internal AgilitySDK include setup.
             // Use a public dependency so include paths resolve during our compilation.
             PublicDependencyModuleNames.Add("D3D12RHI");
@@ -140,6 +150,5 @@ public class SmatchetImGuiPlugin : ModuleRules
         AddExistingLib("sqlite3");
         AddExistingLib("Smatchet_Lua_Internal");
         AddExistingLib("libcurl");
-        AddExistingLib("whisper");
     }
 }

@@ -367,6 +367,7 @@ struct UiDrawSession {
     bool showJiraSettings = false;
     bool showViewsDashboard = true;
     bool showPerformance = false;
+    bool showBlameAnalysis = false;
 
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
@@ -704,12 +705,10 @@ private:
         }
 
         const std::string valueForDisplay = DisplayValueForJiraDateField(field.Id, &field, currentValue);
-        bool hasNewline = false;
         std::string singleLine = valueForDisplay;
         for (size_t i = 0; i < singleLine.size(); ++i) {
             if (singleLine[i] == '\n' || singleLine[i] == '\r') {
                 singleLine.erase(i);
-                hasNewline = true;
                 break;
             }
         }
@@ -976,6 +975,7 @@ void RenderClippedFieldText(const std::string& rawValue,
 static void ApplyLoggingSettingsFromConfig(const JiraConfig& cfg) {
     Logger::Instance().SetMinLevel(Logger::ParseLogLevelString(cfg.LogMinLevel, LogLevel::Info));
     Logger::Instance().SetLogJiraHttpBodies(cfg.LogJiraHttpBodies);
+    Logger::Instance().SetLogP4Io(cfg.LogP4Io);
 }
 
 void SmatchetUI::Draw(AppController& app) {
@@ -1001,6 +1001,11 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetPerfUi::DrawWindow");
         g_perfUi.DrawWindow(&g_ui.showPerformance);
+    }
+    blameAnalysisUi_.SetBlamePanelOpen(g_ui.showBlameAnalysis);
+    blameAnalysisUi_.ServiceBackground();
+    if (g_ui.showBlameAnalysis) {
+        blameAnalysisUi_.DrawWindow(app, &g_ui.showBlameAnalysis, g_ui.gridState.SelectedId);
     }
     if (g_ui.showJiraSettings) {
         ImGui::OpenPopup("JiraSetup");
@@ -1134,6 +1139,9 @@ void SmatchetUI::drawMainMenuBar() {
             }
             if (ImGui::MenuItem("Performance...")) {
                 d.showPerformance = true;
+            }
+            if (ImGui::MenuItem("Blame Analysis...")) {
+                d.showBlameAnalysis = true;
             }
             ImGui::EndMenu();
         }
@@ -2057,6 +2065,15 @@ void SmatchetUI::drawLogWindow() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Verbose: logs response text (capped per request). May include issue summaries and user-visible data.");
     }
+    bool logP4Io = d.cfg.LogP4Io;
+    if (ImGui::Checkbox("Log Perforce p4 stdout (truncated, Trace level)", &logP4Io)) {
+        d.cfg.LogP4Io = logP4Io;
+        Logger::Instance().SetLogP4Io(logP4Io);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
+    }
 
     ImGui::Separator();
 
@@ -2067,13 +2084,14 @@ void SmatchetUI::drawLogWindow() {
         aggregated.reserve(entries.size() * 64);
 
         for (const auto& e : entries) {
-            const char* levelLabel = "";
+            const char* levelLabel;
             switch (e.level) {
                 case LogLevel::Trace: levelLabel = "[TRACE] "; break;
                 case LogLevel::Debug: levelLabel = "[DEBUG] "; break;
                 case LogLevel::Info:  levelLabel = "[INFO ] "; break;
                 case LogLevel::Warn:  levelLabel = "[WARN ] "; break;
                 case LogLevel::Error: levelLabel = "[ERROR] "; break;
+                default:              levelLabel = ""; break;
             }
             aggregated += levelLabel;
             aggregated += e.message;
