@@ -1,7 +1,10 @@
 #include "JiraGridFieldDisplay.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "JsonParseUtil.h"
+#include "Logger.h"
 #include "SmatchetFieldRender.h"
+#include "StringUtil.h"
 
 #include "imgui.h"
 
@@ -10,25 +13,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <exception>
 #include <future>
 #include <string>
 #include <vector>
 
 namespace {
-
-std::string TrimCopy(const std::string& in) {
-    size_t start = 0;
-    size_t end = in.size();
-    while (start < end &&
-           (in[start] == ' ' || in[start] == '\t' || in[start] == '\n' || in[start] == '\r')) {
-        ++start;
-    }
-    while (end > start &&
-           (in[end - 1] == ' ' || in[end - 1] == '\t' || in[end - 1] == '\n' || in[end - 1] == '\r')) {
-        --end;
-    }
-    return in.substr(start, end - start);
-}
 
 struct AttachmentInfo {
     std::string filename;
@@ -38,7 +28,7 @@ struct AttachmentInfo {
 
 bool ParseAttachmentsFieldValue(const std::string& currentValue, std::vector<AttachmentInfo>& outAttachments) {
     outAttachments.clear();
-    const std::string trimmed = TrimCopy(currentValue);
+    const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
     if (trimmed.empty()) {
         return false;
     }
@@ -97,48 +87,28 @@ bool ParseWatchersFieldJson(const std::string& raw,
     outWatchCount = 0;
     outIsWatching = false;
     outSelfUrl.clear();
-    const std::string trimmed = TrimCopy(raw);
+    const std::string trimmed = TrimCopyAsciiWhitespace(raw);
     if (trimmed.empty()) {
         return false;
     }
-    try {
-        nlohmann::json j = nlohmann::json::parse(trimmed);
-        if (j.is_string()) {
-            j = nlohmann::json::parse(j.get<std::string>());
-        }
-        if (!j.is_object()) {
-            return false;
-        }
-        if (j.contains("isWatching")) {
-            const auto& iw = j["isWatching"];
-            if (iw.is_boolean()) {
-                outIsWatching = iw.get<bool>();
-            } else if (iw.is_number_integer()) {
-                outIsWatching = (iw.get<long long>() != 0);
-            }
-        }
-        if (j.contains("watchCount")) {
-            const auto& wc = j["watchCount"];
-            if (wc.is_number_integer()) {
-                outWatchCount = static_cast<int>(wc.get<long long>());
-            } else if (wc.is_number_unsigned()) {
-                outWatchCount = static_cast<int>(wc.get<unsigned long long>());
-            } else if (wc.is_number_float()) {
-                outWatchCount = static_cast<int>(wc.get<double>());
-            } else if (wc.is_string()) {
-                try {
-                    outWatchCount = std::stoi(wc.get<std::string>());
-                } catch (...) {}
-            }
-        }
-        if (outWatchCount < 0) {
-            outWatchCount = 0;
-        }
-        outSelfUrl = j.value("self", std::string());
-        return true;
-    } catch (...) {
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
         return false;
     }
+    if (j.contains("isWatching")) {
+        const auto& iw = j["isWatching"];
+        if (iw.is_boolean()) {
+            outIsWatching = iw.get<bool>();
+        } else if (iw.is_number_integer()) {
+            outIsWatching = (iw.get<long long>() != 0);
+        }
+    }
+    outWatchCount = ParseJsonIntFieldLoose(j, "watchCount", 0);
+    if (outWatchCount < 0) {
+        outWatchCount = 0;
+    }
+    outSelfUrl = j.value("self", std::string());
+    return true;
 }
 
 bool ParseVotesFieldJson(const std::string& raw,
@@ -148,48 +118,28 @@ bool ParseVotesFieldJson(const std::string& raw,
     outVoteCount = 0;
     outHasVoted = false;
     outSelfUrl.clear();
-    const std::string trimmed = TrimCopy(raw);
+    const std::string trimmed = TrimCopyAsciiWhitespace(raw);
     if (trimmed.empty()) {
         return false;
     }
-    try {
-        nlohmann::json j = nlohmann::json::parse(trimmed);
-        if (j.is_string()) {
-            j = nlohmann::json::parse(j.get<std::string>());
-        }
-        if (!j.is_object()) {
-            return false;
-        }
-        if (j.contains("hasVoted")) {
-            const auto& hv = j["hasVoted"];
-            if (hv.is_boolean()) {
-                outHasVoted = hv.get<bool>();
-            } else if (hv.is_number_integer()) {
-                outHasVoted = (hv.get<long long>() != 0);
-            }
-        }
-        if (j.contains("votes")) {
-            const auto& vc = j["votes"];
-            if (vc.is_number_integer()) {
-                outVoteCount = static_cast<int>(vc.get<long long>());
-            } else if (vc.is_number_unsigned()) {
-                outVoteCount = static_cast<int>(vc.get<unsigned long long>());
-            } else if (vc.is_number_float()) {
-                outVoteCount = static_cast<int>(vc.get<double>());
-            } else if (vc.is_string()) {
-                try {
-                    outVoteCount = std::stoi(vc.get<std::string>());
-                } catch (...) {}
-            }
-        }
-        if (outVoteCount < 0) {
-            outVoteCount = 0;
-        }
-        outSelfUrl = j.value("self", std::string());
-        return true;
-    } catch (...) {
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
         return false;
     }
+    if (j.contains("hasVoted")) {
+        const auto& hv = j["hasVoted"];
+        if (hv.is_boolean()) {
+            outHasVoted = hv.get<bool>();
+        } else if (hv.is_number_integer()) {
+            outHasVoted = (hv.get<long long>() != 0);
+        }
+    }
+    outVoteCount = ParseJsonIntFieldLoose(j, "votes", 0);
+    if (outVoteCount < 0) {
+        outVoteCount = 0;
+    }
+    outSelfUrl = j.value("self", std::string());
+    return true;
 }
 
 struct WorklogFieldSummary {
@@ -207,129 +157,71 @@ struct WorklogFieldSummary {
     std::vector<Entry> Entries;
 };
 
-int ParseJsonIntFieldLoose(const nlohmann::json& j, const char* key, int fallback = 0) {
-    if (!j.contains(key)) {
-        return fallback;
-    }
-    const auto& v = j[key];
-    if (v.is_number_integer()) {
-        return static_cast<int>(v.get<long long>());
-    }
-    if (v.is_number_unsigned()) {
-        return static_cast<int>(v.get<unsigned long long>());
-    }
-    if (v.is_number_float()) {
-        return static_cast<int>(v.get<double>());
-    }
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {}
-    }
-    return fallback;
-}
-
-long long ParseJsonLongLongFieldLoose(const nlohmann::json& w, const char* key) {
-    if (!w.contains(key)) {
-        return 0;
-    }
-    const auto& v = w[key];
-    if (v.is_number_integer()) {
-        return v.get<long long>();
-    }
-    if (v.is_number_unsigned()) {
-        return static_cast<long long>(v.get<unsigned long long>());
-    }
-    if (v.is_number_float()) {
-        return static_cast<long long>(v.get<double>());
-    }
-    if (v.is_string()) {
-        try {
-            return std::stoll(v.get<std::string>());
-        } catch (...) {}
-    }
-    return 0;
-}
-
 bool ParseWorklogFieldJson(const std::string& raw, WorklogFieldSummary& out) {
     out = WorklogFieldSummary{};
-    const std::string trimmed = TrimCopy(raw);
+    const std::string trimmed = TrimCopyAsciiWhitespace(raw);
     if (trimmed.empty()) {
         return false;
     }
-    try {
-        nlohmann::json j = nlohmann::json::parse(trimmed);
-        if (j.is_string()) {
-            j = nlohmann::json::parse(j.get<std::string>());
-        }
-        if (!j.is_object()) {
-            return false;
-        }
-        if (!j.contains("worklogs") || !j["worklogs"].is_array()) {
-            return false;
-        }
-        out.Total = ParseJsonIntFieldLoose(j, "total", 0);
-        if (out.Total < 0) {
-            out.Total = 0;
-        }
-        out.StartAt = ParseJsonIntFieldLoose(j, "startAt", 0);
-        if (out.StartAt < 0) {
-            out.StartAt = 0;
-        }
-        out.MaxResults = ParseJsonIntFieldLoose(j, "maxResults", 0);
-        const auto& arr = j["worklogs"];
-        out.WorklogsOnPage = static_cast<int>(arr.size());
-        for (const auto& w : arr) {
-            if (!w.is_object()) {
-                continue;
-            }
-            WorklogFieldSummary::Entry e;
-            if (w.contains("author") && w["author"].is_object()) {
-                e.Author = w["author"].value("displayName", std::string());
-                if (e.Author.empty()) {
-                    e.Author = w["author"].value("accountId", std::string());
-                }
-            }
-            if (e.Author.empty() && w.contains("updateAuthor") && w["updateAuthor"].is_object()) {
-                e.Author = w["updateAuthor"].value("displayName", std::string());
-            }
-            e.StartedIso = w.value("started", std::string());
-            e.TimeSpentText = w.value("timeSpent", std::string());
-            e.TimeSpentSeconds = ParseJsonLongLongFieldLoose(w, "timeSpentSeconds");
-            if (e.TimeSpentSeconds > 0) {
-                out.SumSecondsOnPage += e.TimeSpentSeconds;
-            }
-            out.Entries.push_back(std::move(e));
-        }
-        return true;
-    } catch (...) {
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
         return false;
     }
+    if (!j.contains("worklogs") || !j["worklogs"].is_array()) {
+        return false;
+    }
+    out.Total = ParseJsonIntFieldLoose(j, "total", 0);
+    if (out.Total < 0) {
+        out.Total = 0;
+    }
+    out.StartAt = ParseJsonIntFieldLoose(j, "startAt", 0);
+    if (out.StartAt < 0) {
+        out.StartAt = 0;
+    }
+    out.MaxResults = ParseJsonIntFieldLoose(j, "maxResults", 0);
+    const auto& arr = j["worklogs"];
+    out.WorklogsOnPage = static_cast<int>(arr.size());
+    for (const auto& w : arr) {
+        if (!w.is_object()) {
+            continue;
+        }
+        WorklogFieldSummary::Entry e;
+        if (w.contains("author") && w["author"].is_object()) {
+            e.Author = w["author"].value("displayName", std::string());
+            if (e.Author.empty()) {
+                e.Author = w["author"].value("accountId", std::string());
+            }
+        }
+        if (e.Author.empty() && w.contains("updateAuthor") && w["updateAuthor"].is_object()) {
+            e.Author = w["updateAuthor"].value("displayName", std::string());
+        }
+        e.StartedIso = w.value("started", std::string());
+        e.TimeSpentText = w.value("timeSpent", std::string());
+        e.TimeSpentSeconds = ParseJsonInt64FieldLoose(w, "timeSpentSeconds", 0);
+        if (e.TimeSpentSeconds > 0) {
+            out.SumSecondsOnPage += e.TimeSpentSeconds;
+        }
+        out.Entries.push_back(std::move(e));
+    }
+    return true;
 }
 
 bool ColumnIdEqualsLower(const std::string& id, const char* lowerAscii) {
-    std::string lower(id.size(), '\0');
-    std::transform(id.begin(), id.end(), lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return lower == lowerAscii;
+    return ToLowerAsciiCopy(id) == lowerAscii;
 }
 
 bool TryRenderIssueRestrictionCell(const std::string& currentValue,
                                    float availWidth,
                                    bool tooltipsEnabled) {
-    const std::string trimmed = TrimCopy(currentValue);
+    const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
     if (trimmed.empty()) {
         return false;
     }
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
+        return false;
+    }
     try {
-        nlohmann::json j = nlohmann::json::parse(trimmed);
-        if (j.is_string()) {
-            j = nlohmann::json::parse(j.get<std::string>());
-        }
-        if (!j.is_object()) {
-            return false;
-        }
         if (!j.contains("issuerestrictions") || !j["issuerestrictions"].is_object()) {
             return false;
         }
@@ -370,19 +262,16 @@ bool TryRenderIssueRestrictionCell(const std::string& currentValue,
 }
 
 bool TryRenderProgressBarCell(const std::string& currentValue, float availWidth) {
-    const std::string trimmed = TrimCopy(currentValue);
+    const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
     if (trimmed.empty()) {
         ImGui::ProgressBar(0.0f, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
         return true;
     }
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
+        return false;
+    }
     try {
-        nlohmann::json j = nlohmann::json::parse(trimmed);
-        if (j.is_string()) {
-            j = nlohmann::json::parse(j.get<std::string>());
-        }
-        if (!j.is_object()) {
-            return false;
-        }
         if (!j.contains("progress") || !j.contains("total")) {
             return false;
         }
@@ -399,10 +288,7 @@ bool TryRenderProgressBarCell(const std::string& currentValue, float availWidth)
 } // namespace
 
 bool JiraGridFieldDisplay::IsWatchersColumnId(const std::string& id) {
-    std::string lower(id.size(), '\0');
-    std::transform(id.begin(), id.end(), lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    const std::string lower = ToLowerAsciiCopy(id);
     return lower == "watchers" || lower == "watches";
 }
 
@@ -732,14 +618,29 @@ void JiraGridFieldDisplay::RenderWorklogField(const std::string& currentValue,
 void JiraGridFieldDisplay::DrawWatchersListWindow(JiraGridFieldAsyncState& d) {
     if (d.watchersFuture.valid()) {
         if (d.watchersFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            WatchersLoadResult r = d.watchersFuture.get();
-            d.watchersLoadInProgress = false;
-            if (r.Ok) {
-                d.watchersLoadedList = std::move(r.Watchers);
-                d.watchersLoadedError.clear();
-            } else {
+            try {
+                WatchersLoadResult r = d.watchersFuture.get();
+                d.watchersLoadInProgress = false;
+                if (r.Ok) {
+                    d.watchersLoadedList = std::move(r.Watchers);
+                    d.watchersLoadedError.clear();
+                } else {
+                    d.watchersLoadedList.clear();
+                    d.watchersLoadedError = std::move(r.Error);
+                }
+            } catch (const std::exception& ex) {
+                d.watchersLoadInProgress = false;
                 d.watchersLoadedList.clear();
-                d.watchersLoadedError = std::move(r.Error);
+                d.watchersLoadedError = std::string("Failed to load watchers: ") + ex.what();
+                LOG_ERROR("JiraGridFieldDisplay: watchers future exception issue=%s err=%s",
+                          d.watchersPopupIssueKey.c_str(),
+                          ex.what());
+            } catch (...) {
+                d.watchersLoadInProgress = false;
+                d.watchersLoadedList.clear();
+                d.watchersLoadedError = "Failed to load watchers.";
+                LOG_ERROR("JiraGridFieldDisplay: watchers future unknown exception issue=%s",
+                          d.watchersPopupIssueKey.c_str());
             }
         }
     }
@@ -782,20 +683,41 @@ void JiraGridFieldDisplay::DrawWatchersListWindow(JiraGridFieldAsyncState& d) {
 void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
     if (d.votesFuture.valid()) {
         if (d.votesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            VotesLoadResult r = d.votesFuture.get();
-            d.votesLoadInProgress = false;
-            if (r.Ok) {
-                d.votesLoadedList = std::move(r.Voters);
-                d.votesLoadedError.clear();
-                d.votesLoadedVoteCount = r.VoteCount;
-                d.votesLoadedHasVoted = r.HasVoted;
-                d.votesLoadedVotersArrayInResponse = r.VotersArrayInResponse;
-            } else {
+            try {
+                VotesLoadResult r = d.votesFuture.get();
+                d.votesLoadInProgress = false;
+                if (r.Ok) {
+                    d.votesLoadedList = std::move(r.Voters);
+                    d.votesLoadedError.clear();
+                    d.votesLoadedVoteCount = r.VoteCount;
+                    d.votesLoadedHasVoted = r.HasVoted;
+                    d.votesLoadedVotersArrayInResponse = r.VotersArrayInResponse;
+                } else {
+                    d.votesLoadedList.clear();
+                    d.votesLoadedError = std::move(r.Error);
+                    d.votesLoadedVoteCount = 0;
+                    d.votesLoadedHasVoted = false;
+                    d.votesLoadedVotersArrayInResponse = false;
+                }
+            } catch (const std::exception& ex) {
+                d.votesLoadInProgress = false;
                 d.votesLoadedList.clear();
-                d.votesLoadedError = std::move(r.Error);
+                d.votesLoadedError = std::string("Failed to load votes: ") + ex.what();
                 d.votesLoadedVoteCount = 0;
                 d.votesLoadedHasVoted = false;
                 d.votesLoadedVotersArrayInResponse = false;
+                LOG_ERROR("JiraGridFieldDisplay: votes future exception issue=%s err=%s",
+                          d.votesPopupIssueKey.c_str(),
+                          ex.what());
+            } catch (...) {
+                d.votesLoadInProgress = false;
+                d.votesLoadedList.clear();
+                d.votesLoadedError = "Failed to load votes.";
+                d.votesLoadedVoteCount = 0;
+                d.votesLoadedHasVoted = false;
+                d.votesLoadedVotersArrayInResponse = false;
+                LOG_ERROR("JiraGridFieldDisplay: votes future unknown exception issue=%s",
+                          d.votesPopupIssueKey.c_str());
             }
         }
     }

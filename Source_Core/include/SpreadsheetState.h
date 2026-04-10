@@ -2,6 +2,7 @@
 #define SPREADSHEET_STATE_H
 
 #include <string>
+#include <cstdio>
 
 struct SpreadsheetState {
     std::string SelectedId;
@@ -17,26 +18,24 @@ struct SpreadsheetState {
         EditingId = id;
         EditingFieldId.clear();
         EditingColumn = col;
-#ifdef _WIN32
-        strncpy_s(EditBuffer, val.c_str(), sizeof(EditBuffer));
-#else
-        strncpy(EditBuffer, val.c_str(), sizeof(EditBuffer));
-#endif
+        CopyToEditBuffer(val);
     }
 
     void StartEditingField(const std::string& id, const std::string& fieldId, const std::string& val) {
         EditingId = id;
         EditingFieldId = fieldId;
         EditingColumn = -1;
-#ifdef _WIN32
-        strncpy_s(EditBuffer, val.c_str(), sizeof(EditBuffer));
-#else
-        strncpy(EditBuffer, val.c_str(), sizeof(EditBuffer));
-#endif
+        CopyToEditBuffer(val);
     }
 
     bool IsEditingField(const std::string& id, const std::string& fieldId) const {
         return EditingId == id && EditingFieldId == fieldId;
+    }
+
+private:
+    void CopyToEditBuffer(const std::string& val) {
+        std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", val.c_str());
+        EditBuffer[sizeof(EditBuffer) - 1] = '\0';
     }
 };
 

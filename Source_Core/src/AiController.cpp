@@ -6,12 +6,17 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include "Logger.h"
 #include "NetworkUsageTracker.h"
+#include "StringUtil.h"
 
 AiController::AiResult AiController::AnalyzeTicket(const std::string& key,
                                                    const std::string& summary,
                                                    const std::string& apiKey) {
-    if (apiKey.empty()) return { false, "No API Key provided." };
+    if (apiKey.empty()) {
+        LOG_WARN("AiController: AnalyzeTicket called without API key (key=%s)", key.c_str());
+        return { false, "No API Key provided." };
+    }
 
     // Construct the prompt
     std::string prompt = "You are a senior software engineer. Analyze this Jira ticket:\n"
@@ -34,12 +39,51 @@ AiController::AiResult AiController::AnalyzeTicket(const std::string& key,
                        cpr::Body{bodyStr});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::OpenAi,
         static_cast<std::uint64_t>(bodyStr.size()), r);
+    LOG_INFO("AiController: completion request key=%s status=%d bytes=%zu",
+             key.c_str(),
+             static_cast<int>(r.status_code),
+             r.text.size());
 
     if (r.status_code == 200) {
-        auto j = nlohmann::json::parse(r.text);
-        return { true, j["choices"][0]["message"]["content"].get<std::string>() };
+        try {
+            const auto j = nlohmann::json::parse(r.text);
+            const auto itChoices = j.find("choices");
+            if (itChoices == j.end() || !itChoices->is_array() || itChoices->empty()) {
+                LOG_ERROR("AiController: malformed response (missing choices array) key=%s body=%s",
+                          key.c_str(),
+                          TruncateForLog(r.text, 300).c_str());
+                return {false, "API Error: malformed response (missing choices)"};
+            }
+            const nlohmann::json& first = (*itChoices)[0];
+            const auto itMessage = first.find("message");
+            if (itMessage == first.end() || !itMessage->is_object()) {
+                LOG_ERROR("AiController: malformed response (missing message object) key=%s body=%s",
+                          key.c_str(),
+                          TruncateForLog(r.text, 300).c_str());
+                return {false, "API Error: malformed response (missing message)"};
+            }
+            const auto itContent = itMessage->find("content");
+            if (itContent == itMessage->end() || !itContent->is_string()) {
+                LOG_ERROR("AiController: malformed response (missing content string) key=%s body=%s",
+                          key.c_str(),
+                          TruncateForLog(r.text, 300).c_str());
+                return {false, "API Error: malformed response (missing content)"};
+            }
+            return { true, itContent->get<std::string>() };
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AiController: parse exception key=%s err=%s body=%s",
+                      key.c_str(),
+                      ex.what(),
+                      TruncateForLog(r.text, 300).c_str());
+            return { false, std::string("API Error: invalid JSON response (") + ex.what() + ")" };
+        }
     }
 
+    LOG_ERROR("AiController: API failure key=%s status=%d cprErr=%d msg=%s",
+              key.c_str(),
+              static_cast<int>(r.status_code),
+              static_cast<int>(r.error.code),
+              r.error.message.c_str());
     return { false, "API Error: " + std::to_string(r.status_code) };
 }
 

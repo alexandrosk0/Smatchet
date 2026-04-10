@@ -1,7 +1,9 @@
 #include "JiraClient.h"
 
+#include "JsonParseUtil.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
+#include "StringUtil.h"
 
 #include <cpr/cpr.h>
 
@@ -23,6 +25,7 @@ std::string FormatWorkDurationFromSeconds(long long seconds);
 
 namespace {
 constexpr std::size_t kMaxJiraHttpBodyLogBytes = 65536;
+constexpr const char* kJiraUserAgent = "Smatchet/1.0 Jira-Client";
 
 void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Response& response) {
     LOG_DEBUG("JiraClient: %s %s -> HTTP %d (%zu bytes)",
@@ -95,27 +98,60 @@ std::string NormalizeBaseUrl(const std::string& domain) {
     return base;
 }
 
-std::string TrimCopy(const std::string& input) {
-    size_t start = 0;
-    size_t end = input.size();
-    while (start < end && (input[start] == ' ' || input[start] == '\t' || input[start] == '\n' || input[start] == '\r')) {
-        ++start;
+bool EnsureJiraAuthConfig(const JiraConfig& cfg, std::string& outError) {
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        LOG_WARN("JiraClient: %s (domain_set=%d token_set=%d)",
+                 outError.c_str(),
+                 cfg.Domain.empty() ? 0 : 1,
+                 cfg.ApiToken.empty() ? 0 : 1);
+        return false;
     }
-    while (end > start && (input[end - 1] == ' ' || input[end - 1] == '\t' || input[end - 1] == '\n' || input[end - 1] == '\r')) {
-        --end;
-    }
-    return input.substr(start, end - start);
+    return true;
 }
 
-std::string JoinStrings(const std::vector<std::string>& items, const std::string& separator) {
-    std::string out;
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (i != 0) {
-            out += separator;
-        }
-        out += items[i];
+cpr::Header BuildJiraHeaders(const JiraConfig& cfg, bool includeJsonContentType = false) {
+    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+    cpr::Header headers{
+        {"Accept", "application/json"},
+        {"Authorization", authHeader},
+        {"User-Agent", kJiraUserAgent}
+    };
+    if (includeJsonContentType) {
+        headers["Content-Type"] = "application/json";
     }
-    return out;
+    return headers;
+}
+
+cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers) {
+    cpr::Redirect redirect(true, true);
+    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+                                           NetworkUsageTracker::kEstimatedGetUploadBytes,
+                                           response);
+    LogJiraHttpResult("GET", url, response);
+    return response;
+}
+
+cpr::Response JiraPostLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
+    cpr::Redirect redirect(true, true);
+    cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+                                           static_cast<std::uint64_t>(body.size()),
+                                           response);
+    LogJiraHttpResult("POST", url, response);
+    return response;
+}
+
+cpr::Response JiraPutLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
+    cpr::Redirect redirect(true, true);
+    cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect);
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
+                                           static_cast<std::uint64_t>(body.size()),
+                                           response);
+    LogJiraHttpResult("PUT", url, response);
+    return response;
 }
 
 // nlohmann::value("k", std::string()) throws type_error.302 if "k" exists but is not a string.
@@ -125,13 +161,6 @@ std::string JsonGetStringIfString(const nlohmann::json& j, const char* key) {
         return {};
     }
     return it->get<std::string>();
-}
-
-std::string TruncateForLog(const std::string& s, std::size_t maxLen = 600) {
-    if (s.size() <= maxLen) {
-        return s;
-    }
-    return s.substr(0, maxLen) + "...";
 }
 
 std::string TrimTrailingZeros(const std::string& number) {
@@ -238,6 +267,38 @@ std::string ParseCommentAuthor(const nlohmann::json& commentNode) {
         }
     }
     return author;
+}
+
+void SortJiraUsersForDisplay(std::vector<JiraUser>& users) {
+    std::sort(users.begin(), users.end(), [](const JiraUser& a, const JiraUser& b) {
+        const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
+        const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
+        return std::lexicographical_compare(
+            lhs.begin(), lhs.end(),
+            rhs.begin(), rhs.end(),
+            [](unsigned char ca, unsigned char cb) {
+                return std::tolower(ca) < std::tolower(cb);
+            });
+    });
+}
+
+void AppendJiraUsersFromJsonArray(const nlohmann::json& arr, std::vector<JiraUser>& outUsers) {
+    if (!arr.is_array()) {
+        return;
+    }
+    for (const auto& node : arr) {
+        if (!node.is_object()) {
+            continue;
+        }
+        JiraUser u;
+        u.AccountId = node.value("accountId", std::string());
+        u.DisplayName = node.value("displayName", std::string());
+        u.EmailAddress = node.value("emailAddress", std::string());
+        u.Active = node.value("active", true);
+        if (!u.AccountId.empty() || !u.DisplayName.empty()) {
+            outUsers.push_back(std::move(u));
+        }
+    }
 }
 
 std::string CleanCommentOutputAscii(const std::string& input) {
@@ -478,7 +539,11 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
     if (allDigits) {
         try {
             return std::stoll(s);
-        } catch (...) {}
+        } catch (const std::exception& ex) {
+            LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds overflow/invalid value=%s err=%s", s.c_str(), ex.what());
+        } catch (...) {
+            LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds unknown parse failure value=%s", s.c_str());
+        }
     }
 
     size_t pos = 0;
@@ -493,7 +558,13 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
             while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) pos++;
             try {
                 number = std::stoll(s.substr(start, pos - start));
-            } catch (...) { break; }
+            } catch (const std::exception& ex) {
+                LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds token parse failure value=%s err=%s", s.c_str(), ex.what());
+                break;
+            } catch (...) {
+                LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds token parse unknown failure value=%s", s.c_str());
+                break;
+            }
         } else {
             break;
         }
@@ -735,24 +806,15 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg,
     outUsers.clear();
     outError.clear();
 
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
-    auto usersResponse = cpr::Get(cpr::Url{usersUrl}, headers, redirect);
-    LogJiraHttpResult("GET", usersUrl, usersResponse);
+    auto usersResponse = JiraGetLogged(usersUrl, headers);
     if (usersResponse.status_code != 200) {
         outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -763,6 +825,7 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg,
         auto usersJson = nlohmann::json::parse(usersResponse.text);
         if (!usersJson.is_array()) {
             outError = "Invalid users response format.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(usersResponse.text, 300).c_str());
             return false;
         }
 
@@ -790,16 +853,7 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg,
             outUsers.push_back(std::move(jiraUser));
         }
 
-        std::sort(outUsers.begin(), outUsers.end(), [](const JiraUser& a, const JiraUser& b) {
-            const std::string& lhs = a.DisplayName;
-            const std::string& rhs = b.DisplayName;
-            return std::lexicographical_compare(
-                lhs.begin(), lhs.end(),
-                rhs.begin(), rhs.end(),
-                [](unsigned char ca, unsigned char cb) {
-                    return std::tolower(ca) < std::tolower(cb);
-                });
-        });
+        SortJiraUsersForDisplay(outUsers);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse users response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -816,8 +870,7 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg,
     outWatchers.clear();
     outError.clear();
 
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -826,20 +879,10 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/watchers";
-    auto response = cpr::Get(cpr::Url{url}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, response);
-    LogJiraHttpResult("GET", url, response);
+    auto response = JiraGetLogged(url, headers);
     if (response.status_code != 200) {
         outError = "Failed to fetch watchers: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -850,36 +893,23 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg,
         const auto j = nlohmann::json::parse(response.text);
         if (!j.is_object()) {
             outError = "Invalid watchers response format.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s",
+                      outError.c_str(),
+                      issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
             return false;
         }
         const auto watchers = j.value("watchers", nlohmann::json::array());
         if (!watchers.is_array()) {
             outError = "Invalid watchers array in response.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s",
+                      outError.c_str(),
+                      issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
             return false;
         }
-        for (const auto& w : watchers) {
-            if (!w.is_object()) {
-                continue;
-            }
-            JiraUser u;
-            u.AccountId = w.value("accountId", std::string());
-            u.DisplayName = w.value("displayName", std::string());
-            u.EmailAddress = w.value("emailAddress", std::string());
-            u.Active = w.value("active", true);
-            if (!u.AccountId.empty() || !u.DisplayName.empty()) {
-                outWatchers.push_back(std::move(u));
-            }
-        }
-        std::sort(outWatchers.begin(), outWatchers.end(), [](const JiraUser& a, const JiraUser& b) {
-            const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
-            const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
-            return std::lexicographical_compare(
-                lhs.begin(), lhs.end(),
-                rhs.begin(), rhs.end(),
-                [](unsigned char ca, unsigned char cb) {
-                    return std::tolower(ca) < std::tolower(cb);
-                });
-        });
+        AppendJiraUsersFromJsonArray(watchers, outWatchers);
+        SortJiraUsersForDisplay(outWatchers);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse watchers response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -908,8 +938,7 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg,
         *outVotersArrayInResponse = false;
     }
 
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -918,20 +947,10 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/votes";
-    auto response = cpr::Get(cpr::Url{url}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, response);
-    LogJiraHttpResult("GET", url, response);
+    auto response = JiraGetLogged(url, headers);
     if (response.status_code != 200) {
         outError = "Failed to fetch votes: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -942,22 +961,15 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg,
         const auto j = nlohmann::json::parse(response.text);
         if (!j.is_object()) {
             outError = "Invalid votes response format.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s",
+                      outError.c_str(),
+                      issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
             return false;
         }
 
         if (outVoteCount && j.contains("votes")) {
-            const auto& vc = j["votes"];
-            if (vc.is_number_integer()) {
-                *outVoteCount = static_cast<int>(vc.get<long long>());
-            } else if (vc.is_number_unsigned()) {
-                *outVoteCount = static_cast<int>(vc.get<unsigned long long>());
-            } else if (vc.is_number_float()) {
-                *outVoteCount = static_cast<int>(vc.get<double>());
-            } else if (vc.is_string()) {
-                try {
-                    *outVoteCount = std::stoi(vc.get<std::string>());
-                } catch (...) {}
-            }
+            *outVoteCount = ParseJsonIntLoose(j["votes"], 0);
             if (*outVoteCount < 0) {
                 *outVoteCount = 0;
             }
@@ -978,29 +990,8 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg,
             }
             const auto voters = j.value("voters", nlohmann::json::array());
             if (voters.is_array()) {
-                for (const auto& w : voters) {
-                    if (!w.is_object()) {
-                        continue;
-                    }
-                    JiraUser u;
-                    u.AccountId = w.value("accountId", std::string());
-                    u.DisplayName = w.value("displayName", std::string());
-                    u.EmailAddress = w.value("emailAddress", std::string());
-                    u.Active = w.value("active", true);
-                    if (!u.AccountId.empty() || !u.DisplayName.empty()) {
-                        outVoters.push_back(std::move(u));
-                    }
-                }
-                std::sort(outVoters.begin(), outVoters.end(), [](const JiraUser& a, const JiraUser& b) {
-                    const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
-                    const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
-                    return std::lexicographical_compare(
-                        lhs.begin(), lhs.end(),
-                        rhs.begin(), rhs.end(),
-                        [](unsigned char ca, unsigned char cb) {
-                            return std::tolower(ca) < std::tolower(cb);
-                        });
-                });
+                AppendJiraUsersFromJsonArray(voters, outVoters);
+                SortJiraUsersForDisplay(outVoters);
             }
         }
     } catch (const std::exception& ex) {
@@ -1018,30 +1009,22 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
     outError.clear();
 
     JiraConfig cfg = ConfigManager::Load();
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueId.empty()) {
         outError = "Issue id is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
         return false;
     }
     if (!fields.is_object() || fields.empty()) {
         outError = "Update fields payload is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
         return false;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Content-Type", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
 
     const auto iequals = [](const std::string& a, const std::string& b) {
         if (a.size() != b.size()) {
@@ -1080,15 +1063,13 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
 
         if (targetStatusId.empty() && targetStatusName.empty()) {
             outError = "Missing target status for transition.";
+            LOG_WARN("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
             return false;
         }
 
         const std::string transitionsUrl =
             base + "/rest/api/3/issue/" + UrlEncode(issueId) + "/transitions";
-        auto transitionsResp = cpr::Get(cpr::Url{transitionsUrl}, headers, redirect);
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-            NetworkUsageTracker::kEstimatedGetUploadBytes, transitionsResp);
-        LogJiraHttpResult("GET", transitionsUrl, transitionsResp);
+        auto transitionsResp = JiraGetLogged(transitionsUrl, headers);
         if (transitionsResp.status_code != 200) {
             outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -1100,6 +1081,10 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
             auto transitionsJson = nlohmann::json::parse(transitionsResp.text);
             if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
                 outError = "Invalid transitions response format.";
+                LOG_ERROR("JiraClient: %s issue=%s body=%s",
+                          outError.c_str(),
+                          issueId.c_str(),
+                          TruncateForLog(transitionsResp.text, 300).c_str());
                 return false;
             }
 
@@ -1153,6 +1138,11 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
 
         if (transitionId.empty()) {
             outError = "No valid transition found for requested status.";
+            LOG_WARN("JiraClient: %s issue=%s targetStatusId=%s targetStatusName=%s",
+                     outError.c_str(),
+                     issueId.c_str(),
+                     targetStatusId.c_str(),
+                     targetStatusName.c_str());
             return false;
         }
 
@@ -1160,15 +1150,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
             {"transition", {{"id", transitionId}}}
         };
         const std::string transitionBodyStr = transitionBody.dump();
-        auto transitionResp = cpr::Post(
-            cpr::Url{transitionsUrl},
-            headers,
-            cpr::Body{transitionBodyStr},
-            redirect
-        );
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-            static_cast<std::uint64_t>(transitionBodyStr.size()), transitionResp);
-        LogJiraHttpResult("POST", transitionsUrl, transitionResp);
+        auto transitionResp = JiraPostLogged(transitionsUrl, headers, transitionBodyStr);
         if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
             outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -1206,15 +1188,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
     body["fields"] = fieldsNormalized;
     const std::string updateUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId);
     const std::string putBodyStr = body.dump();
-    auto response = cpr::Put(
-        cpr::Url{updateUrl},
-        headers,
-        cpr::Body{putBodyStr},
-        redirect
-    );
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        static_cast<std::uint64_t>(putBodyStr.size()), response);
-    LogJiraHttpResult("PUT", updateUrl, response);
+    auto response = JiraPutLogged(updateUrl, headers, putBodyStr);
 
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
@@ -1235,26 +1209,15 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     outComponents.clear();
     outError.clear();
 
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string fieldsListUrl = base + "/rest/api/3/field";
-    auto fieldsResponse = cpr::Get(cpr::Url{fieldsListUrl}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, fieldsResponse);
-    LogJiraHttpResult("GET", fieldsListUrl, fieldsResponse);
+    auto fieldsResponse = JiraGetLogged(fieldsListUrl, headers);
     if (fieldsResponse.status_code != 200) {
         outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -1265,6 +1228,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
         auto response = nlohmann::json::parse(fieldsResponse.text);
         if (!response.is_array()) {
             outError = "Unexpected /field response shape.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(fieldsResponse.text, 300).c_str());
             return false;
         }
 
@@ -1305,7 +1269,11 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
             jiraField.IsCustom = (fieldId.find("customfield_") == 0);
             try {
                 jiraField.RestFieldDefinitionJson = field.dump(2);
+            } catch (const std::exception& ex) {
+                LOG_DEBUG("JiraClient: field definition dump failed field=%s err=%s", fieldId.c_str(), ex.what());
+                jiraField.RestFieldDefinitionJson.clear();
             } catch (...) {
+                LOG_DEBUG("JiraClient: field definition dump failed field=%s (unknown)", fieldId.c_str());
                 jiraField.RestFieldDefinitionJson.clear();
             }
             outFields.push_back(std::move(jiraField));
@@ -1329,10 +1297,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     const std::string metaUrl = base +
         "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(cfg.ProjectKey) +
         "&expand=projects.issuetypes.fields";
-    auto metaResponse = cpr::Get(cpr::Url{metaUrl}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, metaResponse);
-    LogJiraHttpResult("GET", metaUrl, metaResponse);
+    auto metaResponse = JiraGetLogged(metaUrl, headers);
     std::set<std::string> uniqueIssueTypes;
     if (metaResponse.status_code == 200) {
         try {
@@ -1452,10 +1417,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
             bool filledFromProject = false;
             try {
                 const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey);
-                auto projectResp = cpr::Get(cpr::Url{projectUrl}, headers, redirect);
-                NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-                    NetworkUsageTracker::kEstimatedGetUploadBytes, projectResp);
-                LogJiraHttpResult("GET", projectUrl, projectResp);
+                auto projectResp = JiraGetLogged(projectUrl, headers);
                 if (projectResp.status_code == 200) {
                     auto projectJson = nlohmann::json::parse(projectResp.text);
                     if (projectJson.contains("issueTypes") && projectJson["issueTypes"].is_array()) {
@@ -1523,10 +1485,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
         const auto statusFieldIt = fieldIndexById.find("status");
         if (statusFieldIt != fieldIndexById.end()) {
             const std::string statusCatalogUrl = base + "/rest/api/3/status";
-            auto statusResp = cpr::Get(cpr::Url{statusCatalogUrl}, headers, redirect);
-            NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-                NetworkUsageTracker::kEstimatedGetUploadBytes, statusResp);
-            LogJiraHttpResult("GET", statusCatalogUrl, statusResp);
+            auto statusResp = JiraGetLogged(statusCatalogUrl, headers);
             if (statusResp.status_code == 200) {
                 auto statusJson = nlohmann::json::parse(statusResp.text);
                 if (statusJson.is_array()) {
@@ -1676,15 +1635,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         "&maxResults=100&fields=" + fields +
         "&expand=changelog";
 
-    // Build Basic auth exactly as PowerShell/curl: Authorization header sent on every request.
-    std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
         outComments = nlohmann::json::array();
         int startAt = 0;
@@ -1696,10 +1647,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
                 base + "/rest/api/3/issue/" + UrlEncode(issueKey) +
                 "/comment?startAt=" + std::to_string(startAt) +
                 "&maxResults=" + std::to_string(maxResults);
-            auto commentsResp = cpr::Get(cpr::Url{commentsUrl}, headers, redirect);
-            NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-                NetworkUsageTracker::kEstimatedGetUploadBytes, commentsResp);
-            LogJiraHttpResult("GET", commentsUrl, commentsResp);
+            auto commentsResp = JiraGetLogged(commentsUrl, headers);
             if (commentsResp.status_code != 200) {
                 LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d",
                          issueKey.c_str(), commentsResp.status_code);
@@ -1748,10 +1696,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         }
         LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
 
-        auto response = cpr::Get(cpr::Url{pageUrl}, headers, redirect);
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-            NetworkUsageTracker::kEstimatedGetUploadBytes, response);
-        LogJiraHttpResult("GET", pageUrl, response);
+        auto response = JiraGetLogged(pageUrl, headers);
         lastResponseBody = response.text;
         if (response.status_code != 200) {
             LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.",
@@ -1912,10 +1857,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         std::string who = cfg.Email;
         bool verifiedIdentity = false;
         std::string myselfUrl = base + "/rest/api/3/myself";
-        auto myselfResp = cpr::Get(cpr::Url{myselfUrl}, headers, redirect);
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-            NetworkUsageTracker::kEstimatedGetUploadBytes, myselfResp);
-        LogJiraHttpResult("GET", myselfUrl, myselfResp);
+        auto myselfResp = JiraGetLogged(myselfUrl, headers);
         if (myselfResp.status_code == 200) {
             try {
                 auto me = nlohmann::json::parse(myselfResp.text);
@@ -1923,7 +1865,14 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
                 std::string emailAddr = me.value("emailAddress", std::string());
                 who = name.empty() ? emailAddr : (name + " <" + emailAddr + ">");
                 verifiedIdentity = true;
-            } catch (...) {}
+            } catch (const std::exception& ex) {
+                LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s",
+                         ex.what(),
+                         TruncateForLog(myselfResp.text, 300).c_str());
+            } catch (...) {
+                LOG_WARN("JiraClient: failed to parse /myself response (unknown) body=%s",
+                         TruncateForLog(myselfResp.text, 300).c_str());
+            }
         }
 
         if (verifiedIdentity) {
@@ -1990,23 +1939,14 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string url =
         base + "/rest/api/3/user/search?query=" + UrlEncode(query) + "&maxResults=100";
-    auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, resp);
-    LogJiraHttpResult("GET", url, resp);
+    auto resp = JiraGetLogged(url, headers);
     if (resp.status_code != 200) {
         outError = "user/search failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s query=%s", outError.c_str(), TruncateForLog(query, 120).c_str());
         return false;
     }
 
@@ -2014,6 +1954,7 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg,
         auto arr = nlohmann::json::parse(resp.text);
         if (!arr.is_array()) {
             outError = "user/search: expected array.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(resp.text, 300).c_str());
             return false;
         }
         std::unordered_set<std::string> seen;
@@ -2030,6 +1971,7 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg,
         }
     } catch (const std::exception& ex) {
         outError = std::string("user/search parse error: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
     return true;
@@ -2040,8 +1982,7 @@ bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg,
                                       const std::string& plainText,
                                       std::string& outError) {
     outError.clear();
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -2050,27 +1991,17 @@ bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Content-Type", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
 
     nlohmann::json body = nlohmann::json::object();
     body["body"] = AdfDocumentFromPlainText(plainText);
     const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
     const std::string bodyStr = body.dump();
-    auto response = cpr::Post(cpr::Url{postUrl}, headers, cpr::Body{bodyStr}, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        static_cast<std::uint64_t>(bodyStr.size()), response);
-    LogJiraHttpResult("POST", postUrl, response);
+    auto response = JiraPostLogged(postUrl, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add comment failed: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         return false;
     }
     return true;
@@ -2088,8 +2019,7 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg,
                                              const std::string& codeSnippet,
                                              std::string& outError) {
     outError.clear();
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -2098,15 +2028,7 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Content-Type", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
 
     auto para = [](const std::string& text) {
         nlohmann::json p = nlohmann::json::object();
@@ -2140,13 +2062,11 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg,
     body["body"] = std::move(doc);
     const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
     const std::string bodyStr = body.dump();
-    auto response = cpr::Post(cpr::Url{postUrl}, headers, cpr::Body{bodyStr}, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        static_cast<std::uint64_t>(bodyStr.size()), response);
-    LogJiraHttpResult("POST", postUrl, response);
+    auto response = JiraPostLogged(postUrl, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         return false;
     }
     return true;
@@ -2158,8 +2078,7 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
                                      std::string& outError) {
     outGroupNames.clear();
     outError.clear();
-    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
         return false;
     }
     if (accountId.empty()) {
@@ -2167,23 +2086,14 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "application/json"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Jira-Client"}
-    };
-    cpr::Redirect redirect(true, true);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
 
     const std::string url =
         base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
-    auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
-        NetworkUsageTracker::kEstimatedGetUploadBytes, resp);
-    LogJiraHttpResult("GET", url, resp);
+    auto resp = JiraGetLogged(url, headers);
     if (resp.status_code != 200) {
         outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s accountId=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
         return false;
     }
 
@@ -2201,6 +2111,7 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
         }
     } catch (const std::exception& ex) {
         outError = std::string("user parse error: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
     return true;

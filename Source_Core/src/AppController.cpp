@@ -11,13 +11,21 @@
 #include <cctype>
 #include <tuple>
 #include <unordered_set>
+#include <exception>
 
 #include <nlohmann/json.hpp>
 
 #include "imgui.h"
 #include "ConfigManager.h"
+#include "Logger.h"
+#include "StringUtil.h"
 
 #include <cpr/cpr.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace {
 // Base64 encode (RFC 4648) so we can send Authorization exactly like PowerShell/curl.
@@ -141,6 +149,20 @@ std::string AsciiLowerCopy(std::string s) {
     }
     return s;
 }
+
+#if !defined(_WIN32)
+std::string EscapeShellArg(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (char c : value) {
+        if (c == '"' || c == '\\' || c == '`' || c == '$') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(c);
+    }
+    return escaped;
+}
+#endif
 } // namespace
 
 void AppController::SetOpenUrlHandler(std::function<void(const std::string&)> handler) {
@@ -158,14 +180,22 @@ void AppController::OpenUrl(const std::string& url) const {
     }
 
 #if defined(_WIN32)
-    std::string cmd = "start \"\" \"" + url + "\"";
-    std::system(cmd.c_str());
+    const HINSTANCE openResult = ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<intptr_t>(openResult) <= 32) {
+        LOG_ERROR("AppController::OpenUrl failed url=%s err=%ld", TruncateForLog(url, 300).c_str(), GetLastError());
+    }
 #elif defined(__APPLE__)
-    std::string cmd = "open \"" + url + "\"";
-    std::system(cmd.c_str());
+    std::string cmd = "open \"" + EscapeShellArg(url) + "\"";
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        LOG_ERROR("AppController::OpenUrl failed rc=%d url=%s", rc, TruncateForLog(url, 300).c_str());
+    }
 #else
-    std::string cmd = "xdg-open \"" + url + "\"";
-    std::system(cmd.c_str());
+    std::string cmd = "xdg-open \"" + EscapeShellArg(url) + "\"";
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        LOG_ERROR("AppController::OpenUrl failed rc=%d url=%s", rc, TruncateForLog(url, 300).c_str());
+    }
 #endif
 }
 
@@ -188,6 +218,7 @@ void AppController::OpenAttachment(const std::string& url,
 
     // If the host doesn't support attachments-as-files, fall back to regular URL opening.
     if (!AttachmentViewerHandlerCallback) {
+        LOG_INFO("OpenAttachment: no attachment handler, opening URL directly.");
         OpenUrl(url);
         return;
     }
@@ -196,6 +227,7 @@ void AppController::OpenAttachment(const std::string& url,
     // Unreal hosts should marshal the handler back to the game thread if needed.
     JiraConfig cfg = ConfigManager::Load();
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        LOG_WARN("OpenAttachment: missing Jira credentials/domain, falling back to URL open.");
         OpenUrl(url);
         return;
     }
@@ -212,6 +244,10 @@ void AppController::OpenAttachment(const std::string& url,
 
     const auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
+        LOG_WARN("OpenAttachment: download failed status=%d cprErr=%d msg=%s; falling back to URL open.",
+                 static_cast<int>(resp.status_code),
+                 static_cast<int>(resp.error.code),
+                 resp.error.message.c_str());
         OpenUrl(url);
         return;
     }
@@ -223,7 +259,7 @@ void AppController::OpenAttachment(const std::string& url,
             outMime = it->second;
         }
     } catch (...) {
-        // Ignore header parse failures.
+        LOG_DEBUG("OpenAttachment: response header parse failed; using provided mime type.");
     }
     if (outMime.empty()) {
         outMime = "application/octet-stream";
@@ -234,22 +270,37 @@ void AppController::OpenAttachment(const std::string& url,
 
     std::ofstream ofs(outFilePath, std::ios::binary);
     if (!ofs.is_open()) {
+        LOG_WARN("OpenAttachment: failed to open temp file path=%s; falling back to URL open.", outFilePath.c_str());
         OpenUrl(url);
         return;
     }
 
     ofs.write(resp.text.data(), static_cast<std::streamsize>(resp.text.size()));
+    if (!ofs.good()) {
+        LOG_WARN("OpenAttachment: failed to write downloaded bytes path=%s; falling back to URL open.", outFilePath.c_str());
+        ofs.close();
+        OpenUrl(url);
+        return;
+    }
     ofs.close();
 
+    LOG_INFO("OpenAttachment: downloaded %zu bytes mime=%s path=%s",
+             resp.text.size(),
+             outMime.c_str(),
+             outFilePath.c_str());
     AttachmentViewerHandlerCallback(outFilePath, outMime, filename);
 }
 
 void AppController::Initialize(const std::string& dbPath, const std::string& backendType) {
+    LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
     Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(dbPath));
 
     if (backendType == "Jira") {
         Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
         JiraBackend = dynamic_cast<JiraClient*>(Backend.get());
+        LOG_INFO("AppController: Jira backend initialized.");
+    } else {
+        LOG_WARN("AppController: unsupported backendType=%s; backend disabled.", backendType.c_str());
     }
 
     const std::string& fileBase = ConfigManager::GetFilesBaseDirectory();
@@ -422,17 +473,27 @@ void AppController::RunAutoScript(const std::string& scriptPath) {
     const std::string path = ResolveLuaScriptPath(scriptPath);
     for (auto& ticket : ActiveTickets) {
         lua["ticket"] = &ticket;
-        lua.script_file(path);
+        try {
+            lua.script_file(path);
+        } catch (const sol::error& e) {
+            LOG_ERROR("RunAutoScript: lua error ticket=%s path=%s err=%s", ticket.id.c_str(), path.c_str(), e.what());
+        } catch (const std::exception& e) {
+            LOG_ERROR("RunAutoScript: exception ticket=%s path=%s err=%s", ticket.id.c_str(), path.c_str(), e.what());
+        }
     }
 }
 
 void AppController::SyncWithBackend(const JiraConfig* configOverride, const ViewsStore* viewsOverride) {
+    LOG_INFO("AppController::SyncWithBackend started.");
     if (Backend && Cache) {
         bool fullSyncCompleted = false;
         auto freshTickets = Backend->FetchIssues(&fullSyncCompleted, configOverride, viewsOverride);
+        size_t saved = 0;
         for (const auto& t : freshTickets) {
             Cache->SaveTicket(t);
+            ++saved;
         }
+        size_t deleted = 0;
         if (fullSyncCompleted) {
             std::unordered_set<std::string> keepIds;
             keepIds.reserve(freshTickets.size());
@@ -445,9 +506,19 @@ void AppController::SyncWithBackend(const JiraConfig* configOverride, const View
             for (const auto& row : existing) {
                 if (keepIds.find(row.id) == keepIds.end()) {
                     Cache->DeleteTicket(row.id);
+                    ++deleted;
                 }
             }
         }
+        LOG_INFO("AppController::SyncWithBackend finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
+                 freshTickets.size(),
+                 saved,
+                 deleted,
+                 fullSyncCompleted ? 1 : 0);
+    } else {
+        LOG_WARN("AppController::SyncWithBackend skipped: backend=%d cache=%d",
+                 Backend ? 1 : 0,
+                 Cache ? 1 : 0);
     }
     RefreshLocalData();
 }
@@ -470,6 +541,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
         LastJiraFieldCatalogError = "Jira backend is not initialized.";
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        LOG_WARN("AppController::RefreshJiraFieldCatalog skipped: Jira backend not initialized.");
         return false;
     }
 
@@ -481,6 +553,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
         LastJiraFieldCatalogError = error;
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        LOG_ERROR("AppController::RefreshJiraFieldCatalog failed: %s", error.c_str());
         return false;
     }
 
@@ -497,6 +570,7 @@ void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
         LastJiraFieldCatalogError = error;
+        LOG_ERROR("AppController::SetJiraFieldCatalog error: %s", error.c_str());
         return;
     }
     AvailableJiraFields = std::move(fields);
@@ -531,10 +605,15 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     outError.clear();
     if (!Backend || !Cache) {
         outError = "Backend or cache is not initialized.";
+        LOG_WARN("AppController::SubmitJiraFieldEdit skipped issue=%s field=%s: %s",
+                 issueId.c_str(),
+                 field.Id.c_str(),
+                 outError.c_str());
         return false;
     }
     if (issueId.empty()) {
         outError = "Issue id is empty.";
+        LOG_WARN("AppController::SubmitJiraFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
         return false;
     }
 
@@ -574,6 +653,10 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     nlohmann::json fieldsPayload = nlohmann::json::object();
     fieldsPayload[field.Id] = valuePayload;
     if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outError)) {
+        LOG_ERROR("AppController::SubmitJiraFieldEdit failed issue=%s field=%s err=%s",
+                  issueId.c_str(),
+                  field.Id.c_str(),
+                  outError.c_str());
         return false;
     }
 
@@ -621,7 +704,11 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey,
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    return JiraBackend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    const bool ok = JiraBackend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    if (!ok) {
+        LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    }
+    return ok;
 }
 
 bool AppController::JiraSearchUsersByQuery(const std::string& query,
@@ -634,7 +721,13 @@ bool AppController::JiraSearchUsersByQuery(const std::string& query,
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    return JiraBackend->SearchUsersByQuery(cfg, query, outUsers, outError);
+    const bool ok = JiraBackend->SearchUsersByQuery(cfg, query, outUsers, outError);
+    if (!ok) {
+        LOG_ERROR("AppController::JiraSearchUsersByQuery failed query=%s err=%s",
+                  TruncateForLog(query, 120).c_str(),
+                  outError.c_str());
+    }
+    return ok;
 }
 
 bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey,
@@ -646,7 +739,11 @@ bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey,
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    return JiraBackend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    const bool ok = JiraBackend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    if (!ok) {
+        LOG_ERROR("AppController::JiraAddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    }
+    return ok;
 }
 
 bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
@@ -665,8 +762,23 @@ bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    return JiraBackend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
-                                                    changelist, date, approximated, codeSnippet, outError);
+    const bool ok = JiraBackend->AddIssueCommentBlameContext(cfg,
+                                                             issueKey,
+                                                             p4User,
+                                                             functionName,
+                                                             filePath,
+                                                             lineNumber,
+                                                             changelist,
+                                                             date,
+                                                             approximated,
+                                                             codeSnippet,
+                                                             outError);
+    if (!ok) {
+        LOG_ERROR("AppController::JiraAddIssueCommentBlameContext failed issue=%s err=%s",
+                  issueKey.c_str(),
+                  outError.c_str());
+    }
+    return ok;
 }
 
 bool AppController::JiraFetchUserGroupNames(const std::string& accountId,
@@ -679,6 +791,12 @@ bool AppController::JiraFetchUserGroupNames(const std::string& accountId,
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    return JiraBackend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    const bool ok = JiraBackend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    if (!ok) {
+        LOG_ERROR("AppController::JiraFetchUserGroupNames failed account=%s err=%s",
+                  TruncateForLog(accountId, 40).c_str(),
+                  outError.c_str());
+    }
+    return ok;
 }
 

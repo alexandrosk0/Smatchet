@@ -18,6 +18,7 @@
 #include <mutex>
 
 #include "imgui.h"
+#include "Logger.h"
 #include "imgui_impl_dx12.h"
 #include "SmatchetImGuiFonts.h"
 #endif
@@ -235,11 +236,13 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     if (ImplData) {
         ImplData->LastInitError = outError;
     }
+    LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
     return false;
 #else
     if (options.Renderer.Backend != SmatchetRendererBackend::Dx12) {
         outError = "Only DX12 backend is implemented in this runtime build.";
         ImplData->LastInitError = outError;
+        LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
         return false;
     }
 
@@ -247,6 +250,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         !options.Renderer.RendererResource1 || !options.Renderer.RendererResource2) {
         outError = "Missing required DX12 initialization resources (device, command queue, SRV heap, handles).";
         ImplData->LastInitError = outError;
+        LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
         return false;
     }
 
@@ -283,6 +287,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
     if (!Smatchet_ImplDX12_InitBackend(options.Renderer, outError)) {
+        LOG_ERROR("SmatchetImGuiHost::Initialize backend init failed: %s", outError.c_str());
         ImGui::DestroyContext();
         return false;
     }
@@ -358,6 +363,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
                     if (!ok) {
                         // Keep UI visible; we'll retry until resources are ready and Initialize succeeds.
                         std::fprintf(stderr, "SmatchetImGuiHost: Initialize() retry failed: %s\n", err.c_str());
+                        LOG_ERROR("SmatchetImGuiHost: Initialize() retry failed: %s", err.c_str());
 #if defined(_WIN32)
                         {
                             std::string msg = std::string("[Smatchet] Initialize failed: ") + err + "\n";

@@ -7,6 +7,7 @@
 #include "JiraClient.h"
 #include "Logger.h"
 #include "P4Blame.h"
+#include "StringUtil.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -92,6 +93,7 @@ static void LogBlameP4PathsIfChanged(const char* reason) {
 static std::mutex g_displayMutex;
 static std::vector<BlameRow> g_displayRows;
 static std::vector<std::shared_future<DetailPack>> g_detailFuts;
+static std::vector<std::shared_future<DetailPack>> g_detachedDetailFuts;
 static std::vector<int> g_detailPhase;
 static std::vector<DetailPack> g_detailData;
 static std::vector<bool> g_detailScrolled;
@@ -107,6 +109,7 @@ static int g_pendingSelectEntryIndex = -1;
 
 static std::string g_clHoverCl;
 static std::shared_future<P4ChangelistDetails> g_clHoverFut;
+static std::vector<std::shared_future<P4ChangelistDetails>> g_detachedClHoverFuts;
 
 static std::string g_assignTitle;
 static std::string g_assignAccountId;
@@ -116,11 +119,18 @@ static BlameRow g_assignRow;
 static char g_callstackJiraFieldBuf[260]{};
 static std::string s_lastCallstackIssueKey;
 
-void SyncCallstackJiraFieldBufFromCfg() {
-    std::memset(g_callstackJiraFieldBuf, 0, sizeof(g_callstackJiraFieldBuf));
-    if (!g_blameCfg.CallstackJiraFieldId.empty()) {
-        std::strncpy(g_callstackJiraFieldBuf, g_blameCfg.CallstackJiraFieldId.c_str(), sizeof(g_callstackJiraFieldBuf) - 1);
+template <size_t N>
+void CopyToBuffer(char (&dst)[N], const std::string& src) {
+    if (N == 0) {
+        return;
     }
+    std::memset(dst, 0, N);
+    std::strncpy(dst, src.c_str(), N - 1);
+    dst[N - 1] = '\0';
+}
+
+void SyncCallstackJiraFieldBufFromCfg() {
+    CopyToBuffer(g_callstackJiraFieldBuf, g_blameCfg.CallstackJiraFieldId);
 }
 
 void MaybeAutoselectCallstackJiraField(AppController& app) {
@@ -131,12 +141,8 @@ void MaybeAutoselectCallstackJiraField(AppController& app) {
     if (fields.empty()) {
         return;
     }
-    auto toLower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return s;
-    };
     for (const auto& f : fields) {
-        if (toLower(f.Name) == "callstack") {
+        if (ToLowerAsciiCopy(f.Name) == "callstack") {
             g_blameCfg.CallstackJiraFieldId = f.Id;
             SyncCallstackJiraFieldBufFromCfg();
             ConfigManager::SaveBlameAnalysis(g_blameCfg);
@@ -157,8 +163,7 @@ void TryFillCallstackFromJira(AppController& app, const std::string& issueKey) {
         if (v.empty()) {
             return;
         }
-        std::strncpy(g_callstackBuf, v.c_str(), sizeof(g_callstackBuf) - 1);
-        g_callstackBuf[sizeof(g_callstackBuf) - 1] = '\0';
+        CopyToBuffer(g_callstackBuf, v);
         return;
     }
 }
@@ -233,43 +238,53 @@ void WorkerThreadMain(size_t n) {
         atCl.c_str(),
         cfg.P4Executable.c_str());
     int failures = 0;
-    for (size_t i = 0; i < n; ++i) {
-        if (g_worker.Cancel.load()) {
-            LOG_INFO("Blame worker: cancelled at row %zu/%zu (failures=%d)", i, n, failures);
-            break;
-        }
-        BlameRow row;
-        {
-            std::lock_guard<std::mutex> lk(g_worker.Mutex);
-            if (i >= g_worker.Rows.size()) {
+    try {
+        for (size_t i = 0; i < n; ++i) {
+            if (g_worker.Cancel.load()) {
+                LOG_INFO("Blame worker: cancelled at row %zu/%zu (failures=%d)", i, n, failures);
                 break;
             }
-            row = g_worker.Rows[i];
-        }
-        P4LineBlame b = P4BlameLine(cfg, row.PathForP4, row.Parsed.LineNumber, atCl);
-        if (!b.Error.empty()) {
-            LOG_DEBUG("Blame worker: row %zu path=%s err=%s", i, row.PathForP4.c_str(), b.Error.c_str());
-            ++failures;
-        }
-        if (!b.Changelist.empty() && cache) {
-            P4ChangelistDetails d = cache->GetOrFetch(cfg, b.Changelist);
-            if (!d.Date.empty()) {
-                b.Date = d.Date;
+            BlameRow row;
+            {
+                std::lock_guard<std::mutex> lk(g_worker.Mutex);
+                if (i >= g_worker.Rows.size()) {
+                    break;
+                }
+                row = g_worker.Rows[i];
             }
-            if (!d.Author.empty() && b.User.empty()) {
-                b.User = d.Author;
+            P4LineBlame b = P4BlameLine(cfg, row.PathForP4, row.Parsed.LineNumber, atCl);
+            if (!b.Error.empty()) {
+                LOG_WARN("Blame worker: row=%zu path=%s line=%d err=%s",
+                         i + 1,
+                         row.PathForP4.c_str(),
+                         row.Parsed.LineNumber,
+                         b.Error.c_str());
+                ++failures;
             }
-        }
-        {
-            std::lock_guard<std::mutex> lk(g_worker.Mutex);
-            if (i < g_worker.Rows.size()) {
-                g_worker.Rows[i].Blame = std::move(b);
+            if (!b.Changelist.empty() && cache) {
+                P4ChangelistDetails d = cache->GetOrFetch(cfg, b.Changelist);
+                if (!d.Date.empty()) {
+                    b.Date = d.Date;
+                }
+                if (!d.Author.empty() && b.User.empty()) {
+                    b.User = d.Author;
+                }
             }
+            {
+                std::lock_guard<std::mutex> lk(g_worker.Mutex);
+                if (i < g_worker.Rows.size()) {
+                    g_worker.Rows[i].Blame = std::move(b);
+                }
+            }
+            g_worker.Progress = static_cast<int>(i + 1);
         }
-        g_worker.Progress = static_cast<int>(i + 1);
-    }
-    if (!g_worker.Cancel.load()) {
-        LOG_INFO("Blame worker: finished rows=%zu failures=%d", n, failures);
+        if (!g_worker.Cancel.load()) {
+            LOG_INFO("Blame worker: finished rows=%zu failures=%d", n, failures);
+        }
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Blame worker: exception: %s", ex.what());
+    } catch (...) {
+        LOG_ERROR("Blame worker: unknown exception");
     }
     g_worker.PendingPublish = true;
     g_worker.Running = false;
@@ -325,6 +340,35 @@ void ReplacePlaceholder(std::string& s, const char* key, const std::string& val)
         s.replace(pos, k.size(), val);
         pos += val.size();
     }
+}
+
+bool SplitCommandExecutableAndArgs(const std::string& command,
+                                   std::string& outExe,
+                                   std::string& outArgs) {
+    const std::string trimmed = TrimCopy(command);
+    if (trimmed.empty()) {
+        return false;
+    }
+    if (trimmed[0] == '"') {
+        const size_t quoteEnd = trimmed.find('"', 1);
+        if (quoteEnd == std::string::npos || quoteEnd <= 1) {
+            return false;
+        }
+        outExe = trimmed.substr(1, quoteEnd - 1);
+        outArgs = TrimCopy(trimmed.substr(quoteEnd + 1));
+        return !outExe.empty();
+    }
+    size_t split = 0;
+    while (split < trimmed.size() &&
+           trimmed[split] != ' ' &&
+           trimmed[split] != '\t' &&
+           trimmed[split] != '\r' &&
+           trimmed[split] != '\n') {
+        ++split;
+    }
+    outExe = trimmed.substr(0, split);
+    outArgs = split < trimmed.size() ? TrimCopy(trimmed.substr(split + 1)) : std::string();
+    return !outExe.empty();
 }
 
 /** Win32 API argument quoting (embedded " -> \"). */
@@ -425,15 +469,30 @@ bool LaunchP4VcLike(const BlameAnalysisConfig& cfg,
     ReplacePlaceholder(cmd, "{file}", file);
     ReplacePlaceholder(cmd, "{line}", std::to_string(line));
     ReplacePlaceholder(cmd, "{cl}", cl);
-    LOG_INFO("LaunchP4VcLike (custom cmd via cmd.exe): %s", cmd.c_str());
-    const std::wstring wcmd = Utf8ToWide(cmd);
-    const std::wstring cmdParams = std::wstring(L"/d /c ") + wcmd;
+    if (cmd.find('\r') != std::string::npos || cmd.find('\n') != std::string::npos) {
+        LOG_WARN("LaunchP4VcLike: custom command rejected because it contains newline characters");
+        return false;
+    }
+    std::string exeUtf8;
+    std::string argsUtf8;
+    if (!SplitCommandExecutableAndArgs(cmd, exeUtf8, argsUtf8)) {
+        LOG_WARN("LaunchP4VcLike: custom command parse failed. Expected: <exe> [args]");
+        return false;
+    }
+    LOG_INFO("LaunchP4VcLike (custom direct launch): exe=\"%s\" args=\"%s\"", exeUtf8.c_str(), argsUtf8.c_str());
+    const std::wstring wexe = Utf8ToWide(exeUtf8);
+    const std::wstring wargs = Utf8ToWide(argsUtf8);
     SetLastError(0);
-    const INT_PTR r =
-        reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, nullptr, L"cmd.exe", cmdParams.c_str(), workDirPtr, SW_SHOW));
+    const INT_PTR r = reinterpret_cast<INT_PTR>(ShellExecuteW(
+        nullptr,
+        nullptr,
+        wexe.c_str(),
+        wargs.empty() ? nullptr : wargs.c_str(),
+        workDirPtr,
+        SW_SHOW));
     if (r <= 32) {
         LOG_WARN(
-            "LaunchP4VcLike: ShellExecuteW(cmd) failed, result=%lld GetLastError=%lu",
+            "LaunchP4VcLike: ShellExecuteW(custom) failed, result=%lld GetLastError=%lu",
             static_cast<long long>(r),
             static_cast<unsigned long>(GetLastError()));
     }
@@ -482,6 +541,26 @@ void EnsureDetailLoading(size_t idx, const BlameAnalysisConfig& cfg, const std::
 }
 
 void PollDetails() {
+    for (size_t i = 0; i < g_detachedDetailFuts.size();) {
+        if (!g_detachedDetailFuts[i].valid() ||
+            g_detachedDetailFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            g_detachedDetailFuts.erase(
+                g_detachedDetailFuts.begin() + static_cast<std::vector<std::shared_future<DetailPack>>::difference_type>(i));
+        } else {
+            ++i;
+        }
+    }
+    for (size_t i = 0; i < g_detachedClHoverFuts.size();) {
+        if (!g_detachedClHoverFuts[i].valid() ||
+            g_detachedClHoverFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            g_detachedClHoverFuts.erase(
+                g_detachedClHoverFuts.begin() +
+                static_cast<std::vector<std::shared_future<P4ChangelistDetails>>::difference_type>(i));
+        } else {
+            ++i;
+        }
+    }
+
     std::lock_guard<std::mutex> lk(g_displayMutex);
     for (size_t i = 0; i < g_detailFuts.size(); ++i) {
         if (i >= g_detailPhase.size() || g_detailPhase[i] != 1) {
@@ -499,7 +578,11 @@ void PollDetails() {
         }
         try {
             g_detailData[i] = g_detailFuts[i].get();
+        } catch (const std::exception& ex) {
+            LOG_WARN("Blame detail: idx=%zu path=%s async exception=%s", i, pathForLog.c_str(), ex.what());
+            g_detailData[i].Error = std::string("detail load failed: ") + ex.what();
         } catch (...) {
+            LOG_WARN("Blame detail: idx=%zu path=%s async unknown exception", i, pathForLog.c_str());
             g_detailData[i].Error = "detail load failed";
         }
         if (!g_detailData[i].Error.empty()) {
@@ -520,15 +603,11 @@ bool ResolveP4UserForAssign(AppController& app, const std::string& p4User, std::
     if (!app.JiraSearchUsersByQuery(p4User, users, err)) {
         return false;
     }
-    auto lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return s;
-    };
-    const std::string pl = lower(p4User);
+    const std::string pl = ToLowerAsciiCopy(p4User);
     for (const auto& u : users) {
         size_t at = u.EmailAddress.find('@');
         const std::string local = at == std::string::npos ? u.EmailAddress : u.EmailAddress.substr(0, at);
-        if (!local.empty() && lower(local) == pl) {
+        if (!local.empty() && ToLowerAsciiCopy(local) == pl) {
             accountId = u.AccountId;
             return true;
         }
@@ -649,6 +728,11 @@ void CloseBlameModal(bool* pOpen) {
     }
     {
         std::lock_guard<std::mutex> lk(g_displayMutex);
+        for (auto& fut : g_detailFuts) {
+            if (fut.valid() && fut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+                g_detachedDetailFuts.push_back(fut);
+            }
+        }
         g_displayRows.clear();
         g_detailFuts.clear();
         g_detailPhase.clear();
@@ -656,6 +740,10 @@ void CloseBlameModal(bool* pOpen) {
         g_detailScrolled.clear();
     }
     g_clHoverCl.clear();
+    if (g_clHoverFut.valid() &&
+        g_clHoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        g_detachedClHoverFuts.push_back(g_clHoverFut);
+    }
     g_clHoverFut = std::shared_future<P4ChangelistDetails>();
     std::memset(g_callstackBuf, 0, sizeof(g_callstackBuf));
     g_lastUiStatus.clear();
@@ -782,7 +870,11 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
                     ImGui::TextUnformatted("(no describe details)");
                 }
             }
+        } catch (const std::exception& ex) {
+            LOG_WARN("Blame tooltip: changelist detail future exception: %s", ex.what());
+            ImGui::TextUnformatted("Loading CL info…");
         } catch (...) {
+            LOG_WARN("Blame tooltip: changelist detail future unknown exception");
             ImGui::TextUnformatted("Loading CL info…");
         }
     }
@@ -818,11 +910,11 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     if (!cfgLoaded_) {
         g_blameCfg = ConfigManager::LoadBlameAnalysis();
         g_maxFramesVal = g_blameCfg.DefaultMaxFrames;
-        std::strncpy(g_p4Exe, g_blameCfg.P4Executable.c_str(), sizeof(g_p4Exe) - 1);
-        std::strncpy(g_p4vcExe, g_blameCfg.P4VcExecutable.c_str(), sizeof(g_p4vcExe) - 1);
-        std::strncpy(g_timeTpl, g_blameCfg.TimelapseCommandTemplate.c_str(), sizeof(g_timeTpl) - 1);
-        std::strncpy(g_changeTpl, g_blameCfg.ChangeCommandTemplate.c_str(), sizeof(g_changeTpl) - 1);
-        std::strncpy(g_aiUrl, g_blameCfg.AiChatUrl.c_str(), sizeof(g_aiUrl) - 1);
+        CopyToBuffer(g_p4Exe, g_blameCfg.P4Executable);
+        CopyToBuffer(g_p4vcExe, g_blameCfg.P4VcExecutable);
+        CopyToBuffer(g_timeTpl, g_blameCfg.TimelapseCommandTemplate);
+        CopyToBuffer(g_changeTpl, g_blameCfg.ChangeCommandTemplate);
+        CopyToBuffer(g_aiUrl, g_blameCfg.AiChatUrl);
         size_t off = 0;
         for (const auto& kw : g_blameCfg.DefaultIgnoreKeywords) {
             if (off + kw.size() + 2 >= g_ignoreBuf.size()) {
@@ -1058,11 +1150,11 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 ImGui::SameLine();
                 if (ImGui::Button("Reload settings")) {
                     g_blameCfg = ConfigManager::LoadBlameAnalysis();
-                    std::strncpy(g_p4Exe, g_blameCfg.P4Executable.c_str(), sizeof(g_p4Exe) - 1);
-                    std::strncpy(g_p4vcExe, g_blameCfg.P4VcExecutable.c_str(), sizeof(g_p4vcExe) - 1);
-                    std::strncpy(g_timeTpl, g_blameCfg.TimelapseCommandTemplate.c_str(), sizeof(g_timeTpl) - 1);
-                    std::strncpy(g_changeTpl, g_blameCfg.ChangeCommandTemplate.c_str(), sizeof(g_changeTpl) - 1);
-                    std::strncpy(g_aiUrl, g_blameCfg.AiChatUrl.c_str(), sizeof(g_aiUrl) - 1);
+                    CopyToBuffer(g_p4Exe, g_blameCfg.P4Executable);
+                    CopyToBuffer(g_p4vcExe, g_blameCfg.P4VcExecutable);
+                    CopyToBuffer(g_timeTpl, g_blameCfg.TimelapseCommandTemplate);
+                    CopyToBuffer(g_changeTpl, g_blameCfg.ChangeCommandTemplate);
+                    CopyToBuffer(g_aiUrl, g_blameCfg.AiChatUrl);
                     g_maxFramesVal = g_blameCfg.DefaultMaxFrames;
                     SyncCallstackJiraFieldBufFromCfg();
                     LogBlameP4PathsIfChanged("reload_settings");

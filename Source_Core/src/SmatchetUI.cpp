@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring> // for strncpy
+#include <exception>
 #include <algorithm>
 #include <deque>
 #include <future>
@@ -418,6 +419,51 @@ struct UiDrawSession {
 static UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
 
+static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(const JiraConfig& fetchCfg) {
+    return std::async(std::launch::async, [fetchCfg]() {
+        FieldCatalogFetchResult result;
+        JiraClient client;
+        std::vector<JiraField> fields;
+        std::vector<JiraComponent> components;
+        std::string error;
+        result.Ok = client.FetchFieldCatalog(fetchCfg, fields, components, error);
+        if (!result.Ok) {
+            result.Error = error;
+            return result;
+        }
+
+        std::vector<JiraUser> users;
+        std::string usersError;
+        if (!client.FetchUsers(fetchCfg, users, usersError)) {
+            result.Warning = usersError;
+        }
+
+        if (!users.empty()) {
+            for (auto& field : fields) {
+                if (!field.IsUserType) {
+                    continue;
+                }
+                field.AllowedValues.clear();
+                field.AllowedValueOptions.clear();
+                field.AllowedValues.reserve(users.size());
+                field.AllowedValueOptions.reserve(users.size());
+                for (const auto& user : users) {
+                    field.AllowedValues.push_back(user.DisplayName);
+                    JiraFieldOption option;
+                    option.Id = user.AccountId;
+                    option.Value = user.DisplayName;
+                    field.AllowedValueOptions.push_back(std::move(option));
+                }
+            }
+        }
+
+        result.Fields = std::move(fields);
+        result.Components = std::move(components);
+        result.Users = std::move(users);
+        return result;
+    });
+}
+
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll after a short pause at the end. */
 static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table) {
     constexpr float kBottomHorizontalWheelPauseSec = 0.12f;
@@ -491,22 +537,6 @@ static std::string BuildJiraBrowseUrl(const JiraConfig& cfg, const std::string& 
         base.pop_back();
     }
     return base + "/browse/" + issueKey;
-}
-
-static void OpenUrlInDefaultBrowser(const std::string& url) {
-    if (url.empty()) {
-        return;
-    }
-#if defined(_WIN32)
-    std::string cmd = "start \"\" \"" + url + "\"";
-    std::system(cmd.c_str());
-#elif defined(__APPLE__)
-    std::string cmd = "open \"" + url + "\"";
-    std::system(cmd.c_str());
-#else
-    std::string cmd = "xdg-open \"" + url + "\"";
-    std::system(cmd.c_str());
-#endif
 }
 
 class TicketEditService {
@@ -1049,48 +1079,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
         }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
-        d.fieldCatalogFuture = std::async(std::launch::async, [fetchCfg]() {
-            FieldCatalogFetchResult result;
-            JiraClient client;
-            std::vector<JiraField> fields;
-            std::vector<JiraComponent> components;
-            std::string error;
-            result.Ok = client.FetchFieldCatalog(fetchCfg, fields, components, error);
-            if (!result.Ok) {
-                result.Error = error;
-                return result;
-            }
-
-            std::vector<JiraUser> users;
-            std::string usersError;
-            if (!client.FetchUsers(fetchCfg, users, usersError)) {
-                result.Warning = usersError;
-            }
-
-            if (!users.empty()) {
-                for (auto& field : fields) {
-                    if (!field.IsUserType) {
-                        continue;
-                    }
-                    field.AllowedValues.clear();
-                    field.AllowedValueOptions.clear();
-                    field.AllowedValues.reserve(users.size());
-                    field.AllowedValueOptions.reserve(users.size());
-                    for (const auto& user : users) {
-                        field.AllowedValues.push_back(user.DisplayName);
-                        JiraFieldOption option;
-                        option.Id = user.AccountId;
-                        option.Value = user.DisplayName;
-                        field.AllowedValueOptions.push_back(std::move(option));
-                    }
-                }
-            }
-
-            result.Fields = std::move(fields);
-            result.Components = std::move(components);
-            result.Users = std::move(users);
-            return result;
-        });
+        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(fetchCfg);
     };
 
     if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
@@ -1101,16 +1090,26 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
     if (d.fieldCatalogLoading &&
         d.fieldCatalogFuture.valid() &&
         d.fieldCatalogFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-        FieldCatalogFetchResult result = d.fieldCatalogFuture.get();
-        if (result.Ok) {
-            app.SetJiraFieldCatalog(std::move(result.Fields), std::move(result.Components), std::string());
-            d.fieldCatalogWarning = result.Warning;
-            if (!d.fieldCatalogWarning.empty()) {
-                LOG_WARN("SmatchetUI: users fetch warning: %s", d.fieldCatalogWarning.c_str());
+        try {
+            FieldCatalogFetchResult result = d.fieldCatalogFuture.get();
+            if (result.Ok) {
+                app.SetJiraFieldCatalog(std::move(result.Fields), std::move(result.Components), std::string());
+                d.fieldCatalogWarning = result.Warning;
+                if (!d.fieldCatalogWarning.empty()) {
+                    LOG_WARN("SmatchetUI: users fetch warning: %s", d.fieldCatalogWarning.c_str());
+                }
+            } else {
+                app.SetJiraFieldCatalog({}, {}, result.Error.empty() ? std::string("Failed to fetch Jira field catalog.") : result.Error);
+                d.fieldCatalogWarning.clear();
             }
-        } else {
-            app.SetJiraFieldCatalog({}, {}, result.Error.empty() ? std::string("Failed to fetch Jira field catalog.") : result.Error);
+        } catch (const std::exception& ex) {
+            app.SetJiraFieldCatalog({}, {}, std::string("Field catalog load failed: ") + ex.what());
             d.fieldCatalogWarning.clear();
+            LOG_ERROR("SmatchetUI: field catalog future exception: %s", ex.what());
+        } catch (...) {
+            app.SetJiraFieldCatalog({}, {}, "Field catalog load failed.");
+            d.fieldCatalogWarning.clear();
+            LOG_ERROR("SmatchetUI: field catalog future unknown exception");
         }
         d.fieldCatalogLoading = false;
     }
@@ -1745,7 +1744,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                         d.gridState.SelectRow(ticket.id);
                         if (ImGui::IsMouseDoubleClicked(0)) {
                             const std::string url = BuildJiraBrowseUrl(d.cfg, ticket.id);
-                            OpenUrlInDefaultBrowser(url);
+                            app.OpenUrl(url);
                         }
                     }
                     ImGui::EndGroup();

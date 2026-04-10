@@ -1,9 +1,12 @@
 #include "P4Blame.h"
 #include "Logger.h"
+#include "P4ErrorUtil.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <regex>
 
@@ -22,37 +25,8 @@ namespace {
 
 constexpr size_t kP4LogMaxStderr = 2048;
 constexpr size_t kP4LogMaxStdoutTrace = 8192;
-
-std::string TruncateForLog(std::string s, size_t maxLen) {
-    if (s.size() <= maxLen) {
-        return s;
-    }
-    s.resize(maxLen);
-    s += "... [truncated]";
-    return s;
-}
-
-std::string JoinArgsForLog(const std::vector<std::string>& args) {
-    std::string out;
-    for (size_t i = 0; i < args.size(); ++i) {
-        if (i > 0) {
-            out += ' ';
-        }
-        out += args[i];
-    }
-    return out;
-}
-
-
-std::string Trim(std::string s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
-        s.erase(0, 1);
-    }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
-        s.pop_back();
-    }
-    return s;
-}
+constexpr DWORD kP4ProcessTimeoutMs = 120000;
+constexpr size_t kP4CaptureBytesMax = 4u * 1024u * 1024u;
 
 #ifdef _WIN32
 std::wstring Utf8ToWide(const std::string& s) {
@@ -128,7 +102,8 @@ bool RunProcessCapture(const std::wstring& applicationName,
     si.wShowWindow = SW_HIDE;
     si.hStdOutput = wrOut;
     si.hStdError = wrErr;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE hNullInput = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    si.hStdInput = (hNullInput != INVALID_HANDLE_VALUE) ? hNullInput : GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi{};
     std::vector<wchar_t> mutableCmd(commandLine.begin(), commandLine.end());
@@ -149,6 +124,9 @@ bool RunProcessCapture(const std::wstring& applicationName,
     CloseHandle(wrErr);
     if (!ok) {
         LOG_ERROR("P4 RunProcessCapture: CreateProcessW failed GetLastError=%lu", static_cast<unsigned long>(GetLastError()));
+        if (hNullInput != INVALID_HANDLE_VALUE) {
+            CloseHandle(hNullInput);
+        }
         CloseHandle(rdOut);
         CloseHandle(rdErr);
         return false;
@@ -156,16 +134,43 @@ bool RunProcessCapture(const std::wstring& applicationName,
 
     char buf[4096];
     DWORD n = 0;
+    bool outCapped = false;
+    bool errCapped = false;
+    bool timedOut = false;
+    auto appendCapped = [](std::string& dst, const char* src, size_t count, bool& capped) {
+        if (capped || count == 0) {
+            return;
+        }
+        const size_t remaining = (dst.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - dst.size()) : 0;
+        const size_t toAppend = std::min(remaining, count);
+        if (toAppend > 0) {
+            dst.append(src, toAppend);
+        }
+        if (toAppend < count || dst.size() >= kP4CaptureBytesMax) {
+            capped = true;
+            static const char* kSuffix = "\n... [capture capped]";
+            dst.append(kSuffix);
+        }
+    };
+    const DWORD startedAt = GetTickCount();
     for (;;) {
         n = 0;
         if (ReadFile(rdOut, buf, sizeof(buf), &n, nullptr) && n > 0) {
-            outStdout.append(buf, n);
+            appendCapped(outStdout, buf, static_cast<size_t>(n), outCapped);
         }
         n = 0;
         if (ReadFile(rdErr, buf, sizeof(buf), &n, nullptr) && n > 0) {
-            outStderr.append(buf, n);
+            appendCapped(outStderr, buf, static_cast<size_t>(n), errCapped);
         }
         if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+            break;
+        }
+        const DWORD elapsed = GetTickCount() - startedAt;
+        if (elapsed > kP4ProcessTimeoutMs) {
+            timedOut = true;
+            LOG_WARN("P4 RunProcessCapture: process timeout after %lu ms; terminating child", static_cast<unsigned long>(elapsed));
+            TerminateProcess(pi.hProcess, 124);
+            WaitForSingleObject(pi.hProcess, 5000);
             break;
         }
         if (n == 0) {
@@ -173,15 +178,27 @@ bool RunProcessCapture(const std::wstring& applicationName,
         }
     }
     while (ReadFile(rdOut, buf, sizeof(buf), &n, nullptr) && n > 0) {
-        outStdout.append(buf, n);
+        appendCapped(outStdout, buf, static_cast<size_t>(n), outCapped);
     }
     while (ReadFile(rdErr, buf, sizeof(buf), &n, nullptr) && n > 0) {
-        outStderr.append(buf, n);
+        appendCapped(outStderr, buf, static_cast<size_t>(n), errCapped);
     }
 
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
     outExit = static_cast<int>(code);
+    if (timedOut && outExit == STILL_ACTIVE) {
+        outExit = 124;
+    }
+    if (timedOut && outStderr.empty()) {
+        outStderr = "p4 process timed out";
+    }
+    if (outCapped || errCapped) {
+        LOG_WARN("P4 RunProcessCapture: output capture capped at %zu bytes per stream", kP4CaptureBytesMax);
+    }
+    if (hNullInput != INVALID_HANDLE_VALUE) {
+        CloseHandle(hNullInput);
+    }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     CloseHandle(rdOut);
@@ -196,10 +213,10 @@ std::vector<std::string> SplitLines(const std::string& s) {
     while (i < s.size()) {
         size_t j = s.find('\n', i);
         if (j == std::string::npos) {
-            lines.push_back(Trim(s.substr(i)));
+            lines.push_back(TrimCopy(s.substr(i)));
             break;
         }
-        lines.push_back(Trim(s.substr(i, j - i)));
+        lines.push_back(TrimCopy(s.substr(i, j - i)));
         i = j + 1;
     }
     return lines;
@@ -312,7 +329,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
     }
 
     const std::string exeLogged = WideToUtf8(appName);
-    LOG_INFO("P4: spawn exe=\"%s\" args: %s", exeLogged.c_str(), JoinArgsForLog(args).c_str());
+    LOG_INFO("P4: spawn exe=\"%s\" args: %s", exeLogged.c_str(), JoinStrings(args, " ").c_str());
 
     std::wstring cmd;
     cmd += QuoteArg(appName);
@@ -361,8 +378,26 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
         return false;
     }
     char buf[4096];
+    bool outCapped = false;
+    const auto startedAt = clock::now();
     while (fgets(buf, sizeof(buf), pipe)) {
-        outStdout += buf;
+        const size_t chunkLen = std::strlen(buf);
+        if (!outCapped) {
+            const size_t remaining = (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
+            const size_t toAppend = std::min(remaining, chunkLen);
+            if (toAppend > 0) {
+                outStdout.append(buf, toAppend);
+            }
+            if (toAppend < chunkLen || outStdout.size() >= kP4CaptureBytesMax) {
+                outCapped = true;
+                outStdout += "\n... [capture capped]";
+            }
+        }
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - startedAt).count();
+        if (elapsedMs > static_cast<long long>(kP4ProcessTimeoutMs)) {
+            LOG_WARN("P4: popen read loop exceeded timeout (%lld ms); waiting for child exit", elapsedMs);
+            break;
+        }
     }
     const int st = pclose(pipe);
     outExitCode = (st != -1 && WIFEXITED(st)) ? WEXITSTATUS(st) : -1;
@@ -372,6 +407,9 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
              static_cast<long long>(ms));
     if (outExitCode != 0) {
         LOG_WARN("P4: non-zero exit=%d (stderr unavailable via popen)", outExitCode);
+    }
+    if (outCapped) {
+        LOG_WARN("P4: stdout capture capped at %zu bytes on popen path", kP4CaptureBytesMax);
     }
     if (Logger::Instance().GetLogP4Io() && Logger::Instance().ShouldLog(LogLevel::Trace) && !outStdout.empty()) {
         LOG_TRACE("P4: stdout: %s", TruncateForLog(outStdout, kP4LogMaxStdoutTrace).c_str());
@@ -408,7 +446,7 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
         return result;
     }
     if (code != 0) {
-        result.Error = err.empty() ? ("p4 annotate exit " + std::to_string(code)) : err;
+        result.Error = FormatP4CommandError("p4 annotate failed", code, err);
         LOG_DEBUG(
             "P4BlameLine: annotate non-zero exit=%d, trying changes fallback pathArg=%s err=%s",
             code,
@@ -514,7 +552,7 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg,
         return rows;
     }
     if (code != 0) {
-        outError = err.empty() ? ("p4 annotate exit " + std::to_string(code)) : err;
+        outError = FormatP4CommandError("p4 annotate failed", code, err);
         LOG_WARN(
             "P4AnnotateFile: annotate failed exit=%d pathArg=%s err=%s",
             code,
@@ -601,7 +639,7 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisCon
     P4ChangelistDetails d;
     d.Loaded = true;
     if (!P4RunCommand(cfg, args, code, out, err) || code != 0) {
-        d.Error = err.empty() ? ("p4 describe failed: " + std::to_string(code)) : err;
+        d.Error = FormatP4CommandError("p4 describe failed", code, err);
         LOG_WARN(
             "P4ChangelistDescribeCache: describe failed cl=%s err=%s",
             changelist.c_str(),
@@ -618,7 +656,7 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisCon
         std::string who = m[1].str();
         StripP4UserDomain(who);
         d.Author = who;
-        d.Date = Trim(m[2].str());
+        d.Date = TrimCopy(m[2].str());
     } else if (std::regex_search(out, m, headOnBy)) {
         d.Date = m[1].str();
         std::string who = m[2].str();
@@ -630,11 +668,17 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisCon
         descStart = out.find('\n');
     }
     if (descStart != std::string::npos) {
-        d.Description = Trim(out.substr(descStart));
+        d.Description = TrimCopy(out.substr(descStart));
         if (d.Description.size() > 2000) {
             d.Description.resize(2000);
             d.Description += "...";
         }
+    }
+    if (d.Author.empty() && d.Date.empty()) {
+        LOG_DEBUG(
+            "P4ChangelistDescribeCache: header parse miss cl=%s stdout=%s",
+            changelist.c_str(),
+            TruncateForLog(out, 300).c_str());
     }
     Store(changelist, d);
     return d;

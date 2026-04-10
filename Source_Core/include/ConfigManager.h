@@ -8,7 +8,10 @@
 #include <vector>
 #include <unordered_map>
 #include <chrono>
+#include <mutex>
 #include <nlohmann/json.hpp>
+
+#include "Logger.h"
 
 struct JiraConfig {
     std::string Domain;    // e.g., "yourcompany.atlassian.net"
@@ -104,24 +107,40 @@ public:
     static const std::string& GetFilesBaseDirectory() { return GetBaseDirectoryRef(); }
 
     static nlohmann::json LoadMergedConfigJson() {
-        std::ifstream file(GetConfigPath());
+        const std::string path = GetConfigPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        std::ifstream file(path);
         nlohmann::json j = nlohmann::json::object();
         if (file.is_open()) {
             try {
                 file >> j;
+            } catch (const std::exception& ex) {
+                LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), ex.what());
+                j = nlohmann::json::object();
             } catch (...) {
+                LOG_ERROR("ConfigManager: failed to parse config '%s' with unknown exception", path.c_str());
                 j = nlohmann::json::object();
             }
         }
         if (!j.is_object()) {
+            LOG_WARN("ConfigManager: config root is not an object for '%s'; using defaults", path.c_str());
             j = nlohmann::json::object();
         }
         return j;
     }
 
     static void WriteConfigJson(const nlohmann::json& j) {
-        std::ofstream file(GetConfigPath());
+        const std::string path = GetConfigPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        std::ofstream file(path);
+        if (!file.is_open()) {
+            LOG_ERROR("ConfigManager: failed to open config for write '%s'", path.c_str());
+            return;
+        }
         file << j.dump(4);
+        if (!file.good()) {
+            LOG_ERROR("ConfigManager: failed to write config '%s'", path.c_str());
+        }
     }
 
     static void Save(const JiraConfig& config) {
@@ -262,7 +281,11 @@ public:
             cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
             cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
             return cfg;
+        } catch (const std::exception& ex) {
+            LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
+            return {};
         } catch (...) {
+            LOG_ERROR("ConfigManager: Load() parse error (unknown)");
             return {};
         }
     }
@@ -280,6 +303,7 @@ public:
     }
 
     static void SaveViews(const ViewsStore& store) {
+        const std::string viewsPath = GetViewsPath();
         nlohmann::json j;
         j["version"] = store.Version;
         j["active_view_id"] = store.ActiveViewId;
@@ -305,13 +329,22 @@ public:
             j["views"].push_back(viewJson);
         }
 
-        const std::string viewsPath = GetViewsPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
         std::ofstream file(viewsPath);
+        if (!file.is_open()) {
+            LOG_ERROR("ConfigManager: failed to open views file for write '%s'", viewsPath.c_str());
+            return;
+        }
         file << j.dump(4);
+        if (!file.good()) {
+            LOG_ERROR("ConfigManager: failed to write views file '%s'", viewsPath.c_str());
+        }
     }
 
     static ViewsStore LoadViews() {
-        std::ifstream file(GetViewsPath());
+        const std::string viewsPath = GetViewsPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        std::ifstream file(viewsPath);
         if (!file.is_open()) {
             return {};
         }
@@ -375,7 +408,11 @@ public:
             }
         }
         return store;
+        } catch (const std::exception& ex) {
+            LOG_ERROR("ConfigManager: failed to parse views '%s': %s", viewsPath.c_str(), ex.what());
+            return {};
         } catch (...) {
+            LOG_ERROR("ConfigManager: failed to parse views '%s' with unknown exception", viewsPath.c_str());
             return {};
         }
     }
@@ -414,7 +451,25 @@ public:
         store.Views.push_back(defaultView);
         SaveViews(store);
         return store;
+        } catch (const std::exception& ex) {
+            LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error: %s", ex.what());
+            ViewsStore fallback;
+            fallback.Version = 1;
+            ViewDefinition defaultView;
+            defaultView.Id = "default_view";
+            defaultView.Name = "Default View";
+            defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
+            defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
+            defaultView.ColumnOrder = {"id"};
+            for (const auto& fieldId : defaultView.Fields) {
+                defaultView.ColumnOrder.push_back("field:" + fieldId);
+            }
+            defaultView.ColumnWidths["id"] = 90.0f;
+            fallback.ActiveViewId = defaultView.Id;
+            fallback.Views.push_back(std::move(defaultView));
+            return fallback;
         } catch (...) {
+            LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error (unknown)");
             ViewsStore fallback;
             fallback.Version = 1;
             ViewDefinition defaultView;
@@ -434,6 +489,11 @@ public:
     }
 
 private:
+    static std::mutex& GetIoMutexRef() {
+        static std::mutex s_mutex;
+        return s_mutex;
+    }
+
     static std::string& GetBaseDirectoryRef() {
         static std::string s;
         return s;
