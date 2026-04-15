@@ -7,22 +7,49 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
+
+enum class JiraFieldFamily {
+    Unknown,
+    Text,
+    Number,
+    Date,
+    DateTime,
+    Labels,
+    UserSingle,
+    UserMulti,
+    SelectSingle,
+    SelectMulti,
+    CascadingSelect,
+    StructuredSingle,
+    StructuredMulti,
+    Sprint,
+    Status,
+    IssueType
+};
 
 struct JiraFieldOption {
     std::string Id;
     std::string Value;
+    std::string SecondaryValue;
+    std::string PayloadJson;
+    std::vector<JiraFieldOption> Children;
+    bool Disabled = false;
 };
 
 struct JiraField {
     std::string Id;
     std::string Name;
     std::string Type;
+    std::string SchemaSystem;
+    std::string SchemaCustom;
     bool ReadOnly = false;
     bool IsArray = false;
     std::string ItemsType;
     bool IsUserType = false;
     bool IsCustom = false;
+    JiraFieldFamily Family = JiraFieldFamily::Unknown;
     std::vector<std::string> AllowedValues;
     std::vector<JiraFieldOption> AllowedValueOptions;
     /** Pretty JSON object from GET /rest/api/3/field for this id (empty if unknown / synthetic). */
@@ -58,6 +85,15 @@ public:
                            std::vector<JiraField>& outFields,
                            std::vector<JiraComponent>& outComponents,
                            std::string& outError);
+
+    /**
+     * GET /rest/api/3/issue/{issueKeyOrId}/editmeta
+     * Fills outFieldIdCanEdit: field id -> true if Jira lists an edit operation (set/add/remove).
+     */
+    bool FetchIssueEditMeta(const JiraConfig& cfg,
+                            const std::string& issueKeyOrId,
+                            std::unordered_map<std::string, bool>& outFieldIdCanEdit,
+                            std::string& outError);
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
     bool FetchIssueWatchers(const JiraConfig& cfg,
@@ -114,6 +150,12 @@ public:
                              const std::string& accountId,
                              std::vector<std::string>& outGroupNames,
                              std::string& outError);
+
+    /** Move/add an issue to a sprint via Jira Agile API. */
+    bool AddIssueToSprint(const JiraConfig& cfg,
+                          const std::string& issueKey,
+                          const std::string& sprintId,
+                          std::string& outError);
 };
 
 #endif

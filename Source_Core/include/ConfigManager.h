@@ -23,7 +23,8 @@ struct JiraConfig {
     std::string JqlQuery = "assignee=currentUser()";
     // Jira field keys to extract and cache (e.g. customfield_12345, duedate).
     std::vector<std::string> SelectedFields;
-    // When true, show tooltips for clipped/multiline field values.
+    // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
+    // Exposed in UI as Settings → Preferences → Appearance.
     bool EnableFieldOverflowTooltips = true;
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
@@ -31,6 +32,16 @@ struct JiraConfig {
     bool LogJiraHttpBodies = false;
     // When true, P4Blame logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
     bool LogP4Io = false;
+    // OpenAI-compatible API key used by the AI Assistant panel.
+    std::string AiApiKey;
+    // OpenAI-compatible model id (for example: gpt-4o-mini).
+    std::string AiModel = "gpt-4o-mini";
+    // OpenAI-compatible API base URL (for example: https://api.openai.com).
+    std::string AiBaseUrl = "https://api.openai.com";
+    // When true, MCP plugin HTTP server is started.
+    bool McpEnabled = false;
+    // MCP plugin listen port.
+    int McpPort = 8080;
 };
 
 struct ViewSortSpec {
@@ -154,6 +165,11 @@ public:
         j["log_min_level"] = config.LogMinLevel;
         j["log_jira_http_bodies"] = config.LogJiraHttpBodies;
         j["log_p4_io"] = config.LogP4Io;
+        j["ai_api_key"] = config.AiApiKey;
+        j["ai_model"] = config.AiModel;
+        j["ai_base_url"] = config.AiBaseUrl;
+        j["mcp_enabled"] = config.McpEnabled;
+        j["mcp_port"] = config.McpPort;
         WriteConfigJson(j);
     }
 
@@ -280,6 +296,14 @@ public:
             cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
             cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
             cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
+            cfg.AiApiKey = j.value("ai_api_key", std::string{});
+            cfg.AiModel = j.value("ai_model", cfg.AiModel);
+            cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
+            cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
+            cfg.McpPort = j.value("mcp_port", cfg.McpPort);
+            if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
+                cfg.McpPort = 8080;
+            }
             return cfg;
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());

@@ -26,6 +26,29 @@ struct AttachmentInfo {
     std::string mimeType;
 };
 
+bool IsExplicitlyEmptyAttachmentsFieldValue(const std::string& currentValue) {
+    const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
+    if (trimmed.empty()) {
+        return true;
+    }
+
+    nlohmann::json j;
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j)) {
+        return false;
+    }
+
+    if (j.is_null()) {
+        return true;
+    }
+    if (j.is_array()) {
+        return j.empty();
+    }
+    if (j.is_object() && j.contains("attachments") && j["attachments"].is_array()) {
+        return j["attachments"].empty();
+    }
+    return false;
+}
+
 bool ParseAttachmentsFieldValue(const std::string& currentValue, std::vector<AttachmentInfo>& outAttachments) {
     outAttachments.clear();
     const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
@@ -34,28 +57,35 @@ bool ParseAttachmentsFieldValue(const std::string& currentValue, std::vector<Att
     }
 
     nlohmann::json j;
-    try {
-        if (!trimmed.empty() && trimmed.front() == '[') {
-            j = nlohmann::json::parse(trimmed);
-        } else {
-            j = nlohmann::json::parse("[" + trimmed + "]");
-        }
-    } catch (...) {
+    if (!TryParseJsonMaybeDoubleEncoded(trimmed, j)) {
         return false;
     }
 
-    if (!j.is_array()) {
+    nlohmann::json items = nlohmann::json::array();
+    if (j.is_array()) {
+        items = j;
+    } else if (j.is_object() && j.contains("attachments") && j["attachments"].is_array()) {
+        items = j["attachments"];
+    } else if (j.is_object()) {
+        items.push_back(j);
+    } else {
         return false;
     }
 
-    for (const auto& item : j) {
+    for (const auto& item : items) {
         if (!item.is_object()) {
             continue;
         }
 
         AttachmentInfo info;
         info.filename = item.value("filename", std::string());
+        if (info.filename.empty()) {
+            info.filename = item.value("name", std::string());
+        }
         info.mimeType = item.value("mimeType", std::string());
+        if (info.mimeType.empty()) {
+            info.mimeType = item.value("mime_type", std::string());
+        }
 
         if (item.contains("content")) {
             const auto& content = item["content"];
@@ -65,6 +95,9 @@ bool ParseAttachmentsFieldValue(const std::string& currentValue, std::vector<Att
                 info.url = content.value("url", std::string());
                 if (info.url.empty()) {
                     info.url = content.value("self", std::string());
+                }
+                if (info.url.empty()) {
+                    info.url = content.value("href", std::string());
                 }
             }
         }
@@ -345,51 +378,52 @@ void JiraGridFieldDisplay::RenderAttachmentsField(AppController& app,
                                                   const std::string& currentValue,
                                                   float availWidth,
                                                   bool tooltipsEnabled) {
-    (void)availWidth;
-    (void)tooltipsEnabled;
-
     std::vector<AttachmentInfo> attachments;
     if (!ParseAttachmentsFieldValue(currentValue, attachments)) {
+        if (IsExplicitlyEmptyAttachmentsFieldValue(currentValue)) {
+            RenderClippedFieldText(std::string(), availWidth, tooltipsEnabled, true);
+            return;
+        }
         RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
         return;
     }
 
-    const AttachmentInfo& first = attachments.front();
-    const std::string firstName = first.filename.empty() ? std::string("Attachment") : first.filename;
-    const int extraCount = static_cast<int>(attachments.size()) - 1;
+    std::vector<AppController::AttachmentDescriptor> descriptors;
+    descriptors.reserve(attachments.size());
+    for (const auto& attachment : attachments) {
+        AppController::AttachmentDescriptor descriptor;
+        descriptor.Filename = attachment.filename.empty() ? std::string("Attachment") : attachment.filename;
+        descriptor.Url = attachment.url;
+        descriptor.MimeType = attachment.mimeType;
+        descriptors.push_back(std::move(descriptor));
+    }
 
-    std::string display = firstName;
+    std::string display = descriptors.front().Filename;
+    const int extraCount = static_cast<int>(descriptors.size()) - 1;
     if (extraCount > 0) {
         display += " +" + std::to_string(extraCount);
     }
 
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.65f, 1.0f, 1.0f));
     ImGui::TextUnformatted(display.c_str());
+    ImGui::PopStyleColor();
+
     if (ImGui::IsItemHovered()) {
-        if (!first.mimeType.empty()) {
-            ImGui::SetTooltip("MIME: %s", first.mimeType.c_str());
-        } else if (extraCount > 0) {
-            std::string tip;
-            tip += "Attachments:\n";
-            for (const auto& a : attachments) {
-                const std::string name = a.filename.empty() ? std::string("Attachment") : a.filename;
-                tip += " - " + name + "\n";
+        std::string tip = "Click to open attachments window.\n";
+        tip += "Attachments:\n";
+        for (const auto& descriptor : descriptors) {
+            tip += " - " + descriptor.Filename;
+            if (!descriptor.MimeType.empty()) {
+                tip += " [" + descriptor.MimeType + "]";
             }
-            ImGui::SetTooltip("%s", tip.c_str());
+            tip += "\n";
         }
+        ImGui::SetTooltip("%s", tip.c_str());
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
 
-    if (!first.url.empty()) {
-        ImGui::SameLine();
-        const std::string openId = "##att_open_first";
-        if (ImGui::SmallButton(openId.c_str())) {
-            app.OpenAttachment(first.url, firstName, first.mimeType);
-        }
-
-        ImGui::SameLine();
-        const std::string copyId = "##att_copy_first";
-        if (ImGui::SmallButton(copyId.c_str())) {
-            ImGui::SetClipboardText(first.url.c_str());
-        }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        app.ShowAttachmentCollection(descriptors);
     }
 }
 

@@ -25,6 +25,7 @@
 
 // Smatchet core components (needed for the pImpl state).
 #include "AppController.h"
+#include "ConfigManager.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #include "McpPlugin.h"
@@ -311,7 +312,14 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     ImplData->App.SetOpenUrlHandler(options.OpenUrlHandler);
     ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
 
-    ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(options.McpPort)));
+    JiraConfig cfg = ConfigManager::Load();
+    const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
+    if (cfg.McpEnabled) {
+        ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
+        LOG_INFO("SmatchetImGuiHost: MCP plugin enabled on port %d", mcpPort);
+    } else {
+        LOG_INFO("SmatchetImGuiHost: MCP plugin disabled by config.");
+    }
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
     ImplData->Plugins.OnEarlyInit(ImplData->App);
     ImplData->App.Initialize(options.DbPath, options.BackendType);

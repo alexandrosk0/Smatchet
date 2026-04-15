@@ -26,6 +26,7 @@ compile_commands.json
 .vscode/
 .idea/
 cmake-build-*/
+out/
 
 # OS
 Thumbs.db

@@ -190,7 +190,13 @@ int main(int, char**) {
     // 3. Initialize Smatchet Core + plugins
     AppController smatchetApp;
     PluginHost pluginHost;
-    pluginHost.Register(std::make_unique<McpPlugin>(8080));
+    {
+        const JiraConfig cfg = ConfigManager::Load();
+        if (cfg.McpEnabled) {
+            const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : 8080;
+            pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
+        }
+    }
     pluginHost.Register(std::make_unique<LuaConsolePlugin>());
     pluginHost.OnEarlyInit(smatchetApp);
 

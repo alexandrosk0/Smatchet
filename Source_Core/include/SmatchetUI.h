@@ -16,9 +16,10 @@ private:
 
     void drawEnsureCatalogAndInitialSync(AppController& app);
     void drawMainMenuBar();
-    void drawJiraCredentialsModal(AppController& app);
+    void drawPreferencesWindow(AppController& app);
     void drawViewsDashboardWindow(AppController& app);
     void drawActiveProjectWindow(AppController& app);
+    void drawAttachmentPreviewWindow(AppController& app);
     void drawAIAssistantWindow(AppController& app);
     void drawLogWindow();
 };

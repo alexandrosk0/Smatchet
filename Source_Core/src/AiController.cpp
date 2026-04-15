@@ -12,7 +12,9 @@
 
 AiController::AiResult AiController::AnalyzeTicket(const std::string& key,
                                                    const std::string& summary,
-                                                   const std::string& apiKey) {
+                                                   const std::string& apiKey,
+                                                   const std::string& model,
+                                                   const std::string& baseUrl) {
     if (apiKey.empty()) {
         LOG_WARN("AiController: AnalyzeTicket called without API key (key=%s)", key.c_str());
         return { false, "No API Key provided." };
@@ -25,22 +27,34 @@ AiController::AiResult AiController::AnalyzeTicket(const std::string& key,
                          "Task: Provide a 3-bullet point technical action plan.";
 
     // Example using an OpenAI-compatible endpoint (works for most LLM providers)
+    const std::string modelId = model.empty() ? std::string("gpt-4o-mini") : model;
+    std::string apiBase = baseUrl.empty() ? std::string("https://api.openai.com") : baseUrl;
+    while (!apiBase.empty() && apiBase.back() == '/') {
+        apiBase.pop_back();
+    }
+    if (apiBase.find("http://") != 0 && apiBase.find("https://") != 0) {
+        apiBase = "https://" + apiBase;
+    }
+    const std::string endpoint = apiBase + "/v1/chat/completions";
+
     nlohmann::json body = {
-        {"model", "gpt-3.5-turbo"},
+        {"model", modelId},
         {"messages", nlohmann::json::array({
             {{"role", "user"}, {"content", prompt}}
         })}
     };
 
     const std::string bodyStr = body.dump();
-    auto r = cpr::Post(cpr::Url{"https://api.openai.com/v1/chat/completions"},
+    auto r = cpr::Post(cpr::Url{endpoint},
                        cpr::Header{{"Content-Type", "application/json"},
                                    {"Authorization", "Bearer " + apiKey}},
                        cpr::Body{bodyStr});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::OpenAi,
         static_cast<std::uint64_t>(bodyStr.size()), r);
-    LOG_INFO("AiController: completion request key=%s status=%d bytes=%zu",
+    LOG_INFO("AiController: completion request key=%s model=%s endpoint=%s status=%d bytes=%zu",
              key.c_str(),
+             modelId.c_str(),
+             endpoint.c_str(),
              static_cast<int>(r.status_code),
              r.text.size());
 

@@ -7,18 +7,39 @@
 #include "SpreadsheetState.h"
 #include "AiController.h"
 #include "Logger.h"
+#include "NavigationHistory.h"
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
+#include "StringUtil.h"
+#include "JiraLabelsEditor.h"
+#include "JiraDateTimeFieldEditor.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincodec.h>
+#endif
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#include "imgui_impl_opengl3_loader.h"
+#endif
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring> // for strncpy
 #include <exception>
+#include <fstream>
 #include <algorithm>
 #include <deque>
 #include <future>
+#include <iterator>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -207,7 +228,7 @@ int CompareFieldValuesForSort(const std::string& fieldId,
         } catch (...) {}
     }
     auto ciCompare = [](const std::string& x, const std::string& y) {
-        const size_t n = std::min(x.size(), y.size());
+        const size_t n = (std::min)(x.size(), y.size());
         for (size_t i = 0; i < n; ++i) {
             const int cxa = std::tolower(static_cast<unsigned char>(x[i]));
             const int cxb = std::tolower(static_cast<unsigned char>(y[i]));
@@ -229,6 +250,11 @@ bool IsJiraDateOrDateTimeField(const std::string& fieldId, const JiraField* fiel
     return false;
 }
 
+bool IsAttachmentFieldId(const std::string& fieldId) {
+    const std::string lower = ToLowerAsciiCopy(fieldId);
+    return lower == "attachment" || lower == "attachments";
+}
+
 std::string DisplayValueForJiraDateField(const std::string& fieldId,
                                          const JiraField* field,
                                          const std::string& currentValue) {
@@ -238,6 +264,498 @@ std::string DisplayValueForJiraDateField(const std::string& fieldId,
     const std::string compact = FormatCompactJiraDateForDisplay(currentValue);
     return compact.empty() ? currentValue : compact;
 }
+
+struct AttachmentCollectionRequest {
+    std::vector<AppController::AttachmentDescriptor> Attachments;
+};
+
+struct AttachmentPreviewUpdate {
+    std::string LocalPath;
+    std::string MimeType;
+    std::string Filename;
+    std::string Url;
+};
+
+struct AttachmentWindowEntry {
+    std::string Filename;
+    std::string Url;
+    std::string MimeType;
+    std::string LocalPath;
+    int ImageWidth = 0;
+    int ImageHeight = 0;
+    std::string PreviewError;
+    bool PreviewRequestIssued = false;
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+    ImTextureID ThumbnailTextureId = ImTextureID_Invalid;
+#endif
+};
+
+struct ParsedImageInfo {
+    bool Ok = false;
+    int Width = 0;
+    int Height = 0;
+    std::string Error;
+};
+
+static bool IsSupportedImageMime(const std::string& mimeType) {
+    const auto semiPos = mimeType.find(';');
+    const std::string normalized =
+        ToLowerAsciiCopy(TrimCopyAsciiWhitespace(semiPos == std::string::npos ? mimeType : mimeType.substr(0, semiPos)));
+    return normalized == "image/png" ||
+           normalized == "image/jpeg" ||
+           normalized == "image/jpg" ||
+           normalized == "image/gif" ||
+           normalized == "image/webp";
+}
+
+static std::uint32_t ReadU32BE(const unsigned char* data) {
+    return (static_cast<std::uint32_t>(data[0]) << 24) |
+           (static_cast<std::uint32_t>(data[1]) << 16) |
+           (static_cast<std::uint32_t>(data[2]) << 8) |
+           static_cast<std::uint32_t>(data[3]);
+}
+
+static std::uint16_t ReadU16LE(const unsigned char* data) {
+    return static_cast<std::uint16_t>(data[0]) |
+           static_cast<std::uint16_t>(data[1] << 8);
+}
+
+static std::uint32_t ReadU24LE(const unsigned char* data) {
+    return static_cast<std::uint32_t>(data[0]) |
+           (static_cast<std::uint32_t>(data[1]) << 8) |
+           (static_cast<std::uint32_t>(data[2]) << 16);
+}
+
+static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::string& mimeType) {
+    ParsedImageInfo result;
+    if (path.empty()) {
+        result.Error = "Attachment preview path is empty.";
+        return result;
+    }
+    std::ifstream ifs(path.c_str(), std::ios::binary);
+    if (!ifs.is_open()) {
+        result.Error = "Failed to open downloaded attachment file.";
+        return result;
+    }
+    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) {
+        result.Error = "Downloaded attachment file is empty.";
+        return result;
+    }
+    if (bytes.size() >= 24 &&
+        bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+        bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) {
+        const std::uint32_t width = ReadU32BE(&bytes[16]);
+        const std::uint32_t height = ReadU32BE(&bytes[20]);
+        if (width == 0 || height == 0) {
+            result.Error = "PNG dimensions are invalid.";
+            return result;
+        }
+        result.Ok = true;
+        result.Width = static_cast<int>(width);
+        result.Height = static_cast<int>(height);
+        return result;
+    }
+    if (bytes.size() >= 10 &&
+        bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' &&
+        (bytes[3] == '8') && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a') {
+        const std::uint16_t width = ReadU16LE(&bytes[6]);
+        const std::uint16_t height = ReadU16LE(&bytes[8]);
+        if (width == 0 || height == 0) {
+            result.Error = "GIF dimensions are invalid.";
+            return result;
+        }
+        result.Ok = true;
+        result.Width = static_cast<int>(width);
+        result.Height = static_cast<int>(height);
+        return result;
+    }
+    if (bytes.size() >= 30 &&
+        bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
+        bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+        if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'X' && bytes.size() >= 30) {
+            const std::uint32_t widthMinusOne = ReadU24LE(&bytes[24]);
+            const std::uint32_t heightMinusOne = ReadU24LE(&bytes[27]);
+            result.Ok = true;
+            result.Width = static_cast<int>(widthMinusOne + 1);
+            result.Height = static_cast<int>(heightMinusOne + 1);
+            return result;
+        }
+    }
+    if (bytes.size() >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8) {
+        size_t i = 2;
+        while (i + 9 < bytes.size()) {
+            if (bytes[i] != 0xFF) {
+                ++i;
+                continue;
+            }
+            while (i < bytes.size() && bytes[i] == 0xFF) {
+                ++i;
+            }
+            if (i >= bytes.size()) {
+                break;
+            }
+            const unsigned char marker = bytes[i++];
+            if (marker == 0xD8 || marker == 0xD9) {
+                continue;
+            }
+            if (i + 1 >= bytes.size()) {
+                break;
+            }
+            const std::uint16_t segmentLength =
+                static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i]) << 8) | bytes[i + 1]);
+            if (segmentLength < 2 || i + segmentLength > bytes.size()) {
+                break;
+            }
+            const bool isSofMarker =
+                (marker >= 0xC0 && marker <= 0xC3) ||
+                (marker >= 0xC5 && marker <= 0xC7) ||
+                (marker >= 0xC9 && marker <= 0xCB) ||
+                (marker >= 0xCD && marker <= 0xCF);
+            if (isSofMarker && segmentLength >= 7) {
+                const std::uint16_t height =
+                    static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i + 3]) << 8) | bytes[i + 4]);
+                const std::uint16_t width =
+                    static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i + 5]) << 8) | bytes[i + 6]);
+                if (width == 0 || height == 0) {
+                    result.Error = "JPEG dimensions are invalid.";
+                    return result;
+                }
+                result.Ok = true;
+                result.Width = static_cast<int>(width);
+                result.Height = static_cast<int>(height);
+                return result;
+            }
+            i += segmentLength;
+        }
+    }
+
+    result.Error = IsSupportedImageMime(mimeType)
+        ? "Image format detected but dimensions could not be parsed by the in-app preview."
+        : "Attachment is not a supported image format for in-app preview.";
+    return result;
+}
+
+struct AttachmentThumbnailSupport {
+    bool CanRenderBitmapThumbnails = false;
+    std::string Reason;
+};
+
+static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
+    AttachmentThumbnailSupport support;
+    ImGuiIO& io = ImGui::GetIO();
+    const char* backendName = io.BackendRendererName;
+    const std::string rendererName = backendName != nullptr ? ToLowerAsciiCopy(backendName) : std::string();
+
+    if ((io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) == 0) {
+        support.Reason = rendererName.empty()
+            ? std::string("Renderer texture uploads are unavailable on the current backend.")
+            : std::string("Renderer texture uploads are unavailable on backend: ") + rendererName;
+        return support;
+    }
+
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+    if (rendererName.empty() ||
+        rendererName.find("opengl") != std::string::npos ||
+        rendererName.find("gl3") != std::string::npos) {
+        support.CanRenderBitmapThumbnails = true;
+        support.Reason = rendererName.empty()
+            ? std::string("Bitmap thumbnails available.")
+            : std::string("Bitmap thumbnails available on backend: ") + rendererName;
+        return support;
+    }
+#endif
+
+    support.Reason = rendererName.empty()
+        ? std::string("Bitmap thumbnail rendering is not enabled for the current backend.")
+        : std::string("Bitmap thumbnail rendering is not enabled for backend: ") + rendererName;
+    return support;
+}
+
+#if defined(_WIN32) && defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+static std::wstring Utf8ToWideLocal(const std::string& s) {
+    if (s.empty()) {
+        return std::wstring();
+    }
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+    if (n <= 0) {
+        return std::wstring();
+    }
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), &w[0], n);
+    return w;
+}
+
+static bool DecodeImageFileToRgba32(const std::string& path,
+                                    std::vector<unsigned char>& outPixels,
+                                    int& outWidth,
+                                    int& outHeight,
+                                    std::string& outError) {
+    outPixels.clear();
+    outWidth = 0;
+    outHeight = 0;
+    outError.clear();
+
+    const std::wstring widePath = Utf8ToWideLocal(path);
+    if (widePath.empty()) {
+        outError = "Failed to convert image path to wide string.";
+        return false;
+    }
+
+    const HRESULT initHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool shouldUninit = SUCCEEDED(initHr);
+
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    bool ok = false;
+
+    do {
+        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory,
+                                      nullptr,
+                                      CLSCTX_INPROC_SERVER,
+                                      IID_IWICImagingFactory,
+                                      reinterpret_cast<void**>(&factory));
+        if (FAILED(hr) || !factory) {
+            outError = "Failed to create WIC imaging factory.";
+            break;
+        }
+        hr = factory->CreateDecoderFromFilename(
+            widePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
+        if (FAILED(hr) || !decoder) {
+            outError = "Failed to decode image file.";
+            break;
+        }
+        hr = decoder->GetFrame(0, &frame);
+        if (FAILED(hr) || !frame) {
+            outError = "Failed to access image frame.";
+            break;
+        }
+        hr = frame->GetSize(reinterpret_cast<UINT*>(&outWidth), reinterpret_cast<UINT*>(&outHeight));
+        if (FAILED(hr) || outWidth <= 0 || outHeight <= 0) {
+            outError = "Failed to read image dimensions.";
+            break;
+        }
+        hr = factory->CreateFormatConverter(&converter);
+        if (FAILED(hr) || !converter) {
+            outError = "Failed to create WIC format converter.";
+            break;
+        }
+        hr = converter->Initialize(frame,
+                                   GUID_WICPixelFormat32bppRGBA,
+                                   WICBitmapDitherTypeNone,
+                                   nullptr,
+                                   0.0,
+                                   WICBitmapPaletteTypeCustom);
+        if (FAILED(hr)) {
+            outError = "Failed to convert image to RGBA32.";
+            break;
+        }
+        outPixels.resize(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4u);
+        hr = converter->CopyPixels(nullptr,
+                                   static_cast<UINT>(outWidth * 4),
+                                   static_cast<UINT>(outPixels.size()),
+                                   outPixels.data());
+        if (FAILED(hr)) {
+            outError = "Failed to copy image pixels.";
+            outPixels.clear();
+            break;
+        }
+        ok = true;
+    } while (false);
+
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (shouldUninit) {
+        CoUninitialize();
+    }
+    return ok;
+}
+#endif
+
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+static bool CreateAttachmentTextureFromRgba(const std::vector<unsigned char>& pixels,
+                                            int width,
+                                            int height,
+                                            ImTextureID& outTextureId,
+                                            std::string& outError) {
+    outTextureId = ImTextureID_Invalid;
+    outError.clear();
+    if (pixels.empty() || width <= 0 || height <= 0) {
+        outError = "Image pixels are empty.";
+        return false;
+    }
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    if (tex == 0) {
+        outError = "Failed to allocate OpenGL texture.";
+        return false;
+    }
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 width,
+                 height,
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 pixels.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    outTextureId = static_cast<ImTextureID>(static_cast<std::uintptr_t>(tex));
+    return true;
+}
+
+static void DestroyAttachmentTexture(ImTextureID& textureId) {
+    if (textureId == ImTextureID_Invalid) {
+        return;
+    }
+    GLuint tex = static_cast<GLuint>(static_cast<std::uintptr_t>(textureId));
+    if (tex != 0) {
+        glDeleteTextures(1, &tex);
+    }
+    textureId = ImTextureID_Invalid;
+}
+#endif
+
+static void ReleaseAttachmentWindowEntry(AttachmentWindowEntry& entry) {
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+    DestroyAttachmentTexture(entry.ThumbnailTextureId);
+#endif
+    entry.LocalPath.clear();
+    entry.ImageWidth = 0;
+    entry.ImageHeight = 0;
+    entry.PreviewError.clear();
+    entry.PreviewRequestIssued = false;
+}
+
+static void ReleaseAttachmentWindowEntries(std::vector<AttachmentWindowEntry>& entries) {
+    for (auto& entry : entries) {
+        ReleaseAttachmentWindowEntry(entry);
+    }
+    entries.clear();
+}
+
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+static bool AttachmentHasBitmapThumbnail(const AttachmentWindowEntry& entry) {
+    return entry.ThumbnailTextureId != ImTextureID_Invalid;
+}
+#endif
+
+static bool QueueAttachmentPreviewRequest(AppController& app,
+                                          AttachmentWindowEntry& entry,
+                                          const char* reason) {
+    if (!IsSupportedImageMime(entry.MimeType) || entry.Url.empty() || entry.PreviewRequestIssued) {
+        return false;
+    }
+
+    entry.PreviewRequestIssued = true;
+    std::string previewError;
+    if (!app.DownloadAttachmentForPreview(entry.Url, entry.Filename, entry.MimeType, &previewError)) {
+        entry.PreviewError = previewError.empty()
+            ? std::string("Failed to start preview download.")
+            : previewError;
+        LOG_WARN("SmatchetUI: preview request failed reason=%s file=%s err=%s",
+                 reason,
+                 entry.Filename.c_str(),
+                 entry.PreviewError.c_str());
+        return false;
+    }
+
+    LOG_DEBUG("SmatchetUI: preview request queued reason=%s file=%s", reason, entry.Filename.c_str());
+    return true;
+}
+
+static int QueuePriorityAttachmentPreviewRequests(AppController& app,
+                                                  std::vector<AttachmentWindowEntry>& entries,
+                                                  int selectedIndex,
+                                                  int maxRequests) {
+    if (maxRequests <= 0 || entries.empty()) {
+        return 0;
+    }
+
+    int requestsStarted = 0;
+    std::unordered_set<int> scheduledIndices;
+    const int entryCount = static_cast<int>(entries.size());
+
+    auto scheduleIndex = [&](int index, const char* reason) {
+        if (index < 0 || index >= entryCount || requestsStarted >= maxRequests) {
+            return;
+        }
+        if (scheduledIndices.find(index) != scheduledIndices.end()) {
+            return;
+        }
+        scheduledIndices.insert(index);
+        if (QueueAttachmentPreviewRequest(app, entries[static_cast<size_t>(index)], reason)) {
+            ++requestsStarted;
+        }
+    };
+
+    if (selectedIndex >= 0 && selectedIndex < entryCount) {
+        scheduleIndex(selectedIndex, "selected");
+        for (int radius = 1; radius < entryCount && requestsStarted < maxRequests; ++radius) {
+            scheduleIndex(selectedIndex - radius, "nearby-left");
+            scheduleIndex(selectedIndex + radius, "nearby-right");
+        }
+    }
+
+    for (int i = 0; i < entryCount && requestsStarted < maxRequests; ++i) {
+        scheduleIndex(i, "backfill");
+    }
+    return requestsStarted;
+}
+
+// Scales image dimensions to fit inside a square of edge `maxEdge`, preserving aspect ratio.
+static ImVec2 FitImageInsideSquare(int imageWidth, int imageHeight, float maxEdge) {
+    float w = static_cast<float>(imageWidth > 0 ? imageWidth : 1);
+    float h = static_cast<float>(imageHeight > 0 ? imageHeight : 1);
+    if (w <= 0.0f) {
+        w = 1.0f;
+    }
+    if (h <= 0.0f) {
+        h = 1.0f;
+    }
+    const float scale = (std::min)(maxEdge / w, maxEdge / h);
+    if (scale > 0.0f) {
+        w *= scale;
+        h *= scale;
+    }
+    return ImVec2(w, h);
+}
+
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
+    if (entry.ThumbnailTextureId == ImTextureID_Invalid) {
+        return;
+    }
+
+    const float maxEdge = 320.0f;
+    float drawWidth = static_cast<float>(entry.ImageWidth > 0 ? entry.ImageWidth : 1);
+    float drawHeight = static_cast<float>(entry.ImageHeight > 0 ? entry.ImageHeight : 1);
+    const float scale = (std::min)(maxEdge / drawWidth, maxEdge / drawHeight);
+    if (scale > 0.0f) {
+        drawWidth *= (std::min)(scale, 1.0f);
+        drawHeight *= (std::min)(scale, 1.0f);
+    }
+
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(entry.Filename.c_str());
+    if (entry.ImageWidth > 0 && entry.ImageHeight > 0) {
+        ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
+    }
+    ImGui::Separator();
+    ImGui::Image(ImTextureRef(entry.ThumbnailTextureId), ImVec2(drawWidth, drawHeight));
+    ImGui::EndTooltip();
+}
+#endif
 
 struct JiraFieldCatalogIndex {
     explicit JiraFieldCatalogIndex(const std::vector<JiraField>& fields) {
@@ -365,7 +883,7 @@ struct UiDrawSession {
     bool cfgInitialized = false;
     JiraConfig cfg;
 
-    bool showJiraSettings = false;
+    bool showPreferences = false;
     bool showViewsDashboard = true;
     bool showPerformance = false;
     bool showBlameAnalysis = false;
@@ -377,13 +895,18 @@ struct UiDrawSession {
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;
+    NavigationHistory navHistory;
 
     char domainBuf[128]{};
     char emailBuf[128]{};
     char tokenBuf[512]{};
     char projectKeyBuf[64]{};
-    bool tooltipOverflowEnabled = false;
-    bool jiraBuffersInitialized = false;
+    char aiApiKeyBuf[512]{};
+    char aiModelBuf[128]{};
+    char aiBaseUrlBuf[256]{};
+    bool mcpEnabled = false;
+    int mcpPort = 8080;
+    bool preferencesBuffersLoaded = false;
 
     char viewNameBuf[128]{};
     char viewJqlBuf[512]{};
@@ -414,6 +937,14 @@ struct UiDrawSession {
     std::vector<char> logBuffer;
 
     JiraGridFieldAsyncState jiraGridAsync;
+
+    std::mutex attachmentPreviewMutex;
+    std::deque<AttachmentCollectionRequest> attachmentCollectionQueue;
+    std::deque<AttachmentPreviewUpdate> attachmentPreviewUpdateQueue;
+    bool attachmentPreviewCallbackRegistered = false;
+    bool attachmentPreviewWindowOpen = false;
+    std::vector<AttachmentWindowEntry> attachmentWindowEntries;
+    int attachmentWindowSelectedIndex = 0;
 };
 
 static UiDrawSession g_ui;
@@ -539,6 +1070,30 @@ static std::string BuildJiraBrowseUrl(const JiraConfig& cfg, const std::string& 
     return base + "/browse/" + issueKey;
 }
 
+static void SyncWithCurrentView(AppController& app,
+                                UiDrawSession& d,
+                                const ViewsStore& store,
+                                bool pushHistory) {
+    ConfigManager::Save(d.cfg);
+    if (pushHistory) {
+        d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
+    }
+    app.SyncWithBackend(&d.cfg, &store);
+}
+
+static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId) {
+    if (templateId == "need_repro") {
+        return "Need reproduction details for " + issueKey +
+               ":\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details";
+    }
+    if (templateId == "need_logs") {
+        return "Please attach diagnostic data for " + issueKey +
+               ":\n- Relevant logs\n- Callstack / crash context\n- Local repro notes";
+    }
+    return "Triage handoff for " + issueKey +
+           ":\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:";
+}
+
 class TicketEditService {
 public:
     explicit TicketEditService(AppController& appController) : App(appController) {}
@@ -560,6 +1115,7 @@ public:
                                 const std::string& currentValue,
                                 float availWidth,
                                 bool tooltipsEnabled,
+                                bool allowEdits,
                                 SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits,
                                 JiraGridFieldAsyncState& jiraGridAsync) {
@@ -567,6 +1123,10 @@ public:
             return;
         }
         if (!field) {
+            if (IsAttachmentFieldId(fieldId)) {
+                JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
+                return;
+            }
             if (JiraGridFieldDisplay::IsWatchersColumnId(fieldId)) {
                 JiraGridFieldDisplay::RenderWatchersField(
                     ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
@@ -599,7 +1159,7 @@ public:
             return;
         }
 
-        if (field->Id == "attachment") {
+        if (IsAttachmentFieldId(field->Id)) {
             JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
             return;
         }
@@ -642,17 +1202,72 @@ public:
             return;
         }
 
+        if (!allowEdits) {
+            const std::string display = DisplayValueForJiraDateField(field->Id, field, currentValue);
+            const std::string* tip =
+                IsJiraDateOrDateTimeField(field->Id, field) ? &currentValue : nullptr;
+            RenderClippedFieldText(display, availWidth, tooltipsEnabled, true, tip);
+            return;
+        }
+
+        if (JiraLabelsEditor::IsLabelsField(field->Id)) {
+            JiraLabelsEditor::RenderLabelsFieldEditor(
+                app,
+                ticket,
+                *field,
+                currentValue,
+                [&](const std::string& issueId,
+                    const JiraField& fld,
+                    const std::vector<std::string>& values) { QueueEdit(issueId, fld, values, pendingEdits); });
+            return;
+        }
+
+        if (field->Family == JiraFieldFamily::CascadingSelect) {
+            RenderCascadingSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+            return;
+        }
+
+        if ((field->Family == JiraFieldFamily::SelectMulti ||
+             field->Family == JiraFieldFamily::StructuredMulti ||
+             field->Family == JiraFieldFamily::UserMulti) &&
+            !field->AllowedValueOptions.empty()) {
+            RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+            return;
+        }
+
+        if ((field->Family == JiraFieldFamily::SelectSingle ||
+             field->Family == JiraFieldFamily::StructuredSingle ||
+             field->Family == JiraFieldFamily::UserSingle ||
+             field->Family == JiraFieldFamily::Status ||
+             field->Family == JiraFieldFamily::IssueType) &&
+            !field->AllowedValueOptions.empty()) {
+            RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+            return;
+        }
+
         if (field->IsArray && !field->AllowedValueOptions.empty()) {
-            RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits);
+            RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
             return;
         }
 
         if (!field->AllowedValueOptions.empty()) {
-            RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits);
+            RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
             return;
         }
 
-        RenderTextEditor(ticket, *field, currentValue, state, pendingEdits);
+        if (JiraDateTimeFieldEditor::IsJiraDateTimePickerField(*field)) {
+            JiraDateTimeFieldEditor::RenderDateTimeFieldEditor(
+                ticket,
+                *field,
+                currentValue,
+                state,
+                [&](const std::string& issueId,
+                    const JiraField& fld,
+                    const std::vector<std::string>& values) { QueueEdit(issueId, fld, values, pendingEdits); });
+            return;
+        }
+
+        RenderTextEditor(ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
     }
 
 private:
@@ -667,20 +1282,35 @@ private:
         pendingEdits.push_back(std::move(edit));
     }
 
-    static std::string ResolveOptionId(const JiraField& field, const std::string& value) {
-        for (const auto& option : field.AllowedValueOptions) {
+    static std::string EncodeCascadingSelection(const std::string& parentId, const std::string& childId) {
+        return parentId + "\x1f" + childId;
+    }
+
+    static const JiraFieldOption* FindOptionRecursive(const std::vector<JiraFieldOption>& options,
+                                                      const std::string& value) {
+        for (const auto& option : options) {
             if (option.Id == value || option.Value == value) {
-                return option.Id;
+                return &option;
             }
+            if (!option.Children.empty()) {
+                if (const JiraFieldOption* nested = FindOptionRecursive(option.Children, value)) {
+                    return nested;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    static std::string ResolveOptionId(const JiraField& field, const std::string& value) {
+        if (const JiraFieldOption* option = FindOptionRecursive(field.AllowedValueOptions, value)) {
+            return option->Id;
         }
         return value;
     }
 
     static std::string ResolveOptionLabel(const JiraField& field, const std::string& value) {
-        for (const auto& option : field.AllowedValueOptions) {
-            if (option.Id == value || option.Value == value) {
-                return option.Value;
-            }
+        if (const JiraFieldOption* option = FindOptionRecursive(field.AllowedValueOptions, value)) {
+            return option->Value;
         }
         return value;
     }
@@ -712,14 +1342,49 @@ private:
         return JoinCsv(labels);
     }
 
+    static std::string BuildCascadingPreview(const JiraFieldOption& parent, const JiraFieldOption* child) {
+        if (child == nullptr) {
+            return parent.Value;
+        }
+        return parent.Value + " > " + child->Value;
+    }
+
+    static bool TryResolveCascadingSelection(const JiraField& field,
+                                             const std::string& currentValue,
+                                             std::string& outParentId,
+                                             std::string& outChildId) {
+        for (const auto& parent : field.AllowedValueOptions) {
+            if (currentValue == parent.Id || currentValue == parent.Value) {
+                outParentId = parent.Id;
+                outChildId.clear();
+                return true;
+            }
+            for (const auto& child : parent.Children) {
+                const std::string display = BuildCascadingPreview(parent, &child);
+                if (currentValue == child.Id || currentValue == child.Value || currentValue == display) {
+                    outParentId = parent.Id;
+                    outChildId = child.Id;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     static void RenderTextEditor(const CachedTicket& ticket,
                                  const JiraField& field,
                                  const std::string& currentValue,
                                  SpreadsheetState& state,
-                                 std::vector<PendingFieldEdit>& pendingEdits) {
+                                 std::vector<PendingFieldEdit>& pendingEdits,
+                                 bool tooltipsEnabled,
+                                 float availWidth) {
         const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
         if (state.IsEditingField(ticket.id, field.Id)) {
+            const bool editJustStarted = state.EditJustStarted;
             ImGui::SetNextItemWidth(-FLT_MIN);
+            if (editJustStarted) {
+                ImGui::SetKeyboardFocusHere();
+            }
             const bool submitted = ImGui::InputText(
                 itemId.c_str(),
                 state.EditBuffer,
@@ -727,14 +1392,23 @@ private:
                 ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 state.ClearEditing();
-            } else if (submitted || ImGui::IsItemDeactivatedAfterEdit()) {
+            } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
                 QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits);
                 state.ClearEditing();
+            } else if (editJustStarted) {
+                state.EditJustStarted = false;
             }
             return;
         }
 
         const std::string valueForDisplay = DisplayValueForJiraDateField(field.Id, &field, currentValue);
+        bool hasNewlineInValue = false;
+        for (size_t i = 0; i < valueForDisplay.size(); ++i) {
+            if (valueForDisplay[i] == '\n' || valueForDisplay[i] == '\r') {
+                hasNewlineInValue = true;
+                break;
+            }
+        }
         std::string singleLine = valueForDisplay;
         for (size_t i = 0; i < singleLine.size(); ++i) {
             if (singleLine[i] == '\n' || singleLine[i] == '\r') {
@@ -743,24 +1417,38 @@ private:
             }
         }
         const std::string& display = singleLine;
+        const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
         if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
             if (ImGui::IsMouseDoubleClicked(0)) {
                 state.StartEditingField(ticket.id, field.Id, currentValue);
             }
+        }
+        const ImVec2 textSize = ImGui::CalcTextSize(display.c_str());
+        const bool horizontallyClipped = (regionAvail > 0.0f && textSize.x > regionAvail + 1.0f);
+        if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped) && ImGui::IsItemHovered()) {
+            const std::string* rawTip = IsJiraDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
+            const std::string& tipSource =
+                (rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay;
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+            ImGui::TextUnformatted(tipSource.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
         }
     }
 
     static void RenderSingleSelectEditor(const CachedTicket& ticket,
                                          const JiraField& field,
                                          const std::string& currentValue,
-                                         std::vector<PendingFieldEdit>& pendingEdits) {
+                                         std::vector<PendingFieldEdit>& pendingEdits,
+                                         bool tooltipsEnabled) {
         const std::string currentId = ResolveOptionId(field, currentValue);
         const std::string preview = ResolveOptionLabel(field, currentId);
         const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
+        const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
+        const char* previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::BeginCombo(comboId.c_str(),
-                              preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str(),
-                              ImGuiComboFlags_NoArrowButton)) {
+        if (ImGui::BeginCombo(comboId.c_str(), previewCStr, ImGuiComboFlags_NoArrowButton)) {
             const bool selectedNone = currentId.empty();
             if (ImGui::Selectable("<clear>", selectedNone)) {
                 QueueEdit(ticket.id, field, {}, pendingEdits);
@@ -774,16 +1462,29 @@ private:
             }
             ImGui::EndCombo();
         }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+            const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(previewCStr);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
     }
 
     static void RenderMultiSelectEditor(const CachedTicket& ticket,
                                         const JiraField& field,
                                         const std::string& currentValue,
-                                        std::vector<PendingFieldEdit>& pendingEdits) {
+                                        std::vector<PendingFieldEdit>& pendingEdits,
+                                        bool tooltipsEnabled) {
         std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
         std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
         const std::string preview = BuildSelectionPreview(field, selectedIds);
         const std::string comboId = "##MultiSelect_" + ticket.id + "_" + field.Id;
+        const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
             if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
@@ -807,6 +1508,81 @@ private:
             }
             ImGui::EndCombo();
         }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const ImVec2 psz = ImGui::CalcTextSize(preview.c_str());
+            const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(preview.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+    }
+
+    static void RenderCascadingSelectEditor(const CachedTicket& ticket,
+                                            const JiraField& field,
+                                            const std::string& currentValue,
+                                            std::vector<PendingFieldEdit>& pendingEdits,
+                                            bool tooltipsEnabled) {
+        std::string parentId;
+        std::string childId;
+        TryResolveCascadingSelection(field, currentValue, parentId, childId);
+        std::string preview = currentValue.empty() ? std::string("<none>") : currentValue;
+        for (const auto& parent : field.AllowedValueOptions) {
+            if (parent.Id != parentId) {
+                continue;
+            }
+            preview = BuildCascadingPreview(parent, childId.empty() ? nullptr : FindOptionRecursive(parent.Children, childId));
+            break;
+        }
+
+        const std::string comboId = "##CascadeSelect_" + ticket.id + "_" + field.Id;
+        const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+            if (ImGui::Selectable("<clear>", parentId.empty() && childId.empty())) {
+                QueueEdit(ticket.id, field, {}, pendingEdits);
+            }
+            ImGui::Separator();
+            for (const auto& parent : field.AllowedValueOptions) {
+                if (parent.Children.empty()) {
+                    const bool selected = (parent.Id == parentId && childId.empty());
+                    if (ImGui::Selectable(parent.Value.c_str(), selected)) {
+                        QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits);
+                    }
+                    continue;
+                }
+
+                if (ImGui::BeginMenu(parent.Value.c_str())) {
+                    const bool parentOnlySelected = (parent.Id == parentId && childId.empty());
+                    if (ImGui::Selectable("<parent only>", parentOnlySelected)) {
+                        QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits);
+                    }
+                    ImGui::Separator();
+                    for (const auto& child : parent.Children) {
+                        const bool selected = (parent.Id == parentId && child.Id == childId);
+                        if (ImGui::Selectable(child.Value.c_str(), selected)) {
+                            QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, child.Id)}, pendingEdits);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const ImVec2 psz = ImGui::CalcTextSize(preview.c_str());
+            const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(preview.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
     }
 };
 
@@ -818,7 +1594,10 @@ static void DrawGridCellRightClickPopups(const std::string& imguiStackId,
                                          const std::string& issueKey,
                                          const std::string& fieldId,
                                          const std::string& fieldLabel,
-                                         const std::string& rawValue) {
+                                         const std::string& rawValue,
+                                         AppController* app,
+                                         UiDrawSession* ui,
+                                         bool readOnlyMode) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -857,6 +1636,29 @@ static void DrawGridCellRightClickPopups(const std::string& imguiStackId,
     if (ImGui::BeginPopup("cell_copy_quick")) {
         if (ImGui::MenuItem("Copy")) {
             ImGui::SetClipboardText(rawValue.c_str());
+        }
+        if (app && ui && fieldId.empty() && !issueKey.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Quick comment templates");
+            if (readOnlyMode) {
+                ImGui::TextDisabled("(disabled while offline/read-only)");
+            } else {
+                auto postTemplate = [&](const char* title, const char* id) {
+                    if (ImGui::MenuItem(title)) {
+                        std::string err;
+                        if (app->JiraAddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
+                            ui->gridEditError.clear();
+                            ui->gridEditSuccess = std::string("Posted template comment to ") + issueKey + ".";
+                        } else {
+                            ui->gridEditSuccess.clear();
+                            ui->gridEditError = err.empty() ? "Failed to post Jira comment." : err;
+                        }
+                    }
+                };
+                postTemplate("Need repro details", "need_repro");
+                postTemplate("Need logs / diagnostics", "need_logs");
+                postTemplate("Triage handoff summary", "handoff");
+            }
         }
         ImGui::EndPopup();
     }
@@ -1014,6 +1816,32 @@ void SmatchetUI::Draw(AppController& app) {
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
     }
+    if (!g_ui.attachmentPreviewCallbackRegistered) {
+        app.SetAttachmentPreviewHandler([](const std::string& localPath,
+                                           const std::string& mimeType,
+                                           const std::string& filename,
+                                           const std::string& sourceUrl) -> bool {
+            if (!IsSupportedImageMime(mimeType)) {
+                return false;
+            }
+            std::lock_guard<std::mutex> lock(g_ui.attachmentPreviewMutex);
+            AttachmentPreviewUpdate update;
+            update.LocalPath = localPath;
+            update.MimeType = mimeType;
+            update.Filename = filename;
+            update.Url = sourceUrl;
+            g_ui.attachmentPreviewUpdateQueue.push_back(std::move(update));
+            return true;
+        });
+        app.SetAttachmentCollectionHandler(
+            [](const std::vector<AppController::AttachmentDescriptor>& attachments) {
+                std::lock_guard<std::mutex> lock(g_ui.attachmentPreviewMutex);
+                AttachmentCollectionRequest request;
+                request.Attachments = attachments;
+                g_ui.attachmentCollectionQueue.push_back(std::move(request));
+            });
+        g_ui.attachmentPreviewCallbackRegistered = true;
+    }
     UiPerfMonitor::Instance().BeginFrame();
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
     {
@@ -1037,13 +1865,9 @@ void SmatchetUI::Draw(AppController& app) {
     if (g_ui.showBlameAnalysis) {
         blameAnalysisUi_.DrawWindow(app, &g_ui.showBlameAnalysis, g_ui.gridState.SelectedId);
     }
-    if (g_ui.showJiraSettings) {
-        ImGui::OpenPopup("JiraSetup");
-        g_ui.showJiraSettings = false;
-    }
     {
-        SMATCHET_UI_PERF_SCOPE("drawJiraCredentialsModal");
-        drawJiraCredentialsModal(app);
+        SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
+        drawPreferencesWindow(app);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawViewsDashboardWindow");
@@ -1052,6 +1876,10 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawActiveProjectWindow");
         drawActiveProjectWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawAttachmentPreviewWindow");
+        drawAttachmentPreviewWindow(app);
     }
     {
         SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawWatchersListWindow");
@@ -1068,6 +1896,304 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawLogWindow");
         drawLogWindow();
+    }
+}
+
+void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
+    auto& d = g_ui;
+    AttachmentCollectionRequest nextCollection;
+    bool hasCollection = false;
+    std::deque<AttachmentPreviewUpdate> previewUpdates;
+    const AttachmentThumbnailSupport thumbnailSupport = GetAttachmentThumbnailSupport();
+    {
+        std::lock_guard<std::mutex> lock(d.attachmentPreviewMutex);
+        if (!d.attachmentCollectionQueue.empty()) {
+            nextCollection = d.attachmentCollectionQueue.back();
+            d.attachmentCollectionQueue.clear();
+            hasCollection = true;
+        }
+        if (!d.attachmentPreviewUpdateQueue.empty()) {
+            previewUpdates.swap(d.attachmentPreviewUpdateQueue);
+        }
+    }
+
+    if (hasCollection) {
+        ReleaseAttachmentWindowEntries(d.attachmentWindowEntries);
+        d.attachmentWindowEntries.reserve(nextCollection.Attachments.size());
+        int imageCount = 0;
+        for (const auto& attachment : nextCollection.Attachments) {
+            AttachmentWindowEntry entry;
+            entry.Filename = attachment.Filename.empty() ? std::string("Attachment") : attachment.Filename;
+            entry.Url = attachment.Url;
+            entry.MimeType = attachment.MimeType;
+            if (IsSupportedImageMime(entry.MimeType)) {
+                ++imageCount;
+            }
+            d.attachmentWindowEntries.push_back(std::move(entry));
+        }
+        d.attachmentWindowSelectedIndex = 0;
+        d.attachmentPreviewWindowOpen = true;
+        if (imageCount > 0) {
+            const int eagerRequests = QueuePriorityAttachmentPreviewRequests(
+                app, d.attachmentWindowEntries, d.attachmentWindowSelectedIndex, 6);
+            LOG_INFO("SmatchetUI: opened attachment gallery total=%d images=%d eager=%d bitmap=%s detail=%s",
+                     static_cast<int>(d.attachmentWindowEntries.size()),
+                     imageCount,
+                     eagerRequests,
+                     thumbnailSupport.CanRenderBitmapThumbnails ? "enabled" : "disabled",
+                     thumbnailSupport.Reason.c_str());
+        }
+    }
+
+    for (const AttachmentPreviewUpdate& nextPreviewUpdate : previewUpdates) {
+        int targetIndex = -1;
+        for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
+            const AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(i)];
+            if ((!nextPreviewUpdate.Url.empty() && entry.Url == nextPreviewUpdate.Url) ||
+                (nextPreviewUpdate.Url.empty() && entry.Filename == nextPreviewUpdate.Filename)) {
+                targetIndex = i;
+                break;
+            }
+        }
+        if (targetIndex < 0 && d.attachmentWindowSelectedIndex >= 0 &&
+            d.attachmentWindowSelectedIndex < static_cast<int>(d.attachmentWindowEntries.size())) {
+            targetIndex = d.attachmentWindowSelectedIndex;
+        }
+        if (targetIndex >= 0) {
+            AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(targetIndex)];
+            entry.LocalPath = nextPreviewUpdate.LocalPath;
+            entry.MimeType = nextPreviewUpdate.MimeType;
+            entry.PreviewError.clear();
+            entry.ImageWidth = 0;
+            entry.ImageHeight = 0;
+            entry.PreviewRequestIssued = true;
+            if (IsSupportedImageMime(entry.MimeType)) {
+                const ParsedImageInfo imageInfo = ParseImageDimensions(entry.LocalPath, entry.MimeType);
+                if (imageInfo.Ok) {
+                    entry.ImageWidth = imageInfo.Width;
+                    entry.ImageHeight = imageInfo.Height;
+                } else {
+                    entry.PreviewError = imageInfo.Error;
+                }
+            }
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+            if (thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
+#if defined(_WIN32)
+                std::vector<unsigned char> rgbaPixels;
+                std::string uploadError;
+                int decodedWidth = 0;
+                int decodedHeight = 0;
+                if (DecodeImageFileToRgba32(entry.LocalPath, rgbaPixels, decodedWidth, decodedHeight, uploadError)) {
+                    if (decodedWidth > 0 && decodedHeight > 0) {
+                        entry.ImageWidth = decodedWidth;
+                        entry.ImageHeight = decodedHeight;
+                    }
+                    DestroyAttachmentTexture(entry.ThumbnailTextureId);
+                    if (!CreateAttachmentTextureFromRgba(
+                            rgbaPixels, entry.ImageWidth, entry.ImageHeight, entry.ThumbnailTextureId, uploadError)) {
+                        entry.PreviewError = uploadError;
+                        LOG_WARN("SmatchetUI: thumbnail upload failed file=%s err=%s",
+                                 entry.Filename.c_str(),
+                                 uploadError.c_str());
+                    } else {
+                        LOG_DEBUG("SmatchetUI: thumbnail uploaded file=%s size=%dx%d",
+                                  entry.Filename.c_str(),
+                                  entry.ImageWidth,
+                                  entry.ImageHeight);
+                    }
+                } else {
+                    entry.PreviewError = uploadError;
+                    LOG_WARN("SmatchetUI: thumbnail decode failed file=%s err=%s",
+                             entry.Filename.c_str(),
+                             uploadError.c_str());
+                }
+#endif
+            } else if (!thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
+                LOG_DEBUG("SmatchetUI: bitmap thumbnails unavailable for file=%s detail=%s",
+                          entry.Filename.c_str(),
+                          thumbnailSupport.Reason.c_str());
+            }
+#endif
+            d.attachmentPreviewWindowOpen = true;
+        }
+    }
+
+    if (!d.attachmentPreviewWindowOpen) {
+        return;
+    }
+    if (d.attachmentWindowEntries.empty()) {
+        d.attachmentPreviewWindowOpen = false;
+        return;
+    }
+    if (d.attachmentWindowSelectedIndex < 0 ||
+        d.attachmentWindowSelectedIndex >= static_cast<int>(d.attachmentWindowEntries.size())) {
+        d.attachmentWindowSelectedIndex = 0;
+    }
+
+    QueuePriorityAttachmentPreviewRequests(app, d.attachmentWindowEntries, d.attachmentWindowSelectedIndex, 2);
+
+    ImGui::SetNextWindowSize(ImVec2(1040, 560), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Attachment Preview", &d.attachmentPreviewWindowOpen)) {
+        ImGui::Text("Attachments: %d", static_cast<int>(d.attachmentWindowEntries.size()));
+        if (!thumbnailSupport.CanRenderBitmapThumbnails) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", thumbnailSupport.Reason.c_str());
+        }
+        ImGui::Separator();
+        ImGui::BeginChild("AttachmentListPane", ImVec2(390, 0), true);
+        const float cardWidth = 120.0f;
+        const float cardHeight = 160.0f;
+        const float tileSize = 96.0f;
+        const float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
+        const float availableWidth = ImGui::GetContentRegionAvail().x;
+        const int columnCount = (std::max)(1, static_cast<int>((availableWidth + itemSpacing) / (cardWidth + itemSpacing)));
+        if (ImGui::BeginTable("AttachmentGrid", columnCount, ImGuiTableFlags_SizingFixedFit)) {
+            for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
+                AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(i)];
+                const bool selected = (i == d.attachmentWindowSelectedIndex);
+                ImGui::TableNextColumn();
+                ImGui::PushID(i);
+                ImGui::PushStyleColor(
+                    ImGuiCol_ChildBg,
+                    selected ? ImVec4(0.16f, 0.24f, 0.33f, 0.95f) : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+                ImGui::BeginChild("AttachmentCard",
+                                  ImVec2(cardWidth, cardHeight),
+                                  true,
+                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+                bool clicked = false;
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+                if (AttachmentHasBitmapThumbnail(entry)) {
+                    const ImVec2 thumbDraw = FitImageInsideSquare(entry.ImageWidth, entry.ImageHeight, tileSize);
+                    const float padX = (std::max)(0.0f, (cardWidth - thumbDraw.x) * 0.5f);
+                    const float padTop = (std::max)(0.0f, (tileSize - thumbDraw.y) * 0.5f);
+                    const float padBottom = (std::max)(0.0f, tileSize - padTop - thumbDraw.y);
+                    ImGui::SetCursorPosX(padX);
+                    ImGui::Dummy(ImVec2(0.0f, padTop));
+                    clicked = ImGui::ImageButton(
+                        "##attachment_thumb", ImTextureRef(entry.ThumbnailTextureId), thumbDraw);
+                    ImGui::Dummy(ImVec2(0.0f, padBottom));
+                    if (ImGui::IsItemHovered()) {
+                        DrawAttachmentThumbnailTooltip(entry);
+                    }
+                } else
+#endif
+                {
+                    const float centeredX = (std::max)(0.0f, (cardWidth - tileSize) * 0.5f);
+                    ImGui::SetCursorPosX(centeredX);
+                    if (!entry.PreviewError.empty()) {
+                        clicked = ImGui::Button("Preview error", ImVec2(tileSize, tileSize));
+                    } else if (IsSupportedImageMime(entry.MimeType) && entry.PreviewRequestIssued && entry.LocalPath.empty()) {
+                        clicked = ImGui::Button("Loading...", ImVec2(tileSize, tileSize));
+                    } else if (IsSupportedImageMime(entry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
+                        clicked = ImGui::Button("Metadata", ImVec2(tileSize, tileSize));
+                    } else if (IsSupportedImageMime(entry.MimeType)) {
+                        clicked = ImGui::Button("Image", ImVec2(tileSize, tileSize));
+                    } else {
+                        clicked = ImGui::Button("File", ImVec2(tileSize, tileSize));
+                    }
+                }
+                if (clicked) {
+                    d.attachmentWindowSelectedIndex = i;
+                }
+
+                ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cardWidth - 10.0f);
+                ImGui::TextUnformatted(entry.Filename.c_str());
+                ImGui::PopTextWrapPos();
+                if (!entry.PreviewError.empty()) {
+                    ImGui::TextDisabled("preview failed");
+                } else if (IsSupportedImageMime(entry.MimeType)) {
+                    if (entry.ImageWidth > 0 && entry.ImageHeight > 0) {
+                        ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
+                    } else if (entry.PreviewRequestIssued) {
+                        ImGui::TextDisabled("loading");
+                    } else if (!thumbnailSupport.CanRenderBitmapThumbnails) {
+                        ImGui::TextDisabled("metadata");
+                    } else {
+                        ImGui::TextDisabled("image");
+                    }
+                } else {
+                    ImGui::TextDisabled("file");
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+                if (selected) {
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    drawList->AddRect(ImGui::GetItemRectMin(),
+                                      ImGui::GetItemRectMax(),
+                                      IM_COL32(90, 170, 255, 255),
+                                      6.0f,
+                                      0,
+                                      2.0f);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        AttachmentWindowEntry& selectedEntry =
+            d.attachmentWindowEntries[static_cast<size_t>(d.attachmentWindowSelectedIndex)];
+        ImGui::BeginChild("AttachmentDetailsPane", ImVec2(0, 0), false);
+        ImGui::TextUnformatted(selectedEntry.Filename.c_str());
+        ImGui::Separator();
+        ImGui::Text("Mime: %s", selectedEntry.MimeType.empty() ? "(unknown)" : selectedEntry.MimeType.c_str());
+        if (!selectedEntry.LocalPath.empty()) {
+            ImGui::TextWrapped("Local file: %s", selectedEntry.LocalPath.c_str());
+        } else {
+            ImGui::TextDisabled("Local file: not downloaded yet");
+        }
+        if (!selectedEntry.PreviewError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextWrapped("%s", selectedEntry.PreviewError.c_str());
+            ImGui::PopStyleColor();
+        } else if (IsSupportedImageMime(selectedEntry.MimeType) &&
+                   selectedEntry.ImageWidth > 0 &&
+                   selectedEntry.ImageHeight > 0) {
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f),
+                               "Image preview metadata: %dx%d",
+                               selectedEntry.ImageWidth,
+                               selectedEntry.ImageHeight);
+        } else if (IsSupportedImageMime(selectedEntry.MimeType) && selectedEntry.PreviewRequestIssued) {
+            ImGui::TextDisabled("Loading preview...");
+        }
+        if (IsSupportedImageMime(selectedEntry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
+            ImGui::TextDisabled("%s", thumbnailSupport.Reason.c_str());
+        }
+#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+        if (AttachmentHasBitmapThumbnail(selectedEntry)) {
+            const float maxWidth = ImGui::GetContentRegionAvail().x;
+            const float maxHeight = 220.0f;
+            float drawWidth = static_cast<float>(selectedEntry.ImageWidth > 0 ? selectedEntry.ImageWidth : 1);
+            float drawHeight = static_cast<float>(selectedEntry.ImageHeight > 0 ? selectedEntry.ImageHeight : 1);
+            const float scale = (std::min)(maxWidth / drawWidth, maxHeight / drawHeight);
+            if (scale > 0.0f) {
+                drawWidth *= (std::min)(scale, 1.0f);
+                drawHeight *= (std::min)(scale, 1.0f);
+            }
+            ImGui::Image(ImTextureRef(selectedEntry.ThumbnailTextureId), ImVec2(drawWidth, drawHeight));
+        }
+#endif
+        if (ImGui::Button("Open selected")) {
+            app.OpenAttachment(selectedEntry.Url, selectedEntry.Filename, selectedEntry.MimeType);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Open URL externally")) {
+            app.OpenUrl(selectedEntry.Url);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close")) {
+            d.attachmentPreviewWindowOpen = false;
+        }
+        ImGui::EndChild();
+    }
+    ImGui::End();
+    if (!d.attachmentPreviewWindowOpen) {
+        ReleaseAttachmentWindowEntries(d.attachmentWindowEntries);
+        d.attachmentWindowSelectedIndex = 0;
     }
 }
 
@@ -1119,9 +2245,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
         if (activeView) {
             d.cfg.JqlQuery = activeView->Jql;
             d.cfg.SelectedFields = activeView->Fields;
-            ConfigManager::Save(d.cfg);
+            d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
         }
-        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+        SyncWithCurrentView(app, d, ViewState.GetStore(), false);
         d.appliedInitialView = true;
     }
 }
@@ -1130,14 +2256,11 @@ void SmatchetUI::drawMainMenuBar() {
     auto& d = g_ui;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Settings")) {
-            if (ImGui::MenuItem("Jira Credentials...")) {
-                d.showJiraSettings = true;
+            if (ImGui::MenuItem("Preferences...")) {
+                d.showPreferences = true;
             }
             if (ImGui::MenuItem("Views Dashboard...")) {
                 d.showViewsDashboard = true;
-            }
-            if (ImGui::MenuItem("Performance...")) {
-                d.showPerformance = true;
             }
             if (ImGui::MenuItem("Blame Analysis...")) {
                 d.showBlameAnalysis = true;
@@ -1148,76 +2271,183 @@ void SmatchetUI::drawMainMenuBar() {
     }
 }
 
-void SmatchetUI::drawJiraCredentialsModal(AppController& app) {
+void SmatchetUI::drawPreferencesWindow(AppController& app) {
     auto& d = g_ui;
-    ImGui::SetNextWindowSize(ImVec2(450, 0), ImGuiCond_FirstUseEver);
-
-    if (ImGui::BeginPopupModal("JiraSetup", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (!d.jiraBuffersInitialized) {
-            std::memset(d.domainBuf, 0, sizeof(d.domainBuf));
-            std::memset(d.emailBuf, 0, sizeof(d.emailBuf));
-            std::memset(d.tokenBuf, 0, sizeof(d.tokenBuf));
-            std::memset(d.projectKeyBuf, 0, sizeof(d.projectKeyBuf));
-            std::strncpy(d.domainBuf, d.cfg.Domain.c_str(), sizeof(d.domainBuf) - 1);
-            std::strncpy(d.emailBuf, d.cfg.Email.c_str(), sizeof(d.emailBuf) - 1);
-            std::strncpy(d.tokenBuf, d.cfg.ApiToken.c_str(), sizeof(d.tokenBuf) - 1);
-            std::strncpy(d.projectKeyBuf, d.cfg.ProjectKey.c_str(), sizeof(d.projectKeyBuf) - 1);
-            d.tooltipOverflowEnabled = d.cfg.EnableFieldOverflowTooltips;
-            d.jiraBuffersInitialized = true;
-        }
-
-        ImGui::Text("Atlassian Cloud Details");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
-
-        ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
-        ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
-        ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf), ImGuiInputTextFlags_CharsUppercase);
-        ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::Checkbox("Show tooltips for clipped fields", &d.tooltipOverflowEnabled);
-        ImGui::SetItemTooltip("When enabled, hovering a value that is truncated or multiline will show the full text in a tooltip.");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextWrapped("JQL and field selection moved to the Views dashboard window.");
-        if (ImGui::Button("Open Views Dashboard")) {
-            d.showViewsDashboard = true;
-        }
-
-        if (ImGui::Button("Save & Sync", ImVec2(120, 0))) {
-            d.cfg.Domain = d.domainBuf;
-            d.cfg.Email = d.emailBuf;
-            d.cfg.ApiToken = d.tokenBuf;
-            d.cfg.ProjectKey = d.projectKeyBuf;
-            d.cfg.EnableFieldOverflowTooltips = d.tooltipOverflowEnabled;
-
-            ConfigManager::Save(d.cfg);
-            LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
-            d.triggerCatalogRefetch = true;
-            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
-
-            d.jiraBuffersInitialized = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            d.jiraBuffersInitialized = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
+    if (!d.showPreferences) {
+        d.preferencesBuffersLoaded = false;
+        return;
     }
+
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 480.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Preferences", &d.showPreferences)) {
+        ImGui::End();
+        return;
+    }
+
+    if (!d.preferencesBuffersLoaded) {
+        std::memset(d.domainBuf, 0, sizeof(d.domainBuf));
+        std::memset(d.emailBuf, 0, sizeof(d.emailBuf));
+        std::memset(d.tokenBuf, 0, sizeof(d.tokenBuf));
+        std::memset(d.projectKeyBuf, 0, sizeof(d.projectKeyBuf));
+        std::memset(d.aiApiKeyBuf, 0, sizeof(d.aiApiKeyBuf));
+        std::memset(d.aiModelBuf, 0, sizeof(d.aiModelBuf));
+        std::memset(d.aiBaseUrlBuf, 0, sizeof(d.aiBaseUrlBuf));
+        std::strncpy(d.domainBuf, d.cfg.Domain.c_str(), sizeof(d.domainBuf) - 1);
+        std::strncpy(d.emailBuf, d.cfg.Email.c_str(), sizeof(d.emailBuf) - 1);
+        std::strncpy(d.tokenBuf, d.cfg.ApiToken.c_str(), sizeof(d.tokenBuf) - 1);
+        std::strncpy(d.projectKeyBuf, d.cfg.ProjectKey.c_str(), sizeof(d.projectKeyBuf) - 1);
+        std::strncpy(d.aiApiKeyBuf, d.cfg.AiApiKey.c_str(), sizeof(d.aiApiKeyBuf) - 1);
+        std::strncpy(d.aiModelBuf, d.cfg.AiModel.c_str(), sizeof(d.aiModelBuf) - 1);
+        std::strncpy(d.aiBaseUrlBuf, d.cfg.AiBaseUrl.c_str(), sizeof(d.aiBaseUrlBuf) - 1);
+        d.mcpEnabled = d.cfg.McpEnabled;
+        d.mcpPort = d.cfg.McpPort;
+        d.preferencesBuffersLoaded = true;
+    }
+
+    if (ImGui::BeginTabBar("PreferencesTabs")) {
+        if (ImGui::BeginTabItem("Jira")) {
+            ImGui::TextUnformatted("Atlassian Cloud");
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
+            ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
+            ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
+            ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf), ImGuiInputTextFlags_CharsUppercase);
+            ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+            ImGui::Spacing();
+            ImGui::TextWrapped("JQL and column fields are configured in the Views dashboard.");
+            if (ImGui::Button("Open Views Dashboard")) {
+                d.showViewsDashboard = true;
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Assistant")) {
+            ImGui::TextUnformatted("OpenAI-compatible API used by the AI assistant panel.");
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::InputText("API Key", d.aiApiKeyBuf, sizeof(d.aiApiKeyBuf), ImGuiInputTextFlags_Password);
+            ImGui::InputText("Model", d.aiModelBuf, sizeof(d.aiModelBuf));
+            ImGui::SetItemTooltip("Example: gpt-4o-mini");
+            ImGui::InputText("Base URL", d.aiBaseUrlBuf, sizeof(d.aiBaseUrlBuf));
+            ImGui::SetItemTooltip("Example: https://api.openai.com");
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Integrations")) {
+            ImGui::TextUnformatted("MCP (Model Context Protocol)");
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::Checkbox("Enable MCP server", &d.mcpEnabled);
+            ImGui::InputInt("MCP Port", &d.mcpPort);
+            if (d.mcpPort < 1) {
+                d.mcpPort = 1;
+            }
+            if (d.mcpPort > 65535) {
+                d.mcpPort = 65535;
+            }
+            ImGui::TextDisabled("Changes apply on next host initialization or restart.");
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Appearance")) {
+            ImGui::TextUnformatted("Grid and field text");
+            ImGui::Separator();
+            if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip(
+                "When a value is truncated to fit the cell, or spans multiple lines, hover to read the full text in a "
+                "tooltip.");
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Diagnostics")) {
+            static const LogLevel kLogLevels[] = {
+                LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
+            LogLevel parsedLevel = Logger::ParseLogLevelString(d.cfg.LogMinLevel, LogLevel::Info);
+            int levelComboIndex = 2;
+            for (int i = 0; i < 5; ++i) {
+                if (kLogLevels[i] == parsedLevel) {
+                    levelComboIndex = i;
+                    break;
+                }
+            }
+            ImGui::TextUnformatted("Logging");
+            ImGui::Separator();
+            ImGui::TextUnformatted("Min log level");
+            ImGui::SameLine();
+            if (ImGui::Combo(
+                    "##LogMinLevel",
+                    &levelComboIndex,
+                    "Trace\0"
+                    "Debug\0"
+                    "Info\0"
+                    "Warn\0"
+                    "Error\0"
+                    "\0")) {
+                d.cfg.LogMinLevel = Logger::LogLevelToString(kLogLevels[levelComboIndex]);
+                Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
+                ConfigManager::Save(d.cfg);
+            }
+            bool jiraBodies = d.cfg.LogJiraHttpBodies;
+            if (ImGui::Checkbox("Log Jira HTTP bodies (truncated)", &jiraBodies)) {
+                d.cfg.LogJiraHttpBodies = jiraBodies;
+                Logger::Instance().SetLogJiraHttpBodies(jiraBodies);
+                ConfigManager::Save(d.cfg);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Verbose: logs response text (capped per request). May include issue summaries and user-visible "
+                    "data.");
+            }
+            bool logP4Io = d.cfg.LogP4Io;
+            if (ImGui::Checkbox("Log Perforce p4 stdout (truncated, Trace level)", &logP4Io)) {
+                d.cfg.LogP4Io = logP4Io;
+                Logger::Instance().SetLogP4Io(logP4Io);
+                ConfigManager::Save(d.cfg);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
+            }
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            if (ImGui::Button("Open Performance monitor")) {
+                d.showPerformance = true;
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Blame Analysis")) {
+            blameAnalysisUi_.DrawBlamePreferencesTab(app);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextWrapped(
+        "Save & Sync writes the Jira, Assistant, and Integrations tabs to disk and refreshes the Jira connection. "
+        "Appearance and Diagnostics options save immediately when changed. The Blame Analysis tab has its own Save "
+        "settings and Reload settings buttons.");
+    ImGui::Spacing();
+    if (ImGui::Button("Save & Sync", ImVec2(140.0f, 0.0f))) {
+        d.cfg.Domain = d.domainBuf;
+        d.cfg.Email = d.emailBuf;
+        d.cfg.ApiToken = d.tokenBuf;
+        d.cfg.ProjectKey = d.projectKeyBuf;
+        d.cfg.AiApiKey = d.aiApiKeyBuf;
+        d.cfg.AiModel = d.aiModelBuf;
+        d.cfg.AiBaseUrl = d.aiBaseUrlBuf;
+        d.cfg.McpEnabled = d.mcpEnabled;
+        d.cfg.McpPort = d.mcpPort;
+
+        ConfigManager::Save(d.cfg);
+        LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+        d.triggerCatalogRefetch = true;
+        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+    }
+
+    ImGui::End();
 }
 
 void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
@@ -1274,8 +2504,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                             if (nowActive) {
                                 d.cfg.JqlQuery = nowActive->Jql;
                                 d.cfg.SelectedFields = nowActive->Fields;
-                                ConfigManager::Save(d.cfg);
-                                app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                                SyncWithCurrentView(app, d, ViewState.GetStore(), true);
                             }
                         }
                     }
@@ -1284,6 +2513,46 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                     }
                 }
                 ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            const bool disableBackNav = !d.navHistory.CanGoBack();
+            if (disableBackNav) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("<")) {
+                const NavigationEntry* entry = d.navHistory.GoBack();
+                if (entry) {
+                    d.cfg.JqlQuery = entry->Jql;
+                    std::strncpy(d.viewJqlBuf, d.cfg.JqlQuery.c_str(), sizeof(d.viewJqlBuf) - 1);
+                    d.viewJqlBuf[sizeof(d.viewJqlBuf) - 1] = '\0';
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), false);
+                }
+            }
+            if (disableBackNav) {
+                ImGui::EndDisabled();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Run the previous JQL query from navigation history.");
+            }
+            ImGui::SameLine();
+            const bool disableForwardNav = !d.navHistory.CanGoForward();
+            if (disableForwardNav) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button(">")) {
+                const NavigationEntry* entry = d.navHistory.GoForward();
+                if (entry) {
+                    d.cfg.JqlQuery = entry->Jql;
+                    std::strncpy(d.viewJqlBuf, d.cfg.JqlQuery.c_str(), sizeof(d.viewJqlBuf) - 1);
+                    d.viewJqlBuf[sizeof(d.viewJqlBuf) - 1] = '\0';
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), false);
+                }
+            }
+            if (disableForwardNav) {
+                ImGui::EndDisabled();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Run the next JQL query from navigation history.");
             }
 
             ImGui::InputText("View Name", d.viewNameBuf, sizeof(d.viewNameBuf));
@@ -1300,8 +2569,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 if (ViewState.UpdateActive(updated)) {
                     d.cfg.JqlQuery = updated.Jql;
                     d.cfg.SelectedFields = updated.Fields;
-                    ConfigManager::Save(d.cfg);
-                    app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
                 }
             }
             ImGui::SameLine();
@@ -1319,7 +2587,8 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 }
             }
             ImGui::SameLine();
-            if (store.Views.size() <= 1) {
+            const bool disableDeleteView = (store.Views.size() <= 1);
+            if (disableDeleteView) {
                 ImGui::BeginDisabled();
             }
             if (ImGui::Button("Delete View")) {
@@ -1329,12 +2598,11 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                         loadBuffersFromView(*nowActive);
                         d.cfg.JqlQuery = nowActive->Jql;
                         d.cfg.SelectedFields = nowActive->Fields;
-                        ConfigManager::Save(d.cfg);
-                        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                        SyncWithCurrentView(app, d, ViewState.GetStore(), true);
                     }
                 }
             }
-            if (store.Views.size() <= 1) {
+            if (disableDeleteView) {
                 ImGui::EndDisabled();
             }
 
@@ -1408,7 +2676,8 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 std::strncpy(d.selectedFieldsBuf, csv.c_str(), sizeof(d.selectedFieldsBuf) - 1);
             };
 
-            if (d.fieldCatalogLoading) {
+            const bool disableFieldCatalogEditing = d.fieldCatalogLoading;
+            if (disableFieldCatalogEditing) {
                 ImGui::BeginDisabled();
             }
 
@@ -1545,7 +2814,10 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 }
             }
             ImGui::EndChild();
-            if (d.selectedColumnOrderIndex < 0 || d.selectedColumnOrderIndex >= static_cast<int>(d.editingColumnOrder.size())) {
+            const bool disableColumnMoveButtons =
+                d.selectedColumnOrderIndex < 0 ||
+                d.selectedColumnOrderIndex >= static_cast<int>(d.editingColumnOrder.size());
+            if (disableColumnMoveButtons) {
                 ImGui::BeginDisabled();
             }
             if (ImGui::Button("Move Up") && d.selectedColumnOrderIndex > 0) {
@@ -1561,11 +2833,11 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                           d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex + 1)]);
                 ++d.selectedColumnOrderIndex;
             }
-            if (d.selectedColumnOrderIndex < 0 || d.selectedColumnOrderIndex >= static_cast<int>(d.editingColumnOrder.size())) {
+            if (disableColumnMoveButtons) {
                 ImGui::EndDisabled();
             }
 
-            if (d.fieldCatalogLoading) {
+            if (disableFieldCatalogEditing) {
                 ImGui::EndDisabled();
             }
         } else {
@@ -1578,6 +2850,8 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
 void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     auto& d = g_ui;
     ImGui::Begin("Smatchet - Active Project");
+    const std::string& catalogError = app.GetJiraFieldCatalogError();
+    const bool readOnlyMode = !catalogError.empty();
 
     ImGui::Separator();
     const ViewDefinition* activeView = ViewState.GetActiveView();
@@ -1587,8 +2861,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         if (ImGui::Button("Refresh View")) {
             d.cfg.JqlQuery = activeView->Jql;
             d.cfg.SelectedFields = activeView->Fields;
-            ConfigManager::Save(d.cfg);
-            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+            SyncWithCurrentView(app, d, ViewState.GetStore(), true);
         }
         ImGui::SameLine();
         if (ImGui::Button("Open Views")) {
@@ -1603,12 +2876,27 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     }
 
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: 8080");
+    if (d.cfg.McpEnabled) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
+    }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("External AI tools can now access Smatchet tickets via port 8080.");
+        if (d.cfg.McpEnabled) {
+            ImGui::SetTooltip("External tools can access Smatchet tickets via MCP on port %d.", d.cfg.McpPort);
+        } else {
+            ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+        }
     }
 
     ImGui::Separator();
+    if (readOnlyMode) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.25f, 1.0f));
+        ImGui::TextWrapped("Read-only mode: %s", catalogError.c_str());
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Grid edits and quick comment actions are disabled until Jira connectivity is restored.");
+        ImGui::Separator();
+    }
 
     const auto& tickets = app.GetActiveTickets();
 
@@ -1732,6 +3020,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
             const CachedTicket& ticket = tickets[ticketIndex];
             bool isSelected = (d.gridState.SelectedId == ticket.id);
+            if (isSelected && !readOnlyMode) {
+                app.WarmIssueEditMetaAsync(ticket.id);
+            }
             ImGui::TableNextRow();
 
             for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
@@ -1753,7 +3044,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                         ticket.id,
                         std::string(),
                         column.Label,
-                        ticket.id);
+                        ticket.id,
+                        &app,
+                        &d,
+                        readOnlyMode);
                     continue;
                 }
 
@@ -1801,7 +3095,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                         saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
                     ImGui::EndGroup();
                     DrawGridCellRightClickPopups(
-                        cellKey, ticket.id, column.FieldId, column.Label, currentValue);
+                        cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
                 } else {
                     ImGui::BeginGroup();
                     TicketFieldEditor::RenderFieldCell(
@@ -1812,17 +3106,19 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                         currentValue,
                         valueAvailWidth,
                         d.cfg.EnableFieldOverflowTooltips,
+                        !readOnlyMode &&
+                            app.CanEditJiraFieldForIssue(ticket.id, column.FieldId, fieldMeta),
                         d.gridState,
                         pendingEdits,
                         d.jiraGridAsync);
                     ImGui::EndGroup();
                     DrawGridCellRightClickPopups(
-                        cellKey, ticket.id, column.FieldId, column.Label, currentValue);
+                        cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
                 }
 
                 if (showBadge) {
                     const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
-                    const float badgeX = std::max(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
+                    const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
                     ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
                     ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
                     ImGui::TextUnformatted(badgeText.c_str());
@@ -1891,19 +3187,28 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     }
 
     // Keep queued edits latest-per-cell (drop older queued item for same cell).
-    for (const auto& edit : pendingEdits) {
-        const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
-        for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
-            if (BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
-                it = d.queuedFieldEdits.erase(it);
-            } else {
-                ++it;
+    if (!readOnlyMode) {
+        for (const auto& edit : pendingEdits) {
+            const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
+            for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
+                if (BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
+                    it = d.queuedFieldEdits.erase(it);
+                } else {
+                    ++it;
+                }
             }
+            d.queuedFieldEdits.push_back(edit);
         }
-        d.queuedFieldEdits.push_back(edit);
+    } else if (!pendingEdits.empty()) {
+        d.gridEditSuccess.clear();
+        d.gridEditError = "Edit skipped: Jira is in read-only mode.";
     }
 
-    if (!d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
+    if (readOnlyMode) {
+        d.queuedFieldEdits.clear();
+    }
+
+    if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
         d.inFlightEdit = d.queuedFieldEdits.front();
         d.queuedFieldEdits.pop_front();
         d.hasInFlightEdit = true;
@@ -1915,7 +3220,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         d.cellFeedbackByKey[BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id)] = feedback;
     }
 
-    if (d.hasInFlightEdit) {
+    if (!readOnlyMode && d.hasInFlightEdit) {
         if (d.inFlightDelayFrames > 0) {
             --d.inFlightDelayFrames;
         } else {
@@ -1997,12 +3302,21 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app) {
                 }
             }
             ImGui::Spacing();
+            ImGui::TextDisabled("Model: %s", d.cfg.AiModel.empty() ? "(unset)" : d.cfg.AiModel.c_str());
+            ImGui::TextDisabled("Endpoint: %s", d.cfg.AiBaseUrl.empty() ? "(unset)" : d.cfg.AiBaseUrl.c_str());
+            if (d.cfg.AiApiKey.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                                   "Set AI API Key under Settings → Preferences → Assistant to enable generation.");
+            }
 
             if (ImGui::Button("Generate Action Plan") && !d.aiIsThinking) {
                 d.aiIsThinking = true;
-                std::string aiKey = "YOUR_API_KEY_HERE";
-
-                auto result = AiController::AnalyzeTicket(it->id, summary, aiKey);
+                auto result = AiController::AnalyzeTicket(
+                    it->id,
+                    summary,
+                    d.cfg.AiApiKey,
+                    d.cfg.AiModel,
+                    d.cfg.AiBaseUrl);
                 d.aiResponse = result.Response;
                 d.aiIsThinking = false;
             }
@@ -2027,52 +3341,9 @@ void SmatchetUI::drawLogWindow() {
         Logger::Instance().Clear();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(showing application log messages)");
-
-    static const LogLevel kLogLevels[] = {
-        LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
-    LogLevel parsedLevel = Logger::ParseLogLevelString(d.cfg.LogMinLevel, LogLevel::Info);
-    int levelComboIndex = 2;
-    for (int i = 0; i < 5; ++i) {
-        if (kLogLevels[i] == parsedLevel) {
-            levelComboIndex = i;
-            break;
-        }
-    }
-    ImGui::Separator();
-    ImGui::TextUnformatted("Min log level");
+    ImGui::TextDisabled("(application log)");
     ImGui::SameLine();
-    if (ImGui::Combo(
-            "##LogMinLevel",
-            &levelComboIndex,
-            "Trace\0"
-            "Debug\0"
-            "Info\0"
-            "Warn\0"
-            "Error\0"
-            "\0")) {
-        d.cfg.LogMinLevel = Logger::LogLevelToString(kLogLevels[levelComboIndex]);
-        Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
-        ConfigManager::Save(d.cfg);
-    }
-    bool jiraBodies = d.cfg.LogJiraHttpBodies;
-    if (ImGui::Checkbox("Log Jira HTTP bodies (truncated)", &jiraBodies)) {
-        d.cfg.LogJiraHttpBodies = jiraBodies;
-        Logger::Instance().SetLogJiraHttpBodies(jiraBodies);
-        ConfigManager::Save(d.cfg);
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Verbose: logs response text (capped per request). May include issue summaries and user-visible data.");
-    }
-    bool logP4Io = d.cfg.LogP4Io;
-    if (ImGui::Checkbox("Log Perforce p4 stdout (truncated, Trace level)", &logP4Io)) {
-        d.cfg.LogP4Io = logP4Io;
-        Logger::Instance().SetLogP4Io(logP4Io);
-        ConfigManager::Save(d.cfg);
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
-    }
+    ImGui::TextDisabled("Log level and verbose options: Settings → Preferences → Diagnostics.");
 
     ImGui::Separator();
 

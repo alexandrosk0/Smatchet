@@ -14,7 +14,12 @@ public:
 
     void DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey);
 
+    /** Persisted blame options (same fields as former Blame "Options…"); call from Preferences. */
+    void DrawBlamePreferencesTab(AppController& app);
+
 private:
+    void ensureSettingsBuffersLoaded();
+
     bool cfgLoaded_ = false;
     bool blamePanelOpen_ = false;
     bool blameOpenPrev_ = false;

@@ -16,6 +16,7 @@
 #include <string>
 #include <utility>
 #include <algorithm>
+#include <mutex>
 #include <unordered_map>
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
@@ -46,15 +47,33 @@ public:
                                                         const std::string& mimeType,
                                                         const std::string& filename)>;
     void SetAttachmentViewerHandler(AttachmentViewerHandler handler);
+    using AttachmentPreviewHandler = std::function<bool(const std::string& localPath,
+                                                        const std::string& mimeType,
+                                                        const std::string& filename,
+                                                        const std::string& sourceUrl)>;
+    void SetAttachmentPreviewHandler(AttachmentPreviewHandler handler);
+    struct AttachmentDescriptor {
+        std::string Filename;
+        std::string Url;
+        std::string MimeType;
+    };
+    using AttachmentCollectionHandler = std::function<void(const std::vector<AttachmentDescriptor>& attachments)>;
+    void SetAttachmentCollectionHandler(AttachmentCollectionHandler handler);
+    void ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments);
 
     /**
      * Open an attachment (image/pdf/etc) without requiring Basic Auth headers in the browser.
      * - If AttachmentViewerHandler is set: downloads to a temp file and calls the handler.
-     * - Otherwise: falls back to OpenUrl(url) (may not work for attachments in embedded browsers).
+     * - Otherwise, for image mime types: downloads and offers in-app preview handler.
+     * - If no host/in-app handler path is available: falls back to OpenUrl(url).
      */
     void OpenAttachment(const std::string& url,
                          const std::string& filename,
                          const std::string& mimeType);
+    bool DownloadAttachmentForPreview(const std::string& url,
+                                      const std::string& filename,
+                                      const std::string& mimeType,
+                                      std::string* outError = nullptr);
 
     void InitLua();
 
@@ -98,10 +117,25 @@ public:
 
     const JiraField* FindJiraFieldById(const std::string& fieldId) const;
 
+    /**
+     * Per-issue Jira edit metadata: true if the field may be edited for this issue.
+     * Matches SubmitJiraFieldEdit: sprint fields, timetracking estimate columns, and `status` ignore
+     * editmeta (Jira does not list status like a normal settable field; updates use transitions).
+     * `priority`: if editmeta is loaded but omits `priority`, allow edit (Jira omits it inconsistently).
+     * Returns true when editmeta is not loaded yet (optimistic) or for non-Jira backends.
+     * After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
+     * @param fieldMeta optional catalog row for fieldId (avoids lookup; same as nullptr + catalog).
+     */
+    bool CanEditJiraFieldForIssue(const std::string& issueId,
+                                  const std::string& fieldId,
+                                  const JiraField* fieldMeta = nullptr) const;
+
     bool SubmitJiraFieldEdit(const std::string& issueId,
                              const JiraField& field,
                              const std::vector<std::string>& rawValues,
                              std::string& outError);
+    /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
+    void WarmIssueEditMetaAsync(const std::string& issueId);
 
     /** Fetches watcher users for an issue (Jira only). */
     bool FetchIssueWatchers(const std::string& issueKey,
@@ -143,12 +177,30 @@ private:
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
     AttachmentViewerHandler AttachmentViewerHandlerCallback;
+    AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
+    AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
 
+    struct IssueEditMetaCache {
+        bool loaded = false;
+        /** Field id -> Jira allows an update operation (set/add/remove). */
+        std::unordered_map<std::string, bool> fieldCanEdit;
+    };
+
+    mutable std::mutex editMetaMutex_;
+    std::unordered_map<std::string, IssueEditMetaCache> issueEditMeta_;
+    std::unordered_map<std::string, IssueEditMetaCache> issueTypeEditMeta_;
+
+    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr);
+    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr);
+    void InvalidateIssueEditMeta(const std::string& issueId);
+    void PruneEditMetaCacheToActiveTickets();
+    void WarmIssueTypeEditMetaAtStartAsync();
+    std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
     std::string ResolveLuaScriptPath(const std::string& filename) const;
 };
 

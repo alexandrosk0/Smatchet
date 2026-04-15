@@ -281,8 +281,9 @@ target_link_libraries(SmatchetCore PRIVATE
         ImGuiLib
         glfw
 )
+target_compile_definitions(SmatchetCore PRIVATE SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS=1)
 if(WIN32)
-    target_link_libraries(SmatchetCore PRIVATE shell32)
+    target_link_libraries(SmatchetCore PRIVATE shell32 windowscodecs ole32)
 endif()
 smatchet_apply_strict_warnings(SmatchetCore)
 

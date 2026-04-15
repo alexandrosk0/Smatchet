@@ -9,15 +9,17 @@ struct SpreadsheetState {
     std::string EditingId;
     std::string EditingFieldId;
     int EditingColumn = -1;
+    bool EditJustStarted = false;
     char EditBuffer[512] = "";
 
     void SelectRow(const std::string& id) { SelectedId = id; }
-    void ClearEditing() { EditingId = ""; EditingFieldId = ""; EditingColumn = -1; }
+    void ClearEditing() { EditingId = ""; EditingFieldId = ""; EditingColumn = -1; EditJustStarted = false; }
 
     void StartEditing(const std::string& id, int col, const std::string& val) {
         EditingId = id;
         EditingFieldId.clear();
         EditingColumn = col;
+        EditJustStarted = true;
         CopyToEditBuffer(val);
     }
 
@@ -25,6 +27,7 @@ struct SpreadsheetState {
         EditingId = id;
         EditingFieldId = fieldId;
         EditingColumn = -1;
+        EditJustStarted = true;
         CopyToEditBuffer(val);
     }
 

@@ -163,6 +163,252 @@ std::string JsonGetStringIfString(const nlohmann::json& j, const char* key) {
     return it->get<std::string>();
 }
 
+std::string TrimTrailingZeros(const std::string& number);
+
+std::string JsonValueToCompactString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    if (value.is_number_float()) {
+        std::ostringstream oss;
+        oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+        return TrimTrailingZeros(oss.str());
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    return {};
+}
+
+std::string JsonIdToString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    return {};
+}
+
+std::string BuildJiraOptionDisplayValue(const nlohmann::json& value) {
+    if (value.is_null()) {
+        return {};
+    }
+    if (value.is_primitive()) {
+        return JsonValueToCompactString(value);
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+
+    if (value.contains("key") && value["key"].is_string()) {
+        const std::string key = value["key"].get<std::string>();
+        const std::string summary =
+            value.contains("fields") && value["fields"].is_object()
+                ? JsonGetStringIfString(value["fields"], "summary")
+                : std::string();
+        if (!key.empty() && !summary.empty()) {
+            return key + " - " + summary;
+        }
+        if (!key.empty()) {
+            return key;
+        }
+    }
+
+    static const char* kPreferredLabelKeys[] = {
+        "displayName", "value", "name", "label", "title", "summary", "key", "groupId", "accountId", "id"
+    };
+    for (const char* key : kPreferredLabelKeys) {
+        const auto it = value.find(key);
+        if (it == value.end()) {
+            continue;
+        }
+        const std::string label = JsonValueToCompactString(*it);
+        if (!label.empty()) {
+            return label;
+        }
+    }
+    return {};
+}
+
+std::string BuildJiraOptionId(const nlohmann::json& value) {
+    if (value.is_null()) {
+        return {};
+    }
+    if (value.is_primitive()) {
+        return JsonValueToCompactString(value);
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+    static const char* kPreferredIdKeys[] = {"id", "accountId", "groupId", "key", "value", "name"};
+    for (const char* key : kPreferredIdKeys) {
+        const auto it = value.find(key);
+        if (it == value.end()) {
+            continue;
+        }
+        const std::string id = JsonIdToString(*it);
+        if (!id.empty()) {
+            return id;
+        }
+    }
+    return {};
+}
+
+bool IsSimpleOptionObject(const nlohmann::json& value) {
+    if (!value.is_object()) {
+        return false;
+    }
+    static const std::unordered_set<std::string> kSimpleKeys = {
+        "id", "value", "name", "disabled", "self", "description", "label", "archived", "released"
+    };
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        if (kSimpleKeys.find(it.key()) == kSimpleKeys.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+JiraFieldOption JiraFieldOptionFromJson(const nlohmann::json& value) {
+    JiraFieldOption option;
+    option.Id = BuildJiraOptionId(value);
+    option.Value = BuildJiraOptionDisplayValue(value);
+    if (option.Value.empty()) {
+        option.Value = option.Id;
+    }
+    if (value.is_object()) {
+        option.SecondaryValue = JsonGetStringIfString(value, "description");
+        if (option.SecondaryValue.empty()) {
+            option.SecondaryValue = JsonGetStringIfString(value, "key");
+            if (option.SecondaryValue == option.Value) {
+                option.SecondaryValue.clear();
+            }
+        }
+        const auto disabledIt = value.find("disabled");
+        option.Disabled = disabledIt != value.end() && disabledIt->is_boolean() && disabledIt->get<bool>();
+        const auto childrenIt = value.find("children");
+        if (childrenIt != value.end() && childrenIt->is_array()) {
+            for (const auto& child : *childrenIt) {
+                option.Children.push_back(JiraFieldOptionFromJson(child));
+            }
+        }
+    }
+    try {
+        option.PayloadJson = value.dump();
+    } catch (...) {
+        option.PayloadJson.clear();
+    }
+    return option;
+}
+
+std::string JiraFieldOptionKey(const JiraFieldOption& option) {
+    if (!option.Id.empty()) {
+        return "id:" + ToLowerAsciiCopy(option.Id);
+    }
+    return "value:" + ToLowerAsciiCopy(option.Value);
+}
+
+void MergeJiraFieldOption(std::vector<JiraFieldOption>& target, const JiraFieldOption& incoming) {
+    const std::string incomingKey = JiraFieldOptionKey(incoming);
+    for (auto& existing : target) {
+        if (JiraFieldOptionKey(existing) != incomingKey) {
+            continue;
+        }
+        if (existing.Value.empty()) {
+            existing.Value = incoming.Value;
+        }
+        if (existing.SecondaryValue.empty()) {
+            existing.SecondaryValue = incoming.SecondaryValue;
+        }
+        if (existing.PayloadJson.empty()) {
+            existing.PayloadJson = incoming.PayloadJson;
+        }
+        existing.Disabled = existing.Disabled || incoming.Disabled;
+        for (const auto& child : incoming.Children) {
+            MergeJiraFieldOption(existing.Children, child);
+        }
+        return;
+    }
+    target.push_back(incoming);
+}
+
+void RefreshAllowedValuesFromOptions(JiraField& field) {
+    field.AllowedValues.clear();
+    field.AllowedValues.reserve(field.AllowedValueOptions.size());
+    for (const auto& option : field.AllowedValueOptions) {
+        if (!option.Value.empty()) {
+            field.AllowedValues.push_back(option.Value);
+        }
+    }
+}
+
+JiraFieldFamily ClassifyJiraFieldFamily(const JiraField& field) {
+    const std::string lowerId = ToLowerAsciiCopy(field.Id);
+    const std::string lowerCustom = ToLowerAsciiCopy(field.SchemaCustom);
+    if (lowerId == "labels") {
+        return JiraFieldFamily::Labels;
+    }
+    if (lowerId == "status") {
+        return JiraFieldFamily::Status;
+    }
+    if (lowerId == "issuetype") {
+        return JiraFieldFamily::IssueType;
+    }
+    if (lowerCustom.find("gh-sprint") != std::string::npos) {
+        return JiraFieldFamily::Sprint;
+    }
+    if (field.Type == "date") {
+        return JiraFieldFamily::Date;
+    }
+    if (field.Type == "datetime") {
+        return JiraFieldFamily::DateTime;
+    }
+    if (field.Type == "number") {
+        return JiraFieldFamily::Number;
+    }
+    if (field.IsUserType) {
+        return field.IsArray ? JiraFieldFamily::UserMulti : JiraFieldFamily::UserSingle;
+    }
+    if (lowerCustom.find("cascadingselect") != std::string::npos) {
+        return JiraFieldFamily::CascadingSelect;
+    }
+    if (!field.AllowedValueOptions.empty()) {
+        const bool hasChildren = std::any_of(field.AllowedValueOptions.begin(),
+                                             field.AllowedValueOptions.end(),
+                                             [](const JiraFieldOption& option) {
+                                                 return !option.Children.empty();
+                                             });
+        if (hasChildren) {
+            return JiraFieldFamily::CascadingSelect;
+        }
+        const bool likelyStructured = std::any_of(field.AllowedValueOptions.begin(),
+                                                  field.AllowedValueOptions.end(),
+                                                  [](const JiraFieldOption& option) {
+                                                      if (option.PayloadJson.empty()) {
+                                                          return false;
+                                                      }
+                                                      nlohmann::json raw =
+                                                          nlohmann::json::parse(option.PayloadJson, nullptr, false);
+                                                      return raw.is_object() && !IsSimpleOptionObject(raw);
+                                                  });
+        if (likelyStructured) {
+            return field.IsArray ? JiraFieldFamily::StructuredMulti : JiraFieldFamily::StructuredSingle;
+        }
+        return field.IsArray ? JiraFieldFamily::SelectMulti : JiraFieldFamily::SelectSingle;
+    }
+    return JiraFieldFamily::Text;
+}
+
 std::string TrimTrailingZeros(const std::string& number) {
     if (number.find('.') == std::string::npos) {
         return number;
@@ -718,6 +964,14 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
                 return dn;
             }
         }
+        if (value.contains("value") && value["value"].is_string() &&
+            value.contains("child") && value["child"].is_object()) {
+            const std::string parentValue = value["value"].get<std::string>();
+            const std::string childValue = BuildJiraOptionDisplayValue(value["child"]);
+            if (!parentValue.empty() && !childValue.empty()) {
+                return parentValue + " > " + childValue;
+            }
+        }
         if (value.contains("value") && value["value"].is_string()) {
             const std::string vv = value["value"].get<std::string>();
             if (!vv.empty()) {
@@ -913,6 +1167,109 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg,
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse watchers response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueEditMeta(const JiraConfig& cfg,
+                                    const std::string& issueKeyOrId,
+                                    std::unordered_map<std::string, bool>& outFieldIdCanEdit,
+                                    std::string& outError) {
+    outFieldIdCanEdit.clear();
+    outError.clear();
+
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKeyOrId.empty()) {
+        outError = "Issue key or id is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKeyOrId) + "/editmeta";
+    auto response = JiraGetLogged(url, headers);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch issue editmeta: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 800);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
+        return false;
+    }
+
+    try {
+        const auto root = nlohmann::json::parse(response.text);
+        if (!root.is_object() || !root.contains("fields") || !root["fields"].is_object()) {
+            outError = "Invalid editmeta response: missing fields object.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s",
+                      outError.c_str(),
+                      issueKeyOrId.c_str(),
+                      TruncateForLog(response.text, 400).c_str());
+            return false;
+        }
+        const auto& fields = root["fields"];
+        for (auto it = fields.begin(); it != fields.end(); ++it) {
+            const std::string fieldId = ToLowerAsciiCopy(it.key());
+            const auto& meta = it.value();
+            bool canEdit = false;
+            const bool hasOperationsArray =
+                meta.is_object() && meta.contains("operations") && meta["operations"].is_array();
+            if (hasOperationsArray) {
+                for (const auto& op : meta["operations"]) {
+                    if (op.is_string()) {
+                        const std::string opLower = ToLowerAsciiCopy(op.get<std::string>());
+                        if (opLower == "set" || opLower == "add" || opLower == "remove") {
+                            canEdit = true;
+                            break;
+                        }
+                        continue;
+                    }
+                    if (!op.is_object()) {
+                        continue;
+                    }
+                    static const char* kOpNameKeys[] = {"operation", "name", "type"};
+                    for (const char* key : kOpNameKeys) {
+                        if (!op.contains(key) || !op[key].is_string()) {
+                            continue;
+                        }
+                        const std::string opLower = ToLowerAsciiCopy(op[key].get<std::string>());
+                        if (opLower == "set" || opLower == "add" || opLower == "remove") {
+                            canEdit = true;
+                            break;
+                        }
+                    }
+                    if (canEdit) {
+                        break;
+                    }
+                }
+            }
+            // Jira sometimes omits `operations` for nullable date/datetime fields (e.g. unset due date)
+            // while still listing the field in editmeta. Treat as editable only when the key is absent
+            // or not an array — not when operations is an explicit empty array.
+            if (!canEdit && meta.is_object() && !hasOperationsArray) {
+                static const std::unordered_set<std::string> kSchemaOnlyDateDenylist = {
+                    "created", "updated", "resolutiondate"};
+                if (kSchemaOnlyDateDenylist.find(fieldId) == kSchemaOnlyDateDenylist.end() &&
+                    meta.contains("schema") && meta["schema"].is_object()) {
+                    const auto& schema = meta["schema"];
+                    if (schema.contains("type") && schema["type"].is_string()) {
+                        const std::string t = ToLowerAsciiCopy(schema["type"].get<std::string>());
+                        if (t == "date" || t == "datetime") {
+                            canEdit = true;
+                        }
+                    }
+                }
+            }
+            outFieldIdCanEdit[fieldId] = canEdit;
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse editmeta response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
         return false;
     }
 
@@ -1153,7 +1510,11 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
         auto transitionResp = JiraPostLogged(transitionsUrl, headers, transitionBodyStr);
         if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
             outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
-            LOG_ERROR("JiraClient: %s", outError.c_str());
+            if (!transitionResp.text.empty()) {
+                outError += " — ";
+                outError += TruncateForLog(transitionResp.text, 1200);
+            }
+            LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
             return false;
         }
 
@@ -1192,7 +1553,11 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId,
 
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
         LOG_DEBUG("JiraClient: update payload:\n%s", body.dump(2).c_str());
         return false;
     }
@@ -1215,6 +1580,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildJiraHeaders(cfg);
+    std::vector<std::string> sprintFieldIds;
 
     const std::string fieldsListUrl = base + "/rest/api/3/field";
     auto fieldsResponse = JiraGetLogged(fieldsListUrl, headers);
@@ -1251,6 +1617,14 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                 if (schema.contains("type") && schema["type"].is_string()) {
                     jiraField.Type = schema["type"].get<std::string>();
                 }
+                jiraField.SchemaSystem =
+                    (schema.contains("system") && schema["system"].is_string())
+                        ? schema["system"].get<std::string>()
+                        : std::string();
+                jiraField.SchemaCustom =
+                    (schema.contains("custom") && schema["custom"].is_string())
+                        ? schema["custom"].get<std::string>()
+                        : std::string();
 
                 jiraField.IsArray = (jiraField.Type == "array");
                 if (jiraField.IsArray && schema.contains("items")) {
@@ -1264,9 +1638,13 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                 }
                 jiraField.IsUserType =
                     (jiraField.Type == "user") || (jiraField.IsArray && jiraField.ItemsType == "user");
+                if (!jiraField.SchemaCustom.empty() && jiraField.SchemaCustom.find("gh-sprint") != std::string::npos) {
+                    sprintFieldIds.push_back(fieldId);
+                }
             }
 
             jiraField.IsCustom = (fieldId.find("customfield_") == 0);
+            jiraField.Family = ClassifyJiraFieldFamily(jiraField);
             try {
                 jiraField.RestFieldDefinitionJson = field.dump(2);
             } catch (const std::exception& ex) {
@@ -1356,47 +1734,14 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                         }
 
                         JiraField& targetField = outFields[indexIt->second];
-                        if (!targetField.AllowedValues.empty()) {
-                            continue;
-                        }
-
                         for (const auto& val : fieldObj["allowedValues"]) {
-                            std::string optionId;
-                            std::string optionValue;
-
-                            if (val.is_string()) {
-                                optionValue = val.get<std::string>();
-                                optionId = optionValue;
-                            } else if (val.is_object()) {
-                                if (val.contains("id")) {
-                                    if (val["id"].is_string()) {
-                                        optionId = val["id"].get<std::string>();
-                                    } else if (val["id"].is_number_integer()) {
-                                        optionId = std::to_string(val["id"].get<long long>());
-                                    } else if (val["id"].is_number_unsigned()) {
-                                        optionId = std::to_string(val["id"].get<unsigned long long>());
-                                    }
-                                }
-
-                                if (val.contains("value") && val["value"].is_string()) {
-                                    optionValue = val["value"].get<std::string>();
-                                } else if (val.contains("name") && val["name"].is_string()) {
-                                    optionValue = val["name"].get<std::string>();
-                                }
-
-                                if (optionValue.empty() && !optionId.empty()) {
-                                    optionValue = optionId;
-                                }
-                            }
-
-                            if (!optionValue.empty()) {
-                                targetField.AllowedValues.push_back(optionValue);
-                                JiraFieldOption option;
-                                option.Id = optionId.empty() ? optionValue : optionId;
-                                option.Value = optionValue;
-                                targetField.AllowedValueOptions.push_back(option);
+                            JiraFieldOption option = JiraFieldOptionFromJson(val);
+                            if (!option.Value.empty() || !option.Id.empty()) {
+                                MergeJiraFieldOption(targetField.AllowedValueOptions, option);
                             }
                         }
+                        RefreshAllowedValuesFromOptions(targetField);
+                        targetField.Family = ClassifyJiraFieldFamily(targetField);
                     }
                 }
             }
@@ -1443,6 +1788,11 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                             JiraFieldOption option;
                             option.Id = std::move(tid);
                             option.Value = tname;
+                            try {
+                                option.PayloadJson = it.dump();
+                            } catch (...) {
+                                option.PayloadJson.clear();
+                            }
                             opts.push_back(std::move(option));
                         }
                         if (!opts.empty()) {
@@ -1451,10 +1801,8 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                                           return a.Value < b.Value;
                                       });
                             issueTypeField.AllowedValueOptions = std::move(opts);
-                            issueTypeField.AllowedValues.clear();
-                            for (const auto& o : issueTypeField.AllowedValueOptions) {
-                                issueTypeField.AllowedValues.push_back(o.Value);
-                            }
+                            RefreshAllowedValuesFromOptions(issueTypeField);
+                            issueTypeField.Family = ClassifyJiraFieldFamily(issueTypeField);
                             filledFromProject = true;
                         }
                     }
@@ -1476,6 +1824,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                     option.Value = issueTypeName;
                     issueTypeField.AllowedValueOptions.push_back(option);
                 }
+                issueTypeField.Family = ClassifyJiraFieldFamily(issueTypeField);
             }
         }
     }
@@ -1517,8 +1866,14 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                         JiraFieldOption option;
                         option.Id = statusId;
                         option.Value = statusName;
+                        try {
+                            option.PayloadJson = statusObj.dump();
+                        } catch (...) {
+                            option.PayloadJson.clear();
+                        }
                         statusField.AllowedValueOptions.push_back(std::move(option));
                     }
+                    statusField.Family = ClassifyJiraFieldFamily(statusField);
                 }
             } else {
                 LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
@@ -1528,6 +1883,130 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
         LOG_WARN("JiraClient: status catalog parse failed: %s", ex.what());
     }
 
+    // Enrich sprint custom fields with selectable sprint options (active/future) from Jira Agile.
+    if (!sprintFieldIds.empty() && !cfg.ProjectKey.empty()) {
+        try {
+            std::vector<int> boardIds;
+            std::set<int> seenBoardIds;
+            const int kBoardsPerPage = 50;
+            const int kMaxBoardPages = 20;
+            for (int page = 0; page < kMaxBoardPages; ++page) {
+                const int startAt = page * kBoardsPerPage;
+                const std::string boardsUrl = base + "/rest/agile/1.0/board?projectKeyOrId=" +
+                                              UrlEncode(cfg.ProjectKey) + "&maxResults=" +
+                                              std::to_string(kBoardsPerPage) + "&startAt=" +
+                                              std::to_string(startAt);
+                auto boardsResp = JiraGetLogged(boardsUrl, headers);
+                if (boardsResp.status_code != 200) {
+                    LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
+                    break;
+                }
+                auto boardsJson = nlohmann::json::parse(boardsResp.text);
+                if (!boardsJson.is_object() || !boardsJson.contains("values") ||
+                    !boardsJson["values"].is_array()) {
+                    LOG_WARN("JiraClient: sprint board discovery response missing values array.");
+                    break;
+                }
+
+                const auto& values = boardsJson["values"];
+                for (const auto& board : values) {
+                    if (!board.is_object() || !board.contains("id")) {
+                        continue;
+                    }
+                    const int bid = ParseJsonIntLoose(board["id"], -1);
+                    if (bid > 0 && seenBoardIds.insert(bid).second) {
+                        boardIds.push_back(bid);
+                    }
+                }
+
+                const bool isLast = boardsJson.value("isLast", false);
+                if (isLast || values.empty()) {
+                    break;
+                }
+            }
+
+            std::vector<JiraFieldOption> sprintOptions;
+            std::set<std::string> seenSprintIds;
+            for (int boardId : boardIds) {
+                const std::string sprintUrl = base + "/rest/agile/1.0/board/" +
+                                              std::to_string(boardId) +
+                                              "/sprint?state=active,future&maxResults=100";
+                auto sprintResp = JiraGetLogged(sprintUrl, headers);
+                if (sprintResp.status_code != 200) {
+                    continue;
+                }
+                auto sprintJson = nlohmann::json::parse(sprintResp.text);
+                if (!sprintJson.is_object() || !sprintJson.contains("values") ||
+                    !sprintJson["values"].is_array()) {
+                    continue;
+                }
+                for (const auto& sprint : sprintJson["values"]) {
+                    if (!sprint.is_object() || !sprint.contains("id")) {
+                        continue;
+                    }
+                    std::string sprintId;
+                    if (sprint["id"].is_string()) {
+                        sprintId = sprint["id"].get<std::string>();
+                    } else {
+                        const int sid = ParseJsonIntLoose(sprint["id"], -1);
+                        if (sid > 0) {
+                            sprintId = std::to_string(sid);
+                        }
+                    }
+                    const std::string sprintName = sprint.value("name", std::string());
+                    if (sprintId.empty() || sprintName.empty() || !seenSprintIds.insert(sprintId).second) {
+                        continue;
+                    }
+                    JiraFieldOption opt;
+                    opt.Id = sprintId;
+                    opt.Value = sprintName;
+                    try {
+                        opt.PayloadJson = sprint.dump();
+                    } catch (...) {
+                        opt.PayloadJson.clear();
+                    }
+                    sprintOptions.push_back(std::move(opt));
+                }
+            }
+
+            if (!sprintOptions.empty()) {
+                std::sort(sprintOptions.begin(),
+                          sprintOptions.end(),
+                          [](const JiraFieldOption& a, const JiraFieldOption& b) {
+                              return a.Value < b.Value;
+                          });
+                for (const auto& sprintFieldId : sprintFieldIds) {
+                    const auto fit = fieldIndexById.find(sprintFieldId);
+                    if (fit == fieldIndexById.end()) {
+                        continue;
+                    }
+                    JiraField& targetField = outFields[fit->second];
+                    if (targetField.AllowedValueOptions.empty()) {
+                        targetField.AllowedValueOptions = sprintOptions;
+                    } else {
+                        for (const auto& opt : sprintOptions) {
+                            MergeJiraFieldOption(targetField.AllowedValueOptions, opt);
+                        }
+                        std::sort(targetField.AllowedValueOptions.begin(),
+                                  targetField.AllowedValueOptions.end(),
+                                  [](const JiraFieldOption& a, const JiraFieldOption& b) {
+                                      return a.Value < b.Value;
+                                  });
+                    }
+                    RefreshAllowedValuesFromOptions(targetField);
+                    targetField.Family = ClassifyJiraFieldFamily(targetField);
+                }
+            }
+        } catch (const std::exception& ex) {
+            LOG_WARN("JiraClient: sprint enrichment failed: %s", ex.what());
+        } catch (...) {
+            LOG_WARN("JiraClient: sprint enrichment failed (unknown exception).");
+        }
+    }
+
+    for (auto& field : outFields) {
+        field.Family = ClassifyJiraFieldFamily(field);
+    }
     return true;
 }
 
@@ -1703,7 +2182,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
                       page, response.status_code, static_cast<int>(response.error.code));
             if (response.status_code == 401 || response.status_code == 403 ||
                 (response.text.find("authenticated") != std::string::npos)) {
-                LOG_WARN("JiraClient: login failed. Check Email and API token in Settings -> Jira Credentials.");
+                LOG_WARN("JiraClient: login failed. Check Email and API token under Settings → Preferences → Jira.");
             }
             LOG_DEBUG("JiraClient: response error message: %s", response.error.message.c_str());
             break;
@@ -1777,6 +2256,9 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
                             } else {
                                 ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
                             }
+                        } else if (fieldKey == "attachment" || fieldKey == "attachments") {
+                            // Keep full attachment metadata JSON (filename/content/mime/id) for UI open/preview actions.
+                            ticket.fieldValues[fieldKey] = stringifyForGrid(rawValue);
                         } else if (fieldKey == "timeoriginalestimate" ||
                                    fieldKey == "timeestimate" ||
                                    fieldKey == "timespent" ||
@@ -1882,7 +2364,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         } else {
             LOG_WARN("JiraClient: API returned 0 issues and /myself was not authenticated (HTTP %d). "
                      "This usually means the app sent invalid credentials (often a truncated API token). "
-                     "Re-open Settings -> Jira Credentials and paste the full API token.",
+                     "Re-open Settings → Preferences → Jira and paste the full API token.",
                      myselfResp.status_code);
         }
     }
@@ -2112,6 +2594,40 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
     } catch (const std::exception& ex) {
         outError = std::string("user parse error: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool JiraClient::AddIssueToSprint(const JiraConfig& cfg,
+                                  const std::string& issueKey,
+                                  const std::string& sprintId,
+                                  std::string& outError) {
+    outError.clear();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+    if (sprintId.empty()) {
+        outError = "Sprint id is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const std::string url = base + "/rest/agile/1.0/sprint/" + UrlEncode(sprintId) + "/issue";
+    const nlohmann::json body = nlohmann::json{{"issues", nlohmann::json::array({issueKey})}};
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(url, headers, bodyStr);
+    if (response.status_code != 204 && response.status_code != 200) {
+        outError = "Failed to add issue to sprint: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " - " + TruncateForLog(response.text, 220);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s sprint=%s", outError.c_str(), issueKey.c_str(), sprintId.c_str());
         return false;
     }
     return true;

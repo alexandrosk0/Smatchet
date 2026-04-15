@@ -5,16 +5,20 @@
 #include <nlohmann/json.hpp>
 
 inline bool TryParseJsonMaybeDoubleEncoded(const std::string& raw, nlohmann::json& outJson) {
-    try {
-        outJson = nlohmann::json::parse(raw);
-        if (outJson.is_string()) {
-            outJson = nlohmann::json::parse(outJson.get<std::string>());
-        }
-        return true;
-    } catch (...) {
+    outJson = nlohmann::json::parse(raw, nullptr, false);
+    if (outJson.is_discarded()) {
         outJson = nlohmann::json();
         return false;
     }
+    if (outJson.is_string()) {
+        nlohmann::json nested = nlohmann::json::parse(outJson.get<std::string>(), nullptr, false);
+        if (nested.is_discarded()) {
+            outJson = nlohmann::json();
+            return false;
+        }
+        outJson = std::move(nested);
+    }
+    return true;
 }
 
 inline int ParseJsonIntLoose(const nlohmann::json& v, int fallback = 0) {
