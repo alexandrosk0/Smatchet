@@ -55,6 +55,7 @@ public:
 
     // Thread‑safe snapshot of current log entries.
     std::vector<LogEntry> GetEntriesSnapshot() const;
+    std::uint64_t GetRevision() const;
 
     // Clear all log entries.
     void Clear();
@@ -69,6 +70,7 @@ private:
     std::atomic<int> m_minLevelInt{static_cast<int>(LogLevel::Info)};
     std::atomic<bool> m_logJiraHttpBodies{false};
     std::atomic<bool> m_logP4Io{false};
+    std::atomic<std::uint64_t> m_revision{0};
     static constexpr std::size_t kMaxEntries = 1000;
 };
 

@@ -10,8 +10,11 @@
 class SmatchetPerfUi {
 public:
     void DrawWindow(bool* pOpen);
+    /// Reads `io.Framerate` / delta; call after `DrawWindow` while the performance UI is open.
+    void DrawFpsOverlay();
 
 private:
+    void updateSmoothedFps();
     struct CpuSmoothBucket {
         double lastTotalMs = 0.0;
         double avgPerCallMs = 0.0;

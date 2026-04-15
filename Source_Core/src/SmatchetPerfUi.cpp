@@ -167,25 +167,30 @@ void SmatchetPerfUi::buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std
     }
 }
 
+void SmatchetPerfUi::updateSmoothedFps() {
+    const ImGuiIO& io = ImGui::GetIO();
+    const double dt = static_cast<double>(io.DeltaTime);
+    const double fps = static_cast<double>(io.Framerate);
+    const double frameMs = dt > 0.0 ? dt * 1000.0 : 0.0;
+    if (!fpsSmoothInit_) {
+        smoothFps_ = fps;
+        smoothFrameMs_ = frameMs;
+        fpsSmoothInit_ = true;
+    } else {
+        const double fa = SmoothingAlpha(dt, kFpsSmoothTauSec);
+        smoothFps_ = fa * fps + (1.0 - fa) * smoothFps_;
+        smoothFrameMs_ = fa * frameMs + (1.0 - fa) * smoothFrameMs_;
+    }
+}
+
 void SmatchetPerfUi::DrawWindow(bool* pOpen) {
     if (!pOpen || !*pOpen) {
         return;
     }
+    updateSmoothedFps();
     ImGui::SetNextWindowSize(ImVec2(520, 380), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Performance", pOpen)) {
-        const ImGuiIO& io = ImGui::GetIO();
-        const double dt = static_cast<double>(io.DeltaTime);
-        const double fps = static_cast<double>(io.Framerate);
-        const double frameMs = dt > 0.0 ? dt * 1000.0 : 0.0;
-        if (!fpsSmoothInit_) {
-            smoothFps_ = fps;
-            smoothFrameMs_ = frameMs;
-            fpsSmoothInit_ = true;
-        } else {
-            const double fa = SmoothingAlpha(dt, kFpsSmoothTauSec);
-            smoothFps_ = fa * fps + (1.0 - fa) * smoothFps_;
-            smoothFrameMs_ = fa * frameMs + (1.0 - fa) * smoothFrameMs_;
-        }
+        const double dt = static_cast<double>(ImGui::GetIO().DeltaTime);
         ImGui::Text("FPS: %.1f    Frame: %.2f ms (smoothed)", smoothFps_, smoothFrameMs_);
         ImGui::Separator();
 
@@ -263,6 +268,20 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
             }
             ImGui::EndTabBar();
         }
+    }
+    ImGui::End();
+}
+
+void SmatchetPerfUi::DrawFpsOverlay() {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(
+        ImVec2(io.DisplaySize.x - 12.0f, io.DisplaySize.y - 12.0f), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav
+        | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking;
+    if (ImGui::Begin("##SmatchetFpsOverlay", nullptr, kFlags)) {
+        ImGui::Text("FPS %.1f  %.2f ms", smoothFps_, smoothFrameMs_);
     }
     ImGui::End();
 }

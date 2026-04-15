@@ -16,14 +16,22 @@
 #include <string>
 #include <utility>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
 #include "JiraClient.h"
 
 class AppController {
 public:
+    struct JiraFieldEditResult {
+        bool Ok = false;
+        std::string Error;
+        std::unordered_map<std::string, std::string> UpdatedDisplayValues;
+    };
+
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
@@ -105,6 +113,10 @@ public:
     void UpdateTicket(const CachedTicket& ticket);
 
     const std::vector<CachedTicket>& GetActiveTickets() const { return ActiveTickets; }
+    std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
+
+    /** Bumped when `AvailableJiraFields` changes (fetch, error clear, etc.); UI sort cache should invalidate. */
+    std::uint64_t GetJiraFieldCatalogRevision() const { return JiraFieldCatalogRevision.load(); }
 
     bool RefreshJiraFieldCatalog(const JiraConfig& cfg);
 
@@ -128,12 +140,23 @@ public:
      */
     bool CanEditJiraFieldForIssue(const std::string& issueId,
                                   const std::string& fieldId,
-                                  const JiraField* fieldMeta = nullptr) const;
+                                  const JiraField* fieldMeta = nullptr,
+                                  const std::string* issueTypeKeyOverride = nullptr) const;
 
     bool SubmitJiraFieldEdit(const std::string& issueId,
                              const JiraField& field,
                              const std::vector<std::string>& rawValues,
                              std::string& outError);
+    bool SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
+                                        const JiraField& field,
+                                        const std::vector<std::string>& rawValues,
+                                        const std::string& originalEstimateSnapshot,
+                                        const std::string& remainingEstimateSnapshot,
+                                        const std::string& issueTypeKeySnapshot,
+                                        JiraFieldEditResult& outResult);
+    bool ApplyJiraFieldEditResult(const std::string& issueId,
+                                  const JiraFieldEditResult& result,
+                                  std::string& outError);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
@@ -170,6 +193,8 @@ private:
     std::unique_ptr<ITrackerClient> Backend;
     JiraClient* JiraBackend = nullptr;
     std::vector<CachedTicket> ActiveTickets;
+    std::atomic<std::uint64_t> ActiveTicketsRevision{0};
+    std::atomic<std::uint64_t> JiraFieldCatalogRevision{0};
     std::vector<JiraField> AvailableJiraFields;
     std::vector<JiraComponent> AvailableJiraComponents;
     std::string LastJiraFieldCatalogError;
@@ -194,9 +219,18 @@ private:
     mutable std::mutex editMetaMutex_;
     std::unordered_map<std::string, IssueEditMetaCache> issueEditMeta_;
     std::unordered_map<std::string, IssueEditMetaCache> issueTypeEditMeta_;
+    std::unordered_set<std::string> issueEditMetaWarmupInFlight_;
 
-    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr);
-    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr);
+    /**
+     * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
+     *        for issuetype (safe for background threads that captured the key on the UI thread).
+     */
+    bool EnsureIssueEditMetaLoaded(const std::string& issueId,
+                                   std::string* outError = nullptr,
+                                   const std::string* issueTypeKeyOverride = nullptr);
+    bool RefreshIssueEditMeta(const std::string& issueId,
+                              std::string* outError = nullptr,
+                              const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     void WarmIssueTypeEditMetaAtStartAsync();

@@ -42,6 +42,7 @@ private:
     std::unordered_map<std::string, double> emaByName_;
 };
 
+// name == nullptr: no timing recorded (cheap no-op; use for conditional scopes).
 class UiPerfScope {
 public:
     explicit UiPerfScope(const char* name);

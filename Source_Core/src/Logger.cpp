@@ -107,6 +107,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
     entry.level = level;
     entry.message = message;
     m_entries.push_back(entry);
+    m_revision.fetch_add(1, std::memory_order_release);
 }
 
 void Logger::Logf(LogLevel level, const char* fmt, ...) {
@@ -136,7 +137,12 @@ std::vector<LogEntry> Logger::GetEntriesSnapshot() const {
     return m_entries;
 }
 
+std::uint64_t Logger::GetRevision() const {
+    return m_revision.load(std::memory_order_acquire);
+}
+
 void Logger::Clear() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_entries.clear();
+    m_revision.fetch_add(1, std::memory_order_release);
 }

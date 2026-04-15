@@ -77,9 +77,12 @@ std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows() const {
 
 UiPerfScope::UiPerfScope(const char* name)
     : name_(name)
-    , t0_(std::chrono::steady_clock::now()) {}
+    , t0_(name ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
 
 UiPerfScope::~UiPerfScope() {
+    if (!name_) {
+        return;
+    }
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - t0_);
     UiPerfMonitor::Instance().Record(name_, dt);

@@ -892,6 +892,7 @@ void AppController::RefreshLocalData() {
     if (Cache) {
         ActiveTickets = Cache->GetAllTickets();
         PruneEditMetaCacheToActiveTickets();
+        ActiveTicketsRevision.fetch_add(1);
     }
 }
 
@@ -907,6 +908,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
         LastJiraFieldCatalogError = "Jira backend is not initialized.";
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        JiraFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::RefreshJiraFieldCatalog skipped: Jira backend not initialized.");
         return false;
     }
@@ -919,6 +921,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
         LastJiraFieldCatalogError = error;
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        JiraFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::RefreshJiraFieldCatalog failed: %s", error.c_str());
         return false;
     }
@@ -926,6 +929,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
     AvailableJiraFields = std::move(fetchedFields);
     AvailableJiraComponents = std::move(fetchedComponents);
     LastJiraFieldCatalogError.clear();
+    JiraFieldCatalogRevision.fetch_add(1);
     return true;
 }
 
@@ -936,6 +940,7 @@ void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
         LastJiraFieldCatalogError = error;
+        JiraFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::SetJiraFieldCatalog error: %s", error.c_str());
         return;
     }
@@ -954,6 +959,7 @@ void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
         historyField.ReadOnly = true;
         AvailableJiraFields.push_back(std::move(historyField));
     }
+    JiraFieldCatalogRevision.fetch_add(1);
 }
 
 const JiraField* AppController::FindJiraFieldById(const std::string& fieldId) const {
@@ -1020,7 +1026,8 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync() {
 
 bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
                                             const std::string& fieldId,
-                                            const JiraField* fieldMeta) const {
+                                            const JiraField* fieldMeta,
+                                            const std::string* issueTypeKeyOverride) const {
     if (!JiraBackend || issueId.empty() || fieldId.empty()) {
         return true;
     }
@@ -1037,7 +1044,12 @@ bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
     if (fieldKey == "status") {
         return true;
     }
-    const std::string issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    std::string issueTypeKey;
+    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
+        issueTypeKey = *issueTypeKeyOverride;
+    } else {
+        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    }
     std::lock_guard<std::mutex> lock(editMetaMutex_);
     const auto it = issueEditMeta_.find(issueId);
     if (it == issueEditMeta_.end() || !it->second.loaded) {
@@ -1060,7 +1072,9 @@ bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
     return fieldIt->second;
 }
 
-bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError) {
+bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId,
+                                              std::string* outError,
+                                              const std::string* issueTypeKeyOverride) {
     if (outError) {
         outError->clear();
     }
@@ -1074,7 +1088,12 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
             return true;
         }
     }
-    const std::string issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    std::string issueTypeKey;
+    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
+        issueTypeKey = *issueTypeKeyOverride;
+    } else {
+        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    }
     if (!issueTypeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         const auto typeIt = issueTypeEditMeta_.find(issueTypeKey);
@@ -1111,14 +1130,21 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     return ok;
 }
 
-bool AppController::RefreshIssueEditMeta(const std::string& issueId, std::string* outError) {
-    const std::string issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+bool AppController::RefreshIssueEditMeta(const std::string& issueId,
+                                        std::string* outError,
+                                        const std::string* issueTypeKeyOverride) {
+    std::string issueTypeKey;
+    if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
+        issueTypeKey = *issueTypeKeyOverride;
+    } else {
+        issueTypeKey = ResolveIssueTypeKeyForIssue(issueId);
+    }
     InvalidateIssueEditMeta(issueId);
     if (!issueTypeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueTypeEditMeta_.erase(issueTypeKey);
     }
-    return EnsureIssueEditMetaLoaded(issueId, outError);
+    return EnsureIssueEditMetaLoaded(issueId, outError, &issueTypeKey);
 }
 
 void AppController::InvalidateIssueEditMeta(const std::string& issueId) {
@@ -1171,11 +1197,19 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
         if (it != issueEditMeta_.end() && it->second.loaded) {
             return;
         }
+        if (issueEditMetaWarmupInFlight_.find(issueId) != issueEditMetaWarmupInFlight_.end()) {
+            return;
+        }
+        issueEditMetaWarmupInFlight_.insert(issueId);
     }
 
     std::thread([this, issueId]() {
         std::string ignored;
         EnsureIssueEditMetaLoaded(issueId, &ignored);
+        {
+            std::lock_guard<std::mutex> lock(editMetaMutex_);
+            issueEditMetaWarmupInFlight_.erase(issueId);
+        }
     }).detach();
 }
 
@@ -1456,6 +1490,249 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         RefreshLocalData();
     }
 
+    return true;
+}
+
+bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
+                                                   const JiraField& field,
+                                                   const std::vector<std::string>& rawValues,
+                                                   const std::string& originalEstimateSnapshot,
+                                                   const std::string& remainingEstimateSnapshot,
+                                                   const std::string& issueTypeKeySnapshot,
+                                                   JiraFieldEditResult& outResult) {
+    outResult = JiraFieldEditResult{};
+    if (issueId.empty()) {
+        outResult.Error = "Issue id is empty.";
+        return false;
+    }
+
+    JiraClient localClient;
+    JiraConfig cfg = ConfigManager::Load();
+    std::vector<std::string> values;
+    values.reserve(rawValues.size());
+    for (const auto& value : rawValues) {
+        if (!value.empty()) {
+            values.push_back(value);
+        }
+    }
+
+    if (IsSprintField(field)) {
+        if (values.empty()) {
+            outResult.Error = "Clearing sprint is not supported by this action.";
+            return false;
+        }
+        const std::string sprintId = values.front();
+        if (!localClient.AddIssueToSprint(cfg, issueId, sprintId, outResult.Error)) {
+            return false;
+        }
+        std::string displayValue = sprintId;
+        for (const auto& option : field.AllowedValueOptions) {
+            if (option.Id == sprintId) {
+                displayValue = option.Value;
+                break;
+            }
+        }
+        outResult.Ok = true;
+        outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+        return true;
+    }
+
+    if (IsNonEditableTimetrackingFieldId(field.Id)) {
+        outResult.Error = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
+        return false;
+    }
+
+    if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        const std::string editedValue = values.empty() ? std::string() : values.front();
+        if (editedValue.empty()) {
+            outResult.Error = "Clearing Jira timetracking estimates is not supported by this editor.";
+            return false;
+        }
+        std::string originalEstimate = originalEstimateSnapshot;
+        std::string remainingEstimate = remainingEstimateSnapshot;
+        if (field.Id == "timeoriginalestimate") {
+            originalEstimate = editedValue;
+        } else {
+            remainingEstimate = editedValue;
+        }
+
+        nlohmann::json timetrackingPayload = nlohmann::json::object();
+        if (!originalEstimate.empty()) {
+            timetrackingPayload["originalEstimate"] = originalEstimate;
+        }
+        if (!remainingEstimate.empty()) {
+            timetrackingPayload["remainingEstimate"] = remainingEstimate;
+        }
+        if (timetrackingPayload.empty()) {
+            outResult.Error = "Timetracking update requires at least one estimate value.";
+            return false;
+        }
+
+        nlohmann::json fieldsPayload = nlohmann::json::object();
+        fieldsPayload["timetracking"] = std::move(timetrackingPayload);
+        if (!localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+            return false;
+        }
+        outResult.Ok = true;
+        outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
+        outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
+        return true;
+    }
+
+    const std::string* issueTypeKeyOpt =
+        issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
+    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
+    }
+    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+        !CanEditJiraFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+        outResult.Error = "Field cannot be edited for this issue (Jira edit metadata).";
+        LOG_WARN("AppController::SubmitJiraFieldEditNetworkOnly blocked by editmeta issue=%s field=%s",
+                 issueId.c_str(),
+                 field.Id.c_str());
+        return false;
+    }
+
+    nlohmann::json valuePayload;
+    if (field.IsArray) {
+        valuePayload = nlohmann::json::array();
+        for (const auto& value : values) {
+            if (field.IsUserType) {
+                valuePayload.push_back(nlohmann::json{{"accountId", value}});
+            } else if (field.Family == JiraFieldFamily::StructuredMulti ||
+                       field.Family == JiraFieldFamily::IssueType ||
+                       field.Family == JiraFieldFamily::Status ||
+                       field.Family == JiraFieldFamily::CascadingSelect) {
+                nlohmann::json optionPayload;
+                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
+                    valuePayload.push_back(std::move(optionPayload));
+                } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
+                           !field.AllowedValueOptions.empty()) {
+                    valuePayload.push_back(FallbackPayloadForSelectableField(field, value));
+                } else {
+                    valuePayload.push_back(value);
+                }
+            } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
+                       !field.AllowedValueOptions.empty()) {
+                valuePayload.push_back(nlohmann::json{{"id", value}});
+            } else {
+                valuePayload.push_back(value);
+            }
+        }
+    } else {
+        const std::string scalarValue = values.empty() ? std::string() : values.front();
+        if (scalarValue.empty()) {
+            valuePayload = nullptr;
+        } else if (field.IsUserType) {
+            valuePayload = nlohmann::json{{"accountId", scalarValue}};
+        } else if (field.Family == JiraFieldFamily::StructuredSingle ||
+                   field.Family == JiraFieldFamily::IssueType ||
+                   field.Family == JiraFieldFamily::Status ||
+                   field.Family == JiraFieldFamily::CascadingSelect) {
+            if (!TryBuildFieldOptionPayload(field, scalarValue, valuePayload)) {
+                valuePayload = FallbackPayloadForSelectableField(field, scalarValue);
+            }
+        } else if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
+            valuePayload = nlohmann::json{{"id", scalarValue}};
+        } else if (field.Id == "description") {
+            valuePayload = AdfDocumentFromPlainText(scalarValue);
+        } else if (field.Type == "date" || field.Type == "datetime") {
+            ParsedJiraDateTime parsed;
+            if (!TryParseJiraDateTime(scalarValue, parsed)) {
+                outResult.Error = "Invalid date/datetime value.";
+                return false;
+            }
+            valuePayload = FormatJiraDateOrDateTimeForApi(field.Type == "date", parsed);
+        } else if (field.Type == "number") {
+            if (!TryParseJiraNumberValue(scalarValue, valuePayload)) {
+                outResult.Error = "Invalid numeric value: " + scalarValue;
+                return false;
+            }
+        } else {
+            valuePayload = scalarValue;
+        }
+    }
+
+    nlohmann::json fieldsPayload = nlohmann::json::object();
+    fieldsPayload[field.Id] = std::move(valuePayload);
+    bool updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    bool didRetryAfter400 = false;
+    if (!updateOk && JiraBackend && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
+        didRetryAfter400 = true;
+        RefreshIssueEditMeta(issueId, nullptr, issueTypeKeyOpt);
+        if (!CanEditJiraFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+            outResult.Error =
+                "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
+            LOG_WARN(
+                "AppController::SubmitJiraFieldEditNetworkOnly blocked after editmeta refresh issue=%s field=%s",
+                issueId.c_str(),
+                field.Id.c_str());
+            return false;
+        }
+        updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    }
+    if (!updateOk) {
+        std::string payloadForLog;
+        try {
+            payloadForLog = fieldsPayload.dump();
+        } catch (...) {
+            payloadForLog = "(payload dump failed)";
+        }
+        LOG_ERROR("AppController::SubmitJiraFieldEditNetworkOnly failed issue=%s field=%s retried_after_400=%d "
+                  "jira_error=%s request=%s",
+                  issueId.c_str(),
+                  field.Id.c_str(),
+                  didRetryAfter400 ? 1 : 0,
+                  outResult.Error.c_str(),
+                  TruncateForLog(payloadForLog, 1200).c_str());
+        return false;
+    }
+
+    std::string displayValue;
+    if (!values.empty()) {
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i != 0) {
+                displayValue += ", ";
+            }
+            displayValue += ResolveDisplayValueForSubmittedSelection(field, values[i]);
+        }
+    }
+    outResult.Ok = true;
+    outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+    return true;
+}
+
+bool AppController::ApplyJiraFieldEditResult(const std::string& issueId,
+                                             const JiraFieldEditResult& result,
+                                             std::string& outError) {
+    outError.clear();
+    if (!result.Ok) {
+        outError = result.Error.empty() ? std::string("Failed to save Jira field update.") : result.Error;
+        return false;
+    }
+    if (!Cache) {
+        outError = "Cache is not initialized.";
+        return false;
+    }
+    if (issueId.empty()) {
+        outError = "Issue id is empty.";
+        return false;
+    }
+
+    auto ticketIt = std::find_if(
+        ActiveTickets.begin(),
+        ActiveTickets.end(),
+        [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    if (ticketIt == ActiveTickets.end()) {
+        RefreshLocalData();
+        return true;
+    }
+
+    CachedTicket updatedTicket = *ticketIt;
+    for (const auto& pair : result.UpdatedDisplayValues) {
+        updatedTicket.fieldValues[pair.first] = pair.second;
+    }
+    UpdateTicket(updatedTicket);
     return true;
 }
 

@@ -47,6 +47,10 @@
 #include <string>
 
 namespace {
+
+/** Quiet period after last grid column width / sort metadata change before writing views JSON. */
+constexpr std::chrono::milliseconds kViewStateSaveDebounce{300};
+
 std::string JoinCsv(const std::vector<std::string>& values) {
     std::string out;
     for (size_t i = 0; i < values.size(); ++i) {
@@ -858,6 +862,12 @@ struct PendingFieldEdit {
     std::vector<std::string> Values;
 };
 
+struct FieldEditCommitResult {
+    bool Ok = false;
+    std::string Error;
+    AppController::JiraFieldEditResult ApplyResult;
+};
+
 struct FieldCatalogFetchResult {
     bool Ok = false;
     std::vector<JiraField> Fields;
@@ -923,10 +933,21 @@ struct UiDrawSession {
     std::deque<PendingFieldEdit> queuedFieldEdits;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;
+    std::string inFlightOriginalEstimateSnapshot;
+    std::string inFlightRemainingEstimateSnapshot;
+    bool inFlightCommitStarted = false;
+    std::future<FieldEditCommitResult> inFlightCommitFuture;
+    /** Issuetype key captured with the row when starting an async Jira edit (for editmeta on worker). */
+    std::string inFlightIssueTypeKeySnapshot;
     int inFlightDelayFrames = 0;
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
     std::string lastGridActiveViewId;
+    std::vector<size_t> cachedSortedIndices;
+    std::string cachedSortFingerprint;
+    std::uint64_t cachedSortTicketsRevision = 0;
+    std::uint64_t cachedSortCatalogRevision = 0;
+    bool cachedSortValid = false;
 
     /** Seconds at vertical end before wheel maps to horizontal scroll (see RouteVerticalWheelToHorizontalAtTableVerticalEnds). */
     float gridBottomHorizontalWheelPauseTimer = 0.f;
@@ -935,6 +956,10 @@ struct UiDrawSession {
     bool aiIsThinking = false;
 
     std::vector<char> logBuffer;
+    std::uint64_t lastSeenLogRevision = 0;
+    /** When true, `ViewState.Save()` is scheduled for `pendingViewStateSaveAt` (debounced, extended on each change). */
+    bool pendingViewStateSave = false;
+    std::chrono::steady_clock::time_point pendingViewStateSaveAt{};
 
     JiraGridFieldAsyncState jiraGridAsync;
 
@@ -1093,18 +1118,6 @@ static std::string BuildTemplateCommentBody(const std::string& issueKey, const s
     return "Triage handoff for " + issueKey +
            ":\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:";
 }
-
-class TicketEditService {
-public:
-    explicit TicketEditService(AppController& appController) : App(appController) {}
-
-    bool Commit(const PendingFieldEdit& edit, std::string& outError) {
-        return App.SubmitJiraFieldEdit(edit.IssueId, edit.Field, edit.Values, outError);
-    }
-
-private:
-    AppController& App;
-};
 
 class TicketFieldEditor {
 public:
@@ -1897,6 +1910,15 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawLogWindow");
         drawLogWindow();
     }
+    if (g_ui.showPerformance) {
+        g_perfUi.DrawFpsOverlay();
+    }
+    if (g_ui.pendingViewStateSave &&
+        std::chrono::steady_clock::now() >= g_ui.pendingViewStateSaveAt) {
+        SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
+        ViewState.Save();
+        g_ui.pendingViewStateSave = false;
+    }
 }
 
 void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
@@ -2259,6 +2281,9 @@ void SmatchetUI::drawMainMenuBar() {
             if (ImGui::MenuItem("Preferences...")) {
                 d.showPreferences = true;
             }
+            if (ImGui::MenuItem("Performance...")) {
+                d.showPerformance = true;
+            }
             if (ImGui::MenuItem("Views Dashboard...")) {
                 d.showViewsDashboard = true;
             }
@@ -2407,12 +2432,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
                     "Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
-            }
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            if (ImGui::Button("Open Performance monitor")) {
-                d.showPerformance = true;
             }
             ImGui::EndTabItem();
         }
@@ -2853,49 +2872,52 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     const std::string& catalogError = app.GetJiraFieldCatalogError();
     const bool readOnlyMode = !catalogError.empty();
 
-    ImGui::Separator();
-    const ViewDefinition* activeView = ViewState.GetActiveView();
-    if (activeView) {
-        ImGui::Text("View: %s", activeView->Name.c_str());
-        ImGui::SameLine();
-        if (ImGui::Button("Refresh View")) {
-            d.cfg.JqlQuery = activeView->Jql;
-            d.cfg.SelectedFields = activeView->Fields;
-            SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Open Views")) {
-            d.showViewsDashboard = true;
-        }
-    } else {
-        ImGui::TextDisabled("No active view.");
-        ImGui::SameLine();
-        if (ImGui::Button("Open Views")) {
-            d.showViewsDashboard = true;
-        }
-    }
-
-    ImGui::SameLine();
-    if (d.cfg.McpEnabled) {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
-    } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
-    }
-    if (ImGui::IsItemHovered()) {
-        if (d.cfg.McpEnabled) {
-            ImGui::SetTooltip("External tools can access Smatchet tickets via MCP on port %d.", d.cfg.McpPort);
-        } else {
-            ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
-        }
-    }
-
-    ImGui::Separator();
-    if (readOnlyMode) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.25f, 1.0f));
-        ImGui::TextWrapped("Read-only mode: %s", catalogError.c_str());
-        ImGui::PopStyleColor();
-        ImGui::TextDisabled("Grid edits and quick comment actions are disabled until Jira connectivity is restored.");
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:header");
         ImGui::Separator();
+        const ViewDefinition* activeView = ViewState.GetActiveView();
+        if (activeView) {
+            ImGui::Text("View: %s", activeView->Name.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh View")) {
+                d.cfg.JqlQuery = activeView->Jql;
+                d.cfg.SelectedFields = activeView->Fields;
+                SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open Views")) {
+                d.showViewsDashboard = true;
+            }
+        } else {
+            ImGui::TextDisabled("No active view.");
+            ImGui::SameLine();
+            if (ImGui::Button("Open Views")) {
+                d.showViewsDashboard = true;
+            }
+        }
+
+        ImGui::SameLine();
+        if (d.cfg.McpEnabled) {
+            ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
+        }
+        if (ImGui::IsItemHovered()) {
+            if (d.cfg.McpEnabled) {
+                ImGui::SetTooltip("External tools can access Smatchet tickets via MCP on port %d.", d.cfg.McpPort);
+            } else {
+                ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+            }
+        }
+
+        ImGui::Separator();
+        if (readOnlyMode) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.25f, 1.0f));
+            ImGui::TextWrapped("Read-only mode: %s", catalogError.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("Grid edits and quick comment actions are disabled until Jira connectivity is restored.");
+            ImGui::Separator();
+        }
     }
 
     const auto& tickets = app.GetActiveTickets();
@@ -2905,16 +2927,26 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
     const std::vector<TicketGridColumn> columns =
         activeViewForGrid ? TicketGridColumnsBuilder::Build(*activeViewForGrid, catalogIndex)
                    : std::vector<TicketGridColumn>();
-    TicketEditService ticketEditService(app);
 
-    if (!d.gridEditError.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-        ImGui::TextWrapped("%s", d.gridEditError.c_str());
-        ImGui::PopStyleColor();
-    } else if (!d.gridEditSuccess.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-        ImGui::TextWrapped("%s", d.gridEditSuccess.c_str());
-        ImGui::PopStyleColor();
+    const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
+    if (viewChanged && activeViewForGrid) {
+        d.lastGridActiveViewId = activeViewForGrid->Id;
+    }
+    if (!activeViewForGrid) {
+        d.lastGridActiveViewId.clear();
+    }
+
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:prep");
+        if (!d.gridEditError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextWrapped("%s", d.gridEditError.c_str());
+            ImGui::PopStyleColor();
+        } else if (!d.gridEditSuccess.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+            ImGui::TextWrapped("%s", d.gridEditSuccess.c_str());
+            ImGui::PopStyleColor();
+        }
     }
 
     std::vector<PendingFieldEdit> pendingEdits;
@@ -2929,335 +2961,452 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         ImGuiTableFlags_NoSavedSettings;
 
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
-        for (const auto& column : columns) {
-            const float persistedWidth = activeViewForGrid
-                ? (activeViewForGrid->ColumnWidths.count(column.Key) ? activeViewForGrid->ColumnWidths.at(column.Key) : 0.0f)
-                : 0.0f;
-            const float defaultWidth = (column.ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
-            const float width = persistedWidth > 0.0f ? persistedWidth : defaultWidth;
-            if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-                ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
-            } else {
-                ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
-            }
-        }
-        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-        for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
-            ImGui::TableSetColumnIndex(hci);
-            const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
-            ImGui::PushID(hci);
-            ImGui::TableHeader(hcol.Label.c_str());
-            const JiraField* hdrMeta =
-                (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
-            DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
-            ImGui::PopID();
-        }
-
-        // When the active view changes, the table still holds the previous view's sort; clear and apply
-        // the new view's sort so we don't persist the old sort into the new view.
-        const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
-        if (viewChanged) {
-            d.lastGridActiveViewId = activeViewForGrid->Id;
-        }
-        if (!activeViewForGrid) {
-            d.lastGridActiveViewId.clear();
-        }
-
-        // Apply persisted sort from view when ImGui has no sort yet, or when we just switched view.
-        if (activeViewForGrid && !activeViewForGrid->SortSpecs.empty()) {
-            ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-            if (specs && (specs->SpecsCount == 0 || viewChanged)) {
-                for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ++i) {
-                    const ViewSortSpec& vs = activeViewForGrid->SortSpecs[i];
-                    if (vs.Direction == 0) continue;
-                    int colIndex = -1;
-                    for (size_t c = 0; c < columns.size(); ++c) {
-                        if (columns[c].Key == vs.ColumnKey) { colIndex = static_cast<int>(c); break; }
-                    }
-                    if (colIndex >= 0) {
-                        ImGui::TableSetColumnSortDirection(colIndex, static_cast<ImGuiSortDirection>(vs.Direction), (i > 0));
-                    }
-                }
-            }
-        }
-
-        ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
-        std::vector<size_t> sortedIndices;
-        if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
-            sortedIndices.resize(tickets.size());
-            for (size_t i = 0; i < tickets.size(); ++i) sortedIndices[i] = i;
-            const std::vector<CachedTicket>* ticketsPtr = &tickets;
-            const std::vector<TicketGridColumn>* columnsPtr = &columns;
-            const JiraFieldCatalogIndex* catalogPtr = &catalogIndex;
-            std::stable_sort(sortedIndices.begin(), sortedIndices.end(),
-                [ticketsPtr, columnsPtr, catalogPtr, sortSpecs](size_t ia, size_t ib) {
-                    const auto& tix = *ticketsPtr;
-                    const auto& cols = *columnsPtr;
-                    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-                        const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-                        const int colIndex = spec.ColumnIndex;
-                        if (colIndex < 0 || colIndex >= static_cast<int>(cols.size())) continue;
-                        const TicketGridColumn& col = cols[static_cast<size_t>(colIndex)];
-                        const int dir = (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
-                        if (col.ColumnKind == TicketGridColumn::Kind::Id) {
-                            const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
-                            if (less) return dir > 0;
-                            if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id)) continue;
-                            return dir < 0;
-                        }
-                        const std::string aVal = tix[ia].GetFieldValue(col.FieldId);
-                        const std::string bVal = tix[ib].GetFieldValue(col.FieldId);
-                        const JiraField* fieldMeta = catalogPtr->Find(col.FieldId);
-                        const int cmp = CompareFieldValuesForSort(col.FieldId, fieldMeta, aVal, bVal, spec.SortDirection);
-                        if (cmp != 0) return (cmp * dir) < 0;
-                    }
-                    return ia < ib;
-                });
-        }
-
-        const std::vector<size_t>* indicesToUse = sortedIndices.empty() ? nullptr : &sortedIndices;
-        for (size_t r = 0; r < tickets.size(); ++r) {
-            const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
-            const CachedTicket& ticket = tickets[ticketIndex];
-            bool isSelected = (d.gridState.SelectedId == ticket.id);
-            if (isSelected && !readOnlyMode) {
-                app.WarmIssueEditMetaAsync(ticket.id);
-            }
-            ImGui::TableNextRow();
-
-            for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
-                const auto& column = columns[static_cast<size_t>(colIndex)];
-                ImGui::TableSetColumnIndex(colIndex);
-
+        {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
+            for (const auto& column : columns) {
+                const float persistedWidth = activeViewForGrid
+                    ? (activeViewForGrid->ColumnWidths.count(column.Key) ? activeViewForGrid->ColumnWidths.at(column.Key) : 0.0f)
+                    : 0.0f;
+                const float defaultWidth = (column.ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
+                const float width = persistedWidth > 0.0f ? persistedWidth : defaultWidth;
                 if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-                    ImGui::BeginGroup();
-                    if (ImGui::Selectable(ticket.id.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
-                        d.gridState.SelectRow(ticket.id);
-                        if (ImGui::IsMouseDoubleClicked(0)) {
-                            const std::string url = BuildJiraBrowseUrl(d.cfg, ticket.id);
-                            app.OpenUrl(url);
-                        }
-                    }
-                    ImGui::EndGroup();
-                    DrawGridCellRightClickPopups(
-                        BuildCellKey(ticket.id, "id"),
-                        ticket.id,
-                        std::string(),
-                        column.Label,
-                        ticket.id,
-                        &app,
-                        &d,
-                        readOnlyMode);
-                    continue;
-                }
-
-                const std::string currentValue = ticket.GetFieldValue(column.FieldId);
-                const JiraField* fieldMeta = catalogIndex.Find(column.FieldId);
-                const float cellStartY = ImGui::GetCursorScreenPos().y;
-                const float cellRightX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-                const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
-                const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
-                const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
-                const bool isSavingThisCell =
-                    feedbackIt != d.cellFeedbackByKey.end() &&
-                    feedbackIt->second.State == CellWriteState::Saving;
-
-                bool showBadge = false;
-                ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
-                std::string badgeText;
-                std::string badgeTooltip;
-                if (feedbackIt != d.cellFeedbackByKey.end() &&
-                    feedbackIt->second.State == CellWriteState::Error &&
-                    !feedbackIt->second.Message.empty()) {
-                    showBadge = true;
-                    badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-                    badgeText = "!";
-                    badgeTooltip = feedbackIt->second.Message;
-                } else if (feedbackIt != d.cellFeedbackByKey.end() &&
-                           feedbackIt->second.State == CellWriteState::Success) {
-                    showBadge = true;
-                    badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
-                    badgeText = "OK";
-                    badgeTooltip = "Saved";
-                }
-
-                if (isSavingThisCell) {
-                    showBadge = true;
-                    badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
-                    badgeText = "...";
-                    badgeTooltip = "Saving...";
-                    ImGui::BeginGroup();
-                    const std::string saveDisplay =
-                        DisplayValueForJiraDateField(column.FieldId, fieldMeta, currentValue);
-                    const std::string* saveTip =
-                        IsJiraDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
-                    RenderClippedFieldText(
-                        saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
-                    ImGui::EndGroup();
-                    DrawGridCellRightClickPopups(
-                        cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                    ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
                 } else {
-                    ImGui::BeginGroup();
-                    TicketFieldEditor::RenderFieldCell(
-                        app,
-                        ticket,
-                        column.FieldId,
-                        fieldMeta,
-                        currentValue,
-                        valueAvailWidth,
-                        d.cfg.EnableFieldOverflowTooltips,
-                        !readOnlyMode &&
-                            app.CanEditJiraFieldForIssue(ticket.id, column.FieldId, fieldMeta),
-                        d.gridState,
-                        pendingEdits,
-                        d.jiraGridAsync);
-                    ImGui::EndGroup();
-                    DrawGridCellRightClickPopups(
-                        cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                    ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
                 }
+            }
+            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+            for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
+                ImGui::TableSetColumnIndex(hci);
+                const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
+                ImGui::PushID(hci);
+                ImGui::TableHeader(hcol.Label.c_str());
+                const JiraField* hdrMeta =
+                    (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
+                DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
+                ImGui::PopID();
+            }
 
-                if (showBadge) {
-                    const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
-                    const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
-                    ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
-                    ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
-                    ImGui::TextUnformatted(badgeText.c_str());
-                    ImGui::PopStyleColor();
-                    if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", badgeTooltip.c_str());
+            // Apply persisted sort from view when ImGui has no sort yet, or when we just switched view.
+            if (activeViewForGrid && !activeViewForGrid->SortSpecs.empty()) {
+                ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
+                if (specs && (specs->SpecsCount == 0 || viewChanged)) {
+                    for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ++i) {
+                        const ViewSortSpec& vs = activeViewForGrid->SortSpecs[i];
+                        if (vs.Direction == 0) continue;
+                        int colIndex = -1;
+                        for (size_t c = 0; c < columns.size(); ++c) {
+                            if (columns[c].Key == vs.ColumnKey) { colIndex = static_cast<int>(c); break; }
+                        }
+                        if (colIndex >= 0) {
+                            ImGui::TableSetColumnSortDirection(colIndex, static_cast<ImGuiSortDirection>(vs.Direction), (i > 0));
+                        }
                     }
                 }
             }
         }
 
-        RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable());
+        {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
+            ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+            if (viewChanged) {
+                d.cachedSortValid = false;
+            }
+            if (sortSpecs && sortSpecs->SpecsDirty) {
+                d.cachedSortValid = false;
+                sortSpecs->SpecsDirty = false;
+            }
+            const std::uint64_t activeTicketsRevision = app.GetActiveTicketsRevision();
+            if (activeTicketsRevision != d.cachedSortTicketsRevision) {
+                d.cachedSortValid = false;
+            }
+            const std::uint64_t catalogRevision = app.GetJiraFieldCatalogRevision();
+            if (catalogRevision != d.cachedSortCatalogRevision) {
+                d.cachedSortValid = false;
+            }
 
-        // Persist column widths and sort specs back to the active view.
-        if (activeViewForGrid) {
-            ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-            if (mutableActive) {
-                bool metaChanged = false;
-                ImGuiTable* table = ImGui::GetCurrentTable();
-                if (table) {
-                    // Persist column widths only; column order is controlled via the Views dashboard.
-                    for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
-                        const std::string& key = columns[static_cast<size_t>(i)].Key;
-                        const float width = (i < table->ColumnsCount)
-                            ? table->Columns[i].WidthGiven
-                            : 0.0f;
-                        const auto oldIt = mutableActive->ColumnWidths.find(key);
-                        const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
-                        if (std::abs(oldWidth - width) > 0.5f) {
-                            mutableActive->ColumnWidths[key] = width;
+            if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
+                std::string fingerprint;
+                fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
+                for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+                    const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+                    fingerprint += std::to_string(spec.ColumnIndex);
+                    fingerprint.push_back(':');
+                    fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
+                    fingerprint.push_back(':');
+                    fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
+                    fingerprint.push_back('|');
+                }
+
+                if (!d.cachedSortValid ||
+                    d.cachedSortFingerprint != fingerprint ||
+                    d.cachedSortedIndices.size() != tickets.size()) {
+                    d.cachedSortedIndices.resize(tickets.size());
+                    for (size_t i = 0; i < tickets.size(); ++i) d.cachedSortedIndices[i] = i;
+                    const std::vector<CachedTicket>* ticketsPtr = &tickets;
+                    const std::vector<TicketGridColumn>* columnsPtr = &columns;
+                    const JiraFieldCatalogIndex* catalogPtr = &catalogIndex;
+                    std::stable_sort(
+                        d.cachedSortedIndices.begin(),
+                        d.cachedSortedIndices.end(),
+                        [ticketsPtr, columnsPtr, catalogPtr, sortSpecs](size_t ia, size_t ib) {
+                            const auto& tix = *ticketsPtr;
+                            const auto& cols = *columnsPtr;
+                            for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+                                const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+                                const int colIndex = spec.ColumnIndex;
+                                if (colIndex < 0 || colIndex >= static_cast<int>(cols.size())) continue;
+                                const TicketGridColumn& col = cols[static_cast<size_t>(colIndex)];
+                                const int dir = (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
+                                if (col.ColumnKind == TicketGridColumn::Kind::Id) {
+                                    const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
+                                    if (less) return dir > 0;
+                                    if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id)) continue;
+                                    return dir < 0;
+                                }
+                                const std::string aVal = tix[ia].GetFieldValue(col.FieldId);
+                                const std::string bVal = tix[ib].GetFieldValue(col.FieldId);
+                                const JiraField* fieldMeta = catalogPtr->Find(col.FieldId);
+                                const int cmp = CompareFieldValuesForSort(
+                                    col.FieldId,
+                                    fieldMeta,
+                                    aVal,
+                                    bVal,
+                                    spec.SortDirection);
+                                if (cmp != 0) return (cmp * dir) < 0;
+                            }
+                            return ia < ib;
+                        });
+                    d.cachedSortFingerprint = std::move(fingerprint);
+                    d.cachedSortValid = true;
+                    d.cachedSortTicketsRevision = activeTicketsRevision;
+                    d.cachedSortCatalogRevision = catalogRevision;
+                }
+            } else {
+                d.cachedSortedIndices.clear();
+                d.cachedSortFingerprint.clear();
+                d.cachedSortValid = false;
+                d.cachedSortTicketsRevision = activeTicketsRevision;
+                d.cachedSortCatalogRevision = catalogRevision;
+            }
+        }
+
+        {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
+            const std::vector<size_t>* indicesToUse =
+                d.cachedSortedIndices.empty() ? nullptr : &d.cachedSortedIndices;
+            for (size_t r = 0; r < tickets.size(); ++r) {
+                const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
+                const CachedTicket& ticket = tickets[ticketIndex];
+                bool isSelected = (d.gridState.SelectedId == ticket.id);
+                if (isSelected && !readOnlyMode) {
+                    app.WarmIssueEditMetaAsync(ticket.id);
+                }
+                thread_local char rowPerfLabel[288];
+                const char* rowPerfScopeName = nullptr;
+                if (isSelected) {
+                    std::snprintf(rowPerfLabel,
+                                  sizeof(rowPerfLabel),
+                                  "activeProject:row[%zu] %s",
+                                  r,
+                                  ticket.id.c_str());
+                    rowPerfLabel[sizeof(rowPerfLabel) - 1] = '\0';
+                    rowPerfScopeName = rowPerfLabel;
+                }
+                SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
+                ImGui::TableNextRow();
+
+                for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
+                    const auto& column = columns[static_cast<size_t>(colIndex)];
+                    ImGui::TableSetColumnIndex(colIndex);
+
+                    if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+                        ImGui::BeginGroup();
+                        if (ImGui::Selectable(ticket.id.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                            d.gridState.SelectRow(ticket.id);
+                            if (ImGui::IsMouseDoubleClicked(0)) {
+                                const std::string url = BuildJiraBrowseUrl(d.cfg, ticket.id);
+                                app.OpenUrl(url);
+                            }
+                        }
+                        ImGui::EndGroup();
+                        DrawGridCellRightClickPopups(
+                            BuildCellKey(ticket.id, "id"),
+                            ticket.id,
+                            std::string(),
+                            column.Label,
+                            ticket.id,
+                            &app,
+                            &d,
+                            readOnlyMode);
+                        continue;
+                    }
+
+                    const std::string currentValue = ticket.GetFieldValue(column.FieldId);
+                    const JiraField* fieldMeta = catalogIndex.Find(column.FieldId);
+                    const float cellStartY = ImGui::GetCursorScreenPos().y;
+                    const float cellRightX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+                    const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
+                    const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
+                    const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
+                    const bool isSavingThisCell =
+                        feedbackIt != d.cellFeedbackByKey.end() &&
+                        feedbackIt->second.State == CellWriteState::Saving;
+
+                    bool showBadge = false;
+                    ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
+                    std::string badgeText;
+                    std::string badgeTooltip;
+                    if (feedbackIt != d.cellFeedbackByKey.end() &&
+                        feedbackIt->second.State == CellWriteState::Error &&
+                        !feedbackIt->second.Message.empty()) {
+                        showBadge = true;
+                        badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+                        badgeText = "!";
+                        badgeTooltip = feedbackIt->second.Message;
+                    } else if (feedbackIt != d.cellFeedbackByKey.end() &&
+                               feedbackIt->second.State == CellWriteState::Success) {
+                        showBadge = true;
+                        badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
+                        badgeText = "OK";
+                        badgeTooltip = "Saved";
+                    }
+
+                    if (isSavingThisCell) {
+                        showBadge = true;
+                        badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
+                        badgeText = "...";
+                        badgeTooltip = "Saving...";
+                        ImGui::BeginGroup();
+                        const std::string saveDisplay =
+                            DisplayValueForJiraDateField(column.FieldId, fieldMeta, currentValue);
+                        const std::string* saveTip =
+                            IsJiraDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
+                        RenderClippedFieldText(
+                            saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
+                        ImGui::EndGroup();
+                        DrawGridCellRightClickPopups(
+                            cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                    } else {
+                        ImGui::BeginGroup();
+                        TicketFieldEditor::RenderFieldCell(
+                            app,
+                            ticket,
+                            column.FieldId,
+                            fieldMeta,
+                            currentValue,
+                            valueAvailWidth,
+                            d.cfg.EnableFieldOverflowTooltips,
+                            !readOnlyMode &&
+                                app.CanEditJiraFieldForIssue(ticket.id, column.FieldId, fieldMeta),
+                            d.gridState,
+                            pendingEdits,
+                            d.jiraGridAsync);
+                        ImGui::EndGroup();
+                        DrawGridCellRightClickPopups(
+                            cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                    }
+
+                    if (showBadge) {
+                        const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
+                        const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
+                        ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
+                        ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
+                        ImGui::TextUnformatted(badgeText.c_str());
+                        ImGui::PopStyleColor();
+                        if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", badgeTooltip.c_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
+            RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable());
+
+            // Persist column widths and sort specs back to the active view.
+            if (activeViewForGrid) {
+                ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
+                if (mutableActive) {
+                    bool metaChanged = false;
+                    ImGuiTable* table = ImGui::GetCurrentTable();
+                    if (table) {
+                        // Persist column widths only; column order is controlled via the Views dashboard.
+                        for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
+                            const std::string& key = columns[static_cast<size_t>(i)].Key;
+                            const float width = (i < table->ColumnsCount)
+                                ? table->Columns[i].WidthGiven
+                                : 0.0f;
+                            const auto oldIt = mutableActive->ColumnWidths.find(key);
+                            const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
+                            if (std::abs(oldWidth - width) > 0.5f) {
+                                mutableActive->ColumnWidths[key] = width;
+                                metaChanged = true;
+                            }
+                        }
+                    }
+                    // Re-fetch sort specs from the table right before persisting so we use current state.
+                    ImGuiTableSortSpecs* currentSortSpecs = ImGui::TableGetSortSpecs();
+                    if (currentSortSpecs && currentSortSpecs->SpecsCount > 0 && currentSortSpecs->Specs != nullptr) {
+                        std::vector<ViewSortSpec> newSortSpecs;
+                        for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
+                            const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
+                            if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
+                                currentSortSpecs->Specs[s].SortDirection != ImGuiSortDirection_None) {
+                                ViewSortSpec vs;
+                                vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
+                                vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);
+                                newSortSpecs.push_back(vs);
+                            }
+                        }
+                        if (newSortSpecs != mutableActive->SortSpecs) {
+                            mutableActive->SortSpecs = std::move(newSortSpecs);
+                            metaChanged = true;
+                        }
+                    } else {
+                        // No active sort in the table; clear stored sort so it doesn't persist stale state.
+                        if (!mutableActive->SortSpecs.empty()) {
+                            mutableActive->SortSpecs.clear();
                             metaChanged = true;
                         }
                     }
-                }
-                // Re-fetch sort specs from the table right before persisting so we use current state.
-                ImGuiTableSortSpecs* currentSortSpecs = ImGui::TableGetSortSpecs();
-                if (currentSortSpecs && currentSortSpecs->SpecsCount > 0 && currentSortSpecs->Specs != nullptr) {
-                    std::vector<ViewSortSpec> newSortSpecs;
-                    for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
-                        const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
-                        if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
-                            currentSortSpecs->Specs[s].SortDirection != ImGuiSortDirection_None) {
-                            ViewSortSpec vs;
-                            vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
-                            vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);
-                            newSortSpecs.push_back(vs);
-                        }
+                    if (metaChanged) {
+                        const auto now = std::chrono::steady_clock::now();
+                        const auto deadline = now + kViewStateSaveDebounce;
+                        d.pendingViewStateSave = true;
+                        d.pendingViewStateSaveAt = std::max(d.pendingViewStateSaveAt, deadline);
                     }
-                    if (newSortSpecs != mutableActive->SortSpecs) {
-                        mutableActive->SortSpecs = std::move(newSortSpecs);
-                        metaChanged = true;
-                    }
-                } else {
-                    // No active sort in the table; clear stored sort so it doesn't persist stale state.
-                    if (!mutableActive->SortSpecs.empty()) {
-                        mutableActive->SortSpecs.clear();
-                        metaChanged = true;
-                    }
-                }
-                if (metaChanged) {
-                    ViewState.Save();
                 }
             }
         }
         ImGui::EndTable();
     }
 
-    // Keep queued edits latest-per-cell (drop older queued item for same cell).
-    if (!readOnlyMode) {
-        for (const auto& edit : pendingEdits) {
-            const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
-            for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
-                if (BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
-                    it = d.queuedFieldEdits.erase(it);
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:edits.queue");
+        // Keep queued edits latest-per-cell (drop older queued item for same cell).
+        if (!readOnlyMode) {
+            for (const auto& edit : pendingEdits) {
+                const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
+                for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
+                    if (BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
+                        it = d.queuedFieldEdits.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                d.queuedFieldEdits.push_back(edit);
+            }
+        } else if (!pendingEdits.empty()) {
+            d.gridEditSuccess.clear();
+            d.gridEditError = "Edit skipped: Jira is in read-only mode.";
+        }
+
+        if (readOnlyMode) {
+            d.queuedFieldEdits.clear();
+        }
+    }
+
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:edits.inFlight");
+        if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
+            d.inFlightEdit = d.queuedFieldEdits.front();
+            d.queuedFieldEdits.pop_front();
+            d.inFlightOriginalEstimateSnapshot.clear();
+            d.inFlightRemainingEstimateSnapshot.clear();
+            const auto snapshotIt = std::find_if(
+                tickets.begin(),
+                tickets.end(),
+                [&](const CachedTicket& ticket) { return ticket.id == d.inFlightEdit.IssueId; });
+            if (snapshotIt != tickets.end()) {
+                d.inFlightOriginalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
+                d.inFlightRemainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
+            }
+            d.hasInFlightEdit = true;
+            d.inFlightCommitStarted = false;
+            d.inFlightDelayFrames = 1;
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Saving;
+            feedback.Message = "Saving to Jira...";
+            feedback.FramesRemaining = 0;
+            d.cellFeedbackByKey[BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id)] = feedback;
+        }
+
+        if (d.hasInFlightEdit) {
+            if (d.inFlightDelayFrames > 0) {
+                --d.inFlightDelayFrames;
+            } else if (!d.inFlightCommitStarted) {
+                const PendingFieldEdit edit = d.inFlightEdit;
+                const std::string originalEstimateSnapshot = d.inFlightOriginalEstimateSnapshot;
+                const std::string remainingEstimateSnapshot = d.inFlightRemainingEstimateSnapshot;
+                const std::string issueTypeKeySnapshot = d.inFlightIssueTypeKeySnapshot;
+                d.inFlightCommitFuture = std::async(std::launch::async,
+                                                    [&app,
+                                                     edit,
+                                                     originalEstimateSnapshot,
+                                                     remainingEstimateSnapshot,
+                                                     issueTypeKeySnapshot]() {
+                    FieldEditCommitResult result;
+                    result.Ok = app.SubmitJiraFieldEditNetworkOnly(edit.IssueId,
+                                                                   edit.Field,
+                                                                   edit.Values,
+                                                                   originalEstimateSnapshot,
+                                                                   remainingEstimateSnapshot,
+                                                                   issueTypeKeySnapshot,
+                                                                   result.ApplyResult);
+                    result.Error = result.ApplyResult.Error;
+                    return result;
+                });
+                d.inFlightCommitStarted = true;
+            } else {
+                const std::string editKey = BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id);
+                if (d.inFlightCommitFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+                    // Async Jira commit still running; keep UI responsive.
                 } else {
-                    ++it;
+                    const FieldEditCommitResult result = d.inFlightCommitFuture.get();
+                    std::string applyError;
+                    const bool applied = result.Ok &&
+                        app.ApplyJiraFieldEditResult(d.inFlightEdit.IssueId, result.ApplyResult, applyError);
+                    if (!result.Ok || !applied) {
+                        d.gridEditError = (!result.Ok ? result.Error : applyError).empty()
+                        ? std::string("Failed to save Jira field update.")
+                        : (!result.Ok ? result.Error : applyError);
+                        d.gridEditSuccess.clear();
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Error;
+                        feedback.Message = d.gridEditError;
+                        feedback.FramesRemaining = 0;
+                        d.cellFeedbackByKey[editKey] = feedback;
+                    } else {
+                        d.gridEditSuccess = "Field update saved to Jira.";
+                        d.gridEditError.clear();
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Success;
+                        feedback.Message = "Saved";
+                        feedback.FramesRemaining = 180;
+                        d.cellFeedbackByKey[editKey] = feedback;
+                    }
+                    d.hasInFlightEdit = false;
+                    d.inFlightCommitStarted = false;
                 }
             }
-            d.queuedFieldEdits.push_back(edit);
         }
-    } else if (!pendingEdits.empty()) {
-        d.gridEditSuccess.clear();
-        d.gridEditError = "Edit skipped: Jira is in read-only mode.";
     }
 
-    if (readOnlyMode) {
-        d.queuedFieldEdits.clear();
-    }
-
-    if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
-        d.inFlightEdit = d.queuedFieldEdits.front();
-        d.queuedFieldEdits.pop_front();
-        d.hasInFlightEdit = true;
-        d.inFlightDelayFrames = 1;
-        CellWriteFeedback feedback;
-        feedback.State = CellWriteState::Saving;
-        feedback.Message = "Saving to Jira...";
-        feedback.FramesRemaining = 0;
-        d.cellFeedbackByKey[BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id)] = feedback;
-    }
-
-    if (!readOnlyMode && d.hasInFlightEdit) {
-        if (d.inFlightDelayFrames > 0) {
-            --d.inFlightDelayFrames;
-        } else {
-            std::string commitError;
-            const std::string editKey = BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id);
-            if (!ticketEditService.Commit(d.inFlightEdit, commitError)) {
-                d.gridEditError = commitError.empty()
-                    ? std::string("Failed to save Jira field update.")
-                    : commitError;
-                d.gridEditSuccess.clear();
-                CellWriteFeedback feedback;
-                feedback.State = CellWriteState::Error;
-                feedback.Message = d.gridEditError;
-                feedback.FramesRemaining = 0;
-                d.cellFeedbackByKey[editKey] = feedback;
-            } else {
-                d.gridEditSuccess = "Field update saved to Jira.";
-                d.gridEditError.clear();
-                CellWriteFeedback feedback;
-                feedback.State = CellWriteState::Success;
-                feedback.Message = "Saved";
-                feedback.FramesRemaining = 180;
-                d.cellFeedbackByKey[editKey] = feedback;
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:cellFeedback");
+        for (auto it = d.cellFeedbackByKey.begin(); it != d.cellFeedbackByKey.end();) {
+            if (it->second.State == CellWriteState::Success && it->second.FramesRemaining > 0) {
+                --it->second.FramesRemaining;
             }
-            d.hasInFlightEdit = false;
-        }
-    }
 
-    for (auto it = d.cellFeedbackByKey.begin(); it != d.cellFeedbackByKey.end();) {
-        if (it->second.State == CellWriteState::Success && it->second.FramesRemaining > 0) {
-            --it->second.FramesRemaining;
-        }
-
-        if (it->second.State == CellWriteState::Success && it->second.FramesRemaining <= 0) {
-            it = d.cellFeedbackByKey.erase(it);
-        } else {
-            ++it;
+            if (it->second.State == CellWriteState::Success && it->second.FramesRemaining <= 0) {
+                it = d.cellFeedbackByKey.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
@@ -3335,10 +3484,13 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app) {
 
 void SmatchetUI::drawLogWindow() {
     auto& d = g_ui;
+    Logger& logger = Logger::Instance();
     ImGui::Begin("Log");
 
     if (ImGui::Button("Clear Log")) {
-        Logger::Instance().Clear();
+        logger.Clear();
+        d.lastSeenLogRevision = logger.GetRevision();
+        d.logBuffer.assign(1, '\0');
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(application log)");
@@ -3347,9 +3499,10 @@ void SmatchetUI::drawLogWindow() {
 
     ImGui::Separator();
 
-    const auto entries = Logger::Instance().GetEntriesSnapshot();
-
-    {
+    const std::uint64_t revision = logger.GetRevision();
+    const bool rebuildLogBuffer = d.logBuffer.empty() || revision != d.lastSeenLogRevision;
+    if (rebuildLogBuffer) {
+        const auto entries = logger.GetEntriesSnapshot();
         std::string aggregated;
         aggregated.reserve(entries.size() * 64);
 
@@ -3370,6 +3523,7 @@ void SmatchetUI::drawLogWindow() {
 
         d.logBuffer.assign(aggregated.begin(), aggregated.end());
         d.logBuffer.push_back('\0');
+        d.lastSeenLogRevision = revision;
     }
 
     ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
