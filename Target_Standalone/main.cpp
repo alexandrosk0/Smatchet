@@ -254,6 +254,7 @@ int main(int, char**) {
         glfwSwapBuffers(window);
     }
 
+    smatchetApp.ClearAutomationLogSinks();
     pluginHost.OnStop();
 
     // 5. Cleanup

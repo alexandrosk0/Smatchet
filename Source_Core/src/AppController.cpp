@@ -15,6 +15,7 @@
 #include <sstream>
 #include <mutex>
 #include <thread>
+#include <algorithm>
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +30,8 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
+#elif defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>
 #endif
 
 namespace {
@@ -101,6 +104,88 @@ bool IsImageMimeType(const std::string& mimeType) {
 
 std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension);
 
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::string NormalizeDomain(const std::string& rawDomain) {
+    std::string value = TrimAsciiWhitespace(rawDomain);
+    const size_t schemeSep = value.find("://");
+    if (schemeSep != std::string::npos) {
+        value = value.substr(schemeSep + 3);
+    }
+    const size_t slashPos = value.find('/');
+    if (slashPos != std::string::npos) {
+        value = value.substr(0, slashPos);
+    }
+    const size_t atPos = value.rfind('@');
+    if (atPos != std::string::npos) {
+        value = value.substr(atPos + 1);
+    }
+    const size_t colonPos = value.find(':');
+    if (colonPos != std::string::npos) {
+        value = value.substr(0, colonPos);
+    }
+    return ToLowerAscii(value);
+}
+
+std::string ExtractHostFromUrl(const std::string& url) {
+    const size_t schemeSep = url.find("://");
+    if (schemeSep == std::string::npos) {
+        return std::string();
+    }
+    const size_t hostStart = schemeSep + 3;
+    const size_t hostEnd = url.find_first_of("/?#", hostStart);
+    const std::string hostPort = url.substr(hostStart, hostEnd - hostStart);
+    if (hostPort.empty()) {
+        return std::string();
+    }
+    if (hostPort.front() == '[') {
+        const size_t closePos = hostPort.find(']');
+        if (closePos == std::string::npos) {
+            return std::string();
+        }
+        return ToLowerAscii(hostPort.substr(1, closePos - 1));
+    }
+    const size_t colonPos = hostPort.find(':');
+    return ToLowerAscii(colonPos == std::string::npos ? hostPort : hostPort.substr(0, colonPos));
+}
+
+bool IsAllowedJiraAttachmentHost(const std::string& host, const std::string& jiraDomain) {
+    if (host.empty() || jiraDomain.empty()) {
+        return false;
+    }
+    if (host == jiraDomain) {
+        return true;
+    }
+    const std::string suffix = "." + jiraDomain;
+    if (host.size() > suffix.size() &&
+        host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return true;
+    }
+    return host == "api.media.atlassian.com";
+}
+
+#if defined(__APPLE__) || defined(__linux__)
+bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
+    if (!exe || arg.empty()) {
+        return false;
+    }
+    const pid_t child = fork();
+    if (child < 0) {
+        return false;
+    }
+    if (child == 0) {
+        execlp(exe, exe, arg.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    return true;
+}
+#endif
+
 bool DownloadAttachmentToLocalFile(const std::string& url,
                                    const std::string& filename,
                                    const std::string& mimeType,
@@ -120,6 +205,16 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         outError = "Missing Jira credentials/domain.";
         return false;
     }
+    if (url.rfind("https://", 0) != 0) {
+        outError = "Attachment URL must use HTTPS.";
+        return false;
+    }
+    const std::string jiraDomain = NormalizeDomain(cfg.Domain);
+    const std::string targetHost = ExtractHostFromUrl(url);
+    if (!IsAllowedJiraAttachmentHost(targetHost, jiraDomain)) {
+        outError = "Attachment host is not allowlisted.";
+        return false;
+    }
 
     const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
     const std::string authHeader = "Basic " + Base64Encode(basicCred);
@@ -128,9 +223,30 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         {"Authorization", authHeader},
         {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}
     };
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect(false, false);
 
-    const auto resp = cpr::Get(cpr::Url{url}, headers, redirect);
+    constexpr size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
+    bool sizeExceeded = false;
+    std::string bodyAccum;
+    bodyAccum.reserve(64 * 1024);
+    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+        if (bodyAccum.size() + data.size() > kMaxAttachmentDownloadBytes) {
+            sizeExceeded = true;
+            return false;
+        }
+        bodyAccum.append(data);
+        return true;
+    }};
+    const auto resp = cpr::Get(cpr::Url{url},
+                               headers,
+                               redirect,
+                               writeCb,
+                               cpr::ConnectTimeout{5000},
+                               cpr::Timeout{120000});
+    if (sizeExceeded) {
+        outError = "Attachment exceeds max allowed size.";
+        return false;
+    }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
         outError = "Download failed: HTTP " + std::to_string(static_cast<int>(resp.status_code));
         return false;
@@ -158,7 +274,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         return false;
     }
 
-    ofs.write(resp.text.data(), static_cast<std::streamsize>(resp.text.size()));
+    ofs.write(bodyAccum.data(), static_cast<std::streamsize>(bodyAccum.size()));
     if (!ofs.good()) {
         outError = "Failed to write downloaded attachment bytes.";
         ofs.close();
@@ -167,7 +283,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
     }
     ofs.close();
     LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s",
-             resp.text.size(),
+             bodyAccum.size(),
              outMime.c_str(),
              outFilePath.c_str());
     return true;
@@ -259,7 +375,12 @@ bool LuaTruthy(const sol::object& o) {
     return true;
 }
 
-sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
+constexpr int kJsonToLuaMaxDepth = 64;
+
+sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth) {
+    if (depth > kJsonToLuaMaxDepth) {
+        return sol::make_object(luaView, sol::nil);
+    }
     switch (j.type()) {
     case nlohmann::json::value_t::null:
         return sol::make_object(luaView, sol::nil);
@@ -277,20 +398,41 @@ sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
         sol::table arr = luaView.create_table();
         std::size_t idx = 1;
         for (const auto& el : j) {
-            arr[idx++] = JsonToLua(luaView, el);
+            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1);
         }
         return arr;
     }
     case nlohmann::json::value_t::object: {
         sol::table tbl = luaView.create_table();
         for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLua(luaView, it.value());
+            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1);
         }
         return tbl;
     }
     default:
         return sol::make_object(luaView, sol::nil);
     }
+}
+
+sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
+    return JsonToLuaImpl(luaView, j, 0);
+}
+
+// Strip ASCII control chars (keep tab) so log sinks / terminals can't be driven by script input.
+std::string SanitizeLogText(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc == '\t' || uc == '\n') {
+            out.push_back(c);
+        } else if (uc < 0x20 || uc == 0x7F) {
+            out.push_back('?');
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
 }
 
 std::string AsciiLowerCopy(std::string s) {
@@ -315,6 +457,60 @@ std::string EscapeShellArg(const std::string& value) {
 #endif
 } // namespace
 
+AppController::~AppController() {
+    shuttingDown_.store(true);
+    JoinBackgroundTasks();
+}
+
+std::shared_ptr<const std::vector<CachedTicket>> AppController::GetActiveTicketsSnapshot() const {
+    std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+    if (!activeTicketsPublished_) {
+        activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+    }
+    return activeTicketsPublished_;
+}
+
+std::vector<CachedTicket> AppController::GetActiveTickets() const {
+    std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+    if (!activeTicketsPublished_) {
+        activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+    }
+    return *activeTicketsPublished_;
+}
+
+void AppController::LaunchBackgroundTask(std::function<void()> task) {
+    if (!task || shuttingDown_.load()) {
+        return;
+    }
+    std::thread worker([this, task = std::move(task)]() mutable {
+        if (shuttingDown_.load()) {
+            return;
+        }
+        task();
+    });
+    std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
+    backgroundWorkers_.push_back(std::move(worker));
+}
+
+void AppController::JoinBackgroundTasks() {
+    std::vector<std::thread> workers;
+    {
+        std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
+        workers = std::move(backgroundWorkers_);
+    }
+    const std::thread::id selfId = std::this_thread::get_id();
+    for (auto& worker : workers) {
+        if (!worker.joinable()) {
+            continue;
+        }
+        if (worker.get_id() == selfId) {
+            worker.detach();
+            continue;
+        }
+        worker.join();
+    }
+}
+
 void AppController::SetOpenUrlHandler(std::function<void(const std::string&)> handler) {
     OpenUrlHandler = std::move(handler);
 }
@@ -334,6 +530,29 @@ void AppController::OpenUrl(const std::string& url) const {
         return;
     }
 
+    // Scheme allowlist: avoid handing `javascript:`, `file:`, `vbscript:`, etc.
+    // Only http(s) and mailto pass through; anything else is rejected.
+    {
+        std::string schemePrefix;
+        const size_t colonPos = url.find(':');
+        if (colonPos == std::string::npos) {
+            LOG_WARN("AppController::OpenUrl rejected: missing scheme in url=%s",
+                     TruncateForLog(url, 200).c_str());
+            return;
+        }
+        schemePrefix.reserve(colonPos);
+        for (size_t i = 0; i < colonPos; ++i) {
+            schemePrefix.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(url[i]))));
+        }
+        const bool ok = (schemePrefix == "http") || (schemePrefix == "https") || (schemePrefix == "mailto");
+        if (!ok) {
+            LOG_WARN("AppController::OpenUrl rejected: scheme '%s' not allowlisted for url=%s",
+                     schemePrefix.c_str(),
+                     TruncateForLog(url, 200).c_str());
+            return;
+        }
+    }
+
     if (OpenUrlHandler) {
         OpenUrlHandler(url);
         return;
@@ -345,16 +564,12 @@ void AppController::OpenUrl(const std::string& url) const {
         LOG_ERROR("AppController::OpenUrl failed url=%s err=%ld", TruncateForLog(url, 300).c_str(), GetLastError());
     }
 #elif defined(__APPLE__)
-    std::string cmd = "open \"" + EscapeShellArg(url) + "\"";
-    const int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        LOG_ERROR("AppController::OpenUrl failed rc=%d url=%s", rc, TruncateForLog(url, 300).c_str());
+    if (!LaunchCommandNoShell("open", url)) {
+        LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
     }
 #else
-    std::string cmd = "xdg-open \"" + EscapeShellArg(url) + "\"";
-    const int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        LOG_ERROR("AppController::OpenUrl failed rc=%d url=%s", rc, TruncateForLog(url, 300).c_str());
+    if (!LaunchCommandNoShell("xdg-open", url)) {
+        LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
     }
 #endif
 }
@@ -363,6 +578,10 @@ void AppController::AddAutomationLogSink(std::function<void(const std::string&)>
     if (sink) {
         AutomationLogSinks.push_back(std::move(sink));
     }
+}
+
+void AppController::ClearAutomationLogSinks() {
+    AutomationLogSinks.clear();
 }
 
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
@@ -457,15 +676,13 @@ void AppController::OpenAttachmentInSystemViewer(const std::string& url,
                   static_cast<unsigned long>(GetLastError()));
     }
 #elif defined(__APPLE__)
-    const std::string cmd = "open \"" + EscapeShellArg(outFilePath) + "\"";
-    launchOk = (std::system(cmd.c_str()) == 0);
+    launchOk = LaunchCommandNoShell("open", outFilePath);
     if (!launchOk) {
         LOG_ERROR("OpenAttachmentInSystemViewer: open failed path=%s",
                   TruncateForLog(outFilePath, 300).c_str());
     }
 #else
-    const std::string cmd = "xdg-open \"" + EscapeShellArg(outFilePath) + "\"";
-    launchOk = (std::system(cmd.c_str()) == 0);
+    launchOk = LaunchCommandNoShell("xdg-open", outFilePath);
     if (!launchOk) {
         LOG_ERROR("OpenAttachmentInSystemViewer: xdg-open failed path=%s",
                   TruncateForLog(outFilePath, 300).c_str());
@@ -535,6 +752,11 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 }
 
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
+    if (filename.empty() || filename.find("..") != std::string::npos || filename.find(':') != std::string::npos ||
+        (!filename.empty() && (filename[0] == '/' || filename[0] == '\\'))) {
+        LOG_WARN("ResolveLuaScriptPath: blocked suspicious script path=%s", filename.c_str());
+        return std::string();
+    }
     if (!luaScriptsDirectory_.empty()) {
         return luaScriptsDirectory_ + filename;
     }
@@ -543,6 +765,18 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
 
 void AppController::InitLua() {
     lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::table);
+    // Keep scripting focused on UI formatting and data transforms.
+    // Dynamic code loading + filesystem + process access are all disabled; nil them AFTER opening libs.
+    lua["dofile"] = sol::lua_nil;
+    lua["loadfile"] = sol::lua_nil;
+    lua["load"] = sol::lua_nil;
+    lua["loadstring"] = sol::lua_nil;
+    lua["require"] = sol::lua_nil;
+    lua["collectgarbage"] = sol::lua_nil;
+    lua["os"] = sol::lua_nil;
+    lua["io"] = sol::lua_nil;
+    lua["package"] = sol::lua_nil;
+    lua["debug"] = sol::lua_nil;
 
     // Bind the CachedTicket struct
     lua.new_usertype<CachedTicket>("Ticket",
@@ -551,18 +785,25 @@ void AppController::InitLua() {
     );
 
     lua.set_function("log_info", [this](std::string msg) {
+        const std::string clean = SanitizeLogText(msg);
         if (!AutomationLogSinks.empty()) {
             for (const auto& sink : AutomationLogSinks) {
-                sink(msg);
+                sink(clean);
             }
         } else {
-            std::printf("[LUA] %s\n", msg.c_str());
+            std::printf("[LUA] %s\n", clean.c_str());
         }
     });
 
     lua.set_function("decode_json", [this](const std::string& s) -> std::tuple<sol::object, std::string> {
+        constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
+        if (s.size() > kMaxDecodeBytes) {
+            return {sol::make_object(lua, sol::nil), std::string("input too large")};
+        }
         try {
-            const nlohmann::json j = nlohmann::json::parse(s);
+            // max_depth=kJsonToLuaMaxDepth bounds parser recursion against deeply-nested input.
+            const nlohmann::json j =
+                nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/false);
             return {JsonToLua(lua, j), std::string()};
         } catch (const std::exception& e) {
             return {sol::make_object(lua, sol::nil), std::string(e.what())};
@@ -624,6 +865,10 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     };
 
     const std::string path = ResolveLuaScriptPath(scriptPath);
+    if (path.empty()) {
+        logErr("[LUA setup] ", "invalid script path");
+        return;
+    }
     try {
         lua.script_file(path);
     } catch (const sol::error& e) {
@@ -690,7 +935,13 @@ bool AppController::TryLuaFieldDisplay(const std::string& fieldId,
 
 void AppController::RunAutoScript(const std::string& scriptPath) {
     const std::string path = ResolveLuaScriptPath(scriptPath);
-    for (auto& ticket : ActiveTickets) {
+    if (path.empty()) {
+        LOG_WARN("RunAutoScript: invalid script path=%s", scriptPath.c_str());
+        return;
+    }
+    const auto snap = GetActiveTicketsSnapshot();
+    std::vector<CachedTicket> tickets(snap->begin(), snap->end());
+    for (auto& ticket : tickets) {
         lua["ticket"] = &ticket;
         try {
             lua.script_file(path);
@@ -1005,7 +1256,12 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
 
 void AppController::RefreshLocalData() {
     if (Cache) {
-        ActiveTickets = Cache->GetAllTickets();
+        auto latestTickets = Cache->GetAllTickets();
+        {
+            std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+            ActiveTickets = std::move(latestTickets);
+            activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+        }
         PruneEditMetaCacheToActiveTickets();
         ActiveTicketsRevision.fetch_add(1);
     }
@@ -1089,11 +1345,13 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
     if (issueId.empty()) {
         return std::string();
     }
+    const auto ticketsSnap = GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
     const auto it = std::find_if(
-        ActiveTickets.begin(),
-        ActiveTickets.end(),
+        tickets.begin(),
+        tickets.end(),
         [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-    if (it == ActiveTickets.end()) {
+    if (it == tickets.end()) {
         return std::string();
     }
     return ToLowerAsciiCopy(TrimCopy(it->GetFieldValue("issuetype")));
@@ -1103,12 +1361,14 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync() {
     if (!JiraBackend) {
         return;
     }
+    const auto ticketsSnap = GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
     std::vector<std::pair<std::string, std::string>> representatives;
     std::unordered_set<std::string> seenTypes;
-    seenTypes.reserve(ActiveTickets.size());
+    seenTypes.reserve(tickets.size());
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        for (const auto& ticket : ActiveTickets) {
+        for (const auto& ticket : tickets) {
             if (ticket.id.empty()) {
                 continue;
             }
@@ -1131,12 +1391,15 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync() {
     if (representatives.empty()) {
         return;
     }
-    std::thread([this, representatives]() {
+    LaunchBackgroundTask([this, representatives]() {
         for (const auto& pair : representatives) {
+            if (shuttingDown_.load()) {
+                break;
+            }
             std::string ignored;
             EnsureIssueEditMetaLoaded(pair.second, &ignored);
         }
-    }).detach();
+    });
 }
 
 bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
@@ -1271,11 +1534,13 @@ void AppController::InvalidateIssueEditMeta(const std::string& issueId) {
 }
 
 void AppController::PruneEditMetaCacheToActiveTickets() {
+    const auto ticketsSnap = GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
     std::unordered_set<std::string> keep;
     std::unordered_set<std::string> keepTypes;
-    keep.reserve(ActiveTickets.size());
-    keepTypes.reserve(ActiveTickets.size());
-    for (const auto& t : ActiveTickets) {
+    keep.reserve(tickets.size());
+    keepTypes.reserve(tickets.size());
+    for (const auto& t : tickets) {
         if (!t.id.empty()) {
             keep.insert(t.id);
         }
@@ -1318,14 +1583,14 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
         issueEditMetaWarmupInFlight_.insert(issueId);
     }
 
-    std::thread([this, issueId]() {
+    LaunchBackgroundTask([this, issueId]() {
         std::string ignored;
         EnsureIssueEditMetaLoaded(issueId, &ignored);
         {
             std::lock_guard<std::mutex> lock(editMetaMutex_);
             issueEditMetaWarmupInFlight_.erase(issueId);
         }
-    }).detach();
+    });
 }
 
 bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
@@ -1355,6 +1620,9 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         }
     }
 
+    const std::shared_ptr<const std::vector<CachedTicket>> ticketsSnap = GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
+
     if (IsSprintField(field)) {
         if (!JiraBackend) {
             outError = "Jira backend is not initialized.";
@@ -1378,10 +1646,10 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
             return false;
         }
         auto ticketIt = std::find_if(
-            ActiveTickets.begin(),
-            ActiveTickets.end(),
+            tickets.begin(),
+            tickets.end(),
             [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-        if (ticketIt != ActiveTickets.end()) {
+        if (ticketIt != tickets.end()) {
             CachedTicket updatedTicket = *ticketIt;
             std::string displayValue = sprintId;
             for (const auto& option : field.AllowedValueOptions) {
@@ -1407,8 +1675,8 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     }
 
     auto ticketIt = std::find_if(
-        ActiveTickets.begin(),
-        ActiveTickets.end(),
+        tickets.begin(),
+        tickets.end(),
         [&](const CachedTicket& ticket) { return ticket.id == issueId; });
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
@@ -1422,9 +1690,9 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         }
 
         std::string originalEstimate =
-            (ticketIt != ActiveTickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
+            (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
         std::string remainingEstimate =
-            (ticketIt != ActiveTickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
+            (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
         if (field.Id == "timeoriginalestimate") {
             originalEstimate = editedValue;
         } else {
@@ -1460,7 +1728,7 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
             return false;
         }
 
-        if (ticketIt != ActiveTickets.end()) {
+        if (ticketIt != tickets.end()) {
             CachedTicket updatedTicket = *ticketIt;
             updatedTicket.fieldValues["timeoriginalestimate"] = originalEstimate;
             updatedTicket.fieldValues["timeestimate"] = remainingEstimate;
@@ -1592,7 +1860,7 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     }
 
     // Keep local cache and in-memory model in sync with the successful Jira update.
-    if (ticketIt != ActiveTickets.end()) {
+    if (ticketIt != tickets.end()) {
         CachedTicket updatedTicket = *ticketIt;
 
         std::string displayValue;
@@ -1845,11 +2113,13 @@ bool AppController::ApplyJiraFieldEditResult(const std::string& issueId,
         return false;
     }
 
+    const auto ticketsSnapApply = GetActiveTicketsSnapshot();
+    const auto& ticketsApply = *ticketsSnapApply;
     auto ticketIt = std::find_if(
-        ActiveTickets.begin(),
-        ActiveTickets.end(),
+        ticketsApply.begin(),
+        ticketsApply.end(),
         [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-    if (ticketIt == ActiveTickets.end()) {
+    if (ticketIt == ticketsApply.end()) {
         RefreshLocalData();
         return true;
     }

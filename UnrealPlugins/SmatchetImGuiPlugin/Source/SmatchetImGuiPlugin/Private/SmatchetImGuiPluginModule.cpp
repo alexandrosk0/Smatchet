@@ -30,31 +30,35 @@ namespace {
 // software mouse sprite so PIE / standalone / packaged always have a visible pointer — UE's own flags
 // (IsCursorVisible, show-cursor settings) are unreliable across embedded/separate PIE and captured game
 // modes. The Ctrl+Alt+J hotkey flips SmatchetHost's Suppress flag if the user ever sees a double pointer.
-// /GR- means no dynamic_cast; matching uses ISlateViewport pointer identity from GameViewport's SceneViewport.
-// Render thread only: input processor publishes pointer-over-PIE-viewport via atomic (no FSlateApplication here).
+// Render thread only: input processor publishes hovered ISlateViewport pointer identity via atomic
+// (no FSlateApplication access off the game thread).
 bool ShouldDrawSoftwareCursorForSlateWindow(SmatchetImGuiHostHandle Host, SWindow& SlateWindow) {
-    if ((Host && SmatchetHost_GetSuppressSoftwareCursor(Host)) ||
-        !GSmatchetPointerOverGameViewport.load(std::memory_order_relaxed)) {
+    if (Host && SmatchetHost_GetSuppressSoftwareCursor(Host)) {
         return false;
     }
     const TSharedPtr<ISlateViewport> SlateViewport = SlateWindow.GetViewport();
-    if (!SlateViewport.IsValid() || !GEngine) {
+    if (!SlateViewport.IsValid()) {
         return false;
     }
-    ISlateViewport* const SlateVp = SlateViewport.Get();
-    for (UGameViewportClient* Client = GEngine->GameViewport; Client != nullptr;
-         Client = GEngine->GetNextPIEViewport(Client)) {
-        if (FSceneViewport* SceneViewport = Client->GetGameViewport()) {
-            if (static_cast<ISlateViewport*>(SceneViewport) == SlateVp) {
-                return true;
-            }
-        }
+    const std::uintptr_t HoveredViewportId =
+        GSmatchetPointerOverSlateViewportId.load(std::memory_order_relaxed);
+    if (HoveredViewportId == 0) {
+        return false;
     }
-    return false;
+    const std::uintptr_t WindowViewportId = reinterpret_cast<std::uintptr_t>(SlateViewport.Get());
+    return HoveredViewportId == WindowViewportId;
 }
 
 void SmatchetOpenUrlCallback(const char* UrlUtf8, void*) {
     const FString UEUrl(UrlUtf8 ? UTF8_TO_TCHAR(UrlUtf8) : TEXT(""));
+    // Scheme allowlist mirrors AppController::OpenUrl to avoid `javascript:` / `file:` / etc.
+    const bool bHttp = UEUrl.StartsWith(TEXT("http://"), ESearchCase::IgnoreCase);
+    const bool bHttps = UEUrl.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase);
+    const bool bMailto = UEUrl.StartsWith(TEXT("mailto:"), ESearchCase::IgnoreCase);
+    if (!bHttp && !bHttps && !bMailto) {
+        UE_LOG(LogTemp, Warning, TEXT("SmatchetOpenUrlCallback rejected url with non-allowlisted scheme."));
+        return;
+    }
     FPlatformProcess::LaunchURL(*UEUrl, nullptr, nullptr);
 }
 

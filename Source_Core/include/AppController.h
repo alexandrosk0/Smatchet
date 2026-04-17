@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include "LocalCacheManager.h"
@@ -26,6 +27,8 @@
 
 class AppController {
 public:
+    ~AppController();
+
     struct JiraFieldEditResult {
         bool Ok = false;
         std::string Error;
@@ -36,6 +39,8 @@ public:
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink);
+    /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
+    void ClearAutomationLogSinks();
 
     /**
      * Optional host callback for launching URLs.
@@ -123,7 +128,9 @@ public:
 
     void UpdateTicket(const CachedTicket& ticket);
 
-    const std::vector<CachedTicket>& GetActiveTickets() const { return ActiveTickets; }
+    std::vector<CachedTicket> GetActiveTickets() const;
+    /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
+    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
 
     /** Bumped when `AvailableJiraFields` changes (fetch, error clear, etc.); UI sort cache should invalidate. */
@@ -204,6 +211,7 @@ private:
     std::unique_ptr<ITrackerClient> Backend;
     JiraClient* JiraBackend = nullptr;
     std::vector<CachedTicket> ActiveTickets;
+    mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
     std::atomic<std::uint64_t> JiraFieldCatalogRevision{0};
     std::vector<JiraField> AvailableJiraFields;
@@ -248,6 +256,13 @@ private:
     void WarmIssueTypeEditMetaAtStartAsync();
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
     std::string ResolveLuaScriptPath(const std::string& filename) const;
+    void LaunchBackgroundTask(std::function<void()> task);
+    void JoinBackgroundTasks();
+
+    mutable std::mutex activeTicketsMutex_;
+    std::atomic<bool> shuttingDown_{false};
+    std::vector<std::thread> backgroundWorkers_;
+    mutable std::mutex backgroundWorkersMutex_;
 };
 
 

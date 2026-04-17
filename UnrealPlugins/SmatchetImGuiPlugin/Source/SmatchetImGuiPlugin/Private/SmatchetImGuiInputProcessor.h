@@ -8,16 +8,16 @@
 #include "UObject/WeakObjectPtr.h"
 
 #include <atomic>
+#include <cstdint>
 
 #include "SmatchetImGuiHostC.h"
 
 class UGameViewportClient;
 
 // Written on the game thread from FSmatchetImGuiInputProcessor::Tick and read on the render thread from
-// SmatchetImGuiPluginModule's OnBackBufferReadyToPresent hook. Tracks whether the OS pointer is currently
-// over any UGameViewportClient's FSceneViewport rect, so the module can decide per-window whether to draw
-// ImGui's software cursor sprite without touching FSlateApplication off the game thread.
-extern std::atomic<bool> GSmatchetPointerOverGameViewport;
+// SmatchetImGuiPluginModule's OnBackBufferReadyToPresent hook. Holds the ISlateViewport pointer identity
+// (as uintptr_t) currently under the OS pointer, or 0 when not over a game viewport.
+extern std::atomic<std::uintptr_t> GSmatchetPointerOverSlateViewportId;
 
 class FSmatchetImGuiInputProcessor : public IInputProcessor {
 public:

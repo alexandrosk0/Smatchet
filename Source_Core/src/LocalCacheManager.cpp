@@ -3,11 +3,18 @@
 
 #include <exception>
 
-LocalCacheManager::LocalCacheManager(const std::string& dbPath) 
-    : db(dbPath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE) 
+LocalCacheManager::LocalCacheManager(const std::string& dbPath)
+    : db(dbPath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX)
 {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath.c_str());
-    // Create table if it doesn't exist
+    // WAL improves crash safety and allows readers while a writer is active.
+    // synchronous=NORMAL is the recommended pairing with WAL (fsync on checkpoint, not every commit).
+    try {
+        db.exec("PRAGMA journal_mode=WAL");
+        db.exec("PRAGMA synchronous=NORMAL");
+    } catch (const std::exception& ex) {
+        LOG_WARN("LocalCacheManager: failed to set WAL pragmas: %s", ex.what());
+    }
     db.exec("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY)");
     db.exec("CREATE TABLE IF NOT EXISTS ticket_field_values ("
             "ticket_id TEXT NOT NULL, "

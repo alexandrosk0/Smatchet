@@ -26,11 +26,22 @@ std::string FormatWorkDurationFromSeconds(long long seconds);
 namespace {
 constexpr std::size_t kMaxJiraHttpBodyLogBytes = 65536;
 constexpr const char* kJiraUserAgent = "Smatchet/1.0 Jira-Client";
+constexpr long kJiraConnectTimeoutMs = 5000;
+constexpr long kJiraOverallTimeoutMs = 30000;
+
+// Redact URL query for logging: keeps scheme://host/path, drops ?query and #fragment.
+std::string RedactUrlForLog(const std::string& url) {
+    const size_t q = url.find_first_of("?#");
+    if (q == std::string::npos) {
+        return url;
+    }
+    return url.substr(0, q) + "?[redacted]";
+}
 
 void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Response& response) {
     LOG_DEBUG("JiraClient: %s %s -> HTTP %d (%zu bytes)",
               method,
-              url.c_str(),
+              RedactUrlForLog(url).c_str(),
               static_cast<int>(response.status_code),
               response.text.size());
     if (!Logger::Instance().GetLogJiraHttpBodies()) {
@@ -46,7 +57,7 @@ void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Re
         suffix = "\n[truncated…]";
     }
     Logger::Instance().Log(LogLevel::Trace,
-                           std::string("JiraClient: ") + method + " response body (" + url + "):\n" + body +
+                           std::string("JiraClient: ") + method + " response body (" + RedactUrlForLog(url) + "):\n" + body +
                                suffix);
 }
 
@@ -126,7 +137,11 @@ cpr::Header BuildJiraHeaders(const JiraConfig& cfg, bool includeJsonContentType 
 
 cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers) {
     cpr::Redirect redirect(true, true);
-    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect);
+    cpr::Response response = cpr::Get(cpr::Url{url},
+                                      headers,
+                                      redirect,
+                                      cpr::ConnectTimeout{kJiraConnectTimeoutMs},
+                                      cpr::Timeout{kJiraOverallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
                                            NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
@@ -136,7 +151,12 @@ cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers) 
 
 cpr::Response JiraPostLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
     cpr::Redirect redirect(true, true);
-    cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect);
+    cpr::Response response = cpr::Post(cpr::Url{url},
+                                       headers,
+                                       cpr::Body{body},
+                                       redirect,
+                                       cpr::ConnectTimeout{kJiraConnectTimeoutMs},
+                                       cpr::Timeout{kJiraOverallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
                                            static_cast<std::uint64_t>(body.size()),
                                            response);
@@ -146,7 +166,12 @@ cpr::Response JiraPostLogged(const std::string& url, const cpr::Header& headers,
 
 cpr::Response JiraPutLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
     cpr::Redirect redirect(true, true);
-    cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect);
+    cpr::Response response = cpr::Put(cpr::Url{url},
+                                      headers,
+                                      cpr::Body{body},
+                                      redirect,
+                                      cpr::ConnectTimeout{kJiraConnectTimeoutMs},
+                                      cpr::Timeout{kJiraOverallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira,
                                            static_cast<std::uint64_t>(body.size()),
                                            response);
@@ -2192,8 +2217,8 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         try {
             auto json = nlohmann::json::parse(response.text);
             if (!json.contains("issues")) {
-                LOG_WARN("JiraClient: page %d response has no 'issues' key. Full response.text:\n%s",
-                         page, response.text.c_str());
+                LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s",
+                         page, TruncateForLog(response.text, 800).c_str());
                 syncEndedCleanly = false;
                 break;
             }

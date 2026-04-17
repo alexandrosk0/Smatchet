@@ -232,7 +232,9 @@ add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
 message(STATUS "Fetching Dear ImGui...")
 FetchContent_Declare(imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
-        GIT_TAG docking
+        # Pinned to a specific commit on the docking branch (reproducible builds / supply chain).
+        # v1.92.7-docking-39-g329c5a6b3
+        GIT_TAG 329c5a6b3be75ebf54506d3ae94b836ffcf19fa0
 )
 
 FetchContent_Populate(imgui)
@@ -447,32 +449,20 @@ endif()
 file(GLOB STANDALONE_SOURCES "Target_Standalone/*.cpp")
 
 if(WIN32)
-    # Copy the icon into the repo (only if it doesn't already exist).
-    # This keeps the build working even if the icon only exists locally.
-    set(_SMATCHET_ICO_SRC "C:/Users/alexk/Downloads/smatchet.ico")
     set(_SMATCHET_ICO_DEST "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone/smatchet.ico")
+    if(EXISTS "${_SMATCHET_ICO_DEST}")
+        # Generate a `.rc` file with an embedded absolute icon path.
+        file(TO_CMAKE_PATH "${_SMATCHET_ICO_DEST}" _SMATCHET_ICO_PATH_CMAKE)
+        set(SMATCHET_ICO_PATH "${_SMATCHET_ICO_PATH_CMAKE}")
 
-    if(NOT EXISTS "${_SMATCHET_ICO_DEST}")
-        if(EXISTS "${_SMATCHET_ICO_SRC}")
-            file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone")
-            file(COPY "${_SMATCHET_ICO_SRC}" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone")
-            message(STATUS "Copied smatchet.ico into repo at: ${_SMATCHET_ICO_DEST}")
-        else()
-            message(FATAL_ERROR "smatchet.ico not found. Expected either at '${_SMATCHET_ICO_DEST}' or '${_SMATCHET_ICO_SRC}'.")
-        endif()
+        set(_SMATCHET_RC_IN "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone/smatchet.rc.in")
+        set(_SMATCHET_RC_OUT "${CMAKE_CURRENT_BINARY_DIR}/generated/smatchet.rc")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        configure_file("${_SMATCHET_RC_IN}" "${_SMATCHET_RC_OUT}" @ONLY)
+        list(APPEND STANDALONE_SOURCES "${_SMATCHET_RC_OUT}")
+    else()
+        message(WARNING "Smatchet icon not found at ${_SMATCHET_ICO_DEST}; building without embedded icon.")
     endif()
-
-    # Generate a `.rc` file with an embedded absolute icon path.
-    file(TO_CMAKE_PATH "${_SMATCHET_ICO_DEST}" _SMATCHET_ICO_PATH_CMAKE)
-    set(SMATCHET_ICO_PATH "${_SMATCHET_ICO_PATH_CMAKE}")
-
-    set(_SMATCHET_RC_IN "${CMAKE_CURRENT_SOURCE_DIR}/Target_Standalone/smatchet.rc.in")
-    set(_SMATCHET_RC_OUT "${CMAKE_CURRENT_BINARY_DIR}/generated/smatchet.rc")
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
-
-    configure_file("${_SMATCHET_RC_IN}" "${_SMATCHET_RC_OUT}" @ONLY)
-
-    list(APPEND STANDALONE_SOURCES "${_SMATCHET_RC_OUT}")
 endif()
 
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})

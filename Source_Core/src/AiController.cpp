@@ -48,15 +48,31 @@ AiController::AiResult AiController::AnalyzeTicket(const std::string& key,
     auto r = cpr::Post(cpr::Url{endpoint},
                        cpr::Header{{"Content-Type", "application/json"},
                                    {"Authorization", "Bearer " + apiKey}},
-                       cpr::Body{bodyStr});
+                       cpr::Body{bodyStr},
+                       cpr::ConnectTimeout{5000},
+                       cpr::Timeout{60000});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::OpenAi,
         static_cast<std::uint64_t>(bodyStr.size()), r);
-    LOG_INFO("AiController: completion request key=%s model=%s endpoint=%s status=%d bytes=%zu",
+    // Log host only; full endpoint can encode sensitive routing for custom base URLs.
+    std::string endpointHost = apiBase;
+    {
+        const size_t schemeEnd = endpointHost.find("://");
+        if (schemeEnd != std::string::npos) {
+            endpointHost = endpointHost.substr(schemeEnd + 3);
+        }
+    }
+    LOG_INFO("AiController: completion request key=%s model=%s host=%s status=%d bytes=%zu",
              key.c_str(),
              modelId.c_str(),
-             endpoint.c_str(),
+             endpointHost.c_str(),
              static_cast<int>(r.status_code),
              r.text.size());
+
+    constexpr size_t kMaxAiResponseBytes = 4u * 1024u * 1024u;
+    if (r.text.size() > kMaxAiResponseBytes) {
+        LOG_ERROR("AiController: response too large (%zu bytes) key=%s", r.text.size(), key.c_str());
+        return { false, "API Error: response too large." };
+    }
 
     if (r.status_code == 200) {
         try {

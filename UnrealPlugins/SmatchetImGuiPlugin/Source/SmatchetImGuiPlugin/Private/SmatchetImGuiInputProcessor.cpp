@@ -14,7 +14,7 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiInputProcessor, Log, All);
 
-std::atomic<bool> GSmatchetPointerOverGameViewport{false};
+std::atomic<std::uintptr_t> GSmatchetPointerOverSlateViewportId{0};
 
 namespace {
 
@@ -108,7 +108,7 @@ void FSmatchetImGuiInputProcessor::Tick(const float, FSlateApplication& SlateApp
         RestoreViewportMouseSnapshotIfActive();
     }
 
-    bool bPointerOverGameViewport = false;
+    std::uintptr_t PointerOverSlateViewportId = 0;
     if (bWantViewportStomp) {
         if (!bOverlayViewportStompActive) {
             SavedViewportMouseModes.Reset();
@@ -171,11 +171,14 @@ void FSmatchetImGuiInputProcessor::Tick(const float, FSlateApplication& SlateApp
             const FVector2D Size = Geo.GetAbsoluteSize();
             if (MousePos.X >= TopLeft.X && MousePos.Y >= TopLeft.Y &&
                 MousePos.X < TopLeft.X + Size.X && MousePos.Y < TopLeft.Y + Size.Y) {
-                bPointerOverGameViewport = true;
+                if (PointerOverSlateViewportId == 0) {
+                    PointerOverSlateViewportId =
+                        reinterpret_cast<std::uintptr_t>(static_cast<ISlateViewport*>(SceneViewport));
+                }
             }
         }
     }
-    GSmatchetPointerOverGameViewport.store(bPointerOverGameViewport, std::memory_order_relaxed);
+    GSmatchetPointerOverSlateViewportId.store(PointerOverSlateViewportId, std::memory_order_relaxed);
 }
 
 bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) {

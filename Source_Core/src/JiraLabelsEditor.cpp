@@ -86,7 +86,8 @@ std::vector<std::string> CollectLabelSuggestions(AppController& app,
     };
 
     appendLabels(currentValue);
-    const auto& tickets = app.GetActiveTickets();
+    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
     for (const auto& candidate : tickets) {
         appendLabels(candidate.GetFieldValue("labels"));
     }

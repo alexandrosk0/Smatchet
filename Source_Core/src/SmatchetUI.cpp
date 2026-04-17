@@ -1062,6 +1062,8 @@ struct UiDrawSession {
     char aiBaseUrlBuf[256]{};
     bool mcpEnabled = false;
     int mcpPort = 8080;
+    bool mcpAllowRemote = false;
+    char mcpAuthTokenBuf[512]{};
     bool preferencesBuffersLoaded = false;
 
     char viewNameBuf[128]{};
@@ -2460,6 +2462,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
         CopyStringToBuffer(d.aiBaseUrlBuf, d.cfg.AiBaseUrl);
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
+        d.mcpAllowRemote = d.cfg.McpAllowRemote;
+        CopyStringToBuffer(d.mcpAuthTokenBuf, d.cfg.McpAuthToken);
         d.preferencesBuffersLoaded = true;
     }
 
@@ -2505,6 +2509,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
             if (d.mcpPort > 65535) {
                 d.mcpPort = 65535;
             }
+            ImGui::Checkbox("Bind on all interfaces (LAN)", &d.mcpAllowRemote);
+            ImGui::SetItemTooltip(
+                "When off, MCP listens on localhost only (127.0.0.1). When on, it binds 0.0.0.0 — reachable on your "
+                "network. Set an auth token below if you enable this.");
+            ImGui::InputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf), ImGuiInputTextFlags_Password);
+            ImGui::SetItemTooltip(
+                "If set, clients must send header X-Smatchet-Token with this value. If empty and bind is localhost-only, "
+                "only loopback clients may connect.");
             ImGui::TextDisabled("Changes apply on next host initialization or restart.");
             ImGui::EndTabItem();
         }
@@ -2594,6 +2606,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
         d.cfg.AiBaseUrl = d.aiBaseUrlBuf;
         d.cfg.McpEnabled = d.mcpEnabled;
         d.cfg.McpPort = d.mcpPort;
+        d.cfg.McpAllowRemote = d.mcpAllowRemote;
+        d.cfg.McpAuthToken = d.mcpAuthTokenBuf;
 
         ConfigManager::Save(d.cfg);
         LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
@@ -3039,13 +3053,21 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
 
         ImGui::SameLine();
         if (d.cfg.McpEnabled) {
-            ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+            if (d.cfg.McpAllowRemote) {
+                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d (LAN)", d.cfg.McpPort);
+            } else {
+                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+            }
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
         }
         if (ImGui::IsItemHovered()) {
             if (d.cfg.McpEnabled) {
-                ImGui::SetTooltip("External tools can access Smatchet tickets via MCP on port %d.", d.cfg.McpPort);
+                ImGui::SetTooltip(
+                    "MCP on port %d. %s Auth: %s.",
+                    d.cfg.McpPort,
+                    d.cfg.McpAllowRemote ? "Bound on all interfaces." : "Localhost only.",
+                    d.cfg.McpAuthToken.empty() ? "loopback only (no token)." : "X-Smatchet-Token required.");
             } else {
                 ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
             }
@@ -3061,7 +3083,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         }
     }
 
-    const auto& tickets = app.GetActiveTickets();
+    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
 
     JiraFieldCatalogIndex catalogIndex(app.GetAvailableJiraFields());
     const ViewDefinition* activeViewForGrid = ViewState.GetActiveView();
@@ -3576,7 +3599,8 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app) {
         ImGui::TextDisabled("Select a ticket to see AI insights.");
     } else {
         // Find the selected ticket data in the app's cache
-        const auto& tickets = app.GetActiveTickets();
+        const auto ticketsSnapAi = app.GetActiveTicketsSnapshot();
+        const auto& tickets = *ticketsSnapAi;
         auto it = std::find_if(tickets.begin(), tickets.end(),
                                [&](const CachedTicket& t){ return t.id == d.gridState.SelectedId; });
 

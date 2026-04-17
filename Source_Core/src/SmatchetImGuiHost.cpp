@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <chrono>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "imgui.h"
@@ -78,8 +79,10 @@ struct Smatchet_ImplDX12_SrvAllocator {
     D3D12_GPU_DESCRIPTOR_HANDLE GpuBase{};
     UINT IncrementSize = 0;
     int Capacity = 0;    // total descriptors in heap, including slot 0 (reserved for font)
-    int NextSlot = 1;    // next fresh slot; slots 1..Capacity-1 are dynamic
+    int OverflowSlot = -1; // reserved non-font slot used only on exhaustion
+    int NextSlot = 1;    // next fresh non-overflow slot; typically 1..OverflowSlot-1
     std::vector<int> FreeList; // returned slots available for reuse (LIFO)
+    bool bLoggedExhausted = false;
     std::mutex Mutex;
 };
 
@@ -95,16 +98,20 @@ static void Smatchet_ImplDX12_SrvAllocCb(
     if (!a.FreeList.empty()) {
         slot = a.FreeList.back();
         a.FreeList.pop_back();
-    } else if (a.NextSlot < a.Capacity) {
+    } else if (a.OverflowSlot > 0 ? (a.NextSlot < a.OverflowSlot) : (a.NextSlot < a.Capacity)) {
         slot = a.NextSlot++;
     }
     if (slot < 0) {
-        // Out of SRV descriptors; return slot 0 (font) so we don't crash. Thumbnail will alias
-        // the font texture, which is visually wrong but safer than returning an invalid handle.
-        slot = 0;
-        std::fprintf(stderr,
-                     "[Smatchet] DX12 SRV heap exhausted (capacity=%d). Thumbnails beyond this limit will be blank.\n",
-                     a.Capacity);
+        // Never reuse slot 0 (font atlas). Spill exhausted allocations into a dedicated non-font
+        // overflow slot so extra thumbnails may alias each other but cannot corrupt text/icons.
+        slot = (a.OverflowSlot > 0) ? a.OverflowSlot : 0;
+        if (!a.bLoggedExhausted) {
+            std::fprintf(stderr,
+                         "[Smatchet] DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may alias.\n",
+                         a.Capacity,
+                         a.OverflowSlot);
+            a.bLoggedExhausted = true;
+        }
     }
     if (outCpu) { outCpu->ptr = a.CpuBase.ptr + static_cast<SIZE_T>(slot) * a.IncrementSize; }
     if (outGpu) { outGpu->ptr = a.GpuBase.ptr + static_cast<UINT64>(slot) * a.IncrementSize; }
@@ -121,7 +128,7 @@ static void Smatchet_ImplDX12_SrvFreeCb(
     }
     const SIZE_T offset = cpu.ptr - a.CpuBase.ptr;
     const int slot = static_cast<int>(offset / a.IncrementSize);
-    if (slot > 0 && slot < a.Capacity) {
+    if (slot > 0 && slot < a.Capacity && slot != a.OverflowSlot) {
         a.FreeList.push_back(slot);
     }
 }
@@ -154,8 +161,10 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
         a.GpuBase = fontSrvGpuHandle;
         a.IncrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         a.Capacity = renderer.NumSrvDescriptors > 0 ? renderer.NumSrvDescriptors : 1;
+        a.OverflowSlot = (a.Capacity > 1) ? (a.Capacity - 1) : -1;
         a.NextSlot = 1;
         a.FreeList.clear();
+        a.bLoggedExhausted = false;
         if (a.Capacity <= 1) {
             std::fprintf(stderr,
                          "[Smatchet] DX12 SRV heap has %d slot(s); attachment thumbnails and other dynamic "
@@ -329,9 +338,11 @@ bool SmatchetImGuiHost::UpdateRendererColorFormat(int colorFormat, std::string& 
 
 bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outError) {
     outError.clear();
-    if (ImplData) {
-        ImplData->LastInitError.clear();
+    if (!ImplData) {
+        outError = "Host state is unavailable.";
+        return false;
     }
+    ImplData->LastInitError.clear();
     if (ImplData->Initialized.load(std::memory_order_acquire)) {
         return true;
     }
@@ -442,6 +453,9 @@ void SmatchetImGuiHost::Shutdown() {
     }
 
     ImplData->App.SetCloseEmbeddedUiHandler({});
+    // Sinks may capture `this` of plugin instances that are about to be destroyed;
+    // drop them before tearing down plugins so any late callers fall back to stdio.
+    ImplData->App.ClearAutomationLogSinks();
 
 #if defined(_WIN32)
     ImplData->Plugins.OnStop();
@@ -746,14 +760,36 @@ void SmatchetImGuiHost::FormatCachedRendererDebugSummary(char* buf, std::size_t 
 // C ABI wrappers (avoid C++ ABI mismatch between MinGW-built native libs and MSVC-built Unreal module)
 // -------------------------------------------------------------------------------------------------
 #if defined(_WIN32)
+namespace {
+std::mutex gHostHandleSetMutex;
+std::unordered_set<SmatchetImGuiHost*> gLiveHostHandles;
+}
+
 extern "C" {
 
 SmatchetImGuiHostHandle SmatchetHost_Create() {
-    return reinterpret_cast<SmatchetImGuiHostHandle>(new SmatchetImGuiHost());
+    auto* host = new SmatchetImGuiHost();
+    {
+        std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
+        gLiveHostHandles.insert(host);
+    }
+    return reinterpret_cast<SmatchetImGuiHostHandle>(host);
 }
 
 void SmatchetHost_Destroy(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
+        const auto it = gLiveHostHandles.find(h);
+        if (it == gLiveHostHandles.end()) {
+            LOG_WARN("SmatchetHost_Destroy: ignored stale/double-free handle.");
+            return;
+        }
+        gLiveHostHandles.erase(it);
+    }
     delete h;
 }
 

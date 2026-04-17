@@ -159,7 +159,8 @@ void TryFillCallstackFromJira(AppController& app, const std::string& issueKey) {
     if (g_blameCfg.CallstackJiraFieldId.empty() || issueKey.empty()) {
         return;
     }
-    for (const auto& t : app.GetActiveTickets()) {
+    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    for (const auto& t : *ticketsSnap) {
         if (t.id != issueKey) {
             continue;
         }
@@ -437,8 +438,18 @@ bool LaunchP4VcLike(const BlameAnalysisConfig& cfg,
     const std::wstring workDir = WorkingDirWideForFile(file);
     const wchar_t* workDirPtr = workDir.empty() ? nullptr : workDir.c_str();
 
-    const bool customCmd =
+    bool customCmd =
         (isTimelapse && !timelapseTemplate.empty()) || (!isTimelapse && !changeTemplate.empty());
+
+    // Custom templates invoke arbitrary programs from config-controlled strings.
+    // Require explicit opt-in so a stolen/edited config file cannot auto-exec.
+    if (customCmd) {
+        const JiraConfig jiraCfg = ConfigManager::Load();
+        if (!jiraCfg.BlameAllowCustomCommands) {
+            LOG_WARN("LaunchP4VcLike: custom command template present but blame_allow_custom_commands=false; falling back to p4vc.");
+            customCmd = false;
+        }
+    }
 
     if (!customCmd) {
         const std::wstring app = ResolveP4VcExecutableWide(cfg);

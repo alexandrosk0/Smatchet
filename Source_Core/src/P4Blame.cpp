@@ -18,6 +18,10 @@
 #else
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/select.h>
 #include <sys/wait.h>
 #endif
 
@@ -207,6 +211,134 @@ bool RunProcessCapture(const std::wstring& applicationName,
 }
 #endif
 
+#if !defined(_WIN32)
+bool RunProcessCapturePosix(const std::string& exe,
+                            const std::vector<std::string>& args,
+                            int& outExit,
+                            std::string& outStdout,
+                            std::string& outStderr) {
+    outExit = -1;
+    outStdout.clear();
+    outStderr.clear();
+    int pipeFds[2] = {-1, -1};
+    if (pipe(pipeFds) != 0) {
+        LOG_ERROR("P4: pipe() failed errno=%d %s", errno, std::strerror(errno));
+        return false;
+    }
+    const pid_t child = fork();
+    if (child < 0) {
+        LOG_ERROR("P4: fork() failed errno=%d %s", errno, std::strerror(errno));
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        return false;
+    }
+    if (child == 0) {
+        dup2(pipeFds[1], STDOUT_FILENO);
+        dup2(pipeFds[1], STDERR_FILENO);
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 2);
+        argv.push_back(const_cast<char*>(exe.c_str()));
+        for (const auto& a : args) {
+            argv.push_back(const_cast<char*>(a.c_str()));
+        }
+        argv.push_back(nullptr);
+        execvp(exe.c_str(), argv.data());
+        _exit(127);
+    }
+
+    close(pipeFds[1]);
+    const int oldFlags = fcntl(pipeFds[0], F_GETFL, 0);
+    if (oldFlags >= 0) {
+        fcntl(pipeFds[0], F_SETFL, oldFlags | O_NONBLOCK);
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    bool timedOut = false;
+    bool outCapped = false;
+    char buf[4096];
+    for (;;) {
+        int childStatus = 0;
+        const pid_t waitRes = waitpid(child, &childStatus, WNOHANG);
+        if (waitRes == child) {
+            if (WIFEXITED(childStatus)) {
+                outExit = WEXITSTATUS(childStatus);
+            } else if (WIFSIGNALED(childStatus)) {
+                outExit = 128 + WTERMSIG(childStatus);
+            } else {
+                outExit = -1;
+            }
+            break;
+        }
+
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(pipeFds[0], &readSet);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 200000;
+        const int sel = select(pipeFds[0] + 1, &readSet, nullptr, nullptr, &timeout);
+        if (sel > 0 && FD_ISSET(pipeFds[0], &readSet)) {
+            const ssize_t n = read(pipeFds[0], buf, sizeof(buf));
+            if (n > 0) {
+                if (!outCapped) {
+                    const size_t remaining =
+                        (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
+                    const size_t toAppend = std::min(remaining, static_cast<size_t>(n));
+                    if (toAppend > 0) {
+                        outStdout.append(buf, toAppend);
+                    }
+                    if (toAppend < static_cast<size_t>(n) || outStdout.size() >= kP4CaptureBytesMax) {
+                        outCapped = true;
+                        outStdout += "\n... [capture capped]";
+                    }
+                }
+            }
+        }
+
+        const auto elapsedMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        if (elapsedMs > static_cast<long long>(kP4ProcessTimeoutMs)) {
+            timedOut = true;
+            kill(child, SIGKILL);
+            int childStatusAfterKill = 0;
+            waitpid(child, &childStatusAfterKill, 0);
+            outExit = 124;
+            outStderr = "p4 process timed out";
+            break;
+        }
+    }
+
+    for (;;) {
+        const ssize_t n = read(pipeFds[0], buf, sizeof(buf));
+        if (n <= 0) {
+            break;
+        }
+        if (!outCapped) {
+            const size_t remaining = (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
+            const size_t toAppend = std::min(remaining, static_cast<size_t>(n));
+            if (toAppend > 0) {
+                outStdout.append(buf, toAppend);
+            }
+            if (toAppend < static_cast<size_t>(n) || outStdout.size() >= kP4CaptureBytesMax) {
+                outCapped = true;
+                outStdout += "\n... [capture capped]";
+            }
+        }
+    }
+
+    close(pipeFds[0]);
+    if (timedOut && outStderr.empty()) {
+        outStderr = "p4 process timed out";
+    }
+    if (outCapped) {
+        LOG_WARN("P4: stdout capture capped at %zu bytes on posix path", kP4CaptureBytesMax);
+    }
+    return true;
+}
+#endif
+
 std::vector<std::string> SplitLines(const std::string& s) {
     std::vector<std::string> lines;
     size_t i = 0;
@@ -355,61 +487,16 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
     return true;
 #else
     const std::string& exe = cfg.P4Executable.empty() ? std::string("p4") : cfg.P4Executable;
-    std::string cmd = exe;
-    for (const std::string& a : args) {
-        cmd += ' ';
-        if (a.find_first_of(" \t\n\"'\\") != std::string::npos) {
-            cmd += '"';
-            for (char c : a) {
-                if (c == '"' || c == '\\') {
-                    cmd += '\\';
-                }
-                cmd += c;
-            }
-            cmd += '"';
-        } else {
-            cmd += a;
-        }
-    }
-    LOG_INFO("P4: spawn cmd: %s", cmd.c_str());
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        LOG_ERROR("P4: popen failed errno=%d %s", errno, std::strerror(errno));
+    LOG_INFO("P4: spawn exe=\"%s\" args: %s", exe.c_str(), JoinStrings(args, " ").c_str());
+    if (!RunProcessCapturePosix(exe, args, outExitCode, outStdout, outStderr)) {
+        LOG_ERROR("P4: posix spawn failed");
         return false;
     }
-    char buf[4096];
-    bool outCapped = false;
-    const auto startedAt = clock::now();
-    while (fgets(buf, sizeof(buf), pipe)) {
-        const size_t chunkLen = std::strlen(buf);
-        if (!outCapped) {
-            const size_t remaining = (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
-            const size_t toAppend = std::min(remaining, chunkLen);
-            if (toAppend > 0) {
-                outStdout.append(buf, toAppend);
-            }
-            if (toAppend < chunkLen || outStdout.size() >= kP4CaptureBytesMax) {
-                outCapped = true;
-                outStdout += "\n... [capture capped]";
-            }
-        }
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - startedAt).count();
-        if (elapsedMs > static_cast<long long>(kP4ProcessTimeoutMs)) {
-            LOG_WARN("P4: popen read loop exceeded timeout (%lld ms); waiting for child exit", elapsedMs);
-            break;
-        }
-    }
-    const int st = pclose(pipe);
-    outExitCode = (st != -1 && WIFEXITED(st)) ? WEXITSTATUS(st) : -1;
-    (void)outStderr;
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
-    LOG_INFO("P4: completed exit=%d duration=%lld ms (stderr not captured on this platform; stdout only)", outExitCode,
+    LOG_INFO("P4: completed exit=%d duration=%lld ms", outExitCode,
              static_cast<long long>(ms));
     if (outExitCode != 0) {
-        LOG_WARN("P4: non-zero exit=%d (stderr unavailable via popen)", outExitCode);
-    }
-    if (outCapped) {
-        LOG_WARN("P4: stdout capture capped at %zu bytes on popen path", kP4CaptureBytesMax);
+        LOG_WARN("P4: non-zero exit=%d stderr=%s", outExitCode, TruncateForLog(outStderr, kP4LogMaxStderr).c_str());
     }
     if (Logger::Instance().GetLogP4Io() && Logger::Instance().ShouldLog(LogLevel::Trace) && !outStdout.empty()) {
         LOG_TRACE("P4: stdout: %s", TruncateForLog(outStdout, kP4LogMaxStdoutTrace).c_str());
