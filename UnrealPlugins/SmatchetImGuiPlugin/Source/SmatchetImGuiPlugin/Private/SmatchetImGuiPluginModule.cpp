@@ -3,15 +3,18 @@
 #include "Containers/StringConv.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformProcess.h"
 #include "Logging/LogMacros.h"
 #include "Misc/Paths.h"
 #include "PixelFormat.h"
-#include "RHICommandList.h"
-#include "RenderGraphBuilder.h"
 #include "Rendering/SlateRenderer.h"
+#include "RenderingThread.h"
+#include "RHICommandList.h"
+#include "Rendering/RenderingCommon.h"
 #include "SceneViewExtension.h"
+#include "Slate/SceneViewport.h"
 #include "Widgets/SWindow.h"
 
 #include "SmatchetImGuiHostC.h"
@@ -21,13 +24,35 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiPlugin, Log, All);
 
-// Used only to satisfy RDG validation:
-// If we specify ERDGPassFlags::Raster / Compute, the pass must have a non-null parameter struct.
-// The struct doesn't need to contain actual RDG resources for this pass.
-BEGIN_SHADER_PARAMETER_STRUCT(FImGuiBackBufferPassParams, )
-END_SHADER_PARAMETER_STRUCT()
-
 namespace {
+
+// If the presenting Slate window is (or contains) a UGameViewportClient's FSceneViewport, draw ImGui's
+// software mouse sprite so PIE / standalone / packaged always have a visible pointer — UE's own flags
+// (IsCursorVisible, show-cursor settings) are unreliable across embedded/separate PIE and captured game
+// modes. The Ctrl+Alt+J hotkey flips SmatchetHost's Suppress flag if the user ever sees a double pointer.
+// /GR- means no dynamic_cast; matching uses ISlateViewport pointer identity from GameViewport's SceneViewport.
+// Render thread only: input processor publishes pointer-over-PIE-viewport via atomic (no FSlateApplication here).
+bool ShouldDrawSoftwareCursorForSlateWindow(SmatchetImGuiHostHandle Host, SWindow& SlateWindow) {
+    if ((Host && SmatchetHost_GetSuppressSoftwareCursor(Host)) ||
+        !GSmatchetPointerOverGameViewport.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const TSharedPtr<ISlateViewport> SlateViewport = SlateWindow.GetViewport();
+    if (!SlateViewport.IsValid() || !GEngine) {
+        return false;
+    }
+    ISlateViewport* const SlateVp = SlateViewport.Get();
+    for (UGameViewportClient* Client = GEngine->GameViewport; Client != nullptr;
+         Client = GEngine->GetNextPIEViewport(Client)) {
+        if (FSceneViewport* SceneViewport = Client->GetGameViewport()) {
+            if (static_cast<ISlateViewport*>(SceneViewport) == SlateVp) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void SmatchetOpenUrlCallback(const char* UrlUtf8, void*) {
     const FString UEUrl(UrlUtf8 ? UTF8_TO_TCHAR(UrlUtf8) : TEXT(""));
     FPlatformProcess::LaunchURL(*UEUrl, nullptr, nullptr);
@@ -80,7 +105,14 @@ public:
 
         if (FSlateApplication::IsInitialized()) {
             InputProcessor = MakeShared<FSmatchetImGuiInputProcessor>(Host);
-            FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor);
+            // Default registration uses EInputPreProcessorType::Game (lowest priority). Editor and
+            // game preprocessors run first; when none consume, we still run — but double-clicks
+            // and some paths still leaked to Slate. Register in PreEditor at the front of that
+            // bucket so we can reliably swallow input while the Smatchet UI is visible.
+            FInputPreprocessorRegistrationKey PreProcKey;
+            PreProcKey.Type = EInputPreProcessorType::PreEditor;
+            PreProcKey.Priority = 0;
+            FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor, PreProcKey);
         }
 
         if (!TryRegisterBackBufferHook()) {
@@ -114,12 +146,13 @@ public:
             BackBufferHookRetryHandle = {};
         }
 
-        if (BackBufferReadyHandle.IsValid() && FSlateApplication::IsInitialized()) {
-            FSlateApplication::Get().GetRenderer()->OnAddBackBufferReadyToPresentPass().Remove(BackBufferReadyHandle);
-            BackBufferReadyHandle = {};
+        if (BackBufferPresentHandle.IsValid() && FSlateApplication::IsInitialized()) {
+            FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().Remove(BackBufferPresentHandle);
+            BackBufferPresentHandle = {};
         }
 
         if (InputProcessor.IsValid() && FSlateApplication::IsInitialized()) {
+            InputProcessor->EnsureTooltipsRestored();
             FSlateApplication::Get().UnregisterInputPreProcessor(InputProcessor);
             InputProcessor.Reset();
         }
@@ -161,6 +194,9 @@ private:
             nullptr,
             &SmatchetAttachmentViewerCallback,
             nullptr);
+        // DX12 dynamic-texture SRV allocator needs to know the heap capacity so it can hand out
+        // slots 1..N-1 for attachment thumbnails (slot 0 stays reserved for the font atlas).
+        SmatchetHost_SetNumSrvDescriptors(Host, Params.NumSrvDescriptors);
         CachedColorFormat = Params.ColorFormat;
         return true;
     }
@@ -182,7 +218,7 @@ private:
         return ApplyInitOptions(Params);
     }
 
-    bool TryRenderToSlateBackBuffer(FRHITexture* BackBufferTexture, FRHICommandListImmediate* RHICmdList) {
+    bool TryRenderToSlateBackBuffer(FRHITexture* BackBufferTexture, FRHICommandListImmediate* RHICmdList, bool bDrawSoftwareCursor) {
         if (!Host || !RenderBackend || !BackBufferTexture) {
             return false;
         }
@@ -210,27 +246,47 @@ private:
             }
         }
 
-        return RenderBackend->RenderToSlateBackBuffer(Host, BackBufferTexture, RHICmdList);
+        return RenderBackend->RenderToSlateBackBuffer(Host, BackBufferTexture, RHICmdList, bDrawSoftwareCursor);
     }
 
-    void OnAddBackBufferReadyToPresentPass(FRDGBuilder& GraphBuilder, SWindow&, FRDGTexture* BackBufferTexture) {
-        if (!BackBufferTexture) {
+    void OnBackBufferReadyToPresent(SWindow& SlateWindow, const FTextureRHIRef& BackBufferTexture) {
+        if (!IsInRenderingThread()) {
             return;
         }
-        FRHITexture* BackBufferRHI = BackBufferTexture->GetRHI();
-        if (!BackBufferRHI) {
+        if (!BackBufferTexture.IsValid() || !Host || !RenderBackend) {
+            return;
+        }
+        if (SmatchetHost_IsUiVisible(Host) == 0) {
+            return;
+        }
+        // Unreal fires this hook for every Slate window it presents, including tooltips, menus,
+        // drag-and-drop cursor decorators, and notification popups. Each of those has its own
+        // tiny back buffer; drawing the full ImGui overlay into them scribbles over the editor
+        // (e.g. the screen goes black while hovering Play because we render the overlay into the
+        // tooltip window's back buffer). Restrict to top-level editor / game / PIE windows.
+        const EWindowType WindowType = SlateWindow.GetType();
+        if (WindowType != EWindowType::Normal && WindowType != EWindowType::GameWindow) {
             return;
         }
 
-        FImGuiBackBufferPassParams* PassParams = GraphBuilder.AllocParameters<FImGuiBackBufferPassParams>();
+        // PIE hides the OS cursor but embedded PIE still uses EWindowType::Normal; only GameWindow
+        // is not enough. Editor chrome keeps the OS cursor — do not draw ImGui's there.
+        const bool bDrawSoftwareCursor = ShouldDrawSoftwareCursorForSlateWindow(Host, SlateWindow);
+        const FTextureRHIRef BackBufferCopy = BackBufferTexture;
 
-        GraphBuilder.AddPass(
-            RDG_EVENT_NAME("SmatchetImGuiBackBuffer"),
-            PassParams,
-            ERDGPassFlags::NeverCull | ERDGPassFlags::Raster | ERDGPassFlags::SkipRenderPass,
-            [this, PassParams, BackBufferRHI](FRHICommandListImmediate& RHICmdList) {
-                (void)PassParams;
-                TryRenderToSlateBackBuffer(BackBufferRHI, &RHICmdList);
+        // Enqueue into the RHI command stream; the lambda runs when the list is bottom-of-pipe,
+        // which is the only time FD3D12CommandContext::Get / RHIGetGraphicsCommandList are safe.
+        FRHICommandListImmediate& ImmediateCmdList = FRHICommandListExecutor::GetImmediateCommandList();
+        ImmediateCmdList.EnqueueLambda(
+            TEXT("SmatchetImGuiDrawSlateOverlay"),
+            [this, BackBufferCopy, bDrawSoftwareCursor](FRHICommandListImmediate& RHICmdList) {
+                if (!Host || !RenderBackend) {
+                    return;
+                }
+                if (SmatchetHost_IsUiVisible(Host) == 0) {
+                    return;
+                }
+                TryRenderToSlateBackBuffer(BackBufferCopy.GetReference(), &RHICmdList, bDrawSoftwareCursor);
             });
     }
 
@@ -238,16 +294,16 @@ private:
         if (!RenderBackend) {
             return false;
         }
-        if (BackBufferReadyHandle.IsValid()) {
+        if (BackBufferPresentHandle.IsValid()) {
             return true;
         }
         if (!FSlateApplication::IsInitialized()) {
             return false;
         }
-        BackBufferReadyHandle = FSlateApplication::Get().GetRenderer()->OnAddBackBufferReadyToPresentPass().AddRaw(
+        BackBufferPresentHandle = FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().AddRaw(
             this,
-            &FSmatchetImGuiPluginModule::OnAddBackBufferReadyToPresentPass);
-        return BackBufferReadyHandle.IsValid();
+            &FSmatchetImGuiPluginModule::OnBackBufferReadyToPresent);
+        return BackBufferPresentHandle.IsValid();
     }
 
     bool TryCreateViewExtension() {
@@ -271,7 +327,7 @@ private:
     int CachedColorFormat = 0;
     bool bInitOptionsSet = false;
 
-    FDelegateHandle BackBufferReadyHandle{};
+    FDelegateHandle BackBufferPresentHandle{};
     FTSTicker::FDelegateHandle BackBufferHookRetryHandle{};
     FTSTicker::FDelegateHandle InitOptionsRetryHandle{};
     FTSTicker::FDelegateHandle ViewExtensionRetryHandle{};

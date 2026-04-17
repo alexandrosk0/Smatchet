@@ -10,10 +10,11 @@ public class SmatchetImGuiPlugin : ModuleRules
 
         // Surface dead-code-adjacent issues in plugin .cpp/.h without changing engine modules.
         // (IWYU enforcement is optional: turn on when you want to pay down monolithic includes.)
-        ShadowVariableWarningLevel = WarningLevel.Warning;
-        UnsafeTypeCastWarningLevel = WarningLevel.Warning;
-        bEnableUndefinedIdentifierWarnings = true;
-        bEnforceIWYU = false;
+        // UE 5.6+: compiler warning knobs live under CppCompileWarningSettings (ModuleRules.* is obsolete).
+        CppCompileWarningSettings.ShadowVariableWarningLevel = WarningLevel.Warning;
+        CppCompileWarningSettings.UnsafeTypeCastWarningLevel = WarningLevel.Warning;
+        CppCompileWarningSettings.UndefinedIdentifierWarningLevel = WarningLevel.Warning;
+        IWYUSupport = IWYUSupport.None;
 
         PublicDependencyModuleNames.AddRange(
             new[]
@@ -65,9 +66,18 @@ public class SmatchetImGuiPlugin : ModuleRules
             var agilityD3DX12IncludeDir = Path.Combine(agilityIncludeRoot, "d3dx12");
             PublicSystemIncludePaths.Add(agilityD3DX12IncludeDir);
 
-            // libcurl (Schannel backend) depends on these Windows crypto/import libs.
-            PublicAdditionalLibraries.Add("crypt32.lib");
-            PublicAdditionalLibraries.Add("cryptnet.lib");
+            // libcurl (Schannel backend) depends on these Windows system crypto libs.
+            // Use PublicSystemLibraries (not PublicAdditionalLibraries) so UBT does not require a resolvable path.
+            // Names must include the .lib suffix — bare "crypt32" makes link.exe look for crypt32.obj (LNK1181).
+            PublicSystemLibraries.Add("crypt32.lib");
+            PublicSystemLibraries.Add("cryptnet.lib");
+
+            // Attachment preview decodes JPEG/PNG/GIF/WebP via WIC (CoCreateInstance + IWICImagingFactory).
+            // Without these the Unreal plugin fails to resolve CLSID_WICImagingFactory / CoCreateInstance
+            // and the attachment preview falls back to the "metadata only" path — which is exactly the
+            // "no picture in preview" symptom observed inside the editor.
+            PublicSystemLibraries.Add("windowscodecs.lib");
+            PublicSystemLibraries.Add("ole32.lib");
         }
 
         string PluginDir = ModuleDirectory;
@@ -150,5 +160,84 @@ public class SmatchetImGuiPlugin : ModuleRules
         AddExistingLib("sqlite3");
         AddExistingLib("Smatchet_Lua_Internal");
         AddExistingLib("libcurl");
+
+        WarnIfPackagedLibsAreStale(ThirdPartyDir, LibDir, backendSuffix);
+    }
+
+    // Compare the newest Source_Core mtime (checked in alongside this plugin) against the packaged
+    // SmatchetImGuiHost_<backend> lib. If core sources are newer, the packaged libs are stale and
+    // the editor will load an older build than the standalone app. Emit a warning with the fix.
+    private static void WarnIfPackagedLibsAreStale(string ThirdPartyDir, string LibDir, string backendSuffix)
+    {
+        try
+        {
+            string repoRoot = Path.GetFullPath(Path.Combine(ThirdPartyDir, "..", "..", "..", ".."));
+            string sourceCoreDir = Path.Combine(repoRoot, "Source_Core");
+            if (!Directory.Exists(sourceCoreDir) || !Directory.Exists(LibDir))
+            {
+                return;
+            }
+
+            string[] sourceExtensions = { "*.cpp", "*.c", "*.cc", "*.cxx", "*.h", "*.hpp", "*.inl" };
+            DateTime newestSource = DateTime.MinValue;
+            foreach (string pattern in sourceExtensions)
+            {
+                foreach (string file in Directory.EnumerateFiles(sourceCoreDir, pattern, SearchOption.AllDirectories))
+                {
+                    DateTime stamp = File.GetLastWriteTimeUtc(file);
+                    if (stamp > newestSource)
+                    {
+                        newestSource = stamp;
+                    }
+                }
+            }
+            if (newestSource == DateTime.MinValue)
+            {
+                return;
+            }
+
+            string hostLibBase = "SmatchetImGuiHost_" + backendSuffix;
+            string[] candidates =
+            {
+                Path.Combine(LibDir, hostLibBase + ".lib"),
+                Path.Combine(LibDir, "lib" + hostLibBase + ".lib"),
+                Path.Combine(LibDir, "lib" + hostLibBase + ".a"),
+                Path.Combine(LibDir, hostLibBase + ".a")
+            };
+            string packagedLib = null;
+            foreach (string candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    packagedLib = candidate;
+                    break;
+                }
+            }
+            if (packagedLib == null)
+            {
+                return;
+            }
+
+            DateTime packagedStamp = File.GetLastWriteTimeUtc(packagedLib);
+            if (newestSource <= packagedStamp)
+            {
+                return;
+            }
+
+            TimeSpan lag = newestSource - packagedStamp;
+            // UBT promotes lines starting with "warning:" into the build output and surface list.
+            System.Console.WriteLine(
+                "warning: SmatchetImGuiPlugin: packaged native lib '{0}' is older than Source_Core by {1:c}. " +
+                "Unreal will load a stale Smatchet host. Run 'scripts\\package_unreal_plugin_msvc.ps1' " +
+                "to refresh ThirdParty libs, then rebuild the plugin.",
+                Path.GetFileName(packagedLib),
+                lag);
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine(
+                "warning: SmatchetImGuiPlugin: staleness check failed ({0}). Packaged libs may or may not be up to date.",
+                ex.Message);
+        }
     }
 }

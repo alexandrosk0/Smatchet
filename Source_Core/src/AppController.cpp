@@ -174,11 +174,43 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
 }
 
 std::string GetTempDir() {
+#if defined(_WIN32) && defined(_MSC_VER)
+    // MSVC: getenv is deprecated (C4996); _dupenv_s is not linked the same way on MinGW.
+    auto readEnv = [](const char* name) -> std::string {
+        char* buf = nullptr;
+        size_t sz = 0;
+        if (_dupenv_s(&buf, &sz, name) != 0) {
+            if (buf) {
+                std::free(buf);
+            }
+            return {};
+        }
+        if (!buf || buf[0] == '\0') {
+            if (buf) {
+                std::free(buf);
+            }
+            return {};
+        }
+        std::string out(buf);
+        std::free(buf);
+        return out;
+    };
+    std::string t = readEnv("TEMP");
+    if (!t.empty()) {
+        return t;
+    }
+    t = readEnv("TMP");
+    if (!t.empty()) {
+        return t;
+    }
+    return ".";
+#else
     const char* env = std::getenv("TEMP");
     if (env && *env) return std::string(env);
     env = std::getenv("TMP");
     if (env && *env) return std::string(env);
     return ".";
+#endif
 }
 
 std::string SanitizeFilename(const std::string& name) {
@@ -287,6 +319,16 @@ void AppController::SetOpenUrlHandler(std::function<void(const std::string&)> ha
     OpenUrlHandler = std::move(handler);
 }
 
+void AppController::SetCloseEmbeddedUiHandler(std::function<void()> handler) {
+    CloseEmbeddedUiHandler = std::move(handler);
+}
+
+void AppController::CloseEmbeddedUi() {
+    if (CloseEmbeddedUiHandler) {
+        CloseEmbeddedUiHandler();
+    }
+}
+
 void AppController::OpenUrl(const std::string& url) const {
     if (url.empty()) {
         return;
@@ -388,6 +430,47 @@ void AppController::OpenAttachment(const std::string& url,
 
     LOG_INFO("OpenAttachment: opening attachment via URL fallback.");
     OpenUrl(url);
+}
+
+void AppController::OpenAttachmentInSystemViewer(const std::string& url,
+                                                 const std::string& filename,
+                                                 const std::string& mimeType) {
+    if (url.empty()) {
+        return;
+    }
+    std::string outFilePath;
+    std::string outMime;
+    std::string outError;
+    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, outError)) {
+        LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", outError.c_str());
+        OpenUrl(url);
+        return;
+    }
+    bool launchOk = false;
+#if defined(_WIN32)
+    const HINSTANCE shellResult =
+        ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    launchOk = reinterpret_cast<intptr_t>(shellResult) > 32;
+    if (!launchOk) {
+        LOG_ERROR("OpenAttachmentInSystemViewer: ShellExecute failed path=%s err=%lu",
+                  TruncateForLog(outFilePath, 300).c_str(),
+                  static_cast<unsigned long>(GetLastError()));
+    }
+#elif defined(__APPLE__)
+    const std::string cmd = "open \"" + EscapeShellArg(outFilePath) + "\"";
+    launchOk = (std::system(cmd.c_str()) == 0);
+    if (!launchOk) {
+        LOG_ERROR("OpenAttachmentInSystemViewer: open failed path=%s",
+                  TruncateForLog(outFilePath, 300).c_str());
+    }
+#else
+    const std::string cmd = "xdg-open \"" + EscapeShellArg(outFilePath) + "\"";
+    launchOk = (std::system(cmd.c_str()) == 0);
+    if (!launchOk) {
+        LOG_ERROR("OpenAttachmentInSystemViewer: xdg-open failed path=%s",
+                  TruncateForLog(outFilePath, 300).c_str());
+    }
+#endif
 }
 
 bool AppController::DownloadAttachmentForPreview(const std::string& url,
@@ -857,6 +940,38 @@ bool TryParseJiraNumberValue(const std::string& rawValue, nlohmann::json& outVal
     } catch (...) {
         return false;
     }
+}
+
+bool LooksLikeJiraIssueKey(const std::string& value) {
+    const size_t dash = value.find('-');
+    if (dash == std::string::npos || dash == 0 || dash + 1 >= value.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < dash; ++i) {
+        const unsigned char c = static_cast<unsigned char>(value[i]);
+        if (!(std::isupper(c) != 0 || std::isdigit(c) != 0 || c == '_')) {
+            return false;
+        }
+    }
+    for (size_t i = dash + 1; i < value.size(); ++i) {
+        if (std::isdigit(static_cast<unsigned char>(value[i])) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string ExtractJiraIssueKeyFromDisplayValue(const std::string& value) {
+    const std::string trimmed = TrimCopy(value);
+    if (LooksLikeJiraIssueKey(trimmed)) {
+        return trimmed;
+    }
+    const size_t sep = trimmed.find(" - ");
+    if (sep == std::string::npos) {
+        return std::string();
+    }
+    const std::string key = TrimCopy(trimmed.substr(0, sep));
+    return LooksLikeJiraIssueKey(key) ? key : std::string();
 }
 
 nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
@@ -1398,6 +1513,13 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         const std::string scalarValue = values.empty() ? std::string() : values.front();
         if (scalarValue.empty()) {
             valuePayload = nullptr;
+        } else if (field.Id == "parent") {
+            const std::string parentKey = ExtractJiraIssueKeyFromDisplayValue(scalarValue);
+            if (!parentKey.empty()) {
+                valuePayload = nlohmann::json{{"key", parentKey}};
+            } else {
+                valuePayload = scalarValue;
+            }
         } else if (field.IsUserType) {
             valuePayload = nlohmann::json{{"accountId", scalarValue}};
         } else if (field.Family == JiraFieldFamily::StructuredSingle ||
@@ -1623,13 +1745,17 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
         const std::string scalarValue = values.empty() ? std::string() : values.front();
         if (scalarValue.empty()) {
             valuePayload = nullptr;
+        } else if (field.Id == "parent") {
+            const std::string parentKey = ExtractJiraIssueKeyFromDisplayValue(scalarValue);
+            valuePayload = parentKey.empty() ? nlohmann::json(scalarValue) : nlohmann::json{{"key", parentKey}};
         } else if (field.IsUserType) {
             valuePayload = nlohmann::json{{"accountId", scalarValue}};
         } else if (field.Family == JiraFieldFamily::StructuredSingle ||
                    field.Family == JiraFieldFamily::IssueType ||
                    field.Family == JiraFieldFamily::Status ||
                    field.Family == JiraFieldFamily::CascadingSelect) {
-            if (!TryBuildFieldOptionPayload(field, scalarValue, valuePayload)) {
+            const bool builtStructured = TryBuildFieldOptionPayload(field, scalarValue, valuePayload);
+            if (!builtStructured) {
                 valuePayload = FallbackPayloadForSelectableField(field, scalarValue);
             }
         } else if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {

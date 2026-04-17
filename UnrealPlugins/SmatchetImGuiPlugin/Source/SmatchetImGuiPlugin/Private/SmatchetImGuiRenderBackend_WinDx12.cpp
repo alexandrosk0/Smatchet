@@ -9,6 +9,8 @@
 #include "PixelFormat.h"
 #include "RHICommandList.h"
 
+#include "imgui.h"
+
 #include <d3d12.h>
 #include <wrl/client.h>
 
@@ -16,15 +18,20 @@ DEFINE_LOG_CATEGORY_STATIC(LogSmatchetWinDx12RenderBackend, Log, All);
 
 namespace {
 
-// Slate "back buffer ready" RDG passes often record through FRHICommandListImmediate without
-// exposing GetNativeCommandBuffer(). D3D12 RHI can still resolve the underlying list.
+// Slate "back buffer ready" hook executes this via FRHICommandListImmediate::EnqueueLambda, so the
+// command list is bottom-of-pipe. GetNativeCommandBuffer() is usually null there, but the D3D12 RHI
+// can still resolve the underlying graphics command list via RHIGetGraphicsCommandList.
 ID3D12GraphicsCommandList* ResolveD3D12GraphicsCommandList(
-    FRHICommandListImmediate* RHICmdList) {
+    FRHICommandListImmediate* RHICmdList,
+    ID3D12DynamicRHI* D3D12RHI) {
     if (!RHICmdList) {
         return nullptr;
     }
     if (void* Native = RHICmdList->GetNativeCommandBuffer()) {
         return reinterpret_cast<ID3D12GraphicsCommandList*>(Native);
+    }
+    if (D3D12RHI) {
+        return D3D12RHI->RHIGetGraphicsCommandList(*RHICmdList, /*InDeviceIndex=*/0);
     }
     return nullptr;
 }
@@ -63,9 +70,14 @@ public:
             return false;
         }
 
+        // Slot 0 is used by the ImGui font atlas (legacy single-SRV path). Slots 1..N-1 are used by
+        // the Smatchet DX12 SRV allocator for dynamic textures (attachment thumbnails). 128 entries
+        // is ample for our previews and costs ~4KB of descriptor heap memory.
+        constexpr int NumSrvDescriptors = 128;
+
         D3D12_DESCRIPTOR_HEAP_DESC HeapDesc{};
         HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        HeapDesc.NumDescriptors = 1;
+        HeapDesc.NumDescriptors = NumSrvDescriptors;
         HeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         HeapDesc.NodeMask = 0;
 
@@ -85,13 +97,15 @@ public:
         // This avoids ABI/lifetime issues when crossing toolchains.
         OutParams.RendererResource1 = reinterpret_cast<void*>(ImGuiFontSrvCpuHandle.ptr);
         OutParams.RendererResource2 = reinterpret_cast<void*>(ImGuiFontSrvGpuHandle.ptr);
+        OutParams.NumSrvDescriptors = NumSrvDescriptors;
         return true;
     }
 
     virtual bool RenderToSlateBackBuffer(
         SmatchetImGuiHostHandle Host,
         FRHITexture* BackBufferTexture,
-        FRHICommandListImmediate* RHICmdList) override {
+        FRHICommandListImmediate* RHICmdList,
+        bool bDrawSoftwareCursor) override {
         if (!Host || !BackBufferTexture) {
             return false;
         }
@@ -131,6 +145,12 @@ public:
         }
 
         SmatchetHost_BeginFrame(Host, FallbackDelta, static_cast<float>(BackBufferSize.X), static_cast<float>(BackBufferSize.Y));
+        // When the game viewport hides the hardware cursor, draw ImGui's sprite so clicks are visible
+        // inside the overlay. When the OS cursor is still visible, keep this false to avoid two pointers.
+        // BeginFrame made the ImGui context current.
+        if (ImGui::GetCurrentContext() != nullptr) {
+            ImGui::GetIO().MouseDrawCursor = bDrawSoftwareCursor;
+        }
         SmatchetHost_DrawUI(Host);
         if (SmatchetHost_IsInitialized(Host) == 0 || SmatchetHost_IsFrameActive(Host) == 0) {
             return false;
@@ -139,7 +159,7 @@ public:
         D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle =
             D3D12RHI->RHIGetRenderTargetView(BackBufferTexture, /*MipIndex=*/0, /*ArraySliceIndex=*/0);
 
-        ID3D12GraphicsCommandList* Cmd = ResolveD3D12GraphicsCommandList(RHICmdList);
+        ID3D12GraphicsCommandList* Cmd = ResolveD3D12GraphicsCommandList(RHICmdList, D3D12RHI);
         if (Cmd) {
             D3D12_VIEWPORT Viewport{};
             Viewport.Width = static_cast<float>(BackBufferSize.X);
@@ -173,7 +193,7 @@ public:
                 LogSmatchetWinDx12RenderBackend,
                 Warning,
                 TEXT(
-                    "Could not resolve ID3D12GraphicsCommandList for Slate back buffer pass (GetNativeCommandBuffer null and RHIGetGraphicsCommandList null)."));
+                    "Could not resolve ID3D12GraphicsCommandList for Slate present hook (GetNativeCommandBuffer null and RHIGetGraphicsCommandList null)."));
             LastMissingNativeCmdLogSeconds = MissingCmdNow;
         }
         return false;

@@ -11,20 +11,79 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cctype>
 #include <exception>
 #include <future>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
+
+constexpr std::size_t kMaxRenderCacheEntries = 256;
+
+template <typename TValue, typename TBuilder>
+TValue& GetOrBuildCachedValue(std::unordered_map<std::string, TValue>& cache,
+                              const std::string& key,
+                              TBuilder&& build) {
+    const auto it = cache.find(key);
+    if (it != cache.end()) {
+        return it->second;
+    }
+    if (cache.size() >= kMaxRenderCacheEntries) {
+        cache.clear();
+    }
+    return cache.emplace(key, build()).first->second;
+}
 
 struct AttachmentInfo {
     std::string filename;
     std::string url;
     std::string mimeType;
 };
+
+struct AttachmentRenderModel {
+    bool parsed = false;
+    bool explicitEmpty = false;
+    std::vector<AppController::AttachmentDescriptor> descriptors;
+    std::string display;
+    std::string tooltip;
+};
+
+struct WatchersRenderModel {
+    bool parsed = false;
+    std::string line;
+    std::string tooltip;
+};
+
+struct VotesRenderModel {
+    bool parsed = false;
+    std::string line;
+    std::string tooltip;
+};
+
+struct WorklogRenderModel {
+    bool parsed = false;
+    std::string line;
+    std::string tooltip;
+};
+
+struct IssueRestrictionRenderModel {
+    bool rendered = false;
+    std::string display;
+};
+
+struct ProgressRenderModel {
+    bool rendered = false;
+    float fraction = 0.0f;
+};
+
+AttachmentRenderModel BuildAttachmentRenderModel(const std::string& currentValue);
+WatchersRenderModel BuildWatchersRenderModel(const std::string& currentValue);
+VotesRenderModel BuildVotesRenderModel(const std::string& currentValue);
+WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue);
+IssueRestrictionRenderModel BuildIssueRestrictionRenderModel(const std::string& currentValue);
+ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue);
 
 bool IsExplicitlyEmptyAttachmentsFieldValue(const std::string& currentValue) {
     const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
@@ -243,20 +302,176 @@ bool ColumnIdEqualsLower(const std::string& id, const char* lowerAscii) {
     return ToLowerAsciiCopy(id) == lowerAscii;
 }
 
-bool TryRenderIssueRestrictionCell(const std::string& currentValue,
-                                   float availWidth,
-                                   bool tooltipsEnabled) {
+AttachmentRenderModel BuildAttachmentRenderModel(const std::string& currentValue) {
+    AttachmentRenderModel model;
+    std::vector<AttachmentInfo> attachments;
+    if (!ParseAttachmentsFieldValue(currentValue, attachments)) {
+        model.explicitEmpty = IsExplicitlyEmptyAttachmentsFieldValue(currentValue);
+        return model;
+    }
+
+    model.parsed = true;
+    model.descriptors.reserve(attachments.size());
+    for (const auto& attachment : attachments) {
+        AppController::AttachmentDescriptor descriptor;
+        descriptor.Filename = attachment.filename.empty() ? std::string("Attachment") : attachment.filename;
+        descriptor.Url = attachment.url;
+        descriptor.MimeType = attachment.mimeType;
+        model.descriptors.push_back(std::move(descriptor));
+    }
+
+    model.display = model.descriptors.front().Filename;
+    const int extraCount = static_cast<int>(model.descriptors.size()) - 1;
+    if (extraCount > 0) {
+        model.display += " +" + std::to_string(extraCount);
+    }
+
+    model.tooltip = "Click to open attachments window.\nAttachments:\n";
+    for (const auto& descriptor : model.descriptors) {
+        model.tooltip += " - " + descriptor.Filename;
+        if (!descriptor.MimeType.empty()) {
+            model.tooltip += " [" + descriptor.MimeType + "]";
+        }
+        model.tooltip += "\n";
+    }
+    return model;
+}
+
+WatchersRenderModel BuildWatchersRenderModel(const std::string& currentValue) {
+    WatchersRenderModel model;
+    int watchCount = 0;
+    bool isWatching = false;
+    std::string selfUrl;
+    if (!ParseWatchersFieldJson(currentValue, watchCount, isWatching, selfUrl)) {
+        return model;
+    }
+
+    model.parsed = true;
+    if (watchCount <= 0) {
+        model.line = isWatching ? "You watch" : "No watchers";
+    } else if (watchCount == 1) {
+        model.line = isWatching ? "1 watcher (you)" : "1 watcher";
+    } else {
+        model.line = isWatching ? (std::to_string(watchCount) + " watchers (incl. you)")
+                                : (std::to_string(watchCount) + " watchers");
+    }
+
+    model.tooltip = "Watchers\n";
+    model.tooltip += "Count: " + std::to_string(watchCount) + "\n";
+    model.tooltip += isWatching ? "You are watching this issue.\n" : "You are not watching.\n";
+    if (!selfUrl.empty()) {
+        model.tooltip += "\n";
+        model.tooltip += selfUrl;
+    }
+    return model;
+}
+
+VotesRenderModel BuildVotesRenderModel(const std::string& currentValue) {
+    VotesRenderModel model;
+    int voteCount = 0;
+    bool hasVoted = false;
+    std::string selfUrl;
+    if (!ParseVotesFieldJson(currentValue, voteCount, hasVoted, selfUrl)) {
+        return model;
+    }
+
+    model.parsed = true;
+    if (voteCount <= 0) {
+        model.line = hasVoted ? "You voted" : "No votes";
+    } else if (voteCount == 1) {
+        model.line = hasVoted ? "1 vote (you)" : "1 vote";
+    } else {
+        model.line = hasVoted ? (std::to_string(voteCount) + " votes (incl. you)")
+                              : (std::to_string(voteCount) + " votes");
+    }
+
+    model.tooltip = "Votes\n";
+    model.tooltip += "Count: " + std::to_string(voteCount) + "\n";
+    model.tooltip += hasVoted ? "You have voted on this issue.\n" : "You have not voted.\n";
+    if (!selfUrl.empty()) {
+        model.tooltip += "\n";
+        model.tooltip += selfUrl;
+    }
+    return model;
+}
+
+WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
+    WorklogRenderModel model;
+    WorklogFieldSummary s;
+    if (!ParseWorklogFieldJson(currentValue, s)) {
+        return model;
+    }
+
+    model.parsed = true;
+    if (s.Total <= 0) {
+        model.line = "No work logged";
+    } else {
+        model.line = std::to_string(s.Total);
+        model.line += (s.Total == 1) ? " work log" : " work logs";
+        if (s.SumSecondsOnPage > 0) {
+            model.line += " \xC2\xB7 ";
+            model.line += FormatWorkDurationFromSeconds(s.SumSecondsOnPage);
+            if (s.WorklogsOnPage < s.Total) {
+                model.line += "*";
+            }
+        }
+    }
+
+    model.tooltip = "Log work\n";
+    model.tooltip += "Total entries: " + std::to_string(s.Total) + "\n";
+    if (s.Total > 0 && s.WorklogsOnPage > 0) {
+        model.tooltip += "This page: " + std::to_string(s.StartAt + 1) + "\xe2\x80\x93" +
+                         std::to_string(s.StartAt + s.WorklogsOnPage) + " of " + std::to_string(s.Total) + "\n";
+    }
+    if (s.MaxResults > 0) {
+        model.tooltip += "Page size (maxResults): " + std::to_string(s.MaxResults) + "\n";
+    }
+    if (s.SumSecondsOnPage > 0) {
+        model.tooltip += "Time on page: " + FormatWorkDurationFromSeconds(s.SumSecondsOnPage);
+        if (s.WorklogsOnPage < s.Total) {
+            model.tooltip += " (partial; not all work logs loaded)";
+        }
+        model.tooltip += "\n";
+    }
+    const int kMaxTipEntries = 12;
+    int shown = 0;
+    for (const auto& e : s.Entries) {
+        if (shown >= kMaxTipEntries) {
+            const int rest = static_cast<int>(s.Entries.size()) - shown;
+            model.tooltip += "\n... +" + std::to_string(rest) + " on this page";
+            break;
+        }
+        model.tooltip += "\n- ";
+        model.tooltip += e.Author.empty() ? std::string("(unknown)") : e.Author;
+        if (!e.TimeSpentText.empty()) {
+            model.tooltip += " - " + e.TimeSpentText;
+        } else if (e.TimeSpentSeconds > 0) {
+            model.tooltip += " - " + FormatWorkDurationFromSeconds(e.TimeSpentSeconds);
+        }
+        if (!e.StartedIso.empty()) {
+            model.tooltip += " (" + e.StartedIso + ")";
+        }
+        ++shown;
+    }
+    if (s.Total > s.WorklogsOnPage) {
+        model.tooltip += "\n\nMore entries exist in Jira than are included in this cell.";
+    }
+    return model;
+}
+
+IssueRestrictionRenderModel BuildIssueRestrictionRenderModel(const std::string& currentValue) {
+    IssueRestrictionRenderModel model;
     const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
     if (trimmed.empty()) {
-        return false;
+        return model;
     }
     nlohmann::json j;
     if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
-        return false;
+        return model;
     }
     try {
         if (!j.contains("issuerestrictions") || !j["issuerestrictions"].is_object()) {
-            return false;
+            return model;
         }
         const auto& rest = j["issuerestrictions"];
         bool shouldDisplay = true;
@@ -275,46 +490,46 @@ bool TryRenderIssueRestrictionCell(const std::string& currentValue,
                 shouldDisplay = !(s == "false" || s == "0" || s == "no" || s == "off" || s.empty());
             }
         }
-        std::string display;
         if (!shouldDisplay) {
-            display = "Not displayed";
+            model.display = "Not displayed";
         } else {
             const int n = static_cast<int>(rest.size());
             if (n == 0) {
-                display = "No restrictions";
+                model.display = "No restrictions";
             } else {
-                display = std::to_string(n) + (n == 1 ? " restriction" : " restrictions");
+                model.display = std::to_string(n) + (n == 1 ? " restriction" : " restrictions");
             }
         }
-        const std::string* tip = tooltipsEnabled ? &currentValue : nullptr;
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, true, tip);
-        return true;
+        model.rendered = true;
+        return model;
     } catch (...) {
-        return false;
+        return IssueRestrictionRenderModel{};
     }
 }
 
-bool TryRenderProgressBarCell(const std::string& currentValue, float availWidth) {
+ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
+    ProgressRenderModel model;
     const std::string trimmed = TrimCopyAsciiWhitespace(currentValue);
     if (trimmed.empty()) {
-        ImGui::ProgressBar(0.0f, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
-        return true;
+        model.rendered = true;
+        model.fraction = 0.0f;
+        return model;
     }
     nlohmann::json j;
     if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
-        return false;
+        return model;
     }
     try {
         if (!j.contains("progress") || !j.contains("total")) {
-            return false;
+            return model;
         }
         const int p = ParseJsonIntFieldLoose(j, "progress", 0);
         const int t = ParseJsonIntFieldLoose(j, "total", 0);
-        const float frac = (t > 0) ? (static_cast<float>(p) / static_cast<float>(t)) : 0.0f;
-        ImGui::ProgressBar(frac, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
-        return true;
+        model.rendered = true;
+        model.fraction = (t > 0) ? (static_cast<float>(p) / static_cast<float>(t)) : 0.0f;
+        return model;
     } catch (...) {
-        return false;
+        return ProgressRenderModel{};
     }
 }
 
@@ -350,7 +565,15 @@ bool JiraGridFieldDisplay::IsProgressDisplayField(const JiraField* field) {
 }
 
 bool JiraGridFieldDisplay::TryRenderProgressJsonField(const std::string& currentValue, float availWidth) {
-    return TryRenderProgressBarCell(currentValue, availWidth);
+    static thread_local std::unordered_map<std::string, ProgressRenderModel> cache;
+    const ProgressRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildProgressRenderModel(currentValue); });
+    if (model.rendered) {
+        ImGui::ProgressBar(model.fraction, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
+    }
+    return model.rendered;
 }
 
 bool JiraGridFieldDisplay::IsIssueRestrictionColumnId(const std::string& fieldId) {
@@ -371,16 +594,29 @@ bool JiraGridFieldDisplay::IsIssueRestrictionField(const JiraField* field) {
 bool JiraGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& currentValue,
                                                           float availWidth,
                                                           bool tooltipsEnabled) {
-    return TryRenderIssueRestrictionCell(currentValue, availWidth, tooltipsEnabled);
+    static thread_local std::unordered_map<std::string, IssueRestrictionRenderModel> cache;
+    const IssueRestrictionRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildIssueRestrictionRenderModel(currentValue); });
+    if (model.rendered) {
+        const std::string* tip = tooltipsEnabled ? &currentValue : nullptr;
+        RenderClippedFieldText(model.display, availWidth, tooltipsEnabled, true, tip);
+    }
+    return model.rendered;
 }
 
 void JiraGridFieldDisplay::RenderAttachmentsField(AppController& app,
                                                   const std::string& currentValue,
                                                   float availWidth,
                                                   bool tooltipsEnabled) {
-    std::vector<AttachmentInfo> attachments;
-    if (!ParseAttachmentsFieldValue(currentValue, attachments)) {
-        if (IsExplicitlyEmptyAttachmentsFieldValue(currentValue)) {
+    static thread_local std::unordered_map<std::string, AttachmentRenderModel> cache;
+    const AttachmentRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildAttachmentRenderModel(currentValue); });
+    if (!model.parsed) {
+        if (model.explicitEmpty) {
             RenderClippedFieldText(std::string(), availWidth, tooltipsEnabled, true);
             return;
         }
@@ -388,42 +624,17 @@ void JiraGridFieldDisplay::RenderAttachmentsField(AppController& app,
         return;
     }
 
-    std::vector<AppController::AttachmentDescriptor> descriptors;
-    descriptors.reserve(attachments.size());
-    for (const auto& attachment : attachments) {
-        AppController::AttachmentDescriptor descriptor;
-        descriptor.Filename = attachment.filename.empty() ? std::string("Attachment") : attachment.filename;
-        descriptor.Url = attachment.url;
-        descriptor.MimeType = attachment.mimeType;
-        descriptors.push_back(std::move(descriptor));
-    }
-
-    std::string display = descriptors.front().Filename;
-    const int extraCount = static_cast<int>(descriptors.size()) - 1;
-    if (extraCount > 0) {
-        display += " +" + std::to_string(extraCount);
-    }
-
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.65f, 1.0f, 1.0f));
-    ImGui::TextUnformatted(display.c_str());
+    ImGui::TextUnformatted(model.display.c_str());
     ImGui::PopStyleColor();
 
     if (ImGui::IsItemHovered()) {
-        std::string tip = "Click to open attachments window.\n";
-        tip += "Attachments:\n";
-        for (const auto& descriptor : descriptors) {
-            tip += " - " + descriptor.Filename;
-            if (!descriptor.MimeType.empty()) {
-                tip += " [" + descriptor.MimeType + "]";
-            }
-            tip += "\n";
-        }
-        ImGui::SetTooltip("%s", tip.c_str());
+        ImGui::SetTooltip("%s", model.tooltip.c_str());
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-        app.ShowAttachmentCollection(descriptors);
+        app.ShowAttachmentCollection(model.descriptors);
     }
 }
 
@@ -432,31 +643,15 @@ void JiraGridFieldDisplay::RenderWatchersField(const std::string& issueKey,
                                                float availWidth,
                                                bool tooltipsEnabled,
                                                JiraGridFieldAsyncState& async) {
-    int watchCount = 0;
-    bool isWatching = false;
-    std::string selfUrl;
-    const bool parsed = ParseWatchersFieldJson(currentValue, watchCount, isWatching, selfUrl);
-    if (parsed) {
-        std::string line;
-        if (watchCount <= 0) {
-            line = isWatching ? "You watch" : "No watchers";
-        } else if (watchCount == 1) {
-            line = isWatching ? "1 watcher (you)" : "1 watcher";
-        } else {
-            line = isWatching ? (std::to_string(watchCount) + " watchers (incl. you)")
-                              : (std::to_string(watchCount) + " watchers");
-        }
-
-        ImGui::TextUnformatted(line.c_str());
+    static thread_local std::unordered_map<std::string, WatchersRenderModel> cache;
+    const WatchersRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildWatchersRenderModel(currentValue); });
+    if (model.parsed) {
+        ImGui::TextUnformatted(model.line.c_str());
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            std::string tip = "Watchers\n";
-            tip += "Count: " + std::to_string(watchCount) + "\n";
-            tip += isWatching ? "You are watching this issue.\n" : "You are not watching.\n";
-            if (!selfUrl.empty()) {
-                tip += "\n";
-                tip += selfUrl;
-            }
-            ImGui::SetTooltip("%s", tip.c_str());
+            ImGui::SetTooltip("%s", model.tooltip.c_str());
         }
     } else {
         RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
@@ -504,31 +699,15 @@ void JiraGridFieldDisplay::RenderVotesField(const std::string& issueKey,
                                              float availWidth,
                                              bool tooltipsEnabled,
                                              JiraGridFieldAsyncState& async) {
-    int voteCount = 0;
-    bool hasVoted = false;
-    std::string selfUrl;
-    const bool parsed = ParseVotesFieldJson(currentValue, voteCount, hasVoted, selfUrl);
-    if (parsed) {
-        std::string line;
-        if (voteCount <= 0) {
-            line = hasVoted ? "You voted" : "No votes";
-        } else if (voteCount == 1) {
-            line = hasVoted ? "1 vote (you)" : "1 vote";
-        } else {
-            line = hasVoted ? (std::to_string(voteCount) + " votes (incl. you)")
-                            : (std::to_string(voteCount) + " votes");
-        }
-
-        ImGui::TextUnformatted(line.c_str());
+    static thread_local std::unordered_map<std::string, VotesRenderModel> cache;
+    const VotesRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildVotesRenderModel(currentValue); });
+    if (model.parsed) {
+        ImGui::TextUnformatted(model.line.c_str());
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            std::string tip = "Votes\n";
-            tip += "Count: " + std::to_string(voteCount) + "\n";
-            tip += hasVoted ? "You have voted on this issue.\n" : "You have not voted.\n";
-            if (!selfUrl.empty()) {
-                tip += "\n";
-                tip += selfUrl;
-            }
-            ImGui::SetTooltip("%s", tip.c_str());
+            ImGui::SetTooltip("%s", model.tooltip.c_str());
         }
     } else {
         RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
@@ -582,70 +761,19 @@ void JiraGridFieldDisplay::RenderVotesField(const std::string& issueKey,
 void JiraGridFieldDisplay::RenderWorklogField(const std::string& currentValue,
                                               float availWidth,
                                               bool tooltipsEnabled) {
-    WorklogFieldSummary s;
-    const bool parsed = ParseWorklogFieldJson(currentValue, s);
-    if (!parsed) {
+    static thread_local std::unordered_map<std::string, WorklogRenderModel> cache;
+    const WorklogRenderModel& model = GetOrBuildCachedValue(
+        cache,
+        currentValue,
+        [&]() { return BuildWorklogRenderModel(currentValue); });
+    if (!model.parsed) {
         RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
         return;
     }
 
-    std::string line;
-    if (s.Total <= 0) {
-        line = "No work logged";
-    } else {
-        line = std::to_string(s.Total);
-        line += (s.Total == 1) ? " work log" : " work logs";
-        if (s.SumSecondsOnPage > 0) {
-            line += " \xC2\xB7 ";
-            line += FormatWorkDurationFromSeconds(s.SumSecondsOnPage);
-            if (s.WorklogsOnPage < s.Total) {
-                line += "*";
-            }
-        }
-    }
-
-    ImGui::TextUnformatted(line.c_str());
+    ImGui::TextUnformatted(model.line.c_str());
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
-        std::string tip = "Log work\n";
-        tip += "Total entries: " + std::to_string(s.Total) + "\n";
-        if (s.Total > 0 && s.WorklogsOnPage > 0) {
-            tip += "This page: " + std::to_string(s.StartAt + 1) + "\xe2\x80\x93" +
-                   std::to_string(s.StartAt + s.WorklogsOnPage) + " of " + std::to_string(s.Total) + "\n";
-        }
-        if (s.MaxResults > 0) {
-            tip += "Page size (maxResults): " + std::to_string(s.MaxResults) + "\n";
-        }
-        if (s.SumSecondsOnPage > 0) {
-            tip += "Time on page: " + FormatWorkDurationFromSeconds(s.SumSecondsOnPage);
-            if (s.WorklogsOnPage < s.Total) {
-                tip += " (partial; not all work logs loaded)";
-            }
-            tip += "\n";
-        }
-        const int kMaxTipEntries = 12;
-        int shown = 0;
-        for (const auto& e : s.Entries) {
-            if (shown >= kMaxTipEntries) {
-                const int rest = static_cast<int>(s.Entries.size()) - shown;
-                tip += "\n... +" + std::to_string(rest) + " on this page";
-                break;
-            }
-            tip += "\n- ";
-            tip += e.Author.empty() ? std::string("(unknown)") : e.Author;
-            if (!e.TimeSpentText.empty()) {
-                tip += " — " + e.TimeSpentText;
-            } else if (e.TimeSpentSeconds > 0) {
-                tip += " — " + FormatWorkDurationFromSeconds(e.TimeSpentSeconds);
-            }
-            if (!e.StartedIso.empty()) {
-                tip += " (" + e.StartedIso + ")";
-            }
-            ++shown;
-        }
-        if (s.Total > s.WorklogsOnPage) {
-            tip += "\n\nMore entries exist in Jira than are included in this cell.";
-        }
-        ImGui::SetTooltip("%s", tip.c_str());
+        ImGui::SetTooltip("%s", model.tooltip.c_str());
     }
 }
 

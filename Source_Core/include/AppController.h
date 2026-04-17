@@ -47,6 +47,13 @@ public:
     void OpenUrl(const std::string& url) const;
 
     /**
+     * Optional host callback to hide the embedded overlay (e.g. Unreal plugin toggles Slate visibility).
+     * Set by SmatchetImGuiHost; no-op when unset (standalone / tests).
+     */
+    void SetCloseEmbeddedUiHandler(std::function<void()> handler);
+    void CloseEmbeddedUi();
+
+    /**
      * Optional host callback for showing Jira attachments inside Unreal.
      * If set, Smatchet will download the attachment bytes and save them to a local temp file,
      * then call this handler with the file path.
@@ -78,6 +85,10 @@ public:
     void OpenAttachment(const std::string& url,
                          const std::string& filename,
                          const std::string& mimeType);
+    /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
+    void OpenAttachmentInSystemViewer(const std::string& url,
+                                      const std::string& filename,
+                                      const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url,
                                       const std::string& filename,
                                       const std::string& mimeType,
@@ -201,6 +212,7 @@ private:
     sol::state lua;
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
+    std::function<void()> CloseEmbeddedUiHandler;
     AttachmentViewerHandler AttachmentViewerHandlerCallback;
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;

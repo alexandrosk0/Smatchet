@@ -26,6 +26,8 @@ struct JiraConfig {
     // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
     // Exposed in UI as Settings → Preferences → Appearance.
     bool EnableFieldOverflowTooltips = true;
+    // Restores Settings → Performance window visibility on launch.
+    bool ShowPerformanceWindow = false;
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
     // When true, JiraClient logs truncated HTTP response bodies at Trace.
@@ -162,6 +164,7 @@ public:
         j["project_key"] = config.ProjectKey;
         j["jql"] = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
+        j["show_performance_window"] = config.ShowPerformanceWindow;
         j["log_min_level"] = config.LogMinLevel;
         j["log_jira_http_bodies"] = config.LogJiraHttpBodies;
         j["log_p4_io"] = config.LogP4Io;
@@ -293,6 +296,7 @@ public:
             cfg.ProjectKey = j.value("project_key", std::string{});
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+            cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
             cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
             cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
             cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);

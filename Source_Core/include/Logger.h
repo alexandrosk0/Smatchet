@@ -5,6 +5,7 @@
 #include <mutex>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 // Simple log4cxx-style levels.
 enum class LogLevel {

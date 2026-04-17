@@ -1,14 +1,30 @@
 #pragma once
 
+#include "Containers/Array.h"
 #include "Framework/Application/IInputProcessor.h"
 #include "Input/Events.h"
+#include "InputCoreTypes.h"
 #include "Templates/SharedPointer.h"
+#include "UObject/WeakObjectPtr.h"
+
+#include <atomic>
 
 #include "SmatchetImGuiHostC.h"
+
+class UGameViewportClient;
+
+// Written on the game thread from FSmatchetImGuiInputProcessor::Tick and read on the render thread from
+// SmatchetImGuiPluginModule's OnBackBufferReadyToPresent hook. Tracks whether the OS pointer is currently
+// over any UGameViewportClient's FSceneViewport rect, so the module can decide per-window whether to draw
+// ImGui's software cursor sprite without touching FSlateApplication off the game thread.
+extern std::atomic<bool> GSmatchetPointerOverGameViewport;
 
 class FSmatchetImGuiInputProcessor : public IInputProcessor {
 public:
     explicit FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost);
+
+    /** Call before UnregisterInputPreProcessor so editor tooltips are not left disabled. */
+    void EnsureTooltipsRestored();
 
     virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp, TSharedRef<ICursor> Cursor) override;
     virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override;
@@ -17,12 +33,31 @@ public:
     virtual bool HandleMouseMoveEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override;
     virtual bool HandleMouseButtonDownEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override;
     virtual bool HandleMouseButtonUpEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override;
+    virtual bool HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override;
     virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication& SlateApp, const FPointerEvent& InWheelEvent, const FPointerEvent* InGestureEvent) override;
 
 private:
+    void SyncSlateTooltipPolicy(FSlateApplication& SlateApp);
+    void RestoreViewportMouseSnapshotIfActive();
+
+    struct FSmatchetSavedViewportMouse {
+        TWeakObjectPtr<UGameViewportClient> WeakClient;
+        EMouseCaptureMode CaptureMode = EMouseCaptureMode::NoCapture;
+        EMouseLockMode LockMode = EMouseLockMode::DoNotLock;
+        bool bSceneHadMouseCapture = false;
+        /** Slate lock-to-viewport; approximated from lock mode (no public query on FSceneViewport). */
+        bool bWantsSlateLockToViewport = false;
+    };
+
     int32 ToImGuiMouseButton(const FPointerEvent& MouseEvent) const;
     int32 ToImGuiKey(const FKeyEvent& InKeyEvent) const;
     void PushModifierState(const FInputEvent& InputEvent) const;
 
     SmatchetImGuiHostHandle Host = nullptr;
+    bool bSlateTooltipSuppressionActive = false;
+    bool bAllowTooltipsBeforeSmatchet = true;
+
+    /** True while Tick is applying NoCapture / DoNotLock / unlock to game viewports for the overlay. */
+    bool bOverlayViewportStompActive = false;
+    TArray<FSmatchetSavedViewportMouse> SavedViewportMouseModes;
 };

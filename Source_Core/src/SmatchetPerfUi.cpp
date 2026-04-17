@@ -49,6 +49,29 @@ int CompareRoundedMs(double x, double y) {
     return 0;
 }
 
+/// Coarser than display (0.01 ms); reduces sort churn when smoothed values drift within the same bucket.
+int CompareStableLastMs(double x, double y) {
+    const auto qx = static_cast<long long>(std::llround(x * 10.0));
+    const auto qy = static_cast<long long>(std::llround(y * 10.0));
+    if (qx < qy) {
+        return -1;
+    }
+    if (qx > qy) {
+        return 1;
+    }
+    return 0;
+}
+
+void SortRowsByStableLastDesc(std::vector<UiPerfRow>& rows) {
+    std::sort(rows.begin(), rows.end(), [](const UiPerfRow& a, const UiPerfRow& b) {
+        const int cmp = CompareStableLastMs(a.lastTotalMs, b.lastTotalMs);
+        if (cmp != 0) {
+            return cmp > 0;
+        }
+        return a.name < b.name;
+    });
+}
+
 void SortUiPerfRows(std::vector<UiPerfRow>& rows, const ImGuiTableSortSpecs* sort_specs) {
     if (!sort_specs || sort_specs->SpecsCount <= 0) {
         return;
@@ -62,7 +85,7 @@ void SortUiPerfRows(std::vector<UiPerfRow>& rows, const ImGuiTableSortSpecs* sor
             cmp = a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
             break;
         case PerfTableCol::Last:
-            cmp = CompareRoundedMs(a.lastTotalMs, b.lastTotalMs);
+            cmp = CompareStableLastMs(a.lastTotalMs, b.lastTotalMs);
             break;
         case PerfTableCol::Avg:
             cmp = CompareRoundedMs(a.avgPerCallMs, b.avgPerCallMs);
@@ -74,7 +97,10 @@ void SortUiPerfRows(std::vector<UiPerfRow>& rows, const ImGuiTableSortSpecs* sor
             cmp = CompareRoundedMs(a.maxMs, b.maxMs);
             break;
         case PerfTableCol::Calls:
-            cmp = a.calls < b.calls ? -1 : (a.calls > b.calls ? 1 : 0);
+            cmp = a.lifetimeHits < b.lifetimeHits ? -1 : (a.lifetimeHits > b.lifetimeHits ? 1 : 0);
+            if (cmp == 0) {
+                cmp = a.calls < b.calls ? -1 : (a.calls > b.calls ? 1 : 0);
+            }
             break;
         default:
             cmp = 0;
@@ -163,6 +189,7 @@ void SmatchetPerfUi::buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std
         d.emaAvgMs = b.emaAvgMs;
         d.maxMs = b.maxMs;
         d.calls = r.calls;
+        d.lifetimeHits = r.lifetimeHits;
         out.push_back(std::move(d));
     }
 }
@@ -188,7 +215,7 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
         return;
     }
     updateSmoothedFps();
-    ImGui::SetNextWindowSize(ImVec2(520, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Performance", pOpen)) {
         const double dt = static_cast<double>(ImGui::GetIO().DeltaTime);
         ImGui::Text("FPS: %.1f    Frame: %.2f ms (smoothed)", smoothFps_, smoothFrameMs_);
@@ -198,10 +225,13 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
             if (ImGui::BeginTabItem("CPU")) {
                 ImGui::TextUnformatted(
                     "Wall time per scoped UI path; nested scopes overlap (not additive). "
-                    "Values use heavy time-based smoothing (~few second response) and 2 decimal places.");
+                    "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
+                    "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame. "
+                    "Hits: last frame count and running total while the app runs.");
                 ImGui::Separator();
                 std::vector<UiPerfRow> rows;
                 buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dt);
+                SortRowsByStableLastDesc(rows);
                 if (ImGui::BeginTable("UiPerfTable", 6,
                         ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
                             | ImGuiTableFlags_Sortable)) {
@@ -238,7 +268,7 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                         ImGui::TableNextColumn();
                         ImGui::Text("%.2f", r.maxMs);
                         ImGui::TableNextColumn();
-                        ImGui::Text("%u", r.calls);
+                        ImGui::Text("%u / %llu", r.calls, static_cast<unsigned long long>(r.lifetimeHits));
                     }
                     ImGui::EndTable();
                 }

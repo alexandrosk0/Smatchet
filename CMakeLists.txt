@@ -85,6 +85,28 @@ FetchContent_MakeAvailable(json)
 message(STATUS "Fetching cpr (C++ Requests)...")
 FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG 1.9.2)
 FetchContent_MakeAvailable(cpr)
+# MSVC C4244: Body(File) used int for tellg() (streamoff). Patch vendored header after fetch.
+set(_cpr_body_h "${cpr_SOURCE_DIR}/include/cpr/body.h")
+if(EXISTS "${_cpr_body_h}")
+    file(READ "${_cpr_body_h}" _cpr_body_h_contents)
+    set(_cpr_body_h_patched "${_cpr_body_h_contents}")
+    string(REPLACE "int length = is.tellg();"
+                   "const std::streamoff length = is.tellg();"
+                   _cpr_body_h_patched
+                   "${_cpr_body_h_patched}")
+    string(REPLACE "buffer.resize(length);"
+                   "buffer.resize(static_cast<size_t>(length));"
+                   _cpr_body_h_patched
+                   "${_cpr_body_h_patched}")
+    string(REPLACE "is.read(&buffer[0], length);"
+                   "is.read(buffer.data(), static_cast<std::streamsize>(length));"
+                   _cpr_body_h_patched
+                   "${_cpr_body_h_patched}")
+    if(NOT _cpr_body_h_patched STREQUAL _cpr_body_h_contents)
+        file(WRITE "${_cpr_body_h}" "${_cpr_body_h_patched}")
+        message(STATUS "Patched cpr include/cpr/body.h (streamoff / resize / read).")
+    endif()
+endif()
 
 message(STATUS "Fetching SQLiteCpp...")
 set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "Disable linting" FORCE)
@@ -239,6 +261,7 @@ endif()
 # ==============================================================================
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHost.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp")
 # GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
 set(_SMATCHET_BLAME_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/BlameSyntaxHighlight.cpp")
 if(EXISTS "${_SMATCHET_BLAME_SYNTAX}")
@@ -249,71 +272,69 @@ if(EXISTS "${_SMATCHET_BLAME_SYNTAX}")
 endif()
 unset(_smatchet_blame_syntax_idx)
 unset(_SMATCHET_BLAME_SYNTAX)
-add_library(SmatchetCore STATIC ${CORE_SOURCES})
 
 # FIX: Explicitly define the sol2 and lua paths because FetchContent variables
 # can sometimes be finicky with older sol2 tags.
 set(SOL2_INCLUDE_DIR "${CMAKE_BINARY_DIR}/_deps/sol2-src")
 set(LUA_INCLUDE_DIR "${CMAKE_BINARY_DIR}/_deps/lua-src/src")
 
-target_include_directories(SmatchetCore PUBLIC
+add_library(SmatchetCoreInterface INTERFACE)
+target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
         ${sqlitecpp_SOURCE_DIR}/include
         ${LUA_SRC_DIR}/src
         ${sol2_SOURCE_DIR}/single
 )
-target_include_directories(SmatchetCore PRIVATE
-        Source_Core/src
-        ${sol2_SOURCE_DIR}/single
-        ${LUA_SRC_DIR}/src
-)
 
-target_link_libraries(SmatchetCore PUBLIC
+target_link_libraries(SmatchetCoreInterface INTERFACE
         nlohmann_json::nlohmann_json
         SQLiteCpp
         cpr::cpr
         httplib::httplib
 )
 
-target_link_libraries(SmatchetCore PRIVATE
-        Smatchet_Lua_Internal  # This provides the actual Lua symbols
-        ghc_filesystem
-        ImGuiLib
-        glfw
-)
-target_compile_definitions(SmatchetCore PRIVATE SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS=1)
-if(WIN32)
-    target_link_libraries(SmatchetCore PRIVATE shell32 windowscodecs ole32)
-endif()
-smatchet_apply_strict_warnings(SmatchetCore)
-
-if(WIN32)
-    add_library(SmatchetCore_DX12 STATIC ${CORE_SOURCES})
-    target_include_directories(SmatchetCore_DX12 PUBLIC
-            Source_Core/include
-            ${sqlitecpp_SOURCE_DIR}/include
-            ${LUA_SRC_DIR}/src
-            ${sol2_SOURCE_DIR}/single
-    )
-    target_include_directories(SmatchetCore_DX12 PRIVATE
+function(smatchet_configure_core_impl_target _target)
+    target_link_libraries("${_target}" PUBLIC SmatchetCoreInterface)
+    target_include_directories("${_target}" PRIVATE
             Source_Core/src
             ${sol2_SOURCE_DIR}/single
             ${LUA_SRC_DIR}/src
     )
-    target_link_libraries(SmatchetCore_DX12 PUBLIC
-            nlohmann_json::nlohmann_json
-            SQLiteCpp
-            cpr::cpr
-            httplib::httplib
-    )
-    target_link_libraries(SmatchetCore_DX12 PRIVATE
-            Smatchet_Lua_Internal
+    target_link_libraries("${_target}" PRIVATE
+            Smatchet_Lua_Internal  # This provides the actual Lua symbols
             ghc_filesystem
+    )
+endfunction()
+
+function(smatchet_configure_opengl_core_impl_target _target)
+    smatchet_configure_core_impl_target("${_target}")
+    target_link_libraries("${_target}" PRIVATE ImGuiLib glfw)
+    if(WIN32)
+        # WIC (windowscodecs/ole32) is used to decode attachment bitmaps into RGBA32 for ImGui's
+        # backend-agnostic texture API (ImTextureData) when previewing image attachments.
+        target_link_libraries("${_target}" PRIVATE shell32 windowscodecs ole32)
+    endif()
+endfunction()
+
+function(smatchet_configure_dx12_core_impl_target _target)
+    smatchet_configure_core_impl_target("${_target}")
+    target_link_libraries("${_target}" PRIVATE
             ImGuiLib_DX12
             d3d12
             dxgi
             shell32
+            # WIC for attachment image decoding; textures are uploaded via ImTextureData so DX12 and
+            # OpenGL both render the same preview thumbnails.
+            windowscodecs
+            ole32
     )
+    # SmatchetCore_DX12 is packaged into the Unreal plugin; enable embed-only UI affordances.
+    target_compile_definitions("${_target}" PRIVATE SMATCHET_EMBEDDED_IN_UNREAL=1)
+endfunction()
+
+if(WIN32)
+    add_library(SmatchetCore_DX12 STATIC ${CORE_SOURCES})
+    smatchet_configure_dx12_core_impl_target(SmatchetCore_DX12)
     smatchet_apply_strict_warnings(SmatchetCore_DX12)
 endif()
 
@@ -322,11 +343,11 @@ endif()
 # ==============================================================================
 add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp)
 target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
-target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCore)
+target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreInterface)
 
 add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
 target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
-target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCore ImGuiLib)
+target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
 smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
 smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
 
@@ -454,7 +475,8 @@ if(WIN32)
     list(APPEND STANDALONE_SOURCES "${_SMATCHET_RC_OUT}")
 endif()
 
-add_executable(SmatchetStandalone ${STANDALONE_SOURCES})
+add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
+smatchet_configure_opengl_core_impl_target(SmatchetStandalone)
 smatchet_apply_strict_warnings(SmatchetStandalone)
 
 set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
@@ -473,11 +495,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 target_link_libraries(SmatchetStandalone PRIVATE
-        SmatchetCore
         SmatchetPlugin_Mcp
         SmatchetPlugin_LuaConsole
-        ImGuiLib
-        glfw
 )
 
 if(WIN32)

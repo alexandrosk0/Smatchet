@@ -23,7 +23,7 @@ private:
         bool hasValue = false;
     };
 
-    /// Per-scope EMA so the table is readable; `calls` stays instantaneous from the monitor.
+    /// Per-scope EMA so the table is readable; per-frame `calls` / `lifetimeHits` come from the monitor.
     void buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std::vector<UiPerfRow>& out, double dtSec);
 
     std::unordered_map<std::string, CpuSmoothBucket> cpuSmooth_;

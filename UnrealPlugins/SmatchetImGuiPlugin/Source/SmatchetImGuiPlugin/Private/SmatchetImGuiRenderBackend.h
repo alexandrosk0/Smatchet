@@ -15,6 +15,8 @@ struct FSmatchetRendererInitParams {
     void* RendererResource0 = nullptr;
     void* RendererResource1 = nullptr;
     void* RendererResource2 = nullptr;
+    /** D3D12: total SRV descriptors in the heap (slot 0 = font, 1..N-1 = dynamic thumbnails). */
+    int NumSrvDescriptors = 1;
 };
 
 class FRHICommandListImmediate;
@@ -27,10 +29,13 @@ public:
     virtual int GetRendererBackendId() const = 0;
 
     virtual bool BuildInitParams(FSmatchetRendererInitParams& OutParams) = 0;
+    // bDrawSoftwareCursor asks ImGui to render its own mouse cursor sprite. Enable only when the
+    // game viewport has hidden the hardware cursor; leave off when the OS cursor is still visible.
     virtual bool RenderToSlateBackBuffer(
         SmatchetImGuiHostHandle Host,
         FRHITexture* BackBufferTexture,
-        FRHICommandListImmediate* RHICmdList) = 0;
+        FRHICommandListImmediate* RHICmdList,
+        bool bDrawSoftwareCursor) = 0;
 
     virtual void Shutdown() {}
 };

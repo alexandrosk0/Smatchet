@@ -47,6 +47,10 @@ void SmatchetHost_SetInitOptions(
     SmatchetAttachmentViewerFn attachmentViewerFn,
     void* attachmentViewerUserData);
 bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int colorFormat);
+/** D3D12: total SRV descriptors in RendererResource0 heap. Slot 0 is reserved for the font atlas,
+ *  slots 1..N-1 are used by the dynamic-texture SRV allocator (attachment thumbnails, etc.).
+ *  Call after SmatchetHost_SetInitOptions and before the first BeginFrame. Default is 1. */
+void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvDescriptors);
 
 /** Static string: ImGui version + init path; use to verify packaged SmatchetImGuiHost.lib matches plugin. */
 const char* SmatchetHost_GetBuildTag(void);
@@ -58,6 +62,8 @@ void SmatchetHost_FormatCachedRendererSummary(SmatchetImGuiHostHandle host, char
 // UI visibility
 void SmatchetHost_SetUiVisible(SmatchetImGuiHostHandle host, bool visible);
 void SmatchetHost_ToggleUiVisible(SmatchetImGuiHostHandle host);
+void SmatchetHost_SetSuppressSoftwareCursor(SmatchetImGuiHostHandle host, bool suppress);
+bool SmatchetHost_GetSuppressSoftwareCursor(SmatchetImGuiHostHandle host);
 bool SmatchetHost_IsUiVisible(SmatchetImGuiHostHandle host);
 bool SmatchetHost_IsInitialized(SmatchetImGuiHostHandle host);
 bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host);

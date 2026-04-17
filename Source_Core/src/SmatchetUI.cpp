@@ -24,15 +24,16 @@
 #endif
 #include <windows.h>
 #include <wincodec.h>
-#endif
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
-#include "imgui_impl_opengl3_loader.h"
+// WIC decoding works on both OpenGL (GLFW standalone) and DX12 (Unreal plugin) Windows builds, so we
+// gate it on Windows rather than on a specific renderer backend. Thumbnail upload uses ImGui's
+// backend-agnostic ImTextureData API (requires ImGuiBackendFlags_RendererHasTextures at runtime).
+#define SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS 1
 #endif
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstring> // for strncpy
+#include <cstring> // memcpy, memset
 #include <exception>
 #include <fstream>
 #include <algorithm>
@@ -60,6 +61,20 @@ std::string JoinCsv(const std::vector<std::string>& values) {
         out += values[i];
     }
     return out;
+}
+
+/** Bounded, NUL-terminated copy into a char array (avoids strncpy deprecation / truncation warnings). */
+template <size_t N>
+void CopyStringToBuffer(char (&dst)[N], const std::string& str) {
+    if (N == 0) {
+        return;
+    }
+    std::memset(dst, 0, N);
+    const size_t cap = N - 1;
+    const size_t n = (std::min)(str.size(), cap);
+    if (n > 0) {
+        std::memcpy(dst, str.data(), n);
+    }
 }
 
 std::vector<std::string> ParseCsv(const std::string& csv) {
@@ -289,8 +304,8 @@ struct AttachmentWindowEntry {
     int ImageHeight = 0;
     std::string PreviewError;
     bool PreviewRequestIssued = false;
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
-    ImTextureID ThumbnailTextureId = ImTextureID_Invalid;
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    ImTextureData* ThumbnailTextureData = nullptr;
 #endif
 };
 
@@ -458,25 +473,21 @@ static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
         return support;
     }
 
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
-    if (rendererName.empty() ||
-        rendererName.find("opengl") != std::string::npos ||
-        rendererName.find("gl3") != std::string::npos) {
-        support.CanRenderBitmapThumbnails = true;
-        support.Reason = rendererName.empty()
-            ? std::string("Bitmap thumbnails available.")
-            : std::string("Bitmap thumbnails available on backend: ") + rendererName;
-        return support;
-    }
-#endif
-
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    support.CanRenderBitmapThumbnails = true;
     support.Reason = rendererName.empty()
-        ? std::string("Bitmap thumbnail rendering is not enabled for the current backend.")
-        : std::string("Bitmap thumbnail rendering is not enabled for backend: ") + rendererName;
+        ? std::string("Bitmap thumbnails available.")
+        : std::string("Bitmap thumbnails available on backend: ") + rendererName;
     return support;
+#else
+    support.Reason = rendererName.empty()
+        ? std::string("Bitmap thumbnail decoding is not compiled in for this platform.")
+        : std::string("Bitmap thumbnail decoding is not compiled in for this platform (backend: ") + rendererName + ").";
+    return support;
+#endif
 }
 
-#if defined(_WIN32) && defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(_WIN32) && defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
 static std::wstring Utf8ToWideLocal(const std::string& s) {
     if (s.empty()) {
         return std::wstring();
@@ -580,59 +591,82 @@ static bool DecodeImageFileToRgba32(const std::string& path,
 }
 #endif
 
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+// Pending-destroy bookkeeping: once we flip Status to ImTextureStatus_WantDestroy the renderer backend
+// will free the GPU-side resource on a later frame and set Status to Destroyed; only then is it safe to
+// ImGui::UnregisterUserTexture + IM_DELETE. User textures must use RegisterUserTexture — ImGui rebuilds
+// PlatformIO.Textures each frame from font atlases + UserTextures only (manual push_back is dropped).
+static std::vector<ImTextureData*>& AttachmentPendingDestroyTextures() {
+    static std::vector<ImTextureData*> list;
+    return list;
+}
+
+static void TickAttachmentPendingTextureDestroys() {
+    auto& pending = AttachmentPendingDestroyTextures();
+    if (pending.empty()) {
+        return;
+    }
+    for (auto it = pending.begin(); it != pending.end();) {
+        ImTextureData* tex = *it;
+        if (tex && tex->Status == ImTextureStatus_Destroyed) {
+            ImGui::UnregisterUserTexture(tex);
+            IM_DELETE(tex);
+            it = pending.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 static bool CreateAttachmentTextureFromRgba(const std::vector<unsigned char>& pixels,
                                             int width,
                                             int height,
-                                            ImTextureID& outTextureId,
+                                            ImTextureData*& outTextureData,
                                             std::string& outError) {
-    outTextureId = ImTextureID_Invalid;
+    outTextureData = nullptr;
     outError.clear();
     if (pixels.empty() || width <= 0 || height <= 0) {
         outError = "Image pixels are empty.";
         return false;
     }
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    if (tex == 0) {
-        outError = "Failed to allocate OpenGL texture.";
+    const size_t expected = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+    if (pixels.size() < expected) {
+        outError = "Image pixel buffer smaller than width*height*4.";
         return false;
     }
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D,
-                 0,
-                 GL_RGBA,
-                 width,
-                 height,
-                 0,
-                 GL_RGBA,
-                 GL_UNSIGNED_BYTE,
-                 pixels.data());
-    glBindTexture(GL_TEXTURE_2D, 0);
-    outTextureId = static_cast<ImTextureID>(static_cast<std::uintptr_t>(tex));
+    ImTextureData* tex = IM_NEW(ImTextureData)();
+    if (!tex) {
+        outError = "Failed to allocate ImTextureData.";
+        return false;
+    }
+    tex->Create(ImTextureFormat_RGBA32, width, height);
+    if (tex->Pixels == nullptr) {
+        IM_DELETE(tex);
+        outError = "ImTextureData::Create failed to allocate pixel storage.";
+        return false;
+    }
+    memcpy(tex->Pixels, pixels.data(), expected);
+    tex->UseColors = true;
+    tex->Status = ImTextureStatus_WantCreate;
+    ImGui::RegisterUserTexture(tex);
+    outTextureData = tex;
     return true;
 }
 
-static void DestroyAttachmentTexture(ImTextureID& textureId) {
-    if (textureId == ImTextureID_Invalid) {
+static void DestroyAttachmentTexture(ImTextureData*& textureData) {
+    if (!textureData) {
         return;
     }
-    GLuint tex = static_cast<GLuint>(static_cast<std::uintptr_t>(textureId));
-    if (tex != 0) {
-        glDeleteTextures(1, &tex);
-    }
-    textureId = ImTextureID_Invalid;
+    textureData->Status = ImTextureStatus_WantDestroy;
+    textureData->WantDestroyNextFrame = true;
+    AttachmentPendingDestroyTextures().push_back(textureData);
+    textureData = nullptr;
 }
 #endif
 
 static void ReleaseAttachmentWindowEntry(AttachmentWindowEntry& entry) {
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
-    DestroyAttachmentTexture(entry.ThumbnailTextureId);
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    DestroyAttachmentTexture(entry.ThumbnailTextureData);
 #endif
     entry.LocalPath.clear();
     entry.ImageWidth = 0;
@@ -648,9 +682,9 @@ static void ReleaseAttachmentWindowEntries(std::vector<AttachmentWindowEntry>& e
     entries.clear();
 }
 
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
 static bool AttachmentHasBitmapThumbnail(const AttachmentWindowEntry& entry) {
-    return entry.ThumbnailTextureId != ImTextureID_Invalid;
+    return entry.ThumbnailTextureData != nullptr;
 }
 #endif
 
@@ -735,9 +769,9 @@ static ImVec2 FitImageInsideSquare(int imageWidth, int imageHeight, float maxEdg
     return ImVec2(w, h);
 }
 
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
 static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
-    if (entry.ThumbnailTextureId == ImTextureID_Invalid) {
+    if (!entry.ThumbnailTextureData) {
         return;
     }
 
@@ -756,7 +790,7 @@ static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
         ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
     }
     ImGui::Separator();
-    ImGui::Image(ImTextureRef(entry.ThumbnailTextureId), ImVec2(drawWidth, drawHeight));
+    ImGui::Image(entry.ThumbnailTextureData->GetTexRef(), ImVec2(drawWidth, drawHeight));
     ImGui::EndTooltip();
 }
 #endif
@@ -791,10 +825,30 @@ struct TicketGridColumn {
         JiraFieldValue
     };
 
+    enum class RenderPlan {
+        PlainText,
+        SpecialAttachment,
+        SpecialWatchers,
+        SpecialVotes,
+        SpecialWorklog,
+        SpecialProgress,
+        SpecialIssueRestriction,
+        Labels,
+        Cascading,
+        MultiSelect,
+        SingleSelect,
+        DateTimeEditor,
+        TextEditor
+    };
+
     Kind ColumnKind = Kind::Id;
     std::string Key;
     std::string Label;
     std::string FieldId;
+    RenderPlan Plan = RenderPlan::PlainText;
+    bool IsDateLike = false;
+    bool CatalogReadOnly = false;
+    bool NeedsAllowEditsCheck = false;
 };
 
 class TicketGridColumnsBuilder {
@@ -816,6 +870,11 @@ public:
             column.Key = "field:" + fieldId;
             column.FieldId = fieldId;
             column.Label = catalog.DisplayName(fieldId);
+            const JiraField* field = catalog.Find(fieldId);
+            column.Plan = ResolveRenderPlan(fieldId, field);
+            column.IsDateLike = IsJiraDateOrDateTimeField(fieldId, field);
+            column.CatalogReadOnly = field != nullptr && field->ReadOnly;
+            column.NeedsAllowEditsCheck = RequiresAllowEditsCheck(column.Plan);
             allColumns.push_back(column);
         }
 
@@ -843,6 +902,91 @@ public:
     }
 
 private:
+    static TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const JiraField* field) {
+        if (field == nullptr) {
+            if (IsAttachmentFieldId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialAttachment;
+            }
+            if (JiraGridFieldDisplay::IsWatchersColumnId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialWatchers;
+            }
+            if (JiraGridFieldDisplay::IsVotesColumnId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialVotes;
+            }
+            if (JiraGridFieldDisplay::IsWorklogColumnId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialWorklog;
+            }
+            if (JiraGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialProgress;
+            }
+            if (JiraGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
+                return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
+            }
+            return TicketGridColumn::RenderPlan::PlainText;
+        }
+
+        if (IsAttachmentFieldId(field->Id)) {
+            return TicketGridColumn::RenderPlan::SpecialAttachment;
+        }
+        if (JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+            return TicketGridColumn::RenderPlan::SpecialWatchers;
+        }
+        if (JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
+            return TicketGridColumn::RenderPlan::SpecialVotes;
+        }
+        if (JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+            return TicketGridColumn::RenderPlan::SpecialWorklog;
+        }
+        if (JiraGridFieldDisplay::IsProgressDisplayField(field)) {
+            return TicketGridColumn::RenderPlan::SpecialProgress;
+        }
+        if (JiraGridFieldDisplay::IsIssueRestrictionField(field)) {
+            return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
+        }
+        if (field->ReadOnly) {
+            return TicketGridColumn::RenderPlan::PlainText;
+        }
+        if (JiraLabelsEditor::IsLabelsField(field->Id)) {
+            return TicketGridColumn::RenderPlan::Labels;
+        }
+        if (field->Family == JiraFieldFamily::CascadingSelect) {
+            return TicketGridColumn::RenderPlan::Cascading;
+        }
+        if ((field->Family == JiraFieldFamily::SelectMulti ||
+             field->Family == JiraFieldFamily::StructuredMulti ||
+             field->Family == JiraFieldFamily::UserMulti) &&
+            !field->AllowedValueOptions.empty()) {
+            return TicketGridColumn::RenderPlan::MultiSelect;
+        }
+        if ((field->Family == JiraFieldFamily::SelectSingle ||
+             field->Family == JiraFieldFamily::StructuredSingle ||
+             field->Family == JiraFieldFamily::UserSingle ||
+             field->Family == JiraFieldFamily::Status ||
+             field->Family == JiraFieldFamily::IssueType) &&
+            !field->AllowedValueOptions.empty()) {
+            return TicketGridColumn::RenderPlan::SingleSelect;
+        }
+        if (field->IsArray && !field->AllowedValueOptions.empty()) {
+            return TicketGridColumn::RenderPlan::MultiSelect;
+        }
+        if (!field->AllowedValueOptions.empty()) {
+            return TicketGridColumn::RenderPlan::SingleSelect;
+        }
+        if (JiraDateTimeFieldEditor::IsJiraDateTimePickerField(*field)) {
+            return TicketGridColumn::RenderPlan::DateTimeEditor;
+        }
+        return TicketGridColumn::RenderPlan::TextEditor;
+    }
+
+    static bool RequiresAllowEditsCheck(TicketGridColumn::RenderPlan plan) {
+        return plan == TicketGridColumn::RenderPlan::Labels ||
+               plan == TicketGridColumn::RenderPlan::Cascading ||
+               plan == TicketGridColumn::RenderPlan::MultiSelect ||
+               plan == TicketGridColumn::RenderPlan::SingleSelect ||
+               plan == TicketGridColumn::RenderPlan::DateTimeEditor ||
+               plan == TicketGridColumn::RenderPlan::TextEditor;
+    }
+
     static std::string TrimFieldId(const std::string& value) {
         size_t start = 0;
         size_t end = value.size();
@@ -895,6 +1039,8 @@ struct UiDrawSession {
 
     bool showPreferences = false;
     bool showViewsDashboard = true;
+    /** When true, next draw of the Views window requests ImGui focus (brings docked tab to front). */
+    bool requestViewsDashboardFocus = false;
     bool showPerformance = false;
     bool showBlameAnalysis = false;
 
@@ -1123,7 +1269,7 @@ class TicketFieldEditor {
 public:
     static void RenderFieldCell(AppController& app,
                                 const CachedTicket& ticket,
-                                const std::string& fieldId,
+                                const TicketGridColumn& column,
                                 const JiraField* field,
                                 const std::string& currentValue,
                                 float availWidth,
@@ -1132,98 +1278,62 @@ public:
                                 SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits,
                                 JiraGridFieldAsyncState& jiraGridAsync) {
-        if (app.TryLuaFieldDisplay(fieldId, ticket, currentValue, availWidth, field)) {
+        const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
+        if (handledByLua) {
             return;
         }
-        if (!field) {
-            if (IsAttachmentFieldId(fieldId)) {
+
+        auto renderPlainText = [&](bool disabled) {
+            const std::string display = DisplayValueForJiraDateField(column.FieldId, field, currentValue);
+            const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
+            RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip);
+        };
+
+        switch (column.Plan) {
+        case TicketGridColumn::RenderPlan::SpecialAttachment:
+            if (field == nullptr || IsAttachmentFieldId(field->Id)) {
                 JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
                 return;
             }
-            if (JiraGridFieldDisplay::IsWatchersColumnId(fieldId)) {
+            break;
+        case TicketGridColumn::RenderPlan::SpecialWatchers:
+            if (field == nullptr || JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
                 JiraGridFieldDisplay::RenderWatchersField(
                     ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
                 return;
             }
-            if (JiraGridFieldDisplay::IsVotesColumnId(fieldId)) {
+            break;
+        case TicketGridColumn::RenderPlan::SpecialVotes:
+            if (field == nullptr || JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
                 JiraGridFieldDisplay::RenderVotesField(
                     ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
                 return;
             }
-            if (JiraGridFieldDisplay::IsWorklogColumnId(fieldId)) {
+            break;
+        case TicketGridColumn::RenderPlan::SpecialWorklog:
+            if (field == nullptr || JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
                 JiraGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
                 return;
             }
-            if (JiraGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
-                if (JiraGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
-                    return;
-                }
-            }
-            if (JiraGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
-                if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(
-                        currentValue, availWidth, tooltipsEnabled)) {
-                    return;
-                }
-            }
-            const std::string display = DisplayValueForJiraDateField(fieldId, nullptr, currentValue);
-            const std::string* tip =
-                IsJiraDateOrDateTimeField(fieldId, nullptr) ? &currentValue : nullptr;
-            RenderClippedFieldText(display, availWidth, tooltipsEnabled, false, tip);
-            return;
-        }
-
-        if (IsAttachmentFieldId(field->Id)) {
-            JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
-            return;
-        }
-
-        if (JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderWatchersField(
-                ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
-            return;
-        }
-
-        if (JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderVotesField(
-                ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
-            return;
-        }
-
-        if (JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
-            return;
-        }
-
-        if (JiraGridFieldDisplay::IsProgressDisplayField(field)) {
+            break;
+        case TicketGridColumn::RenderPlan::SpecialProgress:
             if (JiraGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
                 return;
             }
-        }
-
-        if (JiraGridFieldDisplay::IsIssueRestrictionField(field)) {
-            if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(
-                    currentValue, availWidth, tooltipsEnabled)) {
+            break;
+        case TicketGridColumn::RenderPlan::SpecialIssueRestriction:
+            if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(currentValue, availWidth, tooltipsEnabled)) {
                 return;
             }
-        }
-
-        if (field->ReadOnly) {
-            const std::string display = DisplayValueForJiraDateField(field->Id, field, currentValue);
-            const std::string* tip =
-                IsJiraDateOrDateTimeField(field->Id, field) ? &currentValue : nullptr;
-            RenderClippedFieldText(display, availWidth, tooltipsEnabled, true, tip);
+            break;
+        case TicketGridColumn::RenderPlan::PlainText:
+            renderPlainText(column.CatalogReadOnly);
             return;
-        }
-
-        if (!allowEdits) {
-            const std::string display = DisplayValueForJiraDateField(field->Id, field, currentValue);
-            const std::string* tip =
-                IsJiraDateOrDateTimeField(field->Id, field) ? &currentValue : nullptr;
-            RenderClippedFieldText(display, availWidth, tooltipsEnabled, true, tip);
-            return;
-        }
-
-        if (JiraLabelsEditor::IsLabelsField(field->Id)) {
+        case TicketGridColumn::RenderPlan::Labels:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
             JiraLabelsEditor::RenderLabelsFieldEditor(
                 app,
                 ticket,
@@ -1233,42 +1343,32 @@ public:
                     const JiraField& fld,
                     const std::vector<std::string>& values) { QueueEdit(issueId, fld, values, pendingEdits); });
             return;
-        }
-
-        if (field->Family == JiraFieldFamily::CascadingSelect) {
+        case TicketGridColumn::RenderPlan::Cascading:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
             RenderCascadingSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
             return;
-        }
-
-        if ((field->Family == JiraFieldFamily::SelectMulti ||
-             field->Family == JiraFieldFamily::StructuredMulti ||
-             field->Family == JiraFieldFamily::UserMulti) &&
-            !field->AllowedValueOptions.empty()) {
+        case TicketGridColumn::RenderPlan::MultiSelect:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
             RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
             return;
-        }
-
-        if ((field->Family == JiraFieldFamily::SelectSingle ||
-             field->Family == JiraFieldFamily::StructuredSingle ||
-             field->Family == JiraFieldFamily::UserSingle ||
-             field->Family == JiraFieldFamily::Status ||
-             field->Family == JiraFieldFamily::IssueType) &&
-            !field->AllowedValueOptions.empty()) {
+        case TicketGridColumn::RenderPlan::SingleSelect:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
             RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
             return;
-        }
-
-        if (field->IsArray && !field->AllowedValueOptions.empty()) {
-            RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
-            return;
-        }
-
-        if (!field->AllowedValueOptions.empty()) {
-            RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
-            return;
-        }
-
-        if (JiraDateTimeFieldEditor::IsJiraDateTimePickerField(*field)) {
+        case TicketGridColumn::RenderPlan::DateTimeEditor:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
             JiraDateTimeFieldEditor::RenderDateTimeFieldEditor(
                 ticket,
                 *field,
@@ -1278,9 +1378,14 @@ public:
                     const JiraField& fld,
                     const std::vector<std::string>& values) { QueueEdit(issueId, fld, values, pendingEdits); });
             return;
+        case TicketGridColumn::RenderPlan::TextEditor:
+            if (!allowEdits) {
+                renderPlainText(true);
+                return;
+            }
+            RenderTextEditor(ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
+            return;
         }
-
-        RenderTextEditor(ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
     }
 
 private:
@@ -1823,9 +1928,18 @@ static void ApplyLoggingSettingsFromConfig(const JiraConfig& cfg) {
     Logger::Instance().SetLogP4Io(cfg.LogP4Io);
 }
 
+static void PersistPerformanceWindowPreference(UiDrawSession& d) {
+    if (d.cfg.ShowPerformanceWindow == d.showPerformance) {
+        return;
+    }
+    d.cfg.ShowPerformanceWindow = d.showPerformance;
+    ConfigManager::Save(d.cfg);
+}
+
 void SmatchetUI::Draw(AppController& app) {
     if (!g_ui.cfgInitialized) {
         g_ui.cfg = ConfigManager::Load();
+        g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
     }
@@ -1867,11 +1981,12 @@ void SmatchetUI::Draw(AppController& app) {
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
-        drawMainMenuBar();
+        drawMainMenuBar(app);
     }
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetPerfUi::DrawWindow");
         g_perfUi.DrawWindow(&g_ui.showPerformance);
+        PersistPerformanceWindowPreference(g_ui);
     }
     blameAnalysisUi_.SetBlamePanelOpen(g_ui.showBlameAnalysis);
     blameAnalysisUi_.ServiceBackground();
@@ -1927,6 +2042,10 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
     bool hasCollection = false;
     std::deque<AttachmentPreviewUpdate> previewUpdates;
     const AttachmentThumbnailSupport thumbnailSupport = GetAttachmentThumbnailSupport();
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    // Reclaim textures whose renderer backend has finished the WantDestroy round-trip.
+    TickAttachmentPendingTextureDestroys();
+#endif
     {
         std::lock_guard<std::mutex> lock(d.attachmentPreviewMutex);
         if (!d.attachmentCollectionQueue.empty()) {
@@ -1998,7 +2117,7 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
                     entry.PreviewError = imageInfo.Error;
                 }
             }
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
             if (thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
 #if defined(_WIN32)
                 std::vector<unsigned char> rgbaPixels;
@@ -2010,9 +2129,9 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
                         entry.ImageWidth = decodedWidth;
                         entry.ImageHeight = decodedHeight;
                     }
-                    DestroyAttachmentTexture(entry.ThumbnailTextureId);
+                    DestroyAttachmentTexture(entry.ThumbnailTextureData);
                     if (!CreateAttachmentTextureFromRgba(
-                            rgbaPixels, entry.ImageWidth, entry.ImageHeight, entry.ThumbnailTextureId, uploadError)) {
+                            rgbaPixels, entry.ImageWidth, entry.ImageHeight, entry.ThumbnailTextureData, uploadError)) {
                         entry.PreviewError = uploadError;
                         LOG_WARN("SmatchetUI: thumbnail upload failed file=%s err=%s",
                                  entry.Filename.c_str(),
@@ -2085,7 +2204,7 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
                 bool clicked = false;
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
                 if (AttachmentHasBitmapThumbnail(entry)) {
                     const ImVec2 thumbDraw = FitImageInsideSquare(entry.ImageWidth, entry.ImageHeight, tileSize);
                     const float padX = (std::max)(0.0f, (cardWidth - thumbDraw.x) * 0.5f);
@@ -2094,7 +2213,7 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
                     ImGui::SetCursorPosX(padX);
                     ImGui::Dummy(ImVec2(0.0f, padTop));
                     clicked = ImGui::ImageButton(
-                        "##attachment_thumb", ImTextureRef(entry.ThumbnailTextureId), thumbDraw);
+                        "##attachment_thumb", entry.ThumbnailTextureData->GetTexRef(), thumbDraw);
                     ImGui::Dummy(ImVec2(0.0f, padBottom));
                     if (ImGui::IsItemHovered()) {
                         DrawAttachmentThumbnailTooltip(entry);
@@ -2185,7 +2304,7 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
         if (IsSupportedImageMime(selectedEntry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
             ImGui::TextDisabled("%s", thumbnailSupport.Reason.c_str());
         }
-#if defined(SMATCHET_ENABLE_OPENGL_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
         if (AttachmentHasBitmapThumbnail(selectedEntry)) {
             const float maxWidth = ImGui::GetContentRegionAvail().x;
             const float maxHeight = 220.0f;
@@ -2196,11 +2315,13 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app) {
                 drawWidth *= (std::min)(scale, 1.0f);
                 drawHeight *= (std::min)(scale, 1.0f);
             }
-            ImGui::Image(ImTextureRef(selectedEntry.ThumbnailTextureId), ImVec2(drawWidth, drawHeight));
+            ImGui::Image(selectedEntry.ThumbnailTextureData->GetTexRef(), ImVec2(drawWidth, drawHeight));
         }
 #endif
         if (ImGui::Button("Open selected")) {
-            app.OpenAttachment(selectedEntry.Url, selectedEntry.Filename, selectedEntry.MimeType);
+            app.OpenAttachmentInSystemViewer(selectedEntry.Url,
+                                             selectedEntry.Filename,
+                                             selectedEntry.MimeType);
         }
         ImGui::SameLine();
         if (ImGui::Button("Open URL externally")) {
@@ -2274,7 +2395,10 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app) {
     }
 }
 
-void SmatchetUI::drawMainMenuBar() {
+void SmatchetUI::drawMainMenuBar(AppController& app) {
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+    (void)app;
+#endif
     auto& d = g_ui;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Settings")) {
@@ -2286,12 +2410,29 @@ void SmatchetUI::drawMainMenuBar() {
             }
             if (ImGui::MenuItem("Views Dashboard...")) {
                 d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
             }
             if (ImGui::MenuItem("Blame Analysis...")) {
                 d.showBlameAnalysis = true;
             }
             ImGui::EndMenu();
         }
+#ifdef SMATCHET_EMBEDDED_IN_UNREAL
+        {
+            const char* closeLabel = "Close";
+            const float btnW = ImGui::CalcTextSize(closeLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            constexpr float kRightMargin = 10.0f;
+            const float xPos =
+                (std::max)(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - btnW - kRightMargin);
+            ImGui::SetCursorPosX(xPos);
+            if (ImGui::SmallButton(closeLabel)) {
+                app.CloseEmbeddedUi();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Hide Smatchet overlay (same as Ctrl+Shift+J)");
+            }
+        }
+#endif
         ImGui::EndMainMenuBar();
     }
 }
@@ -2310,20 +2451,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
     }
 
     if (!d.preferencesBuffersLoaded) {
-        std::memset(d.domainBuf, 0, sizeof(d.domainBuf));
-        std::memset(d.emailBuf, 0, sizeof(d.emailBuf));
-        std::memset(d.tokenBuf, 0, sizeof(d.tokenBuf));
-        std::memset(d.projectKeyBuf, 0, sizeof(d.projectKeyBuf));
-        std::memset(d.aiApiKeyBuf, 0, sizeof(d.aiApiKeyBuf));
-        std::memset(d.aiModelBuf, 0, sizeof(d.aiModelBuf));
-        std::memset(d.aiBaseUrlBuf, 0, sizeof(d.aiBaseUrlBuf));
-        std::strncpy(d.domainBuf, d.cfg.Domain.c_str(), sizeof(d.domainBuf) - 1);
-        std::strncpy(d.emailBuf, d.cfg.Email.c_str(), sizeof(d.emailBuf) - 1);
-        std::strncpy(d.tokenBuf, d.cfg.ApiToken.c_str(), sizeof(d.tokenBuf) - 1);
-        std::strncpy(d.projectKeyBuf, d.cfg.ProjectKey.c_str(), sizeof(d.projectKeyBuf) - 1);
-        std::strncpy(d.aiApiKeyBuf, d.cfg.AiApiKey.c_str(), sizeof(d.aiApiKeyBuf) - 1);
-        std::strncpy(d.aiModelBuf, d.cfg.AiModel.c_str(), sizeof(d.aiModelBuf) - 1);
-        std::strncpy(d.aiBaseUrlBuf, d.cfg.AiBaseUrl.c_str(), sizeof(d.aiBaseUrlBuf) - 1);
+        CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
+        CopyStringToBuffer(d.emailBuf, d.cfg.Email);
+        CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
+        CopyStringToBuffer(d.projectKeyBuf, d.cfg.ProjectKey);
+        CopyStringToBuffer(d.aiApiKeyBuf, d.cfg.AiApiKey);
+        CopyStringToBuffer(d.aiModelBuf, d.cfg.AiModel);
+        CopyStringToBuffer(d.aiBaseUrlBuf, d.cfg.AiBaseUrl);
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
         d.preferencesBuffersLoaded = true;
@@ -2344,6 +2478,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
             ImGui::TextWrapped("JQL and column fields are configured in the Views dashboard.");
             if (ImGui::Button("Open Views Dashboard")) {
                 d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
             }
             ImGui::EndTabItem();
         }
@@ -2474,8 +2609,19 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
     if (!d.showViewsDashboard) {
         return;
     }
+    // With DockSpaceOverViewport, "Views" often shares a tab bar with "Smatchet - Active Project"
+    // (drawn later). showViewsDashboard can stay true while the Views tab is hidden behind another;
+    // Open Views / menu then appears to do nothing unless we explicitly focus this window.
+    const bool bFocusViews = d.requestViewsDashboardFocus;
+    if (bFocusViews) {
+        ImGui::SetNextWindowFocus();
+    }
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
     ImGui::Begin("Views", &d.showViewsDashboard);
+    if (bFocusViews) {
+        ImGui::SetWindowFocus();
+        d.requestViewsDashboardFocus = false;
+    }
 
     ViewsStore& store = ViewState.GetStoreMutable();
     if (store.Views.empty()) {
@@ -2483,14 +2629,11 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
     }
 
     auto loadBuffersFromView = [&](const ViewDefinition& view) {
-        std::memset(d.viewNameBuf, 0, sizeof(d.viewNameBuf));
-        std::memset(d.viewJqlBuf, 0, sizeof(d.viewJqlBuf));
-        std::memset(d.selectedFieldsBuf, 0, sizeof(d.selectedFieldsBuf));
         std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
-        std::strncpy(d.viewNameBuf, view.Name.c_str(), sizeof(d.viewNameBuf) - 1);
-        std::strncpy(d.viewJqlBuf, view.Jql.c_str(), sizeof(d.viewJqlBuf) - 1);
+        CopyStringToBuffer(d.viewNameBuf, view.Name);
+        CopyStringToBuffer(d.viewJqlBuf, view.Jql);
         const std::string selectedFieldsCsv = JoinCsv(view.Fields);
-        std::strncpy(d.selectedFieldsBuf, selectedFieldsCsv.c_str(), sizeof(d.selectedFieldsBuf) - 1);
+        CopyStringToBuffer(d.selectedFieldsBuf, selectedFieldsCsv);
         d.editingColumnOrder = view.ColumnOrder;
         if (d.editingColumnOrder.empty()) {
             d.editingColumnOrder = {"id"};
@@ -2542,8 +2685,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 const NavigationEntry* entry = d.navHistory.GoBack();
                 if (entry) {
                     d.cfg.JqlQuery = entry->Jql;
-                    std::strncpy(d.viewJqlBuf, d.cfg.JqlQuery.c_str(), sizeof(d.viewJqlBuf) - 1);
-                    d.viewJqlBuf[sizeof(d.viewJqlBuf) - 1] = '\0';
+                    CopyStringToBuffer(d.viewJqlBuf, d.cfg.JqlQuery);
                     SyncWithCurrentView(app, d, ViewState.GetStore(), false);
                 }
             }
@@ -2562,8 +2704,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                 const NavigationEntry* entry = d.navHistory.GoForward();
                 if (entry) {
                     d.cfg.JqlQuery = entry->Jql;
-                    std::strncpy(d.viewJqlBuf, d.cfg.JqlQuery.c_str(), sizeof(d.viewJqlBuf) - 1);
-                    d.viewJqlBuf[sizeof(d.viewJqlBuf) - 1] = '\0';
+                    CopyStringToBuffer(d.viewJqlBuf, d.cfg.JqlQuery);
                     SyncWithCurrentView(app, d, ViewState.GetStore(), false);
                 }
             }
@@ -2691,8 +2832,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
             const auto syncSelectedFieldsBuffer = [&]() {
                 const std::vector<std::string> updated = ToSortedVector(selectedFieldSet);
                 const std::string csv = JoinCsv(updated);
-                std::memset(d.selectedFieldsBuf, 0, sizeof(d.selectedFieldsBuf));
-                std::strncpy(d.selectedFieldsBuf, csv.c_str(), sizeof(d.selectedFieldsBuf) - 1);
+                CopyStringToBuffer(d.selectedFieldsBuf, csv);
             };
 
             const bool disableFieldCatalogEditing = d.fieldCatalogLoading;
@@ -2821,8 +2961,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app) {
                             std::vector<std::string> fields = ParseCsv(d.selectedFieldsBuf);
                             fields.erase(std::remove(fields.begin(), fields.end(), fieldId), fields.end());
                             const std::string csv = JoinCsv(fields);
-                            std::memset(d.selectedFieldsBuf, 0, sizeof(d.selectedFieldsBuf));
-                            std::strncpy(d.selectedFieldsBuf, csv.c_str(), sizeof(d.selectedFieldsBuf) - 1);
+                            CopyStringToBuffer(d.selectedFieldsBuf, csv);
                             selectedFieldSet.clear();
                             for (const auto& fid : fields) {
                                 selectedFieldSet.insert(fid);
@@ -2887,12 +3026,14 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             ImGui::SameLine();
             if (ImGui::Button("Open Views")) {
                 d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
             }
         } else {
             ImGui::TextDisabled("No active view.");
             ImGui::SameLine();
             if (ImGui::Button("Open Views")) {
                 d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
             }
         }
 
@@ -3095,127 +3236,135 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
             const std::vector<size_t>* indicesToUse =
                 d.cachedSortedIndices.empty() ? nullptr : &d.cachedSortedIndices;
-            for (size_t r = 0; r < tickets.size(); ++r) {
-                const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
-                const CachedTicket& ticket = tickets[ticketIndex];
-                bool isSelected = (d.gridState.SelectedId == ticket.id);
-                if (isSelected && !readOnlyMode) {
-                    app.WarmIssueEditMetaAsync(ticket.id);
-                }
-                thread_local char rowPerfLabel[288];
-                const char* rowPerfScopeName = nullptr;
-                if (isSelected) {
-                    std::snprintf(rowPerfLabel,
-                                  sizeof(rowPerfLabel),
-                                  "activeProject:row[%zu] %s",
-                                  r,
-                                  ticket.id.c_str());
-                    rowPerfLabel[sizeof(rowPerfLabel) - 1] = '\0';
-                    rowPerfScopeName = rowPerfLabel;
-                }
-                SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
-                ImGui::TableNextRow();
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(tickets.size()));
+            while (clipper.Step()) {
+                for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
+                    const size_t r = static_cast<size_t>(clippedRow);
+                    const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
+                    const CachedTicket& ticket = tickets[ticketIndex];
+                    bool isSelected = (d.gridState.SelectedId == ticket.id);
+                    if (isSelected && !readOnlyMode) {
+                        app.WarmIssueEditMetaAsync(ticket.id);
+                    }
+                    thread_local char rowPerfLabel[288];
+                    const char* rowPerfScopeName = nullptr;
+                    if (isSelected) {
+                        std::snprintf(rowPerfLabel,
+                                      sizeof(rowPerfLabel),
+                                      "activeProject:row[%zu] %s",
+                                      r,
+                                      ticket.id.c_str());
+                        rowPerfLabel[sizeof(rowPerfLabel) - 1] = '\0';
+                        rowPerfScopeName = rowPerfLabel;
+                    }
+                    SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
+                    ImGui::TableNextRow();
 
-                for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
-                    const auto& column = columns[static_cast<size_t>(colIndex)];
-                    ImGui::TableSetColumnIndex(colIndex);
+                    for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
+                        const auto& column = columns[static_cast<size_t>(colIndex)];
+                        ImGui::TableSetColumnIndex(colIndex);
 
-                    if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-                        ImGui::BeginGroup();
-                        if (ImGui::Selectable(ticket.id.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
-                            d.gridState.SelectRow(ticket.id);
-                            if (ImGui::IsMouseDoubleClicked(0)) {
-                                const std::string url = BuildJiraBrowseUrl(d.cfg, ticket.id);
-                                app.OpenUrl(url);
+                        if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+                            ImGui::BeginGroup();
+                            if (ImGui::Selectable(ticket.id.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                                d.gridState.SelectRow(ticket.id);
+                                if (ImGui::IsMouseDoubleClicked(0)) {
+                                    const std::string url = BuildJiraBrowseUrl(d.cfg, ticket.id);
+                                    app.OpenUrl(url);
+                                }
                             }
+                            ImGui::EndGroup();
+                            DrawGridCellRightClickPopups(
+                                BuildCellKey(ticket.id, "id"),
+                                ticket.id,
+                                std::string(),
+                                column.Label,
+                                ticket.id,
+                                &app,
+                                &d,
+                                readOnlyMode);
+                            continue;
                         }
-                        ImGui::EndGroup();
-                        DrawGridCellRightClickPopups(
-                            BuildCellKey(ticket.id, "id"),
-                            ticket.id,
-                            std::string(),
-                            column.Label,
-                            ticket.id,
-                            &app,
-                            &d,
-                            readOnlyMode);
-                        continue;
-                    }
 
-                    const std::string currentValue = ticket.GetFieldValue(column.FieldId);
-                    const JiraField* fieldMeta = catalogIndex.Find(column.FieldId);
-                    const float cellStartY = ImGui::GetCursorScreenPos().y;
-                    const float cellRightX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-                    const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
-                    const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
-                    const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
-                    const bool isSavingThisCell =
-                        feedbackIt != d.cellFeedbackByKey.end() &&
-                        feedbackIt->second.State == CellWriteState::Saving;
+                        const std::string currentValue = ticket.GetFieldValue(column.FieldId);
+                        const JiraField* fieldMeta = catalogIndex.Find(column.FieldId);
+                        const float cellStartY = ImGui::GetCursorScreenPos().y;
+                        const float cellRightX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+                        const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
+                        const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
+                        const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
+                        const bool isSavingThisCell =
+                            feedbackIt != d.cellFeedbackByKey.end() &&
+                            feedbackIt->second.State == CellWriteState::Saving;
 
-                    bool showBadge = false;
-                    ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
-                    std::string badgeText;
-                    std::string badgeTooltip;
-                    if (feedbackIt != d.cellFeedbackByKey.end() &&
-                        feedbackIt->second.State == CellWriteState::Error &&
-                        !feedbackIt->second.Message.empty()) {
-                        showBadge = true;
-                        badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-                        badgeText = "!";
-                        badgeTooltip = feedbackIt->second.Message;
-                    } else if (feedbackIt != d.cellFeedbackByKey.end() &&
-                               feedbackIt->second.State == CellWriteState::Success) {
-                        showBadge = true;
-                        badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
-                        badgeText = "OK";
-                        badgeTooltip = "Saved";
-                    }
+                        bool showBadge = false;
+                        ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
+                        std::string badgeText;
+                        std::string badgeTooltip;
+                        if (feedbackIt != d.cellFeedbackByKey.end() &&
+                            feedbackIt->second.State == CellWriteState::Error &&
+                            !feedbackIt->second.Message.empty()) {
+                            showBadge = true;
+                            badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+                            badgeText = "!";
+                            badgeTooltip = feedbackIt->second.Message;
+                        } else if (feedbackIt != d.cellFeedbackByKey.end() &&
+                                   feedbackIt->second.State == CellWriteState::Success) {
+                            showBadge = true;
+                            badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
+                            badgeText = "OK";
+                            badgeTooltip = "Saved";
+                        }
 
-                    if (isSavingThisCell) {
-                        showBadge = true;
-                        badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
-                        badgeText = "...";
-                        badgeTooltip = "Saving...";
-                        ImGui::BeginGroup();
-                        const std::string saveDisplay =
-                            DisplayValueForJiraDateField(column.FieldId, fieldMeta, currentValue);
-                        const std::string* saveTip =
-                            IsJiraDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
-                        RenderClippedFieldText(
-                            saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
-                        ImGui::EndGroup();
-                        DrawGridCellRightClickPopups(
-                            cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
-                    } else {
-                        ImGui::BeginGroup();
-                        TicketFieldEditor::RenderFieldCell(
-                            app,
-                            ticket,
-                            column.FieldId,
-                            fieldMeta,
-                            currentValue,
-                            valueAvailWidth,
-                            d.cfg.EnableFieldOverflowTooltips,
-                            !readOnlyMode &&
-                                app.CanEditJiraFieldForIssue(ticket.id, column.FieldId, fieldMeta),
-                            d.gridState,
-                            pendingEdits,
-                            d.jiraGridAsync);
-                        ImGui::EndGroup();
-                        DrawGridCellRightClickPopups(
-                            cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
-                    }
+                        if (isSavingThisCell) {
+                            showBadge = true;
+                            badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
+                            badgeText = "...";
+                            badgeTooltip = "Saving...";
+                            ImGui::BeginGroup();
+                            const std::string saveDisplay =
+                                DisplayValueForJiraDateField(column.FieldId, fieldMeta, currentValue);
+                            const std::string* saveTip =
+                                IsJiraDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
+                            RenderClippedFieldText(
+                                saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip);
+                            ImGui::EndGroup();
+                            DrawGridCellRightClickPopups(
+                                cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                        } else {
+                            const bool allowEditsForCell =
+                                !readOnlyMode &&
+                                column.NeedsAllowEditsCheck &&
+                                app.CanEditJiraFieldForIssue(ticket.id, column.FieldId, fieldMeta);
+                            ImGui::BeginGroup();
+                            TicketFieldEditor::RenderFieldCell(
+                                app,
+                                ticket,
+                                column,
+                                fieldMeta,
+                                currentValue,
+                                valueAvailWidth,
+                                d.cfg.EnableFieldOverflowTooltips,
+                                allowEditsForCell,
+                                d.gridState,
+                                pendingEdits,
+                                d.jiraGridAsync);
+                            ImGui::EndGroup();
+                            DrawGridCellRightClickPopups(
+                                cellKey, ticket.id, column.FieldId, column.Label, currentValue, nullptr, nullptr, readOnlyMode);
+                        }
 
-                    if (showBadge) {
-                        const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
-                        const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
-                        ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
-                        ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
-                        ImGui::TextUnformatted(badgeText.c_str());
-                        ImGui::PopStyleColor();
-                        if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", badgeTooltip.c_str());
+                        if (showBadge) {
+                            const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
+                            const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
+                            ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
+                            ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
+                            ImGui::TextUnformatted(badgeText.c_str());
+                            ImGui::PopStyleColor();
+                            if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("%s", badgeTooltip.c_str());
+                            }
                         }
                     }
                 }
@@ -3316,6 +3465,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             d.queuedFieldEdits.pop_front();
             d.inFlightOriginalEstimateSnapshot.clear();
             d.inFlightRemainingEstimateSnapshot.clear();
+            d.inFlightIssueTypeKeySnapshot.clear();
             const auto snapshotIt = std::find_if(
                 tickets.begin(),
                 tickets.end(),
@@ -3323,6 +3473,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             if (snapshotIt != tickets.end()) {
                 d.inFlightOriginalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
                 d.inFlightRemainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
+                d.inFlightIssueTypeKeySnapshot =
+                    ToLowerAsciiCopy(TrimCopy(snapshotIt->GetFieldValue("issuetype")));
             }
             d.hasInFlightEdit = true;
             d.inFlightCommitStarted = false;

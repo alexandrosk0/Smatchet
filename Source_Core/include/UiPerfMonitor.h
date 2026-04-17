@@ -14,6 +14,8 @@ struct UiPerfRow {
     double avgPerCallMs = 0.0;
     double maxMs = 0.0;
     std::uint32_t calls = 0;
+    /// Running total of `calls` across frames (each scope typically records once per frame).
+    std::uint64_t lifetimeHits = 0;
     double emaAvgMs = 0.0;
 };
 
@@ -40,6 +42,7 @@ private:
     std::vector<std::pair<std::string, Agg>> working_;
     std::vector<UiPerfRow> lastFrame_;
     std::unordered_map<std::string, double> emaByName_;
+    std::unordered_map<std::string, std::uint64_t> lifetimeHits_;
 };
 
 // name == nullptr: no timing recorded (cheap no-op; use for conditional scopes).

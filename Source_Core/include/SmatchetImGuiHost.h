@@ -27,6 +27,11 @@ struct SmatchetRendererInitInfo {
     void* RendererResource0 = nullptr;
     void* RendererResource1 = nullptr;
     void* RendererResource2 = nullptr;
+    /** D3D12: total number of SRV descriptors in the heap pointed to by RendererResource0. Slot 0 is
+     *  used for the font atlas (legacy single-SRV path); slots 1..N-1 are available for dynamic
+     *  ImTextureData uploads (attachment thumbnails, user textures, etc.). Set at least 2 to enable
+     *  attachment thumbnails. Defaults to 1 to preserve legacy behaviour. */
+    int NumSrvDescriptors = 1;
 };
 
 class SmatchetImGuiHost {
@@ -67,6 +72,10 @@ public:
     void SetUiVisible(bool visible);
     void ToggleUiVisible();
 
+    /** When true, ImGui will not draw its software mouse sprite inside Unreal game viewports (useful if the OS cursor is already visible). Default false. */
+    void SetSuppressSoftwareCursor(bool suppress);
+    bool GetSuppressSoftwareCursor() const;
+
     AppController& GetAppController();
     PluginHost& GetPluginHost();
 
@@ -74,6 +83,10 @@ public:
     // The host will call Initialize(options) lazily when the UI is shown.
     void SetInitOptions(const InitOptions& options);
     bool UpdateRendererColorFormat(int colorFormat, std::string& outError);
+    /** D3D12: patches the cached InitOptions with the SRV descriptor heap size so that the lazy
+     *  Initialize() call picks it up when wiring up the dynamic-texture allocator. Must be set before
+     *  the first BeginFrame after options are cached. */
+    void SetRendererNumSrvDescriptors(int numSrvDescriptors);
 
     /** Last Initialize() failure (empty if never failed or last run succeeded). For UE_LOG / diagnostics. */
     const char* PeekLastInitErrorUtf8() const;

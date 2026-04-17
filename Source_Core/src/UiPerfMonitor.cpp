@@ -1,6 +1,7 @@
 #include "UiPerfMonitor.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace {
 
@@ -37,6 +38,9 @@ void UiPerfMonitor::BeginFrame() {
         row.maxMs = static_cast<double>(a.maxNs) / 1e6;
         row.lastTotalMs = static_cast<double>(a.totalNs) / 1e6;
         row.avgPerCallMs = a.calls > 0 ? row.lastTotalMs / static_cast<double>(a.calls) : 0.0;
+        std::uint64_t& life = lifetimeHits_[row.name];
+        life += static_cast<std::uint64_t>(row.calls);
+        row.lifetimeHits = life;
 
         const auto emaIt = emaByName_.find(row.name);
         if (emaIt == emaByName_.end()) {

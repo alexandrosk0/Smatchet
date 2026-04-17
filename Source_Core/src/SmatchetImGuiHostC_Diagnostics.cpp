@@ -12,11 +12,18 @@
 
 extern "C" {
 
+// Bump this string whenever Source_Core changes in a way you want to verify made it into the
+// packaged Unreal lib. It appears in:
+//   LogSmatchetImGuiPlugin: Smatchet packaged native host tag: ...
+// on plugin startup, so the editor log immediately reveals if Unreal is loading a stale lib.
+#define SMATCHET_HOST_BUILD_TAG_REV "v2"
+
 const char* SmatchetHost_GetBuildTag(void) {
 #if defined(_WIN32)
-    return "SmatchetImGuiHost InitInfo+Queue IMGUI_" IMGUI_VERSION;
+    return "SmatchetImGuiHost " SMATCHET_HOST_BUILD_TAG_REV
+           " InitInfo+Queue IMGUI_" IMGUI_VERSION " | built " __DATE__ " " __TIME__;
 #else
-    return "SmatchetImGuiHost";
+    return "SmatchetImGuiHost " SMATCHET_HOST_BUILD_TAG_REV;
 #endif
 }
 

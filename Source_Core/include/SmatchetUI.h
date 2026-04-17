@@ -15,7 +15,7 @@ private:
     BlameAnalysisUi blameAnalysisUi_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app);
-    void drawMainMenuBar();
+    void drawMainMenuBar(AppController& app);
     void drawPreferencesWindow(AppController& app);
     void drawViewsDashboardWindow(AppController& app);
     void drawActiveProjectWindow(AppController& app);

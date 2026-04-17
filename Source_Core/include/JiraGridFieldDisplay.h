@@ -2,6 +2,7 @@
 
 #include "JiraClient.h"
 
+#include <cstdint>
 #include <future>
 #include <string>
 #include <vector>

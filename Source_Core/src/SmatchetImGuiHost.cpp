@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <chrono>
 #include <mutex>
+#include <vector>
 
 #include "imgui.h"
 #include "Logger.h"
@@ -41,6 +42,7 @@ struct SmatchetImGuiHost::Impl {
     std::atomic<bool> FrameActive{false};
     std::atomic<bool> OptionsSet{false};
     std::atomic<bool> UiVisible{false};
+    std::atomic<bool> SuppressSoftwareCursor{false};
 
     SmatchetImGuiHost::InitOptions CachedOptions;
 
@@ -68,6 +70,62 @@ struct SmatchetImGuiHost::Impl {
 };
 
 #if defined(_WIN32)
+// Shader-visible SRV heap allocator state used by the ImGui DX12 backend when creating dynamic
+// ImTextureData textures (attachment thumbnails, etc.). Slot 0 stays reserved for the legacy font
+// atlas path; additional slots are allocated/freed with a tiny free-list.
+struct Smatchet_ImplDX12_SrvAllocator {
+    D3D12_CPU_DESCRIPTOR_HANDLE CpuBase{};
+    D3D12_GPU_DESCRIPTOR_HANDLE GpuBase{};
+    UINT IncrementSize = 0;
+    int Capacity = 0;    // total descriptors in heap, including slot 0 (reserved for font)
+    int NextSlot = 1;    // next fresh slot; slots 1..Capacity-1 are dynamic
+    std::vector<int> FreeList; // returned slots available for reuse (LIFO)
+    std::mutex Mutex;
+};
+
+static Smatchet_ImplDX12_SrvAllocator gSmatchetDx12SrvAllocator;
+
+static void Smatchet_ImplDX12_SrvAllocCb(
+    ImGui_ImplDX12_InitInfo*,
+    D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
+    D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
+    Smatchet_ImplDX12_SrvAllocator& a = gSmatchetDx12SrvAllocator;
+    std::lock_guard<std::mutex> lk(a.Mutex);
+    int slot = -1;
+    if (!a.FreeList.empty()) {
+        slot = a.FreeList.back();
+        a.FreeList.pop_back();
+    } else if (a.NextSlot < a.Capacity) {
+        slot = a.NextSlot++;
+    }
+    if (slot < 0) {
+        // Out of SRV descriptors; return slot 0 (font) so we don't crash. Thumbnail will alias
+        // the font texture, which is visually wrong but safer than returning an invalid handle.
+        slot = 0;
+        std::fprintf(stderr,
+                     "[Smatchet] DX12 SRV heap exhausted (capacity=%d). Thumbnails beyond this limit will be blank.\n",
+                     a.Capacity);
+    }
+    if (outCpu) { outCpu->ptr = a.CpuBase.ptr + static_cast<SIZE_T>(slot) * a.IncrementSize; }
+    if (outGpu) { outGpu->ptr = a.GpuBase.ptr + static_cast<UINT64>(slot) * a.IncrementSize; }
+}
+
+static void Smatchet_ImplDX12_SrvFreeCb(
+    ImGui_ImplDX12_InitInfo*,
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu,
+    D3D12_GPU_DESCRIPTOR_HANDLE /*gpu*/) {
+    Smatchet_ImplDX12_SrvAllocator& a = gSmatchetDx12SrvAllocator;
+    std::lock_guard<std::mutex> lk(a.Mutex);
+    if (a.IncrementSize == 0 || a.Capacity <= 0 || cpu.ptr < a.CpuBase.ptr) {
+        return;
+    }
+    const SIZE_T offset = cpu.ptr - a.CpuBase.ptr;
+    const int slot = static_cast<int>(offset / a.IncrementSize);
+    if (slot > 0 && slot < a.Capacity) {
+        a.FreeList.push_back(slot);
+    }
+}
+
 // Modern imgui_impl_dx12 requires ImGui_ImplDX12_InitInfo with a real ID3D12CommandQueue.
 // The legacy 6-argument ImGui_ImplDX12_Init is known to crash against current ImGui / D3D12. (#8429)
 static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& renderer, std::string& outError) {
@@ -86,6 +144,26 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
     fontSrvCpuHandle.ptr = static_cast<SIZE_T>(reinterpret_cast<std::uintptr_t>(renderer.RendererResource1));
     fontSrvGpuHandle.ptr = static_cast<UINT64>(reinterpret_cast<std::uintptr_t>(renderer.RendererResource2));
 
+    // Configure the dynamic-SRV allocator. When NumSrvDescriptors <= 1 we only expose the legacy
+    // single-SRV path so attachment thumbnails will remain blank — this matches the pre-allocator
+    // behaviour and logs a warning.
+    {
+        Smatchet_ImplDX12_SrvAllocator& a = gSmatchetDx12SrvAllocator;
+        std::lock_guard<std::mutex> lk(a.Mutex);
+        a.CpuBase = fontSrvCpuHandle;
+        a.GpuBase = fontSrvGpuHandle;
+        a.IncrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        a.Capacity = renderer.NumSrvDescriptors > 0 ? renderer.NumSrvDescriptors : 1;
+        a.NextSlot = 1;
+        a.FreeList.clear();
+        if (a.Capacity <= 1) {
+            std::fprintf(stderr,
+                         "[Smatchet] DX12 SRV heap has %d slot(s); attachment thumbnails and other dynamic "
+                         "textures will not render. Pass NumSrvDescriptors>=2 in SmatchetRendererInitInfo.\n",
+                         a.Capacity);
+        }
+    }
+
     ImGui_ImplDX12_InitInfo initInfo{};
     initInfo.Device = device;
     initInfo.CommandQueue = commandQueue;
@@ -95,6 +173,10 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
     initInfo.SrvDescriptorHeap = fontSrvDescriptorHeap;
     initInfo.LegacySingleSrvCpuDescriptor = fontSrvCpuHandle;
     initInfo.LegacySingleSrvGpuDescriptor = fontSrvGpuHandle;
+    if (gSmatchetDx12SrvAllocator.Capacity > 1) {
+        initInfo.SrvDescriptorAllocFn = &Smatchet_ImplDX12_SrvAllocCb;
+        initInfo.SrvDescriptorFreeFn = &Smatchet_ImplDX12_SrvFreeCb;
+    }
 
     {
         char dbg[640];
@@ -156,11 +238,33 @@ void SmatchetImGuiHost::ToggleUiVisible() {
     SetUiVisible(!IsUiVisible());
 }
 
+void SmatchetImGuiHost::SetSuppressSoftwareCursor(bool suppress) {
+    if (!ImplData) {
+        return;
+    }
+    ImplData->SuppressSoftwareCursor.store(suppress, std::memory_order_relaxed);
+}
+
+bool SmatchetImGuiHost::GetSuppressSoftwareCursor() const {
+    if (!ImplData) {
+        return false;
+    }
+    return ImplData->SuppressSoftwareCursor.load(std::memory_order_relaxed);
+}
+
 void SmatchetImGuiHost::SetInitOptions(const InitOptions& options) {
     if (!ImplData) {
         return;
     }
     ImplData->CachedOptions = options;
+    ImplData->OptionsSet.store(true, std::memory_order_release);
+}
+
+void SmatchetImGuiHost::SetRendererNumSrvDescriptors(int numSrvDescriptors) {
+    if (!ImplData) {
+        return;
+    }
+    ImplData->CachedOptions.Renderer.NumSrvDescriptors = numSrvDescriptors > 0 ? numSrvDescriptors : 1;
     ImplData->OptionsSet.store(true, std::memory_order_release);
 }
 
@@ -302,15 +406,16 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         if (ImplData->ImGuiCtx) {
             ImGui::SetCurrentContext(ImplData->ImGuiCtx);
         }
-        ImGuiIO& io = ImGui::GetIO();
+        ImGuiIO& warmupIo = ImGui::GetIO();
         unsigned char* pixels = nullptr;
         int width = 0;
         int height = 0;
-        io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height); // Force atlas build / builder init.
+        warmupIo.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height); // Force atlas build / builder init.
     }
 
     ImplData->App.SetOpenUrlHandler(options.OpenUrlHandler);
     ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
+    ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
 
     JiraConfig cfg = ConfigManager::Load();
     const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
@@ -335,6 +440,8 @@ void SmatchetImGuiHost::Shutdown() {
     if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
         return;
     }
+
+    ImplData->App.SetCloseEmbeddedUiHandler({});
 
 #if defined(_WIN32)
     ImplData->Plugins.OnStop();
@@ -449,21 +556,6 @@ void SmatchetImGuiHost::DrawUI() {
     std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
-    }
-
-    // Temporary diagnostic window to confirm the render path is producing output.
-    // If you see this, rendering is working and the issue is inside SmatchetUI window visibility/state.
-    {
-        ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking;
-        ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(420, 140), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Smatchet Debug", nullptr, flags)) {
-            ImGui::Text("UiVisible=%d Initialized=%d", IsUiVisible() ? 1 : 0,
-                        ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
-            ImGui::Text("FrameActive=%d", ImplData->FrameActive.load(std::memory_order_relaxed) ? 1 : 0);
-            ImGui::Text("If this is visible, ImGui rendering is OK.");
-        }
-        ImGui::End();
     }
 
     ImplData->Ui.Draw(ImplData->App);
@@ -726,6 +818,12 @@ bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int co
     return h->UpdateRendererColorFormat(colorFormat, err);
 }
 
+void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvDescriptors) {
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h) return;
+    h->SetRendererNumSrvDescriptors(numSrvDescriptors);
+}
+
 void SmatchetHost_SetUiVisible(SmatchetImGuiHostHandle host, bool visible) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
     if (!h) return;
@@ -736,6 +834,18 @@ void SmatchetHost_ToggleUiVisible(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
     if (!h) return;
     h->ToggleUiVisible();
+}
+
+void SmatchetHost_SetSuppressSoftwareCursor(SmatchetImGuiHostHandle host, bool suppress) {
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h) return;
+    h->SetSuppressSoftwareCursor(suppress);
+}
+
+bool SmatchetHost_GetSuppressSoftwareCursor(SmatchetImGuiHostHandle host) {
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h) return false;
+    return h->GetSuppressSoftwareCursor();
 }
 
 bool SmatchetHost_IsUiVisible(SmatchetImGuiHostHandle host) {

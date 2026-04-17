@@ -126,8 +126,11 @@ void CopyToBuffer(char (&dst)[N], const std::string& src) {
         return;
     }
     std::memset(dst, 0, N);
-    std::strncpy(dst, src.c_str(), N - 1);
-    dst[N - 1] = '\0';
+    const size_t cap = N - 1;
+    const size_t n = (std::min)(src.size(), cap);
+    if (n > 0) {
+        std::memcpy(dst, src.data(), n);
+    }
 }
 
 void SyncCallstackJiraFieldBufFromCfg() {

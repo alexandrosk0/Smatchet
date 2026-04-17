@@ -52,7 +52,8 @@ public:
     virtual bool RenderToSlateBackBuffer(
         SmatchetImGuiHostHandle Host,
         FRHITexture* BackBufferTexture,
-        FRHICommandListImmediate* RHICmdList) override {
+        FRHICommandListImmediate* RHICmdList,
+        bool /*bDrawSoftwareCursor*/) override {
         if (!Host || !BackBufferTexture || !RHICmdList) {
             return false;
         }
