@@ -22,4 +22,6 @@ private:
     void drawAttachmentPreviewWindow(AppController& app);
     void drawAIAssistantWindow(AppController& app);
     void drawLogWindow();
+    void drawBulkImportWindow(AppController& app);
+    void drawBulkExportWindow(AppController& app);
 };

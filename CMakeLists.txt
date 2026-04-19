@@ -83,6 +83,11 @@ FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GI
 FetchContent_MakeAvailable(json)
 
 message(STATUS "Fetching cpr (C++ Requests)...")
+# Bundled libcurl CMake probes ioctlsocket(FIONBIO) with int*; GCC 14 rejects int* vs u_long* →
+# HAVE_IOCTLSOCKET_FIONBIO unset → nonblock.c #errors. Winsock API uses u_long; safe to force on MinGW.
+if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(HAVE_IOCTLSOCKET_FIONBIO 1 CACHE INTERNAL "curl: ioctlsocket FIONBIO (MinGW GCC14+ probe fix)" FORCE)
+endif()
 FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG 1.9.2)
 FetchContent_MakeAvailable(cpr)
 # MSVC C4244: Body(File) used int for tellg() (streamoff). Patch vendored header after fetch.
@@ -127,6 +132,23 @@ if(EXISTS "${_sqlitecpp_cmakelists}")
                    "${_sqlitecpp_cmakelists_contents}")
     if(NOT _sqlitecpp_patched_contents STREQUAL _sqlitecpp_cmakelists_contents)
         file(WRITE "${_sqlitecpp_cmakelists}" "${_sqlitecpp_patched_contents}")
+    endif()
+endif()
+
+# MinGW/GCC: fixed-width integer typedefs no longer leak from libstdc++ transitive includes; SQLiteCpp 3.3.1
+# uses int32_t/int64_t/... without <cstdint> in Statement.h (Column.h, Database.h include it indirectly).
+set(_sqlitecpp_statement_h "${sqlitecpp_SOURCE_DIR}/include/SQLiteCpp/Statement.h")
+if(EXISTS "${_sqlitecpp_statement_h}")
+    file(READ "${_sqlitecpp_statement_h}" _sqlitecpp_statement_h_contents)
+    if(NOT _sqlitecpp_statement_h_contents MATCHES "#include <cstdint>")
+        string(REPLACE "#include <memory>"
+                       "#include <memory>\n#include <cstdint>"
+                       _sqlitecpp_statement_h_patched
+                       "${_sqlitecpp_statement_h_contents}")
+        if(NOT _sqlitecpp_statement_h_patched STREQUAL _sqlitecpp_statement_h_contents)
+            file(WRITE "${_sqlitecpp_statement_h}" "${_sqlitecpp_statement_h_patched}")
+            message(STATUS "Patched SQLiteCpp include/SQLiteCpp/Statement.h (<cstdint> for MinGW/GCC).")
+        endif()
     endif()
 endif()
 
@@ -491,6 +513,24 @@ target_link_libraries(SmatchetStandalone PRIVATE
 
 if(WIN32)
     target_link_libraries(SmatchetStandalone PRIVATE opengl32 ws2_32 crypt32)
+    # MinGW release exe otherwise depends on libgcc/libstdc++ DLLs; wrong DLL on PATH → 0xC0000139
+    # (entry point not found) before main — no logs, "release doesn't run".
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_link_options(SmatchetStandalone PRIVATE -static-libgcc -static-libstdc++)
+        # Still links libwinpthread-1.dll; copy toolchain DLL next to exe so PATH doesn't load a wrong build.
+        get_filename_component(_SMATCHET_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set(_SMATCHET_WINPTHREAD_DLL "${_SMATCHET_MINGW_BIN}/libwinpthread-1.dll")
+        if(EXISTS "${_SMATCHET_WINPTHREAD_DLL}")
+            add_custom_command(
+                TARGET SmatchetStandalone
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_SMATCHET_WINPTHREAD_DLL}"
+                        "$<TARGET_FILE_DIR:SmatchetStandalone>/"
+                COMMENT "Copy MinGW libwinpthread-1.dll next to SmatchetStandalone"
+                VERBATIM)
+        endif()
+    endif()
 elseif(APPLE)
     find_library(COCOA_LIBRARY Cocoa)
     find_library(OPENGL_LIBRARY OpenGL)

@@ -8,6 +8,8 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 enum class JiraFieldFamily {
@@ -71,6 +73,19 @@ struct JiraUser {
 /** Jira-style duration (e.g. "2h 30m"); empty if seconds <= 0. */
 std::string FormatWorkDurationFromSeconds(long long seconds);
 
+/**
+ * Per-(project, issuetype) metadata collected from Jira's createmeta. Currently
+ * tracks required field ids and whether the issuetype is a subtask.
+ * Canonical definition (used by AppController / JiraClient only).
+ */
+struct IssueTypeCreateMeta {
+    std::string ProjectKey;
+    std::string IssueTypeId;
+    std::string IssueTypeName;
+    bool IsSubtask = false;
+    std::unordered_set<std::string> RequiredFieldIds;
+};
+
 class JiraClient : public ITrackerClient {
 public:
     bool FetchUsers(const JiraConfig& cfg,
@@ -81,6 +96,31 @@ public:
                            const nlohmann::json& fields,
                            std::string& outError) override;
 
+    // POST /rest/api/3/issue with {"fields": <fields>}; returns new key (e.g. PROJ-42).
+    std::string CreateIssue(const nlohmann::json& fields,
+                            std::string& outError) override;
+
+    /**
+     * Multipart upload to /rest/api/3/issue/{key}/attachments (X-Atlassian-Token: no-check).
+     * Per-file failures are collected in `outFailures` and do not abort the remaining uploads.
+     * Returns true when every file uploaded successfully.
+     */
+    bool AttachFilesToIssue(const std::string& issueKey,
+                            const std::vector<std::string>& absolutePaths,
+                            std::vector<std::pair<std::string, std::string>>& outFailures,
+                            std::string& outError) override;
+
+    bool AddIssueToSprint(const std::string& issueKey,
+                          const std::string& sprintId,
+                          std::string& outError) override;
+
+    bool FetchFieldCatalog(const JiraConfig& cfg,
+                           std::vector<JiraField>& outFields,
+                           std::vector<JiraComponent>& outComponents,
+                           std::vector<IssueTypeCreateMeta>& outIssueTypeMeta,
+                           std::string& outError);
+
+    /** Legacy overload for callers that don't need issuetype-level required metadata. */
     bool FetchFieldCatalog(const JiraConfig& cfg,
                            std::vector<JiraField>& outFields,
                            std::vector<JiraComponent>& outComponents,
@@ -117,6 +157,16 @@ public:
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                             const JiraConfig* configOverride = nullptr,
                                             const ViewsStore* viewsOverride = nullptr) override;
+
+    /**
+     * Search by explicit issue keys (same field selection as FetchIssues for `viewStore`).
+     * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.
+     */
+    bool FetchIssuesForKeys(const JiraConfig& cfg,
+                            const std::vector<std::string>& issueKeys,
+                            const ViewsStore& viewStore,
+                            std::vector<CachedTicket>& outTickets,
+                            std::string& outError);
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
     bool SearchUsersByQuery(const JiraConfig& cfg,

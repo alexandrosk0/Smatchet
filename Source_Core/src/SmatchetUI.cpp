@@ -13,6 +13,10 @@
 #include "StringUtil.h"
 #include "JiraLabelsEditor.h"
 #include "JiraDateTimeFieldEditor.h"
+#include "IssueDraft.h"
+#include "IssueTableSerializer.h"
+#include "Win32PickFiles.h"
+#include <ghc/filesystem.hpp>
 #include "imgui.h"
 #include "imgui_internal.h"
 #if defined(_WIN32)
@@ -46,6 +50,7 @@
 #include <vector>
 #include <cstdio>
 #include <string>
+#include <system_error>
 
 namespace {
 
@@ -1043,6 +1048,8 @@ struct UiDrawSession {
     bool requestViewsDashboardFocus = false;
     bool showPerformance = false;
     bool showBlameAnalysis = false;
+    bool showBulkImport = false;
+    bool showBulkExport = false;
 
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
@@ -1057,6 +1064,8 @@ struct UiDrawSession {
     char emailBuf[128]{};
     char tokenBuf[512]{};
     char projectKeyBuf[64]{};
+    /** Comma-separated Jira field ids copied from last row for + New issue (see JiraConfig::NewIssueInheritFieldIds). */
+    char newIssueInheritFieldsBuf[512]{};
     char aiApiKeyBuf[512]{};
     char aiModelBuf[128]{};
     char aiBaseUrlBuf[256]{};
@@ -1091,14 +1100,20 @@ struct UiDrawSession {
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
     std::string lastGridActiveViewId;
+    /** Last `BuildGridContextSignature` for the active grid; used to drop new-issue draft on view/JQL/column change. */
+    std::string lastGridContextSignature;
+    /** When true, next completed `CreateIssueAsync` result is ignored (user left the grid). */
+    bool newIssueDiscardAsyncCreateResult = false;
     std::vector<size_t> cachedSortedIndices;
     std::string cachedSortFingerprint;
     std::uint64_t cachedSortTicketsRevision = 0;
     std::uint64_t cachedSortCatalogRevision = 0;
     bool cachedSortValid = false;
 
-    /** Seconds at vertical end before wheel maps to horizontal scroll (see RouteVerticalWheelToHorizontalAtTableVerticalEnds). */
-    float gridBottomHorizontalWheelPauseTimer = 0.f;
+    /** At vertical bottom: first N wheel ticks do not map to horizontal scroll (see RouteVerticalWheelToHorizontalAtTableVerticalEnds). */
+    int gridBottomHorizontalWheelSwallowsRemaining = 0;
+    /** Same at vertical top. */
+    int gridTopHorizontalWheelSwallowsRemaining = 0;
 
     std::string aiResponse;
     bool aiIsThinking = false;
@@ -1111,6 +1126,37 @@ struct UiDrawSession {
 
     JiraGridFieldAsyncState jiraGridAsync;
 
+    // ---- End-of-grid "new issue" draft ----
+    // Holds the in-progress draft plus per-row editor buffers. Reset when
+    // the user clicks Cancel, or after a successful create.
+    bool newIssueDraftActive = false;
+    IssueDraft newIssueDraft;
+    std::unordered_map<std::string, std::vector<char>> newIssueDraftEditBufs; // fieldId -> ImGui InputText buffer
+    std::future<IssueCreateResult> newIssueCreateFuture;
+    bool newIssueCreateInFlight = false;
+    std::string newIssueLastError;
+    std::string newIssueLastSuccessKey;
+    std::vector<std::string> newIssueMissingFieldIds;
+
+    // ---- Bulk import/export ----
+    std::vector<char> bulkImportTextBuf;          // textarea backing store
+    char bulkImportPathBuf[1024]{};               // source file path (typed in)
+    int  bulkImportFormatSel = 0;                 // 0=Auto,1=CSV,2=TSV,3=JSON
+    IssueTableSerializer::ImportResult bulkImportPreview;
+    std::vector<std::string> bulkImportStatus;    // per-row status text
+    std::vector<std::future<IssueCreateResult>> bulkImportFutures;
+    size_t bulkImportNextSubmit = 0;
+    size_t bulkImportCompleted = 0;
+    bool bulkImportRunning = false;
+    std::string bulkImportError;
+    /** Tracks prior frame's `showBulkImport` so we can reset state on the open→close transition. */
+    bool bulkImportWasOpen = false;
+
+    char bulkExportPathBuf[1024]{};
+    int  bulkExportFormatSel = 1; // 0=CSV,1=TSV(default),2=JSON
+    bool bulkExportOnlySelected = false;
+    std::string bulkExportFeedback;
+
     std::mutex attachmentPreviewMutex;
     std::deque<AttachmentCollectionRequest> attachmentCollectionQueue;
     std::deque<AttachmentPreviewUpdate> attachmentPreviewUpdateQueue;
@@ -1120,8 +1166,41 @@ struct UiDrawSession {
     int attachmentWindowSelectedIndex = 0;
 };
 
+/** Fingerprint of what the ticket grid is showing (view, JQL, columns). */
+static std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery) {
+    std::string s;
+    if (!view) {
+        s = "@\x1e";
+    } else {
+        s = view->Id;
+        s.push_back('\x1e');
+        s += JoinCsv(view->Fields);
+        s.push_back('\x1e');
+        s += JoinCsv(view->ColumnOrder);
+        s.push_back('\x1e');
+    }
+    s += jqlQuery;
+    return s;
+}
+
+static void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
+    if (!d.newIssueDraftActive && !d.newIssueCreateInFlight) {
+        return;
+    }
+    d.newIssueDraftActive = false;
+    d.newIssueDraft = IssueDraft{};
+    d.newIssueDraftEditBufs.clear();
+    d.newIssueMissingFieldIds.clear();
+    d.newIssueLastError.clear();
+    d.newIssueLastSuccessKey.clear();
+    if (d.newIssueCreateInFlight) {
+        d.newIssueDiscardAsyncCreateResult = true;
+    }
+}
+
 static UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
+static bool g_openFilePathsHandlerInstalled = false;
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(const JiraConfig& fetchCfg) {
     return std::async(std::launch::async, [fetchCfg]() {
@@ -1168,9 +1247,9 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(const Ji
     });
 }
 
-/** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll after a short pause at the end. */
+/** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at each end ignored (see kEndWheelSwallowsBeforeHorizontal). */
 static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table) {
-    constexpr float kBottomHorizontalWheelPauseSec = 0.12f;
+    constexpr int kEndWheelSwallowsBeforeHorizontal = 6;
 
     if (!table) {
         return;
@@ -1191,22 +1270,35 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table)
     const bool atTop = inner->Scroll.y <= eps;
     const bool noVerticalScroll = inner->ScrollMax.y <= eps;
 
-    bool allowRoute = false;
-    if (noVerticalScroll) {
-        g_ui.gridBottomHorizontalWheelPauseTimer = kBottomHorizontalWheelPauseSec;
-        allowRoute = true;
-    } else if (atBottom || atTop) {
-        g_ui.gridBottomHorizontalWheelPauseTimer += io.DeltaTime;
-        allowRoute = g_ui.gridBottomHorizontalWheelPauseTimer >= kBottomHorizontalWheelPauseSec;
-    } else {
-        g_ui.gridBottomHorizontalWheelPauseTimer = 0.f;
-    }
-
     if (outer) {
         const ImRect tableRect = outer->Rect();
         if (!ImGui::IsMouseHoveringRect(tableRect.Min, tableRect.Max, false)) {
             return;
         }
+    }
+
+    if (!atBottom) {
+        g_ui.gridBottomHorizontalWheelSwallowsRemaining = 0;
+    }
+    if (!atTop) {
+        g_ui.gridTopHorizontalWheelSwallowsRemaining = 0;
+    }
+
+    bool allowRoute = false;
+    if (noVerticalScroll) {
+        allowRoute = true;
+    } else if (atBottom) {
+        if (g_ui.gridBottomHorizontalWheelSwallowsRemaining < kEndWheelSwallowsBeforeHorizontal) {
+            ++g_ui.gridBottomHorizontalWheelSwallowsRemaining;
+            return;
+        }
+        allowRoute = true;
+    } else if (atTop) {
+        if (g_ui.gridTopHorizontalWheelSwallowsRemaining < kEndWheelSwallowsBeforeHorizontal) {
+            ++g_ui.gridTopHorizontalWheelSwallowsRemaining;
+            return;
+        }
+        allowRoute = true;
     }
 
     if (!allowRoute) {
@@ -1252,6 +1344,352 @@ static void SyncWithCurrentView(AppController& app,
         d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
     }
     app.SyncWithBackend(&d.cfg, &store);
+}
+
+/**
+ * Ensure d.newIssueDraftEditBufs has a sized InputText buffer for `fieldId`,
+ * seeded from `seed`. Buffer is large enough for summary-ish lines; the
+ * description column gets a bigger allocation via the caller's override.
+ * Description uses ImGui::InputText (single-line); Jira often returns multiline
+ * text — normalize CR/LF to spaces in the initial seed so the control stays one line.
+ */
+static std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d,
+                                              const std::string& fieldId,
+                                              const std::string& seed,
+                                              size_t minSize = 512) {
+    auto& buf = d.newIssueDraftEditBufs[fieldId];
+    if (buf.empty()) {
+        buf.resize(std::max(minSize, seed.size() + 64), '\0');
+        std::memcpy(buf.data(), seed.data(), std::min(buf.size() - 1, seed.size()));
+        if (fieldId == "description") {
+            for (size_t i = 0; i < buf.size() && buf[i] != '\0'; ++i) {
+                if (buf[i] == '\n' || buf[i] == '\r') {
+                    buf[i] = ' ';
+                }
+            }
+        }
+    }
+    return buf;
+}
+
+static std::string FormatBytesUi(std::uint64_t n) {
+    if (n < 1024) {
+        return std::to_string(n) + " B";
+    }
+    const char* suffix = "KB";
+    double v = static_cast<double>(n) / 1024.0;
+    if (v >= 1024.0) {
+        v /= 1024.0;
+        suffix = "MB";
+    }
+    if (v >= 1024.0) {
+        v /= 1024.0;
+        suffix = "GB";
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.1f %s", v, suffix);
+    return std::string(buf);
+}
+
+static bool DraftHasStagedPath(const IssueDraft& draft, const ghc::filesystem::path& absPath) {
+    std::error_code ec;
+    for (const auto& a : draft.StagedAttachments) {
+        if (a.AbsPath.empty()) {
+            continue;
+        }
+        if (ghc::filesystem::equivalent(absPath, ghc::filesystem::path(a.AbsPath), ec)) {
+            return true;
+        }
+        ec.clear();
+    }
+    return false;
+}
+
+static bool TryAppendStagedFromAbsPath(IssueDraft& draft, const std::string& absUtf8) {
+    namespace fs = ghc::filesystem;
+    std::error_code ec;
+    const fs::path p(absUtf8);
+    if (!fs::is_regular_file(p, ec)) {
+        return false;
+    }
+    if (DraftHasStagedPath(draft, p)) {
+        return false;
+    }
+    StagedAttachment sa;
+    sa.AbsPath = absUtf8;
+    sa.FileName = p.filename().string();
+    sa.SizeBytes = fs::file_size(p, ec);
+    draft.StagedAttachments.push_back(std::move(sa));
+    return true;
+}
+
+static void RenderNewIssueDraftRow(AppController& app,
+                                    UiDrawSession& d,
+                                    const std::vector<TicketGridColumn>& columns,
+                                    const JiraConfig& cfg) {
+    const auto& catalog = app.GetAvailableJiraFields();
+
+    if (d.newIssueCreateInFlight && d.newIssueCreateFuture.valid() &&
+        d.newIssueCreateFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        IssueCreateResult r = d.newIssueCreateFuture.get();
+        d.newIssueCreateInFlight = false;
+        if (d.newIssueDiscardAsyncCreateResult) {
+            d.newIssueDiscardAsyncCreateResult = false;
+        } else if (r.Ok) {
+            d.newIssueLastSuccessKey = r.IssueKey;
+            d.newIssueLastError.clear();
+            d.newIssueMissingFieldIds.clear();
+            d.newIssueDraftActive = false;
+            d.newIssueDraft = IssueDraft{};
+            d.newIssueDraftEditBufs.clear();
+            d.gridEditSuccess = "Created " + r.IssueKey + ".";
+        } else {
+            d.newIssueLastError = r.Error;
+            d.newIssueMissingFieldIds = r.MissingFieldIds;
+            d.newIssueLastSuccessKey.clear();
+        }
+    }
+
+    ImGui::TableNextRow();
+
+    if (!d.newIssueDraftActive) {
+        ImGui::TableSetColumnIndex(0);
+        if (ImGui::SmallButton("+ New issue")) {
+            d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
+            if (!d.newIssueDraft.ParentKey.empty()) {
+                d.newIssueDraft.FieldValues["parent"] = d.newIssueDraft.ParentKey;
+            }
+            d.newIssueDraftActive = true;
+            d.newIssueDraftEditBufs.clear();
+            d.newIssueMissingFieldIds.clear();
+            d.newIssueLastError.clear();
+            d.newIssueLastSuccessKey.clear();
+        }
+        if (!d.newIssueLastSuccessKey.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "OK %s", d.newIssueLastSuccessKey.c_str());
+        } else if (!d.newIssueLastError.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", d.newIssueLastError.c_str());
+        }
+        return;
+    }
+
+    // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
+    const std::unordered_set<std::string> missing(d.newIssueMissingFieldIds.begin(),
+                                                   d.newIssueMissingFieldIds.end());
+
+    for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
+        const auto& column = columns[static_cast<size_t>(colIndex)];
+        ImGui::TableSetColumnIndex(colIndex);
+
+        if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+            ImGui::PushID("newissue_draft_id");
+            ImGui::BeginGroup();
+            ImGui::TextDisabled("[new]");
+
+            const bool disabled = d.newIssueCreateInFlight;
+            const auto runAttachmentPicker = [&]() {
+                app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](std::vector<std::string> paths) {
+                    for (const auto& path : paths) {
+                        TryAppendStagedFromAbsPath(d.newIssueDraft, path);
+                    }
+                });
+            };
+
+            const ImVec2 draftActionBtn(ImGui::GetContentRegionAvail().x, 0.0f);
+            if (disabled) ImGui::BeginDisabled();
+            if (ImGui::Button("Create", draftActionBtn)) {
+                // Flush edit buffers into draft field values just in case.
+                for (auto& kv : d.newIssueDraftEditBufs) {
+                    d.newIssueDraft.FieldValues[kv.first] = std::string(kv.second.data());
+                }
+                // Parent key for create comes from the `parent` grid column (FieldValues), not the payload map.
+                auto parentIt = d.newIssueDraft.FieldValues.find("parent");
+                if (parentIt != d.newIssueDraft.FieldValues.end() && !parentIt->second.empty()) {
+                    std::string parentKey = parentIt->second;
+                    const size_t sep = parentKey.find(" - ");
+                    if (sep != std::string::npos) parentKey = parentKey.substr(0, sep);
+                    d.newIssueDraft.ParentKey = parentKey;
+                    d.newIssueDraft.FieldValues.erase(parentIt);
+                }
+                d.newIssueMissingFieldIds = IssueDraftHelpers::MissingRequiredFields(
+                    d.newIssueDraft,
+                    app.GetRequiredFieldSet(d.newIssueDraft.ProjectKey,
+                                             d.newIssueDraft.IssueTypeId,
+                                             d.newIssueDraft.IssueTypeName));
+                if (!d.newIssueMissingFieldIds.empty()) {
+                    d.newIssueLastError = "Missing required fields.";
+                } else {
+                    d.newIssueLastError.clear();
+                    d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
+                    d.newIssueCreateInFlight = true;
+                }
+            }
+            if (ImGui::Button("Queue", draftActionBtn)) {
+                for (auto& kv : d.newIssueDraftEditBufs) {
+                    d.newIssueDraft.FieldValues[kv.first] = std::string(kv.second.data());
+                }
+                auto parentIt = d.newIssueDraft.FieldValues.find("parent");
+                if (parentIt != d.newIssueDraft.FieldValues.end() && !parentIt->second.empty()) {
+                    std::string parentKey = parentIt->second;
+                    const size_t sep = parentKey.find(" - ");
+                    if (sep != std::string::npos) parentKey = parentKey.substr(0, sep);
+                    d.newIssueDraft.ParentKey = parentKey;
+                    d.newIssueDraft.FieldValues.erase(parentIt);
+                }
+                const std::int64_t qid = app.QueueCreateOffline(d.newIssueDraft);
+                if (qid > 0) {
+                    d.gridEditSuccess = "Queued offline.";
+                    d.newIssueDraftActive = false;
+                    d.newIssueDraft = IssueDraft{};
+                    d.newIssueDraftEditBufs.clear();
+                    d.newIssueMissingFieldIds.clear();
+                    d.newIssueLastError.clear();
+                } else {
+                    d.newIssueLastError = "Failed to queue offline.";
+                }
+            }
+            if (ImGui::Button("Cancel", draftActionBtn)) {
+                d.newIssueDraftActive = false;
+                d.newIssueDraft = IssueDraft{};
+                d.newIssueDraftEditBufs.clear();
+                d.newIssueMissingFieldIds.clear();
+                d.newIssueLastError.clear();
+            }
+            if (ImGui::Button("Add attachment...", draftActionBtn)) {
+                runAttachmentPicker();
+            }
+            if (!d.newIssueDraft.StagedAttachments.empty()) {
+                if (ImGui::Button("Clear all##clratt", draftActionBtn)) {
+                    d.newIssueDraft.StagedAttachments.clear();
+                }
+            }
+            if (disabled) ImGui::EndDisabled();
+
+            if (!d.newIssueDraft.StagedAttachments.empty()) {
+                if (disabled) ImGui::BeginDisabled();
+                constexpr float kChipStripH = 54.0f;
+                ImGui::BeginChild("##newissueattstrip",
+                                  ImVec2(0.0f, kChipStripH),
+                                  true,
+                                  ImGuiWindowFlags_HorizontalScrollbar);
+                for (size_t i = 0; i < d.newIssueDraft.StagedAttachments.size();) {
+                    const auto& att = d.newIssueDraft.StagedAttachments[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    std::string label = att.FileName;
+                    if (label.size() > 36) {
+                        label = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
+                    }
+                    const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(chip.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x##rma")) {
+                        d.newIssueDraft.StagedAttachments.erase(d.newIssueDraft.StagedAttachments.begin() +
+                                                                static_cast<std::ptrdiff_t>(i));
+                        ImGui::PopID();
+                        continue;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Dummy(ImVec2(8.0f, 1.0f));
+                    ImGui::SameLine();
+                    ImGui::PopID();
+                    ++i;
+                }
+                ImGui::EndChild();
+                if (disabled) ImGui::EndDisabled();
+            }
+
+            ImGui::EndGroup();
+            if (ImGui::BeginPopupContextItem("newissue_draft_att_ctx")) {
+                if (ImGui::MenuItem("Add attachment...")) {
+                    if (!d.newIssueCreateInFlight) {
+                        runAttachmentPicker();
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            continue;
+        }
+
+        const std::string& fieldId = column.FieldId;
+        if (fieldId == "id" ||
+            (IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) && fieldId != "status")) {
+            ImGui::TextDisabled("-");
+            continue;
+        }
+
+        const JiraField* field = nullptr;
+        for (const auto& f : catalog) {
+            if (f.Id == fieldId) { field = &f; break; }
+        }
+
+        const bool isMissing = missing.count(fieldId) > 0 ||
+                                (fieldId == "summary" && missing.count("summary") > 0) ||
+                                (fieldId == "parent" && missing.count("__parent__") > 0);
+        if (isMissing) {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.55f, 0.15f, 0.15f, 0.45f));
+        }
+
+        ImGui::PushID(fieldId.c_str());
+        ImGui::SetNextItemWidth(-FLT_MIN);
+
+        const std::string& current = d.newIssueDraft.FieldValues[fieldId];
+
+        // Project/IssueType dropdowns come from catalog option sets when available.
+        if (fieldId == "issuetype" || fieldId == "project" ||
+            (field && !field->IsArray && !field->AllowedValueOptions.empty() &&
+             (field->Family == JiraFieldFamily::SelectSingle ||
+              field->Family == JiraFieldFamily::StructuredSingle ||
+              field->Family == JiraFieldFamily::IssueType ||
+              field->Family == JiraFieldFamily::Status ||
+              field->Family == JiraFieldFamily::Sprint ||
+              field->IsUserType))) {
+            std::string preview = current;
+            if (fieldId == "project" && preview.empty()) preview = d.newIssueDraft.ProjectKey;
+            if (fieldId == "issuetype" && preview.empty()) preview = d.newIssueDraft.IssueTypeName;
+            if (field && !field->AllowedValueOptions.empty()) {
+                for (const auto& opt : field->AllowedValueOptions) {
+                    if (opt.Id == current || opt.Value == current) {
+                        preview = opt.Value;
+                        break;
+                    }
+                }
+            }
+            if (ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str())) {
+                if (field) {
+                    for (const auto& opt : field->AllowedValueOptions) {
+                        const bool selected = (opt.Id == current || opt.Value == current);
+                        if (ImGui::Selectable(opt.Value.c_str(), selected)) {
+                            if (fieldId == "issuetype") {
+                                d.newIssueDraft.IssueTypeId = opt.Id;
+                                d.newIssueDraft.IssueTypeName = opt.Value;
+                            } else if (fieldId == "project") {
+                                d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
+                            } else {
+                                // Store option id (e.g. accountId for users) so create payload matches grid edits.
+                                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
+                            }
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            const size_t minBuf = (fieldId == "description") ? size_t(4096) : size_t(512);
+            auto& buf = EnsureDraftEditBuf(d, fieldId, current, minBuf);
+            if (ImGui::InputText("##input", buf.data(), buf.size())) {
+                d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+            }
+        }
+        ImGui::PopID();
+
+        if (isMissing) {
+            ImGui::PopStyleColor();
+        }
+    }
 }
 
 static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId) {
@@ -1945,6 +2383,8 @@ void SmatchetUI::Draw(AppController& app) {
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
     }
+    // Drain the offline create queue opportunistically (rate-limited internally).
+    app.TickOfflineCreates();
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath,
                                            const std::string& mimeType,
@@ -1970,6 +2410,34 @@ void SmatchetUI::Draw(AppController& app) {
                 g_ui.attachmentCollectionQueue.push_back(std::move(request));
             });
         g_ui.attachmentPreviewCallbackRegistered = true;
+    }
+    if (!g_openFilePathsHandlerInstalled) {
+#if defined(_WIN32)
+        app.SetOpenFilePathsHandler([](bool allowMultiple,
+                                       const std::string& initialDirectoryUtf8,
+                                       std::function<void(std::vector<std::string>)> onComplete) {
+            // GLFW: PlatformHandle is GLFWwindow*; PlatformHandleRaw is HWND (see imgui_impl_glfw).
+            void* hwnd = nullptr;
+            if (ImGui::GetCurrentContext()) {
+                if (const ImGuiViewport* vp = ImGui::GetMainViewport()) {
+                    hwnd = vp->PlatformHandleRaw;
+                }
+            }
+            std::vector<std::string> paths;
+            std::string lastDir;
+            if (SmatchetWin32PickOpenFilePaths(
+                    hwnd, allowMultiple, initialDirectoryUtf8, &lastDir, paths)) {
+                if (!lastDir.empty()) {
+                    g_ui.cfg.LastImportDirectory = std::move(lastDir);
+                    ConfigManager::Save(g_ui.cfg);
+                }
+            }
+            if (onComplete) {
+                onComplete(std::move(paths));
+            }
+        });
+#endif
+        g_openFilePathsHandlerInstalled = true;
     }
     UiPerfMonitor::Instance().BeginFrame();
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
@@ -2010,6 +2478,14 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawAttachmentPreviewWindow");
         drawAttachmentPreviewWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawBulkImportWindow");
+        drawBulkImportWindow(app);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("drawBulkExportWindow");
+        drawBulkExportWindow(app);
     }
     {
         SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawWatchersListWindow");
@@ -2419,6 +2895,15 @@ void SmatchetUI::drawMainMenuBar(AppController& app) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Tickets")) {
+            if (ImGui::MenuItem("Bulk import...")) {
+                d.showBulkImport = true;
+            }
+            if (ImGui::MenuItem("Bulk export...")) {
+                d.showBulkExport = true;
+            }
+            ImGui::EndMenu();
+        }
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
             const char* closeLabel = "Close";
@@ -2457,6 +2942,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
         CopyStringToBuffer(d.emailBuf, d.cfg.Email);
         CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
         CopyStringToBuffer(d.projectKeyBuf, d.cfg.ProjectKey);
+        CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.aiApiKeyBuf, d.cfg.AiApiKey);
         CopyStringToBuffer(d.aiModelBuf, d.cfg.AiModel);
         CopyStringToBuffer(d.aiBaseUrlBuf, d.cfg.AiBaseUrl);
@@ -2478,6 +2964,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
             ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
             ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf), ImGuiInputTextFlags_CharsUppercase);
             ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+            ImGui::Spacing();
+            ImGui::InputText("New issue: inherit fields from last row",
+                             d.newIssueInheritFieldsBuf,
+                             sizeof(d.newIssueInheritFieldsBuf));
+            ImGui::SetItemTooltip(
+                "Comma-separated Jira field ids copied from the last grid row when you click + New issue "
+                "(e.g. description, priority, assignee, labels, components). "
+                "Summary is never copied from the last row. "
+                "Clear and Save & Sync to restore the built-in default list.");
             ImGui::Spacing();
             ImGui::TextWrapped("JQL and column fields are configured in the Views dashboard.");
             if (ImGui::Button("Open Views Dashboard")) {
@@ -2601,6 +3096,19 @@ void SmatchetUI::drawPreferencesWindow(AppController& app) {
         d.cfg.Email = d.emailBuf;
         d.cfg.ApiToken = d.tokenBuf;
         d.cfg.ProjectKey = d.projectKeyBuf;
+        {
+            std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
+            d.cfg.NewIssueInheritFieldIds.clear();
+            for (const auto& s : parsedInherit) {
+                if (!s.empty() && s != "summary") {
+                    d.cfg.NewIssueInheritFieldIds.push_back(s);
+                }
+            }
+            if (d.cfg.NewIssueInheritFieldIds.empty()) {
+                d.cfg.NewIssueInheritFieldIds = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
+            }
+            CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
+        }
         d.cfg.AiApiKey = d.aiApiKeyBuf;
         d.cfg.AiModel = d.aiModelBuf;
         d.cfg.AiBaseUrl = d.aiBaseUrlBuf;
@@ -3100,6 +3608,16 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         d.lastGridActiveViewId.clear();
     }
 
+    const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
+    const bool gridContextChanged =
+        !d.lastGridContextSignature.empty() && gridContextSignature != d.lastGridContextSignature;
+    if (gridContextChanged) {
+        CancelUnfinishedNewIssueForGridChange(d);
+    }
+    d.lastGridContextSignature = gridContextSignature;
+
+    const bool gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:prep");
         if (!d.gridEditError.empty()) {
@@ -3139,6 +3657,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                     ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
                 }
             }
+            ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
             for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
                 ImGui::TableSetColumnIndex(hci);
@@ -3154,7 +3673,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
             // Apply persisted sort from view when ImGui has no sort yet, or when we just switched view.
             if (activeViewForGrid && !activeViewForGrid->SortSpecs.empty()) {
                 ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-                if (specs && (specs->SpecsCount == 0 || viewChanged)) {
+                if (specs && (specs->SpecsCount == 0 || gridSortEnvironmentChanged)) {
                     for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ++i) {
                         const ViewSortSpec& vs = activeViewForGrid->SortSpecs[i];
                         if (vs.Direction == 0) continue;
@@ -3173,7 +3692,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
             ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
-            if (viewChanged) {
+            if (gridSortEnvironmentChanged) {
                 d.cachedSortValid = false;
             }
             if (sortSpecs && sortSpecs->SpecsDirty) {
@@ -3392,6 +3911,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app) {
                     }
                 }
             }
+        }
+
+        if (!readOnlyMode) {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.newIssue");
+            RenderNewIssueDraftRow(app, d, columns, d.cfg);
         }
 
         {
@@ -3711,5 +4235,374 @@ void SmatchetUI::drawLogWindow() {
         ImGuiInputTextFlags_ReadOnly
     );
     ImGui::EndChild();
+    ImGui::End();
+}
+
+namespace {
+
+IssueTableSerializer::Format BulkFormatFromIndex(int idx) {
+    switch (idx) {
+        case 1: return IssueTableSerializer::Format::Csv;
+        case 2: return IssueTableSerializer::Format::Tsv;
+        case 3: return IssueTableSerializer::Format::Json;
+        default: return IssueTableSerializer::Format::Auto;
+    }
+}
+
+int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        auto* buf = static_cast<std::vector<char>*>(data->UserData);
+        buf->resize(static_cast<size_t>(data->BufTextLen) + 1);
+        data->Buf = buf->data();
+    }
+    return 0;
+}
+
+bool ReadEntireFile(const std::string& path, std::string& outText, std::string& outError) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.good()) {
+        outError = "Failed to open file: " + path;
+        return false;
+    }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    outText = ss.str();
+    return true;
+}
+
+bool WriteEntireFile(const std::string& path, const std::string& text, std::string& outError) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f.good()) {
+        outError = "Failed to open file for write: " + path;
+        return false;
+    }
+    f.write(text.data(), static_cast<std::streamsize>(text.size()));
+    return true;
+}
+
+} // anonymous namespace
+
+void SmatchetUI::drawBulkImportWindow(AppController& app) {
+    auto& d = g_ui;
+    if (!d.showBulkImport) {
+        if (d.bulkImportWasOpen) {
+            d.bulkImportTextBuf.clear();
+            d.bulkImportPathBuf[0] = '\0';
+            d.bulkImportFormatSel = 0;
+            d.bulkImportPreview = {};
+            d.bulkImportStatus.clear();
+            d.bulkImportFutures.clear();
+            d.bulkImportNextSubmit = 0;
+            d.bulkImportCompleted = 0;
+            d.bulkImportRunning = false;
+            d.bulkImportError.clear();
+            d.bulkImportWasOpen = false;
+        }
+        return;
+    }
+    d.bulkImportWasOpen = true;
+
+    ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
+        ImGui::End();
+        return;
+    }
+
+    if (d.bulkImportTextBuf.empty()) d.bulkImportTextBuf.assign(1, '\0');
+
+    ImGui::TextUnformatted("Source:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(520);
+    ImGui::InputText("##bulkImportPath", d.bulkImportPathBuf, sizeof(d.bulkImportPathBuf));
+    ImGui::SameLine();
+    if (ImGui::Button("Load file")) {
+        std::string text, err;
+        if (ReadEntireFile(d.bulkImportPathBuf, text, err)) {
+            d.bulkImportTextBuf.assign(text.begin(), text.end());
+            d.bulkImportTextBuf.push_back('\0');
+            d.bulkImportError.clear();
+        } else {
+            d.bulkImportError = err;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Paste clipboard")) {
+        const char* clip = ImGui::GetClipboardText();
+        if (clip && *clip) {
+            const std::string s(clip);
+            d.bulkImportTextBuf.assign(s.begin(), s.end());
+            d.bulkImportTextBuf.push_back('\0');
+            d.bulkImportError.clear();
+        } else {
+            d.bulkImportError = "Clipboard is empty.";
+        }
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    const char* kFormats[] = { "Auto", "CSV", "TSV", "JSON" };
+    ImGui::Combo("##bulkImportFmt", &d.bulkImportFormatSel, kFormats, IM_ARRAYSIZE(kFormats));
+    ImGui::SameLine();
+    if (ImGui::Button("Parse preview")) {
+        const std::string text(d.bulkImportTextBuf.data());
+        const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
+        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(
+            text, fmt, app.GetAvailableJiraFields(),
+            d.cfg.ProjectKey, d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
+        d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
+        d.bulkImportError = d.bulkImportPreview.Error;
+        d.bulkImportNextSubmit = 0;
+        d.bulkImportCompleted = 0;
+        d.bulkImportRunning = false;
+        d.bulkImportFutures.clear();
+        d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
+    }
+
+    if (!d.bulkImportError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", d.bulkImportError.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Paste / edit source text here (headers = field ids or display names):");
+    ImGui::InputTextMultiline(
+        "##bulkImportText",
+        d.bulkImportTextBuf.data(),
+        d.bulkImportTextBuf.size(),
+        ImVec2(-FLT_MIN, 160.0f),
+        ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackResize,
+        &BulkImportTextResizeCallback,
+        &d.bulkImportTextBuf);
+
+    ImGui::Separator();
+    ImGui::Text("Parsed rows: %zu", d.bulkImportPreview.Rows.size());
+    ImGui::SameLine();
+    const int maxConcurrent = (std::max)(1, d.cfg.ImportMaxConcurrent);
+    ImGui::Text("| Max concurrent: %d", maxConcurrent);
+    ImGui::SameLine();
+    const bool canRun = !d.bulkImportPreview.Rows.empty() && !d.bulkImportRunning;
+    if (!canRun) ImGui::BeginDisabled();
+    if (ImGui::Button("Submit all")) {
+        d.bulkImportRunning = true;
+        d.bulkImportNextSubmit = 0;
+        d.bulkImportCompleted = 0;
+        d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), "queued");
+        d.bulkImportFutures.clear();
+        d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
+    }
+    if (!canRun) ImGui::EndDisabled();
+
+    // Pump submissions + completions each frame.
+    if (d.bulkImportRunning) {
+        // Submit up to maxConcurrent in-flight.
+        size_t inFlight = 0;
+        for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
+            if (d.bulkImportFutures[i].valid()) ++inFlight;
+        }
+        while (d.bulkImportNextSubmit < d.bulkImportPreview.Rows.size() &&
+               inFlight < static_cast<size_t>(maxConcurrent)) {
+            const size_t idx = d.bulkImportNextSubmit++;
+            const auto& row = d.bulkImportPreview.Rows[idx];
+            if (!row.Error.empty()) {
+                d.bulkImportStatus[idx] = "parse error: " + row.Error;
+                ++d.bulkImportCompleted;
+                continue;
+            }
+            d.bulkImportFutures[idx] = app.CreateIssueAsync(row.Draft);
+            d.bulkImportStatus[idx] = "submitting...";
+            ++inFlight;
+        }
+        // Reap.
+        for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
+            auto& fut = d.bulkImportFutures[i];
+            if (!fut.valid()) continue;
+            if (fut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) continue;
+            IssueCreateResult r = fut.get();
+            if (r.Ok) {
+                d.bulkImportStatus[i] = "ok " + r.IssueKey;
+            } else {
+                std::string msg = r.Error.empty() ? "failed" : r.Error;
+                if (!r.MissingFieldIds.empty()) {
+                    msg += " [missing: ";
+                    for (size_t k = 0; k < r.MissingFieldIds.size(); ++k) {
+                        if (k) msg += ',';
+                        msg += r.MissingFieldIds[k];
+                    }
+                    msg += "]";
+                }
+                d.bulkImportStatus[i] = msg;
+            }
+            ++d.bulkImportCompleted;
+        }
+        if (d.bulkImportCompleted >= d.bulkImportPreview.Rows.size()) {
+            d.bulkImportRunning = false;
+        }
+    }
+
+    ImGui::SameLine();
+    ImGui::Text("Completed %zu / %zu", d.bulkImportCompleted, d.bulkImportPreview.Rows.size());
+
+    {
+        std::vector<std::string> keysNeedingHydration;
+        for (const auto& row : d.bulkImportPreview.Rows) {
+            const std::string& ek = row.Draft.ExistingIssueKey;
+            if (ek.empty()) {
+                continue;
+            }
+            keysNeedingHydration.push_back(ek);
+        }
+        app.PrefetchIssueTicketsForKeys(keysNeedingHydration);
+    }
+
+    auto ticketsSnap = app.GetActiveTicketsSnapshot();
+
+    if (ImGui::BeginTable("bulkImportPreview", 5,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                          ImVec2(-FLT_MIN, 260.0f))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+        ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Changes", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 220.0f);
+        ImGui::TableHeadersRow();
+
+        for (size_t i = 0; i < d.bulkImportPreview.Rows.size(); ++i) {
+            const auto& row = d.bulkImportPreview.Rows[i];
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%d", row.SourceLine);
+
+            ImGui::TableSetColumnIndex(1);
+            if (!row.Draft.ExistingIssueKey.empty()) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "update %s",
+                                   row.Draft.ExistingIssueKey.c_str());
+            } else {
+                ImGui::Text("create %s / %s", row.Draft.ProjectKey.c_str(),
+                            row.Draft.IssueTypeName.empty() ? row.Draft.IssueTypeId.c_str()
+                                                            : row.Draft.IssueTypeName.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            const auto sumIt = row.Draft.FieldValues.find("summary");
+            ImGui::TextUnformatted(sumIt != row.Draft.FieldValues.end() ? sumIt->second.c_str() : "");
+
+            ImGui::TableSetColumnIndex(3);
+            if (!row.Draft.ExistingIssueKey.empty()) {
+                const CachedTicket* existing = nullptr;
+                if (ticketsSnap) {
+                    for (const auto& t : *ticketsSnap) {
+                        if (t.id == row.Draft.ExistingIssueKey) {
+                            existing = &t;
+                            break;
+                        }
+                    }
+                }
+                if (existing) {
+                    const auto changes = IssueDraftHelpers::ComputeFieldChanges(row.Draft, *existing);
+                    if (changes.empty()) {
+                        ImGui::TextDisabled("no changes");
+                    } else {
+                        ImGui::Text("%zu field(s)", changes.size());
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::BeginTooltip();
+                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                            for (const auto& c : changes) {
+                                ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s",
+                                                   c.FieldId.c_str());
+                                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "- %s",
+                                                   c.OldValue.empty() ? "(empty)" : c.OldValue.c_str());
+                                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "+ %s",
+                                                   c.NewValue.empty() ? "(empty)" : c.NewValue.c_str());
+                                ImGui::Separator();
+                            }
+                            ImGui::PopTextWrapPos();
+                            ImGui::EndTooltip();
+                        }
+                    }
+                } else if (app.IsBulkImportPrefetchInFlight(row.Draft.ExistingIssueKey)) {
+                    ImGui::TextDisabled("loading…");
+                } else {
+                    ImGui::TextDisabled("not in cache");
+                }
+            } else {
+                ImGui::TextDisabled("new");
+            }
+
+            ImGui::TableSetColumnIndex(4);
+            const char* status = (i < d.bulkImportStatus.size()) ? d.bulkImportStatus[i].c_str() : "";
+            if (!row.Error.empty() && (i >= d.bulkImportStatus.size() || d.bulkImportStatus[i].empty())) {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", row.Error.c_str());
+            } else {
+                ImGui::TextUnformatted(status);
+            }
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+void SmatchetUI::drawBulkExportWindow(AppController& app) {
+    auto& d = g_ui;
+    if (!d.showBulkExport) return;
+
+    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextUnformatted("Destination path (for Save):");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(420);
+    ImGui::InputText("##bulkExportPath", d.bulkExportPathBuf, sizeof(d.bulkExportPathBuf));
+    ImGui::SameLine();
+    const char* kFormats[] = { "CSV", "TSV", "JSON" };
+    ImGui::SetNextItemWidth(100);
+    ImGui::Combo("##bulkExportFmt", &d.bulkExportFormatSel, kFormats, IM_ARRAYSIZE(kFormats));
+
+    ImGui::Checkbox("Only selected row", &d.bulkExportOnlySelected);
+
+    auto buildText = [&]() -> std::string {
+        auto snap = app.GetActiveTicketsSnapshot();
+        std::vector<CachedTicket> tickets;
+        if (d.bulkExportOnlySelected && !d.gridState.SelectedId.empty() && snap) {
+            for (const auto& t : *snap) {
+                if (t.id == d.gridState.SelectedId) { tickets.push_back(t); break; }
+            }
+        } else if (snap) {
+            tickets = *snap;
+        }
+        IssueTableSerializer::Format fmt = IssueTableSerializer::Format::Csv;
+        if (d.bulkExportFormatSel == 1) fmt = IssueTableSerializer::Format::Tsv;
+        else if (d.bulkExportFormatSel == 2) fmt = IssueTableSerializer::Format::Json;
+        return IssueTableSerializer::SerializeTickets(tickets, {}, fmt);
+    };
+
+    if (ImGui::Button("Copy to clipboard")) {
+        const std::string text = buildText();
+        ImGui::SetClipboardText(text.c_str());
+        d.bulkExportFeedback = "Copied " + std::to_string(text.size()) + " bytes.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save to file")) {
+        const std::string text = buildText();
+        std::string err;
+        if (WriteEntireFile(d.bulkExportPathBuf, text, err)) {
+            d.bulkExportFeedback = "Wrote " + std::to_string(text.size()) + " bytes.";
+        } else {
+            d.bulkExportFeedback = err;
+        }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", d.bulkExportFeedback.c_str());
+
+    ImGui::Separator();
+    auto snap = app.GetActiveTicketsSnapshot();
+    const size_t total = snap ? snap->size() : 0;
+    ImGui::Text("Active tickets in view: %zu", total);
+    ImGui::TextDisabled("Exports the current view's rows. Headers are field ids; import can read them back.");
+
     ImGui::End();
 }

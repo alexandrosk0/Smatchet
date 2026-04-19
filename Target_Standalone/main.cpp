@@ -99,6 +99,17 @@ static void SmatchetApplyWindowIcon(GLFWwindow* window) {
 }
 #endif
 
+static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp, PluginHost& pluginHost) {
+    try {
+        mainWindow.Draw(smatchetApp);
+        pluginHost.OnDraw(smatchetApp);
+    } catch (const std::exception&) {
+        throw;
+    } catch (...) {
+        throw;
+    }
+}
+
 int main(int, char**) {
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
@@ -227,19 +238,12 @@ int main(int, char**) {
         // Draw the main application
 #if defined(_WIN32) && defined(_MSC_VER)
         __try {
-#endif
-        try {
-            mainWindow.Draw(smatchetApp);
-            pluginHost.OnDraw(smatchetApp);
-        } catch (const std::exception&) {
-            throw;
-        } catch (...) {
-            throw;
-        }
-#if defined(_WIN32) && defined(_MSC_VER)
+            SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             exit(1);
         }
+#else
+        SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
 #endif
 
         // Rendering

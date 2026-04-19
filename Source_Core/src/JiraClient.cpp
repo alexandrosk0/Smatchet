@@ -6,6 +6,7 @@
 #include "StringUtil.h"
 
 #include <cpr/cpr.h>
+#include <ghc/filesystem.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -14,11 +15,13 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 #include <cstddef>
+#include <functional>
 
 // Defined below; used by timetracking formatting in the anonymous namespace.
 std::string FormatWorkDurationFromSeconds(long long seconds);
@@ -1595,8 +1598,18 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                                   std::vector<JiraField>& outFields,
                                   std::vector<JiraComponent>& outComponents,
                                   std::string& outError) {
+    std::vector<IssueTypeCreateMeta> ignored;
+    return FetchFieldCatalog(cfg, outFields, outComponents, ignored, outError);
+}
+
+bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
+                                  std::vector<JiraField>& outFields,
+                                  std::vector<JiraComponent>& outComponents,
+                                  std::vector<IssueTypeCreateMeta>& outIssueTypeMeta,
+                                  std::string& outError) {
     outFields.clear();
     outComponents.clear();
+    outIssueTypeMeta.clear();
     outError.clear();
 
     if (!EnsureJiraAuthConfig(cfg, outError)) {
@@ -1706,9 +1719,38 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
         try {
             auto metaJson = nlohmann::json::parse(metaResponse.text);
             std::set<std::string> uniqueComponentIds;
+            std::unordered_map<std::string, std::size_t> issueTypeMetaIndexByKey;
+            const auto issueTypeMetaKey = [](const IssueTypeCreateMeta& m) -> std::string {
+                if (!m.IssueTypeId.empty()) {
+                    return m.ProjectKey + '\x1f' + m.IssueTypeId;
+                }
+                return m.ProjectKey + '\x1f' + m.IssueTypeName;
+            };
+            const auto upsertIssueTypeMeta = [&](IssueTypeCreateMeta entry) {
+                if (entry.IssueTypeId.empty() && entry.IssueTypeName.empty()) {
+                    return;
+                }
+                const std::string k = issueTypeMetaKey(entry);
+                const auto found = issueTypeMetaIndexByKey.find(k);
+                if (found == issueTypeMetaIndexByKey.end()) {
+                    issueTypeMetaIndexByKey[k] = outIssueTypeMeta.size();
+                    outIssueTypeMeta.push_back(std::move(entry));
+                    return;
+                }
+                IssueTypeCreateMeta& dst = outIssueTypeMeta[found->second];
+                dst.RequiredFieldIds.insert(entry.RequiredFieldIds.begin(), entry.RequiredFieldIds.end());
+                if (dst.IssueTypeName.empty() && !entry.IssueTypeName.empty()) {
+                    dst.IssueTypeName = entry.IssueTypeName;
+                }
+                if (dst.IssueTypeId.empty() && !entry.IssueTypeId.empty()) {
+                    dst.IssueTypeId = entry.IssueTypeId;
+                }
+                dst.IsSubtask = dst.IsSubtask || entry.IsSubtask;
+            };
 
         if (metaJson.contains("projects") && metaJson["projects"].is_array()) {
             for (const auto& project : metaJson["projects"]) {
+                std::string projectKey = project.value("key", cfg.ProjectKey);
                 if (!project.contains("issuetypes") || !project["issuetypes"].is_array()) {
                     continue;
                 }
@@ -1718,10 +1760,34 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                         uniqueIssueTypes.insert(issueType["name"].get<std::string>());
                     }
 
+                    IssueTypeCreateMeta metaEntry;
+                    metaEntry.ProjectKey = projectKey;
+                    metaEntry.IsSubtask = issueType.value("subtask", false);
+                    if (issueType.contains("id")) {
+                        if (issueType["id"].is_string()) {
+                            metaEntry.IssueTypeId = issueType["id"].get<std::string>();
+                        } else if (issueType["id"].is_number_integer()) {
+                            metaEntry.IssueTypeId = std::to_string(issueType["id"].get<long long>());
+                        } else if (issueType["id"].is_number_unsigned()) {
+                            metaEntry.IssueTypeId = std::to_string(issueType["id"].get<unsigned long long>());
+                        }
+                    }
+                    metaEntry.IssueTypeName = issueType.value("name", std::string());
+
                     if (!issueType.contains("fields") || !issueType["fields"].is_object()) {
+                        upsertIssueTypeMeta(std::move(metaEntry));
                         continue;
                     }
 
+                    // Pass 1: collect per-screen "required" flags from createmeta field schemas.
+                    for (auto it = issueType["fields"].begin(); it != issueType["fields"].end(); ++it) {
+                        const std::string requiredFieldId = it.key();
+                        if (it.value().is_object() && it.value().value("required", false)) {
+                            metaEntry.RequiredFieldIds.insert(requiredFieldId);
+                        }
+                    }
+
+                    // Pass 2: merge allowedValues into the global field catalog (and collect components).
                     for (auto it = issueType["fields"].begin(); it != issueType["fields"].end(); ++it) {
                         const std::string fieldId = it.key();
                         const auto& fieldObj = it.value();
@@ -1768,6 +1834,8 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
                         RefreshAllowedValuesFromOptions(targetField);
                         targetField.Family = ClassifyJiraFieldFamily(targetField);
                     }
+
+                    upsertIssueTypeMeta(std::move(metaEntry));
                 }
             }
         }
@@ -2035,6 +2103,207 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg,
     return true;
 }
 
+namespace {
+
+bool JiraFetchIssueCommentsPages(const std::string& base,
+                                 const cpr::Header& headers,
+                                 const std::string& issueKey,
+                                 nlohmann::json& outComments) {
+    outComments = nlohmann::json::array();
+    int startAt = 0;
+    const int maxResults = 100;
+    const int maxPages = 20;
+
+    for (int page = 0; page < maxPages; ++page) {
+        const std::string commentsUrl =
+            base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment?startAt=" + std::to_string(startAt) +
+            "&maxResults=" + std::to_string(maxResults);
+        auto commentsResp = JiraGetLogged(commentsUrl, headers);
+        if (commentsResp.status_code != 200) {
+            LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d", issueKey.c_str(),
+                     commentsResp.status_code);
+            return !outComments.empty();
+        }
+
+        try {
+            auto commentsJson = nlohmann::json::parse(commentsResp.text);
+            if (!commentsJson.contains("comments") || !commentsJson["comments"].is_array()) {
+                LOG_WARN("JiraClient: comments endpoint for %s missing comments array.", issueKey.c_str());
+                return !outComments.empty();
+            }
+
+            const auto& pageComments = commentsJson["comments"];
+            for (const auto& c : pageComments) {
+                outComments.push_back(c);
+            }
+
+            const int total = commentsJson.value("total", static_cast<int>(outComments.size()));
+            const int pageCount = static_cast<int>(pageComments.size());
+            const int reportedMaxResults = commentsJson.value("maxResults", pageCount);
+            startAt += (reportedMaxResults > 0 ? reportedMaxResults : pageCount);
+
+            if (static_cast<int>(outComments.size()) >= total || pageCount == 0) {
+                break;
+            }
+        } catch (const std::exception& ex) {
+            LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), ex.what());
+            return !outComments.empty();
+        }
+    }
+    return true;
+}
+
+void BuildFetchFieldListsFromView(const ViewsStore& viewStore,
+                                  std::vector<std::string>& outFieldsList,
+                                  std::vector<std::string>& outSelectedFields) {
+    outFieldsList = std::vector<std::string>{
+        "summary", "description", "status", "assignee", "priority", "issuetype", "parent", "comment", "changelog"};
+    std::unordered_set<std::string> seenFields(outFieldsList.begin(), outFieldsList.end());
+    outSelectedFields.clear();
+    std::unordered_set<std::string> seenSelectedFields;
+
+    const ViewDefinition* activeViewDef = nullptr;
+    for (const auto& view : viewStore.Views) {
+        if (view.Id == viewStore.ActiveViewId) {
+            activeViewDef = &view;
+            break;
+        }
+    }
+    if (!activeViewDef && !viewStore.Views.empty()) {
+        activeViewDef = &viewStore.Views.front();
+    }
+    if (activeViewDef) {
+        for (const auto& rawField : activeViewDef->Fields) {
+            const std::string field = TrimCopy(rawField);
+            if (field.empty()) {
+                continue;
+            }
+            if (field == "history") {
+                if (seenSelectedFields.insert(field).second) {
+                    outSelectedFields.push_back(field);
+                }
+                continue;
+            }
+            if (!seenSelectedFields.insert(field).second) {
+                continue;
+            }
+            if (seenFields.insert(field).second) {
+                outFieldsList.push_back(field);
+                outSelectedFields.push_back(field);
+            } else {
+                outSelectedFields.push_back(field);
+            }
+        }
+    }
+    if (outSelectedFields.empty()) {
+        const char* kBasicDefaults[] = {
+            "summary",
+            "assignee",
+            "priority",
+            "status",
+            "created",
+            "updated",
+        };
+        for (const char* basicId : kBasicDefaults) {
+            if (seenFields.insert(basicId).second) {
+                outFieldsList.push_back(basicId);
+            }
+            if (seenSelectedFields.insert(basicId).second) {
+                outSelectedFields.emplace_back(basicId);
+            }
+        }
+    }
+}
+
+bool JiraAppendCachedTicketFromSearchIssue(
+    const nlohmann::json& issue,
+    const std::vector<std::string>& selectedFields,
+    const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
+    std::vector<CachedTicket>& results) {
+    try {
+        CachedTicket ticket;
+        ticket.id = JsonGetStringIfString(issue, "key");
+
+        nlohmann::json issueFields = issue.value("fields", nlohmann::json::object());
+        const auto stringifyForGrid = [&](const nlohmann::json& v) -> std::string {
+            if (v.is_object() || v.is_array()) {
+                return v.dump();
+            }
+            return NormalizeJiraFieldValue(v);
+        };
+
+        for (const auto& fieldKey : selectedFields) {
+            if (fieldKey == "history") {
+                const nlohmann::json changelog = issue.value("changelog", nlohmann::json::object());
+                const nlohmann::json histories = changelog.value("histories", nlohmann::json::array());
+                ticket.fieldValues["history"] = ParseChangelog(histories);
+                continue;
+            }
+            if (fieldKey == "watchers") {
+                if (issueFields.contains("watchers")) {
+                    ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watchers"]);
+                } else if (issueFields.contains("watches")) {
+                    ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watches"]);
+                } else {
+                    ticket.fieldValues["watchers"] = std::string();
+                }
+                continue;
+            }
+            if (issueFields.contains(fieldKey)) {
+                const auto& rawValue = issueFields[fieldKey];
+                if (fieldKey == "comment" && rawValue.is_object() && rawValue.contains("comments")) {
+                    const auto& commentObj = rawValue;
+                    const auto& commentsArray = commentObj["comments"];
+                    const int totalComments = commentObj.value("total", static_cast<int>(commentsArray.size()));
+                    if (commentsArray.is_array() && !commentsArray.empty()) {
+                        ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
+                    } else if (totalComments > 0) {
+                        nlohmann::json fetchedComments = nlohmann::json::array();
+                        if (fetchIssueComments(ticket.id, fetchedComments) && fetchedComments.is_array()) {
+                            ticket.fieldValues[fieldKey] = ParseComments(fetchedComments);
+                        } else {
+                            ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
+                        }
+                    } else {
+                        ticket.fieldValues[fieldKey] = std::string();
+                    }
+                } else if (fieldKey == "timetracking" || fieldKey == "aggregatetimetracking") {
+                    if (rawValue.is_object()) {
+                        ticket.fieldValues[fieldKey] = FormatJiraTimetrackingDisplay(rawValue);
+                    } else {
+                        ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
+                    }
+                } else if (fieldKey == "attachment" || fieldKey == "attachments") {
+                    ticket.fieldValues[fieldKey] = stringifyForGrid(rawValue);
+                } else if (fieldKey == "timeoriginalestimate" || fieldKey == "timeestimate" ||
+                           fieldKey == "timespent" || fieldKey == "aggregatetimeoriginalestimate" ||
+                           fieldKey == "aggregatetimeestimate" || fieldKey == "aggregatetimespent") {
+                    long long seconds = 0;
+                    if (rawValue.is_number_integer()) {
+                        seconds = rawValue.get<long long>();
+                    } else if (rawValue.is_number_unsigned()) {
+                        seconds = static_cast<long long>(rawValue.get<unsigned long long>());
+                    }
+                    ticket.fieldValues[fieldKey] = FormatWorkDurationFromSeconds(seconds);
+                } else {
+                    ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
+                }
+            } else {
+                ticket.fieldValues[fieldKey] = std::string();
+            }
+        }
+        if (issueFields.contains("issuetype")) {
+            ticket.fieldValues["issuetype"] = NormalizeJiraFieldValue(issueFields["issuetype"]);
+        }
+        results.push_back(std::move(ticket));
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+} // namespace
+
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
                                                   const JiraConfig* configOverride,
                                                   const ViewsStore* viewsOverride) {
@@ -2062,12 +2331,6 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
     while (!jqlRaw.empty() && (jqlRaw.front() == ' ' || jqlRaw.front() == '\t')) jqlRaw.erase(0, 1);
     while (!jqlRaw.empty() && (jqlRaw.back() == ' ' || jqlRaw.back() == '\t')) jqlRaw.pop_back();
     const std::string jqlEncoded = UrlEncode(jqlRaw);
-    std::vector<std::string> fieldsList{
-        "summary", "description", "status", "assignee", "priority", "issuetype", "parent", "comment", "changelog"
-    };
-    std::unordered_set<std::string> seenFields(fieldsList.begin(), fieldsList.end());
-    std::vector<std::string> selectedFields;
-    std::unordered_set<std::string> seenSelectedFields;
 
     // Prefer the active view's field list as the single source of truth.
     ViewsStore viewsStorage;
@@ -2078,59 +2341,9 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
     }
     const ViewsStore& viewStore = *viewsPtr;
 
-    const ViewDefinition* activeViewDef = nullptr;
-    for (const auto& view : viewStore.Views) {
-        if (view.Id == viewStore.ActiveViewId) {
-            activeViewDef = &view;
-            break;
-        }
-    }
-    if (!activeViewDef && !viewStore.Views.empty()) {
-        activeViewDef = &viewStore.Views.front();
-    }
-    if (activeViewDef) {
-        for (const auto& rawField : activeViewDef->Fields) {
-            const std::string field = TrimCopy(rawField);
-            if (field.empty()) {
-                continue;
-            }
-            if (field == "history") {
-                if (seenSelectedFields.insert(field).second) {
-                    selectedFields.push_back(field);
-                }
-                continue;
-            }
-            if (!seenSelectedFields.insert(field).second) {
-                continue;
-            }
-            if (seenFields.insert(field).second) {
-                fieldsList.push_back(field);
-                selectedFields.push_back(field);
-            } else {
-                selectedFields.push_back(field);
-            }
-        }
-    }
-    // Fallback for cases where the active view has no explicit fields:
-    // default to the Basic Fields set so the grid has useful values.
-    if (selectedFields.empty()) {
-        const char* kBasicDefaults[] = {
-            "summary",
-            "assignee",
-            "priority",
-            "status",
-            "created",
-            "updated"
-        };
-        for (const char* basicId : kBasicDefaults) {
-            if (seenFields.insert(basicId).second) {
-                fieldsList.push_back(basicId);
-            }
-            if (seenSelectedFields.insert(basicId).second) {
-                selectedFields.emplace_back(basicId);
-            }
-        }
-    }
+    std::vector<std::string> fieldsList;
+    std::vector<std::string> selectedFields;
+    BuildFetchFieldListsFromView(viewStore, fieldsList, selectedFields);
     const std::string fields = JoinStrings(fieldsList, ",");
 
     // Use the new Jira Cloud search endpoint as per Atlassian migration guidance.
@@ -2141,49 +2354,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
 
     const cpr::Header headers = BuildJiraHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
-        outComments = nlohmann::json::array();
-        int startAt = 0;
-        const int maxResults = 100;
-        const int maxPages = 20;
-
-        for (int page = 0; page < maxPages; ++page) {
-            const std::string commentsUrl =
-                base + "/rest/api/3/issue/" + UrlEncode(issueKey) +
-                "/comment?startAt=" + std::to_string(startAt) +
-                "&maxResults=" + std::to_string(maxResults);
-            auto commentsResp = JiraGetLogged(commentsUrl, headers);
-            if (commentsResp.status_code != 200) {
-                LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d",
-                         issueKey.c_str(), commentsResp.status_code);
-                return !outComments.empty();
-            }
-
-            try {
-                auto commentsJson = nlohmann::json::parse(commentsResp.text);
-                if (!commentsJson.contains("comments") || !commentsJson["comments"].is_array()) {
-                    LOG_WARN("JiraClient: comments endpoint for %s missing comments array.", issueKey.c_str());
-                    return !outComments.empty();
-                }
-
-                const auto& pageComments = commentsJson["comments"];
-                for (const auto& c : pageComments) {
-                    outComments.push_back(c);
-                }
-
-                const int total = commentsJson.value("total", static_cast<int>(outComments.size()));
-                const int pageCount = static_cast<int>(pageComments.size());
-                const int reportedMaxResults = commentsJson.value("maxResults", pageCount);
-                startAt += (reportedMaxResults > 0 ? reportedMaxResults : pageCount);
-
-                if (static_cast<int>(outComments.size()) >= total || pageCount == 0) {
-                    break;
-                }
-            } catch (const std::exception& ex) {
-                LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), ex.what());
-                return !outComments.empty();
-            }
-        }
-        return true;
+        return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
 
     std::vector<CachedTicket> results;
@@ -2224,100 +2395,13 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
             }
 
             const size_t before = results.size();
-            for (auto& issue : json["issues"]) {
-                try {
-                CachedTicket ticket;
-                ticket.id = JsonGetStringIfString(issue, "key");
-
-                nlohmann::json issueFields = issue.value("fields", nlohmann::json::object());
-                const auto stringifyForGrid = [&](const nlohmann::json& v) -> std::string {
-                    if (v.is_object() || v.is_array()) {
-                        return v.dump();
-                    }
-                    return NormalizeJiraFieldValue(v);
-                };
-
-                for (const auto& fieldKey : selectedFields) {
-                    if (fieldKey == "history") {
-                        const nlohmann::json changelog = issue.value("changelog", nlohmann::json::object());
-                        const nlohmann::json histories = changelog.value("histories", nlohmann::json::array());
-                        ticket.fieldValues["history"] = ParseChangelog(histories);
-                        continue;
-                    }
-                    if (fieldKey == "watchers") {
-                        if (issueFields.contains("watchers")) {
-                            ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watchers"]);
-                        } else if (issueFields.contains("watches")) {
-                            ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watches"]);
-                        } else {
-                            ticket.fieldValues["watchers"] = std::string();
-                        }
-                        continue;
-                    }
-                    if (issueFields.contains(fieldKey)) {
-                        const auto& rawValue = issueFields[fieldKey];
-                        if (fieldKey == "comment" &&
-                            rawValue.is_object() &&
-                            rawValue.contains("comments")) {
-                            const auto& commentObj = rawValue;
-                            const auto& commentsArray = commentObj["comments"];
-                            const int totalComments = commentObj.value(
-                                "total", static_cast<int>(commentsArray.size()));
-                            if (commentsArray.is_array() && !commentsArray.empty()) {
-                                ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
-                            } else if (totalComments > 0) {
-                                nlohmann::json fetchedComments = nlohmann::json::array();
-                                if (fetchIssueComments(ticket.id, fetchedComments) && fetchedComments.is_array()) {
-                                    ticket.fieldValues[fieldKey] = ParseComments(fetchedComments);
-                                } else {
-                                    ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
-                                }
-                            } else {
-                                ticket.fieldValues[fieldKey] = std::string();
-                            }
-                        } else if (fieldKey == "timetracking" || fieldKey == "aggregatetimetracking") {
-                            if (rawValue.is_object()) {
-                                ticket.fieldValues[fieldKey] = FormatJiraTimetrackingDisplay(rawValue);
-                            } else {
-                                ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
-                            }
-                        } else if (fieldKey == "attachment" || fieldKey == "attachments") {
-                            // Keep full attachment metadata JSON (filename/content/mime/id) for UI open/preview actions.
-                            ticket.fieldValues[fieldKey] = stringifyForGrid(rawValue);
-                        } else if (fieldKey == "timeoriginalestimate" ||
-                                   fieldKey == "timeestimate" ||
-                                   fieldKey == "timespent" ||
-                                   fieldKey == "aggregatetimeoriginalestimate" ||
-                                   fieldKey == "aggregatetimeestimate" ||
-                                   fieldKey == "aggregatetimespent") {
-                            long long seconds = 0;
-                            if (rawValue.is_number_integer()) {
-                                seconds = rawValue.get<long long>();
-                            } else if (rawValue.is_number_unsigned()) {
-                                seconds = static_cast<long long>(rawValue.get<unsigned long long>());
-                            }
-                            ticket.fieldValues[fieldKey] = FormatWorkDurationFromSeconds(seconds);
-                        } else {
-                            ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
-                        }
-                    } else {
-                        ticket.fieldValues[fieldKey] = std::string();
-                    }
-                }
-                // Always persist issuetype when Jira returned it (search includes it in `fields=` even if
-                // the active view did not list it in selectedFields, so maps stay consistent for the grid).
-                if (issueFields.contains("issuetype")) {
-                    ticket.fieldValues["issuetype"] = NormalizeJiraFieldValue(issueFields["issuetype"]);
-                }
-                results.push_back(std::move(ticket));
-                } catch (const std::exception& ex) {
+            for (const auto& issue : json["issues"]) {
+                if (!JiraAppendCachedTicketFromSearchIssue(issue, selectedFields, fetchIssueComments, results)) {
                     const std::string issueKey = issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
-                    LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s: %s",
+                    LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s",
                               page,
-                              issueKey.empty() ? "(unknown key)" : issueKey.c_str(),
-                              ex.what());
+                              issueKey.empty() ? "(unknown key)" : issueKey.c_str());
                     syncEndedCleanly = false;
-                    continue;
                 }
             }
             const size_t added = results.size() - before;
@@ -2394,6 +2478,93 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted,
         }
     }
     return results;
+}
+
+bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg,
+                                    const std::vector<std::string>& issueKeys,
+                                    const ViewsStore& viewStore,
+                                    std::vector<CachedTicket>& outTickets,
+                                    std::string& outError) {
+    outError.clear();
+    if (issueKeys.empty()) {
+        return true;
+    }
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+
+    std::vector<std::string> keys;
+    keys.reserve(issueKeys.size());
+    std::unordered_set<std::string> seen;
+    for (const auto& k : issueKeys) {
+        const std::string t = TrimCopy(k);
+        if (t.empty() || !seen.insert(t).second) {
+            continue;
+        }
+        keys.push_back(t);
+    }
+    if (keys.empty()) {
+        return true;
+    }
+
+    std::vector<std::string> fieldsList;
+    std::vector<std::string> selectedFields;
+    BuildFetchFieldListsFromView(viewStore, fieldsList, selectedFields);
+    const std::string fields = JoinStrings(fieldsList, ",");
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+    auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
+        return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
+    };
+
+    constexpr std::size_t kMaxKeysPerRequest = 40;
+    for (size_t offset = 0; offset < keys.size(); offset += kMaxKeysPerRequest) {
+        const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
+        std::string jql;
+        if (n == 1) {
+            jql = "key = " + keys[offset];
+        } else {
+            jql = "key in (";
+            for (size_t i = 0; i < n; ++i) {
+                if (i) {
+                    jql += ',';
+                }
+                jql += keys[offset + i];
+            }
+            jql += ')';
+        }
+        const std::string jqlEncoded = UrlEncode(jql);
+        const std::string pageUrl =
+            base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=" + std::to_string(n) + "&fields=" +
+            fields + "&expand=changelog";
+
+        auto response = JiraGetLogged(pageUrl, headers);
+        if (response.status_code != 200) {
+            outError = "Fetch by key failed: HTTP " + std::to_string(response.status_code);
+            LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
+            return false;
+        }
+        try {
+            auto json = nlohmann::json::parse(response.text);
+            if (!json.contains("issues") || !json["issues"].is_array()) {
+                outError = "Fetch by key: response missing issues array.";
+                return false;
+            }
+            for (const auto& issue : json["issues"]) {
+                if (!JiraAppendCachedTicketFromSearchIssue(issue, selectedFields, fetchIssueComments, outTickets)) {
+                    const std::string issueKey =
+                        issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
+                    LOG_WARN("JiraClient::FetchIssuesForKeys: failed to parse issue %s",
+                             issueKey.empty() ? "(unknown)" : issueKey.c_str());
+                }
+            }
+        } catch (const std::exception& ex) {
+            outError = std::string("Fetch by key parse error: ") + ex.what();
+            return false;
+        }
+    }
+    return true;
 }
 
 namespace {
@@ -2622,6 +2793,139 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg,
         return false;
     }
     return true;
+}
+
+std::string JiraClient::CreateIssue(const nlohmann::json& fields,
+                                    std::string& outError) {
+    outError.clear();
+
+    JiraConfig cfg = ConfigManager::Load();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return {};
+    }
+    if (!fields.is_object() || fields.empty()) {
+        outError = "Create issue payload is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
+        return {};
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    nlohmann::json body = nlohmann::json::object();
+    body["fields"] = fields;
+    const std::string url = base + "/rest/api/3/issue";
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(url, headers, bodyStr);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Create issue failed: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        LOG_DEBUG("JiraClient: create payload:\n%s", body.dump(2).c_str());
+        return {};
+    }
+
+    try {
+        auto j = nlohmann::json::parse(response.text);
+        const std::string key = j.value("key", std::string());
+        if (key.empty()) {
+            outError = "Create issue response missing 'key'.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+            return {};
+        }
+        LOG_INFO("JiraClient: created Jira issue %s.", key.c_str());
+        return key;
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse create response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+        return {};
+    }
+}
+
+bool JiraClient::AttachFilesToIssue(const std::string& issueKey,
+                                     const std::vector<std::string>& absolutePaths,
+                                     std::vector<std::pair<std::string, std::string>>& outFailures,
+                                     std::string& outError) {
+    outFailures.clear();
+    outError.clear();
+
+    JiraConfig cfg = ConfigManager::Load();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+    if (absolutePaths.empty()) {
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    // Multipart: let cpr set Content-Type; always include X-Atlassian-Token.
+    cpr::Header headers = BuildJiraHeaders(cfg, false);
+    headers["X-Atlassian-Token"] = "no-check";
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/attachments";
+
+    bool allOk = true;
+    for (const auto& path : absolutePaths) {
+        if (path.empty()) {
+            continue;
+        }
+        std::error_code ec;
+        if (!ghc::filesystem::exists(path, ec) || ec) {
+            outFailures.emplace_back(path, "File not found.");
+            allOk = false;
+            continue;
+        }
+
+        cpr::Multipart multipart{{"file", cpr::File{path}}};
+        cpr::Redirect redirect(true, true);
+        cpr::Response response = cpr::Post(cpr::Url{url},
+                                           headers,
+                                           multipart,
+                                           redirect,
+                                           cpr::ConnectTimeout{kJiraConnectTimeoutMs},
+                                           cpr::Timeout{kJiraOverallTimeoutMs});
+        std::uint64_t approxBytes = 0;
+        try {
+            approxBytes = static_cast<std::uint64_t>(ghc::filesystem::file_size(path, ec));
+            if (ec) approxBytes = 0;
+        } catch (...) {
+            approxBytes = 0;
+        }
+        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, approxBytes, response);
+        LogJiraHttpResult("POST", url, response);
+
+        if (response.status_code != 200 && response.status_code != 201) {
+            std::string msg = "HTTP " + std::to_string(response.status_code);
+            if (!response.text.empty()) {
+                msg += " — ";
+                msg += TruncateForLog(response.text, 600);
+            }
+            outFailures.emplace_back(path, std::move(msg));
+            allOk = false;
+            LOG_WARN("JiraClient: attachment upload failed issue=%s path=%s HTTP=%d",
+                     issueKey.c_str(), path.c_str(), static_cast<int>(response.status_code));
+            continue;
+        }
+        LOG_INFO("JiraClient: uploaded attachment issue=%s path=%s", issueKey.c_str(), path.c_str());
+    }
+
+    if (!allOk && outError.empty()) {
+        outError = "One or more attachments failed to upload.";
+    }
+    return allOk;
+}
+
+bool JiraClient::AddIssueToSprint(const std::string& issueKey,
+                                  const std::string& sprintId,
+                                  std::string& outError) {
+    const JiraConfig cfg = ConfigManager::Load();
+    return AddIssueToSprint(cfg, issueKey, sprintId, outError);
 }
 
 bool JiraClient::AddIssueToSprint(const JiraConfig& cfg,

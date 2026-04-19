@@ -12,7 +12,6 @@
 #include <tuple>
 #include <unordered_set>
 #include <exception>
-#include <sstream>
 #include <mutex>
 #include <thread>
 #include <algorithm>
@@ -24,6 +23,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "CompactDateFormat.h"
+#include "JiraFieldPayload.h"
 
 #include <cpr/cpr.h>
 
@@ -223,7 +223,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         {"Authorization", authHeader},
         {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}
     };
-    cpr::Redirect redirect(false, false);
+    cpr::Redirect redirect(true, false);
 
     constexpr size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
     bool sizeExceeded = false;
@@ -478,6 +478,70 @@ std::vector<CachedTicket> AppController::GetActiveTickets() const {
     return *activeTicketsPublished_;
 }
 
+void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys) {
+    if (!Cache) {
+        return;
+    }
+    std::vector<std::string> toFetch;
+    {
+        const auto snap = GetActiveTicketsSnapshot();
+        std::unordered_set<std::string> have;
+        if (snap) {
+            for (const auto& t : *snap) {
+                have.insert(t.id);
+            }
+        }
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        for (const auto& k : issueKeys) {
+            if (k.empty() || have.count(k) > 0) {
+                continue;
+            }
+            if (bulkImportPrefetchKeysInFlight_.count(k) > 0) {
+                continue;
+            }
+            bulkImportPrefetchKeysInFlight_.insert(k);
+            toFetch.push_back(k);
+        }
+    }
+    if (toFetch.empty()) {
+        return;
+    }
+
+    LaunchBackgroundTask([this, toFetch]() {
+        JiraClient client;
+        JiraConfig cfg = ConfigManager::Load();
+        ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+        std::string err;
+        std::vector<CachedTicket> tickets;
+        const bool ok = client.FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+        {
+            std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+            for (const auto& k : toFetch) {
+                bulkImportPrefetchKeysInFlight_.erase(k);
+            }
+        }
+        if (!ok) {
+            LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
+            return;
+        }
+        if (!Cache) {
+            return;
+        }
+        for (auto& t : tickets) {
+            Cache->SaveTicket(t);
+        }
+        RefreshLocalData();
+    });
+}
+
+bool AppController::IsBulkImportPrefetchInFlight(const std::string& issueKey) const {
+    if (issueKey.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+    return bulkImportPrefetchKeysInFlight_.find(issueKey) != bulkImportPrefetchKeysInFlight_.end();
+}
+
 void AppController::LaunchBackgroundTask(std::function<void()> task) {
     if (!task || shuttingDown_.load()) {
         return;
@@ -594,6 +658,23 @@ void AppController::SetAttachmentPreviewHandler(AttachmentPreviewHandler handler
 
 void AppController::SetAttachmentCollectionHandler(AttachmentCollectionHandler handler) {
     AttachmentCollectionHandlerCallback = std::move(handler);
+}
+
+void AppController::SetOpenFilePathsHandler(OpenFilePathsHandler handler) {
+    OpenFilePathsHandlerCallback = std::move(handler);
+}
+
+void AppController::RequestOpenFilePaths(bool allowMultiple,
+                                         const std::string& initialDirectoryUtf8,
+                                         std::function<void(std::vector<std::string>)> onComplete) const {
+    if (!onComplete) {
+        return;
+    }
+    if (OpenFilePathsHandlerCallback) {
+        OpenFilePathsHandlerCallback(allowMultiple, initialDirectoryUtf8, std::move(onComplete));
+        return;
+    }
+    onComplete({});
 }
 
 void AppController::ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments) {
@@ -1010,240 +1091,6 @@ bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
            fieldId == "aggregatetimespent";
 }
 
-void DecodeCascadingSelection(const std::string& encoded, std::string& outParentId, std::string& outChildId) {
-    const size_t sep = encoded.find('\x1f');
-    if (sep == std::string::npos) {
-        outParentId = encoded;
-        outChildId.clear();
-        return;
-    }
-    outParentId = encoded.substr(0, sep);
-    outChildId = encoded.substr(sep + 1);
-}
-
-const JiraFieldOption* FindJiraFieldOptionByIdRecursive(const std::vector<JiraFieldOption>& options,
-                                                        const std::string& id) {
-    for (const auto& option : options) {
-        if (option.Id == id) {
-            return &option;
-        }
-        if (!option.Children.empty()) {
-            if (const JiraFieldOption* nested = FindJiraFieldOptionByIdRecursive(option.Children, id)) {
-                return nested;
-            }
-        }
-    }
-    return nullptr;
-}
-
-std::string ResolveJiraFieldOptionLabelRecursive(const std::vector<JiraFieldOption>& options,
-                                                 const std::string& value) {
-    for (const auto& option : options) {
-        if (option.Id == value || option.Value == value) {
-            return option.Value;
-        }
-        if (!option.Children.empty()) {
-            const std::string nested = ResolveJiraFieldOptionLabelRecursive(option.Children, value);
-            if (!nested.empty()) {
-                return nested;
-            }
-        }
-    }
-    return {};
-}
-
-std::string ResolveDisplayValueForSubmittedSelection(const JiraField& field, const std::string& value) {
-    if (field.Family == JiraFieldFamily::CascadingSelect) {
-        std::string parentId;
-        std::string childId;
-        DecodeCascadingSelection(value, parentId, childId);
-        const JiraFieldOption* parent = FindJiraFieldOptionByIdRecursive(field.AllowedValueOptions, parentId);
-        if (parent == nullptr) {
-            return value;
-        }
-        if (childId.empty()) {
-            return parent->Value;
-        }
-        const JiraFieldOption* child = FindJiraFieldOptionByIdRecursive(parent->Children, childId);
-        if (child == nullptr) {
-            return parent->Value;
-        }
-        return parent->Value + " > " + child->Value;
-    }
-    const std::string resolved = ResolveJiraFieldOptionLabelRecursive(field.AllowedValueOptions, value);
-    return resolved.empty() ? value : resolved;
-}
-
-nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
-    if (!raw.is_object()) {
-        return raw;
-    }
-    nlohmann::json out = nlohmann::json::object();
-    if (raw.contains("id") && (raw["id"].is_string() || raw["id"].is_number())) {
-        out["id"] = raw["id"];
-        return out;
-    }
-    if (raw.contains("accountId") && raw["accountId"].is_string()) {
-        out["accountId"] = raw["accountId"];
-        return out;
-    }
-    if (raw.contains("groupId") && raw["groupId"].is_string()) {
-        out["groupId"] = raw["groupId"];
-        if (raw.contains("name") && raw["name"].is_string()) {
-            out["name"] = raw["name"];
-        }
-        return out;
-    }
-    if (raw.contains("key") && raw["key"].is_string()) {
-        out["key"] = raw["key"];
-        return out;
-    }
-    if (raw.contains("value") && raw["value"].is_string()) {
-        out["value"] = raw["value"];
-        return out;
-    }
-    if (raw.contains("name") && raw["name"].is_string()) {
-        out["name"] = raw["name"];
-        return out;
-    }
-    return raw;
-}
-
-bool TryBuildStructuredOptionPayload(const JiraFieldOption& option,
-                                     const std::string& nestedChildId,
-                                     nlohmann::json& outPayload) {
-    if (option.PayloadJson.empty()) {
-        return false;
-    }
-    const nlohmann::json raw = nlohmann::json::parse(option.PayloadJson, nullptr, false);
-    if (raw.is_discarded()) {
-        return false;
-    }
-    outPayload = MinimalPayloadForStructuredOption(raw);
-    if (!nestedChildId.empty()) {
-        const JiraFieldOption* child = FindJiraFieldOptionByIdRecursive(option.Children, nestedChildId);
-        if (child == nullptr) {
-            return false;
-        }
-        nlohmann::json childPayload;
-        if (!TryBuildStructuredOptionPayload(*child, std::string(), childPayload)) {
-            childPayload = nlohmann::json::object({{"id", nestedChildId}});
-        }
-        if (!outPayload.is_object()) {
-            outPayload = nlohmann::json::object();
-        }
-        outPayload["child"] = std::move(childPayload);
-    }
-    return true;
-}
-
-bool TryBuildFieldOptionPayload(const JiraField& field,
-                                const std::string& selectedValue,
-                                nlohmann::json& outPayload) {
-    if (field.Family == JiraFieldFamily::CascadingSelect) {
-        std::string parentId;
-        std::string childId;
-        DecodeCascadingSelection(selectedValue, parentId, childId);
-        const JiraFieldOption* option = FindJiraFieldOptionByIdRecursive(field.AllowedValueOptions, parentId);
-        if (option == nullptr) {
-            return false;
-        }
-        return TryBuildStructuredOptionPayload(*option, childId, outPayload);
-    }
-    const JiraFieldOption* option = FindJiraFieldOptionByIdRecursive(field.AllowedValueOptions, selectedValue);
-    if (option == nullptr) {
-        return false;
-    }
-    return TryBuildStructuredOptionPayload(*option, std::string(), outPayload);
-}
-
-nlohmann::json FallbackPayloadForSelectableField(const JiraField& field, const std::string& scalarValue) {
-    if (field.IsUserType) {
-        return nlohmann::json{{"accountId", scalarValue}};
-    }
-    if (field.Family == JiraFieldFamily::Status) {
-        return nlohmann::json{{"name", scalarValue}};
-    }
-    if (field.Family == JiraFieldFamily::IssueType) {
-        return nlohmann::json{{"id", scalarValue}};
-    }
-    if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
-        return nlohmann::json{{"id", scalarValue}};
-    }
-    return scalarValue;
-}
-
-bool TryParseJiraNumberValue(const std::string& rawValue, nlohmann::json& outValue) {
-    const std::string trimmed = TrimCopy(rawValue);
-    if (trimmed.empty()) {
-        outValue = nullptr;
-        return true;
-    }
-
-    size_t parsedChars = 0;
-    try {
-        const double parsed = std::stod(trimmed, &parsedChars);
-        if (parsedChars != trimmed.size()) {
-            return false;
-        }
-        outValue = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool LooksLikeJiraIssueKey(const std::string& value) {
-    const size_t dash = value.find('-');
-    if (dash == std::string::npos || dash == 0 || dash + 1 >= value.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < dash; ++i) {
-        const unsigned char c = static_cast<unsigned char>(value[i]);
-        if (!(std::isupper(c) != 0 || std::isdigit(c) != 0 || c == '_')) {
-            return false;
-        }
-    }
-    for (size_t i = dash + 1; i < value.size(); ++i) {
-        if (std::isdigit(static_cast<unsigned char>(value[i])) == 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-std::string ExtractJiraIssueKeyFromDisplayValue(const std::string& value) {
-    const std::string trimmed = TrimCopy(value);
-    if (LooksLikeJiraIssueKey(trimmed)) {
-        return trimmed;
-    }
-    const size_t sep = trimmed.find(" - ");
-    if (sep == std::string::npos) {
-        return std::string();
-    }
-    const std::string key = TrimCopy(trimmed.substr(0, sep));
-    return LooksLikeJiraIssueKey(key) ? key : std::string();
-}
-
-nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
-    nlohmann::json content = nlohmann::json::array();
-    std::string line;
-    std::istringstream iss(plainText);
-    while (std::getline(iss, line)) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", line}}});
-        content.push_back(std::move(para));
-    }
-    if (content.empty()) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
-        content.push_back(std::move(para));
-    }
-    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
-}
-
 bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
     if (statusCode < 100 || statusCode > 599) {
         return false;
@@ -1279,6 +1126,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
         LastJiraFieldCatalogError = "Jira backend is not initialized.";
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        AvailableJiraIssueTypeMeta.clear();
         JiraFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::RefreshJiraFieldCatalog skipped: Jira backend not initialized.");
         return false;
@@ -1286,12 +1134,14 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
 
     std::vector<JiraField> fetchedFields;
     std::vector<JiraComponent> fetchedComponents;
+    std::vector<IssueTypeCreateMeta> fetchedMeta;
     std::string error;
-    const bool ok = JiraBackend->FetchFieldCatalog(cfg, fetchedFields, fetchedComponents, error);
+    const bool ok = JiraBackend->FetchFieldCatalog(cfg, fetchedFields, fetchedComponents, fetchedMeta, error);
     if (!ok) {
         LastJiraFieldCatalogError = error;
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        AvailableJiraIssueTypeMeta.clear();
         JiraFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::RefreshJiraFieldCatalog failed: %s", error.c_str());
         return false;
@@ -1299,6 +1149,7 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
 
     AvailableJiraFields = std::move(fetchedFields);
     AvailableJiraComponents = std::move(fetchedComponents);
+    AvailableJiraIssueTypeMeta = std::move(fetchedMeta);
     LastJiraFieldCatalogError.clear();
     JiraFieldCatalogRevision.fetch_add(1);
     return true;
@@ -1307,9 +1158,17 @@ bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
 void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
                                        std::vector<JiraComponent> components,
                                        const std::string& error) {
+    SetJiraFieldCatalog(std::move(fields), std::move(components), {}, error);
+}
+
+void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
+                                       std::vector<JiraComponent> components,
+                                       std::vector<IssueTypeCreateMeta> issueTypeMeta,
+                                       const std::string& error) {
     if (!error.empty()) {
         AvailableJiraFields.clear();
         AvailableJiraComponents.clear();
+        AvailableJiraIssueTypeMeta.clear();
         LastJiraFieldCatalogError = error;
         JiraFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::SetJiraFieldCatalog error: %s", error.c_str());
@@ -1317,6 +1176,7 @@ void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
     }
     AvailableJiraFields = std::move(fields);
     AvailableJiraComponents = std::move(components);
+    AvailableJiraIssueTypeMeta = std::move(issueTypeMeta);
     LastJiraFieldCatalogError.clear();
     for (auto& field : AvailableJiraFields) {
         if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
@@ -1339,6 +1199,196 @@ const JiraField* AppController::FindJiraFieldById(const std::string& fieldId) co
         AvailableJiraFields.end(),
         [&](const JiraField& field) { return field.Id == fieldId; });
     return it == AvailableJiraFields.end() ? nullptr : &(*it);
+}
+
+// --- Create-issue helpers -------------------------------------------------
+
+IssueDraft AppController::BuildDraftFromLastTicket(const JiraConfig& cfg) const {
+    const auto snap = GetActiveTicketsSnapshot();
+    const auto& tickets = *snap;
+    CachedTicket lastTicket;
+    if (!tickets.empty()) {
+        lastTicket = tickets.back();
+    }
+    return IssueDraftHelpers::FromCachedTicket(lastTicket,
+                                                AvailableJiraFields,
+                                                cfg.ProjectKey,
+                                                cfg.DefaultIssueTypeId,
+                                                cfg.DefaultIssueTypeName,
+                                                cfg.NewIssueInheritFieldIds);
+}
+
+RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey,
+                                                     const std::string& issueTypeId,
+                                                     const std::string& issueTypeName) const {
+    RequiredFieldSet result;
+    for (const auto& entry : AvailableJiraIssueTypeMeta) {
+        const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() ||
+                                   entry.ProjectKey == projectKey;
+        if (!projectMatch) {
+            continue;
+        }
+        const bool idMatch = !issueTypeId.empty() && entry.IssueTypeId == issueTypeId;
+        const bool nameMatch = !issueTypeName.empty() && entry.IssueTypeName == issueTypeName;
+        if (idMatch || nameMatch) {
+            result.FieldIds = entry.RequiredFieldIds;
+            result.IsSubtask = entry.IsSubtask;
+            return result;
+        }
+    }
+    return result; // empty -> hard minimum only
+}
+
+std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft) {
+    // Snapshot state the worker needs up front so we don't race with UI edits.
+    auto catalogCopy = std::make_shared<std::vector<JiraField>>(AvailableJiraFields);
+    const RequiredFieldSet required =
+        GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
+    std::shared_ptr<std::promise<IssueCreateResult>> promise =
+        std::make_shared<std::promise<IssueCreateResult>>();
+    std::future<IssueCreateResult> future = promise->get_future();
+
+    if (!Backend) {
+        IssueCreateResult err;
+        err.Error = "Tracker backend is not initialized.";
+        promise->set_value(std::move(err));
+        return future;
+    }
+
+    ITrackerClient* backend = Backend.get();
+    LocalCacheManager* cache = Cache.get();
+    IssueDraft draftCopy = draft;
+
+    // Update path: prune fields whose draft value already matches cache so we don't
+    // round-trip ADF descriptions (formatting loss), re-run no-op transitions for
+    // status, or re-add issues to their current sprint.
+    if (!draftCopy.ExistingIssueKey.empty()) {
+        const auto snap = GetActiveTicketsSnapshot();
+        if (snap) {
+            const std::string key = draftCopy.ExistingIssueKey;
+            for (const auto& t : *snap) {
+                if (t.id == key) {
+                    IssueDraftHelpers::PruneUnchangedFields(draftCopy, t);
+                    break;
+                }
+            }
+        }
+    }
+
+    LaunchBackgroundTask([this, promise, backend, cache, draftCopy, catalogCopy, required]() {
+        IssueCreateResult result =
+            IssueCreatePipeline::Run(*backend, cache, draftCopy, required, *catalogCopy);
+        if (result.Ok) {
+            RefreshLocalData();
+        }
+        promise->set_value(std::move(result));
+    });
+    return future;
+}
+
+std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
+    if (!Cache) {
+        LOG_WARN("AppController::QueueCreateOffline skipped: cache not initialized.");
+        return 0;
+    }
+    const std::string payload = IssueDraftHelpers::ToJson(draft);
+    try {
+        const std::int64_t id = Cache->EnqueuePendingCreate(payload);
+        LOG_INFO("AppController: queued offline create id=%lld", static_cast<long long>(id));
+        return id;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::QueueCreateOffline failed: %s", ex.what());
+        return 0;
+    }
+}
+
+size_t AppController::GetPendingCreateCount() const {
+    if (!Cache) {
+        return 0;
+    }
+    try {
+        return Cache->LoadPendingCreates().size();
+    } catch (...) {
+        return 0;
+    }
+}
+
+void AppController::TickOfflineCreates() {
+    if (!Cache || !Backend || offlineReplayInFlight_) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < nextOfflineReplayAt_) {
+        return;
+    }
+
+    std::vector<PendingCreate> pending;
+    try {
+        pending = Cache->LoadPendingCreates();
+    } catch (...) {
+        return;
+    }
+    if (pending.empty()) {
+        return;
+    }
+
+    offlineReplayInFlight_ = true;
+    // Defer heavy work to a worker. Grab snapshots the worker needs.
+    auto catalogCopy = std::make_shared<std::vector<JiraField>>(AvailableJiraFields);
+    ITrackerClient* backend = Backend.get();
+    LocalCacheManager* cache = Cache.get();
+    // Hard cap attempts per row so a permanently-bad payload doesn't loop forever.
+
+    LaunchBackgroundTask([this, pending, backend, cache, catalogCopy]() {
+        constexpr int kMaxReplayAttempts = 5;
+        int successes = 0;
+        int failures = 0;
+        bool ranCreate = false;
+        for (const auto& pc : pending) {
+            if (pc.Attempts >= kMaxReplayAttempts) {
+                continue;
+            }
+            IssueDraft draft;
+            std::string parseErr;
+            if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
+                LOG_WARN("AppController: dropping malformed pending_create id=%lld err=%s",
+                         static_cast<long long>(pc.Id), parseErr.c_str());
+                try { cache->DeletePendingCreate(pc.Id); } catch (...) {}
+                continue;
+            }
+            const RequiredFieldSet required =
+                GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
+            ranCreate = true;
+            IssueCreateResult result =
+                IssueCreatePipeline::Run(*backend, cache, draft, required, *catalogCopy);
+            if (result.Ok) {
+                try { cache->DeletePendingCreate(pc.Id); } catch (...) {}
+                ++successes;
+            } else {
+                try {
+                    cache->UpdatePendingCreate(pc.Id, pc.Attempts + 1, result.Error);
+                } catch (...) {}
+                ++failures;
+            }
+        }
+        if (successes > 0) {
+            RefreshLocalData();
+        }
+        if (successes > 0 || failures > 0) {
+            LOG_INFO("AppController: offline replay finished successes=%d failures=%d",
+                     successes, failures);
+        }
+        // Back off if all failed; otherwise try again soon. Pending rows only skipped (max
+        // attempts) still tick every few seconds — use a long delay when no create ran.
+        std::chrono::seconds delay{5};
+        if (!ranCreate && !pending.empty()) {
+            delay = std::chrono::seconds(300);
+        } else if (failures > 0 && successes == 0) {
+            delay = std::chrono::seconds(30);
+        }
+        nextOfflineReplayAt_ = std::chrono::steady_clock::now() + delay;
+        offlineReplayInFlight_ = false;
+    });
 }
 
 std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueId) const {
@@ -1753,77 +1803,14 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     }
 
     nlohmann::json valuePayload;
-    if (field.IsArray) {
-        valuePayload = nlohmann::json::array();
-        for (const auto& value : values) {
-            if (field.IsUserType) {
-                valuePayload.push_back(nlohmann::json{{"accountId", value}});
-            } else if (field.Family == JiraFieldFamily::StructuredMulti ||
-                       field.Family == JiraFieldFamily::IssueType ||
-                       field.Family == JiraFieldFamily::Status ||
-                       field.Family == JiraFieldFamily::CascadingSelect) {
-                nlohmann::json optionPayload;
-                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-                    valuePayload.push_back(std::move(optionPayload));
-                } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
-                           !field.AllowedValueOptions.empty()) {
-                    valuePayload.push_back(FallbackPayloadForSelectableField(field, value));
-                } else {
-                    valuePayload.push_back(value);
-                }
-            } else if (field.ItemsType == "option" || field.ItemsType == "component" || !field.AllowedValueOptions.empty()) {
-                valuePayload.push_back(nlohmann::json{{"id", value}});
-            } else {
-                valuePayload.push_back(value);
-            }
-        }
-    } else {
-        const std::string scalarValue = values.empty() ? std::string() : values.front();
-        if (scalarValue.empty()) {
-            valuePayload = nullptr;
-        } else if (field.Id == "parent") {
-            const std::string parentKey = ExtractJiraIssueKeyFromDisplayValue(scalarValue);
-            if (!parentKey.empty()) {
-                valuePayload = nlohmann::json{{"key", parentKey}};
-            } else {
-                valuePayload = scalarValue;
-            }
-        } else if (field.IsUserType) {
-            valuePayload = nlohmann::json{{"accountId", scalarValue}};
-        } else if (field.Family == JiraFieldFamily::StructuredSingle ||
-                   field.Family == JiraFieldFamily::IssueType ||
-                   field.Family == JiraFieldFamily::Status ||
-                   field.Family == JiraFieldFamily::CascadingSelect) {
-            if (!TryBuildFieldOptionPayload(field, scalarValue, valuePayload)) {
-                valuePayload = FallbackPayloadForSelectableField(field, scalarValue);
-            }
-        } else if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
-            valuePayload = nlohmann::json{{"id", scalarValue}};
-        } else if (field.Id == "description") {
-            valuePayload = AdfDocumentFromPlainText(scalarValue);
-        } else if (field.Type == "date" || field.Type == "datetime") {
-            ParsedJiraDateTime parsed;
-            if (!TryParseJiraDateTime(scalarValue, parsed)) {
-                outError = "Invalid date/datetime value.";
-                LOG_WARN("AppController::SubmitJiraFieldEdit invalid date issue=%s field=%s value=%s",
-                         issueId.c_str(),
-                         field.Id.c_str(),
-                         scalarValue.c_str());
-                return false;
-            }
-            valuePayload = FormatJiraDateOrDateTimeForApi(field.Type == "date", parsed);
-        } else if (field.Type == "number") {
-            if (!TryParseJiraNumberValue(scalarValue, valuePayload)) {
-                outError = "Invalid numeric value: " + scalarValue;
-                LOG_WARN("AppController::SubmitJiraFieldEdit invalid number issue=%s field=%s value=%s",
-                         issueId.c_str(),
-                         field.Id.c_str(),
-                         scalarValue.c_str());
-                return false;
-            }
-        } else {
-            valuePayload = scalarValue;
-        }
+    std::string buildErr;
+    if (!JiraFieldPayload::BuildValue(field, rawValues, valuePayload, buildErr)) {
+        outError = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
+        LOG_WARN("AppController::SubmitJiraFieldEdit invalid value issue=%s field=%s err=%s",
+                 issueId.c_str(),
+                 field.Id.c_str(),
+                 outError.c_str());
+        return false;
     }
 
     nlohmann::json fieldsPayload = nlohmann::json::object();
@@ -1866,7 +1853,8 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         std::string displayValue;
         if (!values.empty()) {
             for (size_t i = 0; i < values.size(); ++i) {
-                const std::string displayPart = ResolveDisplayValueForSubmittedSelection(field, values[i]);
+                const std::string displayPart =
+                    JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(field, values[i]);
                 if (i != 0) {
                     displayValue += ", ";
                 }
@@ -1984,67 +1972,10 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
     }
 
     nlohmann::json valuePayload;
-    if (field.IsArray) {
-        valuePayload = nlohmann::json::array();
-        for (const auto& value : values) {
-            if (field.IsUserType) {
-                valuePayload.push_back(nlohmann::json{{"accountId", value}});
-            } else if (field.Family == JiraFieldFamily::StructuredMulti ||
-                       field.Family == JiraFieldFamily::IssueType ||
-                       field.Family == JiraFieldFamily::Status ||
-                       field.Family == JiraFieldFamily::CascadingSelect) {
-                nlohmann::json optionPayload;
-                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-                    valuePayload.push_back(std::move(optionPayload));
-                } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
-                           !field.AllowedValueOptions.empty()) {
-                    valuePayload.push_back(FallbackPayloadForSelectableField(field, value));
-                } else {
-                    valuePayload.push_back(value);
-                }
-            } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
-                       !field.AllowedValueOptions.empty()) {
-                valuePayload.push_back(nlohmann::json{{"id", value}});
-            } else {
-                valuePayload.push_back(value);
-            }
-        }
-    } else {
-        const std::string scalarValue = values.empty() ? std::string() : values.front();
-        if (scalarValue.empty()) {
-            valuePayload = nullptr;
-        } else if (field.Id == "parent") {
-            const std::string parentKey = ExtractJiraIssueKeyFromDisplayValue(scalarValue);
-            valuePayload = parentKey.empty() ? nlohmann::json(scalarValue) : nlohmann::json{{"key", parentKey}};
-        } else if (field.IsUserType) {
-            valuePayload = nlohmann::json{{"accountId", scalarValue}};
-        } else if (field.Family == JiraFieldFamily::StructuredSingle ||
-                   field.Family == JiraFieldFamily::IssueType ||
-                   field.Family == JiraFieldFamily::Status ||
-                   field.Family == JiraFieldFamily::CascadingSelect) {
-            const bool builtStructured = TryBuildFieldOptionPayload(field, scalarValue, valuePayload);
-            if (!builtStructured) {
-                valuePayload = FallbackPayloadForSelectableField(field, scalarValue);
-            }
-        } else if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
-            valuePayload = nlohmann::json{{"id", scalarValue}};
-        } else if (field.Id == "description") {
-            valuePayload = AdfDocumentFromPlainText(scalarValue);
-        } else if (field.Type == "date" || field.Type == "datetime") {
-            ParsedJiraDateTime parsed;
-            if (!TryParseJiraDateTime(scalarValue, parsed)) {
-                outResult.Error = "Invalid date/datetime value.";
-                return false;
-            }
-            valuePayload = FormatJiraDateOrDateTimeForApi(field.Type == "date", parsed);
-        } else if (field.Type == "number") {
-            if (!TryParseJiraNumberValue(scalarValue, valuePayload)) {
-                outResult.Error = "Invalid numeric value: " + scalarValue;
-                return false;
-            }
-        } else {
-            valuePayload = scalarValue;
-        }
+    std::string buildErr;
+    if (!JiraFieldPayload::BuildValue(field, rawValues, valuePayload, buildErr)) {
+        outResult.Error = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
+        return false;
     }
 
     nlohmann::json fieldsPayload = nlohmann::json::object();
@@ -2088,7 +2019,7 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
             if (i != 0) {
                 displayValue += ", ";
             }
-            displayValue += ResolveDisplayValueForSubmittedSelection(field, values[i]);
+            displayValue += JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(field, values[i]);
         }
     }
     outResult.Ok = true;

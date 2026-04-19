@@ -1,6 +1,7 @@
 #include "LocalCacheManager.h"
 #include "Logger.h"
 
+#include <chrono>
 #include <exception>
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
@@ -21,6 +22,12 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "field_key TEXT NOT NULL, "
             "field_value TEXT, "
             "PRIMARY KEY(ticket_id, field_key))");
+    db.exec("CREATE TABLE IF NOT EXISTS pending_creates ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "payload TEXT NOT NULL, "
+            "attempts INTEGER NOT NULL DEFAULT 0, "
+            "last_error TEXT, "
+            "created_at INTEGER NOT NULL)");
     LOG_INFO("LocalCacheManager: schema ready");
 }
 
@@ -109,6 +116,74 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
         return results;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::GetAllTickets failed err=%s", ex.what());
+        throw;
+    }
+}
+
+std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& payload) {
+    try {
+        const auto now = std::chrono::system_clock::now();
+        const std::int64_t epoch =
+            std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        SQLite::Statement insert(
+            db,
+            "INSERT INTO pending_creates (payload, attempts, last_error, created_at) VALUES (?, 0, '', ?)");
+        insert.bind(1, payload);
+        insert.bind(2, epoch);
+        insert.exec();
+        return db.getLastInsertRowid();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::EnqueuePendingCreate failed err=%s", ex.what());
+        throw;
+    }
+}
+
+std::vector<PendingCreate> LocalCacheManager::LoadPendingCreates() {
+    try {
+        std::vector<PendingCreate> results;
+        SQLite::Statement query(
+            db,
+            "SELECT id, payload, attempts, last_error, created_at FROM pending_creates ORDER BY id ASC");
+        while (query.executeStep()) {
+            PendingCreate pc;
+            pc.Id = query.getColumn(0).getInt64();
+            pc.Payload = query.getColumn(1).getText();
+            pc.Attempts = query.getColumn(2).getInt();
+            pc.LastError = query.getColumn(3).isNull() ? std::string() : query.getColumn(3).getText();
+            pc.CreatedAtEpochSec = query.getColumn(4).getInt64();
+            results.push_back(std::move(pc));
+        }
+        return results;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::LoadPendingCreates failed err=%s", ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError) {
+    try {
+        SQLite::Statement update(
+            db,
+            "UPDATE pending_creates SET attempts = ?, last_error = ? WHERE id = ?");
+        update.bind(1, attempts);
+        update.bind(2, lastError);
+        update.bind(3, id);
+        update.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::UpdatePendingCreate failed id=%lld err=%s",
+                  static_cast<long long>(id), ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::DeletePendingCreate(std::int64_t id) {
+    try {
+        SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");
+        del.bind(1, id);
+        del.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::DeletePendingCreate failed id=%lld err=%s",
+                  static_cast<long long>(id), ex.what());
         throw;
     }
 }

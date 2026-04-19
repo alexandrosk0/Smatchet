@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Logger.h"
+#include "NewIssueInheritDefaults.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -70,6 +71,20 @@ struct JiraConfig {
     // Allow Blame Analysis to launch user-supplied custom `timelapse_cmd` / `change_cmd` templates.
     // Off by default: these run arbitrary programs; only enable if the config file is trusted.
     bool BlameAllowCustomCommands = false;
+
+    // Default Jira issue type id for new-issue drafts when we can't infer one
+    // from the last displayed ticket (e.g. empty grid). Jira numeric id (e.g. "10001").
+    std::string DefaultIssueTypeId;
+    // Display name fallback matching DefaultIssueTypeId (optional, shown in UI before first catalog fetch).
+    std::string DefaultIssueTypeName;
+    // Max concurrent in-flight POST /issue requests during bulk import.
+    int ImportMaxConcurrent = 4;
+    // Last directory picked in the bulk-import file dialog. Empty = use cwd.
+    std::string LastImportDirectory;
+    // Last directory picked in the bulk-export file dialog. Empty = use cwd.
+    std::string LastExportDirectory;
+    // Jira field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
+    std::vector<std::string> NewIssueInheritFieldIds;
 };
 
 struct ViewSortSpec {
@@ -198,6 +213,20 @@ public:
         j["mcp_auth_token"] = config.McpAuthToken;
         j["mcp_export_fields"] = config.McpExportFields;
         j["blame_allow_custom_commands"] = config.BlameAllowCustomCommands;
+        j["default_issue_type_id"] = config.DefaultIssueTypeId;
+        j["default_issue_type_name"] = config.DefaultIssueTypeName;
+        j["import_max_concurrent"] = config.ImportMaxConcurrent;
+        j["last_import_directory"] = config.LastImportDirectory;
+        j["last_export_directory"] = config.LastExportDirectory;
+        {
+            nlohmann::json inheritIds = nlohmann::json::array();
+            for (const auto& id : config.NewIssueInheritFieldIds) {
+                if (id != "summary") {
+                    inheritIds.push_back(id);
+                }
+            }
+            j["new_issue_inherit_field_ids"] = std::move(inheritIds);
+        }
 #if defined(_WIN32)
         j.erase("token");
         j.erase("ai_api_key");
@@ -363,6 +392,36 @@ public:
                 }
             }
             cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
+            cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
+            cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);
+            cfg.ImportMaxConcurrent = j.value("import_max_concurrent", cfg.ImportMaxConcurrent);
+            cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
+            cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
+            {
+                cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
+                if (j.contains("new_issue_inherit_field_ids") && j["new_issue_inherit_field_ids"].is_array()) {
+                    cfg.NewIssueInheritFieldIds.clear();
+                    for (const auto& item : j["new_issue_inherit_field_ids"]) {
+                        if (item.is_string()) {
+                            std::string s = item.get<std::string>();
+                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+                                s.erase(0, 1);
+                            }
+                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+                                s.pop_back();
+                            }
+                            if (!s.empty() && s != "summary") {
+                                cfg.NewIssueInheritFieldIds.push_back(std::move(s));
+                            }
+                        }
+                    }
+                }
+                if (cfg.NewIssueInheritFieldIds.empty()) {
+                    cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
+                }
+            }
+            if (cfg.ImportMaxConcurrent < 1) cfg.ImportMaxConcurrent = 1;
+            if (cfg.ImportMaxConcurrent > 32) cfg.ImportMaxConcurrent = 32;
             if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
                 cfg.McpPort = 8080;
             }

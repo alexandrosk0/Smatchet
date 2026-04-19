@@ -21,9 +21,12 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <future>
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
 #include "JiraClient.h"
+#include "IssueDraft.h"
+#include "IssueCreatePipeline.h"
 
 class AppController {
 public:
@@ -80,6 +83,20 @@ public:
     using AttachmentCollectionHandler = std::function<void(const std::vector<AttachmentDescriptor>& attachments)>;
     void SetAttachmentCollectionHandler(AttachmentCollectionHandler handler);
     void ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments);
+
+    /**
+     * Optional host hook for native multi-file open (new-issue attachments, etc.).
+     * Invoked on the UI thread; implementation may block (e.g. Win32 IFileDialog).
+     * If unset, RequestOpenFilePaths completes with an empty vector.
+     */
+    using OpenFilePathsHandler =
+        std::function<void(bool allowMultiple,
+                           const std::string& initialDirectoryUtf8,
+                           std::function<void(std::vector<std::string> absolutePathsUtf8)> onComplete)>;
+    void SetOpenFilePathsHandler(OpenFilePathsHandler handler);
+    void RequestOpenFilePaths(bool allowMultiple,
+                              const std::string& initialDirectoryUtf8,
+                              std::function<void(std::vector<std::string>)> onComplete) const;
 
     /**
      * Open an attachment (image/pdf/etc) without requiring Basic Auth headers in the browser.
@@ -144,6 +161,61 @@ public:
     void SetJiraFieldCatalog(std::vector<JiraField> fields,
                              std::vector<JiraComponent> components,
                              const std::string& error);
+    /** Overload that also stores per-(project, issuetype) required metadata. */
+    void SetJiraFieldCatalog(std::vector<JiraField> fields,
+                             std::vector<JiraComponent> components,
+                             std::vector<IssueTypeCreateMeta> issueTypeMeta,
+                             const std::string& error);
+
+    const std::vector<IssueTypeCreateMeta>& GetJiraIssueTypeCreateMeta() const {
+        return AvailableJiraIssueTypeMeta;
+    }
+
+    // ---- Create issue flow -------------------------------------------------
+
+    /**
+     * Build a draft seeded from the last ticket currently displayed + the
+     * configured JiraConfig defaults. Safe to call from the UI thread.
+     */
+    IssueDraft BuildDraftFromLastTicket(const JiraConfig& cfg) const;
+
+    /**
+     * Resolve the required-field set for a draft using cached createmeta.
+     * Falls back to the hard minimum (project/issuetype/summary) if unknown.
+     */
+    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey,
+                                          const std::string& issueTypeId,
+                                          const std::string& issueTypeName) const;
+
+    /**
+     * Fire-and-forget create. Seeds the cache with the new issue on success and
+     * publishes a refreshed snapshot. Returns a future so bulk-import callers
+     * can await per-row completions.
+     */
+    std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft);
+
+    /**
+     * Persist `draft` to SQLite and return the queued row id. Useful when the
+     * user wants to stage creates before going online, or when a create fails
+     * due to connectivity errors. Replayed by `TickOfflineCreates`.
+     */
+    std::int64_t QueueCreateOffline(const IssueDraft& draft);
+
+    /**
+     * Replay any queued offline creates. No-op when the queue is empty or the
+     * backend is unreachable. Intended to be polled from the main tick.
+     */
+    void TickOfflineCreates();
+
+    /** Current depth of the offline create queue (SQLite row count). */
+    size_t GetPendingCreateCount() const;
+
+    /**
+     * Background-fetch issues by key (Jira search) and merge into the local cache.
+     * Used so bulk-import update rows can show field diffs when keys are outside the current JQL.
+     */
+    void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys);
+    bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
     const JiraField* FindJiraFieldById(const std::string& fieldId) const;
 
@@ -216,6 +288,7 @@ private:
     std::atomic<std::uint64_t> JiraFieldCatalogRevision{0};
     std::vector<JiraField> AvailableJiraFields;
     std::vector<JiraComponent> AvailableJiraComponents;
+    std::vector<IssueTypeCreateMeta> AvailableJiraIssueTypeMeta;
     std::string LastJiraFieldCatalogError;
     sol::state lua;
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
@@ -224,6 +297,7 @@ private:
     AttachmentViewerHandler AttachmentViewerHandlerCallback;
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
+    OpenFilePathsHandler OpenFilePathsHandlerCallback;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
@@ -263,6 +337,13 @@ private:
     std::atomic<bool> shuttingDown_{false};
     std::vector<std::thread> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
+
+    // Offline-replay throttle: don't hammer Jira every frame if previous tick failed.
+    std::chrono::steady_clock::time_point nextOfflineReplayAt_ = std::chrono::steady_clock::now();
+    bool offlineReplayInFlight_ = false;
+
+    mutable std::mutex bulkImportPrefetchKeysMutex_;
+    std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
 };
 
 

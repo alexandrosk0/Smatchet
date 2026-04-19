@@ -8,8 +8,10 @@
 #include "InputCoreTypes.h"
 #include "Layout/WidgetPath.h"
 #include "Logging/LogMacros.h"
+#include "Math/UnrealMathUtility.h"
 #include "Slate/SceneViewport.h"
 #include "SmatchetImGuiHostC.h"
+#include "Widgets/SWindow.h"
 #include "imgui.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiInputProcessor, Log, All);
@@ -18,11 +20,32 @@ std::atomic<std::uintptr_t> GSmatchetPointerOverSlateViewportId{0};
 
 namespace {
 
+/**
+ * While a mouse button is held, Slate's "window under mouse" can change (e.g. crossing a table column
+ * splitter or chrome), which makes per-event LocateWindowUnderMouse() subtract a different client
+ * origin and teleports ImGui's io.MousePos — ImGui table column resize then breaks. We snapshot the
+ * top-level SWindow on the first button down and keep subtracting that window's client rect until
+ * all tracked buttons are released.
+ */
+static TWeakPtr<SWindow> GSmatchetMouseCoordWindow;
+static int32 GSmatchetMouseButtonSessionDepth = 0;
+
+static void ResetMouseCoordMapping() {
+    GSmatchetMouseCoordWindow.Reset();
+    GSmatchetMouseButtonSessionDepth = 0;
+}
+
 // ImGui DisplaySize matches the presenting window's client in pixel space; Slate pointer events use
 // global "screen" coordinates. Subtract the top-level window client origin so editor (large offset)
 // matches PIE/standalone where the offset is often small.
 FVector2f MapPointerToClientLocal(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) {
     const FVector2f ScreenPos(MouseEvent.GetScreenSpacePosition());
+    if (GSmatchetMouseButtonSessionDepth > 0) {
+        if (const TSharedPtr<SWindow> Win = GSmatchetMouseCoordWindow.Pin()) {
+            const FSlateRect ClientRect = Win->GetClientRectInScreen();
+            return FVector2f(ScreenPos.X - ClientRect.Left, ScreenPos.Y - ClientRect.Top);
+        }
+    }
     const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(
         ScreenPos,
         SlateApp.GetInteractiveTopLevelWindows(),
@@ -42,6 +65,7 @@ FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHand
 }
 
 void FSmatchetImGuiInputProcessor::EnsureTooltipsRestored() {
+    ResetMouseCoordMapping();
     RestoreViewportMouseSnapshotIfActive();
     if (!FSlateApplication::IsInitialized()) {
         return;
@@ -105,6 +129,7 @@ void FSmatchetImGuiInputProcessor::Tick(const float, FSlateApplication& SlateApp
     const bool bWantViewportStomp = GEngine && Host && (SmatchetHost_IsUiVisible(Host) != 0);
 
     if (!bWantViewportStomp && bOverlayViewportStompActive) {
+        ResetMouseCoordMapping();
         RestoreViewportMouseSnapshotIfActive();
     }
 
@@ -279,10 +304,27 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
         return false;
     }
 
+    const int32 Button = ToImGuiMouseButton(MouseEvent);
+    if (Button >= 0) {
+        if (GSmatchetMouseButtonSessionDepth == 0) {
+            const FVector2f ScreenPos(MouseEvent.GetScreenSpacePosition());
+            const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(
+                ScreenPos,
+                SlateApp.GetInteractiveTopLevelWindows(),
+                /*bIgnoreEnabledStatus=*/true,
+                static_cast<int32>(MouseEvent.GetUserIndex()));
+            if (Path.IsValid()) {
+                GSmatchetMouseCoordWindow = Path.GetWindow();
+            } else {
+                GSmatchetMouseCoordWindow.Reset();
+            }
+        }
+        ++GSmatchetMouseButtonSessionDepth;
+    }
+
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
 
-    const int32 Button = ToImGuiMouseButton(MouseEvent);
     if (Button >= 0) {
         SmatchetHost_SetMouseButton(Host, Button, true);
     }
@@ -305,6 +347,10 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& S
     const int32 Button = ToImGuiMouseButton(MouseEvent);
     if (Button >= 0) {
         SmatchetHost_SetMouseButton(Host, Button, false);
+        GSmatchetMouseButtonSessionDepth = FMath::Max(0, GSmatchetMouseButtonSessionDepth - 1);
+        if (GSmatchetMouseButtonSessionDepth == 0) {
+            GSmatchetMouseCoordWindow.Reset();
+        }
     }
     PushModifierState(MouseEvent);
     return true;
@@ -344,6 +390,9 @@ bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(
     if (!SmatchetHost_IsUiVisible(Host)) {
         return false;
     }
+
+    // Wheel deltas feed ImGui io the same way as standalone; table-level routing
+    // (e.g. vertical-end horizontal scroll) lives in shared UI code on the host side.
 
     const FVector2f P = MapPointerToClientLocal(SlateApp, InWheelEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
