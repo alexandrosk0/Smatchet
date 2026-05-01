@@ -1,0 +1,402 @@
+#include "JiraClient.h"
+
+#include "JiraFieldValueParser.h"
+#include "JiraHttpUtils.h"
+#include "JsonParseUtil.h"
+#include "Logger.h"
+#include "StringUtil.h"
+
+#include <set>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+namespace {
+
+void ParseJiraUserObject(const nlohmann::json& user, JiraUser& out) {
+    out.AccountId = user.value("accountId", std::string());
+    out.DisplayName = user.value("displayName", std::string());
+    out.EmailAddress = user.value("emailAddress", std::string());
+    out.Active = user.value("active", true);
+}
+
+} // namespace
+
+bool JiraClient::FetchUsers(const JiraConfig& cfg, std::vector<JiraUser>& outUsers, std::string& outError) {
+    outUsers.clear();
+    outError.clear();
+
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+
+    const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
+    auto usersResponse = JiraGetLogged(usersUrl, headers);
+    if (usersResponse.status_code != 200) {
+        outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        auto usersJson = nlohmann::json::parse(usersResponse.text);
+        if (!usersJson.is_array()) {
+            outError = "Invalid users response format.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(usersResponse.text, 300).c_str());
+            return false;
+        }
+
+        std::set<std::string> seenAccountIds;
+        std::set<std::string> seenDisplayNames;
+        for (const auto& user : usersJson) {
+            JiraUser jiraUser;
+            jiraUser.AccountId = user.value("accountId", std::string());
+            jiraUser.DisplayName = user.value("displayName", std::string());
+            jiraUser.EmailAddress = user.value("emailAddress", std::string());
+            jiraUser.Active = user.value("active", true);
+
+            if (jiraUser.DisplayName.empty() || jiraUser.AccountId.empty() || !jiraUser.Active ||
+                !seenAccountIds.insert(jiraUser.AccountId).second) {
+                continue;
+            }
+
+            if (!seenDisplayNames.insert(jiraUser.DisplayName).second) {
+                const std::string suffix = jiraUser.AccountId.substr(0, std::min<size_t>(4, jiraUser.AccountId.size()));
+                jiraUser.DisplayName += "_" + suffix;
+            }
+
+            outUsers.push_back(std::move(jiraUser));
+        }
+
+        SortJiraUsersForDisplay(outUsers);
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse users response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey,
+                                    std::vector<JiraUser>& outWatchers, std::string& outError) {
+    outWatchers.clear();
+    outError.clear();
+
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/watchers";
+    auto response = JiraGetLogged(url, headers);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch watchers: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        const auto j = nlohmann::json::parse(response.text);
+        if (!j.is_object()) {
+            outError = "Invalid watchers response format.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
+            return false;
+        }
+        const auto watchers = j.value("watchers", nlohmann::json::array());
+        if (!watchers.is_array()) {
+            outError = "Invalid watchers array in response.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
+            return false;
+        }
+        AppendJiraUsersFromJsonArray(watchers, outWatchers);
+        SortJiraUsersForDisplay(outWatchers);
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse watchers response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueEditMeta(const JiraConfig& cfg, const std::string& issueKeyOrId,
+                                    std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
+    outFieldIdCanEdit.clear();
+    outError.clear();
+
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKeyOrId.empty()) {
+        outError = "Issue key or id is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKeyOrId) + "/editmeta";
+    auto response = JiraGetLogged(url, headers);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch issue editmeta: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 800);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
+        return false;
+    }
+
+    try {
+        const auto root = nlohmann::json::parse(response.text);
+        if (!root.is_object() || !root.contains("fields") || !root["fields"].is_object()) {
+            outError = "Invalid editmeta response: missing fields object.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKeyOrId.c_str(),
+                      TruncateForLog(response.text, 400).c_str());
+            return false;
+        }
+        const auto& fields = root["fields"];
+        for (auto it = fields.begin(); it != fields.end(); ++it) {
+            const std::string fieldId = ToLowerAsciiCopy(it.key());
+            const auto& meta = it.value();
+            bool canEdit = false;
+            const bool hasOperationsArray =
+                meta.is_object() && meta.contains("operations") && meta["operations"].is_array();
+            if (hasOperationsArray) {
+                for (const auto& op : meta["operations"]) {
+                    if (op.is_string()) {
+                        const std::string opLower = ToLowerAsciiCopy(op.get<std::string>());
+                        if (opLower == "set" || opLower == "add" || opLower == "remove") {
+                            canEdit = true;
+                            break;
+                        }
+                        continue;
+                    }
+                    if (!op.is_object()) {
+                        continue;
+                    }
+                    static const char* kOpNameKeys[] = {"operation", "name", "type"};
+                    for (const char* key : kOpNameKeys) {
+                        if (!op.contains(key) || !op[key].is_string()) {
+                            continue;
+                        }
+                        const std::string opLower = ToLowerAsciiCopy(op[key].get<std::string>());
+                        if (opLower == "set" || opLower == "add" || opLower == "remove") {
+                            canEdit = true;
+                            break;
+                        }
+                    }
+                    if (canEdit) {
+                        break;
+                    }
+                }
+            }
+            // Jira sometimes omits `operations` for nullable date/datetime fields (e.g. unset due date)
+            // while still listing the field in editmeta. Treat as editable only when the key is absent
+            // or not an array — not when operations is an explicit empty array.
+            if (!canEdit && meta.is_object() && !hasOperationsArray) {
+                static const std::unordered_set<std::string> kSchemaOnlyDateDenylist = {"created", "updated",
+                                                                                        "resolutiondate"};
+                if (kSchemaOnlyDateDenylist.find(fieldId) == kSchemaOnlyDateDenylist.end() && meta.contains("schema") &&
+                    meta["schema"].is_object()) {
+                    const auto& schema = meta["schema"];
+                    if (schema.contains("type") && schema["type"].is_string()) {
+                        const std::string t = ToLowerAsciiCopy(schema["type"].get<std::string>());
+                        if (t == "date" || t == "datetime") {
+                            canEdit = true;
+                        }
+                    }
+                }
+            }
+            outFieldIdCanEdit[fieldId] = canEdit;
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse editmeta response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issueKey, std::vector<JiraUser>& outVoters,
+                                 std::string& outError, int* outVoteCount, bool* outHasVoted,
+                                 bool* outVotersArrayInResponse) {
+    outVoters.clear();
+    outError.clear();
+    if (outVoteCount) {
+        *outVoteCount = 0;
+    }
+    if (outHasVoted) {
+        *outHasVoted = false;
+    }
+    if (outVotersArrayInResponse) {
+        *outVotersArrayInResponse = false;
+    }
+
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/votes";
+    auto response = JiraGetLogged(url, headers);
+    if (response.status_code != 200) {
+        outError = "Failed to fetch votes: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        const auto j = nlohmann::json::parse(response.text);
+        if (!j.is_object()) {
+            outError = "Invalid votes response format.";
+            LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
+                      TruncateForLog(response.text, 300).c_str());
+            return false;
+        }
+
+        if (outVoteCount && j.contains("votes")) {
+            *outVoteCount = ParseJsonIntLoose(j["votes"], 0);
+            if (*outVoteCount < 0) {
+                *outVoteCount = 0;
+            }
+        }
+
+        if (outHasVoted && j.contains("hasVoted")) {
+            const auto& hv = j["hasVoted"];
+            if (hv.is_boolean()) {
+                *outHasVoted = hv.get<bool>();
+            } else if (hv.is_number_integer()) {
+                *outHasVoted = (hv.get<long long>() != 0);
+            }
+        }
+
+        if (j.contains("voters")) {
+            if (outVotersArrayInResponse) {
+                *outVotersArrayInResponse = j["voters"].is_array();
+            }
+            const auto voters = j.value("voters", nlohmann::json::array());
+            if (voters.is_array()) {
+                AppendJiraUsersFromJsonArray(voters, outVoters);
+                SortJiraUsersForDisplay(outVoters);
+            }
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse votes response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& query, std::vector<JiraUser>& outUsers,
+                                    std::string& outError) {
+    outUsers.clear();
+    outError.clear();
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        outError = "Missing Jira domain or API token.";
+        return false;
+    }
+    if (query.empty()) {
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+
+    const std::string url = base + "/rest/api/3/user/search?query=" + UrlEncode(query) + "&maxResults=100";
+    auto resp = JiraGetLogged(url, headers);
+    if (resp.status_code != 200) {
+        outError = "user/search failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s query=%s", outError.c_str(), TruncateForLog(query, 120).c_str());
+        return false;
+    }
+
+    try {
+        auto arr = nlohmann::json::parse(resp.text);
+        if (!arr.is_array()) {
+            outError = "user/search: expected array.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(resp.text, 300).c_str());
+            return false;
+        }
+        std::unordered_set<std::string> seen;
+        for (const auto& node : arr) {
+            if (!node.is_object()) {
+                continue;
+            }
+            JiraUser u;
+            ParseJiraUserObject(node, u);
+            if (u.AccountId.empty() || !u.Active || !seen.insert(u.AccountId).second) {
+                continue;
+            }
+            outUsers.push_back(std::move(u));
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("user/search parse error: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg, const std::string& accountId,
+                                     std::vector<std::string>& outGroupNames, std::string& outError) {
+    outGroupNames.clear();
+    outError.clear();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (accountId.empty()) {
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg);
+
+    const std::string url =
+        base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
+    auto resp = JiraGetLogged(url, headers);
+    if (resp.status_code != 200) {
+        outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s accountId=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
+        return false;
+    }
+
+    try {
+        auto j = nlohmann::json::parse(resp.text);
+        if (j.contains("groups") && j["groups"].is_object()) {
+            const auto& g = j["groups"];
+            if (g.contains("items") && g["items"].is_array()) {
+                for (const auto& item : g["items"]) {
+                    if (item.is_object() && item.contains("name") && item["name"].is_string()) {
+                        outGroupNames.push_back(item["name"].get<std::string>());
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("user parse error: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+    return true;
+}

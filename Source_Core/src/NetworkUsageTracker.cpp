@@ -7,9 +7,7 @@ NetworkUsageTracker& NetworkUsageTracker::Instance() {
     return inst;
 }
 
-void NetworkUsageTracker::Record(HttpTrafficKind kind,
-                                 std::uint64_t uploadBodyBytes,
-                                 const cpr::Response& r) {
+void NetworkUsageTracker::Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r) {
     const std::uint64_t down = static_cast<std::uint64_t>(r.text.size());
     if (kind == HttpTrafficKind::Jira) {
         jiraRequests_.fetch_add(1, std::memory_order_relaxed);
@@ -41,4 +39,3 @@ void NetworkUsageTracker::Reset() {
     openAiUploadBytes_.store(0, std::memory_order_relaxed);
     openAiDownloadBytes_.store(0, std::memory_order_relaxed);
 }
-

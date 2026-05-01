@@ -76,11 +76,8 @@ std::wstring QuoteArg(const std::wstring& arg) {
     return out;
 }
 
-bool RunProcessCapture(const std::wstring& applicationName,
-                       const std::wstring& commandLine,
-                       int& outExit,
-                       std::string& outStdout,
-                       std::string& outStderr) {
+bool RunProcessCapture(const std::wstring& applicationName, const std::wstring& commandLine, int& outExit,
+                       std::string& outStdout, std::string& outStderr) {
     outExit = -1;
     outStdout.clear();
     outStderr.clear();
@@ -94,7 +91,8 @@ bool RunProcessCapture(const std::wstring& applicationName,
     HANDLE rdErr = nullptr;
     HANDLE wrErr = nullptr;
     if (!CreatePipe(&rdOut, &wrOut, &sa, 0) || !CreatePipe(&rdErr, &wrErr, &sa, 0)) {
-        LOG_ERROR("P4 RunProcessCapture: CreatePipe failed GetLastError=%lu", static_cast<unsigned long>(GetLastError()));
+        LOG_ERROR("P4 RunProcessCapture: CreatePipe failed GetLastError=%lu",
+                  static_cast<unsigned long>(GetLastError()));
         return false;
     }
     SetHandleInformation(rdOut, HANDLE_FLAG_INHERIT, 0);
@@ -106,28 +104,21 @@ bool RunProcessCapture(const std::wstring& applicationName,
     si.wShowWindow = SW_HIDE;
     si.hStdOutput = wrOut;
     si.hStdError = wrErr;
-    HANDLE hNullInput = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE hNullInput =
+        CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
     si.hStdInput = (hNullInput != INVALID_HANDLE_VALUE) ? hNullInput : GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi{};
     std::vector<wchar_t> mutableCmd(commandLine.begin(), commandLine.end());
     mutableCmd.push_back(L'\0');
 
-    const BOOL ok = CreateProcessW(
-        applicationName.empty() ? nullptr : applicationName.c_str(),
-        mutableCmd.data(),
-        nullptr,
-        nullptr,
-        TRUE,
-        CREATE_NO_WINDOW,
-        nullptr,
-        nullptr,
-        &si,
-        &pi);
+    const BOOL ok = CreateProcessW(applicationName.empty() ? nullptr : applicationName.c_str(), mutableCmd.data(),
+                                   nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(wrOut);
     CloseHandle(wrErr);
     if (!ok) {
-        LOG_ERROR("P4 RunProcessCapture: CreateProcessW failed GetLastError=%lu", static_cast<unsigned long>(GetLastError()));
+        LOG_ERROR("P4 RunProcessCapture: CreateProcessW failed GetLastError=%lu",
+                  static_cast<unsigned long>(GetLastError()));
         if (hNullInput != INVALID_HANDLE_VALUE) {
             CloseHandle(hNullInput);
         }
@@ -172,7 +163,8 @@ bool RunProcessCapture(const std::wstring& applicationName,
         const DWORD elapsed = GetTickCount() - startedAt;
         if (elapsed > kP4ProcessTimeoutMs) {
             timedOut = true;
-            LOG_WARN("P4 RunProcessCapture: process timeout after %lu ms; terminating child", static_cast<unsigned long>(elapsed));
+            LOG_WARN("P4 RunProcessCapture: process timeout after %lu ms; terminating child",
+                     static_cast<unsigned long>(elapsed));
             TerminateProcess(pi.hProcess, 124);
             WaitForSingleObject(pi.hProcess, 5000);
             break;
@@ -212,11 +204,8 @@ bool RunProcessCapture(const std::wstring& applicationName,
 #endif
 
 #if !defined(_WIN32)
-bool RunProcessCapturePosix(const std::string& exe,
-                            const std::vector<std::string>& args,
-                            int& outExit,
-                            std::string& outStdout,
-                            std::string& outStderr) {
+bool RunProcessCapturePosix(const std::string& exe, const std::vector<std::string>& args, int& outExit,
+                            std::string& outStdout, std::string& outStderr) {
     outExit = -1;
     outStdout.clear();
     outStderr.clear();
@@ -316,7 +305,8 @@ bool RunProcessCapturePosix(const std::string& exe,
             break;
         }
         if (!outCapped) {
-            const size_t remaining = (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
+            const size_t remaining =
+                (outStdout.size() < kP4CaptureBytesMax) ? (kP4CaptureBytesMax - outStdout.size()) : 0;
             const size_t toAppend = std::min(remaining, static_cast<size_t>(n));
             if (toAppend > 0) {
                 outStdout.append(buf, toAppend);
@@ -368,10 +358,7 @@ void StripP4UserDomain(std::string& user) {
  * - rev user YYYY/MM/DD code
  * - rev: code
  */
-bool ParseAnnotateTextLine(const std::string& line,
-                           std::string& outCl,
-                           std::string& outUser,
-                           std::string& outAnnotDate,
+bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::string& outUser, std::string& outAnnotDate,
                            std::string& outCode) {
     outCl.clear();
     outUser.clear();
@@ -439,11 +426,8 @@ P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, st
 
 } // namespace
 
-bool P4RunCommand(const BlameAnalysisConfig& cfg,
-                  const std::vector<std::string>& args,
-                  int& outExitCode,
-                  std::string& outStdout,
-                  std::string& outStderr) {
+bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
+                  std::string& outStdout, std::string& outStderr) {
     using clock = std::chrono::steady_clock;
     const clock::time_point t0 = clock::now();
 #ifdef _WIN32
@@ -493,8 +477,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
         return false;
     }
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
-    LOG_INFO("P4: completed exit=%d duration=%lld ms", outExitCode,
-             static_cast<long long>(ms));
+    LOG_INFO("P4: completed exit=%d duration=%lld ms", outExitCode, static_cast<long long>(ms));
     if (outExitCode != 0) {
         LOG_WARN("P4: non-zero exit=%d stderr=%s", outExitCode, TruncateForLog(outStderr, kP4LogMaxStderr).c_str());
     }
@@ -505,9 +488,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg,
 #endif
 }
 
-P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
-                        const std::string& depotOrPath,
-                        int oneBasedLine,
+P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
                         const std::string& atChangelist) {
     P4LineBlame result;
     if (depotOrPath.empty() || oneBasedLine <= 0) {
@@ -517,8 +498,7 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
     }
 
     std::string pathArg = depotOrPath;
-    if (!atChangelist.empty() && pathArg.find('@') == std::string::npos &&
-        pathArg.find('#') == std::string::npos) {
+    if (!atChangelist.empty() && pathArg.find('@') == std::string::npos && pathArg.find('#') == std::string::npos) {
         pathArg += "@" + atChangelist;
     }
     LOG_DEBUG("P4BlameLine: pathArg=%s line=%d atCl=%s", pathArg.c_str(), oneBasedLine, atChangelist.c_str());
@@ -534,11 +514,8 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
     }
     if (code != 0) {
         result.Error = FormatP4CommandError("p4 annotate failed", code, err);
-        LOG_DEBUG(
-            "P4BlameLine: annotate non-zero exit=%d, trying changes fallback pathArg=%s err=%s",
-            code,
-            pathArg.c_str(),
-            TruncateForLog(result.Error, 512).c_str());
+        LOG_DEBUG("P4BlameLine: annotate non-zero exit=%d, trying changes fallback pathArg=%s err=%s", code,
+                  pathArg.c_str(), TruncateForLog(result.Error, 512).c_str());
         // Fallback: latest change on file
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
         int c2 = 0;
@@ -548,18 +525,16 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
             LOG_DEBUG("P4BlameLine: changes fallback success pathArg=%s", pathArg.c_str());
             return ParseLatestChangeFromChangesOutput(o2, e2);
         }
-        LOG_WARN("P4BlameLine: annotate failed and changes fallback failed pathArg=%s line=%d", pathArg.c_str(), oneBasedLine);
+        LOG_WARN("P4BlameLine: annotate failed and changes fallback failed pathArg=%s line=%d", pathArg.c_str(),
+                 oneBasedLine);
         return result;
     }
 
     const std::vector<std::string> lines = SplitLines(out);
     if (oneBasedLine <= 0 || static_cast<size_t>(oneBasedLine) > lines.size()) {
         result.Approximate = true;
-        LOG_DEBUG(
-            "P4BlameLine: line out of annotate range (line=%zu annotateLines=%zu) pathArg=%s",
-            static_cast<size_t>(oneBasedLine),
-            lines.size(),
-            pathArg.c_str());
+        LOG_DEBUG("P4BlameLine: line out of annotate range (line=%zu annotateLines=%zu) pathArg=%s",
+                  static_cast<size_t>(oneBasedLine), lines.size(), pathArg.c_str());
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
         int c2 = 0;
         std::string o2;
@@ -579,10 +554,8 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
     std::string codeLine;
     if (!ParseAnnotateTextLine(L, cl, user, annDate, codeLine)) {
         result.Approximate = true;
-        LOG_DEBUG(
-            "P4BlameLine: unrecognized annotate line, trying changes pathArg=%s raw=%s",
-            pathArg.c_str(),
-            TruncateForLog(L, 200).c_str());
+        LOG_DEBUG("P4BlameLine: unrecognized annotate line, trying changes pathArg=%s raw=%s", pathArg.c_str(),
+                  TruncateForLog(L, 200).c_str());
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
         int c2 = 0;
         std::string o2;
@@ -611,10 +584,8 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg,
     return result;
 }
 
-std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg,
-                                             const std::string& depotOrPath,
-                                             const std::string& atChangelist,
-                                             std::string& outError) {
+std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, const std::string& depotOrPath,
+                                            const std::string& atChangelist, std::string& outError) {
     std::vector<P4AnnotatedLine> rows;
     outError.clear();
     if (depotOrPath.empty()) {
@@ -623,8 +594,7 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg,
         return rows;
     }
     std::string pathArg = depotOrPath;
-    if (!atChangelist.empty() && pathArg.find('@') == std::string::npos &&
-        pathArg.find('#') == std::string::npos) {
+    if (!atChangelist.empty() && pathArg.find('@') == std::string::npos && pathArg.find('#') == std::string::npos) {
         pathArg += "@" + atChangelist;
     }
     LOG_DEBUG("P4AnnotateFile: pathArg=%s atCl=%s", pathArg.c_str(), atChangelist.c_str());
@@ -640,11 +610,8 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg,
     }
     if (code != 0) {
         outError = FormatP4CommandError("p4 annotate failed", code, err);
-        LOG_WARN(
-            "P4AnnotateFile: annotate failed exit=%d pathArg=%s err=%s",
-            code,
-            pathArg.c_str(),
-            TruncateForLog(outError, kP4LogMaxStderr).c_str());
+        LOG_WARN("P4AnnotateFile: annotate failed exit=%d pathArg=%s err=%s", code, pathArg.c_str(),
+                 TruncateForLog(outError, kP4LogMaxStderr).c_str());
         return rows;
     }
 
@@ -704,7 +671,8 @@ void P4ChangelistDescribeCache::Store(const std::string& changelist, P4Changelis
     EvictIfNeeded();
 }
 
-P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisConfig& cfg, const std::string& changelist) {
+P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisConfig& cfg,
+                                                          const std::string& changelist) {
     if (changelist.empty()) {
         return P4ChangelistDetails();
     }
@@ -727,10 +695,8 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisCon
     d.Loaded = true;
     if (!P4RunCommand(cfg, args, code, out, err) || code != 0) {
         d.Error = FormatP4CommandError("p4 describe failed", code, err);
-        LOG_WARN(
-            "P4ChangelistDescribeCache: describe failed cl=%s err=%s",
-            changelist.c_str(),
-            TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
+        LOG_WARN("P4ChangelistDescribeCache: describe failed cl=%s err=%s", changelist.c_str(),
+                 TruncateForLog(d.Error, kP4LogMaxStderr).c_str());
         Store(changelist, d);
         return d;
     }
@@ -762,10 +728,8 @@ P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisCon
         }
     }
     if (d.Author.empty() && d.Date.empty()) {
-        LOG_DEBUG(
-            "P4ChangelistDescribeCache: header parse miss cl=%s stdout=%s",
-            changelist.c_str(),
-            TruncateForLog(out, 300).c_str());
+        LOG_DEBUG("P4ChangelistDescribeCache: header parse miss cl=%s stdout=%s", changelist.c_str(),
+                  TruncateForLog(out, 300).c_str());
     }
     Store(changelist, d);
     return d;

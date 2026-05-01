@@ -1,28 +1,18 @@
 #include "NavigationHistory.h"
 
-NavigationHistory::NavigationHistory()
-    : _entries()
-    , _index(-1)
-{
-}
+NavigationHistory::NavigationHistory() : _entries(), _index(-1) {}
 
 void NavigationHistory::Clear() {
     _entries.clear();
     _index = -1;
 }
 
-bool NavigationHistory::CanGoBack() const {
-    return _index > 0;
-}
+bool NavigationHistory::CanGoBack() const { return _index > 0; }
 
-bool NavigationHistory::CanGoForward() const {
-    return _index + 1 < static_cast<int>(_entries.size());
-}
+bool NavigationHistory::CanGoForward() const { return _index + 1 < static_cast<int>(_entries.size()); }
 
 void NavigationHistory::Push(const NavigationEntry& entry) {
-    if (_index >= 0 &&
-        _index < static_cast<int>(_entries.size()) &&
-        _entries[_index].Jql == entry.Jql) {
+    if (_index >= 0 && _index < static_cast<int>(_entries.size()) && _entries[_index].Jql == entry.Jql) {
         return;
     }
 
@@ -35,13 +25,15 @@ void NavigationHistory::Push(const NavigationEntry& entry) {
 }
 
 const NavigationEntry* NavigationHistory::GoBack() {
-    if (!CanGoBack()) return nullptr;
+    if (!CanGoBack())
+        return nullptr;
     --_index;
     return &_entries[_index];
 }
 
 const NavigationEntry* NavigationHistory::GoForward() {
-    if (!CanGoForward()) return nullptr;
+    if (!CanGoForward())
+        return nullptr;
     ++_index;
     return &_entries[_index];
 }
@@ -52,4 +44,3 @@ const NavigationEntry* NavigationHistory::Current() const {
     }
     return &_entries[_index];
 }
-

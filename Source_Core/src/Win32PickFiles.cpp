@@ -23,14 +23,13 @@ std::wstring Utf8ToWide(const std::string& utf8) {
     if (utf8.empty()) {
         return std::wstring();
     }
-    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
-                                       static_cast<int>(utf8.size()), nullptr, 0);
+    const int n =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
     if (n <= 0) {
         return std::wstring();
     }
     std::vector<wchar_t> buf(static_cast<size_t>(n) + 1u, L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
-                        buf.data(), n);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()), buf.data(), n);
     return std::wstring(buf.data());
 }
 
@@ -67,11 +66,8 @@ bool SetInitialFolder(IFileOpenDialog* dialog, const std::wstring& dirW) {
 
 } // namespace
 
-bool SmatchetWin32PickOpenFilePaths(void* hwndOwner,
-                                    bool allowMultiple,
-                                    const std::string& initialDirUtf8,
-                                    std::string* outLastDirectoryUtf8,
-                                    std::vector<std::string>& outAbsPathsUtf8) {
+bool SmatchetWin32PickOpenFilePaths(void* hwndOwner, bool allowMultiple, const std::string& initialDirUtf8,
+                                    std::string* outLastDirectoryUtf8, std::vector<std::string>& outAbsPathsUtf8) {
     outAbsPathsUtf8.clear();
     if (outLastDirectoryUtf8) {
         outLastDirectoryUtf8->clear();
@@ -86,8 +82,7 @@ bool SmatchetWin32PickOpenFilePaths(void* hwndOwner,
     }
 
     IFileOpenDialog* dialog = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
-                                IID_PPV_ARGS(&dialog));
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     if (FAILED(hr) || !dialog) {
         LOG_WARN("SmatchetWin32PickOpenFilePaths: CoCreateInstance(FileOpenDialog) failed hr=0x%08lx",
                  static_cast<unsigned long>(hr));
@@ -166,10 +161,7 @@ bool SmatchetWin32PickOpenFilePaths(void* hwndOwner,
 
 #else
 
-bool SmatchetWin32PickOpenFilePaths(void*,
-                                    bool,
-                                    const std::string&,
-                                    std::string*,
+bool SmatchetWin32PickOpenFilePaths(void*, bool, const std::string&, std::string*,
                                     std::vector<std::string>& outAbsPathsUtf8) {
     outAbsPathsUtf8.clear();
     return false;

@@ -2,9 +2,7 @@
 #include "AppController.h"
 
 void LuaConsolePlugin::OnEarlyInit(AppController& app) {
-    app.AddAutomationLogSink([this](const std::string& msg) {
-        console_.AddLog(std::string("[LUA] ") + msg);
-    });
+    app.AddAutomationLogSink([this](const std::string& msg) { console_.AddLog(std::string("[LUA] ") + msg); });
 }
 
 void LuaConsolePlugin::OnDraw(AppController& app) {

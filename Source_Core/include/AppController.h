@@ -5,9 +5,11 @@
 #include <limits>
 #include <cstdint>
 
-// 2. NOW WE CAN INCLUDE SOL
+// 2. Lua / sol2 (optional build — see SMATCHET_WITH_LUA_AUTOMATION in CMake)
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
+#endif
 
 // 3. THE REST OF YOUR INCLUDES
 #include <functional>
@@ -24,15 +26,24 @@
 #include <future>
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
-#include "JiraClient.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
+#include "JiraClient.h"
+
+#include <nlohmann/json.hpp>
+
+/** Single consolidated Jira degraded/offline banner for main windows (replaces stacked warnings). */
+struct JiraConnectivityBannerForUi {
+    enum class Level { None, Warning, Error };
+    Level Kind = Level::None;
+    std::string Message;
+};
 
 class AppController {
-public:
+  public:
     ~AppController();
 
-    struct JiraFieldEditResult {
+    struct FieldEditResult {
         bool Ok = false;
         std::string Error;
         std::unordered_map<std::string, std::string> UpdatedDisplayValues;
@@ -66,14 +77,11 @@ public:
      * If set, Smatchet will download the attachment bytes and save them to a local temp file,
      * then call this handler with the file path.
      */
-    using AttachmentViewerHandler = std::function<void(const std::string& localPath,
-                                                        const std::string& mimeType,
-                                                        const std::string& filename)>;
+    using AttachmentViewerHandler =
+        std::function<void(const std::string& localPath, const std::string& mimeType, const std::string& filename)>;
     void SetAttachmentViewerHandler(AttachmentViewerHandler handler);
-    using AttachmentPreviewHandler = std::function<bool(const std::string& localPath,
-                                                        const std::string& mimeType,
-                                                        const std::string& filename,
-                                                        const std::string& sourceUrl)>;
+    using AttachmentPreviewHandler = std::function<bool(const std::string& localPath, const std::string& mimeType,
+                                                        const std::string& filename, const std::string& sourceUrl)>;
     void SetAttachmentPreviewHandler(AttachmentPreviewHandler handler);
     struct AttachmentDescriptor {
         std::string Filename;
@@ -90,12 +98,10 @@ public:
      * If unset, RequestOpenFilePaths completes with an empty vector.
      */
     using OpenFilePathsHandler =
-        std::function<void(bool allowMultiple,
-                           const std::string& initialDirectoryUtf8,
+        std::function<void(bool allowMultiple, const std::string& initialDirectoryUtf8,
                            std::function<void(std::vector<std::string> absolutePathsUtf8)> onComplete)>;
     void SetOpenFilePathsHandler(OpenFilePathsHandler handler);
-    void RequestOpenFilePaths(bool allowMultiple,
-                              const std::string& initialDirectoryUtf8,
+    void RequestOpenFilePaths(bool allowMultiple, const std::string& initialDirectoryUtf8,
                               std::function<void(std::vector<std::string>)> onComplete) const;
 
     /**
@@ -104,16 +110,10 @@ public:
      * - Otherwise, for image mime types: downloads and offers in-app preview handler.
      * - If no host/in-app handler path is available: falls back to OpenUrl(url).
      */
-    void OpenAttachment(const std::string& url,
-                         const std::string& filename,
-                         const std::string& mimeType);
+    void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
     /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
-    void OpenAttachmentInSystemViewer(const std::string& url,
-                                      const std::string& filename,
-                                      const std::string& mimeType);
-    bool DownloadAttachmentForPreview(const std::string& url,
-                                      const std::string& filename,
-                                      const std::string& mimeType,
+    void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
+    bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError = nullptr);
 
     void InitLua();
@@ -127,19 +127,15 @@ public:
      * If a Lua handler was registered for fieldId, invoke it to draw the grid cell.
      * @return true if the handler ran and returned a Lua-truthy value (cell fully handled).
      */
-    bool TryLuaFieldDisplay(const std::string& fieldId,
-                            const CachedTicket& ticket,
-                            const std::string& rawValue,
-                            float availWidth,
-                            const JiraField* fieldMeta);
+    bool TryLuaFieldDisplay(const std::string& fieldId, const CachedTicket& ticket, const std::string& rawValue,
+                            float availWidth, const TrackerField* fieldMeta);
 
     /**
      * Sync issues from the tracker into the local cache.
      * Pass the in-memory UI config + views store when syncing from the app so JQL/fields match
      * the active view without relying on an immediate disk round-trip.
      */
-    void SyncWithBackend(const JiraConfig* configOverride = nullptr,
-                         const ViewsStore* viewsOverride = nullptr);
+    void SyncWithBackend(const JiraConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
 
     void RefreshLocalData();
 
@@ -150,26 +146,63 @@ public:
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
 
-    /** Bumped when `AvailableJiraFields` changes (fetch, error clear, etc.); UI sort cache should invalidate. */
+    /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetJiraFieldCatalogRevision() const { return JiraFieldCatalogRevision.load(); }
+    std::uint64_t GetFieldCatalogRevision() const { return JiraFieldCatalogRevision.load(); }
 
-    bool RefreshJiraFieldCatalog(const JiraConfig& cfg);
+    bool RefreshFieldCatalog(const JiraConfig& cfg);
+    bool FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
+    std::string BuildIssueBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const;
+    std::string BuildJqlSearchUrl(const JiraConfig& cfg, const std::string& jql) const;
 
-    const std::vector<JiraField>& GetAvailableJiraFields() const { return AvailableJiraFields; }
-    const std::vector<JiraComponent>& GetAvailableJiraComponents() const { return AvailableJiraComponents; }
-    const std::string& GetJiraFieldCatalogError() const { return LastJiraFieldCatalogError; }
-    void SetJiraFieldCatalog(std::vector<JiraField> fields,
-                             std::vector<JiraComponent> components,
-                             const std::string& error);
-    /** Overload that also stores per-(project, issuetype) required metadata. */
-    void SetJiraFieldCatalog(std::vector<JiraField> fields,
-                             std::vector<JiraComponent> components,
-                             std::vector<IssueTypeCreateMeta> issueTypeMeta,
-                             const std::string& error);
+    const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
+    const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
+    const std::string& GetFieldCatalogError() const { return LastJiraFieldCatalogError; }
+    const std::string& GetFieldCatalogWarning() const { return LastJiraFieldCatalogWarning; }
+    /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets. */
+    const std::string& GetLastTicketSyncWarning() const { return LastJiraTicketSyncWarning; }
 
-    const std::vector<IssueTypeCreateMeta>& GetJiraIssueTypeCreateMeta() const {
-        return AvailableJiraIssueTypeMeta;
-    }
+    /**
+     * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
+     * (e.g. Views dashboard users-fetch warning). Prefer this over separate `GetFieldCatalogWarning` /
+     * `GetLastTicketSyncWarning` lines in headers.
+     */
+    JiraConnectivityBannerForUi GetJiraConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
+
+    /** Last outcome of periodic Jira /myself probe (UI thread). */
+    enum class JiraConnectivityState {
+        Unknown,
+        AuthenticatedReachable,
+        ReachableAuthOrConfigError,
+        TransportDown,
+        ServiceUnavailable,
+    };
+    /** Rate-limited background GET /myself; updates connectivity state and recovery latch. */
+    void TickJiraConnectivityMonitor(const JiraConfig& cfg);
+    /**
+     * One-shot: true when reachability improved to authenticated-reachable (including from
+     * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
+     * offline banner is still set). Clears ticket sync + field-catalog warnings and nudges
+     * offline replay timers. UI should run catalog refetch + `SyncWithCurrentView` on the same frame.
+     */
+    bool ConsumeJiraConnectivityRecovery();
+    /**
+     * One-shot: true after a successful live `SyncWithBackend` issue fetch cleared a stale offline
+     * field-catalog banner. UI should set `triggerCatalogRefetch` (same as connectivity recovery).
+     */
+    bool ConsumeFieldCatalogRefetchAfterLiveTicketSync();
+    /**
+     * Main-thread: applies connectivity + ticket/catalog banner updates latched after any successful
+     * Jira HTTP work (including from background workers). Call once per frame early in `SmatchetUI::Draw`.
+     */
+    /** @return true if a deferred notify was applied this call (live Jira request succeeded). */
+    bool ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny();
+    void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
+                         const std::string& error);
+    void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
+                         std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+
+    const std::vector<TrackerIssueTypeCreateMeta>& GetIssueTypeCreateMeta() const { return AvailableIssueTypeMeta; }
 
     // ---- Create issue flow -------------------------------------------------
 
@@ -183,9 +216,8 @@ public:
      * Resolve the required-field set for a draft using cached createmeta.
      * Falls back to the hard minimum (project/issuetype/summary) if unknown.
      */
-    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey,
-                                          const std::string& issueTypeId,
-                                          const std::string& issueTypeName) const;
+    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
+                                         const std::string& issueTypeName) const;
 
     /**
      * Fire-and-forget create. Seeds the cache with the new issue on success and
@@ -209,76 +241,123 @@ public:
 
     /** Current depth of the offline create queue (SQLite row count). */
     size_t GetPendingCreateCount() const;
+    /** Active offline create rows (`pending_creates`), oldest first. */
+    std::vector<PendingCreate> GetPendingCreates() const;
+    size_t GetDeadPendingCreateCount() const;
+    std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
+
+    struct DeadLetterRestoreSummary {
+        int Restored = 0;
+        int Failed = 0;
+    };
+    /** Move selected dead-letter rows back to the active offline queue (attempts reset to 0). */
+    DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
+    /** One-shot startup message from legacy max-attempt pending drop; empty if none. */
+    std::string TakeLegacyPendingStartupBanner();
+
+    struct DeadLetterDeleteSummary {
+        int Deleted = 0;
+        int Failed = 0;
+    };
+    /** Permanently remove dead-letter rows by `pending_creates_dead.dead_id`. */
+    DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
+
+    struct PendingQueueDeleteSummary {
+        int Deleted = 0;
+        int Failed = 0;
+    };
+    /** Permanently remove active offline-queue rows by `pending_creates.id`. */
+    PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
+
+    /** Safe field families for offline-queued field edits (transport failures only). */
+    static bool FieldEditSupportsOfflineQueue(const TrackerField& field);
+
+    /**
+     * Persist a Jira `fields` payload for later replay when connectivity returns.
+     * @param fieldsPayloadJson JSON object map (field id -> Jira value), same shape as `UpdateIssueFields`.
+     */
+    std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
+                                       const std::string& fieldsPayloadJson, std::string& outError);
+
+    /** Replay queued offline field edits (rate-limited; called from UI tick). */
+    void TickOfflineFieldEdits();
+
+    std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
+    std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
+
+    struct PendingFieldEditDeleteSummary {
+        int Deleted = 0;
+        int Failed = 0;
+    };
+    PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
+
+    struct DeadFieldEditDeleteSummary {
+        int Deleted = 0;
+        int Failed = 0;
+    };
+    DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
     /**
      * Background-fetch issues by key (Jira search) and merge into the local cache.
      * Used so bulk-import update rows can show field diffs when keys are outside the current JQL.
      */
-    void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys);
+    void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const JiraField* FindJiraFieldById(const std::string& fieldId) const;
+    const TrackerField* FindFieldById(const std::string& fieldId) const;
 
     /**
      * Per-issue Jira edit metadata: true if the field may be edited for this issue.
-     * Matches SubmitJiraFieldEdit: sprint fields, timetracking estimate columns, and `status` ignore
+     * Matches SubmitFieldEdit: sprint fields, timetracking estimate columns, and `status` ignore
      * editmeta (Jira does not list status like a normal settable field; updates use transitions).
      * `priority`: if editmeta is loaded but omits `priority`, allow edit (Jira omits it inconsistently).
      * Returns true when editmeta is not loaded yet (optimistic) or for non-Jira backends.
      * After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
      * @param fieldMeta optional catalog row for fieldId (avoids lookup; same as nullptr + catalog).
      */
-    bool CanEditJiraFieldForIssue(const std::string& issueId,
-                                  const std::string& fieldId,
-                                  const JiraField* fieldMeta = nullptr,
-                                  const std::string* issueTypeKeyOverride = nullptr) const;
+    bool CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
+                              const TrackerField* fieldMeta = nullptr,
+                              const std::string* issueTypeKeyOverride = nullptr) const;
 
-    bool SubmitJiraFieldEdit(const std::string& issueId,
-                             const JiraField& field,
-                             const std::vector<std::string>& rawValues,
-                             std::string& outError);
-    bool SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
-                                        const JiraField& field,
-                                        const std::vector<std::string>& rawValues,
-                                        const std::string& originalEstimateSnapshot,
-                                        const std::string& remainingEstimateSnapshot,
-                                        const std::string& issueTypeKeySnapshot,
-                                        JiraFieldEditResult& outResult);
-    bool ApplyJiraFieldEditResult(const std::string& issueId,
-                                  const JiraFieldEditResult& result,
-                                  std::string& outError);
+    bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                         const std::vector<std::string>& rawValues, std::string& outError);
+    bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                    const std::vector<std::string>& rawValues,
+                                    const std::string& originalEstimateSnapshot,
+                                    const std::string& remainingEstimateSnapshot,
+                                    const std::string& issueTypeKeySnapshot, FieldEditResult& outResult);
+
+    /**
+     * Build the Jira fields payload + optimistic display map without calling the network.
+     * Used when a network save failed with a transport error and the edit should be queued offline.
+     */
+    bool TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
+                                    const std::vector<std::string>& rawValues,
+                                    const std::string& originalEstimateSnapshot,
+                                    const std::string& remainingEstimateSnapshot,
+                                    const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
+                                    std::string& outFieldsPayloadJson, std::string& outError);
+    bool ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result, std::string& outError);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
     /** Fetches watcher users for an issue (Jira only). */
-    bool FetchIssueWatchers(const std::string& issueKey,
-                            std::vector<JiraUser>& outWatchers,
+    bool FetchIssueWatchers(const std::string& issueKey, std::vector<JiraUser>& outWatchers,
                             std::string& outError) const;
 
-    bool JiraSearchUsersByQuery(const std::string& query,
-                                std::vector<JiraUser>& outUsers,
-                                std::string& outError) const;
+    bool JiraSearchUsersByQuery(const std::string& query, std::vector<JiraUser>& outUsers, std::string& outError) const;
 
-    bool JiraAddIssueCommentPlain(const std::string& issueKey,
-                                  const std::string& plainText,
-                                  std::string& outError);
+    bool JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 
-    bool JiraAddIssueCommentBlameContext(const std::string& issueKey,
-                                         const std::string& p4User,
-                                         const std::string& functionName,
-                                         const std::string& filePath,
-                                         int lineNumber,
-                                         const std::string& changelist,
-                                         const std::string& date,
-                                         bool approximated,
-                                         const std::string& codeSnippet,
-                                         std::string& outError);
+    bool JiraAddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
+                                         const std::string& functionName, const std::string& filePath, int lineNumber,
+                                         const std::string& changelist, const std::string& date, bool approximated,
+                                         const std::string& codeSnippet, std::string& outError);
 
-    bool JiraFetchUserGroupNames(const std::string& accountId,
-                                 std::vector<std::string>& outGroupNames,
+    bool JiraFetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                  std::string& outError) const;
 
-private:
+  private:
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerClient> Backend;
     JiraClient* JiraBackend = nullptr;
@@ -286,11 +365,16 @@ private:
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
     std::atomic<std::uint64_t> JiraFieldCatalogRevision{0};
-    std::vector<JiraField> AvailableJiraFields;
-    std::vector<JiraComponent> AvailableJiraComponents;
-    std::vector<IssueTypeCreateMeta> AvailableJiraIssueTypeMeta;
+    std::vector<TrackerField> AvailableFields;
+    std::vector<TrackerComponent> AvailableComponents;
+    std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
     std::string LastJiraFieldCatalogError;
+    std::string LastJiraFieldCatalogWarning;
+    std::string LastJiraTicketSyncWarning;
+    bool fieldCatalogEverLoaded_ = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
     sol::state lua;
+#endif
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
@@ -298,9 +382,11 @@ private:
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
+#endif
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
 
@@ -319,32 +405,61 @@ private:
      * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
      *        for issuetype (safe for background threads that captured the key on the UI thread).
      */
-    bool EnsureIssueEditMetaLoaded(const std::string& issueId,
-                                   std::string* outError = nullptr,
+    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
                                    const std::string* issueTypeKeyOverride = nullptr);
-    bool RefreshIssueEditMeta(const std::string& issueId,
-                              std::string* outError = nullptr,
+    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
                               const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     void WarmIssueTypeEditMetaAtStartAsync();
+    void EnsureCatalogHistoryField();
+    bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
+                                            const std::vector<std::string>& rawValues,
+                                            const std::string& originalEstimateSnapshot,
+                                            const std::string& remainingEstimateSnapshot,
+                                            const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
+                                            std::unordered_map<std::string, std::string>& outDisplayValues,
+                                            std::string& outError);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
     std::string ResolveLuaScriptPath(const std::string& filename) const;
     void LaunchBackgroundTask(std::function<void()> task);
     void JoinBackgroundTasks();
+
+    void DrainJiraConnectivityProbeFuture();
+    void ApplyJiraConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
+                                          const JiraReachabilityProbeResult& r);
+    bool IsConnectivityDegradedForProbeInterval(JiraConnectivityState nextProbeState) const;
+    void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now);
+    static JiraConnectivityState MapReachabilityProbeKind(JiraReachabilityProbeKind k);
+
+    void requestDeferredLiveJiraBackendSuccessNotify_() const;
+    void applyLiveJiraReachabilityAfterSuccessfulBackendRequest_();
+
+    std::chrono::steady_clock::time_point nextJiraConnectivityProbeAt_{};
+    bool jiraConnectivityProbeInFlight_ = false;
+    std::future<JiraReachabilityProbeResult> jiraConnectivityProbeFuture_;
+    JiraConnectivityState lastJiraConnectivityState_ = JiraConnectivityState::Unknown;
+    std::string lastJiraConnectivityDiagnostic_;
+    bool jiraConnectivityRecoveryPending_ = false;
+    std::atomic<bool> fieldCatalogRefetchAfterLiveTicketSyncPending_{false};
+    mutable std::atomic<bool> deferredLiveJiraBackendSuccessNotify_{false};
 
     mutable std::mutex activeTicketsMutex_;
     std::atomic<bool> shuttingDown_{false};
     std::vector<std::thread> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
 
-    // Offline-replay throttle: don't hammer Jira every frame if previous tick failed.
+    // Offline-replay throttle + in-flight guards (UI thread + background workers — all accesses
+    // under offlineReplayScheduleMutex_).
+    mutable std::mutex offlineReplayScheduleMutex_;
     std::chrono::steady_clock::time_point nextOfflineReplayAt_ = std::chrono::steady_clock::now();
     bool offlineReplayInFlight_ = false;
+    std::chrono::steady_clock::time_point nextOfflineFieldEditReplayAt_ = std::chrono::steady_clock::now();
+    bool offlineFieldEditReplayInFlight_ = false;
+    std::string legacyPendingStartupBanner_;
 
     mutable std::mutex bulkImportPrefetchKeysMutex_;
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
 };
-
 
 #endif

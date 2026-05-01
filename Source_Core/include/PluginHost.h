@@ -7,7 +7,7 @@
 class AppController;
 
 class PluginHost {
-public:
+  public:
     void Register(std::unique_ptr<IPlugin> plugin);
 
     void OnEarlyInit(AppController& app);
@@ -15,6 +15,6 @@ public:
     void OnDraw(AppController& app);
     void OnStop();
 
-private:
+  private:
     std::vector<std::unique_ptr<IPlugin>> plugins_;
 };

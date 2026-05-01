@@ -36,9 +36,7 @@ bool IsHardMinimumEmpty(const IssueDraft& draft, const std::string& fieldId) {
 
 namespace IssueDraftHelpers {
 
-std::vector<std::string> DefaultNewIssueInheritFieldIds() {
-    return DefaultNewIssueInheritFieldIdsList();
-}
+std::vector<std::string> DefaultNewIssueInheritFieldIds() { return DefaultNewIssueInheritFieldIdsList(); }
 
 bool IsCreateSuppressedFieldId(const std::string& fieldId) {
     static const std::unordered_set<std::string> suppressed = {
@@ -81,9 +79,8 @@ bool IsSpecialDraftFieldId(const std::string& fieldId) {
     return fieldId == "project" || fieldId == "issuetype" || fieldId == "parent";
 }
 
-std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket,
-                                          const std::vector<JiraField>& catalog,
-                                          std::string* outName) {
+std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket, const std::vector<TrackerField>& catalog,
+                                         std::string* outName) {
     const std::string current = ticket.GetFieldValue("issuetype");
     if (outName) {
         *outName = current;
@@ -108,12 +105,9 @@ std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket,
     return {};
 }
 
-IssueDraft FromCachedTicket(const CachedTicket& ticket,
-                            const std::vector<JiraField>& catalog,
-                            const std::string& fallbackProjectKey,
-                            const std::string& fallbackIssueTypeId,
-                            const std::string& fallbackIssueTypeName,
-                            const std::vector<std::string>& inheritFieldIds) {
+IssueDraft FromCachedTicket(const CachedTicket& ticket, const std::vector<TrackerField>& catalog,
+                            const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
+                            const std::string& fallbackIssueTypeName, const std::vector<std::string>& inheritFieldIds) {
     IssueDraft draft;
     draft.ProjectKey = fallbackProjectKey;
     draft.IssueTypeId = fallbackIssueTypeId;
@@ -190,8 +184,7 @@ IssueDraft FromCachedTicket(const CachedTicket& ticket,
     return draft;
 }
 
-std::vector<std::string> MissingRequiredFields(const IssueDraft& draft,
-                                                const RequiredFieldSet& required) {
+std::vector<std::string> MissingRequiredFields(const IssueDraft& draft, const RequiredFieldSet& required) {
     if (!draft.ExistingIssueKey.empty()) {
         return {};
     }
@@ -301,8 +294,10 @@ namespace {
 std::string TrimForDiff(const std::string& s) {
     size_t a = 0;
     size_t b = s.size();
-    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) ++a;
-    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n')) --b;
+    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n'))
+        ++a;
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n'))
+        --b;
     return s.substr(a, b - a);
 }
 
@@ -327,8 +322,7 @@ bool IsDiffSkippedFieldId(const std::string& fieldId) {
 
 } // namespace
 
-std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft,
-                                             const CachedTicket& existing) {
+std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft, const CachedTicket& existing) {
     std::vector<FieldChange> out;
     for (const auto& kv : draft.FieldValues) {
         if (IsDiffSkippedFieldId(kv.first)) {
@@ -349,8 +343,7 @@ std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft,
         }
     }
 
-    std::sort(out.begin(), out.end(),
-              [](const FieldChange& a, const FieldChange& b) { return a.FieldId < b.FieldId; });
+    std::sort(out.begin(), out.end(), [](const FieldChange& a, const FieldChange& b) { return a.FieldId < b.FieldId; });
     return out;
 }
 
@@ -363,10 +356,9 @@ void PruneUnchangedFields(IssueDraft& draft, const CachedTicket& existing) {
         const std::string newVal = TrimForDiff(it->second);
         const bool keyInCache = existing.fieldValues.find(it->first) != existing.fieldValues.end();
         if (!keyInCache && !newVal.empty()) {
-            LOG_DEBUG(
-                "IssueDraftHelpers::PruneUnchangedFields: field '%s' not in cached ticket '%s'; treating baseline as empty",
-                it->first.c_str(),
-                existing.id.c_str());
+            LOG_DEBUG("IssueDraftHelpers::PruneUnchangedFields: field '%s' not in cached ticket '%s'; treating "
+                      "baseline as empty",
+                      it->first.c_str(), existing.id.c_str());
         }
         const std::string oldVal = TrimForDiff(existing.GetFieldValue(it->first));
         if (newVal == oldVal) {

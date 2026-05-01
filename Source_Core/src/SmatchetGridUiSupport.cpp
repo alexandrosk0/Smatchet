@@ -1,0 +1,352 @@
+#include "SmatchetGridUiSupport.h"
+
+#include "AppController.h"
+#include "StringUtil.h"
+
+#include "imgui.h"
+
+#include <algorithm>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+std::string JoinCsvLocal(const std::vector<std::string>& values) {
+    std::string out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i != 0) {
+            out += ", ";
+        }
+        out += values[i];
+    }
+    return out;
+}
+
+static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId) {
+    if (templateId == "need_repro") {
+        return "Need reproduction details for " + issueKey +
+               ":\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details";
+    }
+    if (templateId == "need_logs") {
+        return "Please attach diagnostic data for " + issueKey +
+               ":\n- Relevant logs\n- Callstack / crash context\n- Local repro notes";
+    }
+    return "Triage handoff for " + issueKey + ":\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:";
+}
+
+} // namespace
+
+/**
+ * Right-click on the cell group: Copy (plain RMB). Shift+RMB: full raw cached value panel.
+ * Uses OpenPopup — not BeginPopupContextItem — so Shift+RMB is not swallowed by the Copy menu.
+ */
+void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
+                                  const std::string& fieldId, const std::string& fieldLabel,
+                                  const std::string& rawValue, AppController* app, UiDrawSession* ui,
+                                  bool readOnlyMode) {
+    ImGui::PushID(imguiStackId.c_str());
+    if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        if (ImGui::GetIO().KeyShift) {
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 300.0f), ImGuiCond_FirstUseEver);
+            ImGui::OpenPopup("cell_raw_cached");
+        } else {
+            ImGui::OpenPopup("cell_copy_quick");
+        }
+    }
+    if (ImGui::BeginPopup("cell_raw_cached")) {
+        ImGui::TextUnformatted("Raw cached value");
+        ImGui::Separator();
+        ImGui::Text("Issue: %s", issueKey.c_str());
+        if (!fieldId.empty()) {
+            ImGui::Text("Field: %s (%s)", fieldLabel.c_str(), fieldId.c_str());
+        } else {
+            ImGui::Text("Field: %s", fieldLabel.c_str());
+        }
+        ImGui::TextUnformatted("Value:");
+        if (rawValue.empty()) {
+            ImGui::TextDisabled("(empty)");
+        } else {
+            ImGui::BeginChild("cell_raw_cached_body", ImVec2(0, 140.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+            ImGui::TextUnformatted(rawValue.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
+        if (ImGui::MenuItem("Copy value")) {
+            ImGui::SetClipboardText(rawValue.c_str());
+        }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("cell_copy_quick")) {
+        if (ImGui::MenuItem("Copy")) {
+            ImGui::SetClipboardText(rawValue.c_str());
+        }
+        if (app && ui && fieldId.empty() && !issueKey.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Quick comment templates");
+            if (readOnlyMode) {
+                ImGui::TextDisabled("(disabled while offline/read-only)");
+            } else {
+                auto postTemplate = [&](const char* title, const char* id) {
+                    if (ImGui::MenuItem(title)) {
+                        std::string err;
+                        if (app->JiraAddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
+                            ui->gridEditError.clear();
+                            ui->gridEditSuccess = std::string("Posted template comment to ") + issueKey + ".";
+                        } else {
+                            ui->gridEditSuccess.clear();
+                            ui->gridEditError = err.empty() ? "Failed to post Jira comment." : err;
+                        }
+                    }
+                };
+                postTemplate("Need repro details", "need_repro");
+                postTemplate("Need logs / diagnostics", "need_logs");
+                postTemplate("Triage handoff summary", "handoff");
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta) {
+    // Power-user only: Shift + right-click on header (plain RMB keeps default table header behavior).
+    if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetIO().KeyShift) {
+        ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
+        ImGui::OpenPopup("grid_hdr_meta");
+    }
+    if (!ImGui::BeginPopup("grid_hdr_meta")) {
+        return;
+    }
+
+    if (col.ColumnKind == TicketGridColumn::Kind::Id) {
+        ImGui::TextUnformatted("Issue key column (not a Jira field)");
+        ImGui::Separator();
+        ImGui::Text("Key: %s", col.Key.c_str());
+        ImGui::Text("Label: %s", col.Label.c_str());
+        if (ImGui::MenuItem("Copy column key")) {
+            ImGui::SetClipboardText(col.Key.c_str());
+        }
+        ImGui::EndPopup();
+        return;
+    }
+
+    ImGui::TextUnformatted("Jira field (catalog)");
+    ImGui::Separator();
+
+    const std::string& fieldIdForCopy = meta ? meta->Id : col.FieldId;
+    if (ImGui::MenuItem("Copy field id")) {
+        ImGui::SetClipboardText(fieldIdForCopy.c_str());
+    }
+
+    if (meta) {
+        ImGui::Text("Id: %s", meta->Id.c_str());
+        ImGui::Text("Name: %s", meta->Name.c_str());
+        ImGui::Text("Type: %s", meta->Type.c_str());
+        ImGui::Text("ReadOnly: %s", meta->ReadOnly ? "true" : "false");
+        ImGui::Text("IsCustom: %s", meta->IsCustom ? "true" : "false");
+        ImGui::Text("IsArray: %s", meta->IsArray ? "true" : "false");
+        ImGui::Text("ItemsType: %s", meta->ItemsType.empty() ? "(none)" : meta->ItemsType.c_str());
+        ImGui::Text("IsUserType: %s", meta->IsUserType ? "true" : "false");
+        ImGui::Text("AllowedValues count: %d", static_cast<int>(meta->AllowedValues.size()));
+        ImGui::Text("AllowedValueOptions count: %d", static_cast<int>(meta->AllowedValueOptions.size()));
+
+        const int optCount = static_cast<int>(meta->AllowedValueOptions.size());
+        if (optCount > 0) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("AllowedValueOptions (scroll)");
+            ImGui::BeginChild("hdr_allowed_opts", ImVec2(0, 100.0f), true);
+            const int show = (optCount < 200) ? optCount : 200;
+            for (int i = 0; i < show; ++i) {
+                const TrackerFieldOption& o = meta->AllowedValueOptions[static_cast<size_t>(i)];
+                ImGui::BulletText("id=%s  value=%s", o.Id.c_str(), o.Value.c_str());
+            }
+            if (optCount > show) {
+                ImGui::TextDisabled("... %d more", optCount - show);
+            }
+            ImGui::EndChild();
+        }
+
+        const int valCount = static_cast<int>(meta->AllowedValues.size());
+        if (valCount > 0 && meta->AllowedValueOptions.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("AllowedValues (scroll)");
+            ImGui::BeginChild("hdr_allowed_vals", ImVec2(0, 80.0f), true);
+            const int show = (valCount < 200) ? valCount : 200;
+            for (int i = 0; i < show; ++i) {
+                ImGui::BulletText("%s", meta->AllowedValues[static_cast<size_t>(i)].c_str());
+            }
+            if (valCount > show) {
+                ImGui::TextDisabled("... %d more", valCount - show);
+            }
+            ImGui::EndChild();
+        }
+    } else {
+        ImGui::TextDisabled("No catalog entry for field id: %s", col.FieldId.c_str());
+        ImGui::Text("Column key: %s", col.Key.c_str());
+        ImGui::Text("Header label: %s", col.Label.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("GET /rest/api/3/field (raw object)");
+    if (meta && !meta->RawFieldDefinitionJson.empty()) {
+        if (ImGui::MenuItem("Copy raw JSON")) {
+            ImGui::SetClipboardText(meta->RawFieldDefinitionJson.c_str());
+        }
+        ImGui::BeginChild("hdr_raw_json", ImVec2(0, 140.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+        ImGui::TextUnformatted(meta->RawFieldDefinitionJson.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    } else {
+        ImGui::TextDisabled("(not available — refresh field catalog or synthetic field)");
+    }
+
+    ImGui::EndPopup();
+}
+
+std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn& column,
+                              const TrackerField* fieldMeta) {
+    if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+        return ticket.id;
+    }
+    const std::string raw = ticket.GetFieldValue(column.FieldId);
+    if (IsTrackerDateOrDateTimeField(column.FieldId, fieldMeta)) {
+        return DisplayValueForTrackerDateField(column.FieldId, fieldMeta, raw);
+    }
+    return raw;
+}
+
+// TSV cells cannot contain embedded tabs/newlines without breaking paste into
+// spreadsheets; collapse them to spaces.
+static std::string SanitizeTsvCellForCopy(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        if (ch == '\t' || ch == '\n' || ch == '\r') {
+            out.push_back(' ');
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
+                       const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
+                       const GridRectSelection& sel) {
+    if (!sel.HasAnySelection() || columns.empty()) {
+        return;
+    }
+    const int lastColIdx = static_cast<int>(columns.size()) - 1;
+    const bool useSorted = !sortedIdx.empty();
+
+    // Union of rows touched by either the rectangle or the whole-row set.
+    // Using std::set keeps the output in ascending sort-order, matching the
+    // visual order in the grid.
+    std::set<int> allRows;
+    if (sel.Active) {
+        for (int r = sel.MinRow(); r <= sel.MaxRow(); ++r) {
+            if (r >= 0)
+                allRows.insert(r);
+        }
+    }
+    for (int r : sel.Rows) {
+        if (r >= 0)
+            allRows.insert(r);
+    }
+
+    std::string out;
+    for (int r : allRows) {
+        const size_t logicalRow = static_cast<size_t>(r);
+        size_t ticketIdx = logicalRow;
+        if (useSorted) {
+            if (logicalRow >= sortedIdx.size())
+                continue;
+            ticketIdx = sortedIdx[logicalRow];
+        }
+        if (ticketIdx >= tickets.size())
+            continue;
+        const CachedTicket& t = tickets[ticketIdx];
+
+        int c0 = -1;
+        int c1 = -1;
+        if (sel.RowSelected(r)) {
+            c0 = 0;
+            c1 = lastColIdx;
+        } else if (sel.RectContains(r, sel.MinCol())) {
+            c0 = sel.MinCol();
+            c1 = sel.MaxCol();
+        }
+        if (c0 < 0 || c1 < c0)
+            continue;
+
+        for (int c = c0; c <= c1; ++c) {
+            if (c < 0 || c >= static_cast<int>(columns.size()))
+                continue;
+            const TicketGridColumn& col = columns[static_cast<size_t>(c)];
+            const TrackerField* meta =
+                (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
+            out += SanitizeTsvCellForCopy(GetCellRawForCopy(t, col, meta));
+            if (c < c1)
+                out.push_back('\t');
+        }
+        out.push_back('\n');
+    }
+    ImGui::SetClipboardText(out.c_str());
+}
+
+// Derives a session-local identifier for the current sort/tickets state; used
+// to invalidate the rectangular selection when the row order or contents
+// change (sort re-applied, tickets reloaded, etc.).
+std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::uint64_t ticketsRevision,
+                                       std::size_t ticketCount) {
+    auto mix = [](std::uint64_t h, std::uint64_t v) {
+        v += 0x9e3779b97f4a7c15ULL;
+        v ^= h;
+        v *= 0xff51afd7ed558ccdULL;
+        v ^= v >> 33;
+        return v;
+    };
+    std::uint64_t h = std::hash<std::string>{}(sortFingerprint);
+    h = mix(h, static_cast<std::uint64_t>(ticketsRevision));
+    h = mix(h, static_cast<std::uint64_t>(ticketCount));
+    if (h == 0)
+        h = 1; // reserve 0 for "cleared"
+    return h;
+}
+
+std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery) {
+    std::string s;
+    if (!view) {
+        s = "@\x1e";
+    } else {
+        s = view->Id;
+        s.push_back('\x1e');
+        s += JoinCsvLocal(view->Fields);
+        s.push_back('\x1e');
+        s += JoinCsvLocal(view->ColumnOrder);
+        s.push_back('\x1e');
+    }
+    s += jqlQuery;
+    return s;
+}
+
+void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
+    if (!d.newIssueDraftActive && !d.newIssueCreateInFlight) {
+        return;
+    }
+    d.newIssueDraftActive = false;
+    d.newIssueScrollDraftRowIntoViewPending = false;
+    d.newIssueDraft = IssueDraft{};
+    d.newIssueDraftEditBufs.clear();
+    d.newIssueMissingFieldIds.clear();
+    d.newIssueQueueFallbackVisible = false;
+    d.newIssueQueueFallbackError.clear();
+    if (d.newIssueCreateInFlight) {
+        d.newIssueDiscardAsyncCreateResult = true;
+    }
+}

@@ -2,6 +2,7 @@
 #include <string>
 #include <exception>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #if defined(__linux__)
@@ -46,8 +47,12 @@
 #include "AppController.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
+#if defined(SMATCHET_WITH_MCP)
 #include "McpPlugin.h"
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 #include "LuaConsolePlugin.h"
+#endif
 
 // GLFW Error Callback
 static void glfw_error_callback(int error, const char* description) {
@@ -56,10 +61,12 @@ static void glfw_error_callback(int error, const char* description) {
 
 #if defined(_WIN32)
 static void SmatchetApplyWindowIcon(GLFWwindow* window) {
-    if (!window) return;
+    if (!window)
+        return;
 
     HWND hwnd = glfwGetWin32Window(window);
-    if (!hwnd) return;
+    if (!hwnd)
+        return;
 
     // Load the icon embedded in the executable resources (see smatchet.rc).
     // Use the canonical IDI_APPLICATION numeric id (32512).
@@ -68,13 +75,7 @@ static void SmatchetApplyWindowIcon(GLFWwindow* window) {
     HICON hIcon = LoadIconA(hModule, MAKEINTRESOURCE(kIconResourceId));
     if (!hIcon) {
         // Fallback for cases where LoadIcon fails for the resource.
-        hIcon = (HICON)LoadImageA(
-            hModule,
-            MAKEINTRESOURCE(kIconResourceId),
-            IMAGE_ICON,
-            0, 0,
-            LR_SHARED
-        );
+        hIcon = (HICON)LoadImageA(hModule, MAKEINTRESOURCE(kIconResourceId), IMAGE_ICON, 0, 0, LR_SHARED);
     }
     if (!hIcon) {
         // If this prints, the `.rc` resource may not actually be embedded/recognized.
@@ -108,6 +109,19 @@ static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp
     } catch (...) {
         throw;
     }
+}
+
+// MSVC: __try cannot appear in a function that needs C++ object unwinding (e.g. main with PluginHost on stack).
+static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smatchetApp, PluginHost& pluginHost) {
+#if defined(_WIN32) && defined(_MSC_VER)
+    __try {
+        SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::exit(1);
+    }
+#else
+    SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
+#endif
 }
 
 int main(int, char**) {
@@ -186,7 +200,8 @@ int main(int, char**) {
     // 2. Setup Dear ImGui Context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
 
@@ -201,6 +216,7 @@ int main(int, char**) {
     // 3. Initialize Smatchet Core + plugins
     AppController smatchetApp;
     PluginHost pluginHost;
+#if defined(SMATCHET_WITH_MCP)
     {
         const JiraConfig cfg = ConfigManager::Load();
         if (cfg.McpEnabled) {
@@ -208,14 +224,17 @@ int main(int, char**) {
             pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
         }
     }
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
     pluginHost.Register(std::make_unique<LuaConsolePlugin>());
+#endif
     pluginHost.OnEarlyInit(smatchetApp);
 
     smatchetApp.Initialize("Smatchet_LocalCache.sqlite", "Jira");
     pluginHost.OnStart(smatchetApp);
 
     SmatchetUI mainWindow;
-    
+
     // 4. The Main Render Loop
     ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
 
@@ -231,27 +250,20 @@ int main(int, char**) {
         // ====================================================================
         // THE BRIDGE: Hand control over to your engine-agnostic UI layer
         // ====================================================================
-        
+
         // Setup a full-screen dockspace for a professional layout
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
         // Draw the main application
-#if defined(_WIN32) && defined(_MSC_VER)
-        __try {
-            SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            exit(1);
-        }
-#else
-        SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
-#endif
+        SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
 
         // Rendering
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
+        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w,
+                     clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 

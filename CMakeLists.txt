@@ -43,6 +43,10 @@ option(SMATCHET_WARNINGS_AS_ERRORS
     "Treat the above warnings as errors (useful for CI)"
     OFF)
 
+option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" OFF)
+option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" OFF)
+option(SMATCHET_WITH_AI "Build with AI assistance client (OpenAI-compatible HTTP)" OFF)
+
 function(smatchet_apply_strict_warnings _target)
     if(NOT SMATCHET_ENABLE_STRICT_WARNINGS)
         return()
@@ -196,59 +200,54 @@ FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TA
 FetchContent_MakeAvailable(glfw)
 
 # ==============================================================================
-# LUA & SOL2 (C++14 COMPATIBLE)
+# LUA & SOL2 (C++14 COMPATIBLE) — optional (SMATCHET_WITH_LUA_AUTOMATION)
 # ==============================================================================
-set(LUA_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/lua-src")
-if(NOT EXISTS "${LUA_SRC_DIR}")
-    message(STATUS "Downloading Lua 5.3.6 source...")
-    file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz)
-    execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/_deps)
-    file(RENAME ${CMAKE_BINARY_DIR}/_deps/lua-5.3.6 ${LUA_SRC_DIR})
-endif()
-
-# 1. Build Lua under a UNIQUE name to avoid clashing with sol2's internal 'LuaLib'
-file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
-list(REMOVE_ITEM LUA_SOURCES "${LUA_SRC_DIR}/src/lua.c" "${LUA_SRC_DIR}/src/luac.c")
-
-add_library(Smatchet_Lua_Internal STATIC ${LUA_SOURCES})
-target_include_directories(Smatchet_Lua_Internal PUBLIC "$<BUILD_INTERFACE:${LUA_SRC_DIR}/src>")
-
-# 2. Tell sol2 where the headers are and that Lua is ALREADY FOUND
-set(LUA_INCLUDE_DIR "${LUA_SRC_DIR}/src" CACHE PATH "" FORCE)
-set(LUA_LIBRARIES Smatchet_Lua_Internal CACHE STRING "" FORCE)
-set(SOL2_BUILD_LUA OFF CACHE BOOL "" FORCE) # Tell sol2 NOT to try building its own Lua
-
-FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG v2.20.6)
-
-# FIX: Silence the FetchContent deprecation warning emitted by sol2's
-# fetched CMakeLists.txt (it uses cmake_minimum_required(VERSION 3.5.0)).
-# Newer CMake versions deprecate compatibility with CMake < 3.10.
-FetchContent_GetProperties(sol2)
-if(NOT sol2_POPULATED)
-    FetchContent_Populate(sol2)
-endif()
-
-set(_sol2_cmakelists "${sol2_SOURCE_DIR}/CMakeLists.txt")
-if(EXISTS "${_sol2_cmakelists}")
-    file(READ "${_sol2_cmakelists}" _sol2_cmakelists_contents)
-
-    string(REPLACE "cmake_minimum_required(VERSION 3.5.0)"
-                   "cmake_minimum_required(VERSION 3.10.0)"
-                   _sol2_patched_contents
-                   "${_sol2_cmakelists_contents}")
-    string(REPLACE "cmake_minimum_required(VERSION 3.5)"
-                   "cmake_minimum_required(VERSION 3.10.0)"
-                   _sol2_patched_contents
-                   "${_sol2_patched_contents}")
-
-    if(NOT _sol2_patched_contents STREQUAL _sol2_cmakelists_contents)
-        file(WRITE "${_sol2_cmakelists}" "${_sol2_patched_contents}")
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    set(LUA_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/lua-src")
+    if(NOT EXISTS "${LUA_SRC_DIR}")
+        message(STATUS "Downloading Lua 5.3.6 source...")
+        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/_deps)
+        file(RENAME ${CMAKE_BINARY_DIR}/_deps/lua-5.3.6 ${LUA_SRC_DIR})
     endif()
+
+    file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
+    list(REMOVE_ITEM LUA_SOURCES "${LUA_SRC_DIR}/src/lua.c" "${LUA_SRC_DIR}/src/luac.c")
+
+    add_library(Smatchet_Lua_Internal STATIC ${LUA_SOURCES})
+    target_include_directories(Smatchet_Lua_Internal PUBLIC "$<BUILD_INTERFACE:${LUA_SRC_DIR}/src>")
+
+    set(LUA_INCLUDE_DIR "${LUA_SRC_DIR}/src" CACHE PATH "" FORCE)
+    set(LUA_LIBRARIES Smatchet_Lua_Internal CACHE STRING "" FORCE)
+    set(SOL2_BUILD_LUA OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG v2.20.6)
+
+    FetchContent_GetProperties(sol2)
+    if(NOT sol2_POPULATED)
+        FetchContent_Populate(sol2)
+    endif()
+
+    set(_sol2_cmakelists "${sol2_SOURCE_DIR}/CMakeLists.txt")
+    if(EXISTS "${_sol2_cmakelists}")
+        file(READ "${_sol2_cmakelists}" _sol2_cmakelists_contents)
+
+        string(REPLACE "cmake_minimum_required(VERSION 3.5.0)"
+                       "cmake_minimum_required(VERSION 3.10.0)"
+                       _sol2_patched_contents
+                       "${_sol2_cmakelists_contents}")
+        string(REPLACE "cmake_minimum_required(VERSION 3.5)"
+                       "cmake_minimum_required(VERSION 3.10.0)"
+                       _sol2_patched_contents
+                       "${_sol2_patched_contents}")
+
+        if(NOT _sol2_patched_contents STREQUAL _sol2_cmakelists_contents)
+            file(WRITE "${_sol2_cmakelists}" "${_sol2_patched_contents}")
+        endif()
+    endif()
+
+    add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
 endif()
-
-add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
-
-
 
 # Compile Dear ImGui (with GLFW and OpenGL3 backends)
 message(STATUS "Fetching Dear ImGui...")
@@ -297,18 +296,30 @@ endif()
 unset(_smatchet_blame_syntax_idx)
 unset(_SMATCHET_BLAME_SYNTAX)
 
-# FIX: Explicitly define the sol2 and lua paths because FetchContent variables
-# can sometimes be finicky with older sol2 tags.
-set(SOL2_INCLUDE_DIR "${CMAKE_BINARY_DIR}/_deps/sol2-src")
-set(LUA_INCLUDE_DIR "${CMAKE_BINARY_DIR}/_deps/lua-src/src")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController_stub.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
+if(NOT SMATCHET_WITH_AI)
+    list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController_stub.cpp")
+endif()
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
+else()
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
+endif()
 
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
         ${sqlitecpp_SOURCE_DIR}/include
-        ${LUA_SRC_DIR}/src
-        ${sol2_SOURCE_DIR}/single
 )
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    target_include_directories(SmatchetCoreInterface INTERFACE
+            ${LUA_SRC_DIR}/src
+            ${sol2_SOURCE_DIR}/single
+    )
+endif()
 
 target_link_libraries(SmatchetCoreInterface INTERFACE
         nlohmann_json::nlohmann_json
@@ -317,17 +328,28 @@ target_link_libraries(SmatchetCoreInterface INTERFACE
         httplib::httplib
 )
 
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_LUA_AUTOMATION=1)
+endif()
+if(SMATCHET_WITH_MCP)
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_MCP=1)
+endif()
+if(SMATCHET_WITH_AI)
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_AI=1)
+endif()
+
 function(smatchet_configure_core_impl_target _target)
     target_link_libraries("${_target}" PUBLIC SmatchetCoreInterface)
-    target_include_directories("${_target}" PRIVATE
-            Source_Core/src
-            ${sol2_SOURCE_DIR}/single
-            ${LUA_SRC_DIR}/src
-    )
-    target_link_libraries("${_target}" PRIVATE
-            Smatchet_Lua_Internal  # This provides the actual Lua symbols
-            ghc_filesystem
-    )
+    target_include_directories("${_target}" PRIVATE Source_Core/src)
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        target_include_directories("${_target}" PRIVATE
+                ${sol2_SOURCE_DIR}/single
+                ${LUA_SRC_DIR}/src
+        )
+        target_link_libraries("${_target}" PRIVATE Smatchet_Lua_Internal ghc_filesystem)
+    else()
+        target_link_libraries("${_target}" PRIVATE ghc_filesystem)
+    endif()
 endfunction()
 
 function(smatchet_configure_opengl_core_impl_target _target)
@@ -365,50 +387,59 @@ endif()
 # ==============================================================================
 # 3b. STATIC PLUGINS (same IPlugin contract as future DLLs)
 # ==============================================================================
-add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp)
-target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
-target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreInterface)
+if(SMATCHET_WITH_MCP)
+    add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp)
+    target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreInterface)
+    smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
+endif()
 
-add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
-target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
-target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
-smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
-smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
+    target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+    target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
+    smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
+endif()
 
 if(WIN32)
-    add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
-    target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
-    target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12)
-
-    add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
-    target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
-    target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
-    smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
-    smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole_DX12)
+    if(SMATCHET_WITH_MCP)
+        add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
+        target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+        target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12)
+        smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
+    endif()
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
+        target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+        target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
+        smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole_DX12)
+    endif()
 
     add_library(SmatchetImGuiHost_DX12 STATIC
             Source_Core/src/SmatchetImGuiHost.cpp
             Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp
     )
-    target_include_directories(SmatchetImGuiHost_DX12 PUBLIC
-            Source_Core/include
-            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
-    )
-    target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC
-            SmatchetCore_DX12
-            SmatchetPlugin_Mcp_DX12
-            SmatchetPlugin_LuaConsole_DX12
-            ImGuiLib_DX12
-            d3d12
-            dxgi
-    )
+    target_include_directories(SmatchetImGuiHost_DX12 PUBLIC Source_Core/include)
+    if(SMATCHET_WITH_MCP)
+        target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    endif()
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+    endif()
+    target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12 d3d12 dxgi)
+    if(SMATCHET_WITH_MCP)
+        target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC SmatchetPlugin_Mcp_DX12)
+    endif()
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC SmatchetPlugin_LuaConsole_DX12)
+    endif()
     smatchet_apply_strict_warnings(SmatchetImGuiHost_DX12)
 
     # Package DX12 libs + public host header directly into Unreal plugin ThirdParty layout.
     set(_SMATCHET_UNREAL_INCLUDE_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/include")
     set(_SMATCHET_UNREAL_LIB_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/lib/Win64/$<IF:$<CONFIG:Debug>,Debug,Development>")
-    add_custom_target(SmatchetPackageUnrealLibs_DX12
+    set(_SMATCHET_PKG_DEP SmatchetImGuiHost_DX12 SmatchetCore_DX12 ImGuiLib_DX12)
+    set(_SMATCHET_PKG_CMDS
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_INCLUDE_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -427,19 +458,11 @@ if(WIN32)
                 "$<TARGET_FILE:SmatchetImGuiHost_DX12>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetImGuiHost_DX12>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
-                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_Mcp_DX12>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:SmatchetPlugin_LuaConsole_DX12>"
-                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_LuaConsole_DX12>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:SmatchetCore_DX12>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetCore_DX12>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:ImGuiLib_DX12>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:ImGuiLib_DX12>"
-        # Static dependencies needed by the core when linked from Unreal.
-        # (Static library link-time deps are not automatically pulled by UBT.)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:cpr>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:cpr>"
@@ -450,17 +473,29 @@ if(WIN32)
                 "$<TARGET_FILE:sqlite3>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:sqlite3>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:Smatchet_Lua_Internal>"
-                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:Smatchet_Lua_Internal>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:libcurl>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:libcurl>"
-        DEPENDS
-            SmatchetImGuiHost_DX12
-            SmatchetPlugin_Mcp_DX12
-            SmatchetPlugin_LuaConsole_DX12
-            SmatchetCore_DX12
-            ImGuiLib_DX12
+    )
+    if(SMATCHET_WITH_MCP)
+        list(APPEND _SMATCHET_PKG_CMDS
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_Mcp_DX12>")
+        list(APPEND _SMATCHET_PKG_DEP SmatchetPlugin_Mcp_DX12)
+    endif()
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        list(APPEND _SMATCHET_PKG_CMDS
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:SmatchetPlugin_LuaConsole_DX12>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_LuaConsole_DX12>"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:Smatchet_Lua_Internal>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:Smatchet_Lua_Internal>")
+        list(APPEND _SMATCHET_PKG_DEP SmatchetPlugin_LuaConsole_DX12 Smatchet_Lua_Internal)
+    endif()
+    add_custom_target(SmatchetPackageUnrealLibs_DX12
+        ${_SMATCHET_PKG_CMDS}
+        DEPENDS ${_SMATCHET_PKG_DEP}
         COMMENT "Packaging Smatchet DX12 artifacts for Unreal plugin"
     )
 endif()
@@ -491,25 +526,30 @@ add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
 smatchet_configure_opengl_core_impl_target(SmatchetStandalone)
 smatchet_apply_strict_warnings(SmatchetStandalone)
 
-set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
-add_custom_command(TARGET SmatchetStandalone POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
-        COMMENT "Copy Scripts/*.lua next to SmatchetStandalone"
-        VERBATIM)
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+    add_custom_command(TARGET SmatchetStandalone POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
+            COMMENT "Copy Scripts/*.lua next to SmatchetStandalone"
+            VERBATIM)
+endif()
 
 # Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket in Debug
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(SmatchetStandalone PRIVATE -mcmodel=large)
-    target_link_options(SmatchetStandalone PRIVATE -mcmodel=large)
+    if(SMATCHET_WITH_LUA_AUTOMATION)
+        target_compile_options(SmatchetStandalone PRIVATE -mcmodel=large)
+        target_link_options(SmatchetStandalone PRIVATE -mcmodel=large)
+    endif()
     # MinGW ld can overflow COFF debug relocations in this translation unit.
-    # Force minimal debug emission for standalone target to avoid linker overflow.
     target_compile_options(SmatchetStandalone PRIVATE -g0)
 endif()
 
-target_link_libraries(SmatchetStandalone PRIVATE
-        SmatchetPlugin_Mcp
-        SmatchetPlugin_LuaConsole
-)
+if(SMATCHET_WITH_MCP)
+    target_link_libraries(SmatchetStandalone PRIVATE SmatchetPlugin_Mcp)
+endif()
+if(SMATCHET_WITH_LUA_AUTOMATION)
+    target_link_libraries(SmatchetStandalone PRIVATE SmatchetPlugin_LuaConsole)
+endif()
 
 if(WIN32)
     target_link_libraries(SmatchetStandalone PRIVATE opengl32 ws2_32 crypt32)

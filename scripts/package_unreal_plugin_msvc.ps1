@@ -8,6 +8,17 @@
     Why MSVC: MinGW-built .lib/.a is not safe to link into UnrealEditor-SmatchetImGuiPlugin.dll.
     Use this after changing Source_Core (e.g. SmatchetImGuiHost / diagnostics C API).
 
+    Standalone vs Unreal — same native feature flags:
+    Lua / MCP / AI are CMake options (SMATCHET_WITH_LUA_AUTOMATION, SMATCHET_WITH_MCP, SMATCHET_WITH_AI)
+    baked into SmatchetCore_DX12 / SmatchetImGuiHost_DX12. Unreal's UBT does not toggle them; the
+    packaged .lib files carry whatever you configured in THIS build directory's CMakeCache.
+    Use the same SMATCHET_WITH_* values here as for your SmatchetStandalone build (ideally one MSVC
+    tree: configure once, build SmatchetStandalone for local tests and SmatchetPackageUnrealLibs_DX12
+    for the plugin). If you use two build directories (e.g. MinGW standalone + MSVC Unreal), pass
+    the same -D SMATCHET_WITH_* flags to both configures. After changing options, reconfigure or wipe
+    the build dir so the cache is not stale. Compare SMATCHET_WITH_* entries in CMakeCache.txt
+    across trees if something looks mismatched.
+
     Prerequisites:
     - CMake 3.24+ on PATH
     - Visual Studio 2022 with "Desktop development with C++" (CMake uses VS generator)

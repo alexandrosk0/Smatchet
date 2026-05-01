@@ -9,7 +9,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cctype>
-#include <tuple>
 #include <unordered_set>
 #include <exception>
 #include <mutex>
@@ -18,12 +17,18 @@
 
 #include <nlohmann/json.hpp>
 
-#include "imgui.h"
+#include "AttachmentMimeUtils.h"
+#include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "FieldCatalogCache.h"
+#include "JiraClient.h"
+#include "JiraHttpUtils.h"
+#include "JiraTrackerFieldAdapter.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "CompactDateFormat.h"
 #include "JiraFieldPayload.h"
+#include "SmatchetUI.h"
 
 #include <cpr/cpr.h>
 
@@ -35,84 +40,10 @@
 #endif
 
 namespace {
-// Base64 encode (RFC 4648) so we can send Authorization exactly like PowerShell/curl.
-std::string Base64Encode(const std::string& in) {
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((in.size() + 2) / 3) * 4);
-    for (size_t i = 0; i < in.size(); i += 3) {
-        const unsigned char a = static_cast<unsigned char>(in[i]);
-        const unsigned char b = (i + 1 < in.size()) ? static_cast<unsigned char>(in[i + 1]) : 0u;
-        const unsigned char c = (i + 2 < in.size()) ? static_cast<unsigned char>(in[i + 2]) : 0u;
-        out += table[a >> 2];
-        out += table[((a & 3) << 4) | (b >> 4)];
-        out += (i + 1 < in.size()) ? table[((b & 15) << 2) | (c >> 6)] : '=';
-        out += (i + 2 < in.size()) ? table[c & 63] : '=';
-    }
-    return out;
-}
-
-std::string ExtensionFromMime(const std::string& mimeType) {
-    if (mimeType == "image/png") return ".png";
-    if (mimeType == "image/jpeg") return ".jpg";
-    if (mimeType == "image/jpg") return ".jpg";
-    if (mimeType == "image/gif") return ".gif";
-    if (mimeType == "image/webp") return ".webp";
-    if (mimeType == "application/pdf") return ".pdf";
-    return ".bin";
-}
-
-std::string TrimAsciiWhitespace(const std::string& value) {
-    size_t start = 0;
-    size_t end = value.size();
-    while (start < end && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
-        ++start;
-    }
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
-        --end;
-    }
-    return value.substr(start, end - start);
-}
-
-std::string MimeTypeWithoutParams(const std::string& mimeType) {
-    auto toLower = [](const std::string& value) {
-        std::string lowered = value;
-        for (char& c : lowered) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        return lowered;
-    };
-    const std::string trimmed = TrimAsciiWhitespace(mimeType);
-    if (trimmed.empty()) {
-        return std::string();
-    }
-    const size_t sep = trimmed.find(';');
-    if (sep == std::string::npos) {
-        return toLower(trimmed);
-    }
-    return toLower(TrimAsciiWhitespace(trimmed.substr(0, sep)));
-}
-
-bool IsImageMimeType(const std::string& mimeType) {
-    const std::string normalized = MimeTypeWithoutParams(mimeType);
-    return normalized == "image/png" ||
-           normalized == "image/jpeg" ||
-           normalized == "image/jpg" ||
-           normalized == "image/gif" ||
-           normalized == "image/webp";
-}
-
 std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension);
 
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
-
 std::string NormalizeDomain(const std::string& rawDomain) {
-    std::string value = TrimAsciiWhitespace(rawDomain);
+    std::string value = TrimCopyAsciiWhitespace(rawDomain);
     const size_t schemeSep = value.find("://");
     if (schemeSep != std::string::npos) {
         value = value.substr(schemeSep + 3);
@@ -129,7 +60,7 @@ std::string NormalizeDomain(const std::string& rawDomain) {
     if (colonPos != std::string::npos) {
         value = value.substr(0, colonPos);
     }
-    return ToLowerAscii(value);
+    return ToLowerAsciiCopy(value);
 }
 
 std::string ExtractHostFromUrl(const std::string& url) {
@@ -148,10 +79,10 @@ std::string ExtractHostFromUrl(const std::string& url) {
         if (closePos == std::string::npos) {
             return std::string();
         }
-        return ToLowerAscii(hostPort.substr(1, closePos - 1));
+        return ToLowerAsciiCopy(hostPort.substr(1, closePos - 1));
     }
     const size_t colonPos = hostPort.find(':');
-    return ToLowerAscii(colonPos == std::string::npos ? hostPort : hostPort.substr(0, colonPos));
+    return ToLowerAsciiCopy(colonPos == std::string::npos ? hostPort : hostPort.substr(0, colonPos));
 }
 
 bool IsAllowedJiraAttachmentHost(const std::string& host, const std::string& jiraDomain) {
@@ -162,8 +93,7 @@ bool IsAllowedJiraAttachmentHost(const std::string& host, const std::string& jir
         return true;
     }
     const std::string suffix = "." + jiraDomain;
-    if (host.size() > suffix.size() &&
-        host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0) {
+    if (host.size() > suffix.size() && host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0) {
         return true;
     }
     return host == "api.media.atlassian.com";
@@ -186,12 +116,8 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 }
 #endif
 
-bool DownloadAttachmentToLocalFile(const std::string& url,
-                                   const std::string& filename,
-                                   const std::string& mimeType,
-                                   std::string& outFilePath,
-                                   std::string& outMime,
-                                   std::string& outError) {
+bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& filename, const std::string& mimeType,
+                                   std::string& outFilePath, std::string& outMime, std::string& outError) {
     outFilePath.clear();
     outMime.clear();
     outError.clear();
@@ -216,13 +142,9 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         return false;
     }
 
-    const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
-    const std::string authHeader = "Basic " + Base64Encode(basicCred);
-    cpr::Header headers{
-        {"Accept", "*/*"},
-        {"Authorization", authHeader},
-        {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}
-    };
+    cpr::Header headers{{"Accept", "*/*"},
+                        {"Authorization", BuildJiraBasicAuthHeader(cfg)},
+                        {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
     cpr::Redirect redirect(true, false);
 
     constexpr size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
@@ -237,12 +159,8 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         bodyAccum.append(data);
         return true;
     }};
-    const auto resp = cpr::Get(cpr::Url{url},
-                               headers,
-                               redirect,
-                               writeCb,
-                               cpr::ConnectTimeout{5000},
-                               cpr::Timeout{120000});
+    const auto resp =
+        cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
     if (sizeExceeded) {
         outError = "Attachment exceeds max allowed size.";
         return false;
@@ -282,9 +200,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url,
         return false;
     }
     ofs.close();
-    LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s",
-             bodyAccum.size(),
-             outMime.c_str(),
+    LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s", bodyAccum.size(), outMime.c_str(),
              outFilePath.c_str());
     return true;
 }
@@ -322,9 +238,11 @@ std::string GetTempDir() {
     return ".";
 #else
     const char* env = std::getenv("TEMP");
-    if (env && *env) return std::string(env);
+    if (env && *env)
+        return std::string(env);
     env = std::getenv("TMP");
-    if (env && *env) return std::string(env);
+    if (env && *env)
+        return std::string(env);
     return ".";
 #endif
 }
@@ -332,12 +250,13 @@ std::string GetTempDir() {
 std::string SanitizeFilename(const std::string& name) {
     std::string out = name;
     for (auto& ch : out) {
-        if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' ||
-            ch == '<' || ch == '>' || ch == '|') {
+        if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' || ch == '<' || ch == '>' ||
+            ch == '|') {
             ch = '_';
         }
     }
-    if (out.empty()) return std::string("attachment");
+    if (out.empty())
+        return std::string("attachment");
     return out;
 }
 
@@ -352,7 +271,8 @@ std::string MakeUniqueTempFilePath(const std::string& filename, const std::strin
     }
 
     const std::string tempDir = GetTempDir();
-    if (tempDir.empty()) return base;
+    if (tempDir.empty())
+        return base;
 
     // Ensure tempDir ends with a path separator.
     if (tempDir.back() != '/' && tempDir.back() != '\\') {
@@ -361,85 +281,32 @@ std::string MakeUniqueTempFilePath(const std::string& filename, const std::strin
     return tempDir + std::to_string(now) + "_" + base;
 }
 
-bool LuaTruthy(const sol::object& o) {
-    if (!o.valid()) {
-        return false;
-    }
-    const sol::type t = o.get_type();
-    if (t == sol::type::lua_nil) {
-        return false;
-    }
-    if (t == sol::type::boolean) {
-        return o.as<bool>();
-    }
-    return true;
-}
-
-constexpr int kJsonToLuaMaxDepth = 64;
-
-sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth) {
-    if (depth > kJsonToLuaMaxDepth) {
-        return sol::make_object(luaView, sol::nil);
-    }
-    switch (j.type()) {
-    case nlohmann::json::value_t::null:
-        return sol::make_object(luaView, sol::nil);
-    case nlohmann::json::value_t::boolean:
-        return sol::make_object(luaView, j.get<bool>());
-    case nlohmann::json::value_t::number_integer:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::int64_t>()));
-    case nlohmann::json::value_t::number_unsigned:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::uint64_t>()));
-    case nlohmann::json::value_t::number_float:
-        return sol::make_object(luaView, j.get<double>());
-    case nlohmann::json::value_t::string:
-        return sol::make_object(luaView, j.get<std::string>());
-    case nlohmann::json::value_t::array: {
-        sol::table arr = luaView.create_table();
-        std::size_t idx = 1;
-        for (const auto& el : j) {
-            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1);
+std::string SanitizeOfflineQueueDetail(std::string s) {
+    for (char& c : s) {
+        if (c == '\n' || c == '\r' || c == '\t') {
+            c = ' ';
         }
-        return arr;
-    }
-    case nlohmann::json::value_t::object: {
-        sol::table tbl = luaView.create_table();
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1);
+        if (c == '=') {
+            c = ':';
         }
-        return tbl;
-    }
-    default:
-        return sol::make_object(luaView, sol::nil);
-    }
-}
-
-sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
-    return JsonToLuaImpl(luaView, j, 0);
-}
-
-// Strip ASCII control chars (keep tab) so log sinks / terminals can't be driven by script input.
-std::string SanitizeLogText(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (uc == '\t' || uc == '\n') {
-            out.push_back(c);
-        } else if (uc < 0x20 || uc == 0x7F) {
-            out.push_back('?');
-        } else {
-            out.push_back(c);
-        }
-    }
-    return out;
-}
-
-std::string AsciiLowerCopy(std::string s) {
-    for (auto& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return s;
+}
+
+std::string FormatOfflineQueueTerminalLine(const char* action, const char* stage, const char* reason,
+                                           std::string detail) {
+    detail = SanitizeOfflineQueueDetail(std::move(detail));
+    std::string out;
+    out.reserve(64u + detail.size());
+    out += "action=";
+    out += action;
+    out += " stage=";
+    out += stage;
+    out += " reason=";
+    out += reason;
+    out += " detail=";
+    out += detail;
+    return out;
 }
 
 #if !defined(_WIN32)
@@ -458,7 +325,11 @@ std::string EscapeShellArg(const std::string& value) {
 } // namespace
 
 AppController::~AppController() {
+    // Join UiDrawSession std::async futures that captured this controller (via static `g_ui`) before
+    // tearing down members other threads may still touch.
+    DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
     shuttingDown_.store(true);
+    DrainJiraConnectivityProbeFuture();
     JoinBackgroundTasks();
 }
 
@@ -478,7 +349,7 @@ std::vector<CachedTicket> AppController::GetActiveTickets() const {
     return *activeTicketsPublished_;
 }
 
-void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys) {
+void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
     if (!Cache) {
         return;
     }
@@ -493,7 +364,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
         }
         std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
         for (const auto& k : issueKeys) {
-            if (k.empty() || have.count(k) > 0) {
+            if (k.empty() || (!includeAlreadyActive && have.count(k) > 0)) {
                 continue;
             }
             if (bulkImportPrefetchKeysInFlight_.count(k) > 0) {
@@ -521,9 +392,14 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             }
         }
         if (!ok) {
-            LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
+            if (IsJiraTransportErrorText(err)) {
+                LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.c_str());
+            } else {
+                LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
+            }
             return;
         }
+        requestDeferredLiveJiraBackendSuccessNotify_();
         if (!Cache) {
             return;
         }
@@ -600,8 +476,7 @@ void AppController::OpenUrl(const std::string& url) const {
         std::string schemePrefix;
         const size_t colonPos = url.find(':');
         if (colonPos == std::string::npos) {
-            LOG_WARN("AppController::OpenUrl rejected: missing scheme in url=%s",
-                     TruncateForLog(url, 200).c_str());
+            LOG_WARN("AppController::OpenUrl rejected: missing scheme in url=%s", TruncateForLog(url, 200).c_str());
             return;
         }
         schemePrefix.reserve(colonPos);
@@ -610,8 +485,7 @@ void AppController::OpenUrl(const std::string& url) const {
         }
         const bool ok = (schemePrefix == "http") || (schemePrefix == "https") || (schemePrefix == "mailto");
         if (!ok) {
-            LOG_WARN("AppController::OpenUrl rejected: scheme '%s' not allowlisted for url=%s",
-                     schemePrefix.c_str(),
+            LOG_WARN("AppController::OpenUrl rejected: scheme '%s' not allowlisted for url=%s", schemePrefix.c_str(),
                      TruncateForLog(url, 200).c_str());
             return;
         }
@@ -644,9 +518,7 @@ void AppController::AddAutomationLogSink(std::function<void(const std::string&)>
     }
 }
 
-void AppController::ClearAutomationLogSinks() {
-    AutomationLogSinks.clear();
-}
+void AppController::ClearAutomationLogSinks() { AutomationLogSinks.clear(); }
 
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
     AttachmentViewerHandlerCallback = std::move(handler);
@@ -664,8 +536,7 @@ void AppController::SetOpenFilePathsHandler(OpenFilePathsHandler handler) {
     OpenFilePathsHandlerCallback = std::move(handler);
 }
 
-void AppController::RequestOpenFilePaths(bool allowMultiple,
-                                         const std::string& initialDirectoryUtf8,
+void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& initialDirectoryUtf8,
                                          std::function<void(std::vector<std::string>)> onComplete) const {
     if (!onComplete) {
         return;
@@ -692,9 +563,7 @@ void AppController::ShowAttachmentCollection(const std::vector<AttachmentDescrip
     }
 }
 
-void AppController::OpenAttachment(const std::string& url,
-                                    const std::string& filename,
-                                    const std::string& mimeType) {
+void AppController::OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType) {
     if (url.empty()) {
         return;
     }
@@ -720,7 +589,7 @@ void AppController::OpenAttachment(const std::string& url,
         return;
     }
 
-    if (AttachmentPreviewHandlerCallback && IsImageMimeType(outMime)) {
+    if (AttachmentPreviewHandlerCallback && IsSupportedImageMime(outMime)) {
         if (AttachmentPreviewHandlerCallback(outFilePath, outMime, filename, url)) {
             LOG_INFO("OpenAttachment: queued in-app image preview.");
             return;
@@ -732,8 +601,7 @@ void AppController::OpenAttachment(const std::string& url,
     OpenUrl(url);
 }
 
-void AppController::OpenAttachmentInSystemViewer(const std::string& url,
-                                                 const std::string& filename,
+void AppController::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
                                                  const std::string& mimeType) {
     if (url.empty()) {
         return;
@@ -748,43 +616,36 @@ void AppController::OpenAttachmentInSystemViewer(const std::string& url,
     }
     bool launchOk = false;
 #if defined(_WIN32)
-    const HINSTANCE shellResult =
-        ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    const HINSTANCE shellResult = ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     launchOk = reinterpret_cast<intptr_t>(shellResult) > 32;
     if (!launchOk) {
         LOG_ERROR("OpenAttachmentInSystemViewer: ShellExecute failed path=%s err=%lu",
-                  TruncateForLog(outFilePath, 300).c_str(),
-                  static_cast<unsigned long>(GetLastError()));
+                  TruncateForLog(outFilePath, 300).c_str(), static_cast<unsigned long>(GetLastError()));
     }
 #elif defined(__APPLE__)
     launchOk = LaunchCommandNoShell("open", outFilePath);
     if (!launchOk) {
-        LOG_ERROR("OpenAttachmentInSystemViewer: open failed path=%s",
-                  TruncateForLog(outFilePath, 300).c_str());
+        LOG_ERROR("OpenAttachmentInSystemViewer: open failed path=%s", TruncateForLog(outFilePath, 300).c_str());
     }
 #else
     launchOk = LaunchCommandNoShell("xdg-open", outFilePath);
     if (!launchOk) {
-        LOG_ERROR("OpenAttachmentInSystemViewer: xdg-open failed path=%s",
-                  TruncateForLog(outFilePath, 300).c_str());
+        LOG_ERROR("OpenAttachmentInSystemViewer: xdg-open failed path=%s", TruncateForLog(outFilePath, 300).c_str());
     }
 #endif
 }
 
-bool AppController::DownloadAttachmentForPreview(const std::string& url,
-                                                 const std::string& filename,
-                                                 const std::string& mimeType,
-                                                 std::string* outError) {
+bool AppController::DownloadAttachmentForPreview(const std::string& url, const std::string& filename,
+                                                 const std::string& mimeType, std::string* outError) {
     auto fail = [outError](const std::string& errorMessage) {
         if (outError != nullptr) {
             *outError = errorMessage;
         }
         return false;
     };
-    if (!AttachmentPreviewHandlerCallback || !IsImageMimeType(mimeType)) {
-        return fail(!AttachmentPreviewHandlerCallback
-                        ? std::string("Preview handler is unavailable.")
-                        : std::string("Attachment is not a supported image type."));
+    if (!AttachmentPreviewHandlerCallback || !IsSupportedImageMime(mimeType)) {
+        return fail(!AttachmentPreviewHandlerCallback ? std::string("Preview handler is unavailable.")
+                                                      : std::string("Attachment is not a supported image type."));
     }
     std::string outFilePath;
     std::string outMime;
@@ -794,8 +655,7 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url,
         return fail(downloadError);
     }
     if (!AttachmentPreviewHandlerCallback(outFilePath, outMime, filename, url)) {
-        LOG_WARN("DownloadAttachmentForPreview: preview handler rejected file=%s mime=%s",
-                 filename.c_str(),
+        LOG_WARN("DownloadAttachmentForPreview: preview handler rejected file=%s mime=%s", filename.c_str(),
                  outMime.c_str());
         return fail("Preview handler rejected the attachment.");
     }
@@ -808,6 +668,21 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url,
 void AppController::Initialize(const std::string& dbPath, const std::string& backendType) {
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
     Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(dbPath));
+    try {
+        const size_t dropped = Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+        if (dropped > 0) {
+            char buf[384];
+            std::snprintf(buf, sizeof(buf),
+                          "Startup: dropped %zu legacy offline pending row(s) already at max retries "
+                          "(not archived). They were removed from the active queue only.",
+                          dropped);
+            legacyPendingStartupBanner_ = buf;
+        }
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::Initialize legacy pending cleanup failed: %s", ex.what());
+    } catch (...) {
+        LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
+    }
 
     if (backendType == "Jira") {
         Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
@@ -827,6 +702,34 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // Defer SyncWithBackend to first SmatchetUI::Draw so active view JQL/fields are
     // applied first — avoids fetching issues twice at startup.
     RefreshLocalData();
+
+    if (JiraBackend) {
+        std::vector<TrackerField> snapFields;
+        std::vector<TrackerComponent> snapComponents;
+        std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
+        std::string snapErr;
+        if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(snapFields, snapComponents, snapIssueTypeMeta, snapErr)) {
+            AvailableFields = std::move(snapFields);
+            AvailableComponents = std::move(snapComponents);
+            AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+            fieldCatalogEverLoaded_ = true;
+            LastJiraFieldCatalogError.clear();
+            LastJiraFieldCatalogWarning =
+                "Working offline: Jira field catalog loaded from local snapshot until a live refresh "
+                "succeeds.";
+            for (auto& field : AvailableFields) {
+                if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
+                    field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
+                    field.ReadOnly = true;
+                }
+            }
+            EnsureCatalogHistoryField();
+            JiraFieldCatalogRevision.fetch_add(1);
+            LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
+                     AvailableFields.size());
+        }
+    }
+
     WarmIssueTypeEditMetaAtStartAsync();
 
     InitLua();
@@ -844,201 +747,23 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
     return std::string("Scripts/") + filename;
 }
 
-void AppController::InitLua() {
-    lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::table);
-    // Keep scripting focused on UI formatting and data transforms.
-    // Dynamic code loading + filesystem + process access are all disabled; nil them AFTER opening libs.
-    lua["dofile"] = sol::lua_nil;
-    lua["loadfile"] = sol::lua_nil;
-    lua["load"] = sol::lua_nil;
-    lua["loadstring"] = sol::lua_nil;
-    lua["require"] = sol::lua_nil;
-    lua["collectgarbage"] = sol::lua_nil;
-    lua["os"] = sol::lua_nil;
-    lua["io"] = sol::lua_nil;
-    lua["package"] = sol::lua_nil;
-    lua["debug"] = sol::lua_nil;
-
-    // Bind the CachedTicket struct
-    lua.new_usertype<CachedTicket>("Ticket",
-        "id", &CachedTicket::id,
-        "get_field", &CachedTicket::GetFieldValue
-    );
-
-    lua.set_function("log_info", [this](std::string msg) {
-        const std::string clean = SanitizeLogText(msg);
-        if (!AutomationLogSinks.empty()) {
-            for (const auto& sink : AutomationLogSinks) {
-                sink(clean);
-            }
-        } else {
-            std::printf("[LUA] %s\n", clean.c_str());
-        }
-    });
-
-    lua.set_function("decode_json", [this](const std::string& s) -> std::tuple<sol::object, std::string> {
-        constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
-        if (s.size() > kMaxDecodeBytes) {
-            return {sol::make_object(lua, sol::nil), std::string("input too large")};
-        }
-        try {
-            // max_depth=kJsonToLuaMaxDepth bounds parser recursion against deeply-nested input.
-            const nlohmann::json j =
-                nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/false);
-            return {JsonToLua(lua, j), std::string()};
-        } catch (const std::exception& e) {
-            return {sol::make_object(lua, sol::nil), std::string(e.what())};
-        }
-    });
-
-    lua.set_function("register_field_display", [this](const std::string& fieldId, sol::function fn) {
-        if (fieldId.empty() || !fn.valid()) {
-            return;
-        }
-        fieldDisplayHandlers_[fieldId] = sol::protected_function(std::move(fn));
-    });
-
-    lua.set_function("unregister_field_display", [this](const std::string& fieldId) {
-        fieldDisplayHandlers_.erase(fieldId);
-    });
-
-    lua.set_function("register_field_display_by_name", [this](const std::string& displayName, sol::function fn) {
-        if (displayName.empty() || !fn.valid()) {
-            return;
-        }
-        fieldDisplayHandlersByDisplayName_[AsciiLowerCopy(displayName)] = sol::protected_function(std::move(fn));
-    });
-
-    lua.set_function("unregister_field_display_by_name", [this](const std::string& displayName) {
-        fieldDisplayHandlersByDisplayName_.erase(AsciiLowerCopy(displayName));
-    });
-
-    sol::table imgui = lua.create_table();
-    imgui.set_function("progress_bar", [](float fraction, float width, float height) {
-        ImVec2 sz(width, height);
-        if (width < 0.0f) {
-            sz.x = ImGui::GetContentRegionAvail().x;
-        }
-        if (height <= 0.0f) {
-            sz.y = ImGui::GetFrameHeight();
-        }
-        ImGui::ProgressBar(fraction, sz);
-    });
-    imgui.set_function("text", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); });
-    imgui.set_function("text_unformatted", [](const std::string& s) { ImGui::TextUnformatted(s.c_str()); });
-    imgui.set_function("get_content_region_avail", []() {
-        const ImVec2 v = ImGui::GetContentRegionAvail();
-        return std::make_tuple(v.x, v.y);
-    });
-    lua["imgui"] = imgui;
-}
-
-void AppController::RunLuaSetupScript(const std::string& scriptPath) {
-    auto logErr = [this](const char* prefix, const std::string& detail) {
-        const std::string msg = std::string(prefix) + detail;
-        if (!AutomationLogSinks.empty()) {
-            for (const auto& sink : AutomationLogSinks) {
-                sink(msg);
-            }
-        } else {
-            std::printf("%s\n", msg.c_str());
-        }
-    };
-
-    const std::string path = ResolveLuaScriptPath(scriptPath);
-    if (path.empty()) {
-        logErr("[LUA setup] ", "invalid script path");
-        return;
-    }
-    try {
-        lua.script_file(path);
-    } catch (const sol::error& e) {
-        logErr("[LUA setup] ", e.what());
-    } catch (const std::exception& e) {
-        logErr("[LUA setup] ", e.what());
-    }
-}
-
-bool AppController::TryLuaFieldDisplay(const std::string& fieldId,
-                                       const CachedTicket& ticket,
-                                       const std::string& rawValue,
-                                       const float availWidth,
-                                       const JiraField* fieldMeta) {
-    sol::protected_function* handler = nullptr;
-    const auto itId = fieldDisplayHandlers_.find(fieldId);
-    if (itId != fieldDisplayHandlers_.end() && itId->second.valid()) {
-        handler = &itId->second;
-    } else if (fieldMeta && !fieldMeta->Name.empty()) {
-        const auto itName =
-            fieldDisplayHandlersByDisplayName_.find(AsciiLowerCopy(fieldMeta->Name));
-        if (itName != fieldDisplayHandlersByDisplayName_.end() && itName->second.valid()) {
-            handler = &itName->second;
-        }
-    }
-    if (handler == nullptr) {
-        return false;
-    }
-
-    sol::table ctx = lua.create_table();
-    ctx["issue_id"] = ticket.id;
-    ctx["field_id"] = fieldId;
-    ctx["raw"] = rawValue;
-    ctx["avail_width"] = availWidth;
-    const bool catalogReadOnly = fieldMeta ? fieldMeta->ReadOnly : false;
-    const bool editMetaReadOnly = !CanEditJiraFieldForIssue(ticket.id, fieldId, fieldMeta);
-    ctx["read_only"] = catalogReadOnly || editMetaReadOnly;
-    if (fieldMeta) {
-        ctx["field_name"] = fieldMeta->Name;
-    } else {
-        ctx["field_name"] = sol::lua_nil;
-    }
-
-    sol::protected_function_result pfr = (*handler)(ctx);
-    if (!pfr.valid()) {
-        sol::error err = pfr;
-        const std::string msg = std::string("[LUA field display] ") + err.what();
-        if (!AutomationLogSinks.empty()) {
-            for (const auto& sink : AutomationLogSinks) {
-                sink(msg);
-            }
-        } else {
-            std::printf("%s\n", msg.c_str());
-        }
-        return false;
-    }
-
-    if (pfr.return_count() < 1) {
-        return false;
-    }
-    const sol::object ret = pfr.get<sol::object>(0);
-    return LuaTruthy(ret);
-}
-
-void AppController::RunAutoScript(const std::string& scriptPath) {
-    const std::string path = ResolveLuaScriptPath(scriptPath);
-    if (path.empty()) {
-        LOG_WARN("RunAutoScript: invalid script path=%s", scriptPath.c_str());
-        return;
-    }
-    const auto snap = GetActiveTicketsSnapshot();
-    std::vector<CachedTicket> tickets(snap->begin(), snap->end());
-    for (auto& ticket : tickets) {
-        lua["ticket"] = &ticket;
-        try {
-            lua.script_file(path);
-        } catch (const sol::error& e) {
-            LOG_ERROR("RunAutoScript: lua error ticket=%s path=%s err=%s", ticket.id.c_str(), path.c_str(), e.what());
-        } catch (const std::exception& e) {
-            LOG_ERROR("RunAutoScript: exception ticket=%s path=%s err=%s", ticket.id.c_str(), path.c_str(), e.what());
-        }
-    }
-}
-
 void AppController::SyncWithBackend(const JiraConfig* configOverride, const ViewsStore* viewsOverride) {
     LOG_INFO("AppController::SyncWithBackend started.");
+    LastJiraTicketSyncWarning.clear();
     if (Backend && Cache) {
         bool fullSyncCompleted = false;
-        auto freshTickets = Backend->FetchIssues(&fullSyncCompleted, configOverride, viewsOverride);
+        std::string fetchError;
+        auto freshTickets = Backend->FetchIssues(&fullSyncCompleted, configOverride, viewsOverride, &fetchError);
+        if (!fetchError.empty() && IsJiraTransportErrorText(fetchError)) {
+            LastJiraTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
+            LOG_WARN("AppController::SyncWithBackend transport-style fetch issue: %s", fetchError.c_str());
+            lastJiraConnectivityState_ = JiraConnectivityState::TransportDown;
+            const auto nowProbe = std::chrono::steady_clock::now();
+            nextJiraConnectivityProbeAt_ = nowProbe;
+            PushOfflineReplayTimersDuringTransportOutage(nowProbe);
+        } else if (fetchError.empty()) {
+            requestDeferredLiveJiraBackendSuccessNotify_();
+        }
         size_t saved = 0;
         for (const auto& t : freshTickets) {
             Cache->SaveTicket(t);
@@ -1062,22 +787,349 @@ void AppController::SyncWithBackend(const JiraConfig* configOverride, const View
             }
         }
         LOG_INFO("AppController::SyncWithBackend finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
-                 freshTickets.size(),
-                 saved,
-                 deleted,
-                 fullSyncCompleted ? 1 : 0);
+                 freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
     } else {
-        LOG_WARN("AppController::SyncWithBackend skipped: backend=%d cache=%d",
-                 Backend ? 1 : 0,
-                 Cache ? 1 : 0);
+        LOG_WARN("AppController::SyncWithBackend skipped: backend=%d cache=%d", Backend ? 1 : 0, Cache ? 1 : 0);
     }
     RefreshLocalData();
     WarmIssueTypeEditMetaAtStartAsync();
 }
 
 namespace {
-bool IsSprintField(const JiraField& field) {
-    return field.SchemaCustom.find("gh-sprint") != std::string::npos;
+constexpr auto kJiraConnectivityProbeAggressiveInterval = std::chrono::seconds{20};
+constexpr auto kJiraConnectivityProbeRelaxedInterval = std::chrono::seconds{90};
+constexpr auto kOfflineReplayDelayWhileTransportDown = std::chrono::seconds{25};
+} // namespace
+
+void AppController::DrainJiraConnectivityProbeFuture() {
+    if (!jiraConnectivityProbeInFlight_) {
+        return;
+    }
+    try {
+        if (jiraConnectivityProbeFuture_.valid()) {
+            jiraConnectivityProbeFuture_.wait();
+            (void)jiraConnectivityProbeFuture_.get();
+        }
+    } catch (...) {
+        // Shutdown path: swallow probe failures.
+    }
+    jiraConnectivityProbeInFlight_ = false;
+}
+
+AppController::JiraConnectivityState AppController::MapReachabilityProbeKind(JiraReachabilityProbeKind k) {
+    switch (k) {
+    case JiraReachabilityProbeKind::AuthenticatedReachable:
+        return JiraConnectivityState::AuthenticatedReachable;
+    case JiraReachabilityProbeKind::ReachableAuthOrConfigError:
+        return JiraConnectivityState::ReachableAuthOrConfigError;
+    case JiraReachabilityProbeKind::TransportDown:
+        return JiraConnectivityState::TransportDown;
+    case JiraReachabilityProbeKind::ServiceUnavailable:
+        return JiraConnectivityState::ServiceUnavailable;
+    }
+    return JiraConnectivityState::Unknown;
+}
+
+bool AppController::IsConnectivityDegradedForProbeInterval(JiraConnectivityState nextProbeState) const {
+    if (nextProbeState == JiraConnectivityState::TransportDown ||
+        nextProbeState == JiraConnectivityState::ServiceUnavailable) {
+        return true;
+    }
+    if (!LastJiraTicketSyncWarning.empty() && IsJiraTransportErrorText(LastJiraTicketSyncWarning)) {
+        return true;
+    }
+    const std::string& catalogErr = LastJiraFieldCatalogError;
+    if (!catalogErr.empty() && IsJiraTransportErrorText(catalogErr)) {
+        return true;
+    }
+    return false;
+}
+
+void AppController::PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) {
+    const auto pushTo = now + kOfflineReplayDelayWhileTransportDown;
+    std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+    nextOfflineReplayAt_ = (std::max)(nextOfflineReplayAt_, pushTo);
+    nextOfflineFieldEditReplayAt_ = (std::max)(nextOfflineFieldEditReplayAt_, pushTo);
+}
+
+void AppController::ApplyJiraConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
+                                                     const JiraReachabilityProbeResult& r) {
+    const JiraConnectivityState prev = lastJiraConnectivityState_;
+    const JiraConnectivityState next = MapReachabilityProbeKind(r.Kind);
+    lastJiraConnectivityState_ = next;
+    lastJiraConnectivityDiagnostic_ = r.Diagnostic;
+
+    if (prev != next) {
+        LOG_INFO("AppController: Jira connectivity probe state %d -> %d diag=%s", static_cast<int>(prev),
+                 static_cast<int>(next), r.Diagnostic.c_str());
+    }
+
+    const bool nowAuthenticatedReachable = (next == JiraConnectivityState::AuthenticatedReachable);
+    const bool wasConnectivityDegraded =
+        (prev == JiraConnectivityState::TransportDown || prev == JiraConnectivityState::ServiceUnavailable ||
+         prev == JiraConnectivityState::ReachableAuthOrConfigError);
+    // First successful probe after startup can be Unknown -> AuthenticatedReachable while we still show
+    // an offline/snapshot catalog banner from cache or a failed fetch; nudge a live catalog refresh.
+    const bool coldStartCatalogBanner =
+        (prev == JiraConnectivityState::Unknown && nowAuthenticatedReachable && !LastJiraFieldCatalogWarning.empty());
+    if (nowAuthenticatedReachable && (wasConnectivityDegraded || coldStartCatalogBanner)) {
+        if (!jiraConnectivityRecoveryPending_) {
+            jiraConnectivityRecoveryPending_ = true;
+            LOG_INFO("AppController: Jira authenticated reachability restored; UI recovery pending.");
+        }
+    }
+
+    if (prev == JiraConnectivityState::AuthenticatedReachable &&
+        (next == JiraConnectivityState::TransportDown || next == JiraConnectivityState::ServiceUnavailable)) {
+        std::string diag = r.Diagnostic;
+        constexpr std::size_t kMaxDiagChars = 200;
+        if (diag.size() > kMaxDiagChars) {
+            diag.resize(kMaxDiagChars);
+        }
+        LastJiraTicketSyncWarning = "Showing cached issues — lost connection to Jira: " + diag;
+        LOG_WARN("AppController: Jira probe reports connectivity loss: %s", diag.c_str());
+    }
+
+    if (next == JiraConnectivityState::TransportDown || next == JiraConnectivityState::ServiceUnavailable) {
+        PushOfflineReplayTimersDuringTransportOutage(now);
+    }
+
+    const auto interval = IsConnectivityDegradedForProbeInterval(next) ? kJiraConnectivityProbeAggressiveInterval
+                                                                       : kJiraConnectivityProbeRelaxedInterval;
+    nextJiraConnectivityProbeAt_ = now + interval;
+}
+
+void AppController::TickJiraConnectivityMonitor(const JiraConfig& cfg) {
+    if (!JiraBackend || shuttingDown_.load()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+
+    if (jiraConnectivityProbeInFlight_) {
+        if (jiraConnectivityProbeFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            JiraReachabilityProbeResult r;
+            try {
+                r = jiraConnectivityProbeFuture_.get();
+            } catch (...) {
+                r.Kind = JiraReachabilityProbeKind::TransportDown;
+                r.Diagnostic = "probe future exception";
+            }
+            jiraConnectivityProbeInFlight_ = false;
+            ApplyJiraConnectivityProbeResult(now, r);
+        }
+        return;
+    }
+
+    if (now < nextJiraConnectivityProbeAt_) {
+        return;
+    }
+
+    std::string authGate;
+    if (!EnsureJiraAuthConfig(cfg, authGate)) {
+        nextJiraConnectivityProbeAt_ = now + kJiraConnectivityProbeRelaxedInterval;
+        return;
+    }
+
+    try {
+        jiraConnectivityProbeFuture_ =
+            std::async(std::launch::async, [cfg]() { return JiraClient::ProbeReachability(cfg); });
+        jiraConnectivityProbeInFlight_ = true;
+    } catch (...) {
+        nextJiraConnectivityProbeAt_ = now + kJiraConnectivityProbeAggressiveInterval;
+    }
+}
+
+bool AppController::ConsumeFieldCatalogRefetchAfterLiveTicketSync() {
+    return fieldCatalogRefetchAfterLiveTicketSyncPending_.exchange(false, std::memory_order_acq_rel);
+}
+
+void AppController::requestDeferredLiveJiraBackendSuccessNotify_() const {
+    if (!JiraBackend) {
+        return;
+    }
+    deferredLiveJiraBackendSuccessNotify_.store(true, std::memory_order_release);
+}
+
+void AppController::applyLiveJiraReachabilityAfterSuccessfulBackendRequest_() {
+    if (!JiraBackend) {
+        return;
+    }
+    lastJiraConnectivityState_ = JiraConnectivityState::AuthenticatedReachable;
+    LastJiraTicketSyncWarning.clear();
+    if (!LastJiraFieldCatalogWarning.empty()) {
+        LastJiraFieldCatalogWarning.clear();
+        JiraFieldCatalogRevision.fetch_add(1);
+        fieldCatalogRefetchAfterLiveTicketSyncPending_.store(true, std::memory_order_release);
+    }
+}
+
+bool AppController::ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny() {
+    if (!deferredLiveJiraBackendSuccessNotify_.exchange(false, std::memory_order_acq_rel)) {
+        return false;
+    }
+    applyLiveJiraReachabilityAfterSuccessfulBackendRequest_();
+    return true;
+}
+
+namespace {
+
+constexpr char kWorkingOfflineSnapshotCatalog[] =
+    "Working offline: Jira field catalog loaded from local snapshot until a live refresh succeeds.";
+
+std::string TruncateJiraBannerDetail(const std::string& s, std::size_t maxLen) {
+    if (s.size() <= maxLen) {
+        return s;
+    }
+    if (maxLen <= 3) {
+        return "...";
+    }
+    return s.substr(0, maxLen - 3) + "...";
+}
+
+std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
+    if (cw.empty()) {
+        return std::string();
+    }
+    static const char* prefixes[] = {
+        "Offline: using cached Jira field catalog. Last fetch failed: ",
+        "Offline: restored Jira field catalog from local snapshot. Last fetch failed: ",
+        "Offline: no field catalog snapshot could be loaded. Last fetch failed: ",
+    };
+    for (const char* p : prefixes) {
+        const size_t pl = std::strlen(p);
+        if (cw.size() >= pl && cw.compare(0, pl, p) == 0) {
+            return cw.substr(pl);
+        }
+    }
+    if (cw == kWorkingOfflineSnapshotCatalog) {
+        return std::string();
+    }
+    return TruncateJiraBannerDetail(cw, 100);
+}
+
+std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
+    if (tw.empty()) {
+        return std::string();
+    }
+    static const char* prefixes[] = {
+        "Showing cached issues — live refresh did not complete: ",
+        "Showing cached issues — lost connection to Jira: ",
+        // ASCII hyphen (some logs / older strings / copy-paste normalization).
+        "Showing cached issues - live refresh did not complete: ",
+        "Showing cached issues - lost connection to Jira: ",
+    };
+    for (const char* p : prefixes) {
+        const size_t pl = std::strlen(p);
+        if (tw.size() >= pl && tw.compare(0, pl, p) == 0) {
+            return tw.substr(pl);
+        }
+    }
+    return TruncateJiraBannerDetail(tw, 100);
+}
+
+void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessionNote) {
+    if (!sessionNote || sessionNote->empty()) {
+        return;
+    }
+    if (!out.empty()) {
+        out += " ";
+    }
+    out += "(" + TruncateJiraBannerDetail(*sessionNote, 90) + ")";
+}
+
+} // namespace
+
+JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
+    JiraConnectivityBannerForUi out;
+    const std::string& ce = LastJiraFieldCatalogError;
+    const std::string& cw = LastJiraFieldCatalogWarning;
+    const std::string& tw = LastJiraTicketSyncWarning;
+    const bool haveSession = sessionCatalogNote && !sessionCatalogNote->empty();
+    const bool haveCw = !cw.empty();
+    const bool haveTw = !tw.empty();
+
+    if (!ce.empty()) {
+        out.Kind = JiraConnectivityBannerForUi::Level::Error;
+        out.Message = TruncateJiraBannerDetail(ce, 240);
+        if (haveTw) {
+            const std::string ts = TicketOfflineTechnicalSuffix(tw);
+            if (!ts.empty()) {
+                out.Message += " · Issues: ";
+                out.Message += TruncateJiraBannerDetail(ts, 100);
+            }
+        }
+        AppendSessionCatalogNoteToBanner(out.Message, sessionCatalogNote);
+        return out;
+    }
+
+    if (!haveCw && !haveTw && haveSession) {
+        out.Kind = JiraConnectivityBannerForUi::Level::Warning;
+        out.Message = "Offline: ";
+        out.Message += TruncateJiraBannerDetail(*sessionCatalogNote, 220);
+        return out;
+    }
+
+    if (!haveCw && !haveTw) {
+        return out;
+    }
+
+    out.Kind = JiraConnectivityBannerForUi::Level::Warning;
+    const std::string catSuffix = CatalogOfflineTechnicalSuffix(cw);
+    const std::string ticketSuffix = TicketOfflineTechnicalSuffix(tw);
+    const bool snapshotCatalogOnly = haveCw && cw == kWorkingOfflineSnapshotCatalog;
+
+    std::string headline;
+    if (haveCw && haveTw) {
+        headline = "Offline: issue list and field catalog are not live with Jira.";
+    } else if (haveCw) {
+        headline = snapshotCatalogOnly ? "Offline: field catalog is a local snapshot until a live refresh succeeds."
+                                       : "Offline: field catalog is from cache (not refreshed from Jira).";
+    } else {
+        headline = "Offline: issue list is from cache (live refresh did not complete).";
+    }
+
+    std::string detail;
+    if (!catSuffix.empty() && !ticketSuffix.empty()) {
+        if (catSuffix == ticketSuffix) {
+            detail = catSuffix;
+        } else {
+            detail = TruncateJiraBannerDetail(catSuffix, 70) + " · " + TruncateJiraBannerDetail(ticketSuffix, 70);
+        }
+    } else if (!catSuffix.empty()) {
+        detail = catSuffix;
+    } else if (!ticketSuffix.empty()) {
+        detail = ticketSuffix;
+    }
+
+    out.Message = headline;
+    if (!detail.empty()) {
+        out.Message += " — ";
+        out.Message += TruncateJiraBannerDetail(detail, 130);
+    }
+    AppendSessionCatalogNoteToBanner(out.Message, sessionCatalogNote);
+    return out;
+}
+
+bool AppController::ConsumeJiraConnectivityRecovery() {
+    if (!jiraConnectivityRecoveryPending_) {
+        return false;
+    }
+    jiraConnectivityRecoveryPending_ = false;
+    LastJiraTicketSyncWarning.clear();
+    LastJiraFieldCatalogWarning.clear();
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        nextOfflineReplayAt_ = now;
+        nextOfflineFieldEditReplayAt_ = now;
+    }
+    LOG_INFO("AppController: consumed Jira connectivity recovery latch.");
+    return true;
+}
+
+namespace {
+bool IsSprintField(const TrackerField& field) {
+    return field.Family == TrackerFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
 }
 
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
@@ -1085,9 +1137,7 @@ bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
 }
 
 bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
-    return fieldId == "timespent" ||
-           fieldId == "aggregatetimeoriginalestimate" ||
-           fieldId == "aggregatetimeestimate" ||
+    return fieldId == "timespent" || fieldId == "aggregatetimeoriginalestimate" || fieldId == "aggregatetimeestimate" ||
            fieldId == "aggregatetimespent";
 }
 
@@ -1099,7 +1149,7 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
     return errorText.find(needle) != std::string::npos;
 }
 
-}
+} // namespace
 
 void AppController::RefreshLocalData() {
     if (Cache) {
@@ -1121,84 +1171,251 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
     }
 }
 
-bool AppController::RefreshJiraFieldCatalog(const JiraConfig& cfg) {
-    if (!JiraBackend) {
-        LastJiraFieldCatalogError = "Jira backend is not initialized.";
-        AvailableJiraFields.clear();
-        AvailableJiraComponents.clear();
-        AvailableJiraIssueTypeMeta.clear();
-        JiraFieldCatalogRevision.fetch_add(1);
-        LOG_WARN("AppController::RefreshJiraFieldCatalog skipped: Jira backend not initialized.");
+bool AppController::RefreshFieldCatalog(const JiraConfig& cfg) {
+    if (!Backend) {
+        SetFieldCatalog({}, {}, "Tracker backend is not initialized.");
         return false;
     }
 
-    std::vector<JiraField> fetchedFields;
-    std::vector<JiraComponent> fetchedComponents;
-    std::vector<IssueTypeCreateMeta> fetchedMeta;
+    TrackerFieldCatalogResult catalog;
     std::string error;
-    const bool ok = JiraBackend->FetchFieldCatalog(cfg, fetchedFields, fetchedComponents, fetchedMeta, error);
+    const bool ok = Backend->FetchFieldCatalog(cfg, catalog, error);
     if (!ok) {
-        LastJiraFieldCatalogError = error;
-        AvailableJiraFields.clear();
-        AvailableJiraComponents.clear();
-        AvailableJiraIssueTypeMeta.clear();
-        JiraFieldCatalogRevision.fetch_add(1);
-        LOG_ERROR("AppController::RefreshJiraFieldCatalog failed: %s", error.c_str());
+        SetFieldCatalog({}, {}, error);
+        LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
         return false;
     }
 
-    AvailableJiraFields = std::move(fetchedFields);
-    AvailableJiraComponents = std::move(fetchedComponents);
-    AvailableJiraIssueTypeMeta = std::move(fetchedMeta);
-    LastJiraFieldCatalogError.clear();
-    JiraFieldCatalogRevision.fetch_add(1);
+    SetFieldCatalog(std::move(catalog.Fields), std::move(catalog.Components), std::move(catalog.IssueTypeMeta), {});
     return true;
 }
 
-void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
-                                       std::vector<JiraComponent> components,
-                                       const std::string& error) {
-    SetJiraFieldCatalog(std::move(fields), std::move(components), {}, error);
+bool AppController::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+                                      std::string& outError) const {
+    outCatalog = TrackerFieldCatalogResult{};
+    outError.clear();
+    if (!Backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
+    return Backend->FetchFieldCatalog(cfg, outCatalog, outError);
 }
 
-void AppController::SetJiraFieldCatalog(std::vector<JiraField> fields,
-                                       std::vector<JiraComponent> components,
-                                       std::vector<IssueTypeCreateMeta> issueTypeMeta,
-                                       const std::string& error) {
+std::string AppController::BuildIssueBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const {
+    return Backend ? Backend->BuildBrowseUrl(cfg, issueKey) : std::string();
+}
+
+std::string AppController::BuildJqlSearchUrl(const JiraConfig& cfg, const std::string& jql) const {
+    if (cfg.Domain.empty() || jql.empty()) {
+        return std::string();
+    }
+    return NormalizeBaseUrl(cfg.Domain) + "/issues/?jql=" + UrlEncode(jql);
+}
+
+void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
+                                    const std::string& error) {
+    SetFieldCatalog(std::move(fields), std::move(components), {}, error);
+}
+
+void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
+                                    std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
     if (!error.empty()) {
-        AvailableJiraFields.clear();
-        AvailableJiraComponents.clear();
-        AvailableJiraIssueTypeMeta.clear();
+        if (IsJiraTransportErrorText(error)) {
+            if (!AvailableFields.empty()) {
+                LastJiraFieldCatalogError.clear();
+                const std::string nextWarning = "Offline: using cached Jira field catalog. Last fetch failed: " + error;
+                if (nextWarning != LastJiraFieldCatalogWarning) {
+                    LastJiraFieldCatalogWarning = nextWarning;
+                    JiraFieldCatalogRevision.fetch_add(1);
+                } else {
+                    LastJiraFieldCatalogWarning = nextWarning;
+                }
+                LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
+                return;
+            }
+
+            std::vector<TrackerField> snapFields;
+            std::vector<TrackerComponent> snapComponents;
+            std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
+            std::string snapErr;
+            if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(snapFields, snapComponents, snapIssueTypeMeta,
+                                                               snapErr)) {
+                AvailableFields = std::move(snapFields);
+                AvailableComponents = std::move(snapComponents);
+                AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+                fieldCatalogEverLoaded_ = true;
+                LastJiraFieldCatalogError.clear();
+                LastJiraFieldCatalogWarning =
+                    "Offline: restored Jira field catalog from local snapshot. Last fetch failed: " + error;
+                for (auto& field : AvailableFields) {
+                    if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                        field.ReadOnly = true;
+                    }
+                }
+                EnsureCatalogHistoryField();
+                JiraFieldCatalogRevision.fetch_add(1);
+                LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
+                return;
+            }
+
+            if (fieldCatalogEverLoaded_) {
+                LastJiraFieldCatalogError.clear();
+                LastJiraFieldCatalogWarning =
+                    "Offline: no field catalog snapshot could be loaded. Last fetch failed: " + error;
+                JiraFieldCatalogRevision.fetch_add(1);
+                LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
+                         error.c_str());
+                return;
+            }
+
+            AvailableFields.clear();
+            AvailableComponents.clear();
+            AvailableIssueTypeMeta.clear();
+            fieldCatalogEverLoaded_ = false;
+            LastJiraFieldCatalogWarning.clear();
+            LastJiraFieldCatalogError = "No cached Jira field catalog available. " +
+                                        (error.empty() ? std::string("Last fetch failed.") : error);
+            JiraFieldCatalogRevision.fetch_add(1);
+            LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
+            return;
+        }
+
+        AvailableFields.clear();
+        AvailableComponents.clear();
+        AvailableIssueTypeMeta.clear();
+        fieldCatalogEverLoaded_ = false;
+        LastJiraFieldCatalogWarning.clear();
         LastJiraFieldCatalogError = error;
         JiraFieldCatalogRevision.fetch_add(1);
-        LOG_ERROR("AppController::SetJiraFieldCatalog error: %s", error.c_str());
+        LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
         return;
     }
-    AvailableJiraFields = std::move(fields);
-    AvailableJiraComponents = std::move(components);
-    AvailableJiraIssueTypeMeta = std::move(issueTypeMeta);
+
+    AvailableFields = std::move(fields);
+    AvailableComponents = std::move(components);
+    AvailableIssueTypeMeta = std::move(issueTypeMeta);
     LastJiraFieldCatalogError.clear();
-    for (auto& field : AvailableJiraFields) {
+    LastJiraFieldCatalogWarning.clear();
+    fieldCatalogEverLoaded_ = true;
+    requestDeferredLiveJiraBackendSuccessNotify_();
+    {
+        std::string snapErr;
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(AvailableFields, AvailableComponents, AvailableIssueTypeMeta,
+                                                         snapErr)) {
+            LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
+        }
+    }
+    for (auto& field : AvailableFields) {
         if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
             field.ReadOnly = true;
         }
     }
-    if (FindJiraFieldById("history") == nullptr) {
-        JiraField historyField;
-        historyField.Id = "history";
-        historyField.Name = "History";
-        historyField.ReadOnly = true;
-        AvailableJiraFields.push_back(std::move(historyField));
-    }
+    EnsureCatalogHistoryField();
+
     JiraFieldCatalogRevision.fetch_add(1);
 }
 
-const JiraField* AppController::FindJiraFieldById(const std::string& fieldId) const {
-    const auto it = std::find_if(
-        AvailableJiraFields.begin(),
-        AvailableJiraFields.end(),
-        [&](const JiraField& field) { return field.Id == fieldId; });
-    return it == AvailableJiraFields.end() ? nullptr : &(*it);
+const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
+    const auto it = std::find_if(AvailableFields.begin(), AvailableFields.end(),
+                                 [&](const TrackerField& field) { return field.Id == fieldId; });
+    return it == AvailableFields.end() ? nullptr : &(*it);
+}
+
+void AppController::EnsureCatalogHistoryField() {
+    if (FindFieldById("history") != nullptr) {
+        return;
+    }
+    TrackerField historyField;
+    historyField.Id = "history";
+    historyField.Name = "History";
+    historyField.ReadOnly = true;
+    AvailableFields.push_back(std::move(historyField));
+}
+
+bool AppController::FieldEditSupportsOfflineQueue(const TrackerField& field) {
+    if (IsSprintField(field)) {
+        return false;
+    }
+    if (IsNonEditableTimetrackingFieldId(field.Id) || IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        return false;
+    }
+    switch (field.Family) {
+    case TrackerFieldFamily::Text:
+    case TrackerFieldFamily::Number:
+    case TrackerFieldFamily::Date:
+    case TrackerFieldFamily::DateTime:
+    case TrackerFieldFamily::Labels:
+    case TrackerFieldFamily::SelectSingle:
+    case TrackerFieldFamily::SelectMulti:
+    case TrackerFieldFamily::UserSingle:
+    case TrackerFieldFamily::UserMulti:
+    case TrackerFieldFamily::CascadingSelect:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool AppController::TryBuildFieldEditPayloadForNetwork(
+    const std::string& issueId, const TrackerField& field, const std::vector<std::string>& rawValues,
+    const std::string& originalEstimateSnapshot, const std::string& remainingEstimateSnapshot,
+    const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
+    std::unordered_map<std::string, std::string>& outDisplayValues, std::string& outError) {
+    (void)originalEstimateSnapshot;
+    (void)remainingEstimateSnapshot;
+    outError.clear();
+    outDisplayValues.clear();
+    outFieldsPayload = nlohmann::json::object();
+    if (issueId.empty()) {
+        outError = "Issue id is empty.";
+        return false;
+    }
+    if (IsSprintField(field) || IsNonEditableTimetrackingFieldId(field.Id) ||
+        IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        outError = "Field type not supported for this edit path.";
+        return false;
+    }
+
+    std::vector<std::string> values;
+    values.reserve(rawValues.size());
+    for (const auto& value : rawValues) {
+        if (!value.empty()) {
+            values.push_back(value);
+        }
+    }
+
+    const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
+    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
+    }
+    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+        !CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+        outError = "Field cannot be edited for this issue (Jira edit metadata).";
+        return false;
+    }
+
+    nlohmann::json valuePayload;
+    std::string buildErr;
+    const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(field);
+    if (!JiraFieldPayload::BuildValue(jiraField, rawValues, valuePayload, buildErr)) {
+        outError = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
+        return false;
+    }
+
+    outFieldsPayload = nlohmann::json::object();
+    outFieldsPayload[field.Id] = std::move(valuePayload);
+
+    std::string displayValue;
+    if (!values.empty()) {
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i != 0) {
+                displayValue += ", ";
+            }
+            displayValue += JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(jiraField, values[i]);
+        }
+    }
+    outDisplayValues[field.Id] = std::move(displayValue);
+    return true;
 }
 
 // --- Create-issue helpers -------------------------------------------------
@@ -1210,21 +1427,15 @@ IssueDraft AppController::BuildDraftFromLastTicket(const JiraConfig& cfg) const 
     if (!tickets.empty()) {
         lastTicket = tickets.back();
     }
-    return IssueDraftHelpers::FromCachedTicket(lastTicket,
-                                                AvailableJiraFields,
-                                                cfg.ProjectKey,
-                                                cfg.DefaultIssueTypeId,
-                                                cfg.DefaultIssueTypeName,
-                                                cfg.NewIssueInheritFieldIds);
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, cfg.ProjectKey, cfg.DefaultIssueTypeId,
+                                               cfg.DefaultIssueTypeName, cfg.NewIssueInheritFieldIds);
 }
 
-RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey,
-                                                     const std::string& issueTypeId,
-                                                     const std::string& issueTypeName) const {
+RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
+                                                    const std::string& issueTypeName) const {
     RequiredFieldSet result;
-    for (const auto& entry : AvailableJiraIssueTypeMeta) {
-        const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() ||
-                                   entry.ProjectKey == projectKey;
+    for (const auto& entry : AvailableIssueTypeMeta) {
+        const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() || entry.ProjectKey == projectKey;
         if (!projectMatch) {
             continue;
         }
@@ -1241,11 +1452,9 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
 
 std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
-    auto catalogCopy = std::make_shared<std::vector<JiraField>>(AvailableJiraFields);
-    const RequiredFieldSet required =
-        GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
-    std::shared_ptr<std::promise<IssueCreateResult>> promise =
-        std::make_shared<std::promise<IssueCreateResult>>();
+    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(AvailableFields);
+    const RequiredFieldSet required = GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
+    std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();
 
     if (!Backend) {
@@ -1276,10 +1485,10 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
     }
 
     LaunchBackgroundTask([this, promise, backend, cache, draftCopy, catalogCopy, required]() {
-        IssueCreateResult result =
-            IssueCreatePipeline::Run(*backend, cache, draftCopy, required, *catalogCopy);
+        IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draftCopy, required, *catalogCopy);
         if (result.Ok) {
             RefreshLocalData();
+            requestDeferredLiveJiraBackendSuccessNotify_();
         }
         promise->set_value(std::move(result));
     });
@@ -1295,9 +1504,15 @@ std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
     try {
         const std::int64_t id = Cache->EnqueuePendingCreate(payload);
         LOG_INFO("AppController: queued offline create id=%lld", static_cast<long long>(id));
+        BackendAuditTrail::AppendResult(
+            "offline_queue_create", "ui", std::string(), std::to_string(id), true, std::string(),
+            nlohmann::json{{"pending_create_id", id}, {"draft", IssueDraftHelpers::ToJson(draft)}});
         return id;
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::QueueCreateOffline failed: %s", ex.what());
+        BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(),
+                                        BackendAuditTrail::MakeOperationId("offline-queue"), false, ex.what(),
+                                        nlohmann::json{{"draft", IssueDraftHelpers::ToJson(draft)}});
         return 0;
     }
 }
@@ -1308,75 +1523,607 @@ size_t AppController::GetPendingCreateCount() const {
     }
     try {
         return Cache->LoadPendingCreates().size();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetPendingCreateCount failed: %s", ex.what());
+        return 0;
     } catch (...) {
+        LOG_ERROR("AppController::GetPendingCreateCount failed: unknown exception");
         return 0;
     }
 }
 
-void AppController::TickOfflineCreates() {
-    if (!Cache || !Backend || offlineReplayInFlight_) {
+size_t AppController::GetDeadPendingCreateCount() const {
+    if (!Cache) {
+        return 0;
+    }
+    try {
+        return Cache->GetDeadPendingCreateCount();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetDeadPendingCreateCount failed: %s", ex.what());
+        return 0;
+    } catch (...) {
+        LOG_ERROR("AppController::GetDeadPendingCreateCount failed: unknown exception");
+        return 0;
+    }
+}
+
+std::vector<DeadPendingCreate> AppController::GetDeadPendingCreates() const {
+    if (!Cache) {
+        return {};
+    }
+    try {
+        return Cache->LoadDeadPendingCreates();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetDeadPendingCreates failed: %s", ex.what());
+        return {};
+    } catch (...) {
+        LOG_ERROR("AppController::GetDeadPendingCreates failed: unknown exception");
+        return {};
+    }
+}
+
+std::vector<PendingCreate> AppController::GetPendingCreates() const {
+    if (!Cache) {
+        return {};
+    }
+    try {
+        return Cache->LoadPendingCreates();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetPendingCreates failed: %s", ex.what());
+        return {};
+    } catch (...) {
+        LOG_ERROR("AppController::GetPendingCreates failed: unknown exception");
+        return {};
+    }
+}
+
+AppController::DeadLetterRestoreSummary
+AppController::RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds) {
+    DeadLetterRestoreSummary summary;
+    if (!Cache || originalIds.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : originalIds) {
+        try {
+            if (Cache->RestoreDeadPendingCreate(id)) {
+                ++summary.Restored;
+                BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
+                                                true, std::string(),
+                                                nlohmann::json{{"original_pending_create_id", id}});
+            } else {
+                ++summary.Failed;
+                BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
+                                                false, "Row not found.",
+                                                nlohmann::json{{"original_pending_create_id", id}});
+            }
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::RestoreDeadPendingCreates id=%lld err=%s", static_cast<long long>(id), ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
+                                            false, ex.what(), nlohmann::json{{"original_pending_create_id", id}});
+        } catch (...) {
+            LOG_ERROR("AppController::RestoreDeadPendingCreates id=%lld unknown exception", static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
+                                            false, "Unknown exception.",
+                                            nlohmann::json{{"original_pending_create_id", id}});
+        }
+    }
+    return summary;
+}
+
+std::string AppController::TakeLegacyPendingStartupBanner() { return std::move(legacyPendingStartupBanner_); }
+
+AppController::DeadLetterDeleteSummary
+AppController::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
+    DeadLetterDeleteSummary summary;
+    if (!Cache || deadIds.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : deadIds) {
+        try {
+            Cache->DeleteDeadPendingCreate(id);
+            ++summary.Deleted;
+            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id), true,
+                                            std::string(), nlohmann::json{{"dead_id", id}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::DeleteDeadPendingCreates dead_id=%lld err=%s", static_cast<long long>(id),
+                      ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id),
+                                            false, ex.what(), nlohmann::json{{"dead_id", id}});
+        } catch (...) {
+            LOG_ERROR("AppController::DeleteDeadPendingCreates dead_id=%lld unknown exception",
+                      static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id),
+                                            false, "Unknown exception.", nlohmann::json{{"dead_id", id}});
+        }
+    }
+    return summary;
+}
+
+AppController::PendingQueueDeleteSummary
+AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
+    PendingQueueDeleteSummary summary;
+    if (!Cache || pendingIds.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : pendingIds) {
+        try {
+            Cache->DeletePendingCreate(id);
+            ++summary.Deleted;
+            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), true,
+                                            std::string(), nlohmann::json{{"pending_create_id", id}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::DeletePendingCreates id=%lld err=%s", static_cast<long long>(id), ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), false,
+                                            ex.what(), nlohmann::json{{"pending_create_id", id}});
+        } catch (...) {
+            LOG_ERROR("AppController::DeletePendingCreates id=%lld unknown exception", static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), false,
+                                            "Unknown exception.", nlohmann::json{{"pending_create_id", id}});
+        }
+    }
+    return summary;
+}
+
+std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
+                                                  const std::string& fieldsPayloadJson, std::string& outError) {
+    outError.clear();
+    if (!Cache) {
+        outError = "Cache is not initialized.";
+        return 0;
+    }
+    if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {
+        outError = "Invalid offline field edit enqueue parameters.";
+        return 0;
+    }
+    try {
+        const std::int64_t id = Cache->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson);
+        LOG_INFO("AppController: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
+                 issueKey.c_str(), fieldId.c_str());
+        BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
+                                        std::string(),
+                                        nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
+        return id;
+    } catch (const std::exception& ex) {
+        outError = ex.what();
+        LOG_ERROR("AppController::QueueFieldEditOffline failed: %s", ex.what());
+        BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey,
+                                        BackendAuditTrail::MakeOperationId("offline-field-queue"), false, ex.what(),
+                                        nlohmann::json{{"field_id", fieldId}});
+        return 0;
+    }
+}
+
+std::vector<PendingFieldEditRecord> AppController::GetPendingFieldEdits() const {
+    if (!Cache) {
+        return {};
+    }
+    try {
+        return Cache->LoadPendingFieldEdits();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetPendingFieldEdits failed: %s", ex.what());
+        return {};
+    } catch (...) {
+        LOG_ERROR("AppController::GetPendingFieldEdits failed: unknown exception");
+        return {};
+    }
+}
+
+std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() const {
+    if (!Cache) {
+        return {};
+    }
+    try {
+        return Cache->LoadDeadPendingFieldEdits();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::GetDeadPendingFieldEdits failed: %s", ex.what());
+        return {};
+    } catch (...) {
+        LOG_ERROR("AppController::GetDeadPendingFieldEdits failed: unknown exception");
+        return {};
+    }
+}
+
+AppController::PendingFieldEditDeleteSummary
+AppController::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
+    PendingFieldEditDeleteSummary summary;
+    if (!Cache || ids.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : ids) {
+        try {
+            Cache->DeletePendingFieldEdit(id);
+            ++summary.Deleted;
+            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            true, std::string(), nlohmann::json{{"pending_field_edit_id", id}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::DeletePendingFieldEdits id=%lld err=%s", static_cast<long long>(id), ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            false, ex.what(), nlohmann::json{{"pending_field_edit_id", id}});
+        } catch (...) {
+            LOG_ERROR("AppController::DeletePendingFieldEdits id=%lld unknown exception", static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            false, "Unknown exception.", nlohmann::json{{"pending_field_edit_id", id}});
+        }
+    }
+    return summary;
+}
+
+AppController::DeadFieldEditDeleteSummary
+AppController::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) {
+    DeadFieldEditDeleteSummary summary;
+    if (!Cache || deadIds.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : deadIds) {
+        try {
+            Cache->DeleteDeadPendingFieldEdit(id);
+            ++summary.Deleted;
+            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            true, std::string(), nlohmann::json{{"dead_field_edit_id", id}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::DeleteDeadPendingFieldEdits dead_id=%lld err=%s", static_cast<long long>(id),
+                      ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            false, ex.what(), nlohmann::json{{"dead_field_edit_id", id}});
+        } catch (...) {
+            LOG_ERROR("AppController::DeleteDeadPendingFieldEdits dead_id=%lld unknown exception",
+                      static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
+                                            false, "Unknown exception.", nlohmann::json{{"dead_field_edit_id", id}});
+        }
+    }
+    return summary;
+}
+
+void AppController::TickOfflineFieldEdits() {
+    if (!Cache || !JiraBackend) {
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    if (now < nextOfflineReplayAt_) {
+    {
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        if (offlineFieldEditReplayInFlight_) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextOfflineFieldEditReplayAt_) {
+            return;
+        }
+        offlineFieldEditReplayInFlight_ = true;
+    }
+
+    std::vector<PendingFieldEditRecord> pending;
+    try {
+        pending = Cache->LoadPendingFieldEdits();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::TickOfflineFieldEdits load failed: %s", ex.what());
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineFieldEditReplayInFlight_ = false;
         return;
+    } catch (...) {
+        LOG_ERROR("AppController::TickOfflineFieldEdits load failed: unknown exception");
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineFieldEditReplayInFlight_ = false;
+        return;
+    }
+    if (pending.empty()) {
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineFieldEditReplayInFlight_ = false;
+        return;
+    }
+
+    LocalCacheManager* cache = Cache.get();
+    LaunchBackgroundTask([this, pending, cache]() {
+        JiraClient client;
+        const JiraConfig cfg = ConfigManager::Load();
+        int successes = 0;
+        int failures = 0;
+        int archived = 0;
+        int cacheOpFailures = 0;
+        bool ranUpdate = false;
+
+        const auto tryCacheMutation = [&](const char* action, std::int64_t id,
+                                          const std::function<void()>& fn) -> bool {
+            try {
+                fn();
+                return true;
+            } catch (const std::exception& ex) {
+                ++cacheOpFailures;
+                LOG_ERROR("AppController::TickOfflineFieldEdits %s failed id=%lld err=%s", action,
+                          static_cast<long long>(id), ex.what());
+                return false;
+            } catch (...) {
+                ++cacheOpFailures;
+                LOG_ERROR("AppController::TickOfflineFieldEdits %s failed id=%lld err=unknown exception", action,
+                          static_cast<long long>(id));
+                return false;
+            }
+        };
+
+        const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
+        for (const auto& row : pending) {
+            if (row.Attempts >= kMaxReplayAttempts) {
+                char detailBuf[384];
+                std::snprintf(detailBuf, sizeof(detailBuf),
+                              "Queued offline field edit id %lld already at attempts=%d (max=%d).",
+                              static_cast<long long>(row.Id), row.Attempts, kMaxReplayAttempts);
+                const std::string terminal = FormatOfflineQueueTerminalLine("offline_field_replay", "max_attempt_gate",
+                                                                            "max_attempts", detailBuf);
+                if (tryCacheMutation("archive_pending_field_edit", row.Id,
+                                     [&]() { cache->ArchivePendingFieldEdit(row.Id, "max_attempts", terminal); })) {
+                    ++archived;
+                } else {
+                    ++failures;
+                }
+                continue;
+            }
+
+            nlohmann::json fieldsPayload;
+            try {
+                fieldsPayload = nlohmann::json::parse(row.FieldsPayloadJson);
+            } catch (const std::exception& ex) {
+                const std::string terminal = FormatOfflineQueueTerminalLine("offline_field_replay", "parse_payload",
+                                                                            "malformed_json", ex.what());
+                if (tryCacheMutation("archive_pending_field_edit_malformed", row.Id,
+                                     [&]() { cache->ArchivePendingFieldEdit(row.Id, "malformed_json", terminal); })) {
+                    ++archived;
+                } else {
+                    ++failures;
+                }
+                continue;
+            }
+
+            ranUpdate = true;
+            std::string err;
+            if (!client.UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
+                if (IsJiraTransportErrorText(err)) {
+                    const int nextAttempts = row.Attempts + 1;
+                    if (nextAttempts >= kMaxReplayAttempts) {
+                        const std::string terminal =
+                            FormatOfflineQueueTerminalLine("offline_field_replay", "transport_cap", "max_attempts",
+                                                           "Transport failures exhausted replay attempts: " + err);
+                        if (tryCacheMutation("archive_pending_field_edit_transport_cap", row.Id, [&]() {
+                                cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err);
+                                cache->ArchivePendingFieldEdit(row.Id, "transport_cap", terminal);
+                            })) {
+                            ++archived;
+                        } else {
+                            ++failures;
+                        }
+                    } else {
+                        (void)tryCacheMutation("update_pending_field_edit", row.Id,
+                                               [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err); });
+                        ++failures;
+                    }
+                } else {
+                    const std::string terminal =
+                        FormatOfflineQueueTerminalLine("offline_field_replay", "replay_rejected", "jira_error", err);
+                    if (tryCacheMutation("archive_pending_field_edit_rejected", row.Id, [&]() {
+                            cache->ArchivePendingFieldEdit(row.Id, "replay_rejected", terminal);
+                        })) {
+                        ++archived;
+                    } else {
+                        ++failures;
+                    }
+                }
+                continue;
+            }
+
+            if (tryCacheMutation("delete_pending_field_edit", row.Id,
+                                 [&]() { cache->DeletePendingFieldEdit(row.Id); })) {
+                ++successes;
+                requestDeferredLiveJiraBackendSuccessNotify_();
+                BackendAuditTrail::AppendResult(
+                    "offline_replay_field_edit", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
+                    std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
+            } else {
+                ++failures;
+            }
+        }
+
+        if (successes > 0) {
+            RefreshLocalData();
+        }
+        if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
+            LOG_INFO("AppController: offline field edit replay finished successes=%d failures=%d archived=%d "
+                     "cache_op_failures=%d",
+                     successes, failures, archived, cacheOpFailures);
+        }
+
+        std::chrono::seconds delay{5};
+        if (!ranUpdate && !pending.empty()) {
+            delay = std::chrono::seconds(300);
+        } else if (failures > 0 && successes == 0) {
+            delay = std::chrono::seconds(30);
+        }
+        const auto nextAt = std::chrono::steady_clock::now() + delay;
+        {
+            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+            nextOfflineFieldEditReplayAt_ = nextAt;
+            offlineFieldEditReplayInFlight_ = false;
+        }
+    });
+}
+
+void AppController::TickOfflineCreates() {
+    if (!Cache || !Backend) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        if (offlineReplayInFlight_) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextOfflineReplayAt_) {
+            return;
+        }
+        offlineReplayInFlight_ = true;
     }
 
     std::vector<PendingCreate> pending;
     try {
         pending = Cache->LoadPendingCreates();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::TickOfflineCreates load failed: %s", ex.what());
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
+        return;
     } catch (...) {
+        LOG_ERROR("AppController::TickOfflineCreates load failed: unknown exception");
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
         return;
     }
     if (pending.empty()) {
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
         return;
     }
 
-    offlineReplayInFlight_ = true;
     // Defer heavy work to a worker. Grab snapshots the worker needs.
-    auto catalogCopy = std::make_shared<std::vector<JiraField>>(AvailableJiraFields);
+    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(AvailableFields);
     ITrackerClient* backend = Backend.get();
     LocalCacheManager* cache = Cache.get();
     // Hard cap attempts per row so a permanently-bad payload doesn't loop forever.
 
     LaunchBackgroundTask([this, pending, backend, cache, catalogCopy]() {
-        constexpr int kMaxReplayAttempts = 5;
+        const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
         int successes = 0;
         int failures = 0;
+        int archived = 0;
+        int cacheOpFailures = 0;
         bool ranCreate = false;
+        const auto tryCacheMutation = [&](const char* action, std::int64_t id,
+                                          const std::function<void()>& fn) -> bool {
+            try {
+                fn();
+                return true;
+            } catch (const std::exception& ex) {
+                ++cacheOpFailures;
+                LOG_ERROR("AppController::TickOfflineCreates %s failed id=%lld err=%s", action,
+                          static_cast<long long>(id), ex.what());
+                return false;
+            } catch (...) {
+                ++cacheOpFailures;
+                LOG_ERROR("AppController::TickOfflineCreates %s failed id=%lld err=unknown exception", action,
+                          static_cast<long long>(id));
+                return false;
+            }
+        };
+        const auto archivePending = [&](const PendingCreate& pc, const std::string& reason,
+                                        const std::string& terminalError) -> bool {
+            return tryCacheMutation("archive_pending_create", pc.Id,
+                                    [&]() { cache->ArchivePendingCreate(pc.Id, reason, terminalError); });
+        };
         for (const auto& pc : pending) {
             if (pc.Attempts >= kMaxReplayAttempts) {
+                char detailBuf[384];
+                std::snprintf(detailBuf, sizeof(detailBuf),
+                              "Queued offline create id %lld already at attempts=%d (max=%d). "
+                              "Offline replay did not call Jira create; entry moved to Failed offline creates.",
+                              static_cast<long long>(pc.Id), pc.Attempts, kMaxReplayAttempts);
+                const std::string terminal =
+                    FormatOfflineQueueTerminalLine("offline_replay", "max_attempt_gate", "max_attempts", detailBuf);
+                if (archivePending(pc, "max_attempts", terminal)) {
+                    ++archived;
+                    BackendAuditTrail::AppendResult(
+                        "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true,
+                        std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}});
+                } else {
+                    ++failures;
+                }
                 continue;
             }
             IssueDraft draft;
             std::string parseErr;
             if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
-                LOG_WARN("AppController: dropping malformed pending_create id=%lld err=%s",
+                LOG_WARN("AppController: archiving malformed pending_create id=%lld err=%s",
                          static_cast<long long>(pc.Id), parseErr.c_str());
-                try { cache->DeletePendingCreate(pc.Id); } catch (...) {}
+                const std::string terminal =
+                    FormatOfflineQueueTerminalLine("offline_replay", "parse_payload", "malformed_payload",
+                                                   std::string("IssueDraft JSON parse failed: ") + parseErr);
+                if (archivePending(pc, "malformed_payload", terminal)) {
+                    ++archived;
+                    BackendAuditTrail::AppendResult("offline_dead_letter", "offline_replay", std::string(),
+                                                    std::to_string(pc.Id), true, std::string(),
+                                                    nlohmann::json{{"pending_create_id", pc.Id},
+                                                                   {"reason", "malformed_payload"},
+                                                                   {"error", parseErr}});
+                } else {
+                    ++failures;
+                }
                 continue;
             }
             const RequiredFieldSet required =
                 GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
             ranCreate = true;
-            IssueCreateResult result =
-                IssueCreatePipeline::Run(*backend, cache, draft, required, *catalogCopy);
+            IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draft, required, *catalogCopy);
             if (result.Ok) {
-                try { cache->DeletePendingCreate(pc.Id); } catch (...) {}
-                ++successes;
+                if (tryCacheMutation("delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); })) {
+                    ++successes;
+                    requestDeferredLiveJiraBackendSuccessNotify_();
+                    BackendAuditTrail::AppendResult(
+                        "offline_replay_create", "offline_replay", result.IssueKey, std::to_string(pc.Id), true,
+                        std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}});
+                } else {
+                    ++failures;
+                }
             } else {
-                try {
-                    cache->UpdatePendingCreate(pc.Id, pc.Attempts + 1, result.Error);
-                } catch (...) {}
-                ++failures;
+                const int nextAttempts = pc.Attempts + 1;
+                if (nextAttempts >= kMaxReplayAttempts) {
+                    std::string trackerPart =
+                        result.Error.empty()
+                            ? std::string("Create pipeline returned failure with empty error on final attempt.")
+                            : std::string("Create pipeline error: ") + result.Error;
+                    char headBuf[224];
+                    std::snprintf(headBuf, sizeof(headBuf), "Offline replay attempts went from %d to %d (cap=%d). ",
+                                  pc.Attempts, nextAttempts, kMaxReplayAttempts);
+                    const std::string terminalError = FormatOfflineQueueTerminalLine(
+                        "offline_replay", "issue_create", "max_attempts", std::string(headBuf) + trackerPart);
+                    const bool archivedOk = tryCacheMutation("archive_pending_create", pc.Id, [&]() {
+                        cache->UpdatePendingCreate(pc.Id, nextAttempts, terminalError);
+                        cache->ArchivePendingCreate(pc.Id, "max_attempts", terminalError);
+                    });
+                    if (archivedOk) {
+                        ++archived;
+                        BackendAuditTrail::AppendResult("offline_dead_letter", "offline_replay", std::string(),
+                                                        std::to_string(pc.Id), true, std::string(),
+                                                        nlohmann::json{{"pending_create_id", pc.Id},
+                                                                       {"reason", "max_attempts"},
+                                                                       {"error", result.Error}});
+                    } else {
+                        ++failures;
+                    }
+                } else {
+                    const bool updateOk = tryCacheMutation("update_pending_create", pc.Id, [&]() {
+                        cache->UpdatePendingCreate(pc.Id, nextAttempts, result.Error);
+                    });
+                    (void)updateOk;
+                    BackendAuditTrail::AppendResult("offline_replay_create", "offline_replay", std::string(),
+                                                    std::to_string(pc.Id), false, result.Error,
+                                                    nlohmann::json{{"pending_create_id", pc.Id},
+                                                                   {"attempts_before", pc.Attempts},
+                                                                   {"attempts_after", nextAttempts}});
+                    ++failures;
+                }
             }
         }
         if (successes > 0) {
             RefreshLocalData();
         }
-        if (successes > 0 || failures > 0) {
-            LOG_INFO("AppController: offline replay finished successes=%d failures=%d",
-                     successes, failures);
+        if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
+            LOG_INFO("AppController: offline replay finished successes=%d failures=%d archived=%d cache_op_failures=%d",
+                     successes, failures, archived, cacheOpFailures);
         }
         // Back off if all failed; otherwise try again soon. Pending rows only skipped (max
         // attempts) still tick every few seconds — use a long delay when no create ran.
@@ -1386,8 +2133,12 @@ void AppController::TickOfflineCreates() {
         } else if (failures > 0 && successes == 0) {
             delay = std::chrono::seconds(30);
         }
-        nextOfflineReplayAt_ = std::chrono::steady_clock::now() + delay;
-        offlineReplayInFlight_ = false;
+        const auto nextAt = std::chrono::steady_clock::now() + delay;
+        {
+            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+            nextOfflineReplayAt_ = nextAt;
+            offlineReplayInFlight_ = false;
+        }
     });
 }
 
@@ -1397,10 +2148,8 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
     }
     const auto ticketsSnap = GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
-    const auto it = std::find_if(
-        tickets.begin(),
-        tickets.end(),
-        [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    const auto it =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
     if (it == tickets.end()) {
         return std::string();
     }
@@ -1452,17 +2201,15 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync() {
     });
 }
 
-bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
-                                            const std::string& fieldId,
-                                            const JiraField* fieldMeta,
-                                            const std::string* issueTypeKeyOverride) const {
+bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
+                                         const TrackerField* fieldMeta, const std::string* issueTypeKeyOverride) const {
     if (!JiraBackend || issueId.empty() || fieldId.empty()) {
         return true;
     }
     if (IsEditableTimetrackingEstimateFieldId(fieldId)) {
         return true;
     }
-    const JiraField* meta = fieldMeta ? fieldMeta : FindJiraFieldById(fieldId);
+    const TrackerField* meta = fieldMeta ? fieldMeta : FindFieldById(fieldId);
     if (meta && IsSprintField(*meta)) {
         return true;
     }
@@ -1500,8 +2247,7 @@ bool AppController::CanEditJiraFieldForIssue(const std::string& issueId,
     return fieldIt->second;
 }
 
-bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId,
-                                              std::string* outError,
+bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
                                               const std::string* issueTypeKeyOverride) {
     if (outError) {
         outError->clear();
@@ -1537,7 +2283,9 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId,
     const bool ok = JiraBackend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
 
     IssueEditMetaCache cache;
-    cache.loaded = true;
+    // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
+    // CanEditFieldForIssue deny every field (missing keys) instead of staying optimistic offline.
+    cache.loaded = ok;
     if (ok) {
         cache.fieldCanEdit = std::move(meta);
     }
@@ -1554,13 +2302,14 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId,
         if (outError) {
             *outError = fetchError;
         }
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::RefreshIssueEditMeta(const std::string& issueId,
-                                        std::string* outError,
-                                        const std::string* issueTypeKeyOverride) {
+bool AppController::RefreshIssueEditMeta(const std::string& issueId, std::string* outError,
+                                         const std::string* issueTypeKeyOverride) {
     std::string issueTypeKey;
     if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
         issueTypeKey = *issueTypeKeyOverride;
@@ -1643,24 +2392,22 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
     });
 }
 
-bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
-                                        const JiraField& field,
-                                        const std::vector<std::string>& rawValues,
-                                        std::string& outError) {
+bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                    const std::vector<std::string>& rawValues, std::string& outError) {
     outError.clear();
     if (!Backend || !Cache) {
         outError = "Backend or cache is not initialized.";
-        LOG_WARN("AppController::SubmitJiraFieldEdit skipped issue=%s field=%s: %s",
-                 issueId.c_str(),
-                 field.Id.c_str(),
+        LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
                  outError.c_str());
         return false;
     }
     if (issueId.empty()) {
         outError = "Issue id is empty.";
-        LOG_WARN("AppController::SubmitJiraFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
+        LOG_WARN("AppController::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
         return false;
     }
+
+    const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
 
     std::vector<std::string> values;
     values.reserve(rawValues.size());
@@ -1680,25 +2427,27 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         }
         if (values.empty()) {
             outError = "Clearing sprint is not supported by this action.";
-            LOG_WARN("AppController::SubmitJiraFieldEdit sprint clear not supported issue=%s field=%s",
-                     issueId.c_str(),
+            LOG_WARN("AppController::SubmitFieldEdit sprint clear not supported issue=%s field=%s", issueId.c_str(),
                      field.Id.c_str());
             return false;
         }
         const std::string sprintId = values.front();
         JiraConfig cfg = ConfigManager::Load();
+        auto ticketIt = std::find_if(tickets.begin(), tickets.end(),
+                                     [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+        BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+                                       nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
         if (!JiraBackend->AddIssueToSprint(cfg, issueId, sprintId, outError)) {
-            LOG_ERROR("AppController::SubmitJiraFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
-                      issueId.c_str(),
-                      field.Id.c_str(),
-                      sprintId.c_str(),
-                      outError.c_str());
+            LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
+                      issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
+            BackendAuditTrail::AppendResult(
+                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                nlohmann::json{
+                    {"field_id", field.Id},
+                    {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
+                    {"after", sprintId}});
             return false;
         }
-        auto ticketIt = std::find_if(
-            tickets.begin(),
-            tickets.end(),
-            [&](const CachedTicket& ticket) { return ticket.id == issueId; });
         if (ticketIt != tickets.end()) {
             CachedTicket updatedTicket = *ticketIt;
             std::string displayValue = sprintId;
@@ -1713,28 +2462,30 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         } else {
             RefreshLocalData();
         }
+        BackendAuditTrail::AppendResult(
+            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            nlohmann::json{{"field_id", field.Id},
+                           {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
+                           {"after", values.empty() ? std::string() : values.front()}});
+        requestDeferredLiveJiraBackendSuccessNotify_();
         return true;
     }
 
     if (IsNonEditableTimetrackingFieldId(field.Id)) {
         outError = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
-        LOG_WARN("AppController::SubmitJiraFieldEdit blocked non-editable timetracking issue=%s field=%s",
-                 issueId.c_str(),
+        LOG_WARN("AppController::SubmitFieldEdit blocked non-editable timetracking issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
         return false;
     }
 
-    auto ticketIt = std::find_if(
-        tickets.begin(),
-        tickets.end(),
-        [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    auto ticketIt =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
         const std::string editedValue = values.empty() ? std::string() : values.front();
         if (editedValue.empty()) {
             outError = "Clearing Jira timetracking estimates is not supported by this editor.";
-            LOG_WARN("AppController::SubmitJiraFieldEdit blocked timetracking clear issue=%s field=%s",
-                     issueId.c_str(),
+            LOG_WARN("AppController::SubmitFieldEdit blocked timetracking clear issue=%s field=%s", issueId.c_str(),
                      field.Id.c_str());
             return false;
         }
@@ -1743,6 +2494,8 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
             (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
         std::string remainingEstimate =
             (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
+        const std::string beforeOriginalEstimate = originalEstimate;
+        const std::string beforeRemainingEstimate = remainingEstimate;
         if (field.Id == "timeoriginalestimate") {
             originalEstimate = editedValue;
         } else {
@@ -1763,6 +2516,8 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
 
         nlohmann::json fieldsPayload = nlohmann::json::object();
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
+        BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+                                       nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
         if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outError)) {
             std::string payloadForLog;
             try {
@@ -1770,11 +2525,14 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
             } catch (...) {
                 payloadForLog = "(payload dump failed)";
             }
-            LOG_ERROR("AppController::SubmitJiraFieldEdit failed issue=%s field=%s jira_error=%s request=%s",
-                      issueId.c_str(),
-                      field.Id.c_str(),
-                      outError.c_str(),
-                      TruncateForLog(payloadForLog, 1200).c_str());
+            LOG_ERROR("AppController::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
+                      issueId.c_str(), field.Id.c_str(), outError.c_str(), TruncateForLog(payloadForLog, 1200).c_str());
+            BackendAuditTrail::AppendResult(
+                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                nlohmann::json{{"field_id", "timetracking"},
+                               {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
+                                                         {"timeestimate", beforeRemainingEstimate}}},
+                               {"after", fieldsPayload["timetracking"]}});
             return false;
         }
 
@@ -1786,6 +2544,13 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         } else {
             RefreshLocalData();
         }
+        BackendAuditTrail::AppendResult(
+            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            nlohmann::json{{"field_id", "timetracking"},
+                           {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
+                                                     {"timeestimate", beforeRemainingEstimate}}},
+                           {"after", fieldsPayload["timetracking"]}});
+        requestDeferredLiveJiraBackendSuccessNotify_();
         return true;
     }
 
@@ -1794,38 +2559,42 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
     }
 
     if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
-        !CanEditJiraFieldForIssue(issueId, field.Id, &field)) {
+        !CanEditFieldForIssue(issueId, field.Id, &field)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
-        LOG_WARN("AppController::SubmitJiraFieldEdit blocked by editmeta issue=%s field=%s",
-                 issueId.c_str(),
+        LOG_WARN("AppController::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
         return false;
     }
 
     nlohmann::json valuePayload;
     std::string buildErr;
-    if (!JiraFieldPayload::BuildValue(field, rawValues, valuePayload, buildErr)) {
+    const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(field);
+    if (!JiraFieldPayload::BuildValue(jiraField, rawValues, valuePayload, buildErr)) {
         outError = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
-        LOG_WARN("AppController::SubmitJiraFieldEdit invalid value issue=%s field=%s err=%s",
-                 issueId.c_str(),
-                 field.Id.c_str(),
-                 outError.c_str());
+        LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
+                 field.Id.c_str(), outError.c_str());
         return false;
     }
 
     nlohmann::json fieldsPayload = nlohmann::json::object();
     fieldsPayload[field.Id] = valuePayload;
+    BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+                                   nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
     bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
     bool didRetryAfter400 = false;
     if (!updateOk && JiraBackend && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr);
-        if (!CanEditJiraFieldForIssue(issueId, field.Id, &field)) {
-            outError =
-                "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
-            LOG_WARN("AppController::SubmitJiraFieldEdit blocked after editmeta refresh issue=%s field=%s",
-                     issueId.c_str(),
+        if (!CanEditFieldForIssue(issueId, field.Id, &field)) {
+            outError = "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
+            LOG_WARN("AppController::SubmitFieldEdit blocked after editmeta refresh issue=%s field=%s", issueId.c_str(),
                      field.Id.c_str());
+            BackendAuditTrail::AppendResult(
+                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                nlohmann::json{
+                    {"field_id", field.Id},
+                    {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
+                    {"after", rawValues}});
             return false;
         }
         updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
@@ -1837,12 +2606,15 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         } catch (...) {
             payloadForLog = "(payload dump failed)";
         }
-        LOG_ERROR("AppController::SubmitJiraFieldEdit failed issue=%s field=%s retried_after_400=%d jira_error=%s request=%s",
-                  issueId.c_str(),
-                  field.Id.c_str(),
-                  didRetryAfter400 ? 1 : 0,
-                  outError.c_str(),
-                  TruncateForLog(payloadForLog, 1200).c_str());
+        LOG_ERROR(
+            "AppController::SubmitFieldEdit failed issue=%s field=%s retried_after_400=%d tracker_error=%s request=%s",
+            issueId.c_str(), field.Id.c_str(), didRetryAfter400 ? 1 : 0, outError.c_str(),
+            TruncateForLog(payloadForLog, 1200).c_str());
+        BackendAuditTrail::AppendResult(
+            "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+            nlohmann::json{{"field_id", field.Id},
+                           {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
+                           {"after", rawValues}});
         return false;
     }
 
@@ -1854,7 +2626,7 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
         if (!values.empty()) {
             for (size_t i = 0; i < values.size(); ++i) {
                 const std::string displayPart =
-                    JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(field, values[i]);
+                    JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(jiraField, values[i]);
                 if (i != 0) {
                     displayValue += ", ";
                 }
@@ -1864,21 +2636,27 @@ bool AppController::SubmitJiraFieldEdit(const std::string& issueId,
 
         updatedTicket.fieldValues[field.Id] = displayValue;
         UpdateTicket(updatedTicket);
+        BackendAuditTrail::AppendResult("field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+                                        nlohmann::json{{"field_id", field.Id},
+                                                       {"before", ticketIt->GetFieldValue(field.Id)},
+                                                       {"after", displayValue}});
     } else {
         RefreshLocalData();
+        BackendAuditTrail::AppendResult(
+            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            nlohmann::json{{"field_id", field.Id}, {"before", "unknown"}, {"after", rawValues}});
     }
 
+    requestDeferredLiveJiraBackendSuccessNotify_();
     return true;
 }
 
-bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
-                                                   const JiraField& field,
-                                                   const std::vector<std::string>& rawValues,
-                                                   const std::string& originalEstimateSnapshot,
-                                                   const std::string& remainingEstimateSnapshot,
-                                                   const std::string& issueTypeKeySnapshot,
-                                                   JiraFieldEditResult& outResult) {
-    outResult = JiraFieldEditResult{};
+bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                               const std::vector<std::string>& rawValues,
+                                               const std::string& originalEstimateSnapshot,
+                                               const std::string& remainingEstimateSnapshot,
+                                               const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
+    outResult = FieldEditResult{};
     if (issueId.empty()) {
         outResult.Error = "Issue id is empty.";
         return false;
@@ -1912,6 +2690,7 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
         }
         outResult.Ok = true;
         outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+        requestDeferredLiveJiraBackendSuccessNotify_();
         return true;
     }
 
@@ -1954,44 +2733,30 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
         outResult.Ok = true;
         outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
         outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
+        requestDeferredLiveJiraBackendSuccessNotify_();
         return true;
     }
 
-    const std::string* issueTypeKeyOpt =
-        issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
-    }
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
-        !CanEditJiraFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
-        outResult.Error = "Field cannot be edited for this issue (Jira edit metadata).";
-        LOG_WARN("AppController::SubmitJiraFieldEditNetworkOnly blocked by editmeta issue=%s field=%s",
-                 issueId.c_str(),
-                 field.Id.c_str());
+    const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
+
+    nlohmann::json fieldsPayload;
+    std::unordered_map<std::string, std::string> displayValues;
+    if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
+                                            remainingEstimateSnapshot, issueTypeKeySnapshot, fieldsPayload,
+                                            displayValues, outResult.Error)) {
         return false;
     }
 
-    nlohmann::json valuePayload;
-    std::string buildErr;
-    if (!JiraFieldPayload::BuildValue(field, rawValues, valuePayload, buildErr)) {
-        outResult.Error = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
-        return false;
-    }
-
-    nlohmann::json fieldsPayload = nlohmann::json::object();
-    fieldsPayload[field.Id] = std::move(valuePayload);
     bool updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     bool didRetryAfter400 = false;
     if (!updateOk && JiraBackend && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr, issueTypeKeyOpt);
-        if (!CanEditJiraFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
+        if (!CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
             outResult.Error =
                 "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
-            LOG_WARN(
-                "AppController::SubmitJiraFieldEditNetworkOnly blocked after editmeta refresh issue=%s field=%s",
-                issueId.c_str(),
-                field.Id.c_str());
+            LOG_WARN("AppController::SubmitFieldEditNetworkOnly blocked after editmeta refresh issue=%s field=%s",
+                     issueId.c_str(), field.Id.c_str());
             return false;
         }
         updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
@@ -2003,36 +2768,54 @@ bool AppController::SubmitJiraFieldEditNetworkOnly(const std::string& issueId,
         } catch (...) {
             payloadForLog = "(payload dump failed)";
         }
-        LOG_ERROR("AppController::SubmitJiraFieldEditNetworkOnly failed issue=%s field=%s retried_after_400=%d "
-                  "jira_error=%s request=%s",
-                  issueId.c_str(),
-                  field.Id.c_str(),
-                  didRetryAfter400 ? 1 : 0,
-                  outResult.Error.c_str(),
+        LOG_ERROR("AppController::SubmitFieldEditNetworkOnly failed issue=%s field=%s retried_after_400=%d "
+                  "tracker_error=%s request=%s",
+                  issueId.c_str(), field.Id.c_str(), didRetryAfter400 ? 1 : 0, outResult.Error.c_str(),
                   TruncateForLog(payloadForLog, 1200).c_str());
         return false;
     }
 
-    std::string displayValue;
-    if (!values.empty()) {
-        for (size_t i = 0; i < values.size(); ++i) {
-            if (i != 0) {
-                displayValue += ", ";
-            }
-            displayValue += JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(field, values[i]);
-        }
-    }
     outResult.Ok = true;
-    outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+    outResult.UpdatedDisplayValues = std::move(displayValues);
+    requestDeferredLiveJiraBackendSuccessNotify_();
     return true;
 }
 
-bool AppController::ApplyJiraFieldEditResult(const std::string& issueId,
-                                             const JiraFieldEditResult& result,
-                                             std::string& outError) {
+bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
+                                               const std::vector<std::string>& rawValues,
+                                               const std::string& originalEstimateSnapshot,
+                                               const std::string& remainingEstimateSnapshot,
+                                               const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
+                                               std::string& outFieldsPayloadJson, std::string& outError) {
+    outResult = FieldEditResult{};
+    outFieldsPayloadJson.clear();
+    outError.clear();
+    nlohmann::json fieldsPayload;
+    std::unordered_map<std::string, std::string> displayValues;
+    if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
+                                            remainingEstimateSnapshot, issueTypeKeySnapshot, fieldsPayload,
+                                            displayValues, outError)) {
+        return false;
+    }
+    try {
+        outFieldsPayloadJson = fieldsPayload.dump();
+    } catch (const std::exception& ex) {
+        outError = ex.what();
+        return false;
+    } catch (...) {
+        outError = "Failed to serialize field payload.";
+        return false;
+    }
+    outResult.Ok = true;
+    outResult.UpdatedDisplayValues = std::move(displayValues);
+    return true;
+}
+
+bool AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result,
+                                         std::string& outError) {
     outError.clear();
     if (!result.Ok) {
-        outError = result.Error.empty() ? std::string("Failed to save Jira field update.") : result.Error;
+        outError = result.Error.empty() ? std::string("Failed to save field update.") : result.Error;
         return false;
     }
     if (!Cache) {
@@ -2046,10 +2829,8 @@ bool AppController::ApplyJiraFieldEditResult(const std::string& issueId,
 
     const auto ticketsSnapApply = GetActiveTicketsSnapshot();
     const auto& ticketsApply = *ticketsSnapApply;
-    auto ticketIt = std::find_if(
-        ticketsApply.begin(),
-        ticketsApply.end(),
-        [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    auto ticketIt = std::find_if(ticketsApply.begin(), ticketsApply.end(),
+                                 [&](const CachedTicket& ticket) { return ticket.id == issueId; });
     if (ticketIt == ticketsApply.end()) {
         RefreshLocalData();
         return true;
@@ -2063,8 +2844,7 @@ bool AppController::ApplyJiraFieldEditResult(const std::string& issueId,
     return true;
 }
 
-bool AppController::FetchIssueWatchers(const std::string& issueKey,
-                                       std::vector<JiraUser>& outWatchers,
+bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<JiraUser>& outWatchers,
                                        std::string& outError) const {
     outWatchers.clear();
     outError.clear();
@@ -2076,12 +2856,13 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey,
     const bool ok = JiraBackend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraSearchUsersByQuery(const std::string& query,
-                                           std::vector<JiraUser>& outUsers,
+bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector<JiraUser>& outUsers,
                                            std::string& outError) const {
     outUsers.clear();
     outError.clear();
@@ -2092,15 +2873,15 @@ bool AppController::JiraSearchUsersByQuery(const std::string& query,
     const JiraConfig cfg = ConfigManager::Load();
     const bool ok = JiraBackend->SearchUsersByQuery(cfg, query, outUsers, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraSearchUsersByQuery failed query=%s err=%s",
-                  TruncateForLog(query, 120).c_str(),
+        LOG_ERROR("AppController::JiraSearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey,
-                                             const std::string& plainText,
+bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                              std::string& outError) {
     outError.clear();
     if (!JiraBackend) {
@@ -2111,47 +2892,35 @@ bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey,
     const bool ok = JiraBackend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraAddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
-                                                    const std::string& p4User,
-                                                    const std::string& functionName,
-                                                    const std::string& filePath,
-                                                    const int lineNumber,
-                                                    const std::string& changelist,
-                                                    const std::string& date,
-                                                    const bool approximated,
-                                                    const std::string& codeSnippet,
-                                                    std::string& outError) {
+bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
+                                                    const std::string& functionName, const std::string& filePath,
+                                                    const int lineNumber, const std::string& changelist,
+                                                    const std::string& date, const bool approximated,
+                                                    const std::string& codeSnippet, std::string& outError) {
     outError.clear();
     if (!JiraBackend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->AddIssueCommentBlameContext(cfg,
-                                                             issueKey,
-                                                             p4User,
-                                                             functionName,
-                                                             filePath,
-                                                             lineNumber,
-                                                             changelist,
-                                                             date,
-                                                             approximated,
-                                                             codeSnippet,
-                                                             outError);
+    const bool ok = JiraBackend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
+                                                             changelist, date, approximated, codeSnippet, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraAddIssueCommentBlameContext failed issue=%s err=%s",
-                  issueKey.c_str(),
+        LOG_ERROR("AppController::JiraAddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraFetchUserGroupNames(const std::string& accountId,
-                                            std::vector<std::string>& outGroupNames,
+bool AppController::JiraFetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                             std::string& outError) const {
     outGroupNames.clear();
     outError.clear();
@@ -2163,9 +2932,9 @@ bool AppController::JiraFetchUserGroupNames(const std::string& accountId,
     const bool ok = JiraBackend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraFetchUserGroupNames failed account=%s err=%s",
-                  TruncateForLog(accountId, 40).c_str(),
-                  outError.c_str());
+                  TruncateForLog(accountId, 40).c_str(), outError.c_str());
+    } else {
+        requestDeferredLiveJiraBackendSuccessNotify_();
     }
     return ok;
 }
-

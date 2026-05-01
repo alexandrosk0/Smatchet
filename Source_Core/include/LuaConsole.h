@@ -6,30 +6,29 @@
 #include <vector>
 
 class LuaConsole {
-public:
+  public:
     std::vector<std::string> Items;
     bool AutoScroll = true;
 
     void ClearLog() { Items.clear(); }
 
-    void AddLog(const std::string& log) {
-        Items.push_back(log);
-    }
+    void AddLog(const std::string& log) { Items.push_back(log); }
 
     /** Toolbar + log scroll area (use inside an existing ImGui window). */
     void DrawPanelContents() {
-        if (ImGui::Button("Clear")) ClearLog();
+        if (ImGui::Button("Clear"))
+            ClearLog();
         ImGui::SameLine();
         bool copy_to_clipboard = ImGui::Button("Copy to Clipboard");
         ImGui::SameLine();
         ImGui::Checkbox("Auto-scroll", &AutoScroll);
         ImGui::Separator();
 
-        const float footer_height_to_reserve =
-            ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+        const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
         if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false,
                               ImGuiWindowFlags_HorizontalScrollbar)) {
-            if (copy_to_clipboard) ImGui::LogToClipboard();
+            if (copy_to_clipboard)
+                ImGui::LogToClipboard();
 
             for (const auto& item : Items) {
                 ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -43,7 +42,8 @@ public:
                 ImGui::PopStyleColor();
             }
 
-            if (copy_to_clipboard) ImGui::LogFinish();
+            if (copy_to_clipboard)
+                ImGui::LogFinish();
 
             if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
                 ImGui::SetScrollHereY(1.0f);

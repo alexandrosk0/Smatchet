@@ -39,14 +39,11 @@ std::string Base64Encode(const std::string& in) {
     return out;
 }
 
-bool LooksLikeHttpUrl(const std::string& url) {
-    return url.find("http://") == 0 || url.find("https://") == 0;
-}
+bool LooksLikeHttpUrl(const std::string& url) { return url.find("http://") == 0 || url.find("https://") == 0; }
 
 std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
 }
 
@@ -113,8 +110,7 @@ std::string ExtractHostFromUrl(const std::string& url) {
 
 bool IsLoopbackAddress(const std::string& remoteAddr) {
     const std::string lowered = ToLowerAscii(TrimAsciiWhitespace(remoteAddr));
-    return lowered == "127.0.0.1" || lowered == "::1" || lowered == "localhost" ||
-           lowered == "::ffff:127.0.0.1";
+    return lowered == "127.0.0.1" || lowered == "::1" || lowered == "localhost" || lowered == "::ffff:127.0.0.1";
 }
 
 // Constant-time string compare: return true iff a == b. Always reads max(|a|,|b|) bytes.
@@ -171,8 +167,7 @@ void McpPlugin::OnStart(AppController& app) {
     impl_->jira_domain = NormalizeDomain(cfg.Domain);
     if (cfg.McpExportFields.empty()) {
         impl_->export_fields = {
-            "summary", "status", "priority", "assignee",
-            "updated", "created", "labels", "issuetype",
+            "summary", "status", "priority", "assignee", "updated", "created", "labels", "issuetype",
         };
     } else {
         impl_->export_fields = cfg.McpExportFields;
@@ -228,7 +223,8 @@ void McpPlugin::OnStart(AppController& app) {
         // Attachment proxy:
         // Jira attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
         // We proxy through the MCP server (running in the same process) so Unreal can embed/load it.
-        impl_->svr.Get("/mcp/attachment_proxy", [this, authorize, cfg](const httplib::Request& req, httplib::Response& res) {
+        impl_->svr.Get("/mcp/attachment_proxy", [this, authorize, cfg](const httplib::Request& req,
+                                                                       httplib::Response& res) {
             if (!authorize(req, res)) {
                 return;
             }
@@ -265,10 +261,7 @@ void McpPlugin::OnStart(AppController& app) {
             const std::string authHeader = "Basic " + Base64Encode(basicCred);
 
             cpr::Header headers{
-                {"Accept", "*/*"},
-                {"Authorization", authHeader},
-                {"User-Agent", "Smatchet/1.0 Jira-Attachment-Proxy"}
-            };
+                {"Accept", "*/*"}, {"Authorization", authHeader}, {"User-Agent", "Smatchet/1.0 Jira-Attachment-Proxy"}};
             cpr::Redirect redirect(false, false);
 
             constexpr size_t kMaxAttachmentProxyBytes = 10u * 1024u * 1024u;
@@ -283,11 +276,7 @@ void McpPlugin::OnStart(AppController& app) {
                 bodyAccum.append(data);
                 return true;
             }};
-            const auto resp = cpr::Get(cpr::Url{targetUrl},
-                                       headers,
-                                       redirect,
-                                       writeCb,
-                                       cpr::ConnectTimeout{5000},
+            const auto resp = cpr::Get(cpr::Url{targetUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000},
                                        cpr::Timeout{60000});
             if (sizeExceeded) {
                 res.status = 413;
@@ -332,7 +321,8 @@ void McpPlugin::OnStart(AppController& app) {
                 if (!matches) {
                     for (const auto& fieldId : impl_->export_fields) {
                         const auto it = t.fieldValues.find(fieldId);
-                        if (it == t.fieldValues.end()) continue;
+                        if (it == t.fieldValues.end())
+                            continue;
                         if (it->second.find(query) != std::string::npos) {
                             matches = true;
                             break;

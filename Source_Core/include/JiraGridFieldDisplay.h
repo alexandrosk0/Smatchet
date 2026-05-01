@@ -1,6 +1,6 @@
 #pragma once
 
-#include "JiraClient.h"
+#include "TrackerFieldSchema.h"
 
 #include <cstdint>
 #include <future>
@@ -11,13 +11,13 @@ class AppController;
 
 struct WatchersLoadResult {
     bool Ok = false;
-    std::vector<JiraUser> Watchers;
+    std::vector<TrackerUser> Watchers;
     std::string Error;
 };
 
 struct VotesLoadResult {
     bool Ok = false;
-    std::vector<JiraUser> Voters;
+    std::vector<TrackerUser> Voters;
     std::string Error;
     int VoteCount = 0;
     bool HasVoted = false;
@@ -31,14 +31,14 @@ struct JiraGridFieldAsyncState {
     std::string watchersPopupIssueKey;
     bool watchersLoadInProgress = false;
     std::future<WatchersLoadResult> watchersFuture;
-    std::vector<JiraUser> watchersLoadedList;
+    std::vector<TrackerUser> watchersLoadedList;
     std::string watchersLoadedError;
 
     bool votesPanelOpen = false;
     std::string votesPopupIssueKey;
     bool votesLoadInProgress = false;
     std::future<VotesLoadResult> votesFuture;
-    std::vector<JiraUser> votesLoadedList;
+    std::vector<TrackerUser> votesLoadedList;
     std::string votesLoadedError;
     int votesLoadedVoteCount = 0;
     bool votesLoadedHasVoted = false;
@@ -50,28 +50,18 @@ struct JiraGridFieldAsyncState {
  * List panels for watchers/votes use JiraGridFieldAsyncState on the UI session.
  */
 class JiraGridFieldDisplay {
-public:
+  public:
     static bool IsWatchersColumnId(const std::string& id);
     static bool IsVotesColumnId(const std::string& id);
     static bool IsWorklogColumnId(const std::string& id);
 
-    static void RenderAttachmentsField(AppController& app,
-                                       const std::string& currentValue,
-                                       float availWidth,
+    static void RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                        bool tooltipsEnabled);
-    static void RenderWatchersField(const std::string& issueKey,
-                                    const std::string& currentValue,
-                                    float availWidth,
-                                    bool tooltipsEnabled,
-                                    JiraGridFieldAsyncState& async);
-    static void RenderVotesField(const std::string& issueKey,
-                                 const std::string& currentValue,
-                                 float availWidth,
-                                 bool tooltipsEnabled,
-                                 JiraGridFieldAsyncState& async);
-    static void RenderWorklogField(const std::string& currentValue,
-                                   float availWidth,
-                                   bool tooltipsEnabled);
+    static void RenderWatchersField(const std::string& issueKey, const std::string& currentValue, float availWidth,
+                                    bool tooltipsEnabled, JiraGridFieldAsyncState& async);
+    static void RenderVotesField(const std::string& issueKey, const std::string& currentValue, float availWidth,
+                                 bool tooltipsEnabled, JiraGridFieldAsyncState& async);
+    static void RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
     /** Column key `aggregateprogress` (Jira schema id; case-insensitive). */
     static bool IsProgressStyleColumnId(const std::string& fieldId);
@@ -80,7 +70,7 @@ public:
      * Jira Progress / Aggregate progress: display name or id.
      * Matches name "Progress", "aggregate progress", "aggregateprogress", or id "aggregateprogress".
      */
-    static bool IsProgressDisplayField(const JiraField* field);
+    static bool IsProgressDisplayField(const TrackerField* field);
 
     /**
      * Renders `{"progress":n,"total":m}` (and double-encoded JSON string) as ImGui::ProgressBar.
@@ -92,15 +82,13 @@ public:
     static bool IsIssueRestrictionColumnId(const std::string& fieldId);
 
     /** Issue restriction field by id or display name (issue restriction / issue restrictions). */
-    static bool IsIssueRestrictionField(const JiraField* field);
+    static bool IsIssueRestrictionField(const TrackerField* field);
 
     /**
      * Renders `{"issuerestrictions":{...},"shouldDisplay":bool}` as compact read-only text.
      * @return false if empty, invalid JSON, or wrong shape (caller uses default text).
      */
-    static bool TryRenderIssueRestrictionField(const std::string& currentValue,
-                                               float availWidth,
-                                               bool tooltipsEnabled);
+    static bool TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
     static void DrawWatchersListWindow(JiraGridFieldAsyncState& async);
     static void DrawVotesListWindow(JiraGridFieldAsyncState& async);

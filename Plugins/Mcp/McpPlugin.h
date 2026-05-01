@@ -4,7 +4,7 @@
 #include <memory>
 
 class McpPlugin : public IPlugin {
-public:
+  public:
     explicit McpPlugin(int port = 8080);
     ~McpPlugin() override;
 
@@ -12,7 +12,7 @@ public:
     void OnStart(AppController& app) override;
     void OnStop() override;
 
-private:
+  private:
     int port_;
     struct Impl;
     std::unique_ptr<Impl> impl_;

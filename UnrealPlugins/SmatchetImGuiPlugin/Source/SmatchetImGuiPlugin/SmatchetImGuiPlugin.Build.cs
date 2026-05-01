@@ -148,9 +148,38 @@ public class SmatchetImGuiPlugin : ModuleRules
             throw new BuildException($"SmatchetImGuiPlugin: Missing native library for '{targetName}'. Expected '{msvcLibNoPrefix}', '{msvcLibWithPrefix}', '{mingwAWithPrefix}', or '{mingwANoPrefix}'.");
         }
 
+        // Optional native libs: omit when the companion CMake build disabled Lua/MCP (libs not packaged).
+        void AddExistingLibOptional(string targetName)
+        {
+            string msvcLibNoPrefix = Path.Combine(LibDir, targetName + ".lib");
+            string msvcLibWithPrefix = Path.Combine(LibDir, "lib" + targetName + ".lib");
+            string mingwANoPrefix = Path.Combine(LibDir, targetName + ".a");
+            string mingwAWithPrefix = Path.Combine(LibDir, "lib" + targetName + ".a");
+
+            if (File.Exists(msvcLibNoPrefix))
+            {
+                PublicAdditionalLibraries.Add(msvcLibNoPrefix);
+                return;
+            }
+            if (File.Exists(msvcLibWithPrefix))
+            {
+                PublicAdditionalLibraries.Add(msvcLibWithPrefix);
+                return;
+            }
+            if (File.Exists(mingwAWithPrefix))
+            {
+                PublicAdditionalLibraries.Add(mingwAWithPrefix);
+                return;
+            }
+            if (File.Exists(mingwANoPrefix))
+            {
+                PublicAdditionalLibraries.Add(mingwANoPrefix);
+            }
+        }
+
         AddExistingLib("SmatchetImGuiHost_" + backendSuffix);
-        AddExistingLib("SmatchetPlugin_Mcp_" + backendSuffix);
-        AddExistingLib("SmatchetPlugin_LuaConsole_" + backendSuffix);
+        AddExistingLibOptional("SmatchetPlugin_Mcp_" + backendSuffix);
+        AddExistingLibOptional("SmatchetPlugin_LuaConsole_" + backendSuffix);
         AddExistingLib("SmatchetCore_" + backendSuffix);
         AddExistingLib("ImGuiLib_" + backendSuffix);
 
@@ -158,7 +187,7 @@ public class SmatchetImGuiPlugin : ModuleRules
         AddExistingLib("cpr");
         AddExistingLib("SQLiteCpp");
         AddExistingLib("sqlite3");
-        AddExistingLib("Smatchet_Lua_Internal");
+        AddExistingLibOptional("Smatchet_Lua_Internal");
         AddExistingLib("libcurl");
 
         WarnIfPackagedLibsAreStale(ThirdPartyDir, LibDir, backendSuffix);

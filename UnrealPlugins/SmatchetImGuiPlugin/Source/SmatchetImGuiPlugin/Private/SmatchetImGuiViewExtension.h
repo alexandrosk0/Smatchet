@@ -7,7 +7,7 @@
 #include "SmatchetImGuiHostC.h"
 
 class FSmatchetImGuiViewExtension : public FSceneViewExtensionBase {
-public:
+  public:
     FSmatchetImGuiViewExtension(const FAutoRegister& AutoRegister, SmatchetImGuiHostHandle InHost);
 
     virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override;
@@ -17,7 +17,7 @@ public:
     virtual void PostRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) override;
     virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
 
-private:
+  private:
     SmatchetImGuiHostHandle Host = nullptr;
     // Signals game-thread created a new ImGui frame; consumed on render thread.
     std::atomic<int32> PendingRenderFrame{0};

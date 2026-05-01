@@ -8,22 +8,16 @@
 #include <cstdint>
 
 // Simple log4cxx-style levels.
-enum class LogLevel {
-    Trace = 0,
-    Debug,
-    Info,
-    Warn,
-    Error
-};
+enum class LogLevel { Trace = 0, Debug, Info, Warn, Error };
 
 struct LogEntry {
-    double    timestampSeconds;
-    LogLevel  level;
+    double timestampSeconds;
+    LogLevel level;
     std::string message;
 };
 
 class Logger {
-public:
+  public:
     static Logger& Instance();
 
     /** Parse "trace"|"debug"|"info"|"warn"|"error" (case-insensitive); fallback @p fallback. */
@@ -50,8 +44,8 @@ public:
     // Convenience helpers
     void Trace(const std::string& msg) { Log(LogLevel::Trace, msg); }
     void Debug(const std::string& msg) { Log(LogLevel::Debug, msg); }
-    void Info(const std::string& msg)  { Log(LogLevel::Info,  msg); }
-    void Warn(const std::string& msg)  { Log(LogLevel::Warn,  msg); }
+    void Info(const std::string& msg) { Log(LogLevel::Info, msg); }
+    void Warn(const std::string& msg) { Log(LogLevel::Warn, msg); }
     void Error(const std::string& msg) { Log(LogLevel::Error, msg); }
 
     // Thread‑safe snapshot of current log entries.
@@ -61,7 +55,7 @@ public:
     // Clear all log entries.
     void Clear();
 
-private:
+  private:
     Logger() = default;
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
@@ -78,7 +72,6 @@ private:
 // printf‑style macros for convenience.
 #define LOG_TRACE(fmt, ...) Logger::Instance().Logf(LogLevel::Trace, (fmt), ##__VA_ARGS__)
 #define LOG_DEBUG(fmt, ...) Logger::Instance().Logf(LogLevel::Debug, (fmt), ##__VA_ARGS__)
-#define LOG_INFO(fmt,  ...) Logger::Instance().Logf(LogLevel::Info,  (fmt), ##__VA_ARGS__)
-#define LOG_WARN(fmt,  ...) Logger::Instance().Logf(LogLevel::Warn,  (fmt), ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...) Logger::Instance().Logf(LogLevel::Info, (fmt), ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...) Logger::Instance().Logf(LogLevel::Warn, (fmt), ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) Logger::Instance().Logf(LogLevel::Error, (fmt), ##__VA_ARGS__)
-

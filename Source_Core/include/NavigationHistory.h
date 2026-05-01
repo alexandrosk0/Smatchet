@@ -10,7 +10,7 @@ struct NavigationEntry {
 };
 
 class NavigationHistory {
-public:
+  public:
     NavigationHistory();
 
     void Clear();
@@ -27,10 +27,9 @@ public:
 
     const NavigationEntry* Current() const;
 
-private:
+  private:
     std::vector<NavigationEntry> _entries;
     int _index;
 };
 
 #endif
-

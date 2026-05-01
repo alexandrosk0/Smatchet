@@ -40,8 +40,7 @@ bool ShouldDrawSoftwareCursorForSlateWindow(SmatchetImGuiHostHandle Host, SWindo
     if (!SlateViewport.IsValid()) {
         return false;
     }
-    const std::uintptr_t HoveredViewportId =
-        GSmatchetPointerOverSlateViewportId.load(std::memory_order_relaxed);
+    const std::uintptr_t HoveredViewportId = GSmatchetPointerOverSlateViewportId.load(std::memory_order_relaxed);
     if (HoveredViewportId == 0) {
         return false;
     }
@@ -69,14 +68,11 @@ void SmatchetAttachmentViewerCallback(const char* LocalPathUtf8, const char*, co
 } // namespace
 
 class FSmatchetImGuiPluginModule : public IModuleInterface {
-public:
+  public:
     virtual void StartupModule() override {
         Host = SmatchetHost_Create();
-        UE_LOG(
-            LogSmatchetImGuiPlugin,
-            Log,
-            TEXT("Smatchet packaged native host tag: %s"),
-            ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()));
+        UE_LOG(LogSmatchetImGuiPlugin, Log, TEXT("Smatchet packaged native host tag: %s"),
+               ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()));
         RenderBackend = CreateSmatchetImGuiRenderBackend();
         DbPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Smatchet_LocalCache.sqlite"));
 
@@ -84,25 +80,20 @@ public:
             UE_LOG(LogSmatchetImGuiPlugin, Warning, TEXT("No Smatchet render backend available for this platform."));
         } else {
             bInitOptionsSet = ConfigureAndCacheInitOptions();
-            UE_LOG(
-                LogSmatchetImGuiPlugin,
-                Log,
-                TEXT("Smatchet render backend selected: %s | init options primed: %s"),
-                RenderBackend->GetBackendName(),
-                bInitOptionsSet ? TEXT("yes") : TEXT("no"));
+            UE_LOG(LogSmatchetImGuiPlugin, Log, TEXT("Smatchet render backend selected: %s | init options primed: %s"),
+                   RenderBackend->GetBackendName(), bInitOptionsSet ? TEXT("yes") : TEXT("no"));
         }
 
         if (!bInitOptionsSet) {
-            InitOptionsRetryHandle = FTSTicker::GetCoreTicker().AddTicker(
-                FTickerDelegate::CreateLambda([this](float) {
-                    if (bInitOptionsSet || !Host || !RenderBackend) {
-                        return false;
-                    }
-                    if (ConfigureAndCacheInitOptions()) {
-                        return false;
-                    }
-                    return true;
-                }));
+            InitOptionsRetryHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this](float) {
+                if (bInitOptionsSet || !Host || !RenderBackend) {
+                    return false;
+                }
+                if (ConfigureAndCacheInitOptions()) {
+                    return false;
+                }
+                return true;
+            }));
         }
 
         SmatchetHost_SetUiVisible(Host, false);
@@ -121,16 +112,12 @@ public:
 
         if (!TryRegisterBackBufferHook()) {
             BackBufferHookRetryHandle = FTSTicker::GetCoreTicker().AddTicker(
-                FTickerDelegate::CreateLambda([this](float) {
-                    return TryRegisterBackBufferHook() ? false : true;
-                }));
+                FTickerDelegate::CreateLambda([this](float) { return TryRegisterBackBufferHook() ? false : true; }));
         }
 
         if (!TryCreateViewExtension()) {
             ViewExtensionRetryHandle = FTSTicker::GetCoreTicker().AddTicker(
-                FTickerDelegate::CreateLambda([this](float) {
-                    return TryCreateViewExtension() ? false : true;
-                }));
+                FTickerDelegate::CreateLambda([this](float) { return TryCreateViewExtension() ? false : true; }));
         }
     }
 
@@ -174,7 +161,7 @@ public:
         }
     }
 
-private:
+  private:
     bool ApplyInitOptions(const FSmatchetRendererInitParams& Params) {
         if (!Host || !RenderBackend) {
             return false;
@@ -182,22 +169,9 @@ private:
 
         FTCHARToUTF8 DbPathUtf8(*DbPath);
         SmatchetHost_SetInitOptions(
-            Host,
-            DbPathUtf8.Get(),
-            "Jira",
-            8080,
-            Params.RendererBackend,
-            Params.NumFramesInFlight,
-            Params.ColorFormat,
-            Params.NativeDevice,
-            Params.RendererResource0,
-            Params.RendererResource1,
-            Params.RendererResource2,
-            Params.NativeCommandQueue,
-            &SmatchetOpenUrlCallback,
-            nullptr,
-            &SmatchetAttachmentViewerCallback,
-            nullptr);
+            Host, DbPathUtf8.Get(), "Jira", 8080, Params.RendererBackend, Params.NumFramesInFlight, Params.ColorFormat,
+            Params.NativeDevice, Params.RendererResource0, Params.RendererResource1, Params.RendererResource2,
+            Params.NativeCommandQueue, &SmatchetOpenUrlCallback, nullptr, &SmatchetAttachmentViewerCallback, nullptr);
         // DX12 dynamic-texture SRV allocator needs to know the heap capacity so it can hand out
         // slots 1..N-1 for attachment thumbnails (slot 0 stays reserved for the font atlas).
         SmatchetHost_SetNumSrvDescriptors(Host, Params.NumSrvDescriptors);
@@ -222,7 +196,8 @@ private:
         return ApplyInitOptions(Params);
     }
 
-    bool TryRenderToSlateBackBuffer(FRHITexture* BackBufferTexture, FRHICommandListImmediate* RHICmdList, bool bDrawSoftwareCursor) {
+    bool TryRenderToSlateBackBuffer(FRHITexture* BackBufferTexture, FRHICommandListImmediate* RHICmdList,
+                                    bool bDrawSoftwareCursor) {
         if (!Host || !RenderBackend || !BackBufferTexture) {
             return false;
         }
@@ -239,12 +214,10 @@ private:
             } else {
                 static bool bWarnedColorFormatAfterInit = false;
                 if (!bWarnedColorFormatAfterInit) {
-                    UE_LOG(
-                        LogSmatchetImGuiPlugin,
-                        Warning,
-                        TEXT("Backbuffer color format changed after host init (cached=%d, current=%d). Reinit required to apply."),
-                        CachedColorFormat,
-                        BackBufferColorFormat);
+                    UE_LOG(LogSmatchetImGuiPlugin, Warning,
+                           TEXT("Backbuffer color format changed after host init (cached=%d, current=%d). Reinit "
+                                "required to apply."),
+                           CachedColorFormat, BackBufferColorFormat);
                     bWarnedColorFormatAfterInit = true;
                 }
             }
@@ -305,8 +278,7 @@ private:
             return false;
         }
         BackBufferPresentHandle = FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().AddRaw(
-            this,
-            &FSmatchetImGuiPluginModule::OnBackBufferReadyToPresent);
+            this, &FSmatchetImGuiPluginModule::OnBackBufferReadyToPresent);
         return BackBufferPresentHandle.IsValid();
     }
 
@@ -321,7 +293,7 @@ private:
         return ViewExtension.IsValid();
     }
 
-private:
+  private:
     SmatchetImGuiHostHandle Host = nullptr;
     TUniquePtr<ISmatchetImGuiRenderBackend> RenderBackend;
     TSharedPtr<FSmatchetImGuiInputProcessor> InputProcessor;

@@ -30,8 +30,13 @@
 #include "ConfigManager.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
+#if defined(SMATCHET_WITH_MCP)
 #include "McpPlugin.h"
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 #include "LuaConsolePlugin.h"
+#endif
+#include "SmatchetInputModifierBridge.h"
 
 // Private implementation that keeps SmatchetImGuiHost.h lightweight for Unreal.
 // Unreal should not need to include AppController/PluginHost/SmatchetUI headers.
@@ -78,9 +83,9 @@ struct Smatchet_ImplDX12_SrvAllocator {
     D3D12_CPU_DESCRIPTOR_HANDLE CpuBase{};
     D3D12_GPU_DESCRIPTOR_HANDLE GpuBase{};
     UINT IncrementSize = 0;
-    int Capacity = 0;    // total descriptors in heap, including slot 0 (reserved for font)
-    int OverflowSlot = -1; // reserved non-font slot used only on exhaustion
-    int NextSlot = 1;    // next fresh non-overflow slot; typically 1..OverflowSlot-1
+    int Capacity = 0;          // total descriptors in heap, including slot 0 (reserved for font)
+    int OverflowSlot = -1;     // reserved non-font slot used only on exhaustion
+    int NextSlot = 1;          // next fresh non-overflow slot; typically 1..OverflowSlot-1
     std::vector<int> FreeList; // returned slots available for reuse (LIFO)
     bool bLoggedExhausted = false;
     std::mutex Mutex;
@@ -88,10 +93,8 @@ struct Smatchet_ImplDX12_SrvAllocator {
 
 static Smatchet_ImplDX12_SrvAllocator gSmatchetDx12SrvAllocator;
 
-static void Smatchet_ImplDX12_SrvAllocCb(
-    ImGui_ImplDX12_InitInfo*,
-    D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
-    D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
+static void Smatchet_ImplDX12_SrvAllocCb(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
+                                         D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
     Smatchet_ImplDX12_SrvAllocator& a = gSmatchetDx12SrvAllocator;
     std::lock_guard<std::mutex> lk(a.Mutex);
     int slot = -1;
@@ -106,21 +109,23 @@ static void Smatchet_ImplDX12_SrvAllocCb(
         // overflow slot so extra thumbnails may alias each other but cannot corrupt text/icons.
         slot = (a.OverflowSlot > 0) ? a.OverflowSlot : 0;
         if (!a.bLoggedExhausted) {
-            std::fprintf(stderr,
-                         "[Smatchet] DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may alias.\n",
-                         a.Capacity,
-                         a.OverflowSlot);
+            std::fprintf(
+                stderr,
+                "[Smatchet] DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may alias.\n",
+                a.Capacity, a.OverflowSlot);
             a.bLoggedExhausted = true;
         }
     }
-    if (outCpu) { outCpu->ptr = a.CpuBase.ptr + static_cast<SIZE_T>(slot) * a.IncrementSize; }
-    if (outGpu) { outGpu->ptr = a.GpuBase.ptr + static_cast<UINT64>(slot) * a.IncrementSize; }
+    if (outCpu) {
+        outCpu->ptr = a.CpuBase.ptr + static_cast<SIZE_T>(slot) * a.IncrementSize;
+    }
+    if (outGpu) {
+        outGpu->ptr = a.GpuBase.ptr + static_cast<UINT64>(slot) * a.IncrementSize;
+    }
 }
 
-static void Smatchet_ImplDX12_SrvFreeCb(
-    ImGui_ImplDX12_InitInfo*,
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu,
-    D3D12_GPU_DESCRIPTOR_HANDLE /*gpu*/) {
+static void Smatchet_ImplDX12_SrvFreeCb(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE cpu,
+                                        D3D12_GPU_DESCRIPTOR_HANDLE /*gpu*/) {
     Smatchet_ImplDX12_SrvAllocator& a = gSmatchetDx12SrvAllocator;
     std::lock_guard<std::mutex> lk(a.Mutex);
     if (a.IncrementSize == 0 || a.Capacity <= 0 || cpu.ptr < a.CpuBase.ptr) {
@@ -190,15 +195,11 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
     {
         char dbg[640];
         std::snprintf(
-            dbg,
-            sizeof(dbg),
+            dbg, sizeof(dbg),
             "[Smatchet] ImGui_ImplDX12_Init(ptr): dev=%p cq=%p heap=%p cpu=%llu gpu=%llu dxgi_fmt=%d nframes=%d\n",
-            static_cast<void*>(device),
-            static_cast<void*>(commandQueue),
-            static_cast<void*>(fontSrvDescriptorHeap),
+            static_cast<void*>(device), static_cast<void*>(commandQueue), static_cast<void*>(fontSrvDescriptorHeap),
             static_cast<unsigned long long>(fontSrvCpuHandle.ptr),
-            static_cast<unsigned long long>(fontSrvGpuHandle.ptr),
-            static_cast<int>(renderer.ColorFormat),
+            static_cast<unsigned long long>(fontSrvGpuHandle.ptr), static_cast<int>(renderer.ColorFormat),
             renderer.NumFramesInFlight);
         OutputDebugStringA(dbg);
     }
@@ -213,13 +214,9 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
 
 SmatchetImGuiHost::SmatchetImGuiHost() : ImplData(new Impl()) {}
 
-SmatchetImGuiHost::~SmatchetImGuiHost() {
-    Shutdown();
-}
+SmatchetImGuiHost::~SmatchetImGuiHost() { Shutdown(); }
 
-bool SmatchetImGuiHost::IsUiVisible() const {
-    return ImplData && ImplData->UiVisible.load(std::memory_order_relaxed);
-}
+bool SmatchetImGuiHost::IsUiVisible() const { return ImplData && ImplData->UiVisible.load(std::memory_order_relaxed); }
 
 bool SmatchetImGuiHost::IsInitialized() const {
     return ImplData && ImplData->Initialized.load(std::memory_order_acquire);
@@ -243,9 +240,7 @@ void SmatchetImGuiHost::SetUiVisible(bool visible) {
     ImplData->UiVisible.store(true, std::memory_order_relaxed);
 }
 
-void SmatchetImGuiHost::ToggleUiVisible() {
-    SetUiVisible(!IsUiVisible());
-}
+void SmatchetImGuiHost::ToggleUiVisible() { SetUiVisible(!IsUiVisible()); }
 
 void SmatchetImGuiHost::SetSuppressSoftwareCursor(bool suppress) {
     if (!ImplData) {
@@ -379,14 +374,10 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 
     IMGUI_CHECKVERSION();
     // Diagnostics: if these are invalid/dangling, ImGui's font atlas upload can crash in NewFrame.
-    std::fprintf(
-        stderr,
-        "SmatchetImGuiHost::Initialize: device=%p queue=%p heap=%p cpu.ptr=%llu gpu.ptr=%llu\n",
-        static_cast<void*>(device),
-        options.Renderer.NativeCommandQueue,
-        static_cast<void*>(fontSrvDescriptorHeap),
-        static_cast<unsigned long long>(fontSrvCpuHandle.ptr),
-        static_cast<unsigned long long>(fontSrvGpuHandle.ptr));
+    std::fprintf(stderr, "SmatchetImGuiHost::Initialize: device=%p queue=%p heap=%p cpu.ptr=%llu gpu.ptr=%llu\n",
+                 static_cast<void*>(device), options.Renderer.NativeCommandQueue,
+                 static_cast<void*>(fontSrvDescriptorHeap), static_cast<unsigned long long>(fontSrvCpuHandle.ptr),
+                 static_cast<unsigned long long>(fontSrvGpuHandle.ptr));
     {
         std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
         ImGui::CreateContext();
@@ -428,15 +419,21 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
     ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
 
-    JiraConfig cfg = ConfigManager::Load();
-    const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
-    if (cfg.McpEnabled) {
-        ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
-        LOG_INFO("SmatchetImGuiHost: MCP plugin enabled on port %d", mcpPort);
-    } else {
-        LOG_INFO("SmatchetImGuiHost: MCP plugin disabled by config.");
+#if defined(SMATCHET_WITH_MCP)
+    {
+        JiraConfig cfg = ConfigManager::Load();
+        const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
+        if (cfg.McpEnabled) {
+            ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
+            LOG_INFO("SmatchetImGuiHost: MCP plugin enabled on port %d", mcpPort);
+        } else {
+            LOG_INFO("SmatchetImGuiHost: MCP plugin disabled by config.");
+        }
     }
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
+#endif
     ImplData->Plugins.OnEarlyInit(ImplData->App);
     ImplData->App.Initialize(options.DbPath, options.BackendType);
     ImplData->Plugins.OnStart(ImplData->App);
@@ -475,7 +472,8 @@ void SmatchetImGuiHost::Shutdown() {
 }
 
 void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, float viewportHeight) {
-    if (!ImplData) return;
+    if (!ImplData)
+        return;
 
     // Lazy init while UI is visible (retry if DX resources weren't ready at first show).
     if (!ImplData->Initialized.load(std::memory_order_acquire)) {
@@ -535,14 +533,6 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
-
-    // Diagnostics: confirm context attachment and that we'll reach ImGui::NewFrame().
-    std::fprintf(
-        stderr,
-        "SmatchetImGuiHost::BeginFrame: thread=%lu ctx=%p ui=%d\n",
-        static_cast<unsigned long>(GetCurrentThreadId()),
-        static_cast<void*>(ImplData->ImGuiCtx),
-        IsUiVisible() ? 1 : 0);
 
     ImGui_ImplDX12_NewFrame();
     ImGui::NewFrame();
@@ -615,14 +605,9 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
             LastDrawStatsLogSeconds = nowSeconds;
             if (drawData) {
                 std::fprintf(
-                    stderr,
-                    "SmatchetImGuiHost::RenderDrawData: display=(%f,%f) totalVtx=%d cmds=%d ui=%d init=%d\n",
-                    drawData->DisplaySize.x,
-                    drawData->DisplaySize.y,
-                    drawData->TotalVtxCount,
-                    drawData->CmdListsCount,
-                    IsUiVisible() ? 1 : 0,
-                    ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
+                    stderr, "SmatchetImGuiHost::RenderDrawData: display=(%f,%f) totalVtx=%d cmds=%d ui=%d init=%d\n",
+                    drawData->DisplaySize.x, drawData->DisplaySize.y, drawData->TotalVtxCount, drawData->CmdListsCount,
+                    IsUiVisible() ? 1 : 0, ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
             } else {
                 std::fprintf(stderr, "SmatchetImGuiHost::RenderDrawData: drawData=null\n");
             }
@@ -631,7 +616,7 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
 
     if (drawData) {
         if (ImplData->RendererResource0) {
-            ID3D12DescriptorHeap* heaps[] = { reinterpret_cast<ID3D12DescriptorHeap*>(ImplData->RendererResource0) };
+            ID3D12DescriptorHeap* heaps[] = {reinterpret_cast<ID3D12DescriptorHeap*>(ImplData->RendererResource0)};
             commandList->SetDescriptorHeaps(1, heaps);
         }
         ImGui_ImplDX12_RenderDrawData(drawData, commandList);
@@ -710,6 +695,7 @@ void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool su
     io.AddKeyEvent(ImGuiKey_LeftShift, shift);
     io.AddKeyEvent(ImGuiKey_LeftAlt, alt);
     io.AddKeyEvent(ImGuiKey_LeftSuper, superKey);
+    SmatchetInput_SetPluginModifiersPushed(ctrl, shift);
 }
 
 void SmatchetImGuiHost::AddInputCharacter(unsigned int character) {
@@ -740,20 +726,10 @@ void SmatchetImGuiHost::FormatCachedRendererDebugSummary(char* buf, std::size_t 
         return;
     }
     const auto& r = ImplData->CachedOptions.Renderer;
-    std::snprintf(
-        buf,
-        bufSize,
-        "backend=%u dev=%p cq=%p heap=%p h1=%p h2=%p fmt=%d frames=%d opt=%d ui=%d",
-        static_cast<unsigned>(r.Backend),
-        r.NativeDevice,
-        r.NativeCommandQueue,
-        r.RendererResource0,
-        r.RendererResource1,
-        r.RendererResource2,
-        r.ColorFormat,
-        r.NumFramesInFlight,
-        ImplData->OptionsSet.load() ? 1 : 0,
-        ImplData->UiVisible.load() ? 1 : 0);
+    std::snprintf(buf, bufSize, "backend=%u dev=%p cq=%p heap=%p h1=%p h2=%p fmt=%d frames=%d opt=%d ui=%d",
+                  static_cast<unsigned>(r.Backend), r.NativeDevice, r.NativeCommandQueue, r.RendererResource0,
+                  r.RendererResource1, r.RendererResource2, r.ColorFormat, r.NumFramesInFlight,
+                  ImplData->OptionsSet.load() ? 1 : 0, ImplData->UiVisible.load() ? 1 : 0);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -763,7 +739,7 @@ void SmatchetImGuiHost::FormatCachedRendererDebugSummary(char* buf, std::size_t 
 namespace {
 std::mutex gHostHandleSetMutex;
 std::unordered_set<SmatchetImGuiHost*> gLiveHostHandles;
-}
+} // namespace
 
 extern "C" {
 
@@ -793,25 +769,15 @@ void SmatchetHost_Destroy(SmatchetImGuiHostHandle host) {
     delete h;
 }
 
-void SmatchetHost_SetInitOptions(
-    SmatchetImGuiHostHandle host,
-    const char* dbPathUtf8,
-    const char* backendTypeUtf8,
-    int mcpPort,
-    int rendererBackend,
-    int numFramesInFlight,
-    int colorFormat,
-    void* nativeDevice,
-    void* rendererResource0,
-    void* rendererResource1,
-    void* rendererResource2,
-    void* nativeCommandQueue,
-    SmatchetOpenUrlFn openUrlFn,
-    void* openUrlUserData,
-    SmatchetAttachmentViewerFn attachmentViewerFn,
-    void* attachmentViewerUserData) {
+void SmatchetHost_SetInitOptions(SmatchetImGuiHostHandle host, const char* dbPathUtf8, const char* backendTypeUtf8,
+                                 int mcpPort, int rendererBackend, int numFramesInFlight, int colorFormat,
+                                 void* nativeDevice, void* rendererResource0, void* rendererResource1,
+                                 void* rendererResource2, void* nativeCommandQueue, SmatchetOpenUrlFn openUrlFn,
+                                 void* openUrlUserData, SmatchetAttachmentViewerFn attachmentViewerFn,
+                                 void* attachmentViewerUserData) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
 
     SmatchetImGuiHost::InitOptions opts;
     opts.DbPath = dbPathUtf8 ? std::string(dbPathUtf8) : std::string();
@@ -833,14 +799,11 @@ void SmatchetHost_SetInitOptions(
     }
 
     if (attachmentViewerFn) {
-        opts.AttachmentViewerHandler = [attachmentViewerFn, attachmentViewerUserData](
-            const std::string& localPathUtf8,
-            const std::string& mimeTypeUtf8,
-            const std::string& filenameUtf8) {
-            attachmentViewerFn(localPathUtf8.c_str(),
-                                mimeTypeUtf8.c_str(),
-                                filenameUtf8.c_str(),
-                                attachmentViewerUserData);
+        opts.AttachmentViewerHandler = [attachmentViewerFn, attachmentViewerUserData](const std::string& localPathUtf8,
+                                                                                      const std::string& mimeTypeUtf8,
+                                                                                      const std::string& filenameUtf8) {
+            attachmentViewerFn(localPathUtf8.c_str(), mimeTypeUtf8.c_str(), filenameUtf8.c_str(),
+                               attachmentViewerUserData);
         };
     }
 
@@ -849,118 +812,129 @@ void SmatchetHost_SetInitOptions(
 
 bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int colorFormat) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return false;
+    if (!h)
+        return false;
     std::string err;
     return h->UpdateRendererColorFormat(colorFormat, err);
 }
 
 void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvDescriptors) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetRendererNumSrvDescriptors(numSrvDescriptors);
 }
 
 void SmatchetHost_SetUiVisible(SmatchetImGuiHostHandle host, bool visible) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetUiVisible(visible);
 }
 
 void SmatchetHost_ToggleUiVisible(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->ToggleUiVisible();
 }
 
 void SmatchetHost_SetSuppressSoftwareCursor(SmatchetImGuiHostHandle host, bool suppress) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetSuppressSoftwareCursor(suppress);
 }
 
 bool SmatchetHost_GetSuppressSoftwareCursor(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return false;
+    if (!h)
+        return false;
     return h->GetSuppressSoftwareCursor();
 }
 
 bool SmatchetHost_IsUiVisible(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return false;
+    if (!h)
+        return false;
     return h->IsUiVisible();
 }
 
 bool SmatchetHost_IsInitialized(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return false;
+    if (!h)
+        return false;
     return h->IsInitialized();
 }
 
 bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return false;
+    if (!h)
+        return false;
     return h->IsFrameActive();
 }
 
-void SmatchetHost_BeginFrame(
-    SmatchetImGuiHostHandle host,
-    float deltaTimeSeconds,
-    float viewportWidth,
-    float viewportHeight) {
+void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,
+                             float viewportHeight) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->BeginFrame(deltaTimeSeconds, viewportWidth, viewportHeight);
 }
 
 void SmatchetHost_DrawUI(SmatchetImGuiHostHandle host) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->DrawUI();
 }
 
 void SmatchetHost_RenderDrawData(SmatchetImGuiHostHandle host, int rendererBackend, void* nativeCommandList) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->RenderDrawData(static_cast<SmatchetRendererBackend>(rendererBackend), nativeCommandList);
 }
 
 void SmatchetHost_SetMousePosition(SmatchetImGuiHostHandle host, float x, float y) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetMousePosition(x, y);
 }
 
 void SmatchetHost_SetMouseButton(SmatchetImGuiHostHandle host, int button, bool isDown) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetMouseButton(button, isDown);
 }
 
 void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, float wheelY) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->AddMouseWheel(wheelX, wheelY);
 }
 
 void SmatchetHost_SetKeyDown(SmatchetImGuiHostHandle host, int imguiKey, bool isDown) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetKeyDown(imguiKey, isDown);
 }
 
-void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host,
-                                    bool ctrl,
-                                    bool shift,
-                                    bool alt,
-                                    bool superKey) {
+void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->SetKeyModifiers(ctrl, shift, alt, superKey);
 }
 
 void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int character) {
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
-    if (!h) return;
+    if (!h)
+        return;
     h->AddInputCharacter(character);
 }
 

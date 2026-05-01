@@ -10,19 +10,15 @@ class AppController;
 class PluginHost;
 class SmatchetUI;
 
-enum class SmatchetRendererBackend : uint32_t {
-    Unknown = 0,
-    Dx12 = 1,
-    Ps5 = 2,
-    Xbox = 3
-};
+enum class SmatchetRendererBackend : uint32_t { Unknown = 0, Dx12 = 1, Ps5 = 2, Xbox = 3 };
 
 struct SmatchetRendererInitInfo {
     SmatchetRendererBackend Backend = SmatchetRendererBackend::Unknown;
     int NumFramesInFlight = 3;
     int ColorFormat = 0;
     void* NativeDevice = nullptr;
-    /** D3D12: ID3D12CommandQueue* (e.g. Unreal ID3D12DynamicRHI::RHIGetCommandQueue()). Required for modern imgui_impl_dx12. */
+    /** D3D12: ID3D12CommandQueue* (e.g. Unreal ID3D12DynamicRHI::RHIGetCommandQueue()). Required for modern
+     * imgui_impl_dx12. */
     void* NativeCommandQueue = nullptr;
     void* RendererResource0 = nullptr;
     void* RendererResource1 = nullptr;
@@ -35,7 +31,7 @@ struct SmatchetRendererInitInfo {
 };
 
 class SmatchetImGuiHost {
-public:
+  public:
     struct InitOptions {
         std::string DbPath = "Smatchet_LocalCache.sqlite";
         std::string BackendType = "Jira";
@@ -43,9 +39,7 @@ public:
         SmatchetRendererInitInfo Renderer;
 
         std::function<void(const std::string&)> OpenUrlHandler;
-        std::function<void(const std::string& localPath,
-                           const std::string& mimeType,
-                           const std::string& filename)>
+        std::function<void(const std::string& localPath, const std::string& mimeType, const std::string& filename)>
             AttachmentViewerHandler;
     };
 
@@ -72,7 +66,8 @@ public:
     void SetUiVisible(bool visible);
     void ToggleUiVisible();
 
-    /** When true, ImGui will not draw its software mouse sprite inside Unreal game viewports (useful if the OS cursor is already visible). Default false. */
+    /** When true, ImGui will not draw its software mouse sprite inside Unreal game viewports (useful if the OS cursor
+     * is already visible). Default false. */
     void SetSuppressSoftwareCursor(bool suppress);
     bool GetSuppressSoftwareCursor() const;
 
@@ -93,7 +88,7 @@ public:
     /** snprintf-style summary of cached renderer init fields (ASCII). */
     void FormatCachedRendererDebugSummary(char* buf, std::size_t bufSize) const;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> ImplData;
 };

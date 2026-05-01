@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "IssueDraft.h"
-#include "JiraClient.h"
 #include "LocalCacheManager.h"
+#include "TrackerFieldSchema.h"
 
 /**
  * Tabular (CSV/TSV) and JSON (de)serialization for issue drafts + cached tickets.
@@ -25,12 +25,7 @@
  */
 namespace IssueTableSerializer {
 
-enum class Format {
-    Auto,
-    Csv,
-    Tsv,
-    Json
-};
+enum class Format { Auto, Csv, Tsv, Json };
 
 struct ImportRow {
     IssueDraft Draft;
@@ -50,19 +45,15 @@ struct ImportResult {
  */
 Format DetectFormat(const std::string& text);
 
-ImportResult ParseDrafts(const std::string& text,
-                         Format fmt,
-                         const std::vector<JiraField>& catalog,
-                         const std::string& fallbackProjectKey,
-                         const std::string& fallbackIssueTypeId,
+ImportResult ParseDrafts(const std::string& text, Format fmt, const std::vector<TrackerField>& catalog,
+                         const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
                          const std::string& fallbackIssueTypeName);
 
 /**
  * Serialize tickets to `fmt`. `fieldIds` = column order; if empty, uses union
  * of keys across all tickets (sorted for stability).
  */
-std::string SerializeTickets(const std::vector<CachedTicket>& tickets,
-                             const std::vector<std::string>& fieldIds,
+std::string SerializeTickets(const std::vector<CachedTicket>& tickets, const std::vector<std::string>& fieldIds,
                              Format fmt);
 
 } // namespace IssueTableSerializer

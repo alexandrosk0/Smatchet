@@ -21,7 +21,7 @@ void DecodeCascadingSelection(const std::string& encoded, std::string& outParent
 }
 
 const JiraFieldOption* FindJiraFieldOptionByIdRecursive(const std::vector<JiraFieldOption>& options,
-                                                         const std::string& id) {
+                                                        const std::string& id) {
     for (const auto& option : options) {
         if (option.Id == id) {
             return &option;
@@ -36,7 +36,7 @@ const JiraFieldOption* FindJiraFieldOptionByIdRecursive(const std::vector<JiraFi
 }
 
 std::string ResolveJiraFieldOptionLabelRecursive(const std::vector<JiraFieldOption>& options,
-                                                  const std::string& value) {
+                                                 const std::string& value) {
     for (const auto& option : options) {
         if (option.Id == value || option.Value == value) {
             return option.Value;
@@ -53,14 +53,13 @@ std::string ResolveJiraFieldOptionLabelRecursive(const std::vector<JiraFieldOpti
 
 /** Match option by id or display label (grid often stores names, not Jira ids). */
 const JiraFieldOption* FindJiraFieldOptionByIdOrValueRecursive(const std::vector<JiraFieldOption>& options,
-                                                                const std::string& idOrValue) {
+                                                               const std::string& idOrValue) {
     for (const auto& option : options) {
         if (option.Id == idOrValue || option.Value == idOrValue) {
             return &option;
         }
         if (!option.Children.empty()) {
-            if (const JiraFieldOption* nested =
-                    FindJiraFieldOptionByIdOrValueRecursive(option.Children, idOrValue)) {
+            if (const JiraFieldOption* nested = FindJiraFieldOptionByIdOrValueRecursive(option.Children, idOrValue)) {
                 return nested;
             }
         }
@@ -103,8 +102,7 @@ nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
     return raw;
 }
 
-bool TryBuildStructuredOptionPayload(const JiraFieldOption& option,
-                                     const std::string& nestedChildId,
+bool TryBuildStructuredOptionPayload(const JiraFieldOption& option, const std::string& nestedChildId,
                                      nlohmann::json& outPayload) {
     if (option.PayloadJson.empty()) {
         return false;
@@ -131,9 +129,7 @@ bool TryBuildStructuredOptionPayload(const JiraFieldOption& option,
     return true;
 }
 
-bool TryBuildFieldOptionPayload(const JiraField& field,
-                                const std::string& selectedValue,
-                                nlohmann::json& outPayload) {
+bool TryBuildFieldOptionPayload(const JiraField& field, const std::string& selectedValue, nlohmann::json& outPayload) {
     if (field.Family == JiraFieldFamily::CascadingSelect) {
         std::string parentId;
         std::string childId;
@@ -167,9 +163,7 @@ nlohmann::json FallbackPayloadForSelectableField(const JiraField& field, const s
     return scalarValue;
 }
 
-bool TryBuildUserFieldPayload(const JiraField& field,
-                              const std::string& scalarValue,
-                              nlohmann::json& outValue,
+bool TryBuildUserFieldPayload(const JiraField& field, const std::string& scalarValue, nlohmann::json& outValue,
                               std::string& outError) {
     outError.clear();
     const std::string trimmed = TrimCopy(scalarValue);
@@ -313,8 +307,7 @@ bool FieldUsesAdfDocument(const JiraField& field) {
     if (customLower.empty()) {
         return false;
     }
-    if (customLower.find("adf") != std::string::npos ||
-        customLower.find("atlassian-document") != std::string::npos) {
+    if (customLower.find("adf") != std::string::npos || customLower.find("atlassian-document") != std::string::npos) {
         return true;
     }
     // Multiline / wiki-style custom fields on Jira Cloud typically reject plain strings on v3 create/edit.
@@ -347,13 +340,9 @@ std::string ExtractIssueKey(const std::string& value) {
     return LooksLikeIssueKey(key) ? key : std::string();
 }
 
-bool IsArrayLike(const JiraField& field) {
-    return field.IsArray;
-}
+bool IsArrayLike(const JiraField& field) { return field.IsArray; }
 
-bool BuildValue(const JiraField& field,
-                const std::vector<std::string>& rawValues,
-                nlohmann::json& outValue,
+bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError) {
     outError.clear();
     std::vector<std::string> values;
@@ -394,10 +383,8 @@ bool BuildValue(const JiraField& field,
                 if (!one.is_null()) {
                     outValue.push_back(std::move(one));
                 }
-            } else if (field.Family == JiraFieldFamily::StructuredMulti ||
-                       field.Family == JiraFieldFamily::IssueType ||
-                       field.Family == JiraFieldFamily::Status ||
-                       field.Family == JiraFieldFamily::CascadingSelect) {
+            } else if (field.Family == JiraFieldFamily::StructuredMulti || field.Family == JiraFieldFamily::IssueType ||
+                       field.Family == JiraFieldFamily::Status || field.Family == JiraFieldFamily::CascadingSelect) {
                 nlohmann::json optionPayload;
                 if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
                     outValue.push_back(std::move(optionPayload));
@@ -435,10 +422,8 @@ bool BuildValue(const JiraField& field,
     if (field.IsUserType) {
         return TryBuildUserFieldPayload(field, scalarValue, outValue, outError);
     }
-    if (field.Family == JiraFieldFamily::StructuredSingle ||
-        field.Family == JiraFieldFamily::IssueType ||
-        field.Family == JiraFieldFamily::Status ||
-        field.Family == JiraFieldFamily::CascadingSelect ||
+    if (field.Family == JiraFieldFamily::StructuredSingle || field.Family == JiraFieldFamily::IssueType ||
+        field.Family == JiraFieldFamily::Status || field.Family == JiraFieldFamily::CascadingSelect ||
         field.Family == JiraFieldFamily::SelectSingle) {
         if (!TryBuildFieldOptionPayload(field, scalarValue, outValue)) {
             outValue = FallbackPayloadForSelectableField(field, scalarValue);
@@ -460,8 +445,7 @@ bool BuildValue(const JiraField& field,
         }
         const std::string t = TrimCopy(scalarValue);
         const bool digitsOnly =
-            !t.empty() &&
-            std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            !t.empty() && std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
         outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
         return true;
     }
@@ -491,8 +475,7 @@ bool BuildValue(const JiraField& field,
         }
         const std::string t = TrimCopy(scalarValue);
         const bool digitsOnly =
-            !t.empty() &&
-            std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            !t.empty() && std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
         outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
         return true;
     }
@@ -547,8 +530,7 @@ std::vector<std::string> SplitCommaSeparatedValues(const std::string& input) {
 }
 
 bool IsSprintField(const JiraField& field) {
-    return field.Family == JiraFieldFamily::Sprint ||
-           field.SchemaCustom.find("gh-sprint") != std::string::npos;
+    return field.Family == JiraFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
 }
 
 std::string ResolveSprintIdForAgile(const JiraField& field, const std::string& rawValue) {
@@ -561,9 +543,8 @@ std::string ResolveSprintIdForAgile(const JiraField& field, const std::string& r
             return opt->Id;
         }
     }
-    const bool allDigit =
-        !trimmed.empty() &&
-        std::all_of(trimmed.begin(), trimmed.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+    const bool allDigit = !trimmed.empty() && std::all_of(trimmed.begin(), trimmed.end(),
+                                                          [](unsigned char c) { return std::isdigit(c) != 0; });
     return allDigit ? trimmed : std::string{};
 }
 

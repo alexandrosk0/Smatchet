@@ -1,0 +1,609 @@
+#include "JiraClient.h"
+
+#include "BackendAuditTrail.h"
+#include "JiraFieldValueParser.h"
+#include "JiraHttpUtils.h"
+#include "Logger.h"
+#include "NetworkUsageTracker.h"
+#include "StringUtil.h"
+
+#include <cpr/cpr.h>
+#include <ghc/filesystem.hpp>
+
+#include <cctype>
+#include <cstdint>
+#include <set>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-update");
+    const bool auditIsTransition = fields.is_object() && fields.size() == 1 && fields.contains("status");
+    const std::string auditAction = auditIsTransition ? "issue_transition" : "issue_update_fields";
+
+    // PUT path normalizes time-tracking strings to seconds; audit begin must match what we send.
+    static const std::set<std::string> kTimeTrackingFieldIds = {
+        "timeoriginalestimate",          "timeestimate",          "timespent",
+        "aggregatetimeoriginalestimate", "aggregatetimeestimate", "aggregatetimespent"};
+    nlohmann::json fieldsAudited = fields;
+    if (fields.is_object() && !auditIsTransition) {
+        for (const std::string& fieldId : kTimeTrackingFieldIds) {
+            if (!fieldsAudited.contains(fieldId))
+                continue;
+            const auto& v = fieldsAudited[fieldId];
+            if (v.is_string()) {
+                std::string s = TrimCopy(v.get<std::string>());
+                if (s.empty()) {
+                    fieldsAudited[fieldId] = nullptr;
+                } else {
+                    long long sec = ParseWorkDurationToSeconds(s);
+                    fieldsAudited[fieldId] = sec;
+                }
+            } else if (v.is_null()) {
+                fieldsAudited[fieldId] = nullptr;
+            }
+        }
+    }
+
+    BackendAuditTrail::AppendBegin(
+        auditAction, "jira_client", issueId, auditOp,
+        nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
+
+    JiraConfig cfg = ConfigManager::Load();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
+        return false;
+    }
+    if (issueId.empty()) {
+        outError = "Issue id is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
+        return false;
+    }
+    if (!fields.is_object() || fields.empty()) {
+        outError = "Update fields payload is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+
+    const auto iequals = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Jira requires status updates via transitions endpoint, not field PUT.
+    if (fields.is_object() && fields.size() == 1 && fields.contains("status")) {
+        std::string targetStatusId;
+        std::string targetStatusName;
+        const auto& statusValue = fields["status"];
+        if (statusValue.is_object()) {
+            if (statusValue.contains("id")) {
+                if (statusValue["id"].is_string()) {
+                    targetStatusId = statusValue["id"].get<std::string>();
+                } else if (statusValue["id"].is_number_integer()) {
+                    targetStatusId = std::to_string(statusValue["id"].get<long long>());
+                } else if (statusValue["id"].is_number_unsigned()) {
+                    targetStatusId = std::to_string(statusValue["id"].get<unsigned long long>());
+                }
+            }
+            if (statusValue.contains("name") && statusValue["name"].is_string()) {
+                targetStatusName = statusValue["name"].get<std::string>();
+            }
+        } else if (statusValue.is_string()) {
+            targetStatusName = statusValue.get<std::string>();
+        }
+
+        if (targetStatusId.empty() && targetStatusName.empty()) {
+            outError = "Missing target status for transition.";
+            LOG_WARN("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+            return false;
+        }
+
+        const std::string transitionsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId) + "/transitions";
+        auto transitionsResp = JiraGetLogged(transitionsUrl, headers);
+        if (transitionsResp.status_code != 200) {
+            outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+            return false;
+        }
+
+        std::string transitionId;
+        try {
+            auto transitionsJson = nlohmann::json::parse(transitionsResp.text);
+            if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
+                outError = "Invalid transitions response format.";
+                LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueId.c_str(),
+                          TruncateForLog(transitionsResp.text, 300).c_str());
+                BackendAuditTrail::AppendResult(
+                    "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                    nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+                return false;
+            }
+
+            for (const auto& transition : transitionsJson["transitions"]) {
+                if (!transition.is_object()) {
+                    continue;
+                }
+                std::string thisTransitionId;
+                if (transition.contains("id")) {
+                    if (transition["id"].is_string()) {
+                        thisTransitionId = transition["id"].get<std::string>();
+                    } else if (transition["id"].is_number_integer()) {
+                        thisTransitionId = std::to_string(transition["id"].get<long long>());
+                    } else if (transition["id"].is_number_unsigned()) {
+                        thisTransitionId = std::to_string(transition["id"].get<unsigned long long>());
+                    }
+                }
+                if (thisTransitionId.empty()) {
+                    continue;
+                }
+
+                std::string transitionName = transition.value("name", std::string());
+                std::string toStatusId;
+                std::string toStatusName;
+                if (transition.contains("to") && transition["to"].is_object()) {
+                    const auto& to = transition["to"];
+                    if (to.contains("id")) {
+                        if (to["id"].is_string()) {
+                            toStatusId = to["id"].get<std::string>();
+                        } else if (to["id"].is_number_integer()) {
+                            toStatusId = std::to_string(to["id"].get<long long>());
+                        } else if (to["id"].is_number_unsigned()) {
+                            toStatusId = std::to_string(to["id"].get<unsigned long long>());
+                        }
+                    }
+                    toStatusName = to.value("name", std::string());
+                }
+
+                if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
+                    (!targetStatusName.empty() && iequals(toStatusName, targetStatusName)) ||
+                    (!targetStatusName.empty() && iequals(transitionName, targetStatusName))) {
+                    transitionId = thisTransitionId;
+                    break;
+                }
+            }
+        } catch (const std::exception& ex) {
+            outError = std::string("Failed to parse transitions response: ") + ex.what();
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+            return false;
+        }
+
+        if (transitionId.empty()) {
+            outError = "No valid transition found for requested status.";
+            LOG_WARN("JiraClient: %s issue=%s targetStatusId=%s targetStatusName=%s", outError.c_str(), issueId.c_str(),
+                     targetStatusId.c_str(), targetStatusName.c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+            return false;
+        }
+
+        nlohmann::json transitionBody = {{"transition", {{"id", transitionId}}}};
+        const std::string transitionBodyStr = transitionBody.dump();
+        auto transitionResp = JiraPostLogged(transitionsUrl, headers, transitionBodyStr);
+        if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
+            outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
+            if (!transitionResp.text.empty()) {
+                outError += " — ";
+                outError += TruncateForLog(transitionResp.text, 1200);
+            }
+            LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_transition", "jira_client", issueId, auditOp, false, outError,
+                nlohmann::json{{"target_status_id", targetStatusId}, {"target_status_name", targetStatusName}});
+            return false;
+        }
+
+        LOG_INFO("JiraClient: transitioned Jira issue %s status successfully.", issueId.c_str());
+        BackendAuditTrail::AppendResult("issue_transition", "jira_client", issueId, auditOp, true, std::string(),
+                                        nlohmann::json{{"transition_id", transitionId},
+                                                       {"target_status_id", targetStatusId},
+                                                       {"target_status_name", targetStatusName}});
+        return true;
+    }
+
+    nlohmann::json body = nlohmann::json::object();
+    body["fields"] = fieldsAudited;
+    const std::string updateUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId);
+    const std::string putBodyStr = body.dump();
+    auto response = JiraPutLogged(updateUrl, headers, putBodyStr);
+
+    if (response.status_code != 204 && response.status_code != 200) {
+        outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
+        LOG_DEBUG("JiraClient: update payload:\n%s", body.dump(2).c_str());
+        BackendAuditTrail::AppendResult(
+            "issue_update_fields", "jira_client", issueId, auditOp, false, outError,
+            nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
+        return false;
+    }
+
+    LOG_INFO("JiraClient: updated Jira issue %s fields successfully.", issueId.c_str());
+    BackendAuditTrail::AppendResult(
+        "issue_update_fields", "jira_client", issueId, auditOp, true, std::string(),
+        nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
+    return true;
+}
+
+namespace {
+
+nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
+    nlohmann::json content = nlohmann::json::array();
+    std::string line;
+    std::istringstream iss(plainText);
+    while (std::getline(iss, line)) {
+        nlohmann::json para = nlohmann::json::object();
+        para["type"] = "paragraph";
+        nlohmann::json inner = nlohmann::json::array();
+        nlohmann::json textNode = nlohmann::json::object();
+        textNode["type"] = "text";
+        textNode["text"] = line;
+        inner.push_back(std::move(textNode));
+        para["content"] = std::move(inner);
+        content.push_back(std::move(para));
+    }
+    if (content.empty()) {
+        nlohmann::json para = nlohmann::json::object();
+        para["type"] = "paragraph";
+        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
+        content.push_back(std::move(para));
+    }
+    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
+}
+
+} // namespace
+
+bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg, const std::string& issueKey, const std::string& plainText,
+                                      std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
+    BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp,
+                                   nlohmann::json{{"comment_text", plainText}});
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+
+    nlohmann::json body = nlohmann::json::object();
+    body["body"] = AdfDocumentFromPlainText(plainText);
+    const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(postUrl, headers, bodyStr);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Add comment failed: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+                                        nlohmann::json{{"comment_text", plainText}});
+        return false;
+    }
+    BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, true, std::string(),
+                                    nlohmann::json{{"comment_text", plainText}});
+    return true;
+}
+
+bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg, const std::string& issueKey,
+                                             const std::string& p4User, const std::string& functionName,
+                                             const std::string& filePath, const int lineNumber,
+                                             const std::string& changelist, const std::string& date,
+                                             const bool approximated, const std::string& codeSnippet,
+                                             std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
+    const nlohmann::json auditData = nlohmann::json{{"comment_kind", "blame_context"},
+                                                    {"p4_user", p4User},
+                                                    {"function", functionName},
+                                                    {"file", filePath},
+                                                    {"line", lineNumber},
+                                                    {"changelist", changelist}};
+    BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp, auditData);
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+
+    auto para = [](const std::string& text) {
+        nlohmann::json p = nlohmann::json::object();
+        p["type"] = "paragraph";
+        p["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", text}}});
+        return p;
+    };
+
+    nlohmann::json content = nlohmann::json::array();
+    std::string head = "Blame Analysis — " + p4User + " | " + functionName + " | " + filePath + ":" +
+                       std::to_string(lineNumber) + " | CL " + changelist + " | " + date;
+    content.push_back(para(head));
+    if (approximated) {
+        content.push_back(para("Note: blame is approximated (exact line not found in annotate)."));
+    }
+    std::string blockBody =
+        "L" + std::to_string(lineNumber) + "  CL:" + changelist + "  " + p4User + "\n" + codeSnippet;
+    nlohmann::json codeBlock = nlohmann::json::object();
+    codeBlock["type"] = "codeBlock";
+    codeBlock["attrs"] = nlohmann::json::object();
+    codeBlock["attrs"]["language"] = "cpp";
+    codeBlock["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", blockBody}}});
+    content.push_back(std::move(codeBlock));
+
+    nlohmann::json doc = nlohmann::json::object();
+    doc["type"] = "doc";
+    doc["version"] = 1;
+    doc["content"] = std::move(content);
+
+    nlohmann::json body = nlohmann::json::object();
+    body["body"] = std::move(doc);
+    const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(postUrl, headers, bodyStr);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
+        return false;
+    }
+    BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, true, std::string(),
+                                    auditData);
+    return true;
+}
+
+std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-create");
+    BackendAuditTrail::AppendBegin("issue_create", "jira_client", std::string(), auditOp,
+                                   nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+
+    JiraConfig cfg = ConfigManager::Load();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_create", "jira_client", std::string(), auditOp, false, outError);
+        return {};
+    }
+    if (!fields.is_object() || fields.empty()) {
+        outError = "Create issue payload is empty.";
+        LOG_WARN("JiraClient: %s", outError.c_str());
+        BackendAuditTrail::AppendResult("issue_create", "jira_client", std::string(), auditOp, false, outError);
+        return {};
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    nlohmann::json body = nlohmann::json::object();
+    body["fields"] = fields;
+    const std::string url = base + "/rest/api/3/issue";
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(url, headers, bodyStr);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Create issue failed: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        LOG_DEBUG("JiraClient: create payload:\n%s", body.dump(2).c_str());
+        BackendAuditTrail::AppendResult(
+            "issue_create", "jira_client", std::string(), auditOp, false, outError,
+            nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+        return {};
+    }
+
+    try {
+        auto j = nlohmann::json::parse(response.text);
+        const std::string key = j.value("key", std::string());
+        if (key.empty()) {
+            outError = "Create issue response missing 'key'.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_create", "jira_client", std::string(), auditOp, false, outError,
+                nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+            return {};
+        }
+        LOG_INFO("JiraClient: created Jira issue %s.", key.c_str());
+        BackendAuditTrail::AppendResult(
+            "issue_create", "jira_client", key, auditOp, true, std::string(),
+            nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+        return key;
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse create response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+        BackendAuditTrail::AppendResult(
+            "issue_create", "jira_client", std::string(), auditOp, false, outError,
+            nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+        return {};
+    }
+}
+
+bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths,
+                                    std::vector<std::pair<std::string, std::string>>& outFailures,
+                                    std::string& outError) {
+    outFailures.clear();
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("attach");
+    nlohmann::json fileNames = nlohmann::json::array();
+    for (const auto& path : absolutePaths) {
+        if (!path.empty()) {
+            fileNames.push_back(ghc::filesystem::path(path).filename().string());
+        }
+    }
+    BackendAuditTrail::AppendBegin("issue_attach_files", "jira_client", issueKey, auditOp,
+                                   nlohmann::json{{"files", fileNames}, {"file_count", fileNames.size()}});
+
+    JiraConfig cfg = ConfigManager::Load();
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (absolutePaths.empty()) {
+        BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, true, std::string(),
+                                        nlohmann::json{{"file_count", 0}});
+        return true;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    // Multipart: let cpr set Content-Type; always include X-Atlassian-Token.
+    cpr::Header headers = BuildJiraHeaders(cfg, false);
+    headers["X-Atlassian-Token"] = "no-check";
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/attachments";
+
+    bool allOk = true;
+    for (const auto& path : absolutePaths) {
+        if (path.empty()) {
+            continue;
+        }
+        std::error_code ec;
+        if (!ghc::filesystem::exists(path, ec) || ec) {
+            outFailures.emplace_back(path, "File not found.");
+            allOk = false;
+            BackendAuditTrail::AppendResult(
+                "issue_attach_file", "jira_client", issueKey, auditOp, false, "File not found.",
+                nlohmann::json{{"filename", ghc::filesystem::path(path).filename().string()}});
+            continue;
+        }
+
+        cpr::Multipart multipart{{"file", cpr::File{path}}};
+        cpr::Redirect redirect(true, true);
+        cpr::Response response =
+            cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kJiraConnectTimeoutMs},
+                      cpr::Timeout{kJiraOverallTimeoutMs});
+        std::uint64_t approxBytes = 0;
+        try {
+            approxBytes = static_cast<std::uint64_t>(ghc::filesystem::file_size(path, ec));
+            if (ec)
+                approxBytes = 0;
+        } catch (...) {
+            approxBytes = 0;
+        }
+        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, approxBytes, response);
+        LogJiraHttpResult("POST", url, response);
+
+        if (response.status_code != 200 && response.status_code != 201) {
+            std::string msg = "HTTP " + std::to_string(response.status_code);
+            if (!response.text.empty()) {
+                msg += " — ";
+                msg += TruncateForLog(response.text, 600);
+            }
+            outFailures.emplace_back(path, std::move(msg));
+            allOk = false;
+            LOG_WARN("JiraClient: attachment upload failed issue=%s path=%s HTTP=%d", issueKey.c_str(), path.c_str(),
+                     static_cast<int>(response.status_code));
+            BackendAuditTrail::AppendResult(
+                "issue_attach_file", "jira_client", issueKey, auditOp, false, outFailures.back().second,
+                nlohmann::json{{"filename", ghc::filesystem::path(path).filename().string()}});
+            continue;
+        }
+        LOG_INFO("JiraClient: uploaded attachment issue=%s path=%s", issueKey.c_str(), path.c_str());
+        BackendAuditTrail::AppendResult(
+            "issue_attach_file", "jira_client", issueKey, auditOp, true, std::string(),
+            nlohmann::json{{"filename", ghc::filesystem::path(path).filename().string()}, {"bytes", approxBytes}});
+    }
+
+    if (!allOk && outError.empty()) {
+        outError = "One or more attachments failed to upload.";
+    }
+    BackendAuditTrail::AppendResult(
+        "issue_attach_files", "jira_client", issueKey, auditOp, allOk, allOk ? std::string() : outError,
+        nlohmann::json{{"file_count", fileNames.size()}, {"failure_count", outFailures.size()}});
+    return allOk;
+}
+
+bool JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) {
+    const JiraConfig cfg = ConfigManager::Load();
+    return AddIssueToSprint(cfg, issueKey, sprintId, outError);
+}
+
+bool JiraClient::AddIssueToSprint(const JiraConfig& cfg, const std::string& issueKey, const std::string& sprintId,
+                                  std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("sprint");
+    BackendAuditTrail::AppendBegin("issue_add_to_sprint", "jira_client", issueKey, auditOp,
+                                   nlohmann::json{{"sprint_id", sprintId}});
+    if (!EnsureJiraAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
+                                        nlohmann::json{{"sprint_id", sprintId}});
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
+                                        nlohmann::json{{"sprint_id", sprintId}});
+        return false;
+    }
+    if (sprintId.empty()) {
+        outError = "Sprint id is empty.";
+        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
+                                        nlohmann::json{{"sprint_id", sprintId}});
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const std::string url = base + "/rest/agile/1.0/sprint/" + UrlEncode(sprintId) + "/issue";
+    const nlohmann::json body = nlohmann::json{{"issues", nlohmann::json::array({issueKey})}};
+    const std::string bodyStr = body.dump();
+    auto response = JiraPostLogged(url, headers, bodyStr);
+    if (response.status_code != 204 && response.status_code != 200) {
+        outError = "Failed to add issue to sprint: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " - " + TruncateForLog(response.text, 220);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s sprint=%s", outError.c_str(), issueKey.c_str(), sprintId.c_str());
+        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
+                                        nlohmann::json{{"sprint_id", sprintId}});
+        return false;
+    }
+    BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, true, std::string(),
+                                    nlohmann::json{{"sprint_id", sprintId}});
+    return true;
+}

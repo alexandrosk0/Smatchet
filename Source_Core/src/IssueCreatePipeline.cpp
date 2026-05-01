@@ -2,6 +2,7 @@
 
 #include "ITrackerClient.h"
 #include "JiraFieldPayload.h"
+#include "JiraTrackerFieldAdapter.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -11,7 +12,7 @@
 
 namespace {
 
-const JiraField* FindFieldById(const std::vector<JiraField>& catalog, const std::string& id) {
+const TrackerField* FindFieldById(const std::vector<TrackerField>& catalog, const std::string& id) {
     for (const auto& field : catalog) {
         if (field.Id == id) {
             return &field;
@@ -20,20 +21,18 @@ const JiraField* FindFieldById(const std::vector<JiraField>& catalog, const std:
     return nullptr;
 }
 
-/** Synthesize a minimal JiraField for fields that aren't in the catalog (unlikely, but safe). */
-JiraField MakeSyntheticField(const std::string& id) {
-    JiraField f;
+/** Synthesize a minimal field for fields that aren't in the catalog (unlikely, but safe). */
+TrackerField MakeSyntheticField(const std::string& id) {
+    TrackerField f;
     f.Id = id;
     f.Type = "string";
-    f.Family = JiraFieldFamily::Text;
+    f.Family = TrackerFieldFamily::Text;
     return f;
 }
 
 /** PUT /issue fields: mutable custom + system fields; no project/type swap; status/sprint handled elsewhere. */
-bool BuildUpdateFieldsPayload(const IssueDraft& draft,
-                              const std::vector<JiraField>& catalog,
-                              nlohmann::json& outFields,
-                              std::string& outError) {
+bool BuildUpdateFieldsPayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                              nlohmann::json& outFields, std::string& outError) {
     outFields = nlohmann::json::object();
     outError.clear();
 
@@ -46,10 +45,9 @@ bool BuildUpdateFieldsPayload(const IssueDraft& draft,
         if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
             continue;
         }
-        if (fieldId.empty() ||
-            IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
-            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) ||
-            fieldId == "project" || fieldId == "issuetype" || fieldId == "parent") {
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent") {
             continue;
         }
         if (fieldId == "status") {
@@ -60,20 +58,21 @@ bool BuildUpdateFieldsPayload(const IssueDraft& draft,
             continue;
         }
 
-        const JiraField* field = FindFieldById(catalog, fieldId);
-        JiraField synthetic;
+        const TrackerField* field = FindFieldById(catalog, fieldId);
+        TrackerField synthetic;
         if (!field) {
             synthetic = MakeSyntheticField(fieldId);
             field = &synthetic;
         }
 
-        if (JiraFieldPayload::IsSprintField(*field)) {
+        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
+        if (JiraFieldPayload::IsSprintField(jiraField)) {
             continue;
         }
 
         nlohmann::json value;
         std::string err;
-        if (!JiraFieldPayload::BuildValue(*field, {raw}, value, err)) {
+        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
             outError = "Field '" + fieldId + "': " + err;
             return false;
         }
@@ -84,69 +83,92 @@ bool BuildUpdateFieldsPayload(const IssueDraft& draft,
     return true;
 }
 
-void ApplyPostIssueSteps(ITrackerClient& client,
-                         const std::string& issueKey,
-                         const IssueDraft& draft,
-                         const std::vector<JiraField>& catalog,
-                         IssueCreateResult& result) {
+struct PostIssueStepsOutcome {
+    bool mergeStatusFromDraft = false;
+    bool mergeSprintFieldsFromDraft = false;
+};
+
+bool IsSprintCatalogFieldId(const std::string& fieldId, const std::vector<TrackerField>& catalog) {
+    if (fieldId == "status") {
+        return false;
+    }
+    const TrackerField* sprintField = FindFieldById(catalog, fieldId);
+    if (!sprintField) {
+        return false;
+    }
+    return JiraFieldPayload::IsSprintField(JiraTrackerFieldAdapter::ToJiraField(*sprintField));
+}
+
+PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::string& issueKey,
+                                          const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                          IssueCreateResult& result) {
+    PostIssueStepsOutcome outcome;
     const auto statusIt = draft.FieldValues.find("status");
     if (statusIt != draft.FieldValues.end()) {
         const std::string statusRaw = TrimCopy(statusIt->second);
         if (!statusRaw.empty()) {
-            const JiraField* statusField = FindFieldById(catalog, "status");
-            JiraField statusSynthetic;
+            const TrackerField* statusField = FindFieldById(catalog, "status");
+            TrackerField statusSynthetic;
             if (!statusField) {
                 statusSynthetic = MakeSyntheticField("status");
                 statusField = &statusSynthetic;
             }
+            const JiraField jiraStatusField = JiraTrackerFieldAdapter::ToJiraField(*statusField);
             nlohmann::json statusValue;
             std::string statusBuildErr;
-            if (JiraFieldPayload::BuildValue(*statusField, {statusRaw}, statusValue, statusBuildErr) &&
+            if (JiraFieldPayload::BuildValue(jiraStatusField, {statusRaw}, statusValue, statusBuildErr) &&
                 !statusValue.is_null()) {
                 nlohmann::json statusUpdate = nlohmann::json::object();
                 statusUpdate["status"] = std::move(statusValue);
                 std::string transitionErr;
-                if (!client.UpdateIssueFields(issueKey, statusUpdate, transitionErr)) {
-                    LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s",
-                             issueKey.c_str(),
+                if (client.UpdateIssueFields(issueKey, statusUpdate, transitionErr)) {
+                    outcome.mergeStatusFromDraft = true;
+                } else {
+                    LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s", issueKey.c_str(),
                              transitionErr.c_str());
                 }
             } else if (!statusBuildErr.empty()) {
-                LOG_WARN("IssueCreatePipeline: issue %s: status payload invalid: %s",
-                         issueKey.c_str(),
+                LOG_WARN("IssueCreatePipeline: issue %s: status payload invalid: %s", issueKey.c_str(),
                          statusBuildErr.c_str());
             }
         }
     }
 
+    bool sprintWork = false;
+    bool sprintAllOk = true;
     std::unordered_set<std::string> appliedSprintIds;
     for (const auto& kv : draft.FieldValues) {
         const std::string& fieldId = kv.first;
         if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
             continue;
         }
-        if (fieldId.empty() ||
-            IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
-            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) ||
-            fieldId == "project" || fieldId == "issuetype" || fieldId == "parent") {
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent") {
             continue;
         }
-        const JiraField* sprintField = FindFieldById(catalog, fieldId);
-        if (sprintField == nullptr || !JiraFieldPayload::IsSprintField(*sprintField)) {
+        const TrackerField* sprintField = FindFieldById(catalog, fieldId);
+        if (sprintField == nullptr) {
+            continue;
+        }
+        const JiraField jiraSprintField = JiraTrackerFieldAdapter::ToJiraField(*sprintField);
+        if (!JiraFieldPayload::IsSprintField(jiraSprintField)) {
             continue;
         }
         const std::string raw = TrimCopy(kv.second);
         if (raw.empty()) {
             continue;
         }
+        sprintWork = true;
+        bool sprintSegmentSeen = false;
         for (const std::string& seg : JiraFieldPayload::SplitCommaSeparatedValues(raw)) {
-            const std::string sprintId = JiraFieldPayload::ResolveSprintIdForAgile(*sprintField, seg);
+            sprintSegmentSeen = true;
+            const std::string sprintId = JiraFieldPayload::ResolveSprintIdForAgile(jiraSprintField, seg);
             if (sprintId.empty()) {
+                sprintAllOk = false;
                 LOG_WARN("IssueCreatePipeline: issue %s: sprint segment could not be resolved to id "
                          "(field %s, value '%s').",
-                         issueKey.c_str(),
-                         fieldId.c_str(),
-                         seg.c_str());
+                         issueKey.c_str(), fieldId.c_str(), seg.c_str());
                 continue;
             }
             if (!appliedSprintIds.insert(sprintId).second) {
@@ -154,12 +176,16 @@ void ApplyPostIssueSteps(ITrackerClient& client,
             }
             std::string sprintErr;
             if (!client.AddIssueToSprint(issueKey, sprintId, sprintErr)) {
-                LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s",
-                         issueKey.c_str(),
+                sprintAllOk = false;
+                LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s", issueKey.c_str(),
                          sprintErr.c_str());
             }
         }
+        if (!sprintSegmentSeen) {
+            sprintAllOk = false;
+        }
     }
+    outcome.mergeSprintFieldsFromDraft = sprintWork && sprintAllOk;
 
     if (!draft.StagedAttachments.empty()) {
         std::vector<std::string> paths;
@@ -173,21 +199,65 @@ void ApplyPostIssueSteps(ITrackerClient& client,
             std::string attachErr;
             client.AttachFilesToIssue(issueKey, paths, result.AttachmentFailures, attachErr);
             if (!result.AttachmentFailures.empty()) {
-                LOG_WARN("IssueCreatePipeline: %zu attachment(s) failed for %s",
-                         result.AttachmentFailures.size(), issueKey.c_str());
+                LOG_WARN("IssueCreatePipeline: %zu attachment(s) failed for %s", result.AttachmentFailures.size(),
+                         issueKey.c_str());
             }
         }
     }
+    return outcome;
+}
+
+void MergePostStepDraftIntoCachedTicket(CachedTicket& ticket, const IssueDraft& draft,
+                                        const std::vector<TrackerField>& catalog,
+                                        const PostIssueStepsOutcome& postOutcome) {
+    if (postOutcome.mergeStatusFromDraft) {
+        const auto it = draft.FieldValues.find("status");
+        if (it != draft.FieldValues.end()) {
+            ticket.fieldValues["status"] = it->second;
+        }
+    }
+    if (postOutcome.mergeSprintFieldsFromDraft) {
+        for (const auto& kv : draft.FieldValues) {
+            if (!IsSprintCatalogFieldId(kv.first, catalog)) {
+                continue;
+            }
+            ticket.fieldValues[kv.first] = kv.second;
+        }
+    }
+}
+
+/** Overlay draft onto cache using only keys from the successful PUT fields payload (plus issue type/parent display). */
+CachedTicket MergeDraftIntoCachedTicketForUpdate(const CachedTicket& existing, const IssueDraft& draft,
+                                                 const std::string& issueKey,
+                                                 const nlohmann::json& putFieldsSucceeded) {
+    CachedTicket t = existing;
+    t.id = issueKey;
+    if (putFieldsSucceeded.is_object()) {
+        for (auto it = putFieldsSucceeded.begin(); it != putFieldsSucceeded.end(); ++it) {
+            const std::string fieldId = it.key();
+            const auto dit = draft.FieldValues.find(fieldId);
+            if (dit != draft.FieldValues.end()) {
+                t.fieldValues[fieldId] = dit->second;
+            }
+        }
+    }
+    if (!draft.IssueTypeName.empty()) {
+        t.fieldValues["issuetype"] = draft.IssueTypeName;
+    } else if (!draft.IssueTypeId.empty()) {
+        t.fieldValues["issuetype"] = draft.IssueTypeId;
+    }
+    if (!draft.ParentKey.empty()) {
+        t.fieldValues["parent"] = draft.ParentKey;
+    }
+    return t;
 }
 
 } // namespace
 
 namespace IssueCreatePipeline {
 
-bool BuildFieldsPayload(const IssueDraft& draft,
-                         const std::vector<JiraField>& catalog,
-                         nlohmann::json& outFields,
-                         std::string& outError) {
+bool BuildFieldsPayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog, nlohmann::json& outFields,
+                        std::string& outError) {
     outFields = nlohmann::json::object();
     outError.clear();
 
@@ -216,10 +286,9 @@ bool BuildFieldsPayload(const IssueDraft& draft,
         if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
             continue;
         }
-        if (fieldId.empty() ||
-            IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
-            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) ||
-            fieldId == "project" || fieldId == "issuetype" || fieldId == "parent") {
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent") {
             continue;
         }
         const std::string raw = kv.second;
@@ -227,20 +296,21 @@ bool BuildFieldsPayload(const IssueDraft& draft,
             continue;
         }
 
-        const JiraField* field = FindFieldById(catalog, fieldId);
-        JiraField synthetic;
+        const TrackerField* field = FindFieldById(catalog, fieldId);
+        TrackerField synthetic;
         if (!field) {
             synthetic = MakeSyntheticField(fieldId);
             field = &synthetic;
         }
 
-        if (JiraFieldPayload::IsSprintField(*field)) {
+        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
+        if (JiraFieldPayload::IsSprintField(jiraField)) {
             continue;
         }
 
         nlohmann::json value;
         std::string err;
-        if (!JiraFieldPayload::BuildValue(*field, {raw}, value, err)) {
+        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
             outError = "Field '" + fieldId + "': " + err;
             return false;
         }
@@ -251,14 +321,29 @@ bool BuildFieldsPayload(const IssueDraft& draft,
     return true;
 }
 
-CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft,
-                                        const std::vector<JiraField>& /*catalog*/,
-                                        const std::string& issueKey) {
+CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                       const std::string& issueKey) {
     CachedTicket t;
     t.id = issueKey;
-    t.fieldValues = draft.FieldValues;
+    for (const auto& kv : draft.FieldValues) {
+        const std::string& fieldId = kv.first;
+        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
+            continue;
+        }
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent") {
+            continue;
+        }
+        if (fieldId == "status" || IsSprintCatalogFieldId(fieldId, catalog)) {
+            continue;
+        }
+        t.fieldValues[fieldId] = kv.second;
+    }
     if (!draft.IssueTypeName.empty()) {
         t.fieldValues["issuetype"] = draft.IssueTypeName;
+    } else if (!draft.IssueTypeId.empty()) {
+        t.fieldValues["issuetype"] = draft.IssueTypeId;
     }
     if (!draft.ParentKey.empty()) {
         t.fieldValues["parent"] = draft.ParentKey;
@@ -266,10 +351,8 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft,
     return t;
 }
 
-IssueCreateResult RunUpdateExisting(ITrackerClient& client,
-                                    LocalCacheManager* /*cache*/,
-                                    const IssueDraft& draft,
-                                    const std::vector<JiraField>& catalog) {
+IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+                                    const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
     std::string issueKey = JiraFieldPayload::ExtractIssueKey(draft.ExistingIssueKey);
     if (issueKey.empty()) {
@@ -300,21 +383,31 @@ IssueCreateResult RunUpdateExisting(ITrackerClient& client,
 
     result.Ok = true;
     result.IssueKey = issueKey;
-    ApplyPostIssueSteps(client, issueKey, draft, catalog, result);
+    const PostIssueStepsOutcome postOutcome = ApplyPostIssueSteps(client, issueKey, draft, catalog, result);
 
-    // Intentionally do NOT cache->SaveTicket here: SaveTicket replaces the whole
-    // ticket_field_values row with only the partial draft fields (e.g. a CSV with
-    // just key + summary would wipe every other cached field). Callers trigger a
-    // RefreshLocalData() on result.Ok which repopulates cache from Jira.
+    // SaveTicket replaces all `ticket_field_values` for the id — merge only fields from the successful PUT and,
+    // separately, status/sprint after transition/sprint APIs succeed (they are not in the PUT payload).
     result.SeededTicket = SeedCachedTicketFromDraft(draft, catalog, issueKey);
+    if (cache) {
+        try {
+            CachedTicket existing;
+            if (cache->TryGetTicket(issueKey, existing)) {
+                result.SeededTicket = MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
+            }
+            MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
+            cache->SaveTicket(result.SeededTicket);
+        } catch (const std::exception& ex) {
+            LOG_WARN("IssueCreatePipeline: cache update after PUT failed issue=%s err=%s", issueKey.c_str(),
+                     ex.what());
+        }
+    } else {
+        MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
+    }
     return result;
 }
 
-IssueCreateResult Run(ITrackerClient& client,
-                      LocalCacheManager* cache,
-                      const IssueDraft& draft,
-                      const RequiredFieldSet& required,
-                      const std::vector<JiraField>& catalog) {
+IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+                      const RequiredFieldSet& required, const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
 
     IssueDraft work = draft;
@@ -332,8 +425,7 @@ IssueCreateResult Run(ITrackerClient& client,
     result.MissingFieldIds = IssueDraftHelpers::MissingRequiredFields(work, required);
     if (!result.MissingFieldIds.empty()) {
         result.Error = "Missing required field(s).";
-        LOG_WARN("IssueCreatePipeline: validation failed, %zu field(s) missing.",
-                 result.MissingFieldIds.size());
+        LOG_WARN("IssueCreatePipeline: validation failed, %zu field(s) missing.", result.MissingFieldIds.size());
         return result;
     }
 
@@ -355,9 +447,10 @@ IssueCreateResult Run(ITrackerClient& client,
     result.Ok = true;
     result.IssueKey = issueKey;
 
-    ApplyPostIssueSteps(client, issueKey, work, catalog, result);
+    const PostIssueStepsOutcome postOutcome = ApplyPostIssueSteps(client, issueKey, work, catalog, result);
 
     result.SeededTicket = SeedCachedTicketFromDraft(work, catalog, issueKey);
+    MergePostStepDraftIntoCachedTicket(result.SeededTicket, work, catalog, postOutcome);
     if (cache) {
         cache->SaveTicket(result.SeededTicket);
     }

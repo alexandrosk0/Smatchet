@@ -55,9 +55,7 @@ void AddExtendedSymbolRanges(ImFontGlyphRangesBuilder& builder, ImFontAtlas* atl
 }
 
 #if defined(_WIN32)
-bool FileExistsUtf8(const char* path) {
-    return path && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
-}
+bool FileExistsUtf8(const char* path) { return path && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES; }
 #endif
 
 } // namespace

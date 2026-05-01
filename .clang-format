@@ -1,0 +1,12 @@
+# Smatchet first-party C/C++ — LLVM base, 4-space indent, left-aligned pointers/references.
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+SortIncludes: Never
+IncludeBlocks: Preserve
+NamespaceIndentation: None

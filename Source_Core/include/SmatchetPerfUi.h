@@ -8,12 +8,12 @@
 
 /// ImGui window: FPS, CPU scope timings (`UiPerfMonitor`), and `NetworkUsageTracker` stats.
 class SmatchetPerfUi {
-public:
+  public:
     void DrawWindow(bool* pOpen);
     /// Reads `io.Framerate` / delta; call after `DrawWindow` while the performance UI is open.
     void DrawFpsOverlay();
 
-private:
+  private:
     void updateSmoothedFps();
     struct CpuSmoothBucket {
         double lastTotalMs = 0.0;

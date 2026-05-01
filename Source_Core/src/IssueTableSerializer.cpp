@@ -14,14 +14,17 @@ namespace IssueTableSerializer {
 namespace {
 
 std::string LowerAscii(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
 
 std::string Trim(const std::string& s) {
     size_t a = 0, b = s.size();
-    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
-    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a])))
+        ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1])))
+        --b;
     return s.substr(a, b - a);
 }
 
@@ -80,14 +83,19 @@ std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, ch
 std::string EscapeCsvCell(const std::string& s, char delim) {
     bool needsQuote = false;
     for (char c : s) {
-        if (c == delim || c == '"' || c == '\n' || c == '\r') { needsQuote = true; break; }
+        if (c == delim || c == '"' || c == '\n' || c == '\r') {
+            needsQuote = true;
+            break;
+        }
     }
-    if (!needsQuote) return s;
+    if (!needsQuote)
+        return s;
     std::string out;
     out.reserve(s.size() + 2);
     out.push_back('"');
     for (char c : s) {
-        if (c == '"') out.push_back('"');
+        if (c == '"')
+            out.push_back('"');
         out.push_back(c);
     }
     out.push_back('"');
@@ -97,10 +105,10 @@ std::string EscapeCsvCell(const std::string& s, char delim) {
 // Column header → field id resolver.
 // Priority: literal field id (case-insensitive) > catalog display name
 // (case-insensitive) > special keys > raw header.
-std::string ResolveColumnKey(const std::string& header,
-                             const std::vector<JiraField>& catalog) {
+std::string ResolveColumnKey(const std::string& header, const std::vector<TrackerField>& catalog) {
     const std::string trimmed = Trim(header);
-    if (trimmed.empty()) return {};
+    if (trimmed.empty())
+        return {};
     const std::string low = LowerAscii(trimmed);
 
     // Before catalog: issue key column maps to draft.ExistingIssueKey (update path), not a Jira field id.
@@ -109,22 +117,31 @@ std::string ResolveColumnKey(const std::string& header,
     }
 
     for (const auto& f : catalog) {
-        if (LowerAscii(f.Id) == low) return f.Id;
+        if (LowerAscii(f.Id) == low)
+            return f.Id;
     }
     for (const auto& f : catalog) {
-        if (LowerAscii(f.Name) == low) return f.Id;
+        if (LowerAscii(f.Name) == low)
+            return f.Id;
     }
-    if (low == "project" || low == "projectkey" || low == "project key") return "project";
-    if (low == "issuetype" || low == "issue type" || low == "type") return "issuetype";
-    if (low == "parent" || low == "parentkey" || low == "parent key") return "parent";
-    if (low == "attachments" || low == "attachment") return "attachments";
-    if (low == "summary" || low == "title") return "summary";
-    if (low == "description") return "description";
+    if (low == "project" || low == "projectkey" || low == "project key")
+        return "project";
+    if (low == "issuetype" || low == "issue type" || low == "type")
+        return "issuetype";
+    if (low == "parent" || low == "parentkey" || low == "parent key")
+        return "parent";
+    if (low == "attachments" || low == "attachment")
+        return "attachments";
+    if (low == "summary" || low == "title")
+        return "summary";
+    if (low == "description")
+        return "description";
     return trimmed;
 }
 
 void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::string& rawValue) {
-    if (key.empty()) return;
+    if (key.empty())
+        return;
     const std::string value = Trim(rawValue);
     if (key == "__existing_issue_key__") {
         // Skip empty cells so a duplicate "issuekey" column (often empty in exports)
@@ -144,7 +161,8 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
     } else if (key == "parent") {
         draft.ParentKey = value;
     } else if (key == "attachments") {
-        if (value.empty()) return;
+        if (value.empty())
+            return;
         // Exports serialize the attachments column as a JSON-ish array (e.g. "[]" when
         // empty, or "[{...}, ...]" for existing Jira attachments). Those are NOT local
         // file paths - don't stage them as upload sources. Only accept plain pipe-
@@ -156,7 +174,8 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
         std::string path;
         while (std::getline(ss, path, '|')) {
             const std::string trimmed = Trim(path);
-            if (trimmed.empty()) continue;
+            if (trimmed.empty())
+                continue;
             StagedAttachment att;
             att.AbsPath = trimmed;
             auto slash = trimmed.find_last_of("/\\");
@@ -168,11 +187,8 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
     }
 }
 
-ImportResult ParseCsvOrTsv(const std::string& text,
-                           char delim,
-                           const std::vector<JiraField>& catalog,
-                           const std::string& fallbackProjectKey,
-                           const std::string& fallbackIssueTypeId,
+ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vector<TrackerField>& catalog,
+                           const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
                            const std::string& fallbackIssueTypeName) {
     ImportResult result;
     result.DetectedFormat = (delim == '\t') ? Format::Tsv : Format::Csv;
@@ -185,14 +201,20 @@ ImportResult ParseCsvOrTsv(const std::string& text,
     const auto& header = rows.front();
     std::vector<std::string> keys;
     keys.reserve(header.size());
-    for (const auto& h : header) keys.push_back(ResolveColumnKey(h, catalog));
+    for (const auto& h : header)
+        keys.push_back(ResolveColumnKey(h, catalog));
 
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
         // Skip fully empty lines (e.g. trailing blank).
         bool anyNonEmpty = false;
-        for (const auto& c : row) if (!Trim(c).empty()) { anyNonEmpty = true; break; }
-        if (!anyNonEmpty) continue;
+        for (const auto& c : row)
+            if (!Trim(c).empty()) {
+                anyNonEmpty = true;
+                break;
+            }
+        if (!anyNonEmpty)
+            continue;
 
         ImportRow ir;
         ir.SourceLine = static_cast<int>(r + 1);
@@ -201,7 +223,8 @@ ImportResult ParseCsvOrTsv(const std::string& text,
         ir.Draft.IssueTypeName = fallbackIssueTypeName;
 
         for (size_t i = 0; i < row.size() && i < keys.size(); ++i) {
-            if (keys[i].empty()) continue;
+            if (keys[i].empty())
+                continue;
             ApplyKeyValueToDraft(ir.Draft, keys[i], row[i]);
         }
         result.Rows.push_back(std::move(ir));
@@ -209,10 +232,8 @@ ImportResult ParseCsvOrTsv(const std::string& text,
     return result;
 }
 
-ImportResult ParseJson(const std::string& text,
-                       const std::vector<JiraField>& catalog,
-                       const std::string& fallbackProjectKey,
-                       const std::string& fallbackIssueTypeId,
+ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>& catalog,
+                       const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
                        const std::string& fallbackIssueTypeName) {
     ImportResult result;
     result.DetectedFormat = Format::Json;
@@ -261,7 +282,8 @@ ImportResult ParseJson(const std::string& text,
         auto applyObject = [&](const nlohmann::json& obj) {
             for (auto it = obj.begin(); it != obj.end(); ++it) {
                 const std::string key = ResolveColumnKey(it.key(), catalog);
-                if (key.empty()) continue;
+                if (key.empty())
+                    continue;
                 std::string value;
                 if (it->is_string()) {
                     value = it->get<std::string>();
@@ -277,13 +299,16 @@ ImportResult ParseJson(const std::string& text,
                     // Flatten simple arrays (strings / labels) to comma-separated.
                     std::string joined;
                     for (const auto& el : *it) {
-                        if (!joined.empty()) joined.push_back(',');
-                        if (el.is_string()) joined += el.get<std::string>();
+                        if (!joined.empty())
+                            joined.push_back(',');
+                        if (el.is_string())
+                            joined += el.get<std::string>();
                         else if (el.is_object() && el.contains("value") && el["value"].is_string())
                             joined += el["value"].get<std::string>();
                         else if (el.is_object() && el.contains("name") && el["name"].is_string())
                             joined += el["name"].get<std::string>();
-                        else joined += el.dump();
+                        else
+                            joined += el.dump();
                     }
                     value = joined;
                 } else {
@@ -297,8 +322,9 @@ ImportResult ParseJson(const std::string& text,
             applyObject(item["fields"]);
             // top-level project/issuetype/parent still honored
             for (auto it = item.begin(); it != item.end(); ++it) {
-                if (it.key() == "fields") continue;
-                nlohmann::json one = { { it.key(), *it } };
+                if (it.key() == "fields")
+                    continue;
+                nlohmann::json one = {{it.key(), *it}};
                 applyObject(one);
             }
         } else {
@@ -314,8 +340,10 @@ ImportResult ParseJson(const std::string& text,
 
 Format DetectFormat(const std::string& text) {
     for (char c : text) {
-        if (std::isspace(static_cast<unsigned char>(c))) continue;
-        if (c == '[' || c == '{') return Format::Json;
+        if (std::isspace(static_cast<unsigned char>(c)))
+            continue;
+        if (c == '[' || c == '{')
+            return Format::Json;
         break;
     }
     // Inspect header line for tab vs comma.
@@ -323,28 +351,29 @@ Format DetectFormat(const std::string& text) {
     const std::string first = text.substr(0, (nl == std::string::npos) ? text.size() : nl);
     const size_t tabs = std::count(first.begin(), first.end(), '\t');
     const size_t commas = std::count(first.begin(), first.end(), ',');
-    if (tabs > commas) return Format::Tsv;
+    if (tabs > commas)
+        return Format::Tsv;
     return Format::Csv;
 }
 
-ImportResult ParseDrafts(const std::string& text,
-                         Format fmt,
-                         const std::vector<JiraField>& catalog,
-                         const std::string& fallbackProjectKey,
-                         const std::string& fallbackIssueTypeId,
+ImportResult ParseDrafts(const std::string& text, Format fmt, const std::vector<TrackerField>& catalog,
+                         const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
                          const std::string& fallbackIssueTypeName) {
     Format use = fmt;
-    if (use == Format::Auto) use = DetectFormat(text);
+    if (use == Format::Auto)
+        use = DetectFormat(text);
     switch (use) {
-        case Format::Json: return ParseJson(text, catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
-        case Format::Tsv:  return ParseCsvOrTsv(text, '\t', catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
-        case Format::Csv:
-        default:           return ParseCsvOrTsv(text, ',',  catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
+    case Format::Json:
+        return ParseJson(text, catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
+    case Format::Tsv:
+        return ParseCsvOrTsv(text, '\t', catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
+    case Format::Csv:
+    default:
+        return ParseCsvOrTsv(text, ',', catalog, fallbackProjectKey, fallbackIssueTypeId, fallbackIssueTypeName);
     }
 }
 
-std::string SerializeTickets(const std::vector<CachedTicket>& tickets,
-                             const std::vector<std::string>& fieldIds,
+std::string SerializeTickets(const std::vector<CachedTicket>& tickets, const std::vector<std::string>& fieldIds,
                              Format fmt) {
     std::vector<std::string> cols = fieldIds;
     if (cols.empty()) {
@@ -355,13 +384,15 @@ std::string SerializeTickets(const std::vector<CachedTicket>& tickets,
         cols.assign(keys.begin(), keys.end());
     }
 
-    if (fmt == Format::Auto) fmt = Format::Csv;
+    if (fmt == Format::Auto)
+        fmt = Format::Csv;
 
     if (fmt == Format::Json) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& t : tickets) {
             nlohmann::json obj = nlohmann::json::object();
-            if (!t.id.empty()) obj["key"] = t.id;
+            if (!t.id.empty())
+                obj["key"] = t.id;
             for (const auto& col : cols) {
                 obj[col] = t.GetFieldValue(col);
             }
@@ -374,7 +405,10 @@ std::string SerializeTickets(const std::vector<CachedTicket>& tickets,
     std::string out;
     // header: include implicit "key" first for round-tripping
     out += EscapeCsvCell("key", delim);
-    for (const auto& c : cols) { out.push_back(delim); out += EscapeCsvCell(c, delim); }
+    for (const auto& c : cols) {
+        out.push_back(delim);
+        out += EscapeCsvCell(c, delim);
+    }
     out.push_back('\n');
 
     for (const auto& t : tickets) {

@@ -146,7 +146,7 @@ double SmoothingAlpha(double dtSec, double tauSec) {
 } // namespace
 
 void SmatchetPerfUi::buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std::vector<UiPerfRow>& out,
-    double dtSec) {
+                                          double dtSec) {
     out.clear();
     out.reserve(raw.size());
 
@@ -233,21 +233,21 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                 buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dt);
                 SortRowsByStableLastDesc(rows);
                 if (ImGui::BeginTable("UiPerfTable", 6,
-                        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
-                            | ImGuiTableFlags_Sortable)) {
+                                      ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
+                                          ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable)) {
                     ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_None, 0.0f,
-                        static_cast<ImGuiID>(PerfTableCol::Scope));
-                    ImGui::TableSetupColumn("Last (ms)",
-                        ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
+                                            static_cast<ImGuiID>(PerfTableCol::Scope));
+                    ImGui::TableSetupColumn(
+                        "Last (ms)", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
                         0.0f, static_cast<ImGuiID>(PerfTableCol::Last));
                     ImGui::TableSetupColumn("Avg/call (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                        static_cast<ImGuiID>(PerfTableCol::Avg));
+                                            static_cast<ImGuiID>(PerfTableCol::Avg));
                     ImGui::TableSetupColumn("EMA avg (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                        static_cast<ImGuiID>(PerfTableCol::Ema));
+                                            static_cast<ImGuiID>(PerfTableCol::Ema));
                     ImGui::TableSetupColumn("Max (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                        static_cast<ImGuiID>(PerfTableCol::Max));
+                                            static_cast<ImGuiID>(PerfTableCol::Max));
                     ImGui::TableSetupColumn("Calls", ImGuiTableColumnFlags_None, 0.0f,
-                        static_cast<ImGuiID>(PerfTableCol::Calls));
+                                            static_cast<ImGuiID>(PerfTableCol::Calls));
                     ImGui::TableHeadersRow();
                     if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
                         if (sort_specs->SpecsDirty) {
@@ -276,10 +276,9 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
             }
             if (ImGui::BeginTabItem("Network")) {
                 const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
-                ImGui::TextWrapped(
-                    "HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
-                    "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
-                    static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
+                ImGui::TextWrapped("HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
+                                   "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
+                                   static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
                 ImGui::Separator();
                 ImGui::TextUnformatted("Jira API");
                 ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.jiraRequests));
@@ -304,12 +303,13 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
 
 void SmatchetPerfUi::DrawFpsOverlay() {
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(
-        ImVec2(io.DisplaySize.x - 12.0f, io.DisplaySize.y - 12.0f), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12.0f, io.DisplaySize.y - 12.0f), ImGuiCond_Always,
+                            ImVec2(1.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.55f);
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
-        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav
-        | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking;
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoDocking;
     if (ImGui::Begin("##SmatchetFpsOverlay", nullptr, kFlags)) {
         ImGui::Text("FPS %.1f  %.2f ms", smoothFps_, smoothFrameMs_);
     }

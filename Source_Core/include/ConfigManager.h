@@ -25,15 +25,16 @@
 #include <windows.h>
 #include <wincrypt.h>
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
 #endif
 
 struct JiraConfig {
-    std::string Domain;    // e.g., "yourcompany.atlassian.net"
-    std::string Email;     // e.g., "dev@company.com"
-    std::string ApiToken;  // Your Atlassian API Token
+    std::string Domain;   // e.g., "yourcompany.atlassian.net"
+    std::string Email;    // e.g., "dev@company.com"
+    std::string ApiToken; // Your Atlassian API Token
     // Jira project key used by create meta enrichment calls (e.g. PROJ).
     std::string ProjectKey;
     // JQL used when querying Jira; defaults to issues assigned to the current user.
@@ -41,8 +42,11 @@ struct JiraConfig {
     // Jira field keys to extract and cache (e.g. customfield_12345, duedate).
     std::vector<std::string> SelectedFields;
     // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
-    // Exposed in UI as Settings → Preferences → Appearance.
+    // Exposed in UI as Settings -> Preferences -> Appearance.
     bool EnableFieldOverflowTooltips = true;
+    // Wheel ticks at top/bottom before vertical wheel reroutes to horizontal grid scroll.
+    // Exposed in UI as Settings -> Preferences -> Appearance.
+    int GridEndWheelSwallowsBeforeHorizontal = 15;
     // Restores Settings → Performance window visibility on launch.
     bool ShowPerformanceWindow = false;
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
@@ -88,8 +92,8 @@ struct JiraConfig {
 };
 
 struct ViewSortSpec {
-    std::string ColumnKey;  // "id" or "field:status" etc.
-    int Direction = 0;      // 0=None, 1=Ascending, 2=Descending (ImGuiSortDirection)
+    std::string ColumnKey; // "id" or "field:status" etc.
+    int Direction = 0;     // 0=None, 1=Ascending, 2=Descending (ImGuiSortDirection)
     bool operator==(const ViewSortSpec& o) const { return ColumnKey == o.ColumnKey && Direction == o.Direction; }
     bool operator!=(const ViewSortSpec& o) const { return !(*this == o); }
 };
@@ -151,11 +155,9 @@ struct BlameAnalysisConfig {
 };
 
 class ConfigManager {
-public:
+  public:
     // Optional base directory for config/views (e.g. exe directory). If set, paths are baseDir + filename.
-    static void SetBaseDirectoryForFiles(const std::string& baseDir) {
-        GetBaseDirectoryRef() = baseDir;
-    }
+    static void SetBaseDirectoryForFiles(const std::string& baseDir) { GetBaseDirectoryRef() = baseDir; }
 
     /** Directory used for config/views (trailing separator if set). Empty if unset. */
     static const std::string& GetFilesBaseDirectory() { return GetBaseDirectoryRef(); }
@@ -201,6 +203,7 @@ public:
         j["project_key"] = config.ProjectKey;
         j["jql"] = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
+        j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
         j["show_performance_window"] = config.ShowPerformanceWindow;
         j["log_min_level"] = config.LogMinLevel;
         j["log_jira_http_bodies"] = config.LogJiraHttpBodies;
@@ -366,6 +369,8 @@ public:
             cfg.ProjectKey = j.value("project_key", std::string{});
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+            cfg.GridEndWheelSwallowsBeforeHorizontal =
+                j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
             cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
             cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
             cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
@@ -420,8 +425,14 @@ public:
                     cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
                 }
             }
-            if (cfg.ImportMaxConcurrent < 1) cfg.ImportMaxConcurrent = 1;
-            if (cfg.ImportMaxConcurrent > 32) cfg.ImportMaxConcurrent = 32;
+            if (cfg.ImportMaxConcurrent < 1)
+                cfg.ImportMaxConcurrent = 1;
+            if (cfg.ImportMaxConcurrent > 32)
+                cfg.ImportMaxConcurrent = 32;
+            if (cfg.GridEndWheelSwallowsBeforeHorizontal < 0)
+                cfg.GridEndWheelSwallowsBeforeHorizontal = 0;
+            if (cfg.GridEndWheelSwallowsBeforeHorizontal > 32)
+                cfg.GridEndWheelSwallowsBeforeHorizontal = 32;
             if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
                 cfg.McpPort = 8080;
             }
@@ -437,13 +448,15 @@ public:
 
     static std::string GetConfigPath() {
         const std::string& base = GetBaseDirectoryRef();
-        if (base.empty()) return "smatchet_config.json";
+        if (base.empty())
+            return "smatchet_config.json";
         return base + "smatchet_config.json";
     }
 
     static std::string GetViewsPath() {
         const std::string& base = GetBaseDirectoryRef();
-        if (base.empty()) return "smatchet_views.json";
+        if (base.empty())
+            return "smatchet_views.json";
         return base + "smatchet_views.json";
     }
 
@@ -468,7 +481,8 @@ public:
             viewJson["sort_specs"] = nlohmann::json::array();
             for (const auto& spec : view.SortSpecs) {
                 if (spec.Direction != 0) {
-                    viewJson["sort_specs"].push_back(nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
+                    viewJson["sort_specs"].push_back(
+                        nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
                 }
             }
             j["views"].push_back(viewJson);
@@ -495,61 +509,61 @@ public:
             nlohmann::json j;
             file >> j;
             ViewsStore store;
-        store.Version = j.value("version", 1);
-        store.ActiveViewId = j.value("active_view_id", std::string());
+            store.Version = j.value("version", 1);
+            store.ActiveViewId = j.value("active_view_id", std::string());
 
-        if (j.contains("views") && j["views"].is_array()) {
-            for (const auto& viewJson : j["views"]) {
-                if (!viewJson.is_object()) {
-                    continue;
-                }
-                ViewDefinition view;
-                view.Id = viewJson.value("id", std::string());
-                view.Name = viewJson.value("name", std::string());
-                view.Jql = viewJson.value("jql", view.Jql);
-                if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
-                    for (const auto& field : viewJson["fields"]) {
-                        if (field.is_string()) {
-                            view.Fields.push_back(field.get<std::string>());
-                        }
+            if (j.contains("views") && j["views"].is_array()) {
+                for (const auto& viewJson : j["views"]) {
+                    if (!viewJson.is_object()) {
+                        continue;
                     }
-                }
-                if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
-                    for (const auto& col : viewJson["column_order"]) {
-                        if (col.is_string()) {
-                            view.ColumnOrder.push_back(col.get<std::string>());
-                        }
-                    }
-                }
-                if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
-                    for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
-                        if (it.value().is_number()) {
-                            view.ColumnWidths[it.key()] = it.value().get<float>();
-                        }
-                    }
-                }
-                if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
-                    for (const auto& specJson : viewJson["sort_specs"]) {
-                        if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
-                            ViewSortSpec spec;
-                            spec.ColumnKey = specJson["column"].get<std::string>();
-                            spec.Direction = specJson.value("direction", 0);
-                            if (spec.Direction != 0) {
-                                view.SortSpecs.push_back(spec);
+                    ViewDefinition view;
+                    view.Id = viewJson.value("id", std::string());
+                    view.Name = viewJson.value("name", std::string());
+                    view.Jql = viewJson.value("jql", view.Jql);
+                    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
+                        for (const auto& field : viewJson["fields"]) {
+                            if (field.is_string()) {
+                                view.Fields.push_back(field.get<std::string>());
                             }
                         }
                     }
+                    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
+                        for (const auto& col : viewJson["column_order"]) {
+                            if (col.is_string()) {
+                                view.ColumnOrder.push_back(col.get<std::string>());
+                            }
+                        }
+                    }
+                    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
+                        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
+                            if (it.value().is_number()) {
+                                view.ColumnWidths[it.key()] = it.value().get<float>();
+                            }
+                        }
+                    }
+                    if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
+                        for (const auto& specJson : viewJson["sort_specs"]) {
+                            if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
+                                ViewSortSpec spec;
+                                spec.ColumnKey = specJson["column"].get<std::string>();
+                                spec.Direction = specJson.value("direction", 0);
+                                if (spec.Direction != 0) {
+                                    view.SortSpecs.push_back(spec);
+                                }
+                            }
+                        }
+                    }
+                    if (view.Id.empty()) {
+                        view.Id = view.Name;
+                    }
+                    if (view.Name.empty()) {
+                        view.Name = view.Id.empty() ? std::string("View") : view.Id;
+                    }
+                    store.Views.push_back(std::move(view));
                 }
-                if (view.Id.empty()) {
-                    view.Id = view.Name;
-                }
-                if (view.Name.empty()) {
-                    view.Name = view.Id.empty() ? std::string("View") : view.Id;
-                }
-                store.Views.push_back(std::move(view));
             }
-        }
-        return store;
+            return store;
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: failed to parse views '%s': %s", viewsPath.c_str(), ex.what());
             return {};
@@ -570,29 +584,22 @@ public:
             }
 
             ViewDefinition defaultView;
-        defaultView.Id = "default_view";
-        defaultView.Name = "Default View";
-        defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-        // Basic fields for new installs: exclude id (handled as a special column).
-        defaultView.Fields = {
-            "summary",
-            "assignee",
-            "priority",
-            "status",
-            "created",
-            "updated"
-        };
-        defaultView.ColumnOrder = {"id"};
-        for (const auto& fieldId : defaultView.Fields) {
-            defaultView.ColumnOrder.push_back("field:" + fieldId);
-        }
-        defaultView.ColumnWidths["id"] = 90.0f;
+            defaultView.Id = "default_view";
+            defaultView.Name = "Default View";
+            defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
+            // Basic fields for new installs: exclude id (handled as a special column).
+            defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
+            defaultView.ColumnOrder = {"id"};
+            for (const auto& fieldId : defaultView.Fields) {
+                defaultView.ColumnOrder.push_back("field:" + fieldId);
+            }
+            defaultView.ColumnWidths["id"] = 90.0f;
 
-        store.Version = 1;
-        store.ActiveViewId = defaultView.Id;
-        store.Views.push_back(defaultView);
-        SaveViews(store);
-        return store;
+            store.Version = 1;
+            store.ActiveViewId = defaultView.Id;
+            store.Views.push_back(defaultView);
+            SaveViews(store);
+            return store;
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error: %s", ex.what());
             ViewsStore fallback;
@@ -630,7 +637,64 @@ public:
         }
     }
 
-private:
+#if defined(_WIN32)
+    static std::wstring Utf8ToWide(const std::string& s) {
+        if (s.empty())
+            return std::wstring();
+        const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        if (n <= 1)
+            return std::wstring();
+        std::wstring w(static_cast<size_t>(n - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
+        return w;
+    }
+#endif
+
+    // Crash-safe write: writes to <path>.tmp then atomically renames onto <path>.
+    static bool AtomicWriteTextFile(const std::string& path, const std::string& content) {
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                LOG_ERROR("ConfigManager: failed to open temp file for write '%s'", tmp.c_str());
+                return false;
+            }
+            if (!content.empty()) {
+                file.write(content.data(), static_cast<std::streamsize>(content.size()));
+            }
+            file.flush();
+            if (!file.good()) {
+                LOG_ERROR("ConfigManager: failed to write temp file '%s'", tmp.c_str());
+                file.close();
+                std::remove(tmp.c_str());
+                return false;
+            }
+        }
+#if defined(_WIN32)
+        const std::wstring wSrc = Utf8ToWide(tmp);
+        const std::wstring wDst = Utf8ToWide(path);
+        if (wSrc.empty() || wDst.empty()) {
+            std::remove(tmp.c_str());
+            return false;
+        }
+        if (!MoveFileExW(wSrc.c_str(), wDst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            LOG_ERROR("ConfigManager: MoveFileEx failed '%s' -> '%s' err=%lu", tmp.c_str(), path.c_str(),
+                      static_cast<unsigned long>(GetLastError()));
+            DeleteFileW(wSrc.c_str());
+            return false;
+        }
+        return true;
+#else
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+            LOG_ERROR("ConfigManager: rename failed '%s' -> '%s' errno=%d", tmp.c_str(), path.c_str(), errno);
+            std::remove(tmp.c_str());
+            return false;
+        }
+        return true;
+#endif
+    }
+
+  private:
 #if defined(_WIN32)
     static std::string BinaryToBase64(const BYTE* data, DWORD dataSize) {
         if (!data || dataSize == 0) {
@@ -641,11 +705,7 @@ private:
             return std::string();
         }
         std::string out(static_cast<size_t>(outLen), '\0');
-        if (!CryptBinaryToStringA(data,
-                                  dataSize,
-                                  CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
-                                  &out[0],
-                                  &outLen)) {
+        if (!CryptBinaryToStringA(data, dataSize, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, &out[0], &outLen)) {
             return std::string();
         }
         if (!out.empty() && out.back() == '\0') {
@@ -660,23 +720,13 @@ private:
             return out;
         }
         DWORD outLen = 0;
-        if (!CryptStringToBinaryA(base64.c_str(),
-                                  static_cast<DWORD>(base64.size()),
-                                  CRYPT_STRING_BASE64,
-                                  nullptr,
-                                  &outLen,
-                                  nullptr,
-                                  nullptr)) {
+        if (!CryptStringToBinaryA(base64.c_str(), static_cast<DWORD>(base64.size()), CRYPT_STRING_BASE64, nullptr,
+                                  &outLen, nullptr, nullptr)) {
             return out;
         }
         out.resize(static_cast<size_t>(outLen));
-        if (!CryptStringToBinaryA(base64.c_str(),
-                                  static_cast<DWORD>(base64.size()),
-                                  CRYPT_STRING_BASE64,
-                                  out.data(),
-                                  &outLen,
-                                  nullptr,
-                                  nullptr)) {
+        if (!CryptStringToBinaryA(base64.c_str(), static_cast<DWORD>(base64.size()), CRYPT_STRING_BASE64, out.data(),
+                                  &outLen, nullptr, nullptr)) {
             out.clear();
             return out;
         }
@@ -737,87 +787,24 @@ private:
         return s;
     }
 
-#if defined(_WIN32)
-    static std::wstring Utf8ToWide(const std::string& s) {
-        if (s.empty()) return std::wstring();
-        const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-        if (n <= 1) return std::wstring();
-        std::wstring w(static_cast<size_t>(n - 1), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-        return w;
-    }
-#endif
-
-    // Crash-safe write: writes to <path>.tmp then atomically renames onto <path>.
-    static bool AtomicWriteTextFile(const std::string& path, const std::string& content) {
-        const std::string tmp = path + ".tmp";
-        {
-            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-            if (!file.is_open()) {
-                LOG_ERROR("ConfigManager: failed to open temp file for write '%s'", tmp.c_str());
-                return false;
-            }
-            if (!content.empty()) {
-                file.write(content.data(), static_cast<std::streamsize>(content.size()));
-            }
-            file.flush();
-            if (!file.good()) {
-                LOG_ERROR("ConfigManager: failed to write temp file '%s'", tmp.c_str());
-                file.close();
-                std::remove(tmp.c_str());
-                return false;
-            }
-        }
-#if defined(_WIN32)
-        const std::wstring wSrc = Utf8ToWide(tmp);
-        const std::wstring wDst = Utf8ToWide(path);
-        if (wSrc.empty() || wDst.empty()) {
-            std::remove(tmp.c_str());
-            return false;
-        }
-        if (!MoveFileExW(wSrc.c_str(), wDst.c_str(),
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            LOG_ERROR("ConfigManager: MoveFileEx failed '%s' -> '%s' err=%lu",
-                      tmp.c_str(), path.c_str(), static_cast<unsigned long>(GetLastError()));
-            DeleteFileW(wSrc.c_str());
-            return false;
-        }
-        return true;
-#else
-        if (std::rename(tmp.c_str(), path.c_str()) != 0) {
-            LOG_ERROR("ConfigManager: rename failed '%s' -> '%s' errno=%d",
-                      tmp.c_str(), path.c_str(), errno);
-            std::remove(tmp.c_str());
-            return false;
-        }
-        return true;
-#endif
-    }
-
     // Cross-process advisory lock on a sibling <path>.lock file.
     class ScopedFileLock {
-    public:
-        explicit ScopedFileLock(const std::string& path)
-            : lockPath_(path + ".lock") {
-            Acquire();
-        }
+      public:
+        explicit ScopedFileLock(const std::string& path) : lockPath_(path + ".lock") { Acquire(); }
         ~ScopedFileLock() { Release(); }
         ScopedFileLock(const ScopedFileLock&) = delete;
         ScopedFileLock& operator=(const ScopedFileLock&) = delete;
 
-    private:
+      private:
         void Acquire() {
 #if defined(_WIN32)
             const std::wstring wLock = Utf8ToWide(lockPath_);
-            if (wLock.empty()) return;
-            handle_ = CreateFileW(wLock.c_str(),
-                                  GENERIC_READ | GENERIC_WRITE,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                  nullptr,
-                                  OPEN_ALWAYS,
-                                  FILE_ATTRIBUTE_NORMAL,
-                                  nullptr);
-            if (handle_ == INVALID_HANDLE_VALUE) return;
+            if (wLock.empty())
+                return;
+            handle_ = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle_ == INVALID_HANDLE_VALUE)
+                return;
             OVERLAPPED ov{};
             if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &ov)) {
                 CloseHandle(handle_);
@@ -825,7 +812,8 @@ private:
             }
 #else
             fd_ = ::open(lockPath_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-            if (fd_ < 0) return;
+            if (fd_ < 0)
+                return;
             if (::flock(fd_, LOCK_EX) != 0) {
                 ::close(fd_);
                 fd_ = -1;

@@ -31,9 +31,7 @@ std::string TrimCopy(const std::string& s) {
     return s.substr(start, end - start);
 }
 
-bool IsDigit(char c) {
-    return c >= '0' && c <= '9';
-}
+bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
 // Parse optional timezone: Z | ±HHMM | ±HH:MM.
 bool ParseTimeZone(const std::string& s, size_t& i, int& offsetSec, bool& outWasZ) {
@@ -153,8 +151,8 @@ bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
     if (s.size() < 10) {
         return false;
     }
-    if (!IsDigit(s[0]) || !IsDigit(s[1]) || !IsDigit(s[2]) || !IsDigit(s[3]) || s[4] != '-' ||
-        !IsDigit(s[5]) || !IsDigit(s[6]) || s[7] != '-' || !IsDigit(s[8]) || !IsDigit(s[9])) {
+    if (!IsDigit(s[0]) || !IsDigit(s[1]) || !IsDigit(s[2]) || !IsDigit(s[3]) || s[4] != '-' || !IsDigit(s[5]) ||
+        !IsDigit(s[6]) || s[7] != '-' || !IsDigit(s[8]) || !IsDigit(s[9])) {
         return false;
     }
     const int year = (s[0] - '0') * 1000 + (s[1] - '0') * 100 + (s[2] - '0') * 10 + (s[3] - '0');
@@ -184,8 +182,8 @@ bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
     }
 
     ++i;
-    if (i + 8 > s.size() || !IsDigit(s[i]) || !IsDigit(s[i + 1]) || s[i + 2] != ':' ||
-        !IsDigit(s[i + 3]) || !IsDigit(s[i + 4]) || s[i + 5] != ':' || !IsDigit(s[i + 6]) || !IsDigit(s[i + 7])) {
+    if (i + 8 > s.size() || !IsDigit(s[i]) || !IsDigit(s[i + 1]) || s[i + 2] != ':' || !IsDigit(s[i + 3]) ||
+        !IsDigit(s[i + 4]) || s[i + 5] != ':' || !IsDigit(s[i + 6]) || !IsDigit(s[i + 7])) {
         return false;
     }
     out.Hour = (s[i] - '0') * 10 + (s[i + 1] - '0');
@@ -209,12 +207,7 @@ bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
 
 std::string FormatJiraDateOrDateTimeForApi(bool isDateField, const ParsedJiraDateTime& in) {
     char dateBuf[16];
-    if (std::snprintf(dateBuf,
-                      sizeof(dateBuf),
-                      "%04d-%02d-%02d",
-                      in.Year,
-                      in.Month,
-                      in.Day) <= 0) {
+    if (std::snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d", in.Year, in.Month, in.Day) <= 0) {
         return std::string();
     }
     if (isDateField) {
@@ -224,12 +217,7 @@ std::string FormatJiraDateOrDateTimeForApi(bool isDateField, const ParsedJiraDat
         return std::string(dateBuf);
     }
     char dateTimeBuf[32];
-    if (std::snprintf(dateTimeBuf,
-                      sizeof(dateTimeBuf),
-                      "%sT%02d:%02d:%02d.000",
-                      dateBuf,
-                      in.Hour,
-                      in.Minute,
+    if (std::snprintf(dateTimeBuf, sizeof(dateTimeBuf), "%sT%02d:%02d:%02d.000", dateBuf, in.Hour, in.Minute,
                       in.Second) <= 0) {
         return std::string();
     }

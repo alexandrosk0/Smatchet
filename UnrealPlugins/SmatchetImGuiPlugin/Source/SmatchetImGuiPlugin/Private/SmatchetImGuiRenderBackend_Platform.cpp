@@ -10,7 +10,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSmatchetPlatformRenderBackend, Log, All);
 
 namespace {
 class FPlatformRenderBackend final : public ISmatchetImGuiRenderBackend {
-public:
+  public:
     virtual const TCHAR* GetBackendName() const override {
 #if defined(PLATFORM_PS5) && PLATFORM_PS5
         return TEXT("PS5");
@@ -37,23 +37,22 @@ public:
         OutParams.NumFramesInFlight = 3;
 
         if (!GDynamicRHI) {
-            UE_LOG(LogSmatchetPlatformRenderBackend, Warning, TEXT("[%s] GDynamicRHI not ready yet."), GetBackendName());
+            UE_LOG(LogSmatchetPlatformRenderBackend, Warning, TEXT("[%s] GDynamicRHI not ready yet."),
+                   GetBackendName());
             return false;
         }
 
         OutParams.NativeDevice = GDynamicRHI->RHIGetNativeDevice();
         if (!OutParams.NativeDevice) {
-            UE_LOG(LogSmatchetPlatformRenderBackend, Warning, TEXT("[%s] Native device not available yet."), GetBackendName());
+            UE_LOG(LogSmatchetPlatformRenderBackend, Warning, TEXT("[%s] Native device not available yet."),
+                   GetBackendName());
             return false;
         }
         return true;
     }
 
-    virtual bool RenderToSlateBackBuffer(
-        SmatchetImGuiHostHandle Host,
-        FRHITexture* BackBufferTexture,
-        FRHICommandListImmediate* RHICmdList,
-        bool /*bDrawSoftwareCursor*/) override {
+    virtual bool RenderToSlateBackBuffer(SmatchetImGuiHostHandle Host, FRHITexture* BackBufferTexture,
+                                         FRHICommandListImmediate* RHICmdList, bool /*bDrawSoftwareCursor*/) override {
         if (!Host || !BackBufferTexture || !RHICmdList) {
             return false;
         }
@@ -63,7 +62,8 @@ public:
 
         const FIntPoint BackBufferSize = BackBufferTexture->GetSizeXY();
         constexpr float FallbackDelta = 1.0f / 60.0f;
-        SmatchetHost_BeginFrame(Host, FallbackDelta, static_cast<float>(BackBufferSize.X), static_cast<float>(BackBufferSize.Y));
+        SmatchetHost_BeginFrame(Host, FallbackDelta, static_cast<float>(BackBufferSize.X),
+                                static_cast<float>(BackBufferSize.Y));
         SmatchetHost_DrawUI(Host);
         if (SmatchetHost_IsInitialized(Host) == 0 || SmatchetHost_IsFrameActive(Host) == 0) {
             return false;
@@ -78,7 +78,8 @@ public:
         static double LastLogSeconds = 0.0;
         const double Now = FPlatformTime::Seconds();
         if (Now - LastLogSeconds > 2.0) {
-            UE_LOG(LogSmatchetPlatformRenderBackend, Log, TEXT("[%s] rendered on Slate backbuffer hook."), GetBackendName());
+            UE_LOG(LogSmatchetPlatformRenderBackend, Log, TEXT("[%s] rendered on Slate backbuffer hook."),
+                   GetBackendName());
             LastLogSeconds = Now;
         }
         return true;

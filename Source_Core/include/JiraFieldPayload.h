@@ -10,7 +10,7 @@
 
 /**
  * Shared Jira field -> JSON payload builder. Extracted from
- * AppController::SubmitJiraFieldEditNetworkOnly so it can be reused by the
+ * AppController::SubmitFieldEditNetworkOnly so it can be reused by the
  * create pipeline (single draft + bulk import + offline replay).
  *
  * Callers are responsible for:
@@ -33,9 +33,7 @@ bool FieldUsesAdfDocument(const JiraField& field);
  * values become `null` (meaning "clear field") unless the field is an array
  * type, where an empty list is produced.
  */
-bool BuildValue(const JiraField& field,
-                const std::vector<std::string>& rawValues,
-                nlohmann::json& outValue,
+bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError);
 
 /**

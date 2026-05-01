@@ -4,11 +4,11 @@
 #include "LuaConsole.h"
 
 class LuaConsolePlugin : public IPlugin {
-public:
+  public:
     const char* Id() const override { return "lua_console"; }
     void OnEarlyInit(AppController& app) override;
     void OnDraw(AppController& app) override;
 
-private:
+  private:
     LuaConsole console_;
 };

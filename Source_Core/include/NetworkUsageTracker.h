@@ -8,10 +8,7 @@ namespace cpr {
 class Response;
 }
 
-enum class HttpTrafficKind {
-    Jira,
-    OpenAi
-};
+enum class HttpTrafficKind { Jira, OpenAi };
 
 struct NetworkUsageSnapshot {
     std::uint64_t jiraRequests = 0;
@@ -24,7 +21,7 @@ struct NetworkUsageSnapshot {
 
 /// Thread-safe counters for outbound HTTP from Smatchet (Jira API, OpenAI).
 class NetworkUsageTracker {
-public:
+  public:
     static constexpr std::uint64_t kEstimatedGetUploadBytes = 512;
 
     static NetworkUsageTracker& Instance();
@@ -35,7 +32,7 @@ public:
 
     void Reset();
 
-private:
+  private:
     NetworkUsageTracker() = default;
 
     std::atomic<std::uint64_t> jiraRequests_{0};

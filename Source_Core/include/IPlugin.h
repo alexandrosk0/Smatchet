@@ -4,7 +4,7 @@ class AppController;
 
 /** Single plugin contract; same vtable shape for future DLL loading. */
 class IPlugin {
-public:
+  public:
     virtual ~IPlugin() = default;
 
     virtual const char* Id() const = 0;

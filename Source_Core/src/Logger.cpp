@@ -42,16 +42,16 @@ LogLevel Logger::ParseLogLevelString(const std::string& s, LogLevel fallback) {
 
 const char* Logger::LogLevelToString(LogLevel level) {
     switch (level) {
-        case LogLevel::Trace:
-            return "trace";
-        case LogLevel::Debug:
-            return "debug";
-        case LogLevel::Info:
-            return "info";
-        case LogLevel::Warn:
-            return "warn";
-        case LogLevel::Error:
-            return "error";
+    case LogLevel::Trace:
+        return "trace";
+    case LogLevel::Debug:
+        return "debug";
+    case LogLevel::Info:
+        return "info";
+    case LogLevel::Warn:
+        return "warn";
+    case LogLevel::Error:
+        return "error";
     }
     return "info";
 }
@@ -60,25 +60,15 @@ void Logger::SetMinLevel(LogLevel minLevel) {
     m_minLevelInt.store(static_cast<int>(minLevel), std::memory_order_release);
 }
 
-LogLevel Logger::GetMinLevel() const {
-    return static_cast<LogLevel>(m_minLevelInt.load(std::memory_order_acquire));
-}
+LogLevel Logger::GetMinLevel() const { return static_cast<LogLevel>(m_minLevelInt.load(std::memory_order_acquire)); }
 
-void Logger::SetLogJiraHttpBodies(bool enabled) {
-    m_logJiraHttpBodies.store(enabled, std::memory_order_release);
-}
+void Logger::SetLogJiraHttpBodies(bool enabled) { m_logJiraHttpBodies.store(enabled, std::memory_order_release); }
 
-bool Logger::GetLogJiraHttpBodies() const {
-    return m_logJiraHttpBodies.load(std::memory_order_acquire);
-}
+bool Logger::GetLogJiraHttpBodies() const { return m_logJiraHttpBodies.load(std::memory_order_acquire); }
 
-void Logger::SetLogP4Io(bool enabled) {
-    m_logP4Io.store(enabled, std::memory_order_release);
-}
+void Logger::SetLogP4Io(bool enabled) { m_logP4Io.store(enabled, std::memory_order_release); }
 
-bool Logger::GetLogP4Io() const {
-    return m_logP4Io.load(std::memory_order_acquire);
-}
+bool Logger::GetLogP4Io() const { return m_logP4Io.load(std::memory_order_acquire); }
 
 bool Logger::ShouldLog(LogLevel level) const {
     return static_cast<int>(level) >= m_minLevelInt.load(std::memory_order_relaxed);
@@ -90,8 +80,7 @@ void Logger::Log(LogLevel level, const std::string& message) {
     }
 
     using namespace std::chrono;
-    const double nowSeconds =
-        duration_cast<duration<double>>(steady_clock::now().time_since_epoch()).count();
+    const double nowSeconds = duration_cast<duration<double>>(steady_clock::now().time_since_epoch()).count();
 
     std::lock_guard<std::mutex> lock(m_mutex);
     if (static_cast<int>(level) < m_minLevelInt.load(std::memory_order_relaxed)) {
@@ -137,9 +126,7 @@ std::vector<LogEntry> Logger::GetEntriesSnapshot() const {
     return m_entries;
 }
 
-std::uint64_t Logger::GetRevision() const {
-    return m_revision.load(std::memory_order_acquire);
-}
+std::uint64_t Logger::GetRevision() const { return m_revision.load(std::memory_order_acquire); }
 
 void Logger::Clear() {
     std::lock_guard<std::mutex> lock(m_mutex);

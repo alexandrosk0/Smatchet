@@ -12,18 +12,12 @@
 namespace {
 
 #if defined(_WIN32)
-std::time_t TimeGmPortable(std::tm* tmUtc) {
-    return _mkgmtime(tmUtc);
-}
+std::time_t TimeGmPortable(std::tm* tmUtc) { return _mkgmtime(tmUtc); }
 #else
-std::time_t TimeGmPortable(std::tm* tmUtc) {
-    return timegm(tmUtc);
-}
+std::time_t TimeGmPortable(std::tm* tmUtc) { return timegm(tmUtc); }
 #endif
 
-bool IsLeapYear(int y) {
-    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-}
+bool IsLeapYear(int y) { return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0); }
 
 int DaysInMonth(int year, int month) {
     static const int kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -114,34 +108,28 @@ void ClampDayToMonth(ParsedJiraDateTime& w, int year, int month) {
     }
 }
 
-const char* const kMonthAbbr[12] = {
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+const char* const kMonthAbbr[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 } // namespace
 
 namespace JiraDateTimeFieldEditor {
 
-bool IsJiraDateTimePickerField(const JiraField& field) {
+bool IsJiraDateTimePickerField(const TrackerField& field) {
     if (field.ReadOnly) {
         return false;
     }
     return field.Type == "date" || field.Type == "datetime";
 }
 
-void RenderDateTimeFieldEditor(const CachedTicket& ticket,
-                               const JiraField& field,
-                               const std::string& currentValue,
-                               SpreadsheetState& state,
-                               const QueueDateTimeEditFn& queueEdit) {
+void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+                               SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit) {
     const std::string editorKey = ticket.id + "::" + field.Id;
     const std::string itemId = "##DateCell_" + ticket.id + "_" + field.Id;
     const bool isDateOnly = (field.Type == "date");
 
     ImGui::PushID(editorKey.c_str());
 
-    const auto queue = [&](const std::vector<std::string>& values) {
-        queueEdit(ticket.id, field, values);
-    };
+    const auto queue = [&](const std::vector<std::string>& values) { queueEdit(ticket.id, field, values); };
 
     static ParsedJiraDateTime s_working{};
     static int s_viewYear = 2000;
@@ -212,11 +200,8 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket,
         if (s_forceTextMode) {
             ImGui::TextUnformatted("Unparseable value; edit raw ISO string:");
             ImGui::SetNextItemWidth(420.0f);
-            const bool submitted = ImGui::InputText(
-                "##rawiso",
-                state.EditBuffer,
-                sizeof(state.EditBuffer),
-                ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool submitted = ImGui::InputText("##rawiso", state.EditBuffer, sizeof(state.EditBuffer),
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
             ParsedJiraDateTime tmp;
             const bool canParse = TryParseJiraDateTime(state.EditBuffer, tmp);
             if (!canParse) {

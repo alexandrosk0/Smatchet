@@ -21,9 +21,8 @@ namespace {
 // Slate "back buffer ready" hook executes this via FRHICommandListImmediate::EnqueueLambda, so the
 // command list is bottom-of-pipe. GetNativeCommandBuffer() is usually null there, but the D3D12 RHI
 // can still resolve the underlying graphics command list via RHIGetGraphicsCommandList.
-ID3D12GraphicsCommandList* ResolveD3D12GraphicsCommandList(
-    FRHICommandListImmediate* RHICmdList,
-    ID3D12DynamicRHI* D3D12RHI) {
+ID3D12GraphicsCommandList* ResolveD3D12GraphicsCommandList(FRHICommandListImmediate* RHICmdList,
+                                                           ID3D12DynamicRHI* D3D12RHI) {
     if (!RHICmdList) {
         return nullptr;
     }
@@ -37,14 +36,10 @@ ID3D12GraphicsCommandList* ResolveD3D12GraphicsCommandList(
 }
 
 class FWinDx12RenderBackend final : public ISmatchetImGuiRenderBackend {
-public:
-    virtual const TCHAR* GetBackendName() const override {
-        return TEXT("Win64-DX12");
-    }
+  public:
+    virtual const TCHAR* GetBackendName() const override { return TEXT("Win64-DX12"); }
 
-    virtual int GetRendererBackendId() const override {
-        return SMATCHET_RENDERER_BACKEND_DX12;
-    }
+    virtual int GetRendererBackendId() const override { return SMATCHET_RENDERER_BACKEND_DX12; }
 
     virtual bool BuildInitParams(FSmatchetRendererInitParams& OutParams) override {
         OutParams = {};
@@ -83,7 +78,8 @@ public:
 
         HRESULT Hr = Dx12Device->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&ImGuiFontSrvHeap));
         if (FAILED(Hr) || !ImGuiFontSrvHeap) {
-            UE_LOG(LogSmatchetWinDx12RenderBackend, Warning, TEXT("CreateDescriptorHeap failed (0x%08x)."), static_cast<uint32>(Hr));
+            UE_LOG(LogSmatchetWinDx12RenderBackend, Warning, TEXT("CreateDescriptorHeap failed (0x%08x)."),
+                   static_cast<uint32>(Hr));
             return false;
         }
 
@@ -101,11 +97,8 @@ public:
         return true;
     }
 
-    virtual bool RenderToSlateBackBuffer(
-        SmatchetImGuiHostHandle Host,
-        FRHITexture* BackBufferTexture,
-        FRHICommandListImmediate* RHICmdList,
-        bool bDrawSoftwareCursor) override {
+    virtual bool RenderToSlateBackBuffer(SmatchetImGuiHostHandle Host, FRHITexture* BackBufferTexture,
+                                         FRHICommandListImmediate* RHICmdList, bool bDrawSoftwareCursor) override {
         if (!Host || !BackBufferTexture) {
             return false;
         }
@@ -133,18 +126,16 @@ public:
                 LastInitDiagSeconds = NowSec;
                 char Summary[384];
                 SmatchetHost_FormatCachedRendererSummary(Host, Summary, static_cast<int>(sizeof(Summary)));
-                UE_LOG(
-                    LogSmatchetWinDx12RenderBackend,
-                    Warning,
-                    TEXT(
-                        "Smatchet host not initialized yet (lazy init runs inside BeginFrame). build=%s | %s | lastError=%s | Also watch Visual Studio Output for [Smatchet] lines."),
-                    ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()),
-                    ANSI_TO_TCHAR(Summary),
-                    ANSI_TO_TCHAR(SmatchetHost_GetLastInitError(Host)));
+                UE_LOG(LogSmatchetWinDx12RenderBackend, Warning,
+                       TEXT("Smatchet host not initialized yet (lazy init runs inside BeginFrame). build=%s | %s | "
+                            "lastError=%s | Also watch Visual Studio Output for [Smatchet] lines."),
+                       ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()), ANSI_TO_TCHAR(Summary),
+                       ANSI_TO_TCHAR(SmatchetHost_GetLastInitError(Host)));
             }
         }
 
-        SmatchetHost_BeginFrame(Host, FallbackDelta, static_cast<float>(BackBufferSize.X), static_cast<float>(BackBufferSize.Y));
+        SmatchetHost_BeginFrame(Host, FallbackDelta, static_cast<float>(BackBufferSize.X),
+                                static_cast<float>(BackBufferSize.Y));
         // When the game viewport hides the hardware cursor, draw ImGui's sprite so clicks are visible
         // inside the overlay. When the OS cursor is still visible, keep this false to avoid two pointers.
         // BeginFrame made the ImGui context current.
@@ -176,11 +167,9 @@ public:
             const double Now = FPlatformTime::Seconds();
             if (Now - LastRenderLogSeconds > 2.0) {
                 const bool bUsedNativeBuffer = (RHICmdList && RHICmdList->GetNativeCommandBuffer() != nullptr);
-                UE_LOG(
-                    LogSmatchetWinDx12RenderBackend,
-                    Log,
-                    TEXT("Rendered ImGui on D3D12 command list (native buffer: %s)."),
-                    bUsedNativeBuffer ? TEXT("yes") : TEXT("no (RHIGetGraphicsCommandList)"));
+                UE_LOG(LogSmatchetWinDx12RenderBackend, Log,
+                       TEXT("Rendered ImGui on D3D12 command list (native buffer: %s)."),
+                       bUsedNativeBuffer ? TEXT("yes") : TEXT("no (RHIGetGraphicsCommandList)"));
                 LastRenderLogSeconds = Now;
             }
             return true;
@@ -189,21 +178,17 @@ public:
         static double LastMissingNativeCmdLogSeconds = 0.0;
         const double MissingCmdNow = FPlatformTime::Seconds();
         if (MissingCmdNow - LastMissingNativeCmdLogSeconds > 2.0) {
-            UE_LOG(
-                LogSmatchetWinDx12RenderBackend,
-                Warning,
-                TEXT(
-                    "Could not resolve ID3D12GraphicsCommandList for Slate present hook (GetNativeCommandBuffer null and RHIGetGraphicsCommandList null)."));
+            UE_LOG(LogSmatchetWinDx12RenderBackend, Warning,
+                   TEXT("Could not resolve ID3D12GraphicsCommandList for Slate present hook (GetNativeCommandBuffer "
+                        "null and RHIGetGraphicsCommandList null)."));
             LastMissingNativeCmdLogSeconds = MissingCmdNow;
         }
         return false;
     }
 
-    virtual void Shutdown() override {
-        ImGuiFontSrvHeap.Reset();
-    }
+    virtual void Shutdown() override { ImGuiFontSrvHeap.Reset(); }
 
-private:
+  private:
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> ImGuiFontSrvHeap;
     ID3D12Device* Dx12Device = nullptr;
     D3D12_CPU_DESCRIPTOR_HANDLE ImGuiFontSrvCpuHandle{};
@@ -217,7 +202,5 @@ TUniquePtr<ISmatchetImGuiRenderBackend> CreateSmatchetImGuiRenderBackend_WinDx12
 }
 
 #else
-TUniquePtr<ISmatchetImGuiRenderBackend> CreateSmatchetImGuiRenderBackend_WinDx12() {
-    return nullptr;
-}
+TUniquePtr<ISmatchetImGuiRenderBackend> CreateSmatchetImGuiRenderBackend_WinDx12() { return nullptr; }
 #endif

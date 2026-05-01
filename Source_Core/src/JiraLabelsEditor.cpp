@@ -30,9 +30,7 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
     return result;
 }
 
-std::string JoinCsv(const std::vector<std::string>& values) {
-    return JoinStrings(values, ", ");
-}
+std::string JoinCsv(const std::vector<std::string>& values) { return JoinStrings(values, ", "); }
 
 bool LabelsEqualCaseInsensitive(const std::string& a, const std::string& b) {
     return ToLowerAsciiCopy(a) == ToLowerAsciiCopy(b);
@@ -65,15 +63,14 @@ std::vector<std::string> SortAndUniqueLabels(std::vector<std::string> values) {
         }
         return a < b;
     });
-    values.erase(std::unique(values.begin(), values.end(), [](const std::string& a, const std::string& b) {
-                     return LabelsEqualCaseInsensitive(a, b);
-                 }),
-                 values.end());
+    values.erase(
+        std::unique(values.begin(), values.end(),
+                    [](const std::string& a, const std::string& b) { return LabelsEqualCaseInsensitive(a, b); }),
+        values.end());
     return values;
 }
 
-std::vector<std::string> CollectLabelSuggestions(AppController& app,
-                                                 const CachedTicket& ticket,
+std::vector<std::string> CollectLabelSuggestions(AppController& app, const CachedTicket& ticket,
                                                  const std::string& currentValue) {
     std::vector<std::string> labels;
     const auto appendLabels = [&labels](const std::string& rawLabels) {
@@ -108,8 +105,7 @@ std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::stri
     std::vector<std::string> out;
     out.reserve(suggestions.size());
     for (const auto& suggestion : suggestions) {
-        if (ContainsLabelCaseInsensitive(selectedLabels, suggestion) ||
-            LabelMatchesFilter(suggestion, filterLower)) {
+        if (ContainsLabelCaseInsensitive(selectedLabels, suggestion) || LabelMatchesFilter(suggestion, filterLower)) {
             out.push_back(suggestion);
         }
     }
@@ -120,15 +116,10 @@ std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::stri
 
 namespace JiraLabelsEditor {
 
-bool IsLabelsField(const std::string& fieldId) {
-    return ToLowerAsciiCopy(fieldId) == "labels";
-}
+bool IsLabelsField(const std::string& fieldId) { return ToLowerAsciiCopy(fieldId) == "labels"; }
 
-void RenderLabelsFieldEditor(AppController& app,
-                             const CachedTicket& ticket,
-                             const JiraField& field,
-                             const std::string& currentValue,
-                             const QueueLabelEditFn& queueEdit) {
+void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+                             const std::string& currentValue, const QueueLabelEditFn& queueEdit) {
     static std::string activeEditorKey;
     static char draftBuf[128] = "";
     static char searchBuf[128] = "";
@@ -146,8 +137,7 @@ void RenderLabelsFieldEditor(AppController& app,
     }
     suggestions = SortAndUniqueLabels(std::move(suggestions));
 
-    const std::string preview =
-        selectedLabels.empty() ? std::string("<none>") : JoinCsv(selectedLabels);
+    const std::string preview = selectedLabels.empty() ? std::string("<none>") : JoinCsv(selectedLabels);
     const std::string comboId = "##LabelsMultiSelect_" + ticket.id + "_" + field.Id;
     const std::string editorKey = ticket.id + "::" + field.Id;
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -182,18 +172,17 @@ void RenderLabelsFieldEditor(AppController& app,
 
         for (const auto& suggestion : visibleSuggestions) {
             bool checked = ContainsLabelCaseInsensitive(selectedLabels, suggestion);
-            const std::string optionWidget =
-                suggestion + "##Label_" + ticket.id + "_" + field.Id + "_" + suggestion;
+            const std::string optionWidget = suggestion + "##Label_" + ticket.id + "_" + field.Id + "_" + suggestion;
             if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
                 std::vector<std::string> updated = selectedLabels;
                 if (checked && !ContainsLabelCaseInsensitive(updated, suggestion)) {
                     updated.push_back(suggestion);
                 } else {
-                    updated.erase(
-                        std::remove_if(updated.begin(), updated.end(), [&](const std::string& label) {
-                            return LabelsEqualCaseInsensitive(label, suggestion);
-                        }),
-                        updated.end());
+                    updated.erase(std::remove_if(updated.begin(), updated.end(),
+                                                 [&](const std::string& label) {
+                                                     return LabelsEqualCaseInsensitive(label, suggestion);
+                                                 }),
+                                  updated.end());
                 }
                 updated = SortAndUniqueLabels(std::move(updated));
                 queue(updated);
@@ -201,16 +190,11 @@ void RenderLabelsFieldEditor(AppController& app,
         }
 
         ImGui::Separator();
-        const bool submitted = ImGui::InputTextWithHint(
-            "##NewLabelDraft",
-            "Add label",
-            draftBuf,
-            sizeof(draftBuf),
-            ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool submitted = ImGui::InputTextWithHint("##NewLabelDraft", "Add label", draftBuf, sizeof(draftBuf),
+                                                        ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         const std::string trimmedDraft = TrimCopy(draftBuf);
-        const bool canAddDraft =
-            !trimmedDraft.empty() && !ContainsLabelCaseInsensitive(selectedLabels, trimmedDraft);
+        const bool canAddDraft = !trimmedDraft.empty() && !ContainsLabelCaseInsensitive(selectedLabels, trimmedDraft);
         if (!canAddDraft) {
             ImGui::BeginDisabled();
         }

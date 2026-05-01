@@ -2,7 +2,7 @@
 #define SMATCHET_ISSUE_CREATE_PIPELINE_H
 
 #include "IssueDraft.h"
-#include "JiraClient.h"
+#include "TrackerFieldSchema.h"
 
 #include <nlohmann/json.hpp>
 
@@ -17,11 +17,12 @@ class LocalCacheManager;
  */
 struct IssueCreateResult {
     bool Ok = false;
-    std::string IssueKey;                       // populated on success
-    std::string Error;                          // single-line summary
-    std::vector<std::string> MissingFieldIds;   // populated when validation failed
+    std::string IssueKey;                                                // populated on success
+    std::string Error;                                                   // single-line summary
+    std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
-    CachedTicket SeededTicket;                  // what was (or would be) inserted in cache
+    /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
+    CachedTicket SeededTicket;
 };
 
 /**
@@ -39,30 +40,24 @@ namespace IssueCreatePipeline {
  * POST /rest/api/3/issue expects under the "fields" key). Does NOT include
  * sprint assignments - those must be applied after create via AddIssueToSprint.
  */
-bool BuildFieldsPayload(const IssueDraft& draft,
-                         const std::vector<JiraField>& catalog,
-                         nlohmann::json& outFields,
-                         std::string& outError);
+bool BuildFieldsPayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog, nlohmann::json& outFields,
+                        std::string& outError);
 
 /**
  * Seed a CachedTicket from a draft so the grid can display the new row
  * immediately without waiting for the next Jira sync. `issueKey` may be empty
  * for pending-offline rows (we mark them with a synthetic `__pending__` id).
  */
-CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft,
-                                        const std::vector<JiraField>& catalog,
-                                        const std::string& issueKey);
+CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                       const std::string& issueKey);
 
 /**
  * Execute the full flow. `cache` may be null (no seeding). Attachment failures
  * do NOT flip `Ok` to false when the issue was created - they are reported in
  * `AttachmentFailures` so callers can choose to retry or warn.
  */
-IssueCreateResult Run(ITrackerClient& client,
-                      LocalCacheManager* cache,
-                      const IssueDraft& draft,
-                      const RequiredFieldSet& required,
-                      const std::vector<JiraField>& catalog);
+IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+                      const RequiredFieldSet& required, const std::vector<TrackerField>& catalog);
 
 } // namespace IssueCreatePipeline
 

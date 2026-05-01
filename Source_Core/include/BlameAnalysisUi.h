@@ -5,7 +5,7 @@
 class AppController;
 
 class BlameAnalysisUi {
-public:
+  public:
     /** Call each frame with whether the blame panel is shown (used to detect open/close). */
     void SetBlamePanelOpen(bool open);
 
@@ -17,7 +17,7 @@ public:
     /** Persisted blame options (same fields as former Blame "Options…"); call from Preferences. */
     void DrawBlamePreferencesTab(AppController& app);
 
-private:
+  private:
     void ensureSettingsBuffersLoaded();
 
     bool cfgLoaded_ = false;

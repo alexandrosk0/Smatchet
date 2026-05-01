@@ -12,10 +12,7 @@
  * @param outAbsPathsUtf8 absolute paths of chosen files
  * @return true if user confirmed with at least one file
  */
-bool SmatchetWin32PickOpenFilePaths(void* hwndOwner,
-                                    bool allowMultiple,
-                                    const std::string& initialDirUtf8,
-                                    std::string* outLastDirectoryUtf8,
-                                    std::vector<std::string>& outAbsPathsUtf8);
+bool SmatchetWin32PickOpenFilePaths(void* hwndOwner, bool allowMultiple, const std::string& initialDirUtf8,
+                                    std::string* outLastDirectoryUtf8, std::vector<std::string>& outAbsPathsUtf8);
 
 #endif

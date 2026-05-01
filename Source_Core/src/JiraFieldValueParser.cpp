@@ -1,0 +1,907 @@
+#include "JiraFieldValueParser.h"
+
+#include "Logger.h"
+#include "StringUtil.h"
+
+#include <algorithm>
+#include <cctype>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+#include <unordered_set>
+
+// nlohmann::value("k", std::string()) throws type_error.302 if "k" exists but is not a string.
+std::string JsonGetStringIfString(const nlohmann::json& j, const char* key) {
+    const auto it = j.find(key);
+    if (it == j.end() || !it->is_string()) {
+        return {};
+    }
+    return it->get<std::string>();
+}
+
+std::string TrimTrailingZeros(const std::string& number);
+
+std::string JsonValueToCompactString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    if (value.is_number_float()) {
+        std::ostringstream oss;
+        oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+        return TrimTrailingZeros(oss.str());
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    return {};
+}
+
+std::string JsonIdToString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    return {};
+}
+
+std::string BuildJiraOptionDisplayValue(const nlohmann::json& value) {
+    if (value.is_null()) {
+        return {};
+    }
+    if (value.is_primitive()) {
+        return JsonValueToCompactString(value);
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+
+    if (value.contains("key") && value["key"].is_string()) {
+        const std::string key = value["key"].get<std::string>();
+        const std::string summary = value.contains("fields") && value["fields"].is_object()
+                                        ? JsonGetStringIfString(value["fields"], "summary")
+                                        : std::string();
+        if (!key.empty() && !summary.empty()) {
+            return key + " - " + summary;
+        }
+        if (!key.empty()) {
+            return key;
+        }
+    }
+
+    static const char* kPreferredLabelKeys[] = {"displayName", "value", "name",    "label",     "title",
+                                                "summary",     "key",   "groupId", "accountId", "id"};
+    for (const char* key : kPreferredLabelKeys) {
+        const auto it = value.find(key);
+        if (it == value.end()) {
+            continue;
+        }
+        const std::string label = JsonValueToCompactString(*it);
+        if (!label.empty()) {
+            return label;
+        }
+    }
+    return {};
+}
+
+std::string BuildJiraOptionId(const nlohmann::json& value) {
+    if (value.is_null()) {
+        return {};
+    }
+    if (value.is_primitive()) {
+        return JsonValueToCompactString(value);
+    }
+    if (!value.is_object()) {
+        return {};
+    }
+    static const char* kPreferredIdKeys[] = {"id", "accountId", "groupId", "key", "value", "name"};
+    for (const char* key : kPreferredIdKeys) {
+        const auto it = value.find(key);
+        if (it == value.end()) {
+            continue;
+        }
+        const std::string id = JsonIdToString(*it);
+        if (!id.empty()) {
+            return id;
+        }
+    }
+    return {};
+}
+
+bool IsSimpleOptionObject(const nlohmann::json& value) {
+    if (!value.is_object()) {
+        return false;
+    }
+    static const std::unordered_set<std::string> kSimpleKeys = {"id",          "value", "name",     "disabled", "self",
+                                                                "description", "label", "archived", "released"};
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        if (kSimpleKeys.find(it.key()) == kSimpleKeys.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+JiraFieldOption JiraFieldOptionFromJson(const nlohmann::json& value) {
+    JiraFieldOption option;
+    option.Id = BuildJiraOptionId(value);
+    option.Value = BuildJiraOptionDisplayValue(value);
+    if (option.Value.empty()) {
+        option.Value = option.Id;
+    }
+    if (value.is_object()) {
+        option.SecondaryValue = JsonGetStringIfString(value, "description");
+        if (option.SecondaryValue.empty()) {
+            option.SecondaryValue = JsonGetStringIfString(value, "key");
+            if (option.SecondaryValue == option.Value) {
+                option.SecondaryValue.clear();
+            }
+        }
+        const auto disabledIt = value.find("disabled");
+        option.Disabled = disabledIt != value.end() && disabledIt->is_boolean() && disabledIt->get<bool>();
+        const auto childrenIt = value.find("children");
+        if (childrenIt != value.end() && childrenIt->is_array()) {
+            for (const auto& child : *childrenIt) {
+                option.Children.push_back(JiraFieldOptionFromJson(child));
+            }
+        }
+    }
+    try {
+        option.PayloadJson = value.dump();
+    } catch (...) {
+        option.PayloadJson.clear();
+    }
+    return option;
+}
+
+std::string JiraFieldOptionKey(const JiraFieldOption& option) {
+    if (!option.Id.empty()) {
+        return "id:" + ToLowerAsciiCopy(option.Id);
+    }
+    return "value:" + ToLowerAsciiCopy(option.Value);
+}
+
+void MergeJiraFieldOption(std::vector<JiraFieldOption>& target, const JiraFieldOption& incoming) {
+    const std::string incomingKey = JiraFieldOptionKey(incoming);
+    for (auto& existing : target) {
+        if (JiraFieldOptionKey(existing) != incomingKey) {
+            continue;
+        }
+        if (existing.Value.empty()) {
+            existing.Value = incoming.Value;
+        }
+        if (existing.SecondaryValue.empty()) {
+            existing.SecondaryValue = incoming.SecondaryValue;
+        }
+        if (existing.PayloadJson.empty()) {
+            existing.PayloadJson = incoming.PayloadJson;
+        }
+        existing.Disabled = existing.Disabled || incoming.Disabled;
+        for (const auto& child : incoming.Children) {
+            MergeJiraFieldOption(existing.Children, child);
+        }
+        return;
+    }
+    target.push_back(incoming);
+}
+
+void RefreshAllowedValuesFromOptions(JiraField& field) {
+    field.AllowedValues.clear();
+    field.AllowedValues.reserve(field.AllowedValueOptions.size());
+    for (const auto& option : field.AllowedValueOptions) {
+        if (!option.Value.empty()) {
+            field.AllowedValues.push_back(option.Value);
+        }
+    }
+}
+
+JiraFieldFamily ClassifyJiraFieldFamily(const JiraField& field) {
+    const std::string lowerId = ToLowerAsciiCopy(field.Id);
+    const std::string lowerCustom = ToLowerAsciiCopy(field.SchemaCustom);
+    if (lowerId == "labels") {
+        return JiraFieldFamily::Labels;
+    }
+    if (lowerId == "status") {
+        return JiraFieldFamily::Status;
+    }
+    if (lowerId == "issuetype") {
+        return JiraFieldFamily::IssueType;
+    }
+    if (lowerCustom.find("gh-sprint") != std::string::npos) {
+        return JiraFieldFamily::Sprint;
+    }
+    if (field.Type == "date") {
+        return JiraFieldFamily::Date;
+    }
+    if (field.Type == "datetime") {
+        return JiraFieldFamily::DateTime;
+    }
+    if (field.Type == "number") {
+        return JiraFieldFamily::Number;
+    }
+    if (field.IsUserType) {
+        return field.IsArray ? JiraFieldFamily::UserMulti : JiraFieldFamily::UserSingle;
+    }
+    if (lowerCustom.find("cascadingselect") != std::string::npos) {
+        return JiraFieldFamily::CascadingSelect;
+    }
+    if (!field.AllowedValueOptions.empty()) {
+        const bool hasChildren = std::any_of(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                                             [](const JiraFieldOption& option) { return !option.Children.empty(); });
+        if (hasChildren) {
+            return JiraFieldFamily::CascadingSelect;
+        }
+        const bool likelyStructured = std::any_of(
+            field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(), [](const JiraFieldOption& option) {
+                if (option.PayloadJson.empty()) {
+                    return false;
+                }
+                nlohmann::json raw = nlohmann::json::parse(option.PayloadJson, nullptr, false);
+                return raw.is_object() && !IsSimpleOptionObject(raw);
+            });
+        if (likelyStructured) {
+            return field.IsArray ? JiraFieldFamily::StructuredMulti : JiraFieldFamily::StructuredSingle;
+        }
+        return field.IsArray ? JiraFieldFamily::SelectMulti : JiraFieldFamily::SelectSingle;
+    }
+    return JiraFieldFamily::Text;
+}
+
+std::string TrimTrailingZeros(const std::string& number) {
+    if (number.find('.') == std::string::npos) {
+        return number;
+    }
+    if (number.find('e') != std::string::npos || number.find('E') != std::string::npos) {
+        return number;
+    }
+
+    std::string out = number;
+    while (!out.empty() && out.back() == '0') {
+        out.pop_back();
+    }
+    if (!out.empty() && out.back() == '.') {
+        out.pop_back();
+    }
+    return out.empty() ? std::string("0") : out;
+}
+
+std::string MaybeFormatDateString(const std::string& value) {
+    // Keep display compact for ISO datetime values.
+    if (value.size() >= 10 && value[4] == '-' && value[7] == '-') {
+        return value.substr(0, 10);
+    }
+    return value;
+}
+
+void CollectAdfText(const nlohmann::json& node, std::vector<std::string>& out) {
+    if (!node.is_object()) {
+        return;
+    }
+
+    if (node.contains("text") && node["text"].is_string()) {
+        const std::string text = TrimCopy(node["text"].get<std::string>());
+        if (!text.empty()) {
+            out.push_back(text);
+        }
+    }
+
+    if (node.contains("content") && node["content"].is_array()) {
+        for (const auto& child : node["content"]) {
+            CollectAdfText(child, out);
+        }
+    }
+}
+
+void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out) {
+    if (node.is_array()) {
+        for (const auto& child : node) {
+            ExtractAdfTextToStream(child, out);
+        }
+        return;
+    }
+    if (!node.is_object()) {
+        return;
+    }
+
+    const std::string nodeType = JsonGetStringIfString(node, "type");
+
+    if (nodeType == "hardBreak") {
+        out << "\n";
+    }
+
+    if (node.contains("text") && node["text"].is_string()) {
+        const std::string text = node["text"].get<std::string>();
+        if (!text.empty()) {
+            out << text;
+        }
+    } else if (node.contains("attrs") && node["attrs"].is_object()) {
+        const auto& attrs = node["attrs"];
+        if (attrs.contains("text") && attrs["text"].is_string()) {
+            out << attrs["text"].get<std::string>();
+        } else if (attrs.contains("title") && attrs["title"].is_string()) {
+            out << attrs["title"].get<std::string>();
+        } else if (attrs.contains("url") && attrs["url"].is_string()) {
+            out << attrs["url"].get<std::string>();
+        } else if (attrs.contains("shortName") && attrs["shortName"].is_string()) {
+            out << attrs["shortName"].get<std::string>();
+        }
+    }
+
+    if (node.contains("content")) {
+        ExtractAdfTextToStream(node["content"], out);
+        if (nodeType == "paragraph" || nodeType == "heading" || nodeType == "listItem") {
+            out << "\n";
+        }
+    }
+}
+
+std::string FormatDateIfIso(const std::string& value) {
+    if (value.size() >= 10 && value[4] == '-' && value[7] == '-') {
+        return value.substr(0, 10);
+    }
+    return value;
+}
+
+std::string ParseCommentAuthor(const nlohmann::json& commentNode) {
+    std::string author = "Unknown";
+    if (commentNode.contains("author") && commentNode["author"].is_object()) {
+        const auto& authorObj = commentNode["author"];
+        if (authorObj.contains("displayName") && authorObj["displayName"].is_string()) {
+            author = authorObj["displayName"].get<std::string>();
+        }
+    }
+    return author;
+}
+
+void SortJiraUsersForDisplay(std::vector<JiraUser>& users) {
+    std::sort(users.begin(), users.end(), [](const JiraUser& a, const JiraUser& b) {
+        const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
+        const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
+        return std::lexicographical_compare(
+            lhs.begin(), lhs.end(), rhs.begin(), rhs.end(),
+            [](unsigned char ca, unsigned char cb) { return std::tolower(ca) < std::tolower(cb); });
+    });
+}
+
+void AppendJiraUsersFromJsonArray(const nlohmann::json& arr, std::vector<JiraUser>& outUsers) {
+    if (!arr.is_array()) {
+        return;
+    }
+    for (const auto& node : arr) {
+        if (!node.is_object()) {
+            continue;
+        }
+        JiraUser u;
+        u.AccountId = node.value("accountId", std::string());
+        u.DisplayName = node.value("displayName", std::string());
+        u.EmailAddress = node.value("emailAddress", std::string());
+        u.Active = node.value("active", true);
+        if (!u.AccountId.empty() || !u.DisplayName.empty()) {
+            outUsers.push_back(std::move(u));
+        }
+    }
+}
+
+std::string CleanCommentOutputAscii(const std::string& input) {
+    std::string cleaned;
+    cleaned.reserve(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(input[i]);
+        if (i + 2 < input.size() && c == 0xE2 && static_cast<unsigned char>(input[i + 1]) == 0x80 &&
+            static_cast<unsigned char>(input[i + 2]) == 0xA2) {
+            cleaned += "* ";
+            i += 2;
+        } else {
+            cleaned.push_back(static_cast<char>(c));
+        }
+    }
+    return cleaned;
+}
+
+std::string ParseComments(const nlohmann::json& commentsArray) {
+    const size_t kMaxComments = 20;
+    const size_t kMaxTotalLength = 12000;
+    const size_t kMaxDebugPreviewChars = 400;
+    const size_t kMaxFallbackBodyChars = 4000;
+    size_t emptyBodyDebugLogs = 0;
+
+    if (!commentsArray.is_array() || commentsArray.empty()) {
+        return std::string();
+    }
+
+    std::ostringstream result;
+    size_t totalLength = 0;
+    size_t commentCount = 0;
+
+    for (auto it = commentsArray.rbegin(); it != commentsArray.rend() && commentCount < kMaxComments; ++it) {
+        const auto& commentNode = *it;
+        if (!commentNode.is_object()) {
+            continue;
+        }
+
+        const std::string author = ParseCommentAuthor(commentNode);
+        std::string date;
+        if (commentNode.contains("created") && commentNode["created"].is_string()) {
+            date = FormatDateIfIso(commentNode["created"].get<std::string>());
+        }
+
+        std::string commentText;
+        const nlohmann::json* bodyNode = nullptr;
+        if (commentNode.contains("body")) {
+            const auto& body = commentNode["body"];
+            bodyNode = &body;
+            if (body.is_string()) {
+                commentText = body.get<std::string>();
+            } else if (body.is_object() && body.contains("content")) {
+                std::ostringstream textStream;
+                ExtractAdfTextToStream(body, textStream);
+                commentText = TrimCopy(textStream.str());
+                if (commentText.empty()) {
+                    std::vector<std::string> fallbackParts;
+                    CollectAdfText(body, fallbackParts);
+                    commentText = JoinStrings(fallbackParts, " ");
+                }
+            }
+        }
+
+        if (commentText.empty()) {
+            if (bodyNode != nullptr) {
+                std::string bodyPreview = bodyNode->dump();
+                if (bodyPreview.size() > kMaxDebugPreviewChars) {
+                    bodyPreview.resize(kMaxDebugPreviewChars);
+                }
+                if (emptyBodyDebugLogs < 3) {
+                    LOG_DEBUG("JiraClient: comment body was empty after extraction. body dump preview: %s",
+                              bodyPreview.c_str());
+                    emptyBodyDebugLogs++;
+                }
+                if (bodyPreview.size() > kMaxFallbackBodyChars) {
+                    bodyPreview.resize(kMaxFallbackBodyChars);
+                }
+            }
+            continue;
+        }
+
+        commentText = CleanCommentOutputAscii(commentText);
+
+        std::string entry = "[" + author + "] " + date + "\n" + commentText + "\n";
+
+        if (totalLength + entry.length() > kMaxTotalLength) {
+            break;
+        }
+
+        if (commentCount > 0) {
+            result << "\n";
+        }
+        result << entry;
+        totalLength += entry.length();
+        commentCount++;
+    }
+
+    return result.str();
+}
+
+std::string ParseChangelog(const nlohmann::json& histories) {
+    const size_t kMaxChangelogEntries = 60;
+    const size_t kMaxValueLength = 200;
+    const size_t kMaxRawChangelogChars = 16000;
+
+    auto safeValueString = [&](const nlohmann::json& changeItem, const char* stringKey,
+                               const char* idKey) -> std::string {
+        if (changeItem.contains(stringKey) && !changeItem[stringKey].is_null()) {
+            const auto& value = changeItem[stringKey];
+            if (value.is_string())
+                return value.get<std::string>();
+            if (value.is_number_integer())
+                return std::to_string(value.get<long long>());
+            if (value.is_number_unsigned())
+                return std::to_string(value.get<unsigned long long>());
+            if (value.is_number_float()) {
+                std::ostringstream oss;
+                oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+                return TrimTrailingZeros(oss.str());
+            }
+            if (value.is_boolean())
+                return value.get<bool>() ? "true" : "false";
+            if (value.is_object() || value.is_array())
+                return value.dump();
+        }
+
+        if (changeItem.contains(idKey) && !changeItem[idKey].is_null()) {
+            const auto& value = changeItem[idKey];
+            if (value.is_string())
+                return value.get<std::string>();
+            if (value.is_number_integer())
+                return std::to_string(value.get<long long>());
+            if (value.is_number_unsigned())
+                return std::to_string(value.get<unsigned long long>());
+            if (value.is_number_float()) {
+                std::ostringstream oss;
+                oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+                return TrimTrailingZeros(oss.str());
+            }
+        }
+
+        return std::string();
+    };
+
+    if (!histories.is_array() || histories.empty()) {
+        return std::string();
+    }
+
+    std::ostringstream formatted;
+    size_t entryCount = 0;
+
+    for (auto it = histories.begin(); it != histories.end() && entryCount < kMaxChangelogEntries; ++it) {
+        const auto& history = *it;
+        if (!history.is_object()) {
+            continue;
+        }
+
+        std::string author = "Unknown";
+        if (history.contains("author") && history["author"].is_object()) {
+            const auto& authorObj = history["author"];
+            if (authorObj.contains("displayName") && authorObj["displayName"].is_string()) {
+                author = authorObj["displayName"].get<std::string>();
+            }
+        }
+
+        std::string created;
+        if (history.contains("created") && history["created"].is_string()) {
+            created = MaybeFormatDateString(history["created"].get<std::string>());
+        }
+
+        if (!history.contains("items") || !history["items"].is_array()) {
+            continue;
+        }
+        const auto& items = history["items"];
+
+        for (const auto& changeItem : items) {
+            if (!changeItem.is_object()) {
+                continue;
+            }
+            std::string fieldName;
+            if (changeItem.contains("field") && !changeItem["field"].is_null()) {
+                const auto& f = changeItem["field"];
+                fieldName = f.is_string() ? f.get<std::string>() : f.dump();
+            }
+
+            std::string fromValue = safeValueString(changeItem, "fromString", "from");
+            std::string toValue = safeValueString(changeItem, "toString", "to");
+
+            if (fromValue.size() > kMaxValueLength) {
+                fromValue.resize(kMaxValueLength);
+                fromValue += "...";
+            }
+            if (toValue.size() > kMaxValueLength) {
+                toValue.resize(kMaxValueLength);
+                toValue += "...";
+            }
+
+            if (entryCount > 0) {
+                formatted << "\n";
+            }
+            formatted << "[" << author << "] " << created << "\n"
+                      << fieldName << ": " << fromValue << " -> " << toValue << "\n";
+            entryCount++;
+
+            if (entryCount >= kMaxChangelogEntries) {
+                break;
+            }
+        }
+    }
+
+    if (entryCount >= kMaxChangelogEntries) {
+        formatted << "\n[... truncated ...]\n";
+    }
+
+    if (!formatted.str().empty()) {
+        return formatted.str();
+    }
+
+    if (histories.is_array() && !histories.empty()) {
+        std::string raw = histories.dump();
+        if (raw.size() > kMaxRawChangelogChars) {
+            raw.resize(kMaxRawChangelogChars);
+            raw += "...";
+        }
+        return raw;
+    }
+
+    return std::string();
+}
+
+long long ParseWorkDurationToSeconds(const std::string& input) {
+    std::string s = TrimCopy(input);
+    if (s.empty()) {
+        return 0;
+    }
+
+    // Support a plain number (seconds).
+    bool allDigits = true;
+    for (char ch : s) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            allDigits = false;
+            break;
+        }
+    }
+    if (allDigits) {
+        try {
+            return std::stoll(s);
+        } catch (const std::exception& ex) {
+            LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds overflow/invalid value=%s err=%s", s.c_str(), ex.what());
+        } catch (...) {
+            LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds unknown parse failure value=%s", s.c_str());
+        }
+    }
+
+    size_t pos = 0;
+    long long total = 0;
+    while (pos < s.size()) {
+        while (pos < s.size() && s[pos] == ' ')
+            pos++;
+        if (pos >= s.size())
+            break;
+
+        long long number = 0;
+        if (std::isdigit(static_cast<unsigned char>(s[pos]))) {
+            size_t start = pos;
+            while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos])))
+                pos++;
+            try {
+                number = std::stoll(s.substr(start, pos - start));
+            } catch (const std::exception& ex) {
+                LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds token parse failure value=%s err=%s", s.c_str(),
+                          ex.what());
+                break;
+            } catch (...) {
+                LOG_DEBUG("JiraClient: ParseWorkDurationToSeconds token parse unknown failure value=%s", s.c_str());
+                break;
+            }
+        } else {
+            break;
+        }
+
+        if (pos >= s.size())
+            break;
+        char u = s[pos++];
+        if (u == 'w' || u == 'W') {
+            total += number * 5 * 8 * 60 * 60;
+        } else if (u == 'd' || u == 'D') {
+            total += number * 8 * 60 * 60;
+        } else if (u == 'h' || u == 'H') {
+            total += number * 60 * 60;
+        } else if (u == 'm' || u == 'M') {
+            total += number * 60;
+        } else {
+            break;
+        }
+    }
+    return total;
+}
+
+bool JsonLooksLikeJiraTimetracking(const nlohmann::json& o) {
+    if (!o.is_object()) {
+        return false;
+    }
+    static const char* keys[] = {"originalEstimate",  "originalEstimateSeconds",
+                                 "remainingEstimate", "remainingEstimateSeconds",
+                                 "timeSpent",         "timeSpentSeconds"};
+    for (const char* k : keys) {
+        if (o.contains(k)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Jira returns timetracking as an object with human strings and parallel *Seconds fields.
+std::string FormatJiraTimetrackingDisplay(const nlohmann::json& o) {
+    if (!o.is_object()) {
+        return o.dump();
+    }
+
+    auto scalar = [&](const char* strKey, const char* secKey) -> std::string {
+        if (o.contains(strKey) && o[strKey].is_string()) {
+            std::string s = TrimCopy(o[strKey].get<std::string>());
+            if (!s.empty()) {
+                return s;
+            }
+        }
+        if (!o.contains(secKey) || o[secKey].is_null()) {
+            return {};
+        }
+        long long sec = 0;
+        if (o[secKey].is_number_integer()) {
+            sec = o[secKey].get<long long>();
+        } else if (o[secKey].is_number_unsigned()) {
+            sec = static_cast<long long>(o[secKey].get<unsigned long long>());
+        } else {
+            return {};
+        }
+        return FormatWorkDurationFromSeconds(sec);
+    };
+
+    std::vector<std::string> bits;
+    const std::string orig = scalar("originalEstimate", "originalEstimateSeconds");
+    if (!orig.empty()) {
+        bits.push_back("Original estimate " + orig);
+    }
+    const std::string spent = scalar("timeSpent", "timeSpentSeconds");
+    if (!spent.empty()) {
+        bits.push_back("Spent " + spent);
+    }
+    const std::string rem = scalar("remainingEstimate", "remainingEstimateSeconds");
+    if (!rem.empty()) {
+        bits.push_back("Remaining " + rem);
+    }
+    if (!bits.empty()) {
+        return JoinStrings(bits, " | ");
+    }
+    // Empty {} or object with no usable estimates/spent (show blank cell, not "{}" or raw JSON).
+    return {};
+}
+
+std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
+    if (value.is_null()) {
+        return std::string();
+    }
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    if (value.is_number_float()) {
+        std::ostringstream oss;
+        oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+        return TrimTrailingZeros(oss.str());
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    if (value.is_object()) {
+        if (value.contains("comments") && value["comments"].is_array()) {
+            return ParseComments(value["comments"]);
+        }
+        const auto typeIt = value.find("type");
+        const bool isDoc =
+            typeIt != value.end() && typeIt->is_string() && typeIt->get_ref<const std::string&>() == "doc";
+        if (isDoc && value.contains("content") && value["content"].is_array()) {
+            std::ostringstream out;
+            ExtractAdfTextToStream(value, out);
+            return TrimCopy(out.str());
+        }
+
+        if (value.contains("key") && value["key"].is_string()) {
+            std::string parentKey = value["key"].get<std::string>();
+            std::string parentSummary;
+            if (value.contains("fields") && value["fields"].is_object()) {
+                const auto& parentFields = value["fields"];
+                if (parentFields.contains("summary") && parentFields["summary"].is_string()) {
+                    parentSummary = parentFields["summary"].get<std::string>();
+                }
+            }
+            if (!parentKey.empty() && !parentSummary.empty()) {
+                return parentKey + " - " + parentSummary;
+            }
+            if (!parentKey.empty()) {
+                return parentKey;
+            }
+            if (!parentSummary.empty()) {
+                return parentSummary;
+            }
+        }
+
+        if (value.contains("accountId") && value["accountId"].is_string()) {
+            std::string displayName;
+            if (value.contains("displayName") && value["displayName"].is_string()) {
+                displayName = value["displayName"].get<std::string>();
+            }
+            return displayName.empty() ? value["accountId"].get<std::string>() : displayName;
+        }
+        if (value.contains("displayName") && value["displayName"].is_string()) {
+            const std::string dn = value["displayName"].get<std::string>();
+            if (!dn.empty()) {
+                return dn;
+            }
+        }
+        if (value.contains("value") && value["value"].is_string() && value.contains("child") &&
+            value["child"].is_object()) {
+            const std::string parentValue = value["value"].get<std::string>();
+            const std::string childValue = BuildJiraOptionDisplayValue(value["child"]);
+            if (!parentValue.empty() && !childValue.empty()) {
+                return parentValue + " > " + childValue;
+            }
+        }
+        if (value.contains("value") && value["value"].is_string()) {
+            const std::string vv = value["value"].get<std::string>();
+            if (!vv.empty()) {
+                return vv;
+            }
+        }
+        if (value.contains("name") && value["name"].is_string()) {
+            const std::string nm = value["name"].get<std::string>();
+            if (!nm.empty()) {
+                return nm;
+            }
+        }
+        if (value.contains("id")) {
+            if (value["id"].is_string()) {
+                const std::string sid = value["id"].get<std::string>();
+                if (!sid.empty()) {
+                    return sid;
+                }
+            } else if (value["id"].is_number_integer()) {
+                return std::to_string(value["id"].get<long long>());
+            } else if (value["id"].is_number_unsigned()) {
+                return std::to_string(value["id"].get<unsigned long long>());
+            }
+        }
+        if (JsonLooksLikeJiraTimetracking(value)) {
+            return FormatJiraTimetrackingDisplay(value);
+        }
+        return value.dump();
+    }
+    if (value.is_array()) {
+        std::vector<std::string> parts;
+        for (const auto& item : value) {
+            const std::string normalized = NormalizeJiraFieldValue(item);
+            if (!normalized.empty()) {
+                parts.push_back(normalized);
+            }
+        }
+        return JoinStrings(parts, ", ");
+    }
+    return value.dump();
+}
+std::string FormatWorkDurationFromSeconds(long long seconds) {
+    if (seconds <= 0) {
+        return std::string();
+    }
+
+    const long long minutesTotal = seconds / 60;
+    const long long minutes = minutesTotal % 60;
+    const long long hoursTotal = minutesTotal / 60;
+    const long long hours = hoursTotal % 8;
+    const long long daysTotal = hoursTotal / 8;
+    const long long days = daysTotal % 5;
+    const long long weeks = daysTotal / 5;
+
+    std::string out;
+    if (weeks > 0) {
+        out += std::to_string(weeks) + "w ";
+    }
+    if (days > 0) {
+        out += std::to_string(days) + "d ";
+    }
+    if (hours > 0 || out.empty()) {
+        out += std::to_string(hours) + "h ";
+    }
+    if (minutes > 0) {
+        out += std::to_string(minutes) + "m";
+    }
+    size_t start = 0;
+    size_t end = out.size();
+    while (start < end && (out[start] == ' ' || out[start] == '\t' || out[start] == '\n' || out[start] == '\r')) {
+        ++start;
+    }
+    while (end > start &&
+           (out[end - 1] == ' ' || out[end - 1] == '\t' || out[end - 1] == '\n' || out[end - 1] == '\r')) {
+        --end;
+    }
+    return out.substr(start, end - start);
+}

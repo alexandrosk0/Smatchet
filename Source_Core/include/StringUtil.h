@@ -19,14 +19,10 @@ inline std::string TrimCopyAsciiWhitespace(const std::string& input) {
     return input.substr(start, end - start);
 }
 
-inline std::string TrimCopy(const std::string& input) {
-    return TrimCopyAsciiWhitespace(input);
-}
+inline std::string TrimCopy(const std::string& input) { return TrimCopyAsciiWhitespace(input); }
 
 inline std::string ToLowerAsciiCopy(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 

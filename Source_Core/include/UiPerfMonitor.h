@@ -20,7 +20,7 @@ struct UiPerfRow {
 };
 
 class UiPerfMonitor {
-public:
+  public:
     static UiPerfMonitor& Instance();
 
     void BeginFrame();
@@ -29,7 +29,7 @@ public:
 
     std::vector<UiPerfRow> GetLastFrameRows() const;
 
-private:
+  private:
     UiPerfMonitor() = default;
 
     struct Agg {
@@ -47,14 +47,14 @@ private:
 
 // name == nullptr: no timing recorded (cheap no-op; use for conditional scopes).
 class UiPerfScope {
-public:
+  public:
     explicit UiPerfScope(const char* name);
     ~UiPerfScope();
 
     UiPerfScope(const UiPerfScope&) = delete;
     UiPerfScope& operator=(const UiPerfScope&) = delete;
 
-private:
+  private:
     const char* name_;
     std::chrono::steady_clock::time_point t0_;
 };

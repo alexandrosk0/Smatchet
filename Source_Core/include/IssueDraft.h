@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "LocalCacheManager.h"
-#include "JiraClient.h"
+#include "TrackerFieldSchema.h"
 
 struct StagedAttachment {
     std::string AbsPath;
@@ -23,9 +23,9 @@ struct StagedAttachment {
  */
 struct IssueDraft {
     std::string ProjectKey;
-    std::string IssueTypeId;     // numeric Jira id when known
-    std::string IssueTypeName;   // display name (used as fallback when id unknown)
-    std::string ParentKey;       // PROJ-123 for subtask parent; empty otherwise
+    std::string IssueTypeId;   // numeric Jira id when known
+    std::string IssueTypeName; // display name (used as fallback when id unknown)
+    std::string ParentKey;     // PROJ-123 for subtask parent; empty otherwise
     /** When set (e.g. bulk import "key" column), pipeline updates this issue instead of creating. */
     std::string ExistingIssueKey;
     std::unordered_map<std::string, std::string> FieldValues;
@@ -62,28 +62,23 @@ bool IsSpecialDraftFieldId(const std::string& fieldId);
  * When `ticket.id` is empty (no last row), returns a draft seeded with the
  * fallback project key and issue type only.
  */
-IssueDraft FromCachedTicket(const CachedTicket& ticket,
-                            const std::vector<JiraField>& catalog,
-                            const std::string& fallbackProjectKey,
-                            const std::string& fallbackIssueTypeId,
-                            const std::string& fallbackIssueTypeName,
-                            const std::vector<std::string>& inheritFieldIds);
+IssueDraft FromCachedTicket(const CachedTicket& ticket, const std::vector<TrackerField>& catalog,
+                            const std::string& fallbackProjectKey, const std::string& fallbackIssueTypeId,
+                            const std::string& fallbackIssueTypeName, const std::vector<std::string>& inheritFieldIds);
 
 /**
  * Resolve the Jira issue type id for a ticket using the catalog's allowed
  * options (CachedTicket stores the display name).
  */
-std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket,
-                                          const std::vector<JiraField>& catalog,
-                                          std::string* outName = nullptr);
+std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket, const std::vector<TrackerField>& catalog,
+                                         std::string* outName = nullptr);
 
 /**
  * Returns ids of required fields that are empty / missing in the draft.
  * Always includes the hard minimum (projectKey / issueTypeId / summary) when
  * they are empty, even if `required` is empty.
  */
-std::vector<std::string> MissingRequiredFields(const IssueDraft& draft,
-                                                const RequiredFieldSet& required);
+std::vector<std::string> MissingRequiredFields(const IssueDraft& draft, const RequiredFieldSet& required);
 
 /** JSON (de)serialization for the offline queue + JSON bulk import. */
 std::string ToJson(const IssueDraft& draft);
@@ -92,8 +87,8 @@ bool FromJson(const std::string& json, IssueDraft& outDraft, std::string& outErr
 /** Per-field diff between a draft and an existing cached ticket (for update preview). */
 struct FieldChange {
     std::string FieldId;
-    std::string OldValue;   // value from `existing`
-    std::string NewValue;   // value from `draft`
+    std::string OldValue; // value from `existing`
+    std::string NewValue; // value from `draft`
 };
 
 /**
@@ -102,8 +97,7 @@ struct FieldChange {
  * "issuetype" when they were set on the draft and differ. Empty draft values
  * that match empty cached values are not reported.
  */
-std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft,
-                                             const CachedTicket& existing);
+std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft, const CachedTicket& existing);
 
 /**
  * Strip draft fields whose value matches `existing` (see ComputeFieldChanges).

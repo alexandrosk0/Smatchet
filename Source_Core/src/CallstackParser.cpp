@@ -16,8 +16,7 @@ std::string Trim(std::string s) {
     return s;
 }
 
-void TryExtractUnrealOrModuleFunctionPrefix(const std::string& line,
-                                            const std::string& path,
+void TryExtractUnrealOrModuleFunctionPrefix(const std::string& line, const std::string& path,
                                             std::string& outFunction) {
     if (path.empty() || !outFunction.empty()) {
         return;
@@ -48,10 +47,7 @@ void TryExtractUnrealOrModuleFunctionPrefix(const std::string& line,
     }
 }
 
-bool TryParsePathLinePair(const std::string& line,
-                          std::string& outPath,
-                          int& outLine,
-                          std::string& outFunction) {
+bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& outLine, std::string& outFunction) {
     outPath.clear();
     outLine = 0;
     outFunction.clear();
@@ -109,9 +105,8 @@ bool TryParsePathLinePair(const std::string& line,
 
     // Unreal-style: [File:Line] or File:Line in brackets
     {
-        static const std::regex re(
-            R"(\[?\s*([A-Za-z]:[^\]\r\n]+|(?:/|\S[/\\])[^\]\r\n]+):(\d+)\s*\]?)",
-            std::regex::icase);
+        static const std::regex re(R"(\[?\s*([A-Za-z]:[^\]\r\n]+|(?:/|\S[/\\])[^\]\r\n]+):(\d+)\s*\]?)",
+                                   std::regex::icase);
         std::smatch m;
         if (std::regex_search(line, m, re)) {
             std::string p = Trim(m[1].str());
@@ -159,9 +154,8 @@ bool FrameMatchesIgnoreKeywords(const ParsedCallstackFrame& frame, const std::ve
             continue;
         }
         auto lower = [](std::string s) {
-            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return s;
         };
         const std::string needle = lower(kw);

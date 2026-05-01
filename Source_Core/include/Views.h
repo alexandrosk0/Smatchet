@@ -7,7 +7,7 @@
 #include "ConfigManager.h"
 
 class Views {
-public:
+  public:
     void EnsureLoaded(const JiraConfig& cfg) {
         if (Loaded) {
             return;
@@ -41,10 +41,8 @@ public:
     }
 
     bool Activate(const std::string& viewId) {
-        auto it = std::find_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == viewId; });
+        auto it = std::find_if(Store.Views.begin(), Store.Views.end(),
+                               [&](const ViewDefinition& v) { return v.Id == viewId; });
         if (it == Store.Views.end()) {
             return false;
         }
@@ -95,10 +93,8 @@ public:
         if (Store.Views.size() <= 1) {
             return false;
         }
-        auto it = std::remove_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == Store.ActiveViewId; });
+        auto it = std::remove_if(Store.Views.begin(), Store.Views.end(),
+                                 [&](const ViewDefinition& v) { return v.Id == Store.ActiveViewId; });
         if (it == Store.Views.end()) {
             return false;
         }
@@ -112,11 +108,9 @@ public:
         return true;
     }
 
-    void Save() {
-        ConfigManager::SaveViews(Store);
-    }
+    void Save() { ConfigManager::SaveViews(Store); }
 
-private:
+  private:
     static std::string BuildIdFromName(const std::string& name) {
         std::string id;
         id.reserve(name.size());
@@ -134,10 +128,8 @@ private:
     }
 
     bool Exists(const std::string& id) const {
-        return std::find_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == id; }) != Store.Views.end();
+        return std::find_if(Store.Views.begin(), Store.Views.end(),
+                            [&](const ViewDefinition& v) { return v.Id == id; }) != Store.Views.end();
     }
 
     std::string BuildUniqueId(const std::string& base) const {
@@ -149,7 +141,7 @@ private:
         return candidate;
     }
 
-private:
+  private:
     bool Loaded = false;
     ViewsStore Store;
 };

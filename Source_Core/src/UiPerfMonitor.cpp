@@ -54,7 +54,7 @@ void UiPerfMonitor::BeginFrame() {
     }
 
     std::sort(lastFrame_.begin(), lastFrame_.end(),
-        [](const UiPerfRow& a, const UiPerfRow& b) { return a.lastTotalMs > b.lastTotalMs; });
+              [](const UiPerfRow& a, const UiPerfRow& b) { return a.lastTotalMs > b.lastTotalMs; });
 }
 
 void UiPerfMonitor::Record(const char* name, std::chrono::nanoseconds duration) {
@@ -80,14 +80,12 @@ std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows() const {
 }
 
 UiPerfScope::UiPerfScope(const char* name)
-    : name_(name)
-    , t0_(name ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
+    : name_(name), t0_(name ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
 
 UiPerfScope::~UiPerfScope() {
     if (!name_) {
         return;
     }
-    const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - t0_);
+    const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0_);
     UiPerfMonitor::Instance().Record(name_, dt);
 }

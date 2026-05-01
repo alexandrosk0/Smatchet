@@ -9,9 +9,16 @@
 #include "Layout/WidgetPath.h"
 #include "Logging/LogMacros.h"
 #include "Math/UnrealMathUtility.h"
+#include "Misc/Paths.h"
 #include "Slate/SceneViewport.h"
 #include "SmatchetImGuiHostC.h"
 #include "Widgets/SWindow.h"
+#include "HAL/Platform.h"
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 #include "imgui.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiInputProcessor, Log, All);
@@ -46,11 +53,9 @@ FVector2f MapPointerToClientLocal(FSlateApplication& SlateApp, const FPointerEve
             return FVector2f(ScreenPos.X - ClientRect.Left, ScreenPos.Y - ClientRect.Top);
         }
     }
-    const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(
-        ScreenPos,
-        SlateApp.GetInteractiveTopLevelWindows(),
-        /*bIgnoreEnabledStatus=*/true,
-        static_cast<int32>(MouseEvent.GetUserIndex()));
+    const FWidgetPath Path =
+        SlateApp.LocateWindowUnderMouse(ScreenPos, SlateApp.GetInteractiveTopLevelWindows(),
+                                        /*bIgnoreEnabledStatus=*/true, static_cast<int32>(MouseEvent.GetUserIndex()));
     if (!Path.IsValid()) {
         return ScreenPos;
     }
@@ -60,9 +65,7 @@ FVector2f MapPointerToClientLocal(FSlateApplication& SlateApp, const FPointerEve
 
 } // namespace
 
-FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost)
-    : Host(InHost) {
-}
+FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost) : Host(InHost) {}
 
 void FSmatchetImGuiInputProcessor::EnsureTooltipsRestored() {
     ResetMouseCoordMapping();
@@ -194,8 +197,8 @@ void FSmatchetImGuiInputProcessor::Tick(const float, FSlateApplication& SlateApp
             const FGeometry& Geo = SceneViewport->GetCachedGeometry();
             const FVector2D TopLeft = Geo.GetAbsolutePosition();
             const FVector2D Size = Geo.GetAbsoluteSize();
-            if (MousePos.X >= TopLeft.X && MousePos.Y >= TopLeft.Y &&
-                MousePos.X < TopLeft.X + Size.X && MousePos.Y < TopLeft.Y + Size.Y) {
+            if (MousePos.X >= TopLeft.X && MousePos.Y >= TopLeft.Y && MousePos.X < TopLeft.X + Size.X &&
+                MousePos.Y < TopLeft.Y + Size.Y) {
                 if (PointerOverSlateViewportId == 0) {
                     PointerOverSlateViewportId =
                         reinterpret_cast<std::uintptr_t>(static_cast<ISlateViewport*>(SceneViewport));
@@ -218,10 +221,8 @@ bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateAp
         !InKeyEvent.IsShiftDown() && !InKeyEvent.IsRepeat()) {
         const bool bNext = !SmatchetHost_GetSuppressSoftwareCursor(Host);
         SmatchetHost_SetSuppressSoftwareCursor(Host, bNext);
-        UE_LOG(LogSmatchetImGuiInputProcessor,
-            Log,
-            TEXT("Hotkey Ctrl+Alt+J toggled software cursor suppression. Suppress=%d"),
-            bNext ? 1 : 0);
+        UE_LOG(LogSmatchetImGuiInputProcessor, Log,
+               TEXT("Hotkey Ctrl+Alt+J toggled software cursor suppression. Suppress=%d"), bNext ? 1 : 0);
         return true;
     }
 
@@ -231,11 +232,8 @@ bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateAp
         !InKeyEvent.IsAltDown() && !InKeyEvent.IsRepeat()) {
         SmatchetHost_ToggleUiVisible(Host);
         SyncSlateTooltipPolicy(SlateApp);
-        UE_LOG(LogSmatchetImGuiInputProcessor,
-            Log,
-            TEXT("Hotkey Ctrl+Shift+J toggled UI. UiVisible=%d Initialized=%d"),
-            SmatchetHost_IsUiVisible(Host) ? 1 : 0,
-            SmatchetHost_IsInitialized(Host) ? 1 : 0);
+        UE_LOG(LogSmatchetImGuiInputProcessor, Log, TEXT("Hotkey Ctrl+Shift+J toggled UI. UiVisible=%d Initialized=%d"),
+               SmatchetHost_IsUiVisible(Host) ? 1 : 0, SmatchetHost_IsInitialized(Host) ? 1 : 0);
         return true;
     }
 
@@ -295,7 +293,8 @@ bool FSmatchetImGuiInputProcessor::HandleMouseMoveEvent(FSlateApplication& Slate
     return true;
 }
 
-bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) {
+bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication& SlateApp,
+                                                              const FPointerEvent& MouseEvent) {
     if (!Host) {
         return false;
     }
@@ -309,10 +308,8 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
         if (GSmatchetMouseButtonSessionDepth == 0) {
             const FVector2f ScreenPos(MouseEvent.GetScreenSpacePosition());
             const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(
-                ScreenPos,
-                SlateApp.GetInteractiveTopLevelWindows(),
-                /*bIgnoreEnabledStatus=*/true,
-                static_cast<int32>(MouseEvent.GetUserIndex()));
+                ScreenPos, SlateApp.GetInteractiveTopLevelWindows(),
+                /*bIgnoreEnabledStatus=*/true, static_cast<int32>(MouseEvent.GetUserIndex()));
             if (Path.IsValid()) {
                 GSmatchetMouseCoordWindow = Path.GetWindow();
             } else {
@@ -324,15 +321,18 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDownEvent(FSlateApplication&
 
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    // Apply modifier keys before mouse button so ImGui io.KeyCtrl/io.KeyShift match this click
+    // (was: button first → io still stale until PushModifierState; grid + widgets read wrong branch).
+    PushModifierState(MouseEvent);
 
     if (Button >= 0) {
         SmatchetHost_SetMouseButton(Host, Button, true);
     }
-    PushModifierState(MouseEvent);
     return true;
 }
 
-bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) {
+bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& SlateApp,
+                                                            const FPointerEvent& MouseEvent) {
     if (!Host) {
         return false;
     }
@@ -343,6 +343,7 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& S
 
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    PushModifierState(MouseEvent);
 
     const int32 Button = ToImGuiMouseButton(MouseEvent);
     if (Button >= 0) {
@@ -352,11 +353,11 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonUpEvent(FSlateApplication& S
             GSmatchetMouseCoordWindow.Reset();
         }
     }
-    PushModifierState(MouseEvent);
     return true;
 }
 
-bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) {
+bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApp,
+                                                                     const FPointerEvent& MouseEvent) {
     if (!Host) {
         return false;
     }
@@ -367,6 +368,7 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateAppli
 
     const FVector2f P = MapPointerToClientLocal(SlateApp, MouseEvent);
     SmatchetHost_SetMousePosition(Host, P.X, P.Y);
+    PushModifierState(MouseEvent);
 
     // Slate routes double-clicks through a separate path from MouseButtonDown. If we do not
     // handle it here, the event reaches editor widgets (asset opens, play bar, etc.) even
@@ -375,14 +377,12 @@ bool FSmatchetImGuiInputProcessor::HandleMouseButtonDoubleClickEvent(FSlateAppli
     if (Button >= 0) {
         SmatchetHost_SetMouseButton(Host, Button, true);
     }
-    PushModifierState(MouseEvent);
     return true;
 }
 
-bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(
-    FSlateApplication& SlateApp,
-    const FPointerEvent& InWheelEvent,
-    const FPointerEvent*) {
+bool FSmatchetImGuiInputProcessor::HandleMouseWheelOrGestureEvent(FSlateApplication& SlateApp,
+                                                                  const FPointerEvent& InWheelEvent,
+                                                                  const FPointerEvent*) {
     if (!Host) {
         return false;
     }
@@ -425,28 +425,49 @@ int32 FSmatchetImGuiInputProcessor::ToImGuiMouseButton(const FPointerEvent& Mous
 int32 FSmatchetImGuiInputProcessor::ToImGuiKey(const FKeyEvent& InKeyEvent) const {
     const FKey Key = InKeyEvent.GetKey();
 
-    if (Key == EKeys::Tab) return ImGuiKey_Tab;
-    if (Key == EKeys::Left) return ImGuiKey_LeftArrow;
-    if (Key == EKeys::Right) return ImGuiKey_RightArrow;
-    if (Key == EKeys::Up) return ImGuiKey_UpArrow;
-    if (Key == EKeys::Down) return ImGuiKey_DownArrow;
-    if (Key == EKeys::PageUp) return ImGuiKey_PageUp;
-    if (Key == EKeys::PageDown) return ImGuiKey_PageDown;
-    if (Key == EKeys::Home) return ImGuiKey_Home;
-    if (Key == EKeys::End) return ImGuiKey_End;
-    if (Key == EKeys::Insert) return ImGuiKey_Insert;
-    if (Key == EKeys::Delete) return ImGuiKey_Delete;
-    if (Key == EKeys::BackSpace) return ImGuiKey_Backspace;
-    if (Key == EKeys::SpaceBar) return ImGuiKey_Space;
-    if (Key == EKeys::Enter) return ImGuiKey_Enter;
-    if (Key == EKeys::Escape) return ImGuiKey_Escape;
+    if (Key == EKeys::Tab)
+        return ImGuiKey_Tab;
+    if (Key == EKeys::Left)
+        return ImGuiKey_LeftArrow;
+    if (Key == EKeys::Right)
+        return ImGuiKey_RightArrow;
+    if (Key == EKeys::Up)
+        return ImGuiKey_UpArrow;
+    if (Key == EKeys::Down)
+        return ImGuiKey_DownArrow;
+    if (Key == EKeys::PageUp)
+        return ImGuiKey_PageUp;
+    if (Key == EKeys::PageDown)
+        return ImGuiKey_PageDown;
+    if (Key == EKeys::Home)
+        return ImGuiKey_Home;
+    if (Key == EKeys::End)
+        return ImGuiKey_End;
+    if (Key == EKeys::Insert)
+        return ImGuiKey_Insert;
+    if (Key == EKeys::Delete)
+        return ImGuiKey_Delete;
+    if (Key == EKeys::BackSpace)
+        return ImGuiKey_Backspace;
+    if (Key == EKeys::SpaceBar)
+        return ImGuiKey_Space;
+    if (Key == EKeys::Enter)
+        return ImGuiKey_Enter;
+    if (Key == EKeys::Escape)
+        return ImGuiKey_Escape;
 
-    if (Key == EKeys::A) return ImGuiKey_A;
-    if (Key == EKeys::C) return ImGuiKey_C;
-    if (Key == EKeys::V) return ImGuiKey_V;
-    if (Key == EKeys::X) return ImGuiKey_X;
-    if (Key == EKeys::Y) return ImGuiKey_Y;
-    if (Key == EKeys::Z) return ImGuiKey_Z;
+    if (Key == EKeys::A)
+        return ImGuiKey_A;
+    if (Key == EKeys::C)
+        return ImGuiKey_C;
+    if (Key == EKeys::V)
+        return ImGuiKey_V;
+    if (Key == EKeys::X)
+        return ImGuiKey_X;
+    if (Key == EKeys::Y)
+        return ImGuiKey_Y;
+    if (Key == EKeys::Z)
+        return ImGuiKey_Z;
 
     return -1;
 }
@@ -455,9 +476,19 @@ void FSmatchetImGuiInputProcessor::PushModifierState(const FInputEvent& InputEve
     if (!Host) {
         return;
     }
-    SmatchetHost_SetKeyModifiers(Host,
-                                  InputEvent.IsControlDown(),
-                                  InputEvent.IsShiftDown(),
-                                  InputEvent.IsAltDown(),
-                                  InputEvent.IsCommandDown());
+    const FModifierKeysState Mods = FSlateApplication::Get().GetModifierKeys();
+#if PLATFORM_WINDOWS
+    const bool asyncCtrl =
+        ((::GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0);
+    const bool asyncShift =
+        ((::GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0);
+#else
+    const bool asyncCtrl = false;
+    const bool asyncShift = false;
+#endif
+    const bool ctrl = InputEvent.IsControlDown() || Mods.IsControlDown() || asyncCtrl;
+    const bool shift = InputEvent.IsShiftDown() || Mods.IsShiftDown() || asyncShift;
+    const bool alt = InputEvent.IsAltDown() || Mods.IsAltDown();
+    const bool superKey = InputEvent.IsCommandDown() || Mods.IsCommandDown();
+    SmatchetHost_SetKeyModifiers(Host, ctrl, shift, alt, superKey);
 }
