@@ -122,9 +122,7 @@ static char g_callstackJiraFieldBuf[260]{};
 static std::string s_lastCallstackIssueKey;
 
 template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
-    if (N == 0) {
-        return;
-    }
+    static_assert(N > 0, "CopyToBuffer requires a non-empty char array");
     std::memset(dst, 0, N);
     const size_t cap = N - 1;
     const size_t n = (std::min)(src.size(), cap);

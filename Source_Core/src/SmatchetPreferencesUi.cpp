@@ -27,9 +27,7 @@ std::string JoinCsv(const std::vector<std::string>& values) {
 }
 
 template <size_t N> void CopyStringToBuffer(char (&dst)[N], const std::string& str) {
-    if (N == 0) {
-        return;
-    }
+    static_assert(N > 0, "CopyStringToBuffer requires a non-empty char array");
     std::memset(dst, 0, N);
     const size_t cap = N - 1;
     const size_t n = (std::min)(str.size(), cap);
