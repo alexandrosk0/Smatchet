@@ -9,9 +9,15 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#if defined(SMATCHET_WITH_MCP)
+#include "PluginHost.h"
+#endif
 
 namespace {
 
@@ -73,6 +79,7 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     if (!d.showPreferences) {
         d.preferencesBuffersLoaded = false;
+        d.mcpPrefsSavedHintUntil = {};
         return;
     }
 
@@ -165,7 +172,40 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::SetItemTooltip("If set, clients must send header X-Smatchet-Token with this value. If empty and "
                                   "bind is localhost-only, "
                                   "only loopback clients may connect.");
-            ImGui::TextDisabled("Changes apply on next host initialization or restart.");
+            {
+                const std::string tokenBufStr(d.mcpAuthTokenBuf);
+                const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||
+                                     (d.mcpAllowRemote != d.cfg.McpAllowRemote) || (tokenBufStr != d.cfg.McpAuthToken);
+                if (dirty) {
+                    d.cfg.McpEnabled = d.mcpEnabled;
+                    d.cfg.McpPort = d.mcpPort;
+                    d.cfg.McpAllowRemote = d.mcpAllowRemote;
+                    d.cfg.McpAuthToken = tokenBufStr;
+                    ConfigManager::Save(d.cfg);
+                    LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)", static_cast<int>(d.cfg.McpEnabled),
+                             d.cfg.McpPort);
+                    app.AppendMcpActivity("MCP: Integrations saved settings to disk; syncing plugin host.");
+                    ::PluginHost* ph = app.RuntimePluginHost();
+                    if (ph != nullptr) {
+                        ph->SyncMcpPluginWithConfig(app, d.cfg);
+                    } else {
+                        app.AppendMcpActivity("MCP: no runtime plugin host — restart app to load MCP plugin.");
+                    }
+                    d.mcpPrefsSavedHintUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+                }
+            }
+            if (std::chrono::steady_clock::now() < d.mcpPrefsSavedHintUntil) {
+                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "MCP settings saved to disk.");
+                if (app.RuntimePluginHost() != nullptr) {
+                    ImGui::TextColored(ImVec4(0.55f, 0.78f, 1.0f, 1.0f),
+                                        "MCP server start/stop applied for this session (standalone / embedded host).");
+                }
+            }
+            ImGui::TextDisabled(
+                "MCP settings save when changed. With a running app host, the MCP server starts or stops immediately; "
+                "otherwise restart the app once.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Runtime status, endpoints, and action log: Scripts → MCP Server… (separate window).");
             ImGui::EndTabItem();
         }
 #endif
@@ -254,7 +294,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Separator();
     ImGui::TextWrapped(
         "Save & Sync writes the Jira tab (and optional Assistant / Integrations tabs when enabled in this build) to "
-        "disk and refreshes the Jira connection. "
+        "disk and refreshes the Jira connection. MCP runtime status: Scripts → MCP Server…. "
         "Appearance and Diagnostics options save immediately when changed. The Blame Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
@@ -289,6 +329,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 #endif
 
         ConfigManager::Save(d.cfg);
+#if defined(SMATCHET_WITH_MCP)
+        app.AppendMcpActivity("MCP: Save & Sync wrote MCP fields; syncing plugin host.");
+        if (::PluginHost* ph = app.RuntimePluginHost()) {
+            ph->SyncMcpPluginWithConfig(app, d.cfg);
+        } else {
+            app.AppendMcpActivity("MCP: no runtime plugin host — restart app to load MCP plugin.");
+        }
+#endif
         LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
         d.triggerCatalogRefetch = true;
         app.SyncWithBackend(&d.cfg, &ViewState.GetStore());

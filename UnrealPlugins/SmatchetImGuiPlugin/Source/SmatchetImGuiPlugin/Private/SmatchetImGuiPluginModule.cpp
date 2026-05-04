@@ -75,6 +75,15 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
                ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()));
         RenderBackend = CreateSmatchetImGuiRenderBackend();
         DbPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Smatchet_LocalCache.sqlite"));
+        {
+            const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+            UE_LOG(LogSmatchetImGuiPlugin, Log,
+                   TEXT("Smatchet paths (diagnostics): ProjectDir=%s | SavedDir(db)=%s — native core resolves "
+                        "Lua under ConfigManager files base or cwd-relative Scripts/; standalone sets base from exe "
+                        "dir; Unreal does not unless wired. Check Output Log + Smatchet Logger for "
+                        "luaScriptsDirectory / probes."),
+                   *ProjectDir, *DbPath);
+        }
 
         if (!RenderBackend) {
             UE_LOG(LogSmatchetImGuiPlugin, Warning, TEXT("No Smatchet render backend available for this platform."));

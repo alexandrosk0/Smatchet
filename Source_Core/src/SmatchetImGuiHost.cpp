@@ -37,6 +37,7 @@
 #include "LuaConsolePlugin.h"
 #endif
 #include "SmatchetInputModifierBridge.h"
+#include "SmatchetTheme.h"
 
 // Private implementation that keeps SmatchetImGuiHost.h lightweight for Unreal.
 // Unreal should not need to include AppController/PluginHost/SmatchetUI headers.
@@ -387,6 +388,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
+    SmatchetTheme::ApplyStyle();
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
     // Ensure this thread has the correct ImGui context during DX12 init.
@@ -433,10 +435,14 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
+    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; main menu Scripts entry expects SMATCHET_WITH_LUA_AUTOMATION in UI build.");
+#else
+    LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded, no Scripts menu.");
 #endif
     ImplData->Plugins.OnEarlyInit(ImplData->App);
     ImplData->App.Initialize(options.DbPath, options.BackendType);
     ImplData->Plugins.OnStart(ImplData->App);
+    ImplData->App.SetRuntimePluginHost(&ImplData->Plugins);
 
     ImplData->Initialized.store(true, std::memory_order_release);
     ImplData->LastInitError.clear();
@@ -450,6 +456,7 @@ void SmatchetImGuiHost::Shutdown() {
     }
 
     ImplData->App.SetCloseEmbeddedUiHandler({});
+    ImplData->App.SetRuntimePluginHost(nullptr);
     // Sinks may capture `this` of plugin instances that are about to be destroyed;
     // drop them before tearing down plugins so any late callers fall back to stdio.
     ImplData->App.ClearAutomationLogSinks();

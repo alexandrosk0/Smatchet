@@ -5,6 +5,7 @@
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetToast.h"
 
 #include "imgui.h"
 
@@ -301,9 +302,8 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                     msg += "]";
                 }
                 d.bulkImportStatus[i] = msg;
-                d.gridEditSuccess.clear();
                 const auto& bulkRow = d.bulkImportPreview.Rows[i];
-                d.gridEditError = "Bulk import (line " + std::to_string(bulkRow.SourceLine) + "): " + msg;
+                SmatchetToastManager::Instance().Push("Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
             }
             ++d.bulkImportCompleted;
         }
@@ -449,15 +449,15 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
                 }
             }
             if (!allRows.empty()) {
-                const bool useSorted = !d.cachedSortedIndices.empty();
+                const bool useSorted = !d.filteredIndices.empty();
                 for (int row : allRows) {
                     const size_t logicalRow = static_cast<size_t>(row);
                     size_t ticketIndex = logicalRow;
                     if (useSorted) {
-                        if (logicalRow >= d.cachedSortedIndices.size()) {
+                        if (logicalRow >= d.filteredIndices.size()) {
                             continue;
                         }
-                        ticketIndex = d.cachedSortedIndices[logicalRow];
+                        ticketIndex = d.filteredIndices[logicalRow];
                     }
                     if (ticketIndex < snap->size()) {
                         tickets.push_back((*snap)[ticketIndex]);

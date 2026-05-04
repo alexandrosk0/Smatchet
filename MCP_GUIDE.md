@@ -1,0 +1,126 @@
+# Smatchet MCP (Model Context Protocol) Guide
+
+Smatchet includes a built-in **Model Context Protocol (MCP)** server. This allows AI agents (like Claude Desktop, cursor, or custom IDE plugins) to connect directly to your running Smatchet instance to discover tools, search Jira tickets, and perform automated actions on your behalf.
+
+---
+
+## 1. Overview
+
+The MCP server in Smatchet acts as a bridge between your local Jira data and external AI models. It provides:
+- **Real-time visibility**: AI can see exactly what tickets you have loaded in your grid.
+- **Bi-directional interaction**: AI can trigger Jira actions (edits, transitions) via custom tools.
+- **Dynamic Extensibility**: You can define new "AI tools" on-the-fly using Lua.
+
+---
+
+## 2. Configuration & Setup
+
+### Enabling the Server
+1. Open Smatchet.
+2. Go to **File** → **Preferences**.
+3. Locate the **MCP (Model Context Protocol)** section.
+4. Check **Enable MCP server**.
+5. (Optional) Set a custom **MCP Port** (default is `8080`).
+6. (Optional) Set an **MCP auth token** for security.
+
+### Connecting an AI Client
+Smatchet uses the **SSE (Server-Sent Events)** transport for MCP.
+
+To connect a client (like Claude Desktop), use the following configuration pattern:
+
+**Claude Desktop Config (`claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "smatchet": {
+      "url": "http://127.0.0.1:8080/mcp/sse"
+    }
+  }
+}
+```
+
+> [!NOTE]
+> If you have set an authentication token in Smatchet, the client must include the `X-Smatchet-Token` header in its requests. Some standard MCP clients may require a proxy or custom shim to support this header.
+
+---
+
+## 3. Built-in Tools
+
+Smatchet exposes several core tools to connected AI agents by default:
+
+| Tool Name | Description | Parameters |
+| :--- | :--- | :--- |
+| `list_active_tickets` | Returns a list of all Jira issue keys currently loaded in Smatchet's project grid. | None |
+| `search_active_tickets` | Searches for a specific string within the IDs and field values of all loaded tickets. | `query` (string) |
+
+---
+
+## 4. Custom Tools via Lua
+
+You can extend the AI's capabilities by registering custom tools in `SmatchetHooks.lua`. This is the most powerful way to automate studio-specific workflows.
+
+### Registration Example
+Use `mcp.register_tool(schema, callback)` to define a new tool.
+
+```lua
+-- SmatchetHooks.lua
+mcp.register_tool({
+    name = "set_ticket_priority",
+    description = "Changes the priority of a specific Jira ticket.",
+    parameters_json = [[
+        {
+            "type": "object",
+            "properties": {
+                "ticket_id": { "type": "string", "description": "The Jira key, e.g. PROJ-123" },
+                "priority": { "type": "string", "enum": ["Highest", "High", "Medium", "Low", "Lowest"] }
+            },
+            "required": ["ticket_id", "priority"]
+        }
+    ]]
+}, function(params_json)
+    local params = decode_json(params_json)
+    local ticket, err = smatchet.get_ticket(params.ticket_id)
+    
+    if not ticket then
+        return '{"status": "error", "message": "Ticket not found."}'
+    end
+    
+    local ok, edit_err = ticket:set_field("priority", params.priority)
+    if not ok then
+        return '{"status": "error", "message": "' .. edit_err .. '"}'
+    end
+    
+    return '{"status": "success", "message": "Priority updated for ' .. params.ticket_id .. '"}'
+end)
+```
+
+---
+
+## 5. API Endpoints (Technical Reference)
+
+If you are building a custom integration or debugging, the following endpoints are available:
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/mcp/sse` | `GET` | The primary SSE connection endpoint. Returns an `endpoint` event containing the message path. |
+| `/mcp/messages` | `POST` | The JSON-RPC endpoint where MCP protocol messages are sent. |
+| `/mcp/list_tickets` | `GET` | A simple JSON export of all tickets in the current grid. |
+| `/mcp/search?q=...` | `GET` | Simple search endpoint for quick queries. |
+| `/mcp/attachment_proxy?url=...` | `GET` | Proxies Jira attachment downloads using Smatchet's credentials. Useful for embedding images in external browsers/tools. |
+
+---
+
+## 6. Security
+
+- **Loopback Only**: By default, the MCP server only listens on `127.0.0.1`. It will reject any request from outside your machine.
+- **LAN Access**: If you enable **Bind on all interfaces (LAN)** in Preferences, the server will listen on `0.0.0.0`. 
+- **Authentication**: We strongly recommend setting an **Auth Token** if LAN access is enabled. Clients must provide this token via the `X-Smatchet-Token` HTTP header.
+- **Instruction Limits**: All custom Lua tool callbacks are subject to a **100,000 instruction limit** to prevent AI-triggered infinite loops or hangs.
+
+---
+
+## 7. Troubleshooting
+
+- **Server won't start**: Ensure the port (default `8080`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Scripts** → **MCP Server...**) for error messages.
+- **Connection Refused**: Check your firewall settings. If the client is on the same machine, ensure it's trying to connect to `127.0.0.1` and not your external IP (unless LAN access is enabled).
+- **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have clicked **Save && Reload hooks** in the Lua & Automation panel.

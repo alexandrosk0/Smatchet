@@ -25,6 +25,7 @@
 #include "TrackerFieldSchema.h"
 
 namespace {
+
 bool IsSprintField(const TrackerField& field) {
     return field.Family == TrackerFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
 }
@@ -58,6 +59,13 @@ void AppController::RefreshLocalData() {
         }
         PruneEditMetaCacheToActiveTickets();
         ActiveTicketsRevision.fetch_add(1);
+    }
+}
+
+void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
+    RefreshLocalData();
+    if (JiraBackend) {
+        WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
     }
 }
 
@@ -328,7 +336,7 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
     return ToLowerAsciiCopy(TrimCopy(it->GetFieldValue("issuetype")));
 }
 
-void AppController::WarmIssueTypeEditMetaAtStartAsync() {
+void AppController::WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorker) {
     if (!JiraBackend) {
         return;
     }
@@ -362,13 +370,13 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync() {
     if (representatives.empty()) {
         return;
     }
-    LaunchBackgroundTask([this, representatives]() {
+    LaunchBackgroundTask([this, representatives, jiraCfgForWorker = std::move(jiraCfgForWorker)]() mutable {
         for (const auto& pair : representatives) {
             if (shuttingDown_.load()) {
                 break;
             }
             std::string ignored;
-            EnsureIssueEditMetaLoaded(pair.second, &ignored);
+            EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &jiraCfgForWorker);
         }
     });
 }
@@ -405,6 +413,11 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
             if (byType != issueTypeEditMeta_.end() && byType->second.loaded) {
                 const auto typeFieldIt = byType->second.fieldCanEdit.find(fieldKey);
                 if (typeFieldIt == byType->second.fieldCanEdit.end()) {
+                    // Jira often omits `priority` from editmeta (e.g. Epic) while PUT still accepts it; see
+                    // AppController::CanEditFieldForIssue doc comment.
+                    if (fieldKey == "priority") {
+                        return true;
+                    }
                     return false;
                 }
                 return typeFieldIt->second;
@@ -414,13 +427,17 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
     }
     const auto fieldIt = it->second.fieldCanEdit.find(fieldKey);
     if (fieldIt == it->second.fieldCanEdit.end()) {
+        if (fieldKey == "priority") {
+            return true;
+        }
         return false;
     }
     return fieldIt->second;
 }
 
 bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
-                                              const std::string* issueTypeKeyOverride) {
+                                              const std::string* issueTypeKeyOverride,
+                                              const JiraConfig* configSnapshot) {
     if (outError) {
         outError->clear();
     }
@@ -449,7 +466,7 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
         }
     }
 
-    const JiraConfig cfg = ConfigManager::Load();
+    const JiraConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
     const bool ok = JiraBackend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
@@ -554,9 +571,10 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
         issueEditMetaWarmupInFlight_.insert(issueId);
     }
 
-    LaunchBackgroundTask([this, issueId]() {
+    const JiraConfig warmupJiraCfg = ConfigManager::Load();
+    LaunchBackgroundTask([this, issueId, warmupJiraCfg]() {
         std::string ignored;
-        EnsureIssueEditMetaLoaded(issueId, &ignored);
+        EnsureIssueEditMetaLoaded(issueId, &ignored, nullptr, &warmupJiraCfg);
         {
             std::lock_guard<std::mutex> lock(editMetaMutex_);
             issueEditMetaWarmupInFlight_.erase(issueId);

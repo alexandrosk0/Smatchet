@@ -5,6 +5,10 @@
 #include <cstdlib>
 #include <vector>
 
+#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+static bool g_MainWindowShownAfterFirstFrame = false;
+#endif
+
 #if defined(__linux__)
 #include <limits.h>
 #include <unistd.h>
@@ -54,6 +58,10 @@
 #include "LuaConsolePlugin.h"
 #endif
 
+#ifndef GL_SHADING_LANGUAGE_VERSION
+#define GL_SHADING_LANGUAGE_VERSION 0x8B8C
+#endif
+
 // GLFW Error Callback
 static void glfw_error_callback(int error, const char* description) {
     ::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -88,7 +96,6 @@ static void SmatchetApplyWindowIcon(GLFWwindow* window) {
         }
         return;
     }
-    ::fprintf(stderr, "Icon loaded OK from resources id=%u\n", (unsigned)kIconResourceId);
 
     // Set both big and small icons so it shows up consistently in title bar/taskbar.
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
@@ -124,6 +131,17 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
 #endif
 }
 
+static void SmatchetLogOpenGLInfo() {
+    const GLubyte* vendor = glGetString(GL_VENDOR);
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* version = glGetString(GL_VERSION);
+    const GLubyte* shading = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    ::fprintf(stderr, "OpenGL vendor: %s\n", vendor ? reinterpret_cast<const char*>(vendor) : "(null)");
+    ::fprintf(stderr, "OpenGL renderer: %s\n", renderer ? reinterpret_cast<const char*>(renderer) : "(null)");
+    ::fprintf(stderr, "OpenGL version: %s\n", version ? reinterpret_cast<const char*>(version) : "(null)");
+    ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)");
+}
+
 int main(int, char**) {
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
@@ -144,6 +162,10 @@ int main(int, char**) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 
+#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+#endif
+
     // Create window with graphics context
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Smatchet - Standalone", NULL, NULL);
     if (window == NULL) {
@@ -155,6 +177,7 @@ int main(int, char**) {
 #endif
 
     glfwMakeContextCurrent(window);
+
     glfwSwapInterval(1); // Enable vsync
 
     // Set config/views/Lua scripts base path to exe directory (after window/context so startup is stable).
@@ -212,10 +235,16 @@ int main(int, char**) {
     // Setup Platform/Renderer bindings
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+    SmatchetLogOpenGLInfo();
+    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
+        ::fprintf(stderr, "Failed to create ImGui OpenGL device objects.\n");
+        return 1;
+    }
 
     // 3. Initialize Smatchet Core + plugins
     AppController smatchetApp;
     PluginHost pluginHost;
+    smatchetApp.SetRuntimePluginHost(&pluginHost);
 #if defined(SMATCHET_WITH_MCP)
     {
         const JiraConfig cfg = ConfigManager::Load();
@@ -268,9 +297,17 @@ int main(int, char**) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapBuffers(window);
+
+#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+        if (!g_MainWindowShownAfterFirstFrame) {
+            glfwShowWindow(window);
+            g_MainWindowShownAfterFirstFrame = true;
+        }
+#endif
     }
 
     smatchetApp.ClearAutomationLogSinks();
+    smatchetApp.SetRuntimePluginHost(nullptr);
     pluginHost.OnStop();
 
     // 5. Cleanup

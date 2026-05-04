@@ -12,6 +12,7 @@
 #endif
 
 // 3. THE REST OF YOUR INCLUDES
+#include <deque>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -32,11 +33,20 @@
 
 #include <nlohmann/json.hpp>
 
+class PluginHost;
+
 /** Single consolidated Jira degraded/offline banner for main windows (replaces stacked warnings). */
 struct JiraConnectivityBannerForUi {
     enum class Level { None, Warning, Error };
     Level Kind = Level::None;
     std::string Message;
+};
+
+/** Raw JQL issue fetch result; apply on the UI thread via AppController::ApplyIssueFetchPack. */
+struct JiraIssueFetchPack {
+    std::vector<CachedTicket> Tickets;
+    bool FullSyncCompleted = false;
+    std::string FetchError;
 };
 
 class AppController {
@@ -71,6 +81,16 @@ class AppController {
      */
     void SetCloseEmbeddedUiHandler(std::function<void()> handler);
     void CloseEmbeddedUi();
+
+    /** Standalone / embedded host: set so Preferences can start or stop MCP without app restart. */
+    void SetRuntimePluginHost(PluginHost* host);
+    PluginHost* RuntimePluginHost() const { return runtimePluginHost_; }
+
+#if defined(SMATCHET_WITH_MCP)
+    /** Bounded ring buffer of MCP-related actions (thread-safe). */
+    void AppendMcpActivity(const std::string& line);
+    std::vector<std::string> CopyMcpActivityLog() const;
+#endif
 
     /**
      * Optional host callback for showing Jira attachments inside Unreal.
@@ -117,11 +137,73 @@ class AppController {
                                       std::string* outError = nullptr);
 
     void InitLua();
+    
+    std::string ResolveLuaScriptPath(const std::string& filename) const;
 
-    void RunAutoScript(const std::string& scriptPath);
+    /**
+     * Resolve a URL or local path for field icons / Lua `imgui.image`.
+     * Allows http(s) URLs; local files must lie under the Lua scripts directory or `GetFilesBaseDirectory()`.
+     */
+    std::string ResolveFieldIconAssetPath(const std::string& pathOrUrl) const;
 
-    /** Run a Lua file once (e.g. FieldDisplay.lua) to register UI hooks; errors go to automation log sinks. */
+    void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds);
+
+    std::string GetAutomationScriptContent();
+    bool SaveAutomationScriptContent(const std::string& content, std::string& outError);
+
+    /** Run a Lua file once (e.g. SmatchetHooks.lua) to register UI hooks; errors go to automation log sinks. */
     void RunLuaSetupScript(const std::string& scriptPath);
+
+    /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
+    std::vector<std::string> GetLuaTicketActionNames() const;
+    bool ExecuteLuaTicketAction(const std::string& name, const std::string& issueId, std::string& outError);
+    void AddAiContext(const std::string& text);
+    const std::vector<std::string>& GetAiContext() const;
+    void ClearAiContext();
+    void PromptAi(const std::string& message);
+    void SetAiPromptHandler(std::function<void(const std::string&)> handler);
+    std::vector<std::string> GetLuaGlobalActionNames() const;
+    bool ExecuteLuaGlobalAction(const std::string& name, std::string& outError);
+    /** Lua `register_field_icon_map`; returns false when Lua automation is disabled. */
+    bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field, const std::string& rawValue,
+                                  std::string& outPathOrUrl) const;
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    /**
+     * Lua InitLua uses one functor struct per binding (see AppController_LuaBindings.cpp) so sol2/GCC never
+     * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
+     */
+    void LuaLogInfoBind(std::string msg);
+    std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId);
+    std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
+    void LuaRegisterFieldDisplayBind(const std::string& fieldId, sol::function fn);
+    void LuaUnregisterFieldDisplayBind(const std::string& fieldId);
+    void LuaRegisterFieldDisplayByNameBind(const std::string& displayName, sol::function fn);
+    void LuaUnregisterFieldDisplayByNameBind(const std::string& displayName);
+    void LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol::table map, sol::optional<bool> byName);
+    void LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName);
+    void LuaImGuiTextBind(const std::string& s);
+    void LuaImGuiTextUnformattedBind(const std::string& s);
+    bool LuaImGuiImageBind(const std::string& path, float w, float h);
+    void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
+    void LuaUiRegisterTicketActionBind(const std::string& name, sol::function callback);
+    void LuaUiRegisterGlobalActionBind(const std::string& name, sol::function callback);
+    void LuaAiAddContextBind(const std::string& text);
+    void LuaAiPromptBind(const std::string& message);
+    void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
+    std::vector<CachedTicket> LuaGetActiveTicketsBind();
+    void ClearLuaTicketContextGlue();
+
+    struct McpToolDefinition {
+        std::string name;
+        std::string description;
+        nlohmann::json parametersSchema;
+        sol::protected_function callback;
+    };
+    std::vector<McpToolDefinition> GetLuaMcpTools() const;
+    std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
+    void DrawLuaWindows();
+#endif
 
     /**
      * If a Lua handler was registered for fieldId, invoke it to draw the grid cell.
@@ -137,7 +219,22 @@ class AppController {
      */
     void SyncWithBackend(const JiraConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
 
+    /** Clears the live ticket-sync warning banner (e.g. before kicking off a background fetch). */
+    void ClearLastJiraTicketSyncWarning();
+
+    /**
+     * Runs FetchIssues under an internal mutex (safe with concurrent UI-triggered syncs).
+     * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
+     */
+    JiraIssueFetchPack FetchIssuesForActiveView(const JiraConfig* configOverride = nullptr,
+                                               const ViewsStore* viewsOverride = nullptr);
+
+    /** Merges fetch results into the local cache and updates connectivity banners. */
+    void ApplyIssueFetchPack(JiraIssueFetchPack pack);
+
     void RefreshLocalData();
+    /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
+    void RefreshLocalDataAndWarmIssueTypeMeta();
 
     void UpdateTicket(const CachedTicket& ticket);
 
@@ -372,9 +469,6 @@ class AppController {
     std::string LastJiraFieldCatalogWarning;
     std::string LastJiraTicketSyncWarning;
     bool fieldCatalogEverLoaded_ = false;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    sol::state lua;
-#endif
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
@@ -382,10 +476,21 @@ class AppController {
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
+    std::vector<std::string> aiContext_;
+    std::function<void(const std::string&)> aiPromptHandler_;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
+    std::vector<McpToolDefinition> luaMcpTools_;
+    std::vector<std::pair<std::string, sol::protected_function>> luaWindows_;
+    std::vector<std::pair<std::string, sol::protected_function>> luaTicketActions_;
+    std::vector<std::pair<std::string, sol::protected_function>> luaGlobalActions_;
+    mutable std::mutex fieldIconMapsMutex_;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByFieldId_;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
+
 #endif
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
@@ -404,14 +509,18 @@ class AppController {
     /**
      * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
      *        for issuetype (safe for background threads that captured the key on the UI thread).
+     * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
+     *        or loaded before InitLua to avoid parsing smatchet_config.json after Lua init in release builds).
      */
     bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
-                                   const std::string* issueTypeKeyOverride = nullptr);
+                                   const std::string* issueTypeKeyOverride = nullptr,
+                                   const JiraConfig* configSnapshot = nullptr);
     bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
                               const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
-    void WarmIssueTypeEditMetaAtStartAsync();
+    /** @param jiraCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside worker). */
+    void WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorker);
     void EnsureCatalogHistoryField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
                                             const std::vector<std::string>& rawValues,
@@ -421,7 +530,6 @@ class AppController {
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
-    std::string ResolveLuaScriptPath(const std::string& filename) const;
     void LaunchBackgroundTask(std::function<void()> task);
     void JoinBackgroundTasks();
 
@@ -460,6 +568,14 @@ class AppController {
 
     mutable std::mutex bulkImportPrefetchKeysMutex_;
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
+
+    PluginHost* runtimePluginHost_ = nullptr;
+
+#if defined(SMATCHET_WITH_MCP)
+    static constexpr size_t kMcpActivityLogMax = 100;
+    mutable std::mutex mcpActivityMutex_;
+    std::deque<std::string> mcpActivityLog_;
+#endif
 };
 
 #endif

@@ -43,3 +43,75 @@ inline std::string TruncateForLog(const std::string& input, size_t maxLen = 600)
     }
     return input.substr(0, maxLen) + "... [truncated]";
 }
+
+inline bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+    if (needle.empty()) return true;
+    auto it = std::search(
+        haystack.begin(), haystack.end(),
+        needle.begin(), needle.end(),
+        [](char ch1, char ch2) { return std::tolower(static_cast<unsigned char>(ch1)) == std::tolower(static_cast<unsigned char>(ch2)); }
+    );
+    return it != haystack.end();
+}
+
+/** Case-insensitive string equality. */
+inline bool EqualsCaseInsensitive(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    return std::equal(a.begin(), a.end(), b.begin(), [](unsigned char c1, unsigned char c2) {
+        return std::tolower(c1) == std::tolower(c2);
+    });
+}
+
+/** Natural Jira issue key comparison: "PROJ-2" < "PROJ-10" (lexicographic prefix, then numeric suffix). */
+inline bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
+    auto split = [](const std::string& s) -> std::pair<std::string, long long> {
+        std::string project;
+        long long num = 0;
+        const size_t dash = s.rfind('-');
+        if (dash != std::string::npos && dash + 1 < s.size()) {
+            project = s.substr(0, dash);
+            const std::string tail = s.substr(dash + 1);
+            if (!tail.empty()) {
+                char* end = nullptr;
+                const long long v = std::strtoll(tail.c_str(), &end, 10);
+                if (end == tail.c_str() + tail.size()) {
+                    num = v;
+                    return {project, num};
+                }
+            }
+        }
+        return {s, 0};
+    };
+    const auto pa = split(a);
+    const auto pb = split(b);
+    if (pa.first != pb.first) return pa.first < pb.first;
+    return pa.second < pb.second;
+}
+
+/** Split a string by a delimiter, trimming whitespace from parts. */
+inline std::vector<std::string> SplitAndTrim(const std::string& input, char delimiter = ',') {
+    std::vector<std::string> result;
+    std::string current;
+    auto flush = [&]() {
+        std::string trimmed = TrimCopy(current);
+        if (!trimmed.empty()) result.push_back(trimmed);
+        current.clear();
+    };
+    for (char ch : input) {
+        if (ch == delimiter) flush();
+        else current.push_back(ch);
+    }
+    flush();
+    return result;
+}
+
+/** Replace tabs and newlines with spaces for spreadsheet-safe copy-paste. */
+inline std::string SanitizeForSpreadsheet(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        if (ch == '\t' || ch == '\n' || ch == '\r') out.push_back(' ');
+        else out.push_back(ch);
+    }
+    return out;
+}

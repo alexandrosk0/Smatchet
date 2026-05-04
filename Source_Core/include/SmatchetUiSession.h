@@ -102,6 +102,22 @@ struct UiDrawSession {
     bool showBulkExport = false;
     bool showAuditTrail = false;
     bool requestAuditTrailFocus = false;
+    /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
+    bool showLogWindow = true;
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    /** Lua console / automation panel; dock tab X clears this; reopen from Settings. */
+    bool showLuaAutomationWindow = true;
+    bool requestLuaAutomationFocus = false;
+    /** When true, the next draw will switch to the "Scripting" tab in the Lua window. */
+    bool requestScriptsWindowFocus = false;
+#endif
+
+#if defined(SMATCHET_WITH_MCP)
+    /** MCP status / endpoints / activity; reopen from Scripts (or MCP menu when Lua is off). */
+    bool showMcpServerWindow = false;
+    bool requestMcpServerFocus = false;
+#endif
 
     bool fieldCatalogFetchStarted = false;
     bool fieldCatalogLoading = false;
@@ -110,6 +126,16 @@ struct UiDrawSession {
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;
+    /** First JQL fetch runs async so the UI thread is not blocked for multi-second Jira searches. */
+    bool initialTicketSyncStarted = false;
+    bool initialTicketSyncLoading = false;
+    std::future<JiraIssueFetchPack> initialTicketSyncFuture;
+
+    /** Jira connectivity recovery: refetch issues for current view without blocking the UI thread. */
+    bool connectivityRecoveryTicketResyncPending = false;
+    bool connectivityRecoveryTicketFetchLoading = false;
+    std::future<JiraIssueFetchPack> connectivityRecoveryTicketFetchFuture;
+
     NavigationHistory navHistory;
 
     char domainBuf[128]{};
@@ -125,6 +151,8 @@ struct UiDrawSession {
     bool mcpAllowRemote = false;
     char mcpAuthTokenBuf[512]{};
     bool preferencesBuffersLoaded = false;
+    /** Integrations tab: brief "saved" line after MCP fields persist. */
+    std::chrono::steady_clock::time_point mcpPrefsSavedHintUntil{};
 
     char viewNameBuf[128]{};
     char viewJqlBuf[512]{};
@@ -187,10 +215,12 @@ struct UiDrawSession {
     int inFlightDelayFrames = 0;
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
+    char gridFilterBuf[128]{};
     std::string lastGridActiveViewId;
     std::string lastGridContextSignature;
     bool newIssueDiscardAsyncCreateResult = false;
     std::vector<size_t> cachedSortedIndices;
+    std::vector<size_t> filteredIndices;
     std::string cachedSortFingerprint;
     std::uint64_t cachedSortTicketsRevision = 0;
     std::uint64_t cachedSortCatalogRevision = 0;
@@ -201,6 +231,8 @@ struct UiDrawSession {
 
     std::string aiResponse;
     bool aiIsThinking = false;
+    bool aiPromptPending = false;
+    std::string aiPromptMessage;
 
     std::vector<char> logBuffer;
     std::uint64_t lastSeenLogRevision = 0;
@@ -255,6 +287,10 @@ struct UiDrawSession {
 
     ~UiDrawSession();
 };
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+extern UiDrawSession g_ui;
+#endif
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);

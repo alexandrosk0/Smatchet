@@ -6,6 +6,7 @@
 #include <string>
 #include <exception>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <unordered_map>
 #include <chrono>
@@ -72,6 +73,12 @@ struct JiraConfig {
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
+    /** Scripts → MCP Server… window open on launch (like ShowPerformanceWindow). */
+    bool ShowMcpServerWindow = false;
+    /** Height of the copyable status/endpoints block; 0 = use default (line height × 18). */
+    float McpServerInfoPanelHeightPx = 0.f;
+    /** Height of the Recent actions copyable block. */
+    float McpServerActivityPanelHeightPx = 140.f;
     // Allow Blame Analysis to launch user-supplied custom `timelapse_cmd` / `change_cmd` templates.
     // Off by default: these run arbitrary programs; only enable if the config file is trusted.
     bool BlameAllowCustomCommands = false;
@@ -166,11 +173,55 @@ class ConfigManager {
         const std::string path = GetConfigPath();
         std::lock_guard<std::mutex> lock(GetIoMutexRef());
         ScopedFileLock fileLock(path);
-        std::ifstream file(path);
+        std::string raw;
+#if defined(_WIN32)
+        // Win32 read avoids MinGW/libstdc++ ifstream/stringstream issues seen in release at startup.
+        {
+            const std::wstring wPath = Utf8ToWide(path);
+            if (!wPath.empty()) {
+                HANDLE h = CreateFileW(wPath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (h != INVALID_HANDLE_VALUE) {
+                    LARGE_INTEGER li{};
+                    if (GetFileSizeEx(h, &li) && li.QuadPart > 0 &&
+                        li.QuadPart <= static_cast<LONGLONG>(64 * 1024 * 1024)) {
+                        const size_t n = static_cast<size_t>(li.QuadPart);
+                        raw.resize(n);
+                        size_t off = 0;
+                        while (off < n) {
+                            const size_t room = n - off;
+                            const DWORD toRead = room > static_cast<size_t>(1u << 20)
+                                                       ? static_cast<DWORD>(1u << 20)
+                                                       : static_cast<DWORD>(room);
+                            DWORD rd = 0;
+                            if (!ReadFile(h, &raw[off], toRead, &rd, nullptr) || rd == 0) {
+                                raw.clear();
+                                break;
+                            }
+                            off += static_cast<size_t>(rd);
+                        }
+                        if (off != n) {
+                            raw.clear();
+                        }
+                    }
+                    CloseHandle(h);
+                }
+            }
+        }
+#else
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (file.is_open()) {
+                std::ostringstream ss;
+                ss << file.rdbuf();
+                raw = ss.str();
+            }
+        }
+#endif
         nlohmann::json j = nlohmann::json::object();
-        if (file.is_open()) {
+        if (!raw.empty()) {
             try {
-                file >> j;
+                j = nlohmann::json::parse(raw);
             } catch (const std::exception& ex) {
                 LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), ex.what());
                 j = nlohmann::json::object();
@@ -215,6 +266,14 @@ class ConfigManager {
         j["mcp_allow_remote"] = config.McpAllowRemote;
         j["mcp_auth_token"] = config.McpAuthToken;
         j["mcp_export_fields"] = config.McpExportFields;
+        j["show_mcp_server_window"] = config.ShowMcpServerWindow;
+        j.erase("mcp_server_window_layout_valid");
+        j.erase("mcp_server_window_x");
+        j.erase("mcp_server_window_y");
+        j.erase("mcp_server_window_w");
+        j.erase("mcp_server_window_h");
+        j["mcp_server_info_panel_height_px"] = config.McpServerInfoPanelHeightPx;
+        j["mcp_server_activity_panel_height_px"] = config.McpServerActivityPanelHeightPx;
         j["blame_allow_custom_commands"] = config.BlameAllowCustomCommands;
         j["default_issue_type_id"] = config.DefaultIssueTypeId;
         j["default_issue_type_name"] = config.DefaultIssueTypeName;
@@ -396,6 +455,11 @@ class ConfigManager {
                     }
                 }
             }
+            cfg.ShowMcpServerWindow = j.value("show_mcp_server_window", cfg.ShowMcpServerWindow);
+            cfg.McpServerInfoPanelHeightPx =
+                static_cast<float>(j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
+            cfg.McpServerActivityPanelHeightPx = static_cast<float>(
+                j.value("mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
             cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
             cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
             cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);

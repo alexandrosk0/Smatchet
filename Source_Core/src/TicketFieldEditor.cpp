@@ -4,6 +4,7 @@
 #include "JiraDateTimeFieldEditor.h"
 #include "JiraGridFieldDisplay.h"
 #include "JiraLabelsEditor.h"
+#include "SmatchetFieldIconRender.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldValueUtils.h"
 
@@ -89,15 +90,27 @@ void RenderTextEditor(const CachedTicket& ticket, const TrackerField& field, con
     }
 }
 
-void RenderSingleSelectEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
-                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
+void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+                              const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
+                              bool tooltipsEnabled) {
+    const float cellAvail = ImGui::GetContentRegionAvail().x;
+    SmatchetLoadedIconTexture overlayIcon{};
+    std::string overlayLoadErr;
+    const bool haveOverlayIcon =
+        SmatchetFieldIconRender::TryGetInlineFieldIconTexture(app, field, currentValue, overlayIcon, overlayLoadErr);
+    (void)overlayLoadErr;
+
     const std::string currentId = ResolveOptionId(field, currentValue);
     const std::string preview = ResolveOptionLabel(field, currentId);
     const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
-    const char* previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), previewCStr, ImGuiComboFlags_NoArrowButton)) {
+    const char* previewCStr =
+        haveOverlayIcon ? " " : (preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str());
+    ImGui::SetNextItemWidth(cellAvail);
+    const bool comboOpened = ImGui::BeginCombo(comboId.c_str(), previewCStr, ImGuiComboFlags_NoArrowButton);
+    const ImVec2 comboMin = ImGui::GetItemRectMin();
+    const ImVec2 comboMax = ImGui::GetItemRectMax();
+    if (comboOpened) {
         const bool selectedNone = currentId.empty();
         if (ImGui::Selectable("<clear>", selectedNone)) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
@@ -110,6 +123,22 @@ void RenderSingleSelectEditor(const CachedTicket& ticket, const TrackerField& fi
             }
         }
         ImGui::EndCombo();
+    }
+
+    ImVec2 overlayP0(0.0f, 0.0f);
+    ImVec2 overlayP1(0.0f, 0.0f);
+    if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
+        const float maxEdge = 16.0f;
+        const float iw = static_cast<float>(overlayIcon.Width);
+        const float ih = static_cast<float>(overlayIcon.Height);
+        const float scale = maxEdge / (std::max)(iw, ih);
+        const float dw = iw * scale;
+        const float dh = ih * scale;
+        const float rowH = comboMax.y - comboMin.y;
+        overlayP0 = ImVec2(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
+        overlayP1 = ImVec2(overlayP0.x + dw, overlayP0.y + dh);
+        ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
+                                             ImVec2(1.0f, 1.0f));
     }
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
         const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
@@ -241,6 +270,11 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         return;
     }
 
+    if (SmatchetFieldIconRender::TryDrawFieldValueIcon(app, column.FieldId, field, currentValue, availWidth,
+                                                       tooltipsEnabled, allowEdits)) {
+        return;
+    }
+
     auto renderPlainText = [&](bool disabled) {
         const std::string display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue);
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
@@ -316,7 +350,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        RenderSingleSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderSingleSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
         return;
     case TicketGridColumn::RenderPlan::DateTimeEditor:
         if (!allowEdits) {

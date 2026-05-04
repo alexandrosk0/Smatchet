@@ -43,9 +43,12 @@ option(SMATCHET_WARNINGS_AS_ERRORS
     "Treat the above warnings as errors (useful for CI)"
     OFF)
 
-option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" OFF)
-option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" OFF)
+option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
+option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_WITH_AI "Build with AI assistance client (OpenAI-compatible HTTP)" OFF)
+option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
+    "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
+    ON)
 
 function(smatchet_apply_strict_warnings _target)
     if(NOT SMATCHET_ENABLE_STRICT_WARNINGS)
@@ -246,6 +249,64 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
         endif()
     endif()
 
+    # sol2 2.20.6 keys userdata/metatable names from demangled type text only.
+    # GCC/MinGW can collapse distinct internal callable/userdata types to the same text, then Lua reuses a
+    # wrong __gc metatable and corrupts the heap during InitLua. Append a per-template-type token to the
+    # internal metatable keys while keeping public usertype names unchanged.
+    set(_sol2_single_header "${sol2_SOURCE_DIR}/single/sol/sol.hpp")
+    if(EXISTS "${_sol2_single_header}")
+        file(READ "${_sol2_single_header}" _sol2_single_contents)
+
+        string(REPLACE "#include <cctype>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
+                       "#include <cctype>\n#include <cstdint>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
+                       _sol2_single_patched
+                       "${_sol2_single_contents}")
+
+        string(REPLACE "namespace sol {\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
+                       "namespace sol {\n\n\tnamespace detail {\n\t\ttemplate <typename T>\n\t\tstruct smatchet_type_id_token {\n\t\t\tstatic char id;\n\t\t};\n\n\t\ttemplate <typename T>\n\t\tchar smatchet_type_id_token<T>::id;\n\n\t\ttemplate <typename T>\n\t\tstd::string smatchet_type_identity_suffix() {\n\t\t\treturn std::string(\"@\").append(std::to_string(reinterpret_cast<std::uintptr_t>(&smatchet_type_id_token<T>::id)));\n\t\t}\n\t} // namespace detail\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+
+        string(REPLACE "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>());"
+                       "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\");"
+                       "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\");"
+                       "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\");"
+                       "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+
+        # Also rewrite already-patched build trees when CMake is re-run without refetching sol2.
+        string(REPLACE "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>()).append(detail::smatchet_type_identity_suffix<T>());"
+                       "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\").append(detail::smatchet_type_identity_suffix<T>());"
+                       "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
+                       "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+        string(REPLACE "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
+                       "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
+                       _sol2_single_patched
+                       "${_sol2_single_patched}")
+
+        if(NOT _sol2_single_patched STREQUAL _sol2_single_contents)
+            file(WRITE "${_sol2_single_header}" "${_sol2_single_patched}")
+        endif()
+    endif()
+
     add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
 endif()
 
@@ -340,7 +401,11 @@ endif()
 
 function(smatchet_configure_core_impl_target _target)
     target_link_libraries("${_target}" PUBLIC SmatchetCoreInterface)
-    target_include_directories("${_target}" PRIVATE Source_Core/src)
+    target_include_directories("${_target}" PRIVATE Source_Core/src
+            "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
+    if(SMATCHET_WITH_MCP)
+        target_include_directories("${_target}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         target_include_directories("${_target}" PRIVATE
                 ${sol2_SOURCE_DIR}/single
@@ -526,11 +591,15 @@ add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
 smatchet_configure_opengl_core_impl_target(SmatchetStandalone)
 smatchet_apply_strict_warnings(SmatchetStandalone)
 
+if(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+    target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME=1)
+endif()
+
 if(SMATCHET_WITH_LUA_AUTOMATION)
     set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
     add_custom_command(TARGET SmatchetStandalone POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
-            COMMENT "Copy Scripts/*.lua next to SmatchetStandalone"
+            COMMENT "Copy Scripts (Lua + bundled art) next to SmatchetStandalone"
             VERBATIM)
 endif()
 

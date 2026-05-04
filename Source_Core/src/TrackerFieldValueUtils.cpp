@@ -1,43 +1,7 @@
 #include "TrackerFieldValueUtils.h"
+#include "StringUtil.h"
 
 namespace {
-
-std::vector<std::string> ParseCsv(const std::string& csv) {
-    std::vector<std::string> result;
-    std::string current;
-    for (char ch : csv) {
-        if (ch == ',') {
-            size_t start = 0;
-            size_t end = current.size();
-            while (start < end && (current[start] == ' ' || current[start] == '\t')) {
-                ++start;
-            }
-            while (end > start && (current[end - 1] == ' ' || current[end - 1] == '\t')) {
-                --end;
-            }
-            if (end > start) {
-                result.push_back(current.substr(start, end - start));
-            }
-            current.clear();
-        } else {
-            current.push_back(ch);
-        }
-    }
-
-    size_t start = 0;
-    size_t end = current.size();
-    while (start < end && (current[start] == ' ' || current[start] == '\t')) {
-        ++start;
-    }
-    while (end > start && (current[end - 1] == ' ' || current[end - 1] == '\t')) {
-        --end;
-    }
-    if (end > start) {
-        result.push_back(current.substr(start, end - start));
-    }
-    return result;
-}
-
 } // namespace
 
 namespace TrackerFieldValueUtils {
@@ -73,7 +37,7 @@ std::string ResolveOptionLabel(const TrackerField& field, const std::string& val
 
 std::vector<std::string> ResolveCurrentSelectionIds(const TrackerField& field, const std::string& currentValue) {
     std::vector<std::string> ids;
-    for (const auto& part : ParseCsv(currentValue)) {
+    for (const auto& part : SplitAndTrim(currentValue)) {
         const std::string id = ResolveOptionId(field, part);
         if (!id.empty()) {
             ids.push_back(id);

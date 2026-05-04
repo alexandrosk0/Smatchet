@@ -66,9 +66,15 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path -Path $BuildDir -PathType Container) -or -not (Test-Path -Path (Join-Path $BuildDir "CMakeCache.txt") -PathType Leaf)) {
     Write-Host "==> Configuring (first time or missing CMakeCache)..."
-    & cmake --preset $ConfigurePreset
-    if ($LASTEXITCODE -ne 0) {
-        throw "cmake --preset $ConfigurePreset failed with exit code $LASTEXITCODE"
+    # cmake --preset reads CMakePresets.json from the current directory; must run from repo root.
+    Push-Location $repoRoot
+    try {
+        & cmake --preset $ConfigurePreset
+        if ($LASTEXITCODE -ne 0) {
+            throw "cmake --preset $ConfigurePreset failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        Pop-Location
     }
 }
 

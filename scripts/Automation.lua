@@ -1,4 +1,6 @@
 -- Runs once per active ticket when you click "Run Lua Automation".
--- The host binds `ticket` (id, get_field).
+-- The host calls `process_ticket(ticket)`.
 
-log_info("Automation.lua stub for ticket " .. tostring(ticket.id))
+function process_ticket(ticket)
+    log_info("Automation.lua stub for ticket " .. tostring(ticket.id))
+end

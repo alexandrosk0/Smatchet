@@ -1,4 +1,5 @@
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetToast.h"
 
 #include "AppController.h"
 #include "StringUtil.h"
@@ -22,6 +23,30 @@ std::string JoinCsvLocal(const std::vector<std::string>& values) {
     }
     return out;
 }
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+static void DrawLuaTicketActionMenuItems(AppController* app, UiDrawSession* ui, const std::string& issueKey) {
+    if (!app || !ui || issueKey.empty()) {
+        return;
+    }
+    const auto luaActions = app->GetLuaTicketActionNames();
+    if (luaActions.empty()) {
+        return;
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Lua Actions");
+    for (const auto& name : luaActions) {
+        if (ImGui::MenuItem(name.c_str())) {
+            std::string err;
+            if (!app->ExecuteLuaTicketAction(name, issueKey, err)) {
+                SmatchetToastManager::Instance().Push("Lua Error", err, ToastType::Error);
+            } else {
+                SmatchetToastManager::Instance().Push("Lua Action", "Ran: " + name, ToastType::Success);
+            }
+        }
+    }
+}
+#endif
 
 static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId) {
     if (templateId == "need_repro") {
@@ -77,12 +102,18 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (ImGui::MenuItem("Copy value")) {
             ImGui::SetClipboardText(rawValue.c_str());
         }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        DrawLuaTicketActionMenuItems(app, ui, issueKey);
+#endif
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("cell_copy_quick")) {
         if (ImGui::MenuItem("Copy")) {
             ImGui::SetClipboardText(rawValue.c_str());
         }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        DrawLuaTicketActionMenuItems(app, ui, issueKey);
+#endif
         if (app && ui && fieldId.empty() && !issueKey.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("Quick comment templates");
@@ -93,11 +124,9 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                     if (ImGui::MenuItem(title)) {
                         std::string err;
                         if (app->JiraAddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
-                            ui->gridEditError.clear();
-                            ui->gridEditSuccess = std::string("Posted template comment to ") + issueKey + ".";
+                            SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey, ToastType::Success);
                         } else {
-                            ui->gridEditSuccess.clear();
-                            ui->gridEditError = err.empty() ? "Failed to post Jira comment." : err;
+                            SmatchetToastManager::Instance().Push("Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
                         }
                     }
                 };
@@ -220,20 +249,6 @@ std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn
     return raw;
 }
 
-// TSV cells cannot contain embedded tabs/newlines without breaking paste into
-// spreadsheets; collapse them to spaces.
-static std::string SanitizeTsvCellForCopy(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char ch : s) {
-        if (ch == '\t' || ch == '\n' || ch == '\r') {
-            out.push_back(' ');
-        } else {
-            out.push_back(ch);
-        }
-    }
-    return out;
-}
 
 void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
                        const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
@@ -290,7 +305,7 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
             const TicketGridColumn& col = columns[static_cast<size_t>(c)];
             const TrackerField* meta =
                 (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
-            out += SanitizeTsvCellForCopy(GetCellRawForCopy(t, col, meta));
+            out += SanitizeForSpreadsheet(GetCellRawForCopy(t, col, meta));
             if (c < c1)
                 out.push_back('\t');
         }

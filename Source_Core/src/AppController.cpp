@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <fstream>
 #include <mutex>
@@ -17,6 +19,8 @@
 
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
+
+#include <ghc/filesystem.hpp>
 #include "JiraClient.h"
 #include "JiraHttpUtils.h"
 #include "Logger.h"
@@ -51,7 +55,71 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 #endif
 } // namespace
 
+namespace {
+void LogProcessCwdForScriptsDiagnostics() {
+#if defined(_WIN32)
+    char cwdBuf[MAX_PATH];
+    const DWORD n = GetCurrentDirectoryA(static_cast<DWORD>(sizeof(cwdBuf)), cwdBuf);
+    if (n > 0 && n < sizeof(cwdBuf)) {
+        LOG_INFO("AppController: process cwd (Win32)=\"%s\"", cwdBuf);
+    } else {
+        LOG_WARN("AppController: GetCurrentDirectoryA failed err=%lu", static_cast<unsigned long>(GetLastError()));
+    }
+#elif defined(__APPLE__) || defined(__linux__)
+    char cwdBuf[4096];
+    if (getcwd(cwdBuf, sizeof(cwdBuf))) {
+        LOG_INFO("AppController: process cwd=\"%s\"", cwdBuf);
+    } else {
+        LOG_WARN("AppController: getcwd failed errno=%d", errno);
+    }
+#endif
+}
+
+void LogLuaScriptFileProbe(const char* label, const std::string& path) {
+    if (path.empty()) {
+        LOG_WARN("AppController: Lua script probe %s: path empty (blocked or unresolved)", label);
+        return;
+    }
+    namespace fs = ghc::filesystem;
+    std::error_code ec;
+    const bool reg = fs::is_regular_file(fs::path(path), ec);
+    LOG_INFO("AppController: Lua script probe %s: path=\"%s\" regular_file=%s ec=%s", label, path.c_str(),
+             reg ? "yes" : "no", ec ? ec.message().c_str() : "none");
+}
+} // namespace
+
+namespace {
+std::mutex g_JiraIssueFetchMutex;
+
+bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::string& prefix) {
+    if (prefix.empty() || value.size() < prefix.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        unsigned char a = static_cast<unsigned char>(value[i]);
+        unsigned char b = static_cast<unsigned char>(prefix[i]);
+        if (a >= 'A' && a <= 'Z') {
+            a = static_cast<unsigned char>(a - 'A' + 'a');
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = static_cast<unsigned char>(b - 'A' + 'a');
+        }
+        if (a != b) {
+            return false;
+        }
+    }
+    if (value.size() == prefix.size()) {
+        return true;
+    }
+    const char next = value[prefix.size()];
+    return next == '/' || next == '\\';
+}
+} // namespace
+
 AppController::~AppController() {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    ClearLuaTicketContextGlue();
+#endif
     // Join UiDrawSession std::async futures that captured this controller (via static `g_ui`) before
     // tearing down members other threads may still touch.
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
@@ -192,6 +260,49 @@ void AppController::CloseEmbeddedUi() {
     }
 }
 
+void AppController::SetRuntimePluginHost(PluginHost* host) {
+    runtimePluginHost_ = host;
+}
+
+#if defined(SMATCHET_WITH_MCP)
+namespace {
+
+std::string PrefixMcpActivityLine(const std::string& msg) {
+    const std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tmBuf{};
+#if defined(_WIN32)
+    if (localtime_s(&tmBuf, &t) != 0) {
+        return msg;
+    }
+#else
+    if (localtime_r(&t, &tmBuf) == nullptr) {
+        return msg;
+    }
+#endif
+    char timeBuf[32];
+    if (std::strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &tmBuf) == 0) {
+        return msg;
+    }
+    return std::string(timeBuf) + " " + msg;
+}
+
+} // namespace
+
+void AppController::AppendMcpActivity(const std::string& line) {
+    std::lock_guard<std::mutex> lock(mcpActivityMutex_);
+    mcpActivityLog_.push_back(PrefixMcpActivityLine(line));
+    while (mcpActivityLog_.size() > kMcpActivityLogMax) {
+        mcpActivityLog_.pop_front();
+    }
+}
+
+std::vector<std::string> AppController::CopyMcpActivityLog() const {
+    std::lock_guard<std::mutex> lock(mcpActivityMutex_);
+    return std::vector<std::string>(mcpActivityLog_.begin(), mcpActivityLog_.end());
+}
+#endif
+
 void AppController::OpenUrl(const std::string& url) const {
     if (url.empty()) {
         return;
@@ -308,6 +419,15 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     } else {
         luaScriptsDirectory_.clear();
     }
+    LOG_INFO("AppController: ConfigManager files base %s (len=%zu); luaScriptsDirectory=\"%s\"",
+             fileBase.empty() ? "empty" : "set", fileBase.size(), luaScriptsDirectory_.c_str());
+    LogProcessCwdForScriptsDiagnostics();
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    LogLuaScriptFileProbe("SmatchetHooks.lua", ResolveLuaScriptPath("SmatchetHooks.lua"));
+    LogLuaScriptFileProbe("Automation.lua", ResolveLuaScriptPath("Automation.lua"));
+#else
+    LOG_INFO("AppController: SMATCHET_WITH_LUA_AUTOMATION off — no Lua init; Scripts menu not in this build.");
+#endif
 
     // Defer SyncWithBackend to first SmatchetUI::Draw so active view JQL/fields are
     // applied first — avoids fetching issues twice at startup.
@@ -340,9 +460,17 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         }
     }
 
-    WarmIssueTypeEditMetaAtStartAsync();
+    JiraConfig jiraCfgForEditMetaWarmup{};
+    if (JiraBackend) {
+        // Load before InitLua(): avoids parsing smatchet_config.json immediately after Lua init on MinGW release.
+        jiraCfgForEditMetaWarmup = ConfigManager::Load();
+    }
 
     InitLua();
+
+    if (JiraBackend) {
+        WarmIssueTypeEditMetaAtStartAsync(std::move(jiraCfgForEditMetaWarmup));
+    }
 }
 
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
@@ -357,50 +485,149 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
     return std::string("Scripts/") + filename;
 }
 
+std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUrl) const {
+    namespace fs = ghc::filesystem;
+    const std::string t = TrimCopyAsciiWhitespace(pathOrUrl);
+    if (t.empty()) {
+        return std::string();
+    }
+    if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
+        return t;
+    }
+    std::error_code ec;
+    auto isAllowedPath = [&](const fs::path& absPath) -> bool {
+        const std::string absStr = absPath.string();
+        if (!luaScriptsDirectory_.empty()) {
+            const fs::path scriptsRoot = fs::weakly_canonical(fs::path(luaScriptsDirectory_), ec);
+            if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, scriptsRoot.string())) {
+                return true;
+            }
+            ec.clear();
+        }
+        const std::string base = ConfigManager::GetFilesBaseDirectory();
+        if (!base.empty()) {
+            const fs::path baseRoot = fs::weakly_canonical(fs::path(base), ec);
+            if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, baseRoot.string())) {
+                return true;
+            }
+            ec.clear();
+        }
+        return false;
+    };
+
+    fs::path inp(t);
+    if (!inp.is_absolute()) {
+        if (luaScriptsDirectory_.empty()) {
+            return std::string();
+        }
+        std::string rel = t;
+        if (rel.size() >= 7 && FieldIconHasCaseInsensitivePrefix(rel, "Scripts")) {
+            rel = rel.size() == 7 ? std::string() : rel.substr(8);
+        }
+        const fs::path combined = fs::path(luaScriptsDirectory_) / fs::path(rel);
+        const fs::path absRel = fs::weakly_canonical(combined, ec);
+        if (ec || !isAllowedPath(absRel)) {
+            return std::string();
+        }
+        return absRel.string();
+    }
+    const fs::path abs = fs::weakly_canonical(inp, ec);
+    if (ec) {
+        return std::string();
+    }
+    if (isAllowedPath(abs)) {
+        return abs.string();
+    }
+    return std::string();
+}
+
+std::string AppController::GetAutomationScriptContent() {
+    std::string path = ResolveLuaScriptPath("Automation.lua");
+    if (path.empty()) return "";
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) return "";
+    std::stringstream ss;
+    ss << ifs.rdbuf();
+    return ss.str();
+}
+
+bool AppController::SaveAutomationScriptContent(const std::string& content, std::string& outError) {
+    std::string path = ResolveLuaScriptPath("Automation.lua");
+    if (path.empty()) {
+        outError = "Invalid path";
+        return false;
+    }
+    std::ofstream ofs(path, std::ios::trunc);
+    if (!ofs.is_open()) {
+        outError = "Could not open file for writing: " + path;
+        return false;
+    }
+    ofs << content;
+    return true;
+}
+
+void AppController::ClearLastJiraTicketSyncWarning() { LastJiraTicketSyncWarning.clear(); }
+
+JiraIssueFetchPack AppController::FetchIssuesForActiveView(const JiraConfig* configOverride,
+                                                           const ViewsStore* viewsOverride) {
+    JiraIssueFetchPack pack;
+    if (!Backend || !Cache) {
+        return pack;
+    }
+    std::lock_guard<std::mutex> lock(g_JiraIssueFetchMutex);
+    pack.Tickets = Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError);
+    return pack;
+}
+
+void AppController::ApplyIssueFetchPack(JiraIssueFetchPack pack) {
+    if (!Backend || !Cache) {
+        LOG_WARN("AppController::ApplyIssueFetchPack skipped: backend=%d cache=%d", Backend ? 1 : 0, Cache ? 1 : 0);
+        return;
+    }
+    LastJiraTicketSyncWarning.clear();
+    std::vector<CachedTicket>& freshTickets = pack.Tickets;
+    const std::string& fetchError = pack.FetchError;
+    const bool fullSyncCompleted = pack.FullSyncCompleted;
+
+    if (!fetchError.empty() && IsJiraTransportErrorText(fetchError)) {
+        LastJiraTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
+        LOG_WARN("AppController::ApplyIssueFetchPack transport-style fetch issue: %s", fetchError.c_str());
+        lastJiraConnectivityState_ = JiraConnectivityState::TransportDown;
+        const auto nowProbe = std::chrono::steady_clock::now();
+        nextJiraConnectivityProbeAt_ = nowProbe;
+        PushOfflineReplayTimersDuringTransportOutage(nowProbe);
+    } else if (fetchError.empty()) {
+        requestDeferredLiveJiraBackendSuccessNotify_();
+    }
+    size_t saved = 0;
+    for (const auto& t : freshTickets) {
+        Cache->SaveTicket(t);
+        ++saved;
+    }
+    size_t deleted = 0;
+    if (fullSyncCompleted) {
+        std::unordered_set<std::string> keepIds;
+        keepIds.reserve(freshTickets.size());
+        for (const auto& t : freshTickets) {
+            if (!t.id.empty()) {
+                keepIds.insert(t.id);
+            }
+        }
+        std::vector<CachedTicket> existing = Cache->GetAllTickets();
+        for (const auto& row : existing) {
+            if (keepIds.find(row.id) == keepIds.end()) {
+                Cache->DeleteTicket(row.id);
+                ++deleted;
+            }
+        }
+    }
+    LOG_INFO("AppController::ApplyIssueFetchPack finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
+             freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
+}
+
 void AppController::SyncWithBackend(const JiraConfig* configOverride, const ViewsStore* viewsOverride) {
     LOG_INFO("AppController::SyncWithBackend started.");
-    LastJiraTicketSyncWarning.clear();
-    if (Backend && Cache) {
-        bool fullSyncCompleted = false;
-        std::string fetchError;
-        auto freshTickets = Backend->FetchIssues(&fullSyncCompleted, configOverride, viewsOverride, &fetchError);
-        if (!fetchError.empty() && IsJiraTransportErrorText(fetchError)) {
-            LastJiraTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
-            LOG_WARN("AppController::SyncWithBackend transport-style fetch issue: %s", fetchError.c_str());
-            lastJiraConnectivityState_ = JiraConnectivityState::TransportDown;
-            const auto nowProbe = std::chrono::steady_clock::now();
-            nextJiraConnectivityProbeAt_ = nowProbe;
-            PushOfflineReplayTimersDuringTransportOutage(nowProbe);
-        } else if (fetchError.empty()) {
-            requestDeferredLiveJiraBackendSuccessNotify_();
-        }
-        size_t saved = 0;
-        for (const auto& t : freshTickets) {
-            Cache->SaveTicket(t);
-            ++saved;
-        }
-        size_t deleted = 0;
-        if (fullSyncCompleted) {
-            std::unordered_set<std::string> keepIds;
-            keepIds.reserve(freshTickets.size());
-            for (const auto& t : freshTickets) {
-                if (!t.id.empty()) {
-                    keepIds.insert(t.id);
-                }
-            }
-            std::vector<CachedTicket> existing = Cache->GetAllTickets();
-            for (const auto& row : existing) {
-                if (keepIds.find(row.id) == keepIds.end()) {
-                    Cache->DeleteTicket(row.id);
-                    ++deleted;
-                }
-            }
-        }
-        LOG_INFO("AppController::SyncWithBackend finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
-                 freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
-    } else {
-        LOG_WARN("AppController::SyncWithBackend skipped: backend=%d cache=%d", Backend ? 1 : 0, Cache ? 1 : 0);
-    }
-    RefreshLocalData();
-    WarmIssueTypeEditMetaAtStartAsync();
+    JiraIssueFetchPack pack = FetchIssuesForActiveView(configOverride, viewsOverride);
+    ApplyIssueFetchPack(std::move(pack));
+    RefreshLocalDataAndWarmIssueTypeMeta();
 }

@@ -98,3 +98,54 @@ AiController::AiResult AiController::AnalyzeTicket(const std::string& key, const
               static_cast<int>(r.status_code), static_cast<int>(r.error.code), r.error.message.c_str());
     return {false, "API Error: " + std::to_string(r.status_code)};
 }
+
+AiController::AiResult AiController::ChatCompletion(const std::string& message, const std::vector<std::string>& context,
+                                                    const std::string& apiKey, const std::string& model,
+                                                    const std::string& baseUrl) {
+    if (apiKey.empty()) {
+        return {false, "No API Key provided."};
+    }
+
+    const std::string modelId = model.empty() ? std::string("gpt-4o-mini") : model;
+    std::string apiBase = baseUrl.empty() ? std::string("https://api.openai.com") : baseUrl;
+    while (!apiBase.empty() && apiBase.back() == '/') {
+        apiBase.pop_back();
+    }
+    if (apiBase.find("http://") != 0 && apiBase.find("https://") != 0) {
+        apiBase = "https://" + apiBase;
+    }
+    const std::string endpoint = apiBase + "/v1/chat/completions";
+
+    nlohmann::json messages = nlohmann::json::array();
+    
+    std::string systemPrompt = "You are a senior software engineer using Smatchet, a Jira and P4 integration tool.";
+    if (!context.empty()) {
+        systemPrompt += "\n\nSession Context:\n";
+        for (const auto& ctx : context) {
+            systemPrompt += "- " + ctx + "\n";
+        }
+    }
+    
+    messages.push_back({{"role", "system"}, {"content", systemPrompt}});
+    messages.push_back({{"role", "user"}, {"content", message}});
+
+    nlohmann::json body = {{"model", modelId}, {"messages", messages}};
+
+    const std::string bodyStr = body.dump();
+    auto r = cpr::Post(cpr::Url{endpoint},
+                       cpr::Header{{"Content-Type", "application/json"}, {"Authorization", "Bearer " + apiKey}},
+                       cpr::Body{bodyStr}, cpr::ConnectTimeout{5000}, cpr::Timeout{60000});
+    
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::OpenAi, static_cast<std::uint64_t>(bodyStr.size()), r);
+
+    if (r.status_code == 200) {
+        try {
+            const auto j = nlohmann::json::parse(r.text);
+            return {true, j["choices"][0]["message"]["content"].get<std::string>()};
+        } catch (...) {
+            return {false, "API Error: failed to parse response."};
+        }
+    }
+
+    return {false, "API Error: " + std::to_string(r.status_code)};
+}

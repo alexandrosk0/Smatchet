@@ -20,6 +20,7 @@
 #include <iostream>
 #include <thread>
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 
 namespace {
@@ -155,6 +156,28 @@ struct McpPlugin::Impl {
 McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
 
 McpPlugin::~McpPlugin() { OnStop(); }
+
+McpServerStatus McpPlugin::GetStatus() const {
+    McpServerStatus s;
+    if (!impl_) {
+        return s;
+    }
+    s.PluginRegistered = true;
+    s.ListenPort = port_;
+    s.BindHost = impl_->bind_host;
+    s.AuthRequired = !impl_->auth_token.empty();
+    s.RoutesInstalled = impl_->routes_installed;
+    s.ThreadJoinable = impl_->thread.joinable();
+    s.ServerRunning = impl_->svr.is_running();
+    return s;
+}
+
+bool McpPlugin::AuthTokenMatches(const std::string& cfgToken) const {
+    if (!impl_) {
+        return true;
+    }
+    return impl_->auth_token == cfgToken;
+}
 
 void McpPlugin::OnStart(AppController& app) {
     if (!impl_) {
@@ -342,18 +365,206 @@ void McpPlugin::OnStart(AppController& app) {
             }
             res.set_content(j.dump(), "application/json");
         });
+
+        impl_->svr.Get("/mcp/tools/list", [this, authorize](const httplib::Request& req, httplib::Response& res) {
+            if (!authorize(req, res))
+                return;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            auto tools = impl_->app->GetLuaMcpTools();
+            nlohmann::json j = nlohmann::json::array();
+            for (const auto& t : tools) {
+                j.push_back({{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}});
+            }
+            res.set_content(nlohmann::json{{"tools", j}}.dump(), "application/json");
+#else
+            res.set_content(R"({"tools":[]})", "application/json");
+#endif
+        });
+
+        impl_->svr.Post("/mcp/tools/call", [this, authorize](const httplib::Request& req, httplib::Response& res) {
+            if (!authorize(req, res))
+                return;
+            try {
+                auto body = nlohmann::json::parse(req.body);
+                std::string name = body.value("name", "");
+                std::string paramsStr = body.value("arguments", nlohmann::json::object()).dump();
+                std::string error;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                std::string result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+#else
+                std::string result = "";
+                error = "Lua automation disabled";
+#endif
+                if (!error.empty()) {
+                    res.status = 500;
+                    res.set_content(
+                        nlohmann::json{{"isError", true}, {"content", {{{"type", "text"}, {"text", error}}}}}.dump(),
+                        "application/json");
+                } else {
+                    res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", result}}}}}.dump(),
+                                    "application/json");
+                }
+            } catch (const std::exception& e) {
+                res.status = 400;
+                res.set_content(nlohmann::json{{"isError", true}, {"error", e.what()}}.dump(), "application/json");
+            }
+        });
+
+        // --- Actual MCP JSON-RPC Specification (SSE) ---
+
+        impl_->svr.Get("/mcp/sse", [authorize](const httplib::Request& req, httplib::Response& res) {
+            if (!authorize(req, res))
+                return;
+
+            // In a real implementation, we'd manage session IDs. For now, we use a single global endpoint.
+            res.set_header("Content-Type", "text/event-stream");
+            res.set_header("Cache-Control", "no-cache");
+            res.set_header("Connection", "keep-alive");
+            res.set_header("Access-Control-Allow-Origin", "*");
+
+            std::string endpoint = "/mcp/messages";
+            std::string event = "event: endpoint\ndata: " + endpoint + "\n\n";
+
+            res.set_chunked_content_provider(
+                "text/event-stream",
+                [event](size_t offset, httplib::DataSink& sink) {
+                    if (offset == 0) {
+                        sink.write(event.data(), event.size());
+                        return true;
+                    }
+                    // Keep-alive heartbeat
+                    std::this_thread::sleep_for(std::chrono::seconds(15));
+                    sink.write(": heartbeat\n\n", 12);
+                    return true;
+                },
+                nullptr);
+        });
+
+        impl_->svr.Post("/mcp/messages", [this, authorize](const httplib::Request& req, httplib::Response& res) {
+            if (!authorize(req, res))
+                return;
+
+            try {
+                auto jreq = nlohmann::json::parse(req.body);
+                std::string method = jreq.value("method", "");
+                auto id = jreq["id"];
+                nlohmann::json jres = {{"jsonrpc", "2.0"}, {"id", id}};
+
+                if (method == "initialize") {
+                    jres["result"] = {{"protocolVersion", "2024-11-05"},
+                                      {"capabilities", {{"tools", nlohmann::json::object()}}},
+                                      {"serverInfo", {{"name", "Smatchet"}, {"version", "1.2"}}}};
+                } else if (method == "tools/list") {
+                    nlohmann::json toolList = nlohmann::json::array();
+
+                    // Core C++ Tools
+                    toolList.push_back(
+                        {{"name", "list_active_tickets"},
+                         {"description",
+                          "Returns a list of all tickets currently loaded in the Smatchet project grid."},
+                         {"inputSchema", {{"type", "object"}, {"properties", nlohmann::json::object()}}}});
+                    toolList.push_back(
+                        {{"name", "search_active_tickets"},
+                         {"description", "Search for a specific query string within the active tickets."},
+                         {"inputSchema",
+                          {{"type", "object"},
+                           {"properties", {{"query", {{"type", "string"}, {"description", "The search term"}}}}},
+                           {"required", {"query"}}}}});
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                    auto tools = impl_->app->GetLuaMcpTools();
+                    for (const auto& t : tools) {
+                        toolList.push_back(
+                            {{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}});
+                    }
+#endif
+                    jres["result"] = {{"tools", toolList}};
+                } else if (method == "tools/call") {
+                    auto params = jreq.value("params", nlohmann::json::object());
+                    std::string name = params.value("name", "");
+
+                    if (name == "list_active_tickets") {
+                        const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
+                        nlohmann::json ticketIds = nlohmann::json::array();
+                        for (const auto& t : *ticketsPtr) {
+                            ticketIds.push_back(t.id);
+                        }
+                        jres["result"] = {
+                            {"content", {{{"type", "text"}, {"text", "Active Tickets: " + ticketIds.dump()}}}}};
+                    } else if (name == "search_active_tickets") {
+                        auto args = params.value("arguments", nlohmann::json::object());
+                        std::string query = args.value("query", "");
+                        const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
+                        nlohmann::json matches = nlohmann::json::array();
+                        for (const auto& t : *ticketsPtr) {
+                            if (t.id.find(query) != std::string::npos) {
+                                matches.push_back(t.id);
+                                continue;
+                            }
+                            for (const auto& kv : t.fieldValues) {
+                                if (kv.second.find(query) != std::string::npos) {
+                                    matches.push_back(t.id);
+                                    break;
+                                }
+                            }
+                        }
+                        jres["result"] = {
+                            {"content",
+                             {{{"type", "text"}, {"text", "Search Results for '" + query + "': " + matches.dump()}}}}};
+                    } else {
+                        // Check Lua tools
+                        std::string argsStr = params.value("arguments", nlohmann::json::object()).dump();
+                        std::string error;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                        std::string result = impl_->app->ExecuteLuaMcpTool(name, argsStr, error);
+                        if (error.empty() && !result.empty()) {
+                            jres["result"] = {{"content", {{{"type", "text"}, {"text", result}}}}};
+                        } else if (!error.empty()) {
+                            jres["error"] = {{"code", -32603}, {"message", error}};
+                        } else {
+                            jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+                        }
+#else
+                        jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+#endif
+                    }
+                } else {
+                    jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+                }
+
+                res.set_content(jres.dump(), "application/json");
+            } catch (const std::exception& e) {
+                res.status = 400;
+                res.set_content(
+                    nlohmann::json{{"jsonrpc", "2.0"},
+                                   {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + e.what()}}}}
+                        .dump(),
+                    "application/json");
+            }
+        });
     }
 
     if (impl_->thread.joinable()) {
         return;
     }
 
-    impl_->thread = std::thread([this]() {
+    AppController* appPtr = &app;
+    impl_->thread = std::thread([this, appPtr]() {
         try {
-            impl_->svr.listen(impl_->bind_host.c_str(), port_);
+            const bool ok = impl_->svr.listen(impl_->bind_host.c_str(), port_);
+            if (appPtr != nullptr) {
+                appPtr->AppendMcpActivity(std::string("MCP: HTTP listen finished (returned ") +
+                                            (ok ? "true" : "false") + ").");
+            }
         } catch (const std::exception& e) {
+            if (appPtr != nullptr) {
+                appPtr->AppendMcpActivity(std::string("MCP: listen thread exception: ") + e.what());
+            }
             std::cerr << "MCP server thread error: " << e.what() << std::endl;
         } catch (...) {
+            if (appPtr != nullptr) {
+                appPtr->AppendMcpActivity("MCP: listen thread unknown exception.");
+            }
             std::cerr << "MCP server thread unknown error" << std::endl;
         }
     });

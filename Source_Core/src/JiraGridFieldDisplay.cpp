@@ -397,7 +397,7 @@ WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
 
     model.parsed = true;
     if (s.Total <= 0) {
-        model.line = "No work logged";
+        model.line = "-";
     } else {
         model.line = std::to_string(s.Total);
         model.line += (s.Total == 1) ? " work log" : " work logs";

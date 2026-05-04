@@ -9,16 +9,18 @@
         {
             "name": "_smatchet-native-features",
             "hidden": true,
-            "description": "Shared SMATCHET_WITH_* defaults for all presets; edit ON/OFF here (or override with cmake -D) so Standalone and Unreal-packaged libs stay aligned.",
+            "description": "Shared SMATCHET_WITH_* defaults for all presets; edit ON/OFF here (or override with cmake -D) so Standalone and Unreal-packaged libs stay aligned. Lua matches CMakeLists option default (ON).",
             "cacheVariables": {
-                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
-                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON",
                 "SMATCHET_WITH_AI": "OFF"
             }
         },
         {
             "name": "ninja-debug",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Debug",
             "description": "Debug build with Ninja (requires Ninja on PATH)",
             "generator": "Ninja",
@@ -32,7 +34,9 @@
         },
         {
             "name": "ninja-release",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Release",
             "description": "Release build with Ninja (requires Ninja on PATH)",
             "generator": "Ninja",
@@ -46,7 +50,9 @@
         },
         {
             "name": "ninja-clang-debug",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Debug (Clang)",
             "description": "Debug + compile_commands.json using clang/clang++ on PATH (best match for clang-tidy)",
             "generator": "Ninja",
@@ -60,7 +66,9 @@
         },
         {
             "name": "ninja-unreal-dx12",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Unreal DX12",
             "description": "Debug DX12 artifacts packaged for Unreal plugin",
             "generator": "Ninja",
@@ -75,7 +83,9 @@
         },
         {
             "name": "ninja-unreal-dx12-release",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Unreal DX12 Release",
             "description": "Release DX12 artifacts packaged for Unreal plugin",
             "generator": "Ninja",
@@ -90,7 +100,9 @@
         },
         {
             "name": "vs-unreal-dx12-release",
-            "inherits": ["_smatchet-native-features"],
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "MSVC Unreal DX12 Release",
             "description": "Release DX12 artifacts packaged for Unreal plugin (MSVC ABI compatible)",
             "generator": "Visual Studio 17 2022",

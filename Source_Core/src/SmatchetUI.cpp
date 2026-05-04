@@ -3,6 +3,7 @@
 #include "ConfigManager.h"
 #include "JiraGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
@@ -10,6 +11,10 @@
 #include "SmatchetPerfUi.h"
 #include "SmatchetUiSession.h"
 #include "Win32PickFiles.h"
+#if defined(SMATCHET_WITH_MCP)
+#include "SmatchetMcpServerUi.h"
+#endif
+#include "SmatchetToast.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #if defined(_WIN32)
@@ -28,18 +33,6 @@
 #include <vector>
 #include <string>
 
-namespace {
-
-static void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
-    ConfigManager::Save(d.cfg);
-    if (pushHistory) {
-        d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
-    }
-    app.SyncWithBackend(&d.cfg, &store);
-}
-
-} // namespace
-
 UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
 static bool g_openFilePathsHandlerInstalled = false;
@@ -56,6 +49,21 @@ static void PersistPerformanceWindowPreference(UiDrawSession& d) {
     }
     d.cfg.ShowPerformanceWindow = d.showPerformance;
     ConfigManager::Save(d.cfg);
+}
+
+#if defined(SMATCHET_WITH_MCP)
+static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
+    if (d.cfg.ShowMcpServerWindow == d.showMcpServerWindow) {
+        return;
+    }
+    d.cfg.ShowMcpServerWindow = d.showMcpServerWindow;
+    ConfigManager::Save(d.cfg);
+}
+#endif
+
+static std::future<JiraIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, JiraConfig cfg,
+                                                                    ViewsStore store) {
+    return std::async(std::launch::async, [&app, cfg, store]() { return app.FetchIssuesForActiveView(&cfg, &store); });
 }
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
@@ -83,8 +91,16 @@ void SmatchetUI::Draw(AppController& app) {
     if (!g_ui.cfgInitialized) {
         g_ui.cfg = ConfigManager::Load();
         g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
+#if defined(SMATCHET_WITH_MCP)
+        g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
+#endif
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
+        
+        app.SetAiPromptHandler([](const std::string& message) {
+            g_ui.aiPromptPending = true;
+            g_ui.aiPromptMessage = message;
+        });
     }
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
@@ -152,13 +168,16 @@ void SmatchetUI::Draw(AppController& app) {
         g_openFilePathsHandlerInstalled = true;
     }
     UiPerfMonitor::Instance().BeginFrame();
+    SmatchetImageTextureCache::TickPendingDestroys();
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
     {
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
     }
-    bool jiraConnectivityRecoverySync = false;
-    app.TickJiraConnectivityMonitor(g_ui.cfg);
+    {
+        SMATCHET_UI_PERF_SCOPE("TickJiraConnectivityMonitor");
+        app.TickJiraConnectivityMonitor(g_ui.cfg);
+    }
     auto clearStaleQueuedOfflineGridBanner = []() {
         // Stale green banner: "Queued offline…" is wrong once Jira is reachable again (probe or live API).
         if (!g_ui.gridEditSuccess.empty() && g_ui.gridEditSuccess.find("Queued offline") != std::string::npos) {
@@ -167,7 +186,7 @@ void SmatchetUI::Draw(AppController& app) {
     };
     if (app.ConsumeJiraConnectivityRecovery()) {
         g_ui.triggerCatalogRefetch = true;
-        jiraConnectivityRecoverySync = true;
+        g_ui.connectivityRecoveryTicketResyncPending = true;
         clearStaleQueuedOfflineGridBanner();
     }
     if (app.ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny()) {
@@ -179,9 +198,6 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);
-    }
-    if (jiraConnectivityRecoverySync) {
-        SyncWithCurrentView(app, d, ViewState.GetStore(), false);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
@@ -236,6 +252,10 @@ void SmatchetUI::Draw(AppController& app) {
         drawBulkExportWindow(app, d);
     }
     {
+        SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
+        SmatchetToastManager::Instance().Render();
+    }
+    {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
         drawAuditWindow(app, d);
     }
@@ -253,7 +273,14 @@ void SmatchetUI::Draw(AppController& app) {
         drawAIAssistantWindow(app, d);
     }
 #endif
+#if defined(SMATCHET_WITH_MCP)
     {
+        SMATCHET_UI_PERF_SCOPE("SmatchetDrawMcpServerWindow");
+        SmatchetDrawMcpServerWindow(app, d);
+        PersistMcpServerWindowOpenPreference(d);
+    }
+#endif
+    if (d.showLogWindow) {
         SMATCHET_UI_PERF_SCOPE("drawLogWindow");
         drawLogWindow(d);
     }
@@ -317,14 +344,58 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             d.cfg.SelectedFields = activeView->Fields;
             d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
         }
-        SyncWithCurrentView(app, d, ViewState.GetStore(), false);
-        d.appliedInitialView = true;
+        if (!d.initialTicketSyncStarted) {
+            ConfigManager::Save(d.cfg);
+            app.ClearLastJiraTicketSyncWarning();
+            d.initialTicketSyncStarted = true;
+            d.initialTicketSyncLoading = true;
+            d.initialTicketSyncFuture =
+                StartInitialTicketFetchAsync(app, d.cfg, ViewState.GetStore());
+        }
+        if (d.initialTicketSyncLoading && d.initialTicketSyncFuture.valid() &&
+            d.initialTicketSyncFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            try {
+                JiraIssueFetchPack pack = d.initialTicketSyncFuture.get();
+                app.ApplyIssueFetchPack(std::move(pack));
+                app.RefreshLocalDataAndWarmIssueTypeMeta();
+            } catch (...) {
+                LOG_ERROR("SmatchetUI: initial async ticket fetch failed with exception");
+                app.RefreshLocalDataAndWarmIssueTypeMeta();
+            }
+            d.initialTicketSyncLoading = false;
+            d.appliedInitialView = true;
+        }
+    }
+
+    if (d.connectivityRecoveryTicketResyncPending && !d.connectivityRecoveryTicketFetchLoading) {
+        if (d.appliedInitialView && !d.initialTicketSyncLoading) {
+            ConfigManager::Save(d.cfg);
+            app.ClearLastJiraTicketSyncWarning();
+            d.connectivityRecoveryTicketResyncPending = false;
+            d.connectivityRecoveryTicketFetchLoading = true;
+            d.connectivityRecoveryTicketFetchFuture =
+                StartInitialTicketFetchAsync(app, d.cfg, ViewState.GetStore());
+        }
+    }
+    if (d.connectivityRecoveryTicketFetchLoading && d.connectivityRecoveryTicketFetchFuture.valid() &&
+        d.connectivityRecoveryTicketFetchFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+        try {
+            JiraIssueFetchPack pack = d.connectivityRecoveryTicketFetchFuture.get();
+            app.ApplyIssueFetchPack(std::move(pack));
+            app.RefreshLocalDataAndWarmIssueTypeMeta();
+        } catch (...) {
+            LOG_ERROR("SmatchetUI: connectivity recovery async ticket fetch failed with exception");
+            app.RefreshLocalDataAndWarmIssueTypeMeta();
+        }
+        d.connectivityRecoveryTicketFetchLoading = false;
     }
 }
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
+#if !defined(SMATCHET_WITH_LUA_AUTOMATION)
     (void)app;
+#endif
 #endif
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Settings")) {
@@ -334,28 +405,86 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Performance...")) {
                 d.showPerformance = true;
             }
-            if (ImGui::MenuItem("Views Dashboard...")) {
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Windows")) {
+            if (ImGui::MenuItem("Open Views...")) {
                 d.showViewsDashboard = true;
                 d.requestViewsDashboardFocus = true;
             }
             if (ImGui::MenuItem("Blame Analysis...")) {
                 d.showBlameAnalysis = true;
             }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Tickets")) {
-            if (ImGui::MenuItem("Bulk import...")) {
-                d.showBulkImport = true;
-            }
-            if (ImGui::MenuItem("Bulk export...")) {
-                d.showBulkExport = true;
-            }
+            ImGui::Separator();
+            ImGui::MenuItem("Show Log", nullptr, &d.showLogWindow);
+            ImGui::Separator();
             if (ImGui::MenuItem("Backend audit...")) {
                 d.showAuditTrail = true;
                 d.requestAuditTrailFocus = true;
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Bulk")) {
+            if (ImGui::MenuItem("Bulk import...")) {
+                d.showBulkImport = true;
+            }
+            if (ImGui::MenuItem("Bulk export...")) {
+                d.showBulkExport = true;
+            }
+            ImGui::EndMenu();
+        }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        {
+            const auto globalActions = app.GetLuaGlobalActionNames();
+            if (ImGui::BeginMenu("Scripts")) {
+                if (ImGui::MenuItem("Scripting (Global Actions)...")) {
+                    d.showLuaAutomationWindow = true;
+                    d.requestScriptsWindowFocus = true;
+                }
+                if (ImGui::MenuItem("Lua && Automation...", nullptr, &d.showLuaAutomationWindow) &&
+                    d.showLuaAutomationWindow) {
+                    d.requestLuaAutomationFocus = true;
+                }
+#if defined(SMATCHET_WITH_MCP)
+                if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
+                    d.requestMcpServerFocus = true;
+                }
+#endif
+                if (!globalActions.empty()) {
+                    ImGui::Separator();
+                    for (const auto& name : globalActions) {
+                        if (ImGui::MenuItem(name.c_str())) {
+                            std::string err;
+                            if (!app.ExecuteLuaGlobalAction(name, err)) {
+                                d.gridEditError = "Lua Error: " + err;
+                                d.gridEditSuccess.clear();
+                            } else {
+                                d.gridEditSuccess = "Ran Lua Script: " + name;
+                                d.gridEditError.clear();
+                            }
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        }
+#else
+        {
+            static bool s_loggedScriptsMenuAbsent = false;
+            if (!s_loggedScriptsMenuAbsent) {
+                s_loggedScriptsMenuAbsent = true;
+                LOG_WARN("SmatchetUI: no Scripts menu in this binary (SMATCHET_WITH_LUA_AUTOMATION off).");
+            }
+        }
+#endif
+#if defined(SMATCHET_WITH_MCP) && !defined(SMATCHET_WITH_LUA_AUTOMATION)
+        if (ImGui::BeginMenu("MCP")) {
+            if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
+                d.requestMcpServerFocus = true;
+            }
+            ImGui::EndMenu();
+        }
+#endif
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
             const char* closeLabel = "Close";
@@ -399,6 +528,14 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     DrainFutureJoinQuiet(d.fieldCatalogFuture);
     d.fieldCatalogLoading = false;
     d.fieldCatalogFetchStarted = false;
+
+    DrainFutureJoinQuiet(d.initialTicketSyncFuture);
+    d.initialTicketSyncLoading = false;
+    d.initialTicketSyncStarted = false;
+
+    DrainFutureJoinQuiet(d.connectivityRecoveryTicketFetchFuture);
+    d.connectivityRecoveryTicketFetchLoading = false;
+    d.connectivityRecoveryTicketResyncPending = false;
 
     DrainFutureJoinQuiet(d.inFlightCommitFuture);
     d.inFlightCommitStarted = false;

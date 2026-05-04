@@ -10,6 +10,8 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetTheme.h"
+#include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
@@ -74,33 +76,6 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
     app.SyncWithBackend(&d.cfg, &store);
 }
 
-// Natural issue key comparison: BLOOP-2 < BLOOP-12 (project lexicographic, then number).
-bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
-    auto split = [](const std::string& s) -> std::pair<std::string, long long> {
-        std::string project;
-        long long num = 0;
-        const size_t dash = s.rfind('-');
-        if (dash != std::string::npos && dash + 1 < s.size()) {
-            project = s.substr(0, dash);
-            const std::string tail = s.substr(dash + 1);
-            if (!tail.empty()) {
-                char* end = nullptr;
-                const long long v = std::strtoll(tail.c_str(), &end, 10);
-                if (end == tail.c_str() + tail.size()) {
-                    num = v;
-                    return {project, num};
-                }
-            }
-        }
-        return {s, 0};
-    };
-    const auto pa = split(a);
-    const auto pb = split(b);
-    if (pa.first != pb.first) {
-        return pa.first < pb.first;
-    }
-    return pa.second < pb.second;
-}
 
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at
  * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). */
@@ -1623,39 +1598,49 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.cfg.SelectedFields = activeView->Fields;
                 SyncWithCurrentView(app, d, ViewState.GetStore(), true);
             }
+        }
+
+        // Quick Filter UI moved to header next to Open Views
+        ImGui::SameLine(0, 30.0f);
+        ImGui::SetNextItemWidth(250.0f);
+        if (ImGui::InputTextWithHint("##GridFilter", "Filter...", d.gridFilterBuf, sizeof(d.gridFilterBuf))) {
+            // Filter changed
+        }
+        if (d.gridFilterBuf[0] != '\0') {
             ImGui::SameLine();
-            if (ImGui::Button("Open Views")) {
-                d.showViewsDashboard = true;
-                d.requestViewsDashboardFocus = true;
-            }
-        } else {
-            ImGui::TextDisabled("No active view.");
-            ImGui::SameLine();
-            if (ImGui::Button("Open Views")) {
-                d.showViewsDashboard = true;
-                d.requestViewsDashboardFocus = true;
-            }
+            if (ImGui::Button("Clear")) { d.gridFilterBuf[0] = '\0'; }
         }
 
 #if defined(SMATCHET_WITH_MCP)
         ImGui::SameLine();
-        if (d.cfg.McpEnabled) {
-            if (d.cfg.McpAllowRemote) {
-                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d (LAN)", d.cfg.McpPort);
-            } else {
-                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+        {
+            const char* mcpLabel = d.cfg.McpEnabled ? "● MCP LIVE" : "● MCP DISABLED";
+            float mcpWidth = ImGui::CalcTextSize(mcpLabel).x + 40.0f; 
+            if (d.cfg.McpEnabled) mcpWidth += 50.0f; // extra for port
+            
+            float targetX = ImGui::GetWindowContentRegionMax().x - mcpWidth;
+            if (targetX > ImGui::GetCursorPosX()) {
+                ImGui::SetCursorPosX(targetX);
             }
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
-        }
-        if (ImGui::IsItemHovered()) {
+
             if (d.cfg.McpEnabled) {
-                ImGui::SetTooltip("MCP on port %d. %s Auth: %s.", d.cfg.McpPort,
-                                  d.cfg.McpAllowRemote ? "Bound on all interfaces." : "Localhost only.",
-                                  d.cfg.McpAuthToken.empty() ? "loopback only (no token)."
-                                                             : "X-Smatchet-Token required.");
+                if (d.cfg.McpAllowRemote) {
+                    ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d (LAN)", d.cfg.McpPort);
+                } else {
+                    ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+                }
             } else {
-                ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
+            }
+            if (ImGui::IsItemHovered()) {
+                if (d.cfg.McpEnabled) {
+                    ImGui::SetTooltip("MCP on port %d. %s Auth: %s.", d.cfg.McpPort,
+                                      d.cfg.McpAllowRemote ? "Bound on all interfaces." : "Localhost only.",
+                                      d.cfg.McpAuthToken.empty() ? "loopback only (no token)."
+                                                                 : "X-Smatchet-Token required.");
+                } else {
+                    ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+                }
             }
         }
 #endif
@@ -1733,6 +1718,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_Sortable |
                                        ImGuiTableFlags_SortMulti | ImGuiTableFlags_NoSavedSettings;
+    
+    ImGui::Separator();
 
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
         {
@@ -1750,7 +1737,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
                 }
             }
-            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupScrollFreeze(1, 1);
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
             for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
                 ImGui::TableSetColumnIndex(hci);
@@ -1862,13 +1849,39 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     d.cachedSortTicketsRevision = activeTicketsRevision;
                     d.cachedSortCatalogRevision = catalogRevision;
                 }
-            } else {
-                d.cachedSortedIndices.clear();
-                d.cachedSortFingerprint.clear();
-                d.cachedSortValid = false;
-                d.cachedSortTicketsRevision = activeTicketsRevision;
-                d.cachedSortCatalogRevision = catalogRevision;
             }
+        }
+
+        // Apply Filter
+        static thread_local char lastFilter[128]{};
+        static thread_local size_t lastTicketCount = 0;
+        bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
+        if (filterChanged) {
+            d.gridState.RectSel.ClearAll();
+        }
+        if (filterChanged || !d.cachedSortValid || tickets.size() != lastTicketCount) {
+            d.filteredIndices.clear();
+            const std::vector<size_t>& baseIndices = d.cachedSortedIndices.empty() ? std::vector<size_t>() : d.cachedSortedIndices;
+            
+            auto checkMatch = [&](size_t idx) {
+                if (d.gridFilterBuf[0] == '\0') return true;
+                const auto& t = tickets[idx];
+                if (ContainsCaseInsensitive(t.id, d.gridFilterBuf)) return true;
+                if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf)) return true;
+                return false;
+            };
+
+            if (baseIndices.empty()) {
+                for (size_t i = 0; i < tickets.size(); ++i) {
+                    if (checkMatch(i)) d.filteredIndices.push_back(i);
+                }
+            } else {
+                for (size_t idx : baseIndices) {
+                    if (checkMatch(idx)) d.filteredIndices.push_back(idx);
+                }
+            }
+            std::strncpy(lastFilter, d.gridFilterBuf, sizeof(lastFilter));
+            lastTicketCount = tickets.size();
         }
 
         // Rectangular selection invalidation: anchor/extent are expressed in
@@ -1978,13 +1991,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
-            const std::vector<size_t>* indicesToUse = d.cachedSortedIndices.empty() ? nullptr : &d.cachedSortedIndices;
+            const std::vector<size_t>& indicesToUse = d.filteredIndices;
             ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(tickets.size()));
+            clipper.Begin(static_cast<int>(indicesToUse.size()));
             while (clipper.Step()) {
                 for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
                     const size_t r = static_cast<size_t>(clippedRow);
-                    const size_t ticketIndex = indicesToUse ? (*indicesToUse)[r] : r;
+                    const size_t ticketIndex = indicesToUse[r];
                     const CachedTicket& ticket = tickets[ticketIndex];
                     bool isActiveIssue = (d.gridState.ActiveIssueId == ticket.id);
                     const bool idKeySelectableSelected = d.gridState.RectSel.RowSelected(clippedRow);
@@ -2002,6 +2015,23 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     }
                     SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
                     ImGui::TableNextRow();
+
+                    // Status-based Row Highlighting
+                    const std::string statusRaw = ticket.GetFieldValue("status");
+                    std::string statusLower = ToLowerAsciiCopy(statusRaw);
+                    ImVec4 statusColor = ImVec4(0, 0, 0, 0);
+                    if (statusLower.find("done") != std::string::npos || statusLower.find("resolved") != std::string::npos) 
+                        statusColor = SmatchetTheme::Colors::StatusDone;
+                    else if (statusLower.find("progress") != std::string::npos) 
+                        statusColor = SmatchetTheme::Colors::StatusInProgress;
+                    else if (statusLower.find("todo") != std::string::npos || statusLower.find("open") != std::string::npos || statusLower.find("backlog") != std::string::npos)
+                        statusColor = SmatchetTheme::Colors::StatusToDo;
+                    else if (statusLower.find("block") != std::string::npos)
+                        statusColor = SmatchetTheme::Colors::StatusBlocked;
+
+                    if (statusColor.w > 0.0f) {
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
+                    }
 
                     for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
                         const auto& column = columns[static_cast<size_t>(colIndex)];
@@ -2122,8 +2152,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             const CachedTicket* lastVisibleTicket = nullptr;
             if (!tickets.empty()) {
                 size_t lastIndex = tickets.size() - 1;
-                if (!d.cachedSortedIndices.empty()) {
-                    lastIndex = d.cachedSortedIndices.back();
+                if (!d.filteredIndices.empty()) {
+                    lastIndex = d.filteredIndices.back();
                 }
                 if (lastIndex < tickets.size()) {
                     lastVisibleTicket = &tickets[lastIndex];
@@ -2236,7 +2266,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (windowFocused && sel.HasAnySelection()) {
             if (!io.WantTextInput && effCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                CopyGridRectAsTsv(tickets, d.cachedSortedIndices, columns, catalogIndex, sel);
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, sel);
             }
             if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 sel.ClearAll();
@@ -2251,10 +2281,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             } else if (sel.Active) {
                 activeRow = sel.AnchorRow;
             } else if (!d.gridState.ActiveIssueId.empty()) {
-                const auto& sortedIdx = d.cachedSortedIndices;
-                const bool useSorted = !sortedIdx.empty();
-                for (size_t i = 0; i < tickets.size(); ++i) {
-                    const size_t ti = useSorted ? sortedIdx[i] : i;
+                const auto& indices = d.filteredIndices;
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    const size_t ti = indices[i];
                     if (ti < tickets.size() && tickets[ti].id == d.gridState.ActiveIssueId) {
                         activeRow = static_cast<int>(i);
                         break;
@@ -2379,25 +2408,21 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         const std::int64_t qid = app.QueueFieldEditOffline(
                             d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id, result.QueuedFieldsPayloadJson, qerr);
                         if (qid <= 0) {
-                            d.gridEditError = qerr.empty() ? std::string("Failed to queue offline field edit.") : qerr;
-                            d.gridEditSuccess.clear();
+                            SmatchetToastManager::Instance().Push("Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Error;
-                            feedback.Message = d.gridEditError;
+                            feedback.Message = qerr;
                             feedback.FramesRemaining = 0;
                             d.cellFeedbackByKey[editKey] = feedback;
                         } else if (!app.ApplyFieldEditResult(d.inFlightEdit.IssueId, result.ApplyResult, applyError)) {
-                            d.gridEditError =
-                                applyError.empty() ? std::string("Failed to apply queued field edit.") : applyError;
-                            d.gridEditSuccess.clear();
+                            SmatchetToastManager::Instance().Push("Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError, ToastType::Error);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Error;
-                            feedback.Message = d.gridEditError;
+                            feedback.Message = applyError;
                             feedback.FramesRemaining = 0;
                             d.cellFeedbackByKey[editKey] = feedback;
                         } else {
-                            d.gridEditSuccess = "Queued offline — field edit will sync when Jira is reachable.";
-                            d.gridEditError.clear();
+                            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Jira is reachable.", ToastType::Info);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Success;
                             feedback.Message = "Queued";
@@ -2408,17 +2433,14 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         const bool applied =
                             app.ApplyFieldEditResult(d.inFlightEdit.IssueId, result.ApplyResult, applyError);
                         if (!applied) {
-                            d.gridEditError =
-                                applyError.empty() ? std::string("Failed to apply saved field update.") : applyError;
-                            d.gridEditSuccess.clear();
+                            SmatchetToastManager::Instance().Push("Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError, ToastType::Error);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Error;
-                            feedback.Message = d.gridEditError;
+                            feedback.Message = applyError;
                             feedback.FramesRemaining = 0;
                             d.cellFeedbackByKey[editKey] = feedback;
                         } else {
-                            d.gridEditSuccess = "Field update saved to Jira.";
-                            d.gridEditError.clear();
+                            SmatchetToastManager::Instance().Push("Success", "Field update saved to Jira.", ToastType::Success);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Success;
                             feedback.Message = "Saved";

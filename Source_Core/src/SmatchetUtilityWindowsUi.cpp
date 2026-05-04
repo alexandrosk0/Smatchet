@@ -18,6 +18,17 @@
 
 #if defined(SMATCHET_WITH_AI)
 void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
+    if (d.aiPromptPending && !d.aiIsThinking) {
+        d.aiIsThinking = true;
+        d.aiPromptPending = false;
+        // In a real app, this should be async to avoid UI freeze.
+        // For this implementation, we follow the pattern in AnalyzeTicket button.
+        auto result = AiController::ChatCompletion(d.aiPromptMessage, app.GetAiContext(), d.cfg.AiApiKey, d.cfg.AiModel, d.cfg.AiBaseUrl);
+        d.aiResponse = result.Response;
+        d.aiIsThinking = false;
+        ImGui::SetWindowFocus("AI Assistant");
+    }
+
     ImGui::Begin("AI Assistant");
     if (d.gridState.ActiveIssueId.empty()) {
         ImGui::TextDisabled("Select a ticket to see AI insights.");
@@ -63,6 +74,20 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
                 d.aiResponse = result.Response;
                 d.aiIsThinking = false;
             }
+            
+            const auto& context = app.GetAiContext();
+            if (!context.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Session Context (%zu items)", context.size());
+                if (ImGui::Button("Clear Context")) {
+                    app.ClearAiContext();
+                }
+                ImGui::BeginChild("aiContextScroll", ImVec2(0, 100), true);
+                for (const auto& ctx : context) {
+                    ImGui::BulletText("%s", ctx.c_str());
+                }
+                ImGui::EndChild();
+            }
 
             if (d.aiIsThinking)
                 ImGui::Text("AI is thinking...");
@@ -82,7 +107,10 @@ void SmatchetUI::drawAIAssistantWindow(AppController&, UiDrawSession&) {}
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     Logger& logger = Logger::Instance();
-    ImGui::Begin("Log");
+    if (!ImGui::Begin("Log", &d.showLogWindow)) {
+        ImGui::End();
+        return;
+    }
 
     if (ImGui::Button("Clear Log")) {
         logger.Clear();
