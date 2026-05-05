@@ -7,7 +7,20 @@
     },
     "configurePresets": [
         {
+            "name": "_smatchet-native-features",
+            "hidden": true,
+            "description": "Shared SMATCHET_WITH_* defaults for all presets; edit ON/OFF here (or override with cmake -D) so Standalone and Unreal-packaged libs stay aligned. Lua matches CMakeLists option default (ON).",
+            "cacheVariables": {
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON",
+                "SMATCHET_WITH_AI": "OFF"
+            }
+        },
+        {
             "name": "ninja-debug",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Debug",
             "description": "Debug build with Ninja (requires Ninja on PATH)",
             "generator": "Ninja",
@@ -21,6 +34,9 @@
         },
         {
             "name": "ninja-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
             "displayName": "Ninja Release",
             "description": "Release build with Ninja (requires Ninja on PATH)",
             "generator": "Ninja",
@@ -30,6 +46,71 @@
                 "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-clang-debug",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Debug (Clang)",
+            "description": "Debug + compile_commands.json using clang/clang++ on PATH (best match for clang-tidy)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-clang-debug",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-unreal-dx12",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Unreal DX12",
+            "description": "Debug DX12 artifacts packaged for Unreal plugin",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
+        },
+        {
+            "name": "ninja-unreal-dx12-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Unreal DX12 Release",
+            "description": "Release DX12 artifacts packaged for Unreal plugin",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12-release",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
+        },
+        {
+            "name": "vs-unreal-dx12-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "MSVC Unreal DX12 Release",
+            "description": "Release DX12 artifacts packaged for Unreal plugin (MSVC ABI compatible)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/vs-unreal-dx12-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
         }
     ],
@@ -41,6 +122,32 @@
         {
             "name": "ninja-release",
             "configurePreset": "ninja-release"
+        },
+        {
+            "name": "ninja-clang-debug",
+            "configurePreset": "ninja-clang-debug"
+        },
+        {
+            "name": "ninja-unreal-dx12",
+            "configurePreset": "ninja-unreal-dx12",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
+        },
+        {
+            "name": "ninja-unreal-dx12-release",
+            "configurePreset": "ninja-unreal-dx12-release",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
+        },
+        {
+            "name": "vs-unreal-dx12-release",
+            "configurePreset": "vs-unreal-dx12-release",
+            "configuration": "Release",
+            "targets": [
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
         }
     ]
 }

@@ -26,6 +26,7 @@ compile_commands.json
 .vscode/
 .idea/
 cmake-build-*/
+out/
 
 # OS
 Thumbs.db
@@ -40,8 +41,18 @@ credentials*.json
 
 # App local state / logs
 Smatchet_LocalCache.sqlite
+Smatchet_LocalCache.sqlite-wal
+Smatchet_LocalCache.sqlite-shm
 *.log
 imgui.ini
 smatchet_config.json
 smatchet_views.json
+smatchet_backend_audit.jsonl
+smatchet_field_catalog_cache.json
 
+.vexp/mcp.port
+.vexp/manifest.json
+.vexp/healthy
+.vexp/.gitattributes
+# Keep .cursor/rules committable for shared agent guidance (ignore only local MCP secrets).
+.cursor/mcp.json

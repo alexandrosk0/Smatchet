@@ -6,14 +6,53 @@
 #include <vector>
 
 class LuaConsole {
-public:
+  public:
     std::vector<std::string> Items;
     bool AutoScroll = true;
 
     void ClearLog() { Items.clear(); }
 
-    void AddLog(const std::string& log) {
-        Items.push_back(log);
+    void AddLog(const std::string& log) { Items.push_back(log); }
+
+    /** Toolbar + log scroll area (use inside an existing ImGui window). */
+    void DrawPanelContents() {
+        if (ImGui::Button("Clear"))
+            ClearLog();
+        ImGui::SameLine();
+        bool copy_to_clipboard = ImGui::Button("Copy to Clipboard");
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto-scroll", &AutoScroll);
+        ImGui::Separator();
+
+        const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+        if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            if (copy_to_clipboard)
+                ImGui::LogToClipboard();
+
+            for (const auto& item : Items) {
+                ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+                if (item.find("[ERROR]") != std::string::npos)
+                    color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                else if (item.find("[LUA]") != std::string::npos)
+                    color = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                ImGui::TextUnformatted(item.c_str());
+                ImGui::PopStyleColor();
+            }
+
+            if (copy_to_clipboard)
+                ImGui::LogFinish();
+
+            if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Smatchet Automation Output");
     }
 
     void Draw(const char* title, bool* p_open = nullptr) {
@@ -22,42 +61,15 @@ public:
             ImGui::End();
             return;
         }
-
-        if (ImGui::Button("Clear")) ClearLog();
-        ImGui::SameLine();
-        bool copy_to_clipboard = ImGui::Button("Copy to Clipboard");
-        ImGui::SameLine();
-        ImGui::Checkbox("Auto-scroll", &AutoScroll);
-        ImGui::Separator();
-
-        // Reserve space for a simple footer
-        const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-        if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false, ImGuiWindowFlags_HorizontalScrollbar)) {
-            if (copy_to_clipboard) ImGui::LogToClipboard();
-
-            for (const auto& item : Items) {
-                // Color code the output
-                ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // Default white
-                if (item.find("[ERROR]") != std::string::npos) color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // Red
-                else if (item.find("[LUA]") != std::string::npos) color = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);  // Cyan
-
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextUnformatted(item.c_str());
-                ImGui::PopStyleColor();
-            }
-
-            if (copy_to_clipboard) ImGui::LogFinish();
-
-            if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
-            }
-        }
-        ImGui::EndChild();
-        
-        ImGui::Separator();
-        ImGui::TextDisabled("Smatchet Automation Output");
+        DrawPanelContents();
         ImGui::End();
     }
 };
 
 #endif
+
+
+
+
+
+

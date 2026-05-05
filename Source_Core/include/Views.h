@@ -7,24 +7,21 @@
 #include "ConfigManager.h"
 
 class Views {
-public:
-    void EnsureLoaded(const JiraConfig& cfg) {
-        if (Loaded) {
-            return;
+  public:
+    void EnsureLoaded(const TrackerConfig& cfg) {
+        if (!Loaded) {
+            Disk = ConfigManager::LoadPersistentViewsFromDisk();
+            Loaded = true;
         }
-        Store = ConfigManager::LoadViewsOrBootstrap(cfg);
-        if (Store.ActiveViewId.empty() && !Store.Views.empty()) {
-            Store.ActiveViewId = Store.Views.front().Id;
-        }
-        Loaded = true;
+        ApplyTrackerFromConfig(cfg);
     }
 
-    const ViewsStore& GetStore() const { return Store; }
-    ViewsStore& GetStoreMutable() { return Store; }
+    const ViewsStore& GetStore() const { return Slice_; }
+    ViewsStore& GetStoreMutable() { return Slice_; }
 
     const ViewDefinition* GetActiveView() const {
-        for (const auto& view : Store.Views) {
-            if (view.Id == Store.ActiveViewId) {
+        for (const auto& view : Slice_.Views) {
+            if (view.Id == Slice_.ActiveViewId) {
                 return &view;
             }
         }
@@ -32,8 +29,8 @@ public:
     }
 
     ViewDefinition* GetActiveViewMutable() {
-        for (auto& view : Store.Views) {
-            if (view.Id == Store.ActiveViewId) {
+        for (auto& view : Slice_.Views) {
+            if (view.Id == Slice_.ActiveViewId) {
                 return &view;
             }
         }
@@ -41,14 +38,12 @@ public:
     }
 
     bool Activate(const std::string& viewId) {
-        auto it = std::find_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == viewId; });
-        if (it == Store.Views.end()) {
+        auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                               [&](const ViewDefinition& v) { return v.Id == viewId; });
+        if (it == Slice_.Views.end()) {
             return false;
         }
-        Store.ActiveViewId = viewId;
+        Slice_.ActiveViewId = viewId;
         Save();
         return true;
     }
@@ -70,8 +65,8 @@ public:
                 created.ColumnOrder.push_back("field:" + fieldId);
             }
         }
-        Store.Views.push_back(std::move(created));
-        Store.ActiveViewId = Store.Views.back().Id;
+        Slice_.Views.push_back(std::move(created));
+        Slice_.ActiveViewId = Slice_.Views.back().Id;
         Save();
         return true;
     }
@@ -92,31 +87,59 @@ public:
     }
 
     bool DeleteActive() {
-        if (Store.Views.size() <= 1) {
+        if (Slice_.Views.size() <= 1) {
             return false;
         }
-        auto it = std::remove_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == Store.ActiveViewId; });
-        if (it == Store.Views.end()) {
+        auto it = std::remove_if(Slice_.Views.begin(), Slice_.Views.end(),
+                                 [&](const ViewDefinition& v) { return v.Id == Slice_.ActiveViewId; });
+        if (it == Slice_.Views.end()) {
             return false;
         }
-        Store.Views.erase(it, Store.Views.end());
-        if (!Store.Views.empty()) {
-            Store.ActiveViewId = Store.Views.front().Id;
+        Slice_.Views.erase(it, Slice_.Views.end());
+        if (!Slice_.Views.empty()) {
+            Slice_.ActiveViewId = Slice_.Views.front().Id;
         } else {
-            Store.ActiveViewId.clear();
+            Slice_.ActiveViewId.clear();
         }
         Save();
         return true;
     }
 
     void Save() {
-        ConfigManager::SaveViews(Store);
+        if (!Loaded || !HasActiveBackend) {
+            return;
+        }
+        ConfigManager::ViewsStoreToViewWorkspace(Slice_, Disk.Backends[ActiveBackendKey]);
+        ConfigManager::SavePersistentViewsToDisk(Disk);
     }
 
-private:
+  private:
+    void ApplyTrackerFromConfig(const TrackerConfig& cfg) {
+        const std::string newKey = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
+        if (HasActiveBackend && newKey == ActiveBackendKey) {
+            if (Slice_.Views.empty()) {
+                bool dirty = false;
+                ConfigManager::EnsureViewBucketBootstrapped(Disk, ActiveBackendKey, cfg, dirty);
+                if (dirty) {
+                    Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
+                    ConfigManager::SavePersistentViewsToDisk(Disk);
+                }
+            }
+            return;
+        }
+        if (HasActiveBackend && newKey != ActiveBackendKey) {
+            ConfigManager::ViewsStoreToViewWorkspace(Slice_, Disk.Backends[ActiveBackendKey]);
+        }
+        ActiveBackendKey = newKey;
+        HasActiveBackend = true;
+        bool dirty = false;
+        ConfigManager::EnsureViewBucketBootstrapped(Disk, ActiveBackendKey, cfg, dirty);
+        if (dirty) {
+            ConfigManager::SavePersistentViewsToDisk(Disk);
+        }
+        Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
+    }
+
     static std::string BuildIdFromName(const std::string& name) {
         std::string id;
         id.reserve(name.size());
@@ -134,10 +157,8 @@ private:
     }
 
     bool Exists(const std::string& id) const {
-        return std::find_if(
-            Store.Views.begin(),
-            Store.Views.end(),
-            [&](const ViewDefinition& v) { return v.Id == id; }) != Store.Views.end();
+        return std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                            [&](const ViewDefinition& v) { return v.Id == id; }) != Slice_.Views.end();
     }
 
     std::string BuildUniqueId(const std::string& base) const {
@@ -149,7 +170,16 @@ private:
         return candidate;
     }
 
-private:
+  private:
     bool Loaded = false;
-    ViewsStore Store;
+    bool HasActiveBackend = false;
+    std::string ActiveBackendKey;
+    PersistentViewsFile Disk;
+    ViewsStore Slice_;
 };
+
+
+
+
+
+

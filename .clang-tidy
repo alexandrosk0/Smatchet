@@ -1,0 +1,7 @@
+# Shared defaults for clang-tidy (CLI and IDEs). Narrow checks focused on dead/unused-style issues.
+# Override: clang-tidy -checks='...' or pass -Checks to scripts/run_clang_tidy.ps1
+
+Checks: '-*,clang-analyzer-deadcode.DeadStores,misc-unused-using-decls,misc-unused-alias-decls'
+FormatStyle: none
+# FetchContent / third-party trees (ImGui, etc.): avoid deadcode noise from vendored headers.
+ExcludeHeaderFilterRegex: '.*/_deps/.*'
