@@ -582,8 +582,12 @@ static int JqlInputTextCallback(ImGuiInputTextCallbackData* data) {
 
     if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
         if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr) {
-            BuildJqlSuggestions(data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
-                                *ud->app, *ud->suggestBuild);
+            if (d != nullptr && d->cfg.TrackerType == "Plane") {
+                ud->suggestBuild->Items.clear();
+            } else {
+                BuildJqlSuggestions(data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
+                                    *ud->app, *ud->suggestBuild);
+            }
             if (d != nullptr) {
                 d->jqlAcpLastCursor = data->CursorPos;
                 d->jqlAcpLastSelectionStart = data->SelectionStart;
@@ -615,8 +619,12 @@ static int JqlInputTextCallback(ImGuiInputTextCallbackData* data) {
 
     if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr &&
         data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
-        BuildJqlSuggestions(data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
-                            *ud->app, *ud->suggestBuild);
+        if (d != nullptr && d->cfg.TrackerType == "Plane") {
+            ud->suggestBuild->Items.clear();
+        } else {
+            BuildJqlSuggestions(data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
+                                *ud->app, *ud->suggestBuild);
+        }
         const int n = static_cast<int>(ud->suggestBuild->Items.size());
         if (d != nullptr) {
             const bool enterDown =
@@ -664,17 +672,23 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
 
 void DrawJqlQueryEditor(AppController& app, UiDrawSession& d, Views& viewState, const ViewDefinition& activeView) {
         const std::string currentJql(d.viewJqlBuf);
-        const bool disableOpenJql = currentJql.empty() || d.cfg.Domain.empty();
+        const bool disableOpenJql = currentJql.empty() || d.cfg.Domain.empty() || d.cfg.TrackerType == "Plane";
         if (disableOpenJql) {
             ImGui::BeginDisabled();
         }
-        if (ImGui::Button("JQL")) {
-            app.OpenUrl(app.BuildJqlSearchUrl(d.cfg, currentJql));
+        if (ImGui::Button(d.cfg.TrackerType == "Plane" ? "Query" : "JQL")) {
+            if (d.cfg.TrackerType != "Plane") {
+                app.OpenUrl(app.BuildJqlSearchUrl(d.cfg, currentJql));
+            }
         }
         if (disableOpenJql) {
             ImGui::EndDisabled();
         }
-        ImGui::SetItemTooltip("Open this JQL in Jira.");
+        if (d.cfg.TrackerType == "Plane") {
+            ImGui::SetItemTooltip("Plane does not support opening queries in browser.");
+        } else {
+            ImGui::SetItemTooltip("Open this query in tracker.");
+        }
         ImGui::SameLine();
         JqlSuggestBuild jqlSuggestBuild;
         JqlInputCallbackUserData jqlCb{};
@@ -701,16 +715,20 @@ void DrawJqlQueryEditor(AppController& app, UiDrawSession& d, Views& viewState, 
             jqlFieldRectSize = ImGui::GetItemRectSize();
             const bool suppressJqlHintTooltip = jqlInputHot || (d.viewJqlBuf[0] != '\0');
             if (!suppressJqlHintTooltip) {
-                ImGui::SetItemTooltip(
-                    "Atlassian JQL used when fetching issues.\n"
-                    "Up/Down: suggestion list. Enter: insert suggestion (when listed), else run query.\n"
-                    "Click row: apply suggestion.");
+                if (d.cfg.TrackerType == "Plane") {
+                    ImGui::SetItemTooltip("Plane query or filters used when fetching issues.");
+                } else {
+                    ImGui::SetItemTooltip(
+                        "Atlassian JQL used when fetching issues.\n"
+                        "Up/Down: suggestion list. Enter: insert suggestion (when listed), else run query.\n"
+                        "Click row: apply suggestion.");
+                }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Apply JQL")) {
+            if (ImGui::Button(d.cfg.TrackerType == "Plane" ? "Apply Query" : "Apply JQL")) {
                 SmatchetViewsDashboardUiDetail::ApplyViewsActiveJqlFromBuffers(app, d, viewState, activeView);
             }
-            ImGui::SetItemTooltip("Save this JQL on the active view and sync issues.");
+            ImGui::SetItemTooltip("Save this query on the active view and sync issues.");
         }
         if (d.jqlWantsApplyFromEnter) {
             d.jqlWantsApplyFromEnter = false;

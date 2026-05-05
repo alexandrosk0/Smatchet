@@ -64,6 +64,7 @@ struct FieldEditCommitResult {
 
 struct FieldCatalogFetchResult {
     bool Ok = false;
+    std::string BackendKey;
     std::vector<TrackerField> Fields;
     std::vector<TrackerComponent> Components;
     std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;
@@ -126,15 +127,17 @@ struct UiDrawSession {
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;
+    /** Last `ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType)` applied to views + initial sync. */
+    std::string lastViewsBackendKey;
     /** First JQL fetch runs async so the UI thread is not blocked for multi-second Jira searches. */
     bool initialTicketSyncStarted = false;
     bool initialTicketSyncLoading = false;
-    std::future<JiraIssueFetchPack> initialTicketSyncFuture;
+    std::future<TrackerIssueFetchPack> initialTicketSyncFuture;
 
     /** Jira connectivity recovery: refetch issues for current view without blocking the UI thread. */
     bool connectivityRecoveryTicketResyncPending = false;
     bool connectivityRecoveryTicketFetchLoading = false;
-    std::future<JiraIssueFetchPack> connectivityRecoveryTicketFetchFuture;
+    std::future<TrackerIssueFetchPack> connectivityRecoveryTicketFetchFuture;
 
     NavigationHistory navHistory;
 
@@ -142,8 +145,15 @@ struct UiDrawSession {
     char emailBuf[128]{};
     char tokenBuf[512]{};
     char projectKeyBuf[64]{};
+    char trackerTypeBuf[32]{};
+    char planeUrlBuf[256]{};
+    char planeWorkspaceBuf[128]{};
+    char planeProjectBuf[128]{};
+    char planeApiKeyBuf[512]{};
     char newIssueInheritFieldsBuf[512]{};
+    char newIssueInheritFieldsPlaneBuf[512]{};
     char aiApiKeyBuf[512]{};
+
     char aiModelBuf[128]{};
     char aiBaseUrlBuf[256]{};
     bool mcpEnabled = false;

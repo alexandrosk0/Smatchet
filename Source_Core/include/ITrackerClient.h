@@ -8,10 +8,30 @@
 
 struct JiraConfig;
 struct ViewsStore;
+struct IssueDraft;
+struct RequiredFieldSet;
+
+enum class TrackerReachabilityProbeKind {
+    AuthenticatedReachable,
+    ReachableAuthOrConfigError,
+    TransportDown,
+    ServiceUnavailable,
+};
+
+struct TrackerReachabilityProbeResult {
+    TrackerReachabilityProbeKind Kind = TrackerReachabilityProbeKind::TransportDown;
+    std::string Diagnostic;
+};
 
 class ITrackerClient {
   public:
     virtual ~ITrackerClient() = default;
+    virtual std::string GetTrackerType() const = 0;
+
+    /**
+     * Periodic connectivity check.
+     */
+    virtual TrackerReachabilityProbeResult ProbeReachability(const JiraConfig& cfg) = 0;
 
     /**
      * Pull issues for the current JQL / tracker query.
@@ -30,6 +50,13 @@ class ITrackerClient {
                                                   const ViewsStore* viewsOverride = nullptr,
                                                   std::string* outFetchError = nullptr) = 0;
 
+    /**
+     * Fetch a specific set of issues by their keys.
+     */
+    virtual bool FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
+                                    const ViewsStore& views, std::vector<CachedTicket>& outTickets,
+                                    std::string& outError) = 0;
+
     // Fetch fields/options for the active tracker. Default impl is unsupported.
     virtual bool FetchFieldCatalog(const JiraConfig& /*cfg*/, TrackerFieldCatalogResult& /*outCatalog*/,
                                    std::string& outError) {
@@ -43,6 +70,26 @@ class ITrackerClient {
     // Update one or more tracker field values on an issue.
     // `fields` is the backend-specific object payload under the update root.
     virtual bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) = 0;
+
+    virtual bool UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values, std::string& outError) = 0;
+
+    virtual bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
+                                   nlohmann::json& outPayload, std::string& outError) = 0;
+
+    virtual bool BuildCreatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
+                                    nlohmann::json& /*outPayload*/, std::string& outError) {
+        outError = "BuildCreatePayload is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool BuildUpdatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
+                                    nlohmann::json& /*outPayload*/, std::string& outError) {
+        outError = "BuildUpdatePayload is not supported by this backend.";
+        return false;
+    }
+
+    virtual std::string ResolveDisplayValue(const TrackerField& field, const std::string& value) = 0;
 
     /**
      * Create a new issue and return its key (e.g. "PROJ-42") on success.
@@ -72,6 +119,44 @@ class ITrackerClient {
     virtual bool AddIssueToSprint(const std::string& /*issueKey*/, const std::string& /*sprintId*/,
                                   std::string& outError) {
         outError = "AddIssueToSprint is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool FetchIssueEditMeta(const JiraConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+                                    std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/, std::string& outError) {
+        outError = "FetchIssueEditMeta is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool FetchIssueWatchers(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outWatchers*/,
+                                    std::string& outError) {
+        outError = "FetchIssueWatchers is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool SearchUsersByQuery(const JiraConfig& /*cfg*/, const std::string& /*query*/, std::vector<TrackerUser>& /*outUsers*/,
+                                    std::string& outError) {
+        outError = "SearchUsersByQuery is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool AddIssueCommentPlain(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*plainText*/,
+                                      std::string& outError) {
+        outError = "AddIssueCommentPlain is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool AddIssueCommentBlameContext(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*p4User*/,
+                                             const std::string& /*functionName*/, const std::string& /*filePath*/, int /*lineNumber*/,
+                                             const std::string& /*changelist*/, const std::string& /*date*/, bool /*approximated*/,
+                                             const std::string& /*codeSnippet*/, std::string& outError) {
+        outError = "AddIssueCommentBlameContext is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool FetchUserGroupNames(const JiraConfig& /*cfg*/, const std::string& /*accountId*/,
+                                     std::vector<std::string>& /*outGroupNames*/, std::string& outError) {
+        outError = "FetchUserGroupNames is not supported by this backend.";
         return false;
     }
 };

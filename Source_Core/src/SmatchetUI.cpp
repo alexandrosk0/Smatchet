@@ -39,7 +39,7 @@ static bool g_openFilePathsHandlerInstalled = false;
 
 static void ApplyLoggingSettingsFromConfig(const JiraConfig& cfg) {
     Logger::Instance().SetMinLevel(Logger::ParseLogLevelString(cfg.LogMinLevel, LogLevel::Info));
-    Logger::Instance().SetLogJiraHttpBodies(cfg.LogJiraHttpBodies);
+    Logger::Instance().SetLogTrackerHttpBodies(cfg.LogTrackerHttpBodies);
     Logger::Instance().SetLogP4Io(cfg.LogP4Io);
 }
 
@@ -61,7 +61,7 @@ static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
 }
 #endif
 
-static std::future<JiraIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, JiraConfig cfg,
+static std::future<TrackerIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, JiraConfig cfg,
                                                                     ViewsStore store) {
     return std::async(std::launch::async, [&app, cfg, store]() { return app.FetchIssuesForActiveView(&cfg, &store); });
 }
@@ -70,6 +70,7 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
                                                                         const JiraConfig& fetchCfg) {
     return std::async(std::launch::async, [&app, fetchCfg]() {
         FieldCatalogFetchResult result;
+        result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string error;
         TrackerFieldCatalogResult catalog;
         result.Ok = app.FetchFieldCatalog(fetchCfg, catalog, error);
@@ -173,10 +174,23 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
+        const std::string bk = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+        if (!d.lastViewsBackendKey.empty() && d.lastViewsBackendKey != bk) {
+            d.appliedInitialView = false;
+            d.initialTicketSyncStarted = false;
+            d.initialTicketSyncLoading = false;
+            d.initialTicketSyncFuture = {};
+            d.connectivityRecoveryTicketFetchLoading = false;
+            d.connectivityRecoveryTicketFetchFuture = {};
+            d.connectivityRecoveryTicketResyncPending = false;
+            d.triggerCatalogRefetch = true;
+            d.editingViewId.clear();
+        }
+        d.lastViewsBackendKey = bk;
     }
     {
-        SMATCHET_UI_PERF_SCOPE("TickJiraConnectivityMonitor");
-        app.TickJiraConnectivityMonitor(g_ui.cfg);
+        SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
+        app.TickTrackerConnectivityMonitor(g_ui.cfg);
     }
     auto clearStaleQueuedOfflineGridBanner = []() {
         // Stale green banner: "Queued offline…" is wrong once Jira is reachable again (probe or live API).
@@ -184,12 +198,12 @@ void SmatchetUI::Draw(AppController& app) {
             g_ui.gridEditSuccess.clear();
         }
     };
-    if (app.ConsumeJiraConnectivityRecovery()) {
+    if (app.ConsumeTrackerConnectivityRecovery()) {
         g_ui.triggerCatalogRefetch = true;
         g_ui.connectivityRecoveryTicketResyncPending = true;
         clearStaleQueuedOfflineGridBanner();
     }
-    if (app.ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny()) {
+    if (app.ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny()) {
         clearStaleQueuedOfflineGridBanner();
     }
     if (app.ConsumeFieldCatalogRefetchAfterLiveTicketSync()) {
@@ -313,6 +327,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.fieldCatalogFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         try {
             FieldCatalogFetchResult result = d.fieldCatalogFuture.get();
+            if (result.BackendKey != ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType)) {
+                d.fieldCatalogLoading = false;
+                d.triggerCatalogRefetch = true;
+                return;
+            }
             if (result.Ok) {
                 app.SetFieldCatalog(std::move(result.Fields), std::move(result.Components),
                                     std::move(result.IssueTypeMeta), std::string());
@@ -346,7 +365,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         if (!d.initialTicketSyncStarted) {
             ConfigManager::Save(d.cfg);
-            app.ClearLastJiraTicketSyncWarning();
+            app.ClearLastTrackerTicketSyncWarning();
             d.initialTicketSyncStarted = true;
             d.initialTicketSyncLoading = true;
             d.initialTicketSyncFuture =
@@ -355,7 +374,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         if (d.initialTicketSyncLoading && d.initialTicketSyncFuture.valid() &&
             d.initialTicketSyncFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
-                JiraIssueFetchPack pack = d.initialTicketSyncFuture.get();
+                TrackerIssueFetchPack pack = d.initialTicketSyncFuture.get();
                 app.ApplyIssueFetchPack(std::move(pack));
                 app.RefreshLocalDataAndWarmIssueTypeMeta();
             } catch (...) {
@@ -370,7 +389,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
     if (d.connectivityRecoveryTicketResyncPending && !d.connectivityRecoveryTicketFetchLoading) {
         if (d.appliedInitialView && !d.initialTicketSyncLoading) {
             ConfigManager::Save(d.cfg);
-            app.ClearLastJiraTicketSyncWarning();
+            app.ClearLastTrackerTicketSyncWarning();
             d.connectivityRecoveryTicketResyncPending = false;
             d.connectivityRecoveryTicketFetchLoading = true;
             d.connectivityRecoveryTicketFetchFuture =
@@ -380,7 +399,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
     if (d.connectivityRecoveryTicketFetchLoading && d.connectivityRecoveryTicketFetchFuture.valid() &&
         d.connectivityRecoveryTicketFetchFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         try {
-            JiraIssueFetchPack pack = d.connectivityRecoveryTicketFetchFuture.get();
+            TrackerIssueFetchPack pack = d.connectivityRecoveryTicketFetchFuture.get();
             app.ApplyIssueFetchPack(std::move(pack));
             app.RefreshLocalDataAndWarmIssueTypeMeta();
         } catch (...) {

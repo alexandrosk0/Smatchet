@@ -35,15 +35,15 @@
 
 class PluginHost;
 
-/** Single consolidated Jira degraded/offline banner for main windows (replaces stacked warnings). */
-struct JiraConnectivityBannerForUi {
+/** Single consolidated tracker degraded/offline banner for main windows (replaces stacked warnings). */
+struct TrackerConnectivityBannerForUi {
     enum class Level { None, Warning, Error };
     Level Kind = Level::None;
     std::string Message;
 };
 
-/** Raw JQL issue fetch result; apply on the UI thread via AppController::ApplyIssueFetchPack. */
-struct JiraIssueFetchPack {
+/** Raw tracker issue fetch result; apply on the UI thread via AppController::ApplyIssueFetchPack. */
+struct TrackerIssueFetchPack {
     std::vector<CachedTicket> Tickets;
     bool FullSyncCompleted = false;
     std::string FetchError;
@@ -220,17 +220,17 @@ class AppController {
     void SyncWithBackend(const JiraConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
 
     /** Clears the live ticket-sync warning banner (e.g. before kicking off a background fetch). */
-    void ClearLastJiraTicketSyncWarning();
+    void ClearLastTrackerTicketSyncWarning();
 
     /**
      * Runs FetchIssues under an internal mutex (safe with concurrent UI-triggered syncs).
      * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
      */
-    JiraIssueFetchPack FetchIssuesForActiveView(const JiraConfig* configOverride = nullptr,
-                                               const ViewsStore* viewsOverride = nullptr);
+    TrackerIssueFetchPack FetchIssuesForActiveView(const JiraConfig* configOverride = nullptr,
+                                                  const ViewsStore* viewsOverride = nullptr);
 
     /** Merges fetch results into the local cache and updates connectivity banners. */
-    void ApplyIssueFetchPack(JiraIssueFetchPack pack);
+    void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData();
     /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
@@ -244,8 +244,8 @@ class AppController {
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
-    std::uint64_t GetJiraFieldCatalogRevision() const { return JiraFieldCatalogRevision.load(); }
-    std::uint64_t GetFieldCatalogRevision() const { return JiraFieldCatalogRevision.load(); }
+    std::uint64_t GetTrackerFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
+    std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const JiraConfig& cfg);
     bool FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
@@ -254,35 +254,35 @@ class AppController {
 
     const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
-    const std::string& GetFieldCatalogError() const { return LastJiraFieldCatalogError; }
-    const std::string& GetFieldCatalogWarning() const { return LastJiraFieldCatalogWarning; }
+    const std::string& GetFieldCatalogError() const { return LastTrackerFieldCatalogError; }
+    const std::string& GetFieldCatalogWarning() const { return LastTrackerFieldCatalogWarning; }
     /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets. */
-    const std::string& GetLastTicketSyncWarning() const { return LastJiraTicketSyncWarning; }
+    const std::string& GetLastTicketSyncWarning() const { return LastTrackerTicketSyncWarning; }
 
     /**
      * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
      * (e.g. Views dashboard users-fetch warning). Prefer this over separate `GetFieldCatalogWarning` /
      * `GetLastTicketSyncWarning` lines in headers.
      */
-    JiraConnectivityBannerForUi GetJiraConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
+    TrackerConnectivityBannerForUi GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
 
-    /** Last outcome of periodic Jira /myself probe (UI thread). */
-    enum class JiraConnectivityState {
+    /** Last outcome of periodic tracker probe (UI thread). */
+    enum class TrackerConnectivityState {
         Unknown,
         AuthenticatedReachable,
         ReachableAuthOrConfigError,
         TransportDown,
         ServiceUnavailable,
     };
-    /** Rate-limited background GET /myself; updates connectivity state and recovery latch. */
-    void TickJiraConnectivityMonitor(const JiraConfig& cfg);
+    /** Rate-limited background probe; updates connectivity state and recovery latch. */
+    void TickTrackerConnectivityMonitor(const JiraConfig& cfg);
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
      * offline banner is still set). Clears ticket sync + field-catalog warnings and nudges
      * offline replay timers. UI should run catalog refetch + `SyncWithCurrentView` on the same frame.
      */
-    bool ConsumeJiraConnectivityRecovery();
+    bool ConsumeTrackerConnectivityRecovery();
     /**
      * One-shot: true after a successful live `SyncWithBackend` issue fetch cleared a stale offline
      * field-catalog banner. UI should set `triggerCatalogRefetch` (same as connectivity recovery).
@@ -292,8 +292,8 @@ class AppController {
      * Main-thread: applies connectivity + ticket/catalog banner updates latched after any successful
      * Jira HTTP work (including from background workers). Call once per frame early in `SmatchetUI::Draw`.
      */
-    /** @return true if a deferred notify was applied this call (live Jira request succeeded). */
-    bool ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny();
+    /** @return true if a deferred notify was applied this call (live tracker request succeeded). */
+    bool ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny();
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          const std::string& error);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
@@ -438,11 +438,11 @@ class AppController {
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
-    /** Fetches watcher users for an issue (Jira only). */
-    bool FetchIssueWatchers(const std::string& issueKey, std::vector<JiraUser>& outWatchers,
+    /** Fetches watcher users for an issue. */
+    bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const;
 
-    bool JiraSearchUsersByQuery(const std::string& query, std::vector<JiraUser>& outUsers, std::string& outError) const;
+    bool JiraSearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
 
     bool JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 
@@ -457,17 +457,16 @@ class AppController {
   private:
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerClient> Backend;
-    JiraClient* JiraBackend = nullptr;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
-    std::atomic<std::uint64_t> JiraFieldCatalogRevision{0};
+    std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
     std::vector<TrackerField> AvailableFields;
     std::vector<TrackerComponent> AvailableComponents;
     std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
-    std::string LastJiraFieldCatalogError;
-    std::string LastJiraFieldCatalogWarning;
-    std::string LastJiraTicketSyncWarning;
+    std::string LastTrackerFieldCatalogError;
+    std::string LastTrackerFieldCatalogWarning;
+    std::string LastTrackerTicketSyncWarning;
     bool fieldCatalogEverLoaded_ = false;
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
@@ -533,24 +532,24 @@ class AppController {
     void LaunchBackgroundTask(std::function<void()> task);
     void JoinBackgroundTasks();
 
-    void DrainJiraConnectivityProbeFuture();
-    void ApplyJiraConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
-                                          const JiraReachabilityProbeResult& r);
-    bool IsConnectivityDegradedForProbeInterval(JiraConnectivityState nextProbeState) const;
+    void DrainTrackerConnectivityProbeFuture();
+    void ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
+                                             const TrackerReachabilityProbeResult& r);
+    bool IsConnectivityDegradedForProbeInterval(TrackerConnectivityState nextProbeState) const;
     void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now);
-    static JiraConnectivityState MapReachabilityProbeKind(JiraReachabilityProbeKind k);
+    static TrackerConnectivityState MapReachabilityProbeKind(TrackerReachabilityProbeKind k);
 
-    void requestDeferredLiveJiraBackendSuccessNotify_() const;
-    void applyLiveJiraReachabilityAfterSuccessfulBackendRequest_();
+    void requestDeferredLiveTrackerBackendSuccessNotify_() const;
+    void applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_();
 
-    std::chrono::steady_clock::time_point nextJiraConnectivityProbeAt_{};
-    bool jiraConnectivityProbeInFlight_ = false;
-    std::future<JiraReachabilityProbeResult> jiraConnectivityProbeFuture_;
-    JiraConnectivityState lastJiraConnectivityState_ = JiraConnectivityState::Unknown;
-    std::string lastJiraConnectivityDiagnostic_;
-    bool jiraConnectivityRecoveryPending_ = false;
+    std::chrono::steady_clock::time_point nextTrackerConnectivityProbeAt_{};
+    bool trackerConnectivityProbeInFlight_ = false;
+    std::future<TrackerReachabilityProbeResult> trackerConnectivityProbeFuture_;
+    TrackerConnectivityState lastTrackerConnectivityState_ = TrackerConnectivityState::Unknown;
+    std::string lastTrackerConnectivityDiagnostic_;
+    bool trackerConnectivityRecoveryPending_ = false;
     std::atomic<bool> fieldCatalogRefetchAfterLiveTicketSyncPending_{false};
-    mutable std::atomic<bool> deferredLiveJiraBackendSuccessNotify_{false};
+    mutable std::atomic<bool> deferredLiveTrackerBackendSuccessNotify_{false};
 
     mutable std::mutex activeTicketsMutex_;
     std::atomic<bool> shuttingDown_{false};

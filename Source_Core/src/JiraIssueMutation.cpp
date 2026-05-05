@@ -1,4 +1,4 @@
-#include "JiraClient.h"
+ #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
 #include "JiraFieldValueParser.h"
@@ -6,6 +6,10 @@
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
+#include "JiraFieldPayload.h"
+#include "IssueDraft.h"
+#include "JiraTrackerFieldAdapter.h"
+#include "TrackerFieldSchema.h"
 
 #include <cpr/cpr.h>
 #include <ghc/filesystem.hpp>
@@ -526,7 +530,7 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
             approxBytes = 0;
         }
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, approxBytes, response);
-        LogJiraHttpResult("POST", url, response);
+        LogTrackerHttpResult("JiraClient", "POST", url, response);
 
         if (response.status_code != 200 && response.status_code != 201) {
             std::string msg = "HTTP " + std::to_string(response.status_code);
@@ -606,4 +610,138 @@ bool JiraClient::AddIssueToSprint(const JiraConfig& cfg, const std::string& issu
     BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, true, std::string(),
                                     nlohmann::json{{"sprint_id", sprintId}});
     return true;
+}
+
+#include "JiraTrackerFieldAdapter.h"
+
+bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values, std::string& outError) {
+    nlohmann::json payload;
+    if (!BuildFieldPayload(field, values, payload, outError)) {
+        return false;
+    }
+    return UpdateIssueFields(issueId, payload, outError);
+}
+
+bool JiraClient::BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
+                                   nlohmann::json& outPayload, std::string& outError) {
+    nlohmann::json builtValue;
+    if (!JiraFieldPayload::BuildValue(JiraTrackerFieldAdapter::ToJiraField(field), values, builtValue, outError)) {
+        return false;
+    }
+    outPayload = nlohmann::json::object({{field.Id, builtValue}});
+    return true;
+}
+
+bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                    nlohmann::json& outPayload, std::string& outError) {
+    outPayload = nlohmann::json::object();
+    outError.clear();
+
+    if (draft.ProjectKey.empty()) {
+        outError = "Project key is empty.";
+        return false;
+    }
+    outPayload["project"] = nlohmann::json{{"key", draft.ProjectKey}};
+
+    if (!draft.IssueTypeId.empty()) {
+        outPayload["issuetype"] = nlohmann::json{{"id", draft.IssueTypeId}};
+    } else if (!draft.IssueTypeName.empty()) {
+        outPayload["issuetype"] = nlohmann::json{{"name", draft.IssueTypeName}};
+    } else {
+        outError = "Issue type is empty.";
+        return false;
+    }
+
+    if (!draft.ParentKey.empty()) {
+        outPayload["parent"] = nlohmann::json{{"key", draft.ParentKey}};
+    }
+
+    for (const auto& kv : draft.FieldValues) {
+        const std::string& fieldId = kv.first;
+        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') continue;
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent" || fieldId == "status") {
+            continue;
+        }
+        const std::string raw = kv.second;
+        if (raw.empty()) continue;
+
+        const TrackerField* field = nullptr;
+        for (const auto& f : catalog) { if (f.Id == fieldId) { field = &f; break; } }
+        
+        TrackerField synthetic;
+        if (!field) {
+            synthetic.Id = fieldId;
+            synthetic.Type = "string";
+            synthetic.Family = TrackerFieldFamily::Text;
+            field = &synthetic;
+        }
+
+        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
+        if (JiraFieldPayload::IsSprintField(jiraField)) continue;
+
+        nlohmann::json value;
+        std::string err;
+        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
+            outError = "Field '" + fieldId + "': " + err;
+            return false;
+        }
+        if (!value.is_null()) {
+            outPayload[fieldId] = std::move(value);
+        }
+    }
+    return true;
+}
+
+bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                    nlohmann::json& outPayload, std::string& outError) {
+    outPayload = nlohmann::json::object();
+    outError.clear();
+
+    if (!draft.ParentKey.empty()) {
+        outPayload["parent"] = nlohmann::json{{"key", draft.ParentKey}};
+    }
+
+    for (const auto& kv : draft.FieldValues) {
+        const std::string& fieldId = kv.first;
+        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') continue;
+        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
+            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
+            fieldId == "parent" || fieldId == "status") {
+            continue;
+        }
+        const std::string raw = kv.second;
+        if (raw.empty()) continue;
+
+        const TrackerField* field = nullptr;
+        for (const auto& f : catalog) { if (f.Id == fieldId) { field = &f; break; } }
+
+        TrackerField synthetic;
+        if (!field) {
+            synthetic.Id = fieldId;
+            synthetic.Type = "string";
+            synthetic.Family = TrackerFieldFamily::Text;
+            field = &synthetic;
+        }
+
+        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
+        if (JiraFieldPayload::IsSprintField(jiraField)) continue;
+
+        nlohmann::json value;
+        std::string err;
+        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
+            outError = "Field '" + fieldId + "': " + err;
+            return false;
+        }
+        if (!value.is_null()) {
+            outPayload[fieldId] = std::move(value);
+        }
+    }
+    return true;
+}
+
+std::string JiraClient::ResolveDisplayValue(const TrackerField& field, const std::string& value) {
+    return JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(JiraTrackerFieldAdapter::ToJiraField(field), value);
 }

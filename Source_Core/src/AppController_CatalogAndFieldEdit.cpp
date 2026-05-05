@@ -64,7 +64,7 @@ void AppController::RefreshLocalData() {
 
 void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
     RefreshLocalData();
-    if (JiraBackend) {
+    if (Backend) {
         WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
     }
 }
@@ -124,16 +124,22 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
+    const JiraConfig cfgSnap = ConfigManager::Load();
+    const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap);
+    const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
+
     if (!error.empty()) {
-        if (IsJiraTransportErrorText(error)) {
+        if (IsTrackerTransportErrorText(error)) {
             if (!AvailableFields.empty()) {
-                LastJiraFieldCatalogError.clear();
-                const std::string nextWarning = "Offline: using cached Jira field catalog. Last fetch failed: " + error;
-                if (nextWarning != LastJiraFieldCatalogWarning) {
-                    LastJiraFieldCatalogWarning = nextWarning;
-                    JiraFieldCatalogRevision.fetch_add(1);
+                LastTrackerFieldCatalogError.clear();
+                const std::string nextWarning =
+                    std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
+                    " field catalog. Last fetch failed: " + error;
+                if (nextWarning != LastTrackerFieldCatalogWarning) {
+                    LastTrackerFieldCatalogWarning = nextWarning;
+                    TrackerFieldCatalogRevision.fetch_add(1);
                 } else {
-                    LastJiraFieldCatalogWarning = nextWarning;
+                    LastTrackerFieldCatalogWarning = nextWarning;
                 }
                 LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
                 return;
@@ -143,31 +149,35 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
             std::vector<TrackerComponent> snapComponents;
             std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
             std::string snapErr;
-            if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(snapFields, snapComponents, snapIssueTypeMeta,
-                                                               snapErr)) {
+            if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
+                                                               snapIssueTypeMeta, snapErr)) {
                 AvailableFields = std::move(snapFields);
                 AvailableComponents = std::move(snapComponents);
                 AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
                 fieldCatalogEverLoaded_ = true;
-                LastJiraFieldCatalogError.clear();
-                LastJiraFieldCatalogWarning =
-                    "Offline: restored Jira field catalog from local snapshot. Last fetch failed: " + error;
-                for (auto& field : AvailableFields) {
-                    if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
-                        field.ReadOnly = true;
+                LastTrackerFieldCatalogError.clear();
+                LastTrackerFieldCatalogWarning =
+                    std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
+                    " field catalog from local snapshot. Last fetch failed: " + error;
+                if (!catalogPlane) {
+                    for (auto& field : AvailableFields) {
+                        if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                            field.ReadOnly = true;
+                        }
                     }
+                    EnsureCatalogHistoryField();
                 }
-                EnsureCatalogHistoryField();
-                JiraFieldCatalogRevision.fetch_add(1);
+                TrackerFieldCatalogRevision.fetch_add(1);
                 LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
                 return;
             }
 
             if (fieldCatalogEverLoaded_) {
-                LastJiraFieldCatalogError.clear();
-                LastJiraFieldCatalogWarning =
-                    "Offline: no field catalog snapshot could be loaded. Last fetch failed: " + error;
-                JiraFieldCatalogRevision.fetch_add(1);
+                LastTrackerFieldCatalogError.clear();
+                LastTrackerFieldCatalogWarning =
+                    "Offline: no field catalog snapshot could be loaded for this tracker context. Last fetch failed: " +
+                    error;
+                TrackerFieldCatalogRevision.fetch_add(1);
                 LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
                          error.c_str());
                 return;
@@ -177,10 +187,11 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
             AvailableComponents.clear();
             AvailableIssueTypeMeta.clear();
             fieldCatalogEverLoaded_ = false;
-            LastJiraFieldCatalogWarning.clear();
-            LastJiraFieldCatalogError = "No cached Jira field catalog available. " +
+            LastTrackerFieldCatalogWarning.clear();
+            LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
+                                        " field catalog available. " +
                                         (error.empty() ? std::string("Last fetch failed.") : error);
-            JiraFieldCatalogRevision.fetch_add(1);
+            TrackerFieldCatalogRevision.fetch_add(1);
             LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
             return;
         }
@@ -189,9 +200,9 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         AvailableComponents.clear();
         AvailableIssueTypeMeta.clear();
         fieldCatalogEverLoaded_ = false;
-        LastJiraFieldCatalogWarning.clear();
-        LastJiraFieldCatalogError = error;
-        JiraFieldCatalogRevision.fetch_add(1);
+        LastTrackerFieldCatalogWarning.clear();
+        LastTrackerFieldCatalogError = error;
+        TrackerFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
         return;
     }
@@ -199,25 +210,27 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     AvailableFields = std::move(fields);
     AvailableComponents = std::move(components);
     AvailableIssueTypeMeta = std::move(issueTypeMeta);
-    LastJiraFieldCatalogError.clear();
-    LastJiraFieldCatalogWarning.clear();
+    LastTrackerFieldCatalogError.clear();
+    LastTrackerFieldCatalogWarning.clear();
     fieldCatalogEverLoaded_ = true;
-    requestDeferredLiveJiraBackendSuccessNotify_();
+    requestDeferredLiveTrackerBackendSuccessNotify_();
     {
         std::string snapErr;
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(AvailableFields, AvailableComponents, AvailableIssueTypeMeta,
-                                                         snapErr)) {
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, AvailableFields, AvailableComponents,
+                                                         AvailableIssueTypeMeta, snapErr)) {
             LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
         }
     }
-    for (auto& field : AvailableFields) {
-        if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
-            field.ReadOnly = true;
+    if (!catalogPlane) {
+        for (auto& field : AvailableFields) {
+            if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                field.ReadOnly = true;
+            }
         }
+        EnsureCatalogHistoryField();
     }
-    EnsureCatalogHistoryField();
 
-    JiraFieldCatalogRevision.fetch_add(1);
+    TrackerFieldCatalogRevision.fetch_add(1);
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
@@ -290,25 +303,23 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     }
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
         EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
     }
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         return false;
     }
 
     nlohmann::json valuePayload;
-    std::string buildErr;
-    const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(field);
-    if (!JiraFieldPayload::BuildValue(jiraField, rawValues, valuePayload, buildErr)) {
-        outError = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
+    if (!Backend->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
+        LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s", 
+                 issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
     }
 
-    outFieldsPayload = nlohmann::json::object();
-    outFieldsPayload[field.Id] = std::move(valuePayload);
+    outFieldsPayload = std::move(valuePayload);
 
     std::string displayValue;
     if (!values.empty()) {
@@ -316,7 +327,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
             if (i != 0) {
                 displayValue += ", ";
             }
-            displayValue += JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(jiraField, values[i]);
+            displayValue += Backend->ResolveDisplayValue(field, values[i]);
         }
     }
     outDisplayValues[field.Id] = std::move(displayValue);
@@ -337,7 +348,7 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
 }
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorker) {
-    if (!JiraBackend) {
+    if (!Backend) {
         return;
     }
     const auto ticketsSnap = GetActiveTicketsSnapshot();
@@ -383,7 +394,7 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorke
 
 bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                                          const TrackerField* fieldMeta, const std::string* issueTypeKeyOverride) const {
-    if (!JiraBackend || issueId.empty() || fieldId.empty()) {
+    if (!Backend || issueId.empty() || fieldId.empty()) {
         return true;
     }
     if (IsEditableTimetrackingEstimateFieldId(fieldId)) {
@@ -441,7 +452,7 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     if (outError) {
         outError->clear();
     }
-    if (!JiraBackend || issueId.empty()) {
+    if (!Backend || issueId.empty()) {
         return true;
     }
     {
@@ -469,7 +480,7 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     const JiraConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
-    const bool ok = JiraBackend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
+    const bool ok = Backend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
 
     IssueEditMetaCache cache;
     // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
@@ -492,7 +503,7 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
             *outError = fetchError;
         }
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
@@ -556,7 +567,7 @@ void AppController::PruneEditMetaCacheToActiveTickets() {
 }
 
 void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
-    if (!JiraBackend || issueId.empty()) {
+    if (!Backend || issueId.empty()) {
         return;
     }
     {
@@ -611,7 +622,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     const auto& tickets = *ticketsSnap;
 
     if (IsSprintField(field)) {
-        if (!JiraBackend) {
+        if (!Backend) {
             outError = "Jira backend is not initialized.";
             return false;
         }
@@ -627,7 +638,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                                      [&](const CachedTicket& ticket) { return ticket.id == issueId; });
         BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-        if (!JiraBackend->AddIssueToSprint(cfg, issueId, sprintId, outError)) {
+        if (!Backend->AddIssueToSprint(issueId, sprintId, outError)) {
             LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
                       issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
             BackendAuditTrail::AppendResult(
@@ -657,7 +668,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", values.empty() ? std::string() : values.front()}});
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
         return true;
     }
 
@@ -740,15 +751,15 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                            {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
                                                      {"timeestimate", beforeRemainingEstimate}}},
                            {"after", fieldsPayload["timetracking"]}});
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
         return true;
     }
 
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
         EnsureIssueEditMetaLoaded(issueId, nullptr);
     }
 
-    if (JiraBackend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !CanEditFieldForIssue(issueId, field.Id, &field)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         LOG_WARN("AppController::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
@@ -756,23 +767,18 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return false;
     }
 
-    nlohmann::json valuePayload;
-    std::string buildErr;
-    const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(field);
-    if (!JiraFieldPayload::BuildValue(jiraField, rawValues, valuePayload, buildErr)) {
-        outError = buildErr.empty() ? std::string("Invalid field value.") : buildErr;
-        LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
-                 field.Id.c_str(), outError.c_str());
+    nlohmann::json fieldsPayload;
+    if (!Backend->BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
+        LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", 
+                 issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
     }
 
-    nlohmann::json fieldsPayload = nlohmann::json::object();
-    fieldsPayload[field.Id] = valuePayload;
     BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
     bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
     bool didRetryAfter400 = false;
-    if (!updateOk && JiraBackend && ErrorTextContainsHttpStatus(outError, 400)) {
+    if (!updateOk && Backend && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr);
         if (!CanEditFieldForIssue(issueId, field.Id, &field)) {
@@ -808,19 +814,17 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return false;
     }
 
-    // Keep local cache and in-memory model in sync with the successful Jira update.
+    // Keep local cache and in-memory model in sync with the successful backend update.
     if (ticketIt != tickets.end()) {
         CachedTicket updatedTicket = *ticketIt;
 
         std::string displayValue;
         if (!values.empty()) {
             for (size_t i = 0; i < values.size(); ++i) {
-                const std::string displayPart =
-                    JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(jiraField, values[i]);
                 if (i != 0) {
                     displayValue += ", ";
                 }
-                displayValue += displayPart;
+                displayValue += Backend->ResolveDisplayValue(field, values[i]);
             }
         }
 
@@ -837,7 +841,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             nlohmann::json{{"field_id", field.Id}, {"before", "unknown"}, {"after", rawValues}});
     }
 
-    requestDeferredLiveJiraBackendSuccessNotify_();
+    requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
 }
 
@@ -852,7 +856,10 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    JiraClient localClient;
+    if (!Backend) {
+        outResult.Error = "No tracker backend initialized.";
+        return false;
+    }
     JiraConfig cfg = ConfigManager::Load();
     std::vector<std::string> values;
     values.reserve(rawValues.size());
@@ -868,7 +875,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
             return false;
         }
         const std::string sprintId = values.front();
-        if (!localClient.AddIssueToSprint(cfg, issueId, sprintId, outResult.Error)) {
+        if (!Backend->AddIssueToSprint(issueId, sprintId, outResult.Error)) {
             return false;
         }
         std::string displayValue = sprintId;
@@ -880,7 +887,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         }
         outResult.Ok = true;
         outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
         return true;
     }
 
@@ -917,13 +924,13 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
 
         nlohmann::json fieldsPayload = nlohmann::json::object();
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        if (!localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+        if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
             return false;
         }
         outResult.Ok = true;
         outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
         outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
         return true;
     }
 
@@ -937,9 +944,9 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    bool updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     bool didRetryAfter400 = false;
-    if (!updateOk && JiraBackend && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
+    if (!updateOk && Backend && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr, issueTypeKeyOpt);
         if (!CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
@@ -949,7 +956,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                      issueId.c_str(), field.Id.c_str());
             return false;
         }
-        updateOk = localClient.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+        updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -967,7 +974,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
 
     outResult.Ok = true;
     outResult.UpdatedDisplayValues = std::move(displayValues);
-    requestDeferredLiveJiraBackendSuccessNotify_();
+    requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
 }
 
@@ -1034,39 +1041,39 @@ bool AppController::ApplyFieldEditResult(const std::string& issueId, const Field
     return true;
 }
 
-bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<JiraUser>& outWatchers,
+bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                                        std::string& outError) const {
     outWatchers.clear();
     outError.clear();
-    if (!JiraBackend) {
+    if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    const bool ok = Backend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector<JiraUser>& outUsers,
+bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                                            std::string& outError) const {
     outUsers.clear();
     outError.clear();
-    if (!JiraBackend) {
+    if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->SearchUsersByQuery(cfg, query, outUsers, outError);
+    const bool ok = Backend->SearchUsersByQuery(cfg, query, outUsers, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraSearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
@@ -1074,16 +1081,16 @@ bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector
 bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                              std::string& outError) {
     outError.clear();
-    if (!JiraBackend) {
+    if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    const bool ok = Backend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraAddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
@@ -1094,18 +1101,18 @@ bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
                                                     const std::string& date, const bool approximated,
                                                     const std::string& codeSnippet, std::string& outError) {
     outError.clear();
-    if (!JiraBackend) {
+    if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
+    const bool ok = Backend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
                                                              changelist, date, approximated, codeSnippet, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraAddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
@@ -1114,17 +1121,17 @@ bool AppController::JiraFetchUserGroupNames(const std::string& accountId, std::v
                                             std::string& outError) const {
     outGroupNames.clear();
     outError.clear();
-    if (!JiraBackend) {
+    if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
     const JiraConfig cfg = ConfigManager::Load();
-    const bool ok = JiraBackend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    const bool ok = Backend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
         LOG_ERROR("AppController::JiraFetchUserGroupNames failed account=%s err=%s",
                   TruncateForLog(accountId, 40).c_str(), outError.c_str());
     } else {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }

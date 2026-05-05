@@ -189,7 +189,10 @@ std::vector<std::string> MissingRequiredFields(const IssueDraft& draft, const Re
         return {};
     }
     std::vector<std::string> out;
-    const std::vector<std::string> hardMinimum = {"__project__", "__issuetype__", "summary"};
+    std::vector<std::string> hardMinimum = {"__project__", "summary"};
+    if (required.RequiresIssueType) {
+        hardMinimum.push_back("__issuetype__");
+    }
     for (const auto& key : hardMinimum) {
         if (IsHardMinimumEmpty(draft, key)) {
             out.push_back(key);
@@ -373,6 +376,34 @@ void PruneUnchangedFields(IssueDraft& draft, const CachedTicket& existing) {
             draft.ParentKey.clear();
         }
     }
+}
+
+std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
+                                           const std::vector<TrackerField>& catalog) {
+    std::vector<std::string> names;
+    names.reserve(ids.size());
+    for (const auto& id : ids) {
+        if (id == "__project__") {
+            names.push_back("Project");
+        } else if (id == "__issuetype__") {
+            names.push_back("Issue Type");
+        } else if (id == "__parent__") {
+            names.push_back("Parent");
+        } else {
+            bool found = false;
+            for (const auto& f : catalog) {
+                if (f.Id == id) {
+                    names.push_back(f.Name);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                names.push_back(id);
+            }
+        }
+    }
+    return names;
 }
 
 } // namespace IssueDraftHelpers

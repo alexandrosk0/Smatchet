@@ -31,57 +31,8 @@ TrackerField MakeSyntheticField(const std::string& id) {
 }
 
 /** PUT /issue fields: mutable custom + system fields; no project/type swap; status/sprint handled elsewhere. */
-bool BuildUpdateFieldsPayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                              nlohmann::json& outFields, std::string& outError) {
-    outFields = nlohmann::json::object();
-    outError.clear();
+// BuildUpdateFieldsPayload removed, logic moved to Backend::BuildUpdatePayload
 
-    if (!draft.ParentKey.empty()) {
-        outFields["parent"] = nlohmann::json{{"key", draft.ParentKey}};
-    }
-
-    for (const auto& kv : draft.FieldValues) {
-        const std::string& fieldId = kv.first;
-        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
-            continue;
-        }
-        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
-            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
-            fieldId == "parent") {
-            continue;
-        }
-        if (fieldId == "status") {
-            continue;
-        }
-        const std::string raw = kv.second;
-        if (raw.empty()) {
-            continue;
-        }
-
-        const TrackerField* field = FindFieldById(catalog, fieldId);
-        TrackerField synthetic;
-        if (!field) {
-            synthetic = MakeSyntheticField(fieldId);
-            field = &synthetic;
-        }
-
-        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
-        if (JiraFieldPayload::IsSprintField(jiraField)) {
-            continue;
-        }
-
-        nlohmann::json value;
-        std::string err;
-        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
-            outError = "Field '" + fieldId + "': " + err;
-            return false;
-        }
-        if (!value.is_null()) {
-            outFields[fieldId] = std::move(value);
-        }
-    }
-    return true;
-}
 
 struct PostIssueStepsOutcome {
     bool mergeStatusFromDraft = false;
@@ -256,69 +207,13 @@ CachedTicket MergeDraftIntoCachedTicketForUpdate(const CachedTicket& existing, c
 
 namespace IssueCreatePipeline {
 
-bool BuildFieldsPayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog, nlohmann::json& outFields,
+bool BuildFieldsPayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/, nlohmann::json& /*outFields*/,
                         std::string& outError) {
-    outFields = nlohmann::json::object();
-    outError.clear();
-
-    if (draft.ProjectKey.empty()) {
-        outError = "Project key is empty.";
-        return false;
-    }
-    outFields["project"] = nlohmann::json{{"key", draft.ProjectKey}};
-
-    if (!draft.IssueTypeId.empty()) {
-        outFields["issuetype"] = nlohmann::json{{"id", draft.IssueTypeId}};
-    } else if (!draft.IssueTypeName.empty()) {
-        outFields["issuetype"] = nlohmann::json{{"name", draft.IssueTypeName}};
-    } else {
-        outError = "Issue type is empty.";
-        return false;
-    }
-
-    if (!draft.ParentKey.empty()) {
-        outFields["parent"] = nlohmann::json{{"key", draft.ParentKey}};
-    }
-
-    for (const auto& kv : draft.FieldValues) {
-        const std::string& fieldId = kv.first;
-        // UI-only buffer keys (field ids starting with "__") must never be sent to Jira.
-        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') {
-            continue;
-        }
-        if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
-            IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
-            fieldId == "parent") {
-            continue;
-        }
-        const std::string raw = kv.second;
-        if (raw.empty()) {
-            continue;
-        }
-
-        const TrackerField* field = FindFieldById(catalog, fieldId);
-        TrackerField synthetic;
-        if (!field) {
-            synthetic = MakeSyntheticField(fieldId);
-            field = &synthetic;
-        }
-
-        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
-        if (JiraFieldPayload::IsSprintField(jiraField)) {
-            continue;
-        }
-
-        nlohmann::json value;
-        std::string err;
-        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
-            outError = "Field '" + fieldId + "': " + err;
-            return false;
-        }
-        if (!value.is_null()) {
-            outFields[fieldId] = std::move(value);
-        }
-    }
-    return true;
+    // This method is now just a wrapper for compatibility, but the pipeline should use the client directly.
+    // However, ITrackerClient doesn't have a way to call BuildCreatePayload without an instance.
+    // So we'll keep the signature for now but it's deprecated for polymorphic use.
+    outError = "BuildFieldsPayload(draft, catalog, ...) is deprecated; use client.BuildCreatePayload instead.";
+    return false;
 }
 
 CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
@@ -366,7 +261,7 @@ IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* c
 
     nlohmann::json fields;
     std::string buildErr;
-    if (!BuildUpdateFieldsPayload(draft, catalog, fields, buildErr)) {
+    if (!client.BuildUpdatePayload(draft, catalog, fields, buildErr)) {
         result.Error = buildErr.empty() ? "Failed to build update payload." : buildErr;
         LOG_ERROR("IssueCreatePipeline: %s", result.Error.c_str());
         return result;
@@ -424,20 +319,25 @@ IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const Is
 
     result.MissingFieldIds = IssueDraftHelpers::MissingRequiredFields(work, required);
     if (!result.MissingFieldIds.empty()) {
-        result.Error = "Missing required field(s).";
-        LOG_WARN("IssueCreatePipeline: validation failed, %zu field(s) missing.", result.MissingFieldIds.size());
+        std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(result.MissingFieldIds, catalog);
+        result.Error = "Missing required field(s): " + JoinStrings(names, ", ");
+        LOG_WARN("IssueCreatePipeline: validation failed: %s", result.Error.c_str());
         return result;
     }
 
+    LOG_DEBUG("IssueCreatePipeline: building create payload for project=%s issuetype=%s",
+              work.ProjectKey.c_str(), work.IssueTypeId.c_str());
+
     nlohmann::json fields;
     std::string buildErr;
-    if (!BuildFieldsPayload(work, catalog, fields, buildErr)) {
+    if (!client.BuildCreatePayload(work, catalog, fields, buildErr)) {
         result.Error = buildErr.empty() ? "Failed to build create payload." : buildErr;
         LOG_ERROR("IssueCreatePipeline: %s", result.Error.c_str());
         return result;
     }
 
     std::string createErr;
+    LOG_DEBUG("IssueCreatePipeline: calling CreateIssue with payload: %s", fields.dump().c_str());
     std::string issueKey = client.CreateIssue(fields, createErr);
     if (issueKey.empty()) {
         result.Error = createErr.empty() ? "Create failed." : createErr;

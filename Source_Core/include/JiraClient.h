@@ -87,24 +87,22 @@ struct IssueTypeCreateMeta {
 };
 
 /** Result of GET /rest/api/3/myself with probe timeouts (periodic connectivity monitor). */
-enum class JiraReachabilityProbeKind {
-    AuthenticatedReachable,
-    ReachableAuthOrConfigError,
-    TransportDown,
-    ServiceUnavailable,
-};
-
-struct JiraReachabilityProbeResult {
-    JiraReachabilityProbeKind Kind = JiraReachabilityProbeKind::TransportDown;
-    std::string Diagnostic;
-};
-
 class JiraClient : public ITrackerClient {
   public:
-    static JiraReachabilityProbeResult ProbeReachability(const JiraConfig& cfg);
+    std::string GetTrackerType() const override { return "Jira"; }
+    TrackerReachabilityProbeResult ProbeReachability(const JiraConfig& cfg) override;
     bool FetchUsers(const JiraConfig& cfg, std::vector<JiraUser>& outUsers, std::string& outError);
 
     bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
+    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
+                     std::string& outError) override;
+    bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
+                           nlohmann::json& outPayload, std::string& outError) override;
+    bool BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                            nlohmann::json& outPayload, std::string& outError) override;
+    bool BuildUpdatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                            nlohmann::json& outPayload, std::string& outError) override;
+    std::string ResolveDisplayValue(const TrackerField& field, const std::string& value) override;
 
     // POST /rest/api/3/issue with {"fields": <fields>}; returns new key (e.g. PROJ-42).
     std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;
@@ -134,11 +132,13 @@ class JiraClient : public ITrackerClient {
      * Fills outFieldIdCanEdit: field id -> true if Jira lists an edit operation (set/add/remove).
      */
     bool FetchIssueEditMeta(const JiraConfig& cfg, const std::string& issueKeyOrId,
-                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError);
+                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
     bool FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey, std::vector<JiraUser>& outWatchers,
                             std::string& outError);
+    bool FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
+                            std::string& outError) override;
 
     /**
      * GET /rest/api/3/issue/{issueKey}/votes — fills voter users when `voters` is present.
@@ -159,27 +159,29 @@ class JiraClient : public ITrackerClient {
      * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.
      */
     bool FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets, std::string& outError);
+                             const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets, std::string& outError) override;
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
     bool SearchUsersByQuery(const JiraConfig& cfg, const std::string& query, std::vector<JiraUser>& outUsers,
                             std::string& outError);
+    bool SearchUsersByQuery(const JiraConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,
+                            std::string& outError) override;
 
     /** POST /rest/api/3/issue/{key}/comment with Atlassian Document Format body. */
     bool AddIssueCommentPlain(const JiraConfig& cfg, const std::string& issueKey, const std::string& plainText,
-                              std::string& outError);
+                              std::string& outError) override;
 
     /** Blame-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
     bool AddIssueCommentBlameContext(const JiraConfig& cfg, const std::string& issueKey, const std::string& p4User,
                                      const std::string& functionName, const std::string& filePath, int lineNumber,
                                      const std::string& changelist, const std::string& date, bool approximated,
-                                     const std::string& codeSnippet, std::string& outError);
+                                     const std::string& codeSnippet, std::string& outError) override;
 
     /**
      * Best-effort group names for a user (Cloud may return 403; then outGroupNames stays empty).
      */
     bool FetchUserGroupNames(const JiraConfig& cfg, const std::string& accountId,
-                             std::vector<std::string>& outGroupNames, std::string& outError);
+                             std::vector<std::string>& outGroupNames, std::string& outError) override;
 
     /** Move/add an issue to a sprint via Jira Agile API. */
     bool AddIssueToSprint(const JiraConfig& cfg, const std::string& issueKey, const std::string& sprintId,

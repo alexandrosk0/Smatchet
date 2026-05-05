@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
@@ -38,6 +40,16 @@ struct JiraConfig {
     std::string ApiToken; // Your Atlassian API Token
     // Jira project key used by create meta enrichment calls (e.g. PROJ).
     std::string ProjectKey;
+
+    // Tracker Type: "Jira" or "Plane"
+    std::string TrackerType = "Jira";
+
+    // Plane.so specific configuration
+    std::string PlaneUrl;           // API origin: https://api.plane.so (no path); https://app.plane.so normalized
+    std::string PlaneWorkspaceSlug; // e.g. "my-workspace"
+    std::string PlaneProjectId;     // UUID of the project
+    std::string PlaneApiKey;        // Plane API Key
+
     // JQL used when querying Jira; defaults to issues assigned to the current user.
     std::string JqlQuery = "assignee=currentUser()";
     // Jira field keys to extract and cache (e.g. customfield_12345, duedate).
@@ -52,8 +64,8 @@ struct JiraConfig {
     bool ShowPerformanceWindow = false;
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
-    // When true, JiraClient logs truncated HTTP response bodies at Trace.
-    bool LogJiraHttpBodies = false;
+    // When true, ITrackerClient logs truncated HTTP response bodies at Trace.
+    bool LogTrackerHttpBodies = false;
     // When true, P4Blame logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
     bool LogP4Io = false;
     // OpenAI-compatible API key used by the AI Assistant panel.
@@ -96,6 +108,8 @@ struct JiraConfig {
     std::string LastExportDirectory;
     // Jira field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
     std::vector<std::string> NewIssueInheritFieldIds;
+    // Plane field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
+    std::vector<std::string> NewIssueInheritFieldIdsPlane;
 };
 
 struct ViewSortSpec {
@@ -120,6 +134,163 @@ struct ViewsStore {
     std::string ActiveViewId;
     std::vector<ViewDefinition> Views;
 };
+
+/** One tracker backend's saved views (disk v2 `backends` entry). */
+struct ViewWorkspaceState {
+    std::string ActiveViewId;
+    std::vector<ViewDefinition> Views;
+};
+
+/** Full smatchet_views.json on disk (version 2 with per-backend buckets). */
+struct PersistentViewsFile {
+    int Version = 2;
+    std::unordered_map<std::string, ViewWorkspaceState> Backends;
+};
+
+namespace SmatchetViewsDiskDetail {
+
+inline ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
+    ViewDefinition view;
+    view.Id = viewJson.value("id", std::string());
+    view.Name = viewJson.value("name", std::string());
+    view.Jql = viewJson.value("jql", view.Jql);
+    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
+        for (const auto& field : viewJson["fields"]) {
+            if (field.is_string()) {
+                view.Fields.push_back(field.get<std::string>());
+            }
+        }
+    }
+    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
+        for (const auto& col : viewJson["column_order"]) {
+            if (col.is_string()) {
+                view.ColumnOrder.push_back(col.get<std::string>());
+            }
+        }
+    }
+    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
+        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
+            if (it.value().is_number()) {
+                view.ColumnWidths[it.key()] = it.value().get<float>();
+            }
+        }
+    }
+    if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
+        for (const auto& specJson : viewJson["sort_specs"]) {
+            if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
+                ViewSortSpec spec;
+                spec.ColumnKey = specJson["column"].get<std::string>();
+                spec.Direction = specJson.value("direction", 0);
+                if (spec.Direction != 0) {
+                    view.SortSpecs.push_back(spec);
+                }
+            }
+        }
+    }
+    if (view.Id.empty()) {
+        view.Id = view.Name;
+    }
+    if (view.Name.empty()) {
+        view.Name = view.Id.empty() ? std::string("View") : view.Id;
+    }
+    return view;
+}
+
+inline ViewWorkspaceState ParseWorkspaceObject(const nlohmann::json& root) {
+    ViewWorkspaceState ws;
+    ws.ActiveViewId = root.value("active_view_id", std::string());
+    if (root.contains("views") && root["views"].is_array()) {
+        for (const auto& viewJson : root["views"]) {
+            if (!viewJson.is_object()) {
+                continue;
+            }
+            ws.Views.push_back(ParseViewDefinition(viewJson));
+        }
+    }
+    if (ws.ActiveViewId.empty() && !ws.Views.empty()) {
+        ws.ActiveViewId = ws.Views.front().Id;
+    }
+    return ws;
+}
+
+inline nlohmann::json SerializeView(const ViewDefinition& view) {
+    nlohmann::json viewJson;
+    viewJson["id"] = view.Id;
+    viewJson["name"] = view.Name;
+    viewJson["jql"] = view.Jql;
+    viewJson["fields"] = view.Fields;
+    viewJson["column_order"] = view.ColumnOrder;
+    viewJson["column_widths"] = nlohmann::json::object();
+    for (const auto& kv : view.ColumnWidths) {
+        viewJson["column_widths"][kv.first] = kv.second;
+    }
+    viewJson["sort_specs"] = nlohmann::json::array();
+    for (const auto& spec : view.SortSpecs) {
+        if (spec.Direction != 0) {
+            viewJson["sort_specs"].push_back(
+                nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
+        }
+    }
+    return viewJson;
+}
+
+inline nlohmann::json SerializeWorkspace(const ViewWorkspaceState& ws) {
+    nlohmann::json j = nlohmann::json::object();
+    j["active_view_id"] = ws.ActiveViewId;
+    j["views"] = nlohmann::json::array();
+    for (const auto& view : ws.Views) {
+        j["views"].push_back(SerializeView(view));
+    }
+    return j;
+}
+
+inline ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backendKey, const JiraConfig& cfg) {
+    ViewWorkspaceState ws;
+    if (backendKey == "Plane") {
+        ViewDefinition v;
+        v.Id = "plane_default_view";
+        v.Name = "Default Plane View";
+        v.Jql = "";
+        v.Fields = {"summary", "status", "priority", "assignee", "labels", "created", "updated"};
+        v.ColumnOrder = {"id"};
+        for (const auto& fieldId : v.Fields) {
+            v.ColumnOrder.push_back("field:" + fieldId);
+        }
+        v.ColumnWidths["id"] = 90.0f;
+        ws.ActiveViewId = v.Id;
+        ws.Views.push_back(std::move(v));
+        return ws;
+    }
+
+    ViewDefinition defaultView;
+    defaultView.Id = "default_view";
+    defaultView.Name = "Default View";
+    defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
+    defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
+    defaultView.ColumnOrder = {"id"};
+    for (const auto& fieldId : defaultView.Fields) {
+        defaultView.ColumnOrder.push_back("field:" + fieldId);
+    }
+    defaultView.ColumnWidths["id"] = 90.0f;
+    ws.ActiveViewId = defaultView.Id;
+    ws.Views.push_back(std::move(defaultView));
+    return ws;
+}
+
+inline ViewsStore ViewWorkspaceToViewsStore(const ViewWorkspaceState& ws) {
+    ViewsStore s;
+    s.Version = 2;
+    s.ActiveViewId = ws.ActiveViewId;
+    s.Views = ws.Views;
+    return s;
+}
+
+inline void ViewsStoreToViewWorkspace(const ViewsStore& slice, ViewWorkspaceState& ws) {
+    ws.ActiveViewId = slice.ActiveViewId;
+    ws.Views = slice.Views;
+}
+
+} // namespace SmatchetViewsDiskDetail
 
 struct PathRemapRule {
     std::string FromPrefix;
@@ -252,12 +423,16 @@ class ConfigManager {
         j["domain"] = config.Domain;
         j["email"] = config.Email;
         j["project_key"] = config.ProjectKey;
+        j["tracker_type"] = config.TrackerType;
+        j["plane_url"] = config.PlaneUrl;
+        j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
+        j["plane_project_id"] = config.PlaneProjectId;
         j["jql"] = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
         j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
         j["show_performance_window"] = config.ShowPerformanceWindow;
         j["log_min_level"] = config.LogMinLevel;
-        j["log_jira_http_bodies"] = config.LogJiraHttpBodies;
+        j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
         j["log_p4_io"] = config.LogP4Io;
         j["ai_model"] = config.AiModel;
         j["ai_base_url"] = config.AiBaseUrl;
@@ -289,14 +464,26 @@ class ConfigManager {
             }
             j["new_issue_inherit_field_ids"] = std::move(inheritIds);
         }
+        {
+            nlohmann::json inheritIds = nlohmann::json::array();
+            for (const auto& id : config.NewIssueInheritFieldIdsPlane) {
+                if (id != "summary") {
+                    inheritIds.push_back(id);
+                }
+            }
+            j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
+        }
 #if defined(_WIN32)
         j.erase("token");
         j.erase("ai_api_key");
+        j.erase("plane_api_key");
         j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
         j["ai_api_key_enc"] = ProtectSecretForConfig(config.AiApiKey);
+        j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
 #else
         j["token"] = config.ApiToken;
         j["ai_api_key"] = config.AiApiKey;
+        j["plane_api_key"] = config.PlaneApiKey;
 #endif
         WriteConfigJson(j);
     }
@@ -426,13 +613,27 @@ class ConfigManager {
             cfg.ApiToken = j.value("token", std::string{});
 #endif
             cfg.ProjectKey = j.value("project_key", std::string{});
+            cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
+            cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
+            cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
+            cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
+
+#if defined(_WIN32)
+            cfg.PlaneApiKey = UnprotectSecretFromConfig(j.value("plane_api_key_enc", std::string{}));
+            if (cfg.PlaneApiKey.empty()) {
+                cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+            }
+#else
+            cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+#endif
+
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
             cfg.GridEndWheelSwallowsBeforeHorizontal =
                 j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
             cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
             cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
-            cfg.LogJiraHttpBodies = j.value("log_jira_http_bodies", cfg.LogJiraHttpBodies);
+            cfg.LogTrackerHttpBodies = j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
             cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
 #if defined(_WIN32)
             cfg.AiApiKey = UnprotectSecretFromConfig(j.value("ai_api_key_enc", std::string{}));
@@ -489,6 +690,29 @@ class ConfigManager {
                     cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
                 }
             }
+            {
+                cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
+                if (j.contains("new_issue_inherit_field_ids_plane") && j["new_issue_inherit_field_ids_plane"].is_array()) {
+                    cfg.NewIssueInheritFieldIdsPlane.clear();
+                    for (const auto& item : j["new_issue_inherit_field_ids_plane"]) {
+                        if (item.is_string()) {
+                            std::string s = item.get<std::string>();
+                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+                                s.erase(0, 1);
+                            }
+                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+                                s.pop_back();
+                            }
+                            if (!s.empty() && s != "summary") {
+                                cfg.NewIssueInheritFieldIdsPlane.push_back(std::move(s));
+                            }
+                        }
+                    }
+                }
+                if (cfg.NewIssueInheritFieldIdsPlane.empty()) {
+                    cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
+                }
+            }
             if (cfg.ImportMaxConcurrent < 1)
                 cfg.ImportMaxConcurrent = 1;
             if (cfg.ImportMaxConcurrent > 32)
@@ -524,34 +748,75 @@ class ConfigManager {
         return base + "smatchet_views.json";
     }
 
-    static void SaveViews(const ViewsStore& store) {
+    /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */
+    static std::string NormalizeViewsBackendKey(const std::string& trackerType) {
+        std::string t;
+        t.reserve(trackerType.size());
+        for (char c : trackerType) {
+            t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        if (t == "plane") {
+            return "Plane";
+        }
+        return "Jira";
+    }
+
+    static PersistentViewsFile LoadPersistentViewsFromDisk() {
+        PersistentViewsFile disk;
+        disk.Version = 2;
+        const std::string viewsPath = GetViewsPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        ScopedFileLock fileLock(viewsPath);
+        std::ifstream file(viewsPath);
+        if (!file.is_open()) {
+            return disk;
+        }
+        try {
+            nlohmann::json j;
+            file >> j;
+            if (!j.is_object()) {
+                return disk;
+            }
+            if (j.contains("backends") && j["backends"].is_object()) {
+                disk.Version = j.value("version", 2);
+                for (auto it = j["backends"].begin(); it != j["backends"].end(); ++it) {
+                    if (!it.value().is_object()) {
+                        continue;
+                    }
+                    disk.Backends[it.key()] = SmatchetViewsDiskDetail::ParseWorkspaceObject(it.value());
+                }
+                return disk;
+            }
+            // Legacy v1: top-level active_view_id + views → Jira bucket.
+            disk.Backends["Jira"] = SmatchetViewsDiskDetail::ParseWorkspaceObject(j);
+            return disk;
+        } catch (const std::exception& ex) {
+            LOG_ERROR("ConfigManager: failed to parse views '%s': %s", viewsPath.c_str(), ex.what());
+            return disk;
+        } catch (...) {
+            LOG_ERROR("ConfigManager: failed to parse views '%s' with unknown exception", viewsPath.c_str());
+            return disk;
+        }
+    }
+
+    static void SavePersistentViewsToDisk(const PersistentViewsFile& disk) {
         const std::string viewsPath = GetViewsPath();
         nlohmann::json j;
-        j["version"] = store.Version;
-        j["active_view_id"] = store.ActiveViewId;
-        j["views"] = nlohmann::json::array();
-
-        for (const auto& view : store.Views) {
-            nlohmann::json viewJson;
-            viewJson["id"] = view.Id;
-            viewJson["name"] = view.Name;
-            viewJson["jql"] = view.Jql;
-            viewJson["fields"] = view.Fields;
-            viewJson["column_order"] = view.ColumnOrder;
-            viewJson["column_widths"] = nlohmann::json::object();
-            for (const auto& kv : view.ColumnWidths) {
-                viewJson["column_widths"][kv.first] = kv.second;
-            }
-            viewJson["sort_specs"] = nlohmann::json::array();
-            for (const auto& spec : view.SortSpecs) {
-                if (spec.Direction != 0) {
-                    viewJson["sort_specs"].push_back(
-                        nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
-                }
-            }
-            j["views"].push_back(viewJson);
+        j["version"] = 2;
+        j["backends"] = nlohmann::json::object();
+        std::vector<std::string> keys;
+        keys.reserve(disk.Backends.size());
+        for (const auto& kv : disk.Backends) {
+            keys.push_back(kv.first);
         }
-
+        std::sort(keys.begin(), keys.end());
+        for (const auto& bk : keys) {
+            const auto it = disk.Backends.find(bk);
+            if (it == disk.Backends.end()) {
+                continue;
+            }
+            j["backends"][bk] = SmatchetViewsDiskDetail::SerializeWorkspace(it->second);
+        }
         std::lock_guard<std::mutex> lock(GetIoMutexRef());
         ScopedFileLock fileLock(viewsPath);
         const std::string content = j.dump(4);
@@ -560,144 +825,49 @@ class ConfigManager {
         }
     }
 
-    static ViewsStore LoadViews() {
-        const std::string viewsPath = GetViewsPath();
-        std::lock_guard<std::mutex> lock(GetIoMutexRef());
-        ScopedFileLock fileLock(viewsPath);
-        std::ifstream file(viewsPath);
-        if (!file.is_open()) {
-            return {};
-        }
-
-        try {
-            nlohmann::json j;
-            file >> j;
-            ViewsStore store;
-            store.Version = j.value("version", 1);
-            store.ActiveViewId = j.value("active_view_id", std::string());
-
-            if (j.contains("views") && j["views"].is_array()) {
-                for (const auto& viewJson : j["views"]) {
-                    if (!viewJson.is_object()) {
-                        continue;
-                    }
-                    ViewDefinition view;
-                    view.Id = viewJson.value("id", std::string());
-                    view.Name = viewJson.value("name", std::string());
-                    view.Jql = viewJson.value("jql", view.Jql);
-                    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
-                        for (const auto& field : viewJson["fields"]) {
-                            if (field.is_string()) {
-                                view.Fields.push_back(field.get<std::string>());
-                            }
-                        }
-                    }
-                    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
-                        for (const auto& col : viewJson["column_order"]) {
-                            if (col.is_string()) {
-                                view.ColumnOrder.push_back(col.get<std::string>());
-                            }
-                        }
-                    }
-                    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
-                        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
-                            if (it.value().is_number()) {
-                                view.ColumnWidths[it.key()] = it.value().get<float>();
-                            }
-                        }
-                    }
-                    if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
-                        for (const auto& specJson : viewJson["sort_specs"]) {
-                            if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
-                                ViewSortSpec spec;
-                                spec.ColumnKey = specJson["column"].get<std::string>();
-                                spec.Direction = specJson.value("direction", 0);
-                                if (spec.Direction != 0) {
-                                    view.SortSpecs.push_back(spec);
-                                }
-                            }
-                        }
-                    }
-                    if (view.Id.empty()) {
-                        view.Id = view.Name;
-                    }
-                    if (view.Name.empty()) {
-                        view.Name = view.Id.empty() ? std::string("View") : view.Id;
-                    }
-                    store.Views.push_back(std::move(view));
-                }
+    static void EnsureViewBucketBootstrapped(PersistentViewsFile& disk, const std::string& backendKey,
+                                             const JiraConfig& cfg, bool& outDirty) {
+        ViewWorkspaceState& ws = disk.Backends[backendKey];
+        if (!ws.Views.empty()) {
+            if (ws.ActiveViewId.empty()) {
+                ws.ActiveViewId = ws.Views.front().Id;
+                outDirty = true;
             }
-            return store;
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: failed to parse views '%s': %s", viewsPath.c_str(), ex.what());
-            return {};
-        } catch (...) {
-            LOG_ERROR("ConfigManager: failed to parse views '%s' with unknown exception", viewsPath.c_str());
-            return {};
+            return;
         }
+        ws = SmatchetViewsDiskDetail::MakeDefaultViewWorkspaceForBackend(backendKey, cfg);
+        outDirty = true;
     }
 
+    static ViewsStore ViewWorkspaceToViewsStore(const ViewWorkspaceState& ws) {
+        return SmatchetViewsDiskDetail::ViewWorkspaceToViewsStore(ws);
+    }
+
+    static void ViewsStoreToViewWorkspace(const ViewsStore& slice, ViewWorkspaceState& ws) {
+        SmatchetViewsDiskDetail::ViewsStoreToViewWorkspace(slice, ws);
+    }
+
+    /** Load+bootstrap active backend slice (used when no in-memory Views wrapper is available). */
     static ViewsStore LoadViewsOrBootstrap(const JiraConfig& cfg) {
         try {
-            ViewsStore store = LoadViews();
-            if (!store.Views.empty()) {
-                if (store.ActiveViewId.empty()) {
-                    store.ActiveViewId = store.Views.front().Id;
-                }
-                return store;
+            PersistentViewsFile disk = LoadPersistentViewsFromDisk();
+            const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
+            bool dirty = false;
+            EnsureViewBucketBootstrapped(disk, key, cfg, dirty);
+            if (dirty) {
+                SavePersistentViewsToDisk(disk);
             }
-
-            ViewDefinition defaultView;
-            defaultView.Id = "default_view";
-            defaultView.Name = "Default View";
-            defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-            // Basic fields for new installs: exclude id (handled as a special column).
-            defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
-            defaultView.ColumnOrder = {"id"};
-            for (const auto& fieldId : defaultView.Fields) {
-                defaultView.ColumnOrder.push_back("field:" + fieldId);
-            }
-            defaultView.ColumnWidths["id"] = 90.0f;
-
-            store.Version = 1;
-            store.ActiveViewId = defaultView.Id;
-            store.Views.push_back(defaultView);
-            SaveViews(store);
-            return store;
+            return SmatchetViewsDiskDetail::ViewWorkspaceToViewsStore(disk.Backends[key]);
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error: %s", ex.what());
-            ViewsStore fallback;
-            fallback.Version = 1;
-            ViewDefinition defaultView;
-            defaultView.Id = "default_view";
-            defaultView.Name = "Default View";
-            defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-            defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
-            defaultView.ColumnOrder = {"id"};
-            for (const auto& fieldId : defaultView.Fields) {
-                defaultView.ColumnOrder.push_back("field:" + fieldId);
-            }
-            defaultView.ColumnWidths["id"] = 90.0f;
-            fallback.ActiveViewId = defaultView.Id;
-            fallback.Views.push_back(std::move(defaultView));
-            return fallback;
+            const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
+            return SmatchetViewsDiskDetail::ViewWorkspaceToViewsStore(
+                SmatchetViewsDiskDetail::MakeDefaultViewWorkspaceForBackend(key, cfg));
         } catch (...) {
             LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error (unknown)");
-            ViewsStore fallback;
-            fallback.Version = 1;
-            ViewDefinition defaultView;
-            defaultView.Id = "default_view";
-            defaultView.Name = "Default View";
-            defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-            defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
-            defaultView.ColumnOrder = {"id"};
-            for (const auto& fieldId : defaultView.Fields) {
-                defaultView.ColumnOrder.push_back("field:" + fieldId);
-            }
-            defaultView.ColumnWidths["id"] = 90.0f;
-            fallback.ActiveViewId = defaultView.Id;
-            fallback.Views.push_back(std::move(defaultView));
-            return fallback;
+            const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
+            return SmatchetViewsDiskDetail::ViewWorkspaceToViewsStore(
+                SmatchetViewsDiskDetail::MakeDefaultViewWorkspaceForBackend(key, cfg));
         }
     }
 

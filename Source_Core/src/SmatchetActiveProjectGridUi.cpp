@@ -189,7 +189,7 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
     return true;
 }
 
-bool IsLikelyOfflineCreateError(const std::string& error) { return IsJiraTransportErrorText(error); }
+bool IsLikelyOfflineCreateError(const std::string& error) { return IsTrackerTransportErrorText(error); }
 
 /**
  * Ensure d.newIssueDraftEditBufs has a sized InputText buffer for `fieldId`,
@@ -1342,9 +1342,10 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
         ImGui::TableSetColumnIndex(0);
         if (ImGui::SmallButton("+ New issue")) {
             if (lastVisibleTicket) {
+                const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
                 d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
                     *lastVisibleTicket, app.GetAvailableFields(), cfg.ProjectKey, cfg.DefaultIssueTypeId,
-                    cfg.DefaultIssueTypeName, cfg.NewIssueInheritFieldIds);
+                    cfg.DefaultIssueTypeName, inheritIds);
             } else {
                 d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
             }
@@ -1397,7 +1398,8 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
                                                              d.newIssueDraft.IssueTypeName));
                 if (!d.newIssueMissingFieldIds.empty()) {
                     d.gridEditSuccess.clear();
-                    d.gridEditError = "Missing required fields.";
+                    std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
+                    d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
                 } else {
                     d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
                     d.newIssueCreateInFlight = true;
@@ -1583,8 +1585,8 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
 
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     ImGui::Begin("Smatchet - Active Project");
-    const JiraConnectivityBannerForUi jiraBanner = app.GetJiraConnectivityBannerForUi(nullptr);
-    const bool readOnlyMode = (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error);
+    const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+    const bool readOnlyMode = (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");
@@ -1646,13 +1648,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 #endif
 
         ImGui::Separator();
-        if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error) {
+        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
             ImGui::TextDisabled("Grid edits and quick comment actions stay disabled until Jira is reachable.");
             ImGui::Separator();
-        } else if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Warning) {
+        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
@@ -2372,7 +2374,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             return result;
                         }
                         result.Error = result.ApplyResult.Error;
-                        if (IsJiraTransportErrorText(result.ApplyResult.Error) &&
+                        if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
                             AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
                             AppController::FieldEditResult prepared;
                             std::string payloadJson;

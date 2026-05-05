@@ -35,6 +35,7 @@ struct IssueDraft {
 struct RequiredFieldSet {
     std::unordered_set<std::string> FieldIds;
     bool IsSubtask = false;
+    bool RequiresIssueType = true;
 };
 
 namespace IssueDraftHelpers {
@@ -107,6 +108,13 @@ std::vector<FieldChange> ComputeFieldChanges(const IssueDraft& draft, const Cach
  * Fields absent from `existing.fieldValues` compare against an empty baseline (implicit add / not loaded).
  */
 void PruneUnchangedFields(IssueDraft& draft, const CachedTicket& existing);
+
+/**
+ * Map internal field markers (__project__, etc.) to user-friendly names
+ * and look up other field names in the catalog.
+ */
+std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
+                                           const std::vector<TrackerField>& catalog);
 
 } // namespace IssueDraftHelpers
 

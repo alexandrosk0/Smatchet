@@ -94,7 +94,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.emailBuf, d.cfg.Email);
         CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
         CopyStringToBuffer(d.projectKeyBuf, d.cfg.ProjectKey);
+        CopyStringToBuffer(d.trackerTypeBuf, d.cfg.TrackerType);
+        CopyStringToBuffer(d.planeUrlBuf, d.cfg.PlaneUrl);
+        CopyStringToBuffer(d.planeWorkspaceBuf, d.cfg.PlaneWorkspaceSlug);
+        CopyStringToBuffer(d.planeProjectBuf, d.cfg.PlaneProjectId);
+        CopyStringToBuffer(d.planeApiKeyBuf, d.cfg.PlaneApiKey);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
+        CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
 #if defined(SMATCHET_WITH_AI)
         CopyStringToBuffer(d.aiApiKeyBuf, d.cfg.AiApiKey);
         CopyStringToBuffer(d.aiModelBuf, d.cfg.AiModel);
@@ -110,27 +116,49 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     }
 
     if (ImGui::BeginTabBar("PreferencesTabs")) {
-        if (ImGui::BeginTabItem("Jira")) {
-            ImGui::TextUnformatted("Atlassian Cloud");
+        if (ImGui::BeginTabItem("Tracker")) {
+            ImGui::TextUnformatted("Backend Selection");
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
-            ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
-            ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
-            ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
-            ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf),
-                             ImGuiInputTextFlags_CharsUppercase);
-            ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+
+            const char* items[] = { "Jira", "Plane" };
+            int currentItem = (std::string(d.trackerTypeBuf) == "Plane") ? 1 : 0;
+            if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
+                CopyStringToBuffer(d.trackerTypeBuf, items[currentItem]);
+            }
             ImGui::Spacing();
-            ImGui::InputText("New issue: inherit fields from last row", d.newIssueInheritFieldsBuf,
-                             sizeof(d.newIssueInheritFieldsBuf));
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (currentItem == 0) {
+                ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
+                ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
+                ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
+                ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
+                ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf),
+                                 ImGuiInputTextFlags_CharsUppercase);
+                ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+            } else {
+                ImGui::TextUnformatted("Plane Configuration (plane.so)");
+                ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SetItemTooltip("e.g. https://api.plane.so");
+                ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf), ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::InputText("Project ID (UUID)", d.planeProjectBuf, sizeof(d.planeProjectBuf), ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::InputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf), ImGuiInputTextFlags_Password);
+            }
+
+            ImGui::Spacing();
+            char* inheritBuf = (currentItem == 1) ? d.newIssueInheritFieldsPlaneBuf : d.newIssueInheritFieldsBuf;
+            size_t inheritBufSize = (currentItem == 1) ? sizeof(d.newIssueInheritFieldsPlaneBuf) : sizeof(d.newIssueInheritFieldsBuf);
+            ImGui::InputText("New issue: inherit fields from last row", inheritBuf, inheritBufSize);
             ImGui::SetItemTooltip(
-                "Comma-separated Jira field ids copied from the last grid row when you click + New issue "
+                "Comma-separated tracker field ids copied from the last grid row when you click + New issue "
                 "(e.g. description, priority, assignee, labels, components). "
                 "Summary is never copied from the last row. "
                 "Clear and Save & Sync to restore the built-in default list.");
             ImGui::Spacing();
-            ImGui::TextWrapped("JQL and column fields are configured in the Views dashboard.");
+            ImGui::TextWrapped("Query/JQL and column fields are configured in the Views dashboard.");
             if (ImGui::Button("Open Views Dashboard")) {
                 d.showViewsDashboard = true;
                 d.requestViewsDashboardFocus = true;
@@ -260,10 +288,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
                 ConfigManager::Save(d.cfg);
             }
-            bool jiraBodies = d.cfg.LogJiraHttpBodies;
-            if (ImGui::Checkbox("Log Jira HTTP bodies (truncated)", &jiraBodies)) {
-                d.cfg.LogJiraHttpBodies = jiraBodies;
-                Logger::Instance().SetLogJiraHttpBodies(jiraBodies);
+            bool trackerBodies = d.cfg.LogTrackerHttpBodies;
+            if (ImGui::Checkbox("Log Tracker HTTP bodies (truncated)", &trackerBodies)) {
+                d.cfg.LogTrackerHttpBodies = trackerBodies;
+                Logger::Instance().SetLogTrackerHttpBodies(trackerBodies);
                 ConfigManager::Save(d.cfg);
             }
             if (ImGui::IsItemHovered()) {
@@ -293,8 +321,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextWrapped(
-        "Save & Sync writes the Jira tab (and optional Assistant / Integrations tabs when enabled in this build) to "
-        "disk and refreshes the Jira connection. MCP runtime status: Scripts → MCP Server…. "
+        "Save & Sync writes the Tracker tab (and optional Assistant / Integrations tabs when enabled in this build) to "
+        "disk and refreshes the tracker connection. MCP runtime status: Scripts → MCP Server…. "
         "Appearance and Diagnostics options save immediately when changed. The Blame Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
@@ -303,6 +331,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.cfg.Email = d.emailBuf;
         d.cfg.ApiToken = d.tokenBuf;
         d.cfg.ProjectKey = d.projectKeyBuf;
+        d.cfg.TrackerType = d.trackerTypeBuf;
+        d.cfg.PlaneUrl = d.planeUrlBuf;
+        d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
+        d.cfg.PlaneProjectId = d.planeProjectBuf;
+        d.cfg.PlaneApiKey = d.planeApiKeyBuf;
         {
             std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
             d.cfg.NewIssueInheritFieldIds.clear();
@@ -315,6 +348,19 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 d.cfg.NewIssueInheritFieldIds = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
             }
             CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
+        }
+        {
+            std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsPlaneBuf));
+            d.cfg.NewIssueInheritFieldIdsPlane.clear();
+            for (const auto& s : parsedInherit) {
+                if (!s.empty() && s != "summary") {
+                    d.cfg.NewIssueInheritFieldIdsPlane.push_back(s);
+                }
+            }
+            if (d.cfg.NewIssueInheritFieldIdsPlane.empty()) {
+                d.cfg.NewIssueInheritFieldIdsPlane = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
+            }
+            CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
         }
 #if defined(SMATCHET_WITH_AI)
         d.cfg.AiApiKey = d.aiApiKeyBuf;
@@ -337,8 +383,24 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             app.AppendMcpActivity("MCP: no runtime plugin host — restart app to load MCP plugin.");
         }
 #endif
-        LOG_INFO("Updated Jira config. Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+        if (d.cfg.TrackerType == "Plane") {
+            LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s', Project='%s'", 
+                     d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str(), d.cfg.PlaneProjectId.c_str());
+        } else {
+            LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+        }
         d.triggerCatalogRefetch = true;
+        const std::string oldBackend = d.lastViewsBackendKey;
+        ViewState.EnsureLoaded(d.cfg);
+        const std::string newBackend = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+        if (oldBackend != newBackend) {
+            d.lastViewsBackendKey = newBackend;
+            const ViewDefinition* activeView = ViewState.GetActiveView();
+            if (activeView) {
+                d.cfg.JqlQuery = activeView->Jql;
+                d.cfg.SelectedFields = activeView->Fields;
+            }
+        }
         app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
     }
 

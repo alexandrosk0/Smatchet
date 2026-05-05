@@ -27,9 +27,9 @@ class Logger {
     void SetMinLevel(LogLevel minLevel);
     LogLevel GetMinLevel() const;
 
-    /** When true, JiraClient may log truncated HTTP response bodies at Trace. */
-    void SetLogJiraHttpBodies(bool enabled);
-    bool GetLogJiraHttpBodies() const;
+    /** When true, ITrackerClient may log truncated HTTP response bodies at Trace. */
+    void SetLogTrackerHttpBodies(bool enabled);
+    bool GetLogTrackerHttpBodies() const;
 
     /** When true, P4Blame may log truncated p4 stdout at Trace (stderr always logged on failure). */
     void SetLogP4Io(bool enabled);
@@ -63,7 +63,7 @@ class Logger {
     mutable std::mutex m_mutex;
     std::vector<LogEntry> m_entries;
     std::atomic<int> m_minLevelInt{static_cast<int>(LogLevel::Info)};
-    std::atomic<bool> m_logJiraHttpBodies{false};
+    std::atomic<bool> m_logTrackerHttpBodies{false};
     std::atomic<bool> m_logP4Io{false};
     std::atomic<std::uint64_t> m_revision{0};
     static constexpr std::size_t kMaxEntries = 1000;

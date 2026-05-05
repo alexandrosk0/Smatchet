@@ -22,24 +22,6 @@
 
 namespace {
 
-// #region agent log
-static void AgentNdjsonMcp(const char* hypothesisId, const char* message, const char* dataJsonObject) {
-    const long long ts = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count();
-    char line[960];
-    std::snprintf(line, sizeof(line),
-                  "{\"sessionId\":\"0ebf46\",\"hypothesisId\":\"%s\",\"location\":\"SmatchetMcpServerUi.cpp\","
-                  "\"message\":\"%s\",\"data\":%s,\"timestamp\":%lld}\n",
-                  hypothesisId, message, dataJsonObject, static_cast<long long>(ts));
-    if (FILE* fp = std::fopen("C:/Dev/Smatchet/debug-0ebf46.log", "ab")) {
-        std::fwrite(line, 1, std::strlen(line), fp);
-        std::fclose(fp);
-    }
-}
-// #endregion
-
-
 void AppendLine(std::string& out, const char* fmt, ...) {
     char stack[640];
     va_list ap;
@@ -84,18 +66,6 @@ void SaveMcpWindowLayoutDebounced(UiDrawSession& d) {
         return;
     }
     s_lastWrite = now;
-    // #region agent log
-    {
-        static int s_h5PanelSaveLogs = 0;
-        if (s_h5PanelSaveLogs < 6) {
-            ++s_h5PanelSaveLogs;
-            char data[200];
-            std::snprintf(data, sizeof(data), "{\"infoH\":%.2f,\"actH\":%.2f,\"idx\":%d}", d.cfg.McpServerInfoPanelHeightPx,
-                          d.cfg.McpServerActivityPanelHeightPx, s_h5PanelSaveLogs);
-            AgentNdjsonMcp("H5", "SaveMcpWindowLayoutDebounced_persisting_panel_heights", data);
-        }
-    }
-    // #endregion
     s_infoH = d.cfg.McpServerInfoPanelHeightPx;
     s_actH = d.cfg.McpServerActivityPanelHeightPx;
     ConfigManager::Save(d.cfg);
@@ -230,22 +200,6 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
     if (!d.showMcpServerWindow) {
         return;
     }
-    // #region agent log
-    {
-        static bool s_iniLogged = false;
-        if (!s_iniLogged && ImGui::GetCurrentContext()) {
-            s_iniLogged = true;
-            const char* ini = ImGui::GetIO().IniFilename;
-            char data[256];
-            if (ini && ini[0]) {
-                std::snprintf(data, sizeof(data), "{\"iniFilename\":\"%.200s\"}", ini);
-            } else {
-                std::snprintf(data, sizeof(data), "{\"iniFilename\":null}");
-            }
-            AgentNdjsonMcp("H2", "imgui_io_IniFilename", data);
-        }
-    }
-    // #endregion
 
     ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
 
@@ -267,18 +221,6 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
 
     SmatchetDrawMcpServerPanel(app, d.cfg, d);
 
-    // #region agent log
-    if (ImGui::IsWindowAppearing()) {
-        const ImGuiID dockId = ImGui::GetWindowDockID();
-        const ImVec2 wp = ImGui::GetWindowPos();
-        const ImVec2 ws = ImGui::GetWindowSize();
-        char data[320];
-        std::snprintf(data, sizeof(data),
-                      "{\"runId\":\"post-fix\",\"dockId\":%u,\"wp\":[%.2f,%.2f],\"ws\":[%.2f,%.2f],\"docked\":%s}",
-                      static_cast<unsigned>(dockId), wp.x, wp.y, ws.x, ws.y, dockId != 0 ? "true" : "false");
-        AgentNdjsonMcp("V1", "McpWindow_appear_verify", data);
-    }
-    // #endregion
     SaveMcpWindowLayoutDebounced(d);
 
     ImGui::End();

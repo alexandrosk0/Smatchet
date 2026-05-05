@@ -29,7 +29,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         ImGui::SetNextWindowFocus();
     }
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Views", &d.showViewsDashboard);
+    const std::string viewsWinTitle =
+        std::string("Views - ") + ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+    ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
     if (bFocusViews) {
         ImGui::SetWindowFocus();
         d.requestViewsDashboardFocus = false;
@@ -42,17 +44,17 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     {
         const std::string* sessionCatalogNote = d.fieldCatalogWarning.empty() ? nullptr : &d.fieldCatalogWarning;
-        const JiraConnectivityBannerForUi jiraBanner = app.GetJiraConnectivityBannerForUi(sessionCatalogNote);
-        if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error) {
+        const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(sessionCatalogNote);
+        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
-        } else if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Warning) {
+        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
         }
-        if (jiraBanner.Kind != JiraConnectivityBannerForUi::Level::None) {
+        if (jiraBanner.Kind != TrackerConnectivityBannerForUi::Level::None) {
             ImGui::Separator();
         }
     }
@@ -135,7 +137,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             ImGui::EndDisabled();
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Run the previous JQL query from navigation history.");
+            ImGui::SetTooltip("Run the previous query from navigation history.");
         }
         ImGui::SameLine();
         const bool disableForwardNav = !d.navHistory.CanGoForward();
@@ -154,7 +156,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             ImGui::EndDisabled();
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Run the next JQL query from navigation history.");
+            ImGui::SetTooltip("Run the next query from navigation history.");
         }
 
         ImGui::InputText("View Name", d.viewNameBuf, sizeof(d.viewNameBuf));

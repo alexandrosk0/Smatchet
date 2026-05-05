@@ -579,7 +579,7 @@ bool ResolveP4UserForAssign(AppController& app, const std::string& p4User, std::
         err = "No Perforce user.";
         return false;
     }
-    std::vector<JiraUser> users;
+    std::vector<TrackerUser> users;
     if (!app.JiraSearchUsersByQuery(p4User, users, err)) {
         return false;
     }
@@ -810,7 +810,7 @@ void CloseBlameModal(bool* pOpen) {
     *pOpen = false;
 }
 
-void OpenJiraUserProfileForP4User(AppController& app, const std::string& p4User) {
+void OpenTrackerUserProfileForP4User(AppController& app, const std::string& p4User) {
     g_openProfileModal = true;
     g_profileErr.clear();
     g_profileName.clear();
@@ -820,7 +820,7 @@ void OpenJiraUserProfileForP4User(AppController& app, const std::string& p4User)
         g_profileName = "Past Employee";
         return;
     }
-    std::vector<JiraUser> users;
+    std::vector<TrackerUser> users;
     std::string qerr;
     if (!app.JiraSearchUsersByQuery(p4User, users, qerr) || users.empty()) {
         g_profileName = "Past Employee";
@@ -830,7 +830,7 @@ void OpenJiraUserProfileForP4User(AppController& app, const std::string& p4User)
         }
         return;
     }
-    const JiraUser* best = &users[0];
+    const TrackerUser* best = &users[0];
     for (const auto& u : users) {
         if (!u.EmailAddress.empty()) {
             best = &u;
@@ -855,7 +855,7 @@ void PrepareAssignModal(AppController& app, const BlameRow& row, const std::stri
         g_assignTitle = "Past Employee";
         return;
     }
-    std::vector<JiraUser> users;
+    std::vector<TrackerUser> users;
     std::string err;
     if (!app.JiraSearchUsersByQuery(pu, users, err) || users.empty()) {
         g_assignTitle = std::string("Past Employee (") + pu + ")";
@@ -1244,13 +1244,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     ImGui::Separator();
 
     {
-        const JiraConnectivityBannerForUi jiraBanner = app.GetJiraConnectivityBannerForUi(nullptr);
-        if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error) {
+        const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
             ImGui::Separator();
-        } else if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Warning) {
+        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
@@ -1511,7 +1511,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             }
                             if (!pending && ImGui::IsItemClicked() && !row.Blame.User.empty() &&
                                 row.Blame.User != "...") {
-                                OpenJiraUserProfileForP4User(app, row.Blame.User);
+                                OpenTrackerUserProfileForP4User(app, row.Blame.User);
                             }
                             if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
                                 PrepareAssignModal(app, row, pending ? std::string() : row.Blame.User);
@@ -1681,7 +1681,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                 ImGui::SetTooltip("%s", tip.c_str());
                             }
                             if (ImGui::IsItemClicked()) {
-                                OpenJiraUserProfileForP4User(app, ln.User);
+                                OpenTrackerUserProfileForP4User(app, ln.User);
                             }
                         }
                         if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
@@ -1725,17 +1725,17 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     }
 
     if (ImGui::BeginPopupModal("blame_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        const JiraConnectivityBannerForUi jiraBanner = app.GetJiraConnectivityBannerForUi(nullptr);
-        const bool readOnlyMode = (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error);
+        const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+        const bool readOnlyMode = (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
         ImGui::TextUnformatted(g_assignTitle.c_str());
         ImGui::Separator();
-        if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Error) {
+        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();
             ImGui::TextDisabled("Assign and comment actions stay disabled until Jira is reachable.");
             ImGui::Separator();
-        } else if (jiraBanner.Kind == JiraConnectivityBannerForUi::Level::Warning) {
+        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
             ImGui::PopStyleColor();

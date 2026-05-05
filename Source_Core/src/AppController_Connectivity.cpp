@@ -15,50 +15,50 @@
 #include "StringUtil.h"
 
 namespace {
-constexpr auto kJiraConnectivityProbeAggressiveInterval = std::chrono::seconds{20};
-constexpr auto kJiraConnectivityProbeRelaxedInterval = std::chrono::seconds{90};
+constexpr auto kTrackerConnectivityProbeAggressiveInterval = std::chrono::seconds{20};
+constexpr auto kTrackerConnectivityProbeRelaxedInterval = std::chrono::seconds{90};
 constexpr auto kOfflineReplayDelayWhileTransportDown = std::chrono::seconds{25};
 } // namespace
 
-void AppController::DrainJiraConnectivityProbeFuture() {
-    if (!jiraConnectivityProbeInFlight_) {
+void AppController::DrainTrackerConnectivityProbeFuture() {
+    if (!trackerConnectivityProbeInFlight_) {
         return;
     }
     try {
-        if (jiraConnectivityProbeFuture_.valid()) {
-            jiraConnectivityProbeFuture_.wait();
-            (void)jiraConnectivityProbeFuture_.get();
+        if (trackerConnectivityProbeFuture_.valid()) {
+            trackerConnectivityProbeFuture_.wait();
+            (void)trackerConnectivityProbeFuture_.get();
         }
     } catch (...) {
         // Shutdown path: swallow probe failures.
     }
-    jiraConnectivityProbeInFlight_ = false;
+    trackerConnectivityProbeInFlight_ = false;
 }
 
-AppController::JiraConnectivityState AppController::MapReachabilityProbeKind(JiraReachabilityProbeKind k) {
+AppController::TrackerConnectivityState AppController::MapReachabilityProbeKind(TrackerReachabilityProbeKind k) {
     switch (k) {
-    case JiraReachabilityProbeKind::AuthenticatedReachable:
-        return JiraConnectivityState::AuthenticatedReachable;
-    case JiraReachabilityProbeKind::ReachableAuthOrConfigError:
-        return JiraConnectivityState::ReachableAuthOrConfigError;
-    case JiraReachabilityProbeKind::TransportDown:
-        return JiraConnectivityState::TransportDown;
-    case JiraReachabilityProbeKind::ServiceUnavailable:
-        return JiraConnectivityState::ServiceUnavailable;
+    case TrackerReachabilityProbeKind::AuthenticatedReachable:
+        return TrackerConnectivityState::AuthenticatedReachable;
+    case TrackerReachabilityProbeKind::ReachableAuthOrConfigError:
+        return TrackerConnectivityState::ReachableAuthOrConfigError;
+    case TrackerReachabilityProbeKind::TransportDown:
+        return TrackerConnectivityState::TransportDown;
+    case TrackerReachabilityProbeKind::ServiceUnavailable:
+        return TrackerConnectivityState::ServiceUnavailable;
     }
-    return JiraConnectivityState::Unknown;
+    return TrackerConnectivityState::Unknown;
 }
 
-bool AppController::IsConnectivityDegradedForProbeInterval(JiraConnectivityState nextProbeState) const {
-    if (nextProbeState == JiraConnectivityState::TransportDown ||
-        nextProbeState == JiraConnectivityState::ServiceUnavailable) {
+bool AppController::IsConnectivityDegradedForProbeInterval(TrackerConnectivityState nextProbeState) const {
+    if (nextProbeState == TrackerConnectivityState::TransportDown ||
+        nextProbeState == TrackerConnectivityState::ServiceUnavailable) {
         return true;
     }
-    if (!LastJiraTicketSyncWarning.empty() && IsJiraTransportErrorText(LastJiraTicketSyncWarning)) {
+    if (!LastTrackerTicketSyncWarning.empty() && IsTrackerTransportErrorText(LastTrackerTicketSyncWarning)) {
         return true;
     }
-    const std::string& catalogErr = LastJiraFieldCatalogError;
-    if (!catalogErr.empty() && IsJiraTransportErrorText(catalogErr)) {
+    const std::string& catalogErr = LastTrackerFieldCatalogError;
+    if (!catalogErr.empty() && IsTrackerTransportErrorText(catalogErr)) {
         return true;
     }
     return false;
@@ -71,90 +71,88 @@ void AppController::PushOfflineReplayTimersDuringTransportOutage(std::chrono::st
     nextOfflineFieldEditReplayAt_ = (std::max)(nextOfflineFieldEditReplayAt_, pushTo);
 }
 
-void AppController::ApplyJiraConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
-                                                     const JiraReachabilityProbeResult& r) {
-    const JiraConnectivityState prev = lastJiraConnectivityState_;
-    const JiraConnectivityState next = MapReachabilityProbeKind(r.Kind);
-    lastJiraConnectivityState_ = next;
-    lastJiraConnectivityDiagnostic_ = r.Diagnostic;
+void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
+                                                     const TrackerReachabilityProbeResult& r) {
+    const TrackerConnectivityState prev = lastTrackerConnectivityState_;
+    const TrackerConnectivityState next = MapReachabilityProbeKind(r.Kind);
+    lastTrackerConnectivityState_ = next;
+    lastTrackerConnectivityDiagnostic_ = r.Diagnostic;
 
     if (prev != next) {
-        LOG_INFO("AppController: Jira connectivity probe state %d -> %d diag=%s", static_cast<int>(prev),
+        LOG_INFO("AppController: Tracker connectivity probe state %d -> %d diag=%s", static_cast<int>(prev),
                  static_cast<int>(next), r.Diagnostic.c_str());
     }
 
-    const bool nowAuthenticatedReachable = (next == JiraConnectivityState::AuthenticatedReachable);
+    const bool nowAuthenticatedReachable = (next == TrackerConnectivityState::AuthenticatedReachable);
     const bool wasConnectivityDegraded =
-        (prev == JiraConnectivityState::TransportDown || prev == JiraConnectivityState::ServiceUnavailable ||
-         prev == JiraConnectivityState::ReachableAuthOrConfigError);
+        (prev == TrackerConnectivityState::TransportDown || prev == TrackerConnectivityState::ServiceUnavailable ||
+         prev == TrackerConnectivityState::ReachableAuthOrConfigError);
     // First successful probe after startup can be Unknown -> AuthenticatedReachable while we still show
     // an offline/snapshot catalog banner from cache or a failed fetch; nudge a live catalog refresh.
     const bool coldStartCatalogBanner =
-        (prev == JiraConnectivityState::Unknown && nowAuthenticatedReachable && !LastJiraFieldCatalogWarning.empty());
+        (prev == TrackerConnectivityState::Unknown && nowAuthenticatedReachable && !LastTrackerFieldCatalogWarning.empty());
     if (nowAuthenticatedReachable && (wasConnectivityDegraded || coldStartCatalogBanner)) {
-        if (!jiraConnectivityRecoveryPending_) {
-            jiraConnectivityRecoveryPending_ = true;
-            LOG_INFO("AppController: Jira authenticated reachability restored; UI recovery pending.");
+        if (!trackerConnectivityRecoveryPending_) {
+            trackerConnectivityRecoveryPending_ = true;
+            LOG_INFO("AppController: Tracker authenticated reachability restored; UI recovery pending.");
         }
     }
 
-    if (prev == JiraConnectivityState::AuthenticatedReachable &&
-        (next == JiraConnectivityState::TransportDown || next == JiraConnectivityState::ServiceUnavailable)) {
+    if (prev == TrackerConnectivityState::AuthenticatedReachable &&
+        (next == TrackerConnectivityState::TransportDown || next == TrackerConnectivityState::ServiceUnavailable)) {
         std::string diag = r.Diagnostic;
         constexpr std::size_t kMaxDiagChars = 200;
         if (diag.size() > kMaxDiagChars) {
             diag.resize(kMaxDiagChars);
         }
-        LastJiraTicketSyncWarning = "Showing cached issues — lost connection to Jira: " + diag;
-        LOG_WARN("AppController: Jira probe reports connectivity loss: %s", diag.c_str());
+        LastTrackerTicketSyncWarning = "Showing cached issues — lost connection to tracker: " + diag;
+        LOG_WARN("AppController: Tracker probe reports connectivity loss: %s", diag.c_str());
     }
 
-    if (next == JiraConnectivityState::TransportDown || next == JiraConnectivityState::ServiceUnavailable) {
+    if (next == TrackerConnectivityState::TransportDown || next == TrackerConnectivityState::ServiceUnavailable) {
         PushOfflineReplayTimersDuringTransportOutage(now);
     }
 
-    const auto interval = IsConnectivityDegradedForProbeInterval(next) ? kJiraConnectivityProbeAggressiveInterval
-                                                                       : kJiraConnectivityProbeRelaxedInterval;
-    nextJiraConnectivityProbeAt_ = now + interval;
+    const auto interval = IsConnectivityDegradedForProbeInterval(next) ? kTrackerConnectivityProbeAggressiveInterval
+                                                                       : kTrackerConnectivityProbeRelaxedInterval;
+    nextTrackerConnectivityProbeAt_ = now + interval;
 }
 
-void AppController::TickJiraConnectivityMonitor(const JiraConfig& cfg) {
-    if (!JiraBackend || shuttingDown_.load()) {
+void AppController::TickTrackerConnectivityMonitor(const JiraConfig& cfg) {
+    if (!Backend || shuttingDown_.load()) {
         return;
     }
     const auto now = std::chrono::steady_clock::now();
 
-    if (jiraConnectivityProbeInFlight_) {
-        if (jiraConnectivityProbeFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            JiraReachabilityProbeResult r;
+    if (trackerConnectivityProbeInFlight_) {
+        if (trackerConnectivityProbeFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            TrackerReachabilityProbeResult r;
             try {
-                r = jiraConnectivityProbeFuture_.get();
+                r = trackerConnectivityProbeFuture_.get();
             } catch (...) {
-                r.Kind = JiraReachabilityProbeKind::TransportDown;
+                r.Kind = TrackerReachabilityProbeKind::TransportDown;
                 r.Diagnostic = "probe future exception";
             }
-            jiraConnectivityProbeInFlight_ = false;
-            ApplyJiraConnectivityProbeResult(now, r);
+            trackerConnectivityProbeInFlight_ = false;
+            ApplyTrackerConnectivityProbeResult(now, r);
         }
         return;
     }
 
-    if (now < nextJiraConnectivityProbeAt_) {
+    if (now < nextTrackerConnectivityProbeAt_) {
         return;
     }
 
-    std::string authGate;
-    if (!EnsureJiraAuthConfig(cfg, authGate)) {
-        nextJiraConnectivityProbeAt_ = now + kJiraConnectivityProbeRelaxedInterval;
-        return;
-    }
+    // No explicit auth check here; each backend handles its own config validation in ProbeReachability.
+
 
     try {
-        jiraConnectivityProbeFuture_ =
-            std::async(std::launch::async, [cfg]() { return JiraClient::ProbeReachability(cfg); });
-        jiraConnectivityProbeInFlight_ = true;
+        ITrackerClient* backend = Backend.get();
+        trackerConnectivityProbeFuture_ =
+            std::async(std::launch::async, [backend, cfg]() { return backend->ProbeReachability(cfg); });
+        trackerConnectivityProbeInFlight_ = true;
     } catch (...) {
-        nextJiraConnectivityProbeAt_ = now + kJiraConnectivityProbeAggressiveInterval;
+        nextTrackerConnectivityProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
     }
 }
 
@@ -162,31 +160,31 @@ bool AppController::ConsumeFieldCatalogRefetchAfterLiveTicketSync() {
     return fieldCatalogRefetchAfterLiveTicketSyncPending_.exchange(false, std::memory_order_acq_rel);
 }
 
-void AppController::requestDeferredLiveJiraBackendSuccessNotify_() const {
-    if (!JiraBackend) {
+void AppController::requestDeferredLiveTrackerBackendSuccessNotify_() const {
+    if (!Backend) {
         return;
     }
-    deferredLiveJiraBackendSuccessNotify_.store(true, std::memory_order_release);
+    deferredLiveTrackerBackendSuccessNotify_.store(true, std::memory_order_release);
 }
 
-void AppController::applyLiveJiraReachabilityAfterSuccessfulBackendRequest_() {
-    if (!JiraBackend) {
+void AppController::applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_() {
+    if (!Backend) {
         return;
     }
-    lastJiraConnectivityState_ = JiraConnectivityState::AuthenticatedReachable;
-    LastJiraTicketSyncWarning.clear();
-    if (!LastJiraFieldCatalogWarning.empty()) {
-        LastJiraFieldCatalogWarning.clear();
-        JiraFieldCatalogRevision.fetch_add(1);
+    lastTrackerConnectivityState_ = TrackerConnectivityState::AuthenticatedReachable;
+    LastTrackerTicketSyncWarning.clear();
+    if (!LastTrackerFieldCatalogWarning.empty()) {
+        LastTrackerFieldCatalogWarning.clear();
+        TrackerFieldCatalogRevision.fetch_add(1);
         fieldCatalogRefetchAfterLiveTicketSyncPending_.store(true, std::memory_order_release);
     }
 }
 
-bool AppController::ConsumeDeferredLiveJiraBackendSuccessNotifyIfAny() {
-    if (!deferredLiveJiraBackendSuccessNotify_.exchange(false, std::memory_order_acq_rel)) {
+bool AppController::ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny() {
+    if (!deferredLiveTrackerBackendSuccessNotify_.exchange(false, std::memory_order_acq_rel)) {
         return false;
     }
-    applyLiveJiraReachabilityAfterSuccessfulBackendRequest_();
+    applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_();
     return true;
 }
 
@@ -195,7 +193,7 @@ namespace {
 constexpr char kWorkingOfflineSnapshotCatalog[] =
     "Working offline: Jira field catalog loaded from local snapshot until a live refresh succeeds.";
 
-std::string TruncateJiraBannerDetail(const std::string& s, std::size_t maxLen) {
+std::string TruncateTrackerBannerDetail(const std::string& s, std::size_t maxLen) {
     if (s.size() <= maxLen) {
         return s;
     }
@@ -210,8 +208,8 @@ std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
         return std::string();
     }
     static const char* prefixes[] = {
-        "Offline: using cached Jira field catalog. Last fetch failed: ",
-        "Offline: restored Jira field catalog from local snapshot. Last fetch failed: ",
+        "Offline: using cached tracker field catalog. Last fetch failed: ",
+        "Offline: restored tracker field catalog from local snapshot. Last fetch failed: ",
         "Offline: no field catalog snapshot could be loaded. Last fetch failed: ",
     };
     for (const char* p : prefixes) {
@@ -223,7 +221,7 @@ std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
     if (cw == kWorkingOfflineSnapshotCatalog) {
         return std::string();
     }
-    return TruncateJiraBannerDetail(cw, 100);
+    return TruncateTrackerBannerDetail(cw, 100);
 }
 
 std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
@@ -232,10 +230,10 @@ std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
     }
     static const char* prefixes[] = {
         "Showing cached issues — live refresh did not complete: ",
-        "Showing cached issues — lost connection to Jira: ",
+        "Showing cached issues — lost connection to tracker: ",
         // ASCII hyphen (some logs / older strings / copy-paste normalization).
         "Showing cached issues - live refresh did not complete: ",
-        "Showing cached issues - lost connection to Jira: ",
+        "Showing cached issues - lost connection to tracker: ",
     };
     for (const char* p : prefixes) {
         const size_t pl = std::strlen(p);
@@ -243,7 +241,7 @@ std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
             return tw.substr(pl);
         }
     }
-    return TruncateJiraBannerDetail(tw, 100);
+    return TruncateTrackerBannerDetail(tw, 100);
 }
 
 void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessionNote) {
@@ -253,28 +251,28 @@ void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessi
     if (!out.empty()) {
         out += " ";
     }
-    out += "(" + TruncateJiraBannerDetail(*sessionNote, 90) + ")";
+    out += "(" + TruncateTrackerBannerDetail(*sessionNote, 90) + ")";
 }
 
 } // namespace
 
-JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
-    JiraConnectivityBannerForUi out;
-    const std::string& ce = LastJiraFieldCatalogError;
-    const std::string& cw = LastJiraFieldCatalogWarning;
-    const std::string& tw = LastJiraTicketSyncWarning;
+TrackerConnectivityBannerForUi AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
+    TrackerConnectivityBannerForUi out;
+    const std::string& ce = LastTrackerFieldCatalogError;
+    const std::string& cw = LastTrackerFieldCatalogWarning;
+    const std::string& tw = LastTrackerTicketSyncWarning;
     const bool haveSession = sessionCatalogNote && !sessionCatalogNote->empty();
     const bool haveCw = !cw.empty();
     const bool haveTw = !tw.empty();
 
     if (!ce.empty()) {
-        out.Kind = JiraConnectivityBannerForUi::Level::Error;
-        out.Message = TruncateJiraBannerDetail(ce, 240);
+        out.Kind = TrackerConnectivityBannerForUi::Level::Error;
+        out.Message = TruncateTrackerBannerDetail(ce, 240);
         if (haveTw) {
             const std::string ts = TicketOfflineTechnicalSuffix(tw);
             if (!ts.empty()) {
                 out.Message += " · Issues: ";
-                out.Message += TruncateJiraBannerDetail(ts, 100);
+                out.Message += TruncateTrackerBannerDetail(ts, 100);
             }
         }
         AppendSessionCatalogNoteToBanner(out.Message, sessionCatalogNote);
@@ -282,9 +280,9 @@ JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const 
     }
 
     if (!haveCw && !haveTw && haveSession) {
-        out.Kind = JiraConnectivityBannerForUi::Level::Warning;
+        out.Kind = TrackerConnectivityBannerForUi::Level::Warning;
         out.Message = "Offline: ";
-        out.Message += TruncateJiraBannerDetail(*sessionCatalogNote, 220);
+        out.Message += TruncateTrackerBannerDetail(*sessionCatalogNote, 220);
         return out;
     }
 
@@ -292,17 +290,17 @@ JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const 
         return out;
     }
 
-    out.Kind = JiraConnectivityBannerForUi::Level::Warning;
+    out.Kind = TrackerConnectivityBannerForUi::Level::Warning;
     const std::string catSuffix = CatalogOfflineTechnicalSuffix(cw);
     const std::string ticketSuffix = TicketOfflineTechnicalSuffix(tw);
     const bool snapshotCatalogOnly = haveCw && cw == kWorkingOfflineSnapshotCatalog;
 
     std::string headline;
     if (haveCw && haveTw) {
-        headline = "Offline: issue list and field catalog are not live with Jira.";
+        headline = "Offline: issue list and field catalog are not live with tracker.";
     } else if (haveCw) {
         headline = snapshotCatalogOnly ? "Offline: field catalog is a local snapshot until a live refresh succeeds."
-                                       : "Offline: field catalog is from cache (not refreshed from Jira).";
+                                       : "Offline: field catalog is from cache (not refreshed from tracker).";
     } else {
         headline = "Offline: issue list is from cache (live refresh did not complete).";
     }
@@ -312,7 +310,7 @@ JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const 
         if (catSuffix == ticketSuffix) {
             detail = catSuffix;
         } else {
-            detail = TruncateJiraBannerDetail(catSuffix, 70) + " · " + TruncateJiraBannerDetail(ticketSuffix, 70);
+            detail = TruncateTrackerBannerDetail(catSuffix, 70) + " · " + TruncateTrackerBannerDetail(ticketSuffix, 70);
         }
     } else if (!catSuffix.empty()) {
         detail = catSuffix;
@@ -323,25 +321,25 @@ JiraConnectivityBannerForUi AppController::GetJiraConnectivityBannerForUi(const 
     out.Message = headline;
     if (!detail.empty()) {
         out.Message += " — ";
-        out.Message += TruncateJiraBannerDetail(detail, 130);
+        out.Message += TruncateTrackerBannerDetail(detail, 130);
     }
     AppendSessionCatalogNoteToBanner(out.Message, sessionCatalogNote);
     return out;
 }
 
-bool AppController::ConsumeJiraConnectivityRecovery() {
-    if (!jiraConnectivityRecoveryPending_) {
+bool AppController::ConsumeTrackerConnectivityRecovery() {
+    if (!trackerConnectivityRecoveryPending_) {
         return false;
     }
-    jiraConnectivityRecoveryPending_ = false;
-    LastJiraTicketSyncWarning.clear();
-    LastJiraFieldCatalogWarning.clear();
+    trackerConnectivityRecoveryPending_ = false;
+    LastTrackerTicketSyncWarning.clear();
+    LastTrackerFieldCatalogWarning.clear();
     const auto now = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
         nextOfflineReplayAt_ = now;
         nextOfflineFieldEditReplayAt_ = now;
     }
-    LOG_INFO("AppController: consumed Jira connectivity recovery latch.");
+    LOG_INFO("AppController: consumed tracker connectivity recovery latch.");
     return true;
 }

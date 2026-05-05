@@ -6,6 +6,7 @@
 #include "IssueTableSerializer.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
+#include "StringUtil.h"
 
 #include "imgui.h"
 
@@ -289,16 +290,13 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                 d.bulkImportStatus[i] = "ok " + r.IssueKey;
             } else {
                 std::string msg = r.Error.empty() ? "failed" : r.Error;
-                if (IsJiraTransportErrorText(msg)) {
+                if (IsTrackerTransportErrorText(msg)) {
                     msg = "Network/unreachable: " + msg + " — retry when Jira is reachable.";
                 }
                 if (!r.MissingFieldIds.empty()) {
                     msg += " [missing: ";
-                    for (size_t k = 0; k < r.MissingFieldIds.size(); ++k) {
-                        if (k)
-                            msg += ',';
-                        msg += r.MissingFieldIds[k];
-                    }
+                    std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
+                    msg += JoinStrings(names, ", ");
                     msg += "]";
                 }
                 d.bulkImportStatus[i] = msg;

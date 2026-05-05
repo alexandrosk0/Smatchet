@@ -5,11 +5,11 @@
 #include <sstream>
 #include <string>
 
-JiraReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg) {
-    JiraReachabilityProbeResult out;
+TrackerReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg) {
+    TrackerReachabilityProbeResult out;
     std::string authErr;
     if (!EnsureJiraAuthConfig(cfg, authErr)) {
-        out.Kind = JiraReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
         out.Diagnostic = authErr.empty() ? std::string("Missing Jira domain or API token.") : authErr;
         return out;
     }
@@ -21,13 +21,13 @@ JiraReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg)
 
     const long sc = resp.status_code;
     if (sc == 200) {
-        out.Kind = JiraReachabilityProbeKind::AuthenticatedReachable;
+        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
         out.Diagnostic = "HTTP 200";
         return out;
     }
 
     if (sc == 401 || sc == 403) {
-        out.Kind = JiraReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
         std::ostringstream oss;
         oss << "HTTP " << sc;
         out.Diagnostic = oss.str();
@@ -35,7 +35,7 @@ JiraReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg)
     }
 
     if (sc >= 500 && sc < 600) {
-        out.Kind = JiraReachabilityProbeKind::ServiceUnavailable;
+        out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
         std::ostringstream oss;
         oss << "HTTP " << sc;
         out.Diagnostic = oss.str();
@@ -43,24 +43,15 @@ JiraReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg)
     }
 
     if (sc > 0 && sc < 500) {
-        out.Kind = JiraReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
         std::ostringstream oss;
         oss << "HTTP " << sc;
         out.Diagnostic = oss.str();
         return out;
     }
 
-    std::string composed = std::string("HTTP ") + std::to_string(static_cast<int>(sc));
-    if (!resp.error.message.empty()) {
-        composed += " ";
-        composed += resp.error.message;
-    }
-    if (IsJiraTransportErrorText(composed)) {
-        out.Kind = JiraReachabilityProbeKind::TransportDown;
-    } else {
-        out.Kind = JiraReachabilityProbeKind::ReachableAuthOrConfigError;
-    }
-    out.Diagnostic = composed;
+    out.Kind = TrackerReachabilityProbeKind::TransportDown;
+    out.Diagnostic = resp.error.message.empty() ? std::string("Unknown network error") : resp.error.message;
     return out;
 }
 

@@ -3,10 +3,51 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace {
+
+void TrimAsciiWs(std::string& s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
+        s.erase(0, 1);
+    }
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())) != 0) {
+        s.pop_back();
+    }
+}
+
+std::string NormalizeEndpointForCache(std::string value) {
+    TrimAsciiWs(value);
+    while (!value.empty() && (value.back() == '/' || value.back() == '\\')) {
+        value.pop_back();
+    }
+    const auto scheme = value.find("://");
+    if (scheme == std::string::npos) {
+        return value;
+    }
+    const size_t hostStart = scheme + 3;
+    size_t hostEnd = value.find('/', hostStart);
+    if (hostEnd == std::string::npos) {
+        hostEnd = value.size();
+    }
+    std::string host = value.substr(hostStart, hostEnd - hostStart);
+    std::string portSuffix;
+    const size_t colon = host.find(':');
+    if (colon != std::string::npos) {
+        portSuffix = host.substr(colon);
+        host = host.substr(0, colon);
+    }
+    std::transform(host.begin(), host.end(), host.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::string schemePrefix = value.substr(0, hostStart);
+    if (host == "app.plane.so") {
+        return schemePrefix + "api.plane.so" + portSuffix;
+    }
+    return schemePrefix + host + portSuffix;
+}
 
 std::string FieldCatalogCachePath() {
     const std::string& base = ConfigManager::GetFilesBaseDirectory();
@@ -149,33 +190,130 @@ bool IssueTypeMetaFromJson(const nlohmann::json& j, TrackerIssueTypeCreateMeta& 
     return true;
 }
 
+nlohmann::json BuildEntryJson(const std::vector<TrackerField>& fields, const std::vector<TrackerComponent>& components,
+                              const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta) {
+    nlohmann::json entry = nlohmann::json::object();
+    nlohmann::json jf = nlohmann::json::array();
+    for (const auto& f : fields) {
+        jf.push_back(FieldToJson(f));
+    }
+    entry["fields"] = std::move(jf);
+    nlohmann::json jc = nlohmann::json::array();
+    for (const auto& c : components) {
+        jc.push_back(nlohmann::json{{"id", c.Id}, {"name", c.Name}});
+    }
+    entry["components"] = std::move(jc);
+    nlohmann::json jm = nlohmann::json::array();
+    for (const auto& m : issueTypeMeta) {
+        jm.push_back(IssueTypeMetaToJson(m));
+    }
+    entry["issue_type_meta"] = std::move(jm);
+    return entry;
+}
+
+bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<TrackerField>& outFields,
+                             std::vector<TrackerComponent>& outComponents,
+                             std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
+    outError.clear();
+    outFields.clear();
+    outComponents.clear();
+    outIssueTypeMeta.clear();
+    const auto jf = entryRoot.find("fields");
+    if (jf == entryRoot.end() || !jf->is_array()) {
+        outError = "Invalid field catalog cache entry: missing fields array.";
+        return false;
+    }
+    for (const auto& el : *jf) {
+        TrackerField f;
+        if (FieldFromJson(el, f)) {
+            outFields.push_back(std::move(f));
+        }
+    }
+    const auto jc = entryRoot.find("components");
+    if (jc != entryRoot.end() && jc->is_array()) {
+        for (const auto& el : *jc) {
+            if (!el.is_object()) {
+                continue;
+            }
+            TrackerComponent c;
+            c.Id = el.value("id", std::string());
+            c.Name = el.value("name", std::string());
+            outComponents.push_back(std::move(c));
+        }
+    }
+    const auto jm = entryRoot.find("issue_type_meta");
+    if (jm != entryRoot.end() && jm->is_array()) {
+        for (const auto& el : *jm) {
+            TrackerIssueTypeCreateMeta m;
+            if (IssueTypeMetaFromJson(el, m)) {
+                outIssueTypeMeta.push_back(std::move(m));
+            }
+        }
+    }
+    if (outFields.empty()) {
+        outError = "Field catalog cache entry contained no fields.";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 namespace FieldCatalogCache {
 
-bool SaveFieldCatalogSnapshot(const std::vector<TrackerField>& fields, const std::vector<TrackerComponent>& components,
+std::string BuildFieldCatalogCacheKey(const JiraConfig& cfg) {
+    const std::string bk = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
+    if (bk == "Plane") {
+        return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
+               cfg.PlaneProjectId;
+    }
+    return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + cfg.ProjectKey;
+}
+
+bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::vector<TrackerField>& fields,
+                              const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError) {
     outError.clear();
     try {
-        nlohmann::json root = nlohmann::json::object();
-        root["schema_version"] = 1;
-        nlohmann::json jf = nlohmann::json::array();
-        for (const auto& f : fields) {
-            jf.push_back(FieldToJson(f));
+        const std::string path = FieldCatalogCachePath();
+        nlohmann::json rootOnDisk = nlohmann::json::object();
+        {
+            std::ifstream inf(path, std::ios::binary);
+            if (inf) {
+                std::string text((std::istreambuf_iterator<char>(inf)), std::istreambuf_iterator<char>());
+                if (!text.empty()) {
+                    try {
+                        rootOnDisk = nlohmann::json::parse(text);
+                    } catch (const std::exception& ex) {
+                        LOG_WARN("FieldCatalogCache::SaveFieldCatalogSnapshot: ignoring unreadable cache: %s",
+                                 ex.what());
+                        rootOnDisk = nlohmann::json::object();
+                    }
+                }
+            }
         }
-        root["fields"] = std::move(jf);
-        nlohmann::json jc = nlohmann::json::array();
-        for (const auto& c : components) {
-            jc.push_back(nlohmann::json{{"id", c.Id}, {"name", c.Name}});
+
+        nlohmann::json out = nlohmann::json::object();
+        out["schema_version"] = 2;
+        nlohmann::json entries = nlohmann::json::object();
+
+        const int oldVer = rootOnDisk.value("schema_version", 0);
+        if (oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object()) {
+            entries = rootOnDisk["entries"];
+        } else if (rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array()) {
+            nlohmann::json legacyEntry = nlohmann::json::object();
+            legacyEntry["fields"] = rootOnDisk["fields"];
+            legacyEntry["components"] =
+                rootOnDisk.contains("components") ? rootOnDisk["components"] : nlohmann::json::array();
+            legacyEntry["issue_type_meta"] =
+                rootOnDisk.contains("issue_type_meta") ? rootOnDisk["issue_type_meta"] : nlohmann::json::array();
+            entries["Jira_legacy_v1"] = std::move(legacyEntry);
         }
-        root["components"] = std::move(jc);
-        nlohmann::json jm = nlohmann::json::array();
-        for (const auto& m : issueTypeMeta) {
-            jm.push_back(IssueTypeMetaToJson(m));
-        }
-        root["issue_type_meta"] = std::move(jm);
-        const std::string text = root.dump();
-        if (!ConfigManager::AtomicWriteTextFile(FieldCatalogCachePath(), text)) {
+
+        entries[cacheKey] = BuildEntryJson(fields, components, issueTypeMeta);
+        out["entries"] = std::move(entries);
+        const std::string text = out.dump();
+        if (!ConfigManager::AtomicWriteTextFile(path, text)) {
             outError = "Failed to write field catalog cache file.";
             return false;
         }
@@ -191,7 +329,8 @@ bool SaveFieldCatalogSnapshot(const std::vector<TrackerField>& fields, const std
     }
 }
 
-bool TryLoadFieldCatalogSnapshot(std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
+bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<TrackerField>& outFields,
+                                 std::vector<TrackerComponent>& outComponents,
                                  std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
     outError.clear();
     outFields.clear();
@@ -211,47 +350,31 @@ bool TryLoadFieldCatalogSnapshot(std::vector<TrackerField>& outFields, std::vect
     try {
         const nlohmann::json root = nlohmann::json::parse(text);
         const int ver = root.value("schema_version", 0);
-        if (ver != 1) {
-            outError = "Unsupported field catalog cache schema version.";
-            return false;
-        }
-        const auto jf = root.find("fields");
-        if (jf == root.end() || !jf->is_array()) {
-            outError = "Invalid field catalog cache: missing fields array.";
-            return false;
-        }
-        for (const auto& el : *jf) {
-            TrackerField f;
-            if (FieldFromJson(el, f)) {
-                outFields.push_back(std::move(f));
+        if (ver == 2 && root.contains("entries") && root["entries"].is_object()) {
+            const nlohmann::json& entries = root["entries"];
+            nlohmann::json::const_iterator it = entries.find(cacheKey);
+            if (it == entries.end() && cacheKey.rfind("Jira|", 0) == 0) {
+                it = entries.find("Jira_legacy_v1");
             }
-        }
-        const auto jc = root.find("components");
-        if (jc != root.end() && jc->is_array()) {
-            for (const auto& el : *jc) {
-                if (!el.is_object()) {
-                    continue;
-                }
-                TrackerComponent c;
-                c.Id = el.value("id", std::string());
-                c.Name = el.value("name", std::string());
-                outComponents.push_back(std::move(c));
+            if (it == entries.end() || !it->is_object()) {
+                outError = "No field catalog cache entry for this tracker context.";
+                return false;
             }
+            return ParseCatalogEntryObject(*it, outFields, outComponents, outIssueTypeMeta, outError);
         }
-        const auto jm = root.find("issue_type_meta");
-        if (jm != root.end() && jm->is_array()) {
-            for (const auto& el : *jm) {
-                TrackerIssueTypeCreateMeta m;
-                if (IssueTypeMetaFromJson(el, m)) {
-                    outIssueTypeMeta.push_back(std::move(m));
-                }
+        if (root.contains("fields") && root["fields"].is_array()) {
+            if (cacheKey.rfind("Plane|", 0) == 0) {
+                outError = "Legacy field catalog cache is Jira-only; Plane snapshot not available.";
+                return false;
             }
+            if (cacheKey.rfind("Jira|", 0) != 0) {
+                outError = "Unsupported cache key for legacy field catalog file.";
+                return false;
+            }
+            return ParseCatalogEntryObject(root, outFields, outComponents, outIssueTypeMeta, outError);
         }
-        if (outFields.empty()) {
-            outError = "Field catalog cache contained no fields.";
-            return false;
-        }
-        return true;
+        outError = "Unsupported or empty field catalog cache format.";
+        return false;
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: %s", ex.what());

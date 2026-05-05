@@ -45,7 +45,7 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
             ImGui::TextWrapped("%s", summary.empty() ? "<no summary field selected>" : summary.c_str());
             if (!it->fieldValues.empty()) {
                 ImGui::Spacing();
-                ImGui::Text("Selected Jira Fields");
+                ImGui::Text("Selected Fields");
                 ImGui::Separator();
                 TrackerFieldCatalogIndex aiCatalog(app.GetAvailableFields());
                 for (const auto& kv : it->fieldValues) {

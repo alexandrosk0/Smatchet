@@ -77,8 +77,9 @@ IssueDraft AppController::BuildDraftFromLastTicket(const JiraConfig& cfg) const 
     if (!tickets.empty()) {
         lastTicket = tickets.back();
     }
+    const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
     return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, cfg.ProjectKey, cfg.DefaultIssueTypeId,
-                                               cfg.DefaultIssueTypeName, cfg.NewIssueInheritFieldIds);
+                                               cfg.DefaultIssueTypeName, inheritIds);
 }
 
 RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
@@ -94,8 +95,12 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
         if (idMatch || nameMatch) {
             result.FieldIds = entry.RequiredFieldIds;
             result.IsSubtask = entry.IsSubtask;
-            return result;
+            break;
         }
+    }
+    const auto cfg = ConfigManager::Load();
+    if (cfg.TrackerType == "Plane") {
+        result.RequiresIssueType = false;
     }
     return result; // empty -> hard minimum only
 }
@@ -138,7 +143,7 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draftCopy, required, *catalogCopy);
         if (result.Ok) {
             RefreshLocalData();
-            requestDeferredLiveJiraBackendSuccessNotify_();
+            requestDeferredLiveTrackerBackendSuccessNotify_();
         }
         promise->set_value(std::move(result));
     });
@@ -436,7 +441,7 @@ AppController::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& dead
 }
 
 void AppController::TickOfflineFieldEdits() {
-    if (!Cache || !JiraBackend) {
+    if (!Cache || !Backend) {
         return;
     }
     {
@@ -472,8 +477,12 @@ void AppController::TickOfflineFieldEdits() {
     }
 
     LocalCacheManager* cache = Cache.get();
-    LaunchBackgroundTask([this, pending, cache]() {
-        JiraClient client;
+    ITrackerClient* backend = Backend.get();
+    if (!backend) {
+        return;
+    }
+
+    LaunchBackgroundTask([this, pending, cache, backend]() {
         const JiraConfig cfg = ConfigManager::Load();
         int successes = 0;
         int failures = 0;
@@ -534,8 +543,8 @@ void AppController::TickOfflineFieldEdits() {
 
             ranUpdate = true;
             std::string err;
-            if (!client.UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
-                if (IsJiraTransportErrorText(err)) {
+            if (!backend->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
+                if (IsTrackerTransportErrorText(err)) {
                     const int nextAttempts = row.Attempts + 1;
                     if (nextAttempts >= kMaxReplayAttempts) {
                         const std::string terminal =
@@ -571,7 +580,7 @@ void AppController::TickOfflineFieldEdits() {
             if (tryCacheMutation("delete_pending_field_edit", row.Id,
                                  [&]() { cache->DeletePendingFieldEdit(row.Id); })) {
                 ++successes;
-                requestDeferredLiveJiraBackendSuccessNotify_();
+                requestDeferredLiveTrackerBackendSuccessNotify_();
                 BackendAuditTrail::AppendResult(
                     "offline_replay_field_edit", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
                     std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
@@ -721,7 +730,7 @@ void AppController::TickOfflineCreates() {
             if (result.Ok) {
                 if (tryCacheMutation("delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); })) {
                     ++successes;
-                    requestDeferredLiveJiraBackendSuccessNotify_();
+                    requestDeferredLiveTrackerBackendSuccessNotify_();
                     BackendAuditTrail::AppendResult(
                         "offline_replay_create", "offline_replay", result.IssueKey, std::to_string(pc.Id), true,
                         std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}});

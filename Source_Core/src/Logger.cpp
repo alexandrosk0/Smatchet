@@ -62,9 +62,9 @@ void Logger::SetMinLevel(LogLevel minLevel) {
 
 LogLevel Logger::GetMinLevel() const { return static_cast<LogLevel>(m_minLevelInt.load(std::memory_order_acquire)); }
 
-void Logger::SetLogJiraHttpBodies(bool enabled) { m_logJiraHttpBodies.store(enabled, std::memory_order_release); }
+void Logger::SetLogTrackerHttpBodies(bool enabled) { m_logTrackerHttpBodies.store(enabled, std::memory_order_release); }
 
-bool Logger::GetLogJiraHttpBodies() const { return m_logJiraHttpBodies.load(std::memory_order_acquire); }
+bool Logger::GetLogTrackerHttpBodies() const { return m_logTrackerHttpBodies.load(std::memory_order_acquire); }
 
 void Logger::SetLogP4Io(bool enabled) { m_logP4Io.store(enabled, std::memory_order_release); }
 

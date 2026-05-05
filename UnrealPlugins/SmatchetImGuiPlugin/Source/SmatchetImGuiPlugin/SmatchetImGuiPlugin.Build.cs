@@ -8,6 +8,9 @@ public class SmatchetImGuiPlugin : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Must match CMake ImGuiLib_* (emoji / supplementary-plane text in issue titles).
+        PublicDefinitions.Add("IMGUI_USE_WCHAR32=1");
+
         // Surface dead-code-adjacent issues in plugin .cpp/.h without changing engine modules.
         // (IWYU enforcement is optional: turn on when you want to pay down monolithic includes.)
         // UE 5.6+: compiler warning knobs live under CppCompileWarningSettings (ModuleRules.* is obsolete).

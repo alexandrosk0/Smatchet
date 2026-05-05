@@ -328,6 +328,9 @@ target_include_directories(ImGuiLib PUBLIC
         ${imgui_SOURCE_DIR}/backends
         ${glfw_SOURCE_DIR}/include
 )
+# Supplementary-plane Unicode (emoji in Plane/Jira titles). Must match every TU that includes imgui.h
+# (standalone, DX12 host, Unreal plugin — rebuild packaged ThirdParty libs after changing this).
+target_compile_definitions(ImGuiLib PUBLIC IMGUI_USE_WCHAR32=1)
 
 # Dear ImGui variant for Unreal/DX12 embedding (no GLFW/OpenGL dependency).
 if(WIN32)
@@ -338,6 +341,7 @@ if(WIN32)
             ${imgui_SOURCE_DIR}
             ${imgui_SOURCE_DIR}/backends
     )
+    target_compile_definitions(ImGuiLib_DX12 PUBLIC IMGUI_USE_WCHAR32=1)
 endif()
 
 # ==============================================================================

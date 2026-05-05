@@ -20,10 +20,10 @@ std::string RedactUrlForLog(const std::string& url) {
     return url.substr(0, q) + "?[redacted]";
 }
 
-void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Response& response) {
-    LOG_DEBUG("JiraClient: %s %s -> HTTP %d (%zu bytes)", method, RedactUrlForLog(url).c_str(),
+void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url, const cpr::Response& response) {
+    LOG_DEBUG("%s: %s %s -> HTTP %d (%zu bytes)", clientName, method, RedactUrlForLog(url).c_str(),
               static_cast<int>(response.status_code), response.text.size());
-    if (!Logger::Instance().GetLogJiraHttpBodies()) {
+    if (!Logger::Instance().GetLogTrackerHttpBodies()) {
         return;
     }
     if (!Logger::Instance().ShouldLog(LogLevel::Trace)) {
@@ -35,7 +35,7 @@ void LogJiraHttpResult(const char* method, const std::string& url, const cpr::Re
         body.resize(kMaxJiraHttpBodyLogBytes);
         suffix = "\n[truncated…]";
     }
-    Logger::Instance().Log(LogLevel::Trace, std::string("JiraClient: ") + method + " response body (" +
+    Logger::Instance().Log(LogLevel::Trace, std::string(clientName) + ": " + method + " response body (" +
                                                 RedactUrlForLog(url) + "):\n" + body + suffix);
 }
 
@@ -120,7 +120,7 @@ cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers, 
                                       cpr::Timeout{overallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
-    LogJiraHttpResult("GET", url, response);
+    LogTrackerHttpResult("JiraClient", "GET", url, response);
     return response;
 }
 
@@ -129,7 +129,7 @@ cpr::Response JiraPostLogged(const std::string& url, const cpr::Header& headers,
     cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                        cpr::ConnectTimeout{kJiraConnectTimeoutMs}, cpr::Timeout{kJiraOverallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, static_cast<std::uint64_t>(body.size()), response);
-    LogJiraHttpResult("POST", url, response);
+    LogTrackerHttpResult("JiraClient", "POST", url, response);
     return response;
 }
 
@@ -138,11 +138,11 @@ cpr::Response JiraPutLogged(const std::string& url, const cpr::Header& headers, 
     cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                       cpr::ConnectTimeout{kJiraConnectTimeoutMs}, cpr::Timeout{kJiraOverallTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, static_cast<std::uint64_t>(body.size()), response);
-    LogJiraHttpResult("PUT", url, response);
+    LogTrackerHttpResult("JiraClient", "PUT", url, response);
     return response;
 }
 
-bool IsJiraTransportErrorText(const std::string& error) {
+bool IsTrackerTransportErrorText(const std::string& error) {
     if (error.empty()) {
         return false;
     }
@@ -150,8 +150,8 @@ bool IsJiraTransportErrorText(const std::string& error) {
 
     // Client/config/auth/validation — never treat as transport.
     static const char* kHard[] = {
-        "missing jira domain",
-        "missing jira",
+        "missing tracker domain",
+        "missing tracker",
         "api token",
         "tracker backend is not initialized",
         "http 400",
@@ -167,6 +167,9 @@ bool IsJiraTransportErrorText(const std::string& error) {
         "invalid credentials",
         "bad request",
         "unprocessable",
+        // Plane config errors
+        "plane is not configured",
+        "plane api key is missing",
     };
     for (const char* h : kHard) {
         if (s.find(h) != std::string::npos) {

@@ -52,6 +52,17 @@ void AddExtendedSymbolRanges(ImFontGlyphRangesBuilder& builder, ImFontAtlas* atl
     builder.AddRanges(kMiscSymbolsAndArrows);
     static const ImWchar kCjkSymbolsAndPunctuation[] = {0x3000, 0x303F, 0};
     builder.AddRanges(kCjkSymbolsAndPunctuation);
+
+#if defined(IMGUI_USE_WCHAR32)
+    // Supplementary Multilingual Plane: emoji / pictographs (Plane onboarding titles, GitHub, etc.).
+    // Requires IMGUI_USE_WCHAR32 so glyph builder and text layout support codepoints > U+FFFF.
+    static const ImWchar kRegionalIndicators[] = {0x1F1E6, 0x1F1FF, 0}; // flag pairs
+    builder.AddRanges(kRegionalIndicators);
+    static const ImWchar kEmojiAndPictographs[] = {0x1F300, 0x1FAFF, 0};
+    builder.AddRanges(kEmojiAndPictographs);
+    static const ImWchar kVariationSelectors[] = {0xFE00, 0xFE0F, 0};
+    builder.AddRanges(kVariationSelectors);
+#endif
 }
 
 #if defined(_WIN32)
@@ -87,6 +98,15 @@ void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io) {
         static const char kSegoeUiSymbolPath[] = "C:\\Windows\\Fonts\\seguisym.ttf";
         if (FileExistsUtf8(kSegoeUiSymbolPath)) {
             io.Fonts->AddFontFromFileTTF(kSegoeUiSymbolPath, kFontPixels, &merge_cfg, glyph_ranges.Data);
+        }
+        // Color emoji font; merged bitmaps render as monochrome without FreeType color loader — still beats U+FFFD.
+        static const char kSegoeUiEmojiPath[] = "C:\\Windows\\Fonts\\seguiemj.ttf";
+        if (FileExistsUtf8(kSegoeUiEmojiPath)) {
+            ImFontConfig emoji_cfg;
+            emoji_cfg.MergeMode = true;
+            emoji_cfg.GlyphRanges = glyph_ranges.Data;
+            emoji_cfg.PixelSnapH = true;
+            io.Fonts->AddFontFromFileTTF(kSegoeUiEmojiPath, kFontPixels, &emoji_cfg, glyph_ranges.Data);
         }
         return;
     }

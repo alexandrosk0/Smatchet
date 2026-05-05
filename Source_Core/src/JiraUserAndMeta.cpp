@@ -5,6 +5,7 @@
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
+#include "JiraTrackerFieldAdapter.h"
 
 #include <set>
 #include <string>
@@ -398,5 +399,25 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg, const std::string& a
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
+    return true;
+}
+
+bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey,
+                                    std::vector<TrackerUser>& outWatchers, std::string& outError) {
+    std::vector<JiraUser> jiraWatchers;
+    if (!FetchIssueWatchers(cfg, issueKey, jiraWatchers, outError)) {
+        return false;
+    }
+    outWatchers = JiraTrackerFieldAdapter::ToTrackerUsers(jiraWatchers);
+    return true;
+}
+
+bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& query,
+                                    std::vector<TrackerUser>& outUsers, std::string& outError) {
+    std::vector<JiraUser> jiraUsers;
+    if (!SearchUsersByQuery(cfg, query, jiraUsers, outError)) {
+        return false;
+    }
+    outUsers = JiraTrackerFieldAdapter::ToTrackerUsers(jiraUsers);
     return true;
 }

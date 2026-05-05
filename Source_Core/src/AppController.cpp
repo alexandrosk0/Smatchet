@@ -22,6 +22,7 @@
 
 #include <ghc/filesystem.hpp>
 #include "JiraClient.h"
+#include "PlaneClient.h"
 #include "JiraHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -124,7 +125,7 @@ AppController::~AppController() {
     // tearing down members other threads may still touch.
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
     shuttingDown_.store(true);
-    DrainJiraConnectivityProbeFuture();
+    DrainTrackerConnectivityProbeFuture();
     JoinBackgroundTasks();
 }
 
@@ -174,12 +175,15 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
     }
 
     LaunchBackgroundTask([this, toFetch]() {
-        JiraClient client;
+        ITrackerClient* backend = Backend.get();
+        if (!backend) {
+            return;
+        }
         JiraConfig cfg = ConfigManager::Load();
         ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
         std::string err;
         std::vector<CachedTicket> tickets;
-        const bool ok = client.FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+        const bool ok = backend->FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
         {
             std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
             for (const auto& k : toFetch) {
@@ -187,14 +191,14 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             }
         }
         if (!ok) {
-            if (IsJiraTransportErrorText(err)) {
+            if (IsTrackerTransportErrorText(err)) {
                 LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.c_str());
             } else {
                 LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
             }
             return;
         }
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
         if (!Cache) {
             return;
         }
@@ -405,13 +409,23 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
     }
 
-    if (backendType == "Jira") {
-        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
-        JiraBackend = dynamic_cast<JiraClient*>(Backend.get());
-        LOG_INFO("AppController: Jira backend initialized.");
-    } else {
-        LOG_WARN("AppController: unsupported backendType=%s; backend disabled.", backendType.c_str());
+    JiraConfig cfg = ConfigManager::Load();
+    std::string activeTracker = cfg.TrackerType;
+    if (activeTracker.empty()) {
+        activeTracker = "Jira";
     }
+
+    std::string trackerLower = activeTracker;
+    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+
+    if (trackerLower == "plane") {
+        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        LOG_INFO("AppController: Plane backend initialized.");
+    } else {
+        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        LOG_INFO("AppController: Jira backend initialized.");
+    }
+    const std::string activeTrackerType = Backend ? Backend->GetTrackerType() : "Unknown";
 
     const std::string& fileBase = ConfigManager::GetFilesBaseDirectory();
     if (!fileBase.empty()) {
@@ -433,42 +447,50 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // applied first — avoids fetching issues twice at startup.
     RefreshLocalData();
 
-    if (JiraBackend) {
+    {
         std::vector<TrackerField> snapFields;
         std::vector<TrackerComponent> snapComponents;
         std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
         std::string snapErr;
-        if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(snapFields, snapComponents, snapIssueTypeMeta, snapErr)) {
+        const std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg);
+        if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
+                                                           snapErr)) {
             AvailableFields = std::move(snapFields);
             AvailableComponents = std::move(snapComponents);
             AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
             fieldCatalogEverLoaded_ = true;
-            LastJiraFieldCatalogError.clear();
-            LastJiraFieldCatalogWarning =
-                "Working offline: Jira field catalog loaded from local snapshot until a live refresh "
-                "succeeds.";
-            for (auto& field : AvailableFields) {
-                if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
-                    field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
-                    field.ReadOnly = true;
-                }
+            LastTrackerFieldCatalogError.clear();
+            if (activeTrackerType == "Plane") {
+                LastTrackerFieldCatalogWarning =
+                    "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
+            } else {
+                LastTrackerFieldCatalogWarning =
+                    "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
             }
-            EnsureCatalogHistoryField();
-            JiraFieldCatalogRevision.fetch_add(1);
+            if (activeTrackerType == "Jira") {
+                for (auto& field : AvailableFields) {
+                    if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
+                        field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
+                        field.ReadOnly = true;
+                    }
+                }
+                EnsureCatalogHistoryField();
+            }
+            TrackerFieldCatalogRevision.fetch_add(1);
             LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
                      AvailableFields.size());
         }
     }
 
     JiraConfig jiraCfgForEditMetaWarmup{};
-    if (JiraBackend) {
+    if (activeTrackerType == "Jira") {
         // Load before InitLua(): avoids parsing smatchet_config.json immediately after Lua init on MinGW release.
         jiraCfgForEditMetaWarmup = ConfigManager::Load();
     }
 
     InitLua();
 
-    if (JiraBackend) {
+    if (activeTrackerType == "Jira") {
         WarmIssueTypeEditMetaAtStartAsync(std::move(jiraCfgForEditMetaWarmup));
     }
 }
@@ -566,11 +588,11 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
     return true;
 }
 
-void AppController::ClearLastJiraTicketSyncWarning() { LastJiraTicketSyncWarning.clear(); }
+void AppController::ClearLastTrackerTicketSyncWarning() { LastTrackerTicketSyncWarning.clear(); }
 
-JiraIssueFetchPack AppController::FetchIssuesForActiveView(const JiraConfig* configOverride,
+TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const JiraConfig* configOverride,
                                                            const ViewsStore* viewsOverride) {
-    JiraIssueFetchPack pack;
+    TrackerIssueFetchPack pack;
     if (!Backend || !Cache) {
         return pack;
     }
@@ -579,25 +601,25 @@ JiraIssueFetchPack AppController::FetchIssuesForActiveView(const JiraConfig* con
     return pack;
 }
 
-void AppController::ApplyIssueFetchPack(JiraIssueFetchPack pack) {
+void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     if (!Backend || !Cache) {
         LOG_WARN("AppController::ApplyIssueFetchPack skipped: backend=%d cache=%d", Backend ? 1 : 0, Cache ? 1 : 0);
         return;
     }
-    LastJiraTicketSyncWarning.clear();
+    LastTrackerTicketSyncWarning.clear();
     std::vector<CachedTicket>& freshTickets = pack.Tickets;
     const std::string& fetchError = pack.FetchError;
     const bool fullSyncCompleted = pack.FullSyncCompleted;
 
-    if (!fetchError.empty() && IsJiraTransportErrorText(fetchError)) {
-        LastJiraTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
+    if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
+        LastTrackerTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
         LOG_WARN("AppController::ApplyIssueFetchPack transport-style fetch issue: %s", fetchError.c_str());
-        lastJiraConnectivityState_ = JiraConnectivityState::TransportDown;
+        lastTrackerConnectivityState_ = TrackerConnectivityState::TransportDown;
         const auto nowProbe = std::chrono::steady_clock::now();
-        nextJiraConnectivityProbeAt_ = nowProbe;
+        nextTrackerConnectivityProbeAt_ = nowProbe;
         PushOfflineReplayTimersDuringTransportOutage(nowProbe);
     } else if (fetchError.empty()) {
-        requestDeferredLiveJiraBackendSuccessNotify_();
+        requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     size_t saved = 0;
     for (const auto& t : freshTickets) {
@@ -627,7 +649,32 @@ void AppController::ApplyIssueFetchPack(JiraIssueFetchPack pack) {
 
 void AppController::SyncWithBackend(const JiraConfig* configOverride, const ViewsStore* viewsOverride) {
     LOG_INFO("AppController::SyncWithBackend started.");
-    JiraIssueFetchPack pack = FetchIssuesForActiveView(configOverride, viewsOverride);
+
+    // Resolve effective tracker type — prefer configOverride, else read from disk.
+    std::string newTracker;
+    if (configOverride) {
+        newTracker = configOverride->TrackerType;
+    } else {
+        newTracker = ConfigManager::Load().TrackerType;
+    }
+    if (newTracker.empty()) newTracker = "Jira";
+
+    const std::string currentType = Backend ? Backend->GetTrackerType() : "";
+    const bool isCurrentlyJira  = (currentType == "Jira");
+    const bool isCurrentlyPlane = (currentType == "Plane");
+
+    std::string trackerLower = newTracker;
+    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+
+    if (trackerLower == "plane" && !isCurrentlyPlane) {
+        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        LOG_INFO("AppController: Switched backend to Plane.");
+    } else if (trackerLower == "jira" && !isCurrentlyJira) {
+        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        LOG_INFO("AppController: Switched backend to Jira.");
+    }
+
+    TrackerIssueFetchPack pack = FetchIssuesForActiveView(configOverride, viewsOverride);
     ApplyIssueFetchPack(std::move(pack));
     RefreshLocalDataAndWarmIssueTypeMeta();
 }
