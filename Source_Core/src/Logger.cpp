@@ -133,3 +133,9 @@ void Logger::Clear() {
     m_entries.clear();
     m_revision.fetch_add(1, std::memory_order_release);
 }
+
+
+
+
+
+

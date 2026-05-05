@@ -7,9 +7,9 @@
 #include <string>
 #include <vector>
 
-namespace JiraDateTimeFieldEditor {
+namespace TrackerDateTimeFieldEditor {
 
-bool IsJiraDateTimePickerField(const TrackerField& field);
+bool IsTrackerDateTimePickerField(const TrackerField& field);
 
 using QueueDateTimeEditFn =
     std::function<void(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values)>;
@@ -17,4 +17,11 @@ using QueueDateTimeEditFn =
 void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit);
 
-} // namespace JiraDateTimeFieldEditor
+} // namespace TrackerDateTimeFieldEditor
+
+
+
+
+
+
+

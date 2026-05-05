@@ -64,3 +64,9 @@ class UiPerfScope {
 #define SMATCHET_UI_PERF_SCOPE_CAT2(a, b) a##b
 
 #endif
+
+
+
+
+
+

@@ -123,7 +123,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                 auto postTemplate = [&](const char* title, const char* id) {
                     if (ImGui::MenuItem(title)) {
                         std::string err;
-                        if (app->JiraAddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
+                        if (app->AddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
                             SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey, ToastType::Success);
                         } else {
                             SmatchetToastManager::Instance().Push("Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
@@ -365,3 +365,9 @@ void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
         d.newIssueDiscardAsyncCreateResult = true;
     }
 }
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-#include "JiraLabelsEditor.h"
+#include "TrackerLabelsEditor.h"
 #include "AppController.h"
 #include "StringUtil.h"
 #include "imgui.h"
@@ -30,7 +30,7 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
     return result;
 }
 
-std::string JoinCsv(const std::vector<std::string>& values) { return JoinStrings(values, ", "); }
+
 
 bool LabelsEqualCaseInsensitive(const std::string& a, const std::string& b) {
     return ToLowerAsciiCopy(a) == ToLowerAsciiCopy(b);
@@ -114,7 +114,7 @@ std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::stri
 
 } // namespace
 
-namespace JiraLabelsEditor {
+namespace TrackerLabelsEditor {
 
 bool IsLabelsField(const std::string& fieldId) { return ToLowerAsciiCopy(fieldId) == "labels"; }
 
@@ -137,7 +137,10 @@ void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, con
     }
     suggestions = SortAndUniqueLabels(std::move(suggestions));
 
-    const std::string preview = selectedLabels.empty() ? std::string("<none>") : JoinCsv(selectedLabels);
+    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    if (preview.empty() && !currentValue.empty()) {
+        // Fallback if ResolveDisplayValue returns empty for non-empty value (should not happen with robust backends)
+    }
     const std::string comboId = "##LabelsMultiSelect_" + ticket.id + "_" + field.Id;
     const std::string editorKey = ticket.id + "::" + field.Id;
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -214,4 +217,10 @@ void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, con
     }
 }
 
-} // namespace JiraLabelsEditor
+} // namespace TrackerLabelsEditor
+
+
+
+
+
+

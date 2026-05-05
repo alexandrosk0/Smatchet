@@ -1,7 +1,7 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "ConfigManager.h"
-#include "JiraGridFieldDisplay.h"
+#include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
@@ -37,7 +37,7 @@ UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
 static bool g_openFilePathsHandlerInstalled = false;
 
-static void ApplyLoggingSettingsFromConfig(const JiraConfig& cfg) {
+static void ApplyLoggingSettingsFromConfig(const TrackerConfig& cfg) {
     Logger::Instance().SetMinLevel(Logger::ParseLogLevelString(cfg.LogMinLevel, LogLevel::Info));
     Logger::Instance().SetLogTrackerHttpBodies(cfg.LogTrackerHttpBodies);
     Logger::Instance().SetLogP4Io(cfg.LogP4Io);
@@ -61,13 +61,13 @@ static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
 }
 #endif
 
-static std::future<TrackerIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, JiraConfig cfg,
+static std::future<TrackerIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, TrackerConfig cfg,
                                                                     ViewsStore store) {
     return std::async(std::launch::async, [&app, cfg, store]() { return app.FetchIssuesForActiveView(&cfg, &store); });
 }
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
-                                                                        const JiraConfig& fetchCfg) {
+                                                                        const TrackerConfig& fetchCfg) {
     return std::async(std::launch::async, [&app, fetchCfg]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
@@ -274,12 +274,12 @@ void SmatchetUI::Draw(AppController& app) {
         drawAuditWindow(app, d);
     }
     {
-        SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawWatchersListWindow");
-        JiraGridFieldDisplay::DrawWatchersListWindow(g_ui.jiraGridAsync);
+        SMATCHET_UI_PERF_SCOPE("TrackerGridFieldDisplay::DrawWatchersListWindow");
+        TrackerGridFieldDisplay::DrawWatchersListWindow(g_ui.trackerGridAsync);
     }
     {
-        SMATCHET_UI_PERF_SCOPE("JiraGridFieldDisplay::DrawVotesListWindow");
-        JiraGridFieldDisplay::DrawVotesListWindow(g_ui.jiraGridAsync);
+        SMATCHET_UI_PERF_SCOPE("TrackerGridFieldDisplay::DrawVotesListWindow");
+        TrackerGridFieldDisplay::DrawVotesListWindow(g_ui.trackerGridAsync);
     }
 #if defined(SMATCHET_WITH_AI)
     {
@@ -309,7 +309,7 @@ void SmatchetUI::Draw(AppController& app) {
 }
 
 void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d) {
-    const auto startCatalogFetch = [&](const JiraConfig& fetchCfg) {
+    const auto startCatalogFetch = [&](const TrackerConfig& fetchCfg) {
         if (d.fieldCatalogLoading) {
             return;
         }
@@ -575,3 +575,9 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
 UiDrawSession::~UiDrawSession() {
     DrainAuditReloadFuture(*this);
 }
+
+
+
+
+
+

@@ -57,3 +57,9 @@ bool AppController::TryLuaFieldDisplay(const std::string& /*fieldId*/, const Cac
 }
 
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
+
+
+
+
+
+

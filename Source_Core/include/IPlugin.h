@@ -21,3 +21,9 @@ class IPlugin {
     /** Clean shutdown before ImGui teardown. */
     virtual void OnStop() {}
 };
+
+
+
+
+
+

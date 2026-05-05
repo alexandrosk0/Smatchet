@@ -423,7 +423,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 
 #if defined(SMATCHET_WITH_MCP)
     {
-        JiraConfig cfg = ConfigManager::Load();
+        TrackerConfig cfg = ConfigManager::Load();
         const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
         if (cfg.McpEnabled) {
             ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
@@ -947,3 +947,9 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
+
+
+
+
+
+

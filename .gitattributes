@@ -1,0 +1,34 @@
+# Normalize all text to LF in the repo and on checkout (all platforms).
+* text=auto eol=lf
+
+# Binaries (do not touch line endings)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.bmp binary
+*.tga binary
+*.dds binary
+*.psd binary
+*.lib binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.ilk binary
+*.exp binary
+*.zip binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.pdf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.uasset binary
+*.umap binary
+*.udk binary
+*.blend binary

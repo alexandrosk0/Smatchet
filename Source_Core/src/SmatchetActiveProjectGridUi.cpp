@@ -3,8 +3,8 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
-#include "JiraGridFieldDisplay.h"
-#include "JiraHttpUtils.h"
+#include "TrackerGridFieldDisplay.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetGridUiSupport.h"
@@ -195,7 +195,7 @@ bool IsLikelyOfflineCreateError(const std::string& error) { return IsTrackerTran
  * Ensure d.newIssueDraftEditBufs has a sized InputText buffer for `fieldId`,
  * seeded from `seed`. Buffer is large enough for summary-ish lines; the
  * description column gets a bigger allocation via the caller's override.
- * Description uses ImGui::InputText (single-line); Jira often returns multiline
+ * Description uses ImGui::InputText (single-line); Tracker often returns multiline
  * text — normalize CR/LF to spaces in the initial seed so the control stays one line.
  */
 static std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& fieldId, const std::string& seed,
@@ -816,7 +816,7 @@ static bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) 
     }
 
     ImGui::TextDisabled(
-        "Queued rows replay when Jira is reachable. Dead rows are archived after retries or validation failure. "
+        "Queued rows replay when Tracker is reachable. Dead rows are archived after retries or validation failure. "
         "Retry applies only to failed issue creates. Discard removes rows locally only.");
 
     auto copySelectionToClipboard = [&](const std::string& fallbackKey) {
@@ -1291,7 +1291,7 @@ static bool TryAppendStagedFromAbsPath(IssueDraft& draft, const std::string& abs
 }
 
 static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
-                                   const JiraConfig& cfg, const CachedTicket* lastVisibleTicket) {
+                                   const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
     const auto& catalog = app.GetAvailableFields();
 
     if (d.newIssueCreateInFlight && d.newIssueCreateFuture.valid() &&
@@ -1585,8 +1585,8 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
 
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     ImGui::Begin("Smatchet - Active Project");
-    const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
-    const bool readOnlyMode = (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+    const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+    const bool readOnlyMode = (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");
@@ -1648,15 +1648,15 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 #endif
 
         ImGui::Separator();
-        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
+        if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
+            ImGui::TextWrapped("%s", TrackerBanner.Message.c_str());
             ImGui::PopStyleColor();
-            ImGui::TextDisabled("Grid edits and quick comment actions stay disabled until Jira is reachable.");
+            ImGui::TextDisabled("Grid edits and quick comment actions stay disabled until Tracker is reachable.");
             ImGui::Separator();
-        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
+        } else if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
+            ImGui::TextWrapped("%s", TrackerBanner.Message.c_str());
             ImGui::PopStyleColor();
             ImGui::Separator();
         }
@@ -2122,7 +2122,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             TicketFieldEditor::RenderFieldCell(app, ticket, column, fieldMeta, currentValue,
                                                                valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                                allowEditsForCell, d.gridState, pendingEdits,
-                                                               d.jiraGridAsync);
+                                                               d.trackerGridAsync);
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -2318,7 +2318,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             }
         } else if (!pendingEdits.empty()) {
             d.gridEditSuccess.clear();
-            d.gridEditError = "Edit skipped: Jira is in read-only mode.";
+            d.gridEditError = "Edit skipped: Tracker is in read-only mode.";
         }
 
         if (readOnlyMode) {
@@ -2347,7 +2347,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             d.inFlightDelayFrames = 1;
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Saving;
-            feedback.Message = "Saving to Jira...";
+            feedback.Message = "Saving to Tracker...";
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id)] = feedback;
         }
@@ -2401,7 +2401,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             } else {
                 const std::string editKey = BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id);
                 if (d.inFlightCommitFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-                    // Async Jira commit still running; keep UI responsive.
+                    // Async Tracker commit still running; keep UI responsive.
                 } else {
                     const FieldEditCommitResult result = d.inFlightCommitFuture.get();
                     std::string applyError;
@@ -2424,7 +2424,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             feedback.FramesRemaining = 0;
                             d.cellFeedbackByKey[editKey] = feedback;
                         } else {
-                            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Jira is reachable.", ToastType::Info);
+                            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Tracker is reachable.", ToastType::Info);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Success;
                             feedback.Message = "Queued";
@@ -2442,7 +2442,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             feedback.FramesRemaining = 0;
                             d.cellFeedbackByKey[editKey] = feedback;
                         } else {
-                            SmatchetToastManager::Instance().Push("Success", "Field update saved to Jira.", ToastType::Success);
+                            SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.", ToastType::Success);
                             CellWriteFeedback feedback;
                             feedback.State = CellWriteState::Success;
                             feedback.Message = "Saved";
@@ -2451,7 +2451,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         }
                     } else {
                         d.gridEditError =
-                            result.Error.empty() ? std::string("Failed to save Jira field update.") : result.Error;
+                            result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
                         d.gridEditSuccess.clear();
                         CellWriteFeedback feedback;
                         feedback.State = CellWriteState::Error;
@@ -2486,3 +2486,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     }
     ImGui::End();
 }
+
+
+
+
+
+
+

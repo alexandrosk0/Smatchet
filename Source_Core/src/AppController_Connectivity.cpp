@@ -10,7 +10,7 @@
 
 #include "ConfigManager.h"
 #include "JiraClient.h"
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -118,7 +118,7 @@ void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::stead
     nextTrackerConnectivityProbeAt_ = now + interval;
 }
 
-void AppController::TickTrackerConnectivityMonitor(const JiraConfig& cfg) {
+void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
     if (!Backend || shuttingDown_.load()) {
         return;
     }
@@ -343,3 +343,9 @@ bool AppController::ConsumeTrackerConnectivityRecovery() {
     LOG_INFO("AppController: consumed tracker connectivity recovery latch.");
     return true;
 }
+
+
+
+
+
+

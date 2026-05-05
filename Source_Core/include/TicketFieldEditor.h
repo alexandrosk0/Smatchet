@@ -9,12 +9,18 @@
 #include <vector>
 
 class AppController;
-struct JiraGridFieldAsyncState;
+struct TrackerGridFieldAsyncState;
 
 class TicketFieldEditor {
   public:
     static void RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                 const TrackerField* field, const std::string& currentValue, float availWidth,
                                 bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
-                                std::vector<PendingFieldEdit>& pendingEdits, JiraGridFieldAsyncState& jiraGridAsync);
+                                std::vector<PendingFieldEdit>& pendingEdits, TrackerGridFieldAsyncState& trackerGridAsync);
 };
+
+
+
+
+
+

@@ -16,3 +16,9 @@ bool SmatchetWin32PickOpenFilePaths(void* hwndOwner, bool allowMultiple, const s
                                     std::string* outLastDirectoryUtf8, std::vector<std::string>& outAbsPathsUtf8);
 
 #endif
+
+
+
+
+
+

@@ -126,16 +126,16 @@ bool ConstantTimeStringEquals(const std::string& a, const std::string& b) {
     return diff == 0u;
 }
 
-bool IsAllowedAttachmentHost(const std::string& host, const std::string& jiraDomain) {
-    if (host.empty() || jiraDomain.empty()) {
+bool IsAllowedAttachmentHost(const std::string& host, const std::string& trackerDomain) {
+    if (host.empty() || trackerDomain.empty()) {
         return false;
     }
-    if (host == jiraDomain) {
+    if (host == trackerDomain) {
         return true;
     }
-    const std::string jiraSuffix = "." + jiraDomain;
-    if (host.size() > jiraSuffix.size() &&
-        host.compare(host.size() - jiraSuffix.size(), jiraSuffix.size(), jiraSuffix) == 0) {
+    const std::string TrackerSuffix = "." + trackerDomain;
+    if (host.size() > TrackerSuffix.size() &&
+        host.compare(host.size() - TrackerSuffix.size(), TrackerSuffix.size(), TrackerSuffix) == 0) {
         return true;
     }
     return host == "api.media.atlassian.com";
@@ -149,7 +149,7 @@ struct McpPlugin::Impl {
     bool routes_installed = false;
     std::string bind_host = "127.0.0.1";
     std::string auth_token;
-    std::string jira_domain;
+    std::string tracker_domain;
     std::vector<std::string> export_fields;
 };
 
@@ -184,10 +184,10 @@ void McpPlugin::OnStart(AppController& app) {
         return;
     }
     impl_->app = &app;
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     impl_->bind_host = cfg.McpAllowRemote ? "0.0.0.0" : "127.0.0.1";
     impl_->auth_token = cfg.McpAuthToken;
-    impl_->jira_domain = NormalizeDomain(cfg.Domain);
+    impl_->tracker_domain = NormalizeDomain(cfg.Domain);
     if (cfg.McpExportFields.empty()) {
         impl_->export_fields = {
             "summary", "status", "priority", "assignee", "updated", "created", "labels", "issuetype",
@@ -244,7 +244,7 @@ void McpPlugin::OnStart(AppController& app) {
         });
 
         // Attachment proxy:
-        // Jira attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
+        // Tracker attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
         // We proxy through the MCP server (running in the same process) so Unreal can embed/load it.
         impl_->svr.Get("/mcp/attachment_proxy", [this, authorize, cfg](const httplib::Request& req,
                                                                        httplib::Response& res) {
@@ -268,7 +268,7 @@ void McpPlugin::OnStart(AppController& app) {
                 return;
             }
             const std::string targetHost = ExtractHostFromUrl(targetUrl);
-            if (!IsAllowedAttachmentHost(targetHost, impl_->jira_domain)) {
+            if (!IsAllowedAttachmentHost(targetHost, impl_->tracker_domain)) {
                 res.status = 403;
                 res.set_content("Attachment host is not allowlisted.", "text/plain");
                 return;
@@ -276,7 +276,7 @@ void McpPlugin::OnStart(AppController& app) {
 
             if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
                 res.status = 500;
-                res.set_content("Missing Jira configuration (email/token/domain).", "text/plain");
+                res.set_content("Missing Tracker configuration (email/token/domain).", "text/plain");
                 return;
             }
 
@@ -284,7 +284,7 @@ void McpPlugin::OnStart(AppController& app) {
             const std::string authHeader = "Basic " + Base64Encode(basicCred);
 
             cpr::Header headers{
-                {"Accept", "*/*"}, {"Authorization", authHeader}, {"User-Agent", "Smatchet/1.0 Jira-Attachment-Proxy"}};
+                {"Accept", "*/*"}, {"Authorization", authHeader}, {"User-Agent", "Smatchet/1.0 Tracker-Attachment-Proxy"}};
             cpr::Redirect redirect(false, false);
 
             constexpr size_t kMaxAttachmentProxyBytes = 10u * 1024u * 1024u;
@@ -577,3 +577,10 @@ void McpPlugin::OnStop() {
     impl_->svr.stop();
     impl_->thread.join();
 }
+
+
+
+
+
+
+

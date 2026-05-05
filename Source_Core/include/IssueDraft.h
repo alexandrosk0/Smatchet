@@ -23,7 +23,7 @@ struct StagedAttachment {
  */
 struct IssueDraft {
     std::string ProjectKey;
-    std::string IssueTypeId;   // numeric Jira id when known
+    std::string IssueTypeId;   // numeric Tracker id when known
     std::string IssueTypeName; // display name (used as fallback when id unknown)
     std::string ParentKey;     // PROJ-123 for subtask parent; empty otherwise
     /** When set (e.g. bulk import "key" column), pipeline updates this issue instead of creating. */
@@ -40,7 +40,7 @@ struct RequiredFieldSet {
 
 namespace IssueDraftHelpers {
 
-/** Default Jira field ids copied from the last row into a new-issue draft (config fallback). */
+/** Default Tracker field ids copied from the last row into a new-issue draft (config fallback). */
 std::vector<std::string> DefaultNewIssueInheritFieldIds();
 
 /**
@@ -68,7 +68,7 @@ IssueDraft FromCachedTicket(const CachedTicket& ticket, const std::vector<Tracke
                             const std::string& fallbackIssueTypeName, const std::vector<std::string>& inheritFieldIds);
 
 /**
- * Resolve the Jira issue type id for a ticket using the catalog's allowed
+ * Resolve the Tracker issue type id for a ticket using the catalog's allowed
  * options (CachedTicket stores the display name).
  */
 std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket, const std::vector<TrackerField>& catalog,
@@ -119,3 +119,10 @@ std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
 } // namespace IssueDraftHelpers
 
 #endif
+
+
+
+
+
+
+

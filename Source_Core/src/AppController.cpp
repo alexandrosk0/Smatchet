@@ -23,7 +23,7 @@
 #include <ghc/filesystem.hpp>
 #include "JiraClient.h"
 #include "PlaneClient.h"
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "Views.h"
@@ -90,7 +90,7 @@ void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 } // namespace
 
 namespace {
-std::mutex g_JiraIssueFetchMutex;
+std::mutex g_TrackerIssueFetchMutex;
 
 bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty() || value.size() < prefix.size()) {
@@ -179,7 +179,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
         if (!backend) {
             return;
         }
-        JiraConfig cfg = ConfigManager::Load();
+        TrackerConfig cfg = ConfigManager::Load();
         ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
         std::string err;
         std::vector<CachedTicket> tickets;
@@ -409,7 +409,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
     }
 
-    JiraConfig cfg = ConfigManager::Load();
+    TrackerConfig cfg = ConfigManager::Load();
     std::string activeTracker = cfg.TrackerType;
     if (activeTracker.empty()) {
         activeTracker = "Jira";
@@ -482,7 +482,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         }
     }
 
-    JiraConfig jiraCfgForEditMetaWarmup{};
+    TrackerConfig jiraCfgForEditMetaWarmup{};
     if (activeTrackerType == "Jira") {
         // Load before InitLua(): avoids parsing smatchet_config.json immediately after Lua init on MinGW release.
         jiraCfgForEditMetaWarmup = ConfigManager::Load();
@@ -590,13 +590,13 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
 
 void AppController::ClearLastTrackerTicketSyncWarning() { LastTrackerTicketSyncWarning.clear(); }
 
-TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const JiraConfig* configOverride,
+TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfig* configOverride,
                                                            const ViewsStore* viewsOverride) {
     TrackerIssueFetchPack pack;
     if (!Backend || !Cache) {
         return pack;
     }
-    std::lock_guard<std::mutex> lock(g_JiraIssueFetchMutex);
+    std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
     pack.Tickets = Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError);
     return pack;
 }
@@ -647,7 +647,7 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
              freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
 }
 
-void AppController::SyncWithBackend(const JiraConfig* configOverride, const ViewsStore* viewsOverride) {
+void AppController::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride) {
     LOG_INFO("AppController::SyncWithBackend started.");
 
     // Resolve effective tracker type — prefer configOverride, else read from disk.
@@ -678,3 +678,10 @@ void AppController::SyncWithBackend(const JiraConfig* configOverride, const View
     ApplyIssueFetchPack(std::move(pack));
     RefreshLocalDataAndWarmIssueTypeMeta();
 }
+
+
+
+
+
+
+

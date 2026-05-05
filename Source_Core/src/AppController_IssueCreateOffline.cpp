@@ -18,7 +18,7 @@
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "JiraClient.h"
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "LocalCacheManager.h"
 #include "StringUtil.h"
@@ -70,7 +70,7 @@ std::string EscapeShellArg(const std::string& value) {
 
 // --- Create-issue helpers -------------------------------------------------
 
-IssueDraft AppController::BuildDraftFromLastTicket(const JiraConfig& cfg) const {
+IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) const {
     const auto snap = GetActiveTicketsSnapshot();
     const auto& tickets = *snap;
     CachedTicket lastTicket;
@@ -483,7 +483,7 @@ void AppController::TickOfflineFieldEdits() {
     }
 
     LaunchBackgroundTask([this, pending, cache, backend]() {
-        const JiraConfig cfg = ConfigManager::Load();
+        const TrackerConfig cfg = ConfigManager::Load();
         int successes = 0;
         int failures = 0;
         int archived = 0;
@@ -800,3 +800,9 @@ void AppController::TickOfflineCreates() {
         }
     });
 }
+
+
+
+
+
+

@@ -36,3 +36,9 @@ inline std::string ExtensionFromMime(const std::string& mimeType) {
         return ".pdf";
     return ".bin";
 }
+
+
+
+
+
+

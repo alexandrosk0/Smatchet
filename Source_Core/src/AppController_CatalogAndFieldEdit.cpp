@@ -17,9 +17,9 @@
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
 #include "JiraClient.h"
-#include "JiraFieldPayload.h"
-#include "JiraHttpUtils.h"
-#include "JiraTrackerFieldAdapter.h"
+#include "TrackerFieldPayload.h"
+#include "TrackerHttpUtils.h"
+
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
@@ -76,7 +76,7 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
     }
 }
 
-bool AppController::RefreshFieldCatalog(const JiraConfig& cfg) {
+bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) {
     if (!Backend) {
         SetFieldCatalog({}, {}, "Tracker backend is not initialized.");
         return false;
@@ -95,7 +95,7 @@ bool AppController::RefreshFieldCatalog(const JiraConfig& cfg) {
     return true;
 }
 
-bool AppController::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                       std::string& outError) const {
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
@@ -106,11 +106,19 @@ bool AppController::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalog
     return Backend->FetchFieldCatalog(cfg, outCatalog, outError);
 }
 
-std::string AppController::BuildIssueBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const {
+std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     return Backend ? Backend->BuildBrowseUrl(cfg, issueKey) : std::string();
 }
 
-std::string AppController::BuildJqlSearchUrl(const JiraConfig& cfg, const std::string& jql) const {
+std::string AppController::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                               const std::string& value) const {
+    if (!Backend) {
+        return value;
+    }
+    return Backend->ResolveDisplayValue(fieldId, field, value);
+}
+
+std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) const {
     if (cfg.Domain.empty() || jql.empty()) {
         return std::string();
     }
@@ -124,7 +132,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
-    const JiraConfig cfgSnap = ConfigManager::Load();
+    const TrackerConfig cfgSnap = ConfigManager::Load();
     const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap);
     const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
 
@@ -327,7 +335,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
             if (i != 0) {
                 displayValue += ", ";
             }
-            displayValue += Backend->ResolveDisplayValue(field, values[i]);
+            displayValue += Backend->ResolveDisplayValue(field.Id, &field, values[i]);
         }
     }
     outDisplayValues[field.Id] = std::move(displayValue);
@@ -347,7 +355,7 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
     return ToLowerAsciiCopy(TrimCopy(it->GetFieldValue("issuetype")));
 }
 
-void AppController::WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorker) {
+void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
     if (!Backend) {
         return;
     }
@@ -381,13 +389,13 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorke
     if (representatives.empty()) {
         return;
     }
-    LaunchBackgroundTask([this, representatives, jiraCfgForWorker = std::move(jiraCfgForWorker)]() mutable {
+    LaunchBackgroundTask([this, representatives, trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
         for (const auto& pair : representatives) {
             if (shuttingDown_.load()) {
                 break;
             }
             std::string ignored;
-            EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &jiraCfgForWorker);
+            EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &trackerCfgForWorker);
         }
     });
 }
@@ -448,7 +456,7 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
 
 bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
                                               const std::string* issueTypeKeyOverride,
-                                              const JiraConfig* configSnapshot) {
+                                              const TrackerConfig* configSnapshot) {
     if (outError) {
         outError->clear();
     }
@@ -477,7 +485,7 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
         }
     }
 
-    const JiraConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
+    const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
     const bool ok = Backend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
@@ -582,10 +590,10 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
         issueEditMetaWarmupInFlight_.insert(issueId);
     }
 
-    const JiraConfig warmupJiraCfg = ConfigManager::Load();
-    LaunchBackgroundTask([this, issueId, warmupJiraCfg]() {
+    const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
+    LaunchBackgroundTask([this, issueId, warmupTrackerCfg]() {
         std::string ignored;
-        EnsureIssueEditMetaLoaded(issueId, &ignored, nullptr, &warmupJiraCfg);
+        EnsureIssueEditMetaLoaded(issueId, &ignored, nullptr, &warmupTrackerCfg);
         {
             std::lock_guard<std::mutex> lock(editMetaMutex_);
             issueEditMetaWarmupInFlight_.erase(issueId);
@@ -633,7 +641,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             return false;
         }
         const std::string sprintId = values.front();
-        JiraConfig cfg = ConfigManager::Load();
+        TrackerConfig cfg = ConfigManager::Load();
         auto ticketIt = std::find_if(tickets.begin(), tickets.end(),
                                      [&](const CachedTicket& ticket) { return ticket.id == issueId; });
         BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
@@ -824,7 +832,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                 if (i != 0) {
                     displayValue += ", ";
                 }
-                displayValue += Backend->ResolveDisplayValue(field, values[i]);
+                displayValue += Backend->ResolveDisplayValue(field.Id, &field, values[i]);
             }
         }
 
@@ -860,7 +868,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         outResult.Error = "No tracker backend initialized.";
         return false;
     }
-    JiraConfig cfg = ConfigManager::Load();
+    TrackerConfig cfg = ConfigManager::Load();
     std::vector<std::string> values;
     values.reserve(rawValues.size());
     for (const auto& value : rawValues) {
@@ -1046,10 +1054,10 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
     outWatchers.clear();
     outError.clear();
     if (!Backend) {
-        outError = "Jira backend is not initialized.";
+        outError = "Tracker backend is not initialized.";
         return false;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
@@ -1059,7 +1067,26 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
     return ok;
 }
 
-bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
+bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
+                                    std::string& outError, int* outVoteCount, bool* outHasVoted,
+                                    bool* outVotersInResponse) const {
+    outVoters.clear();
+    outError.clear();
+    if (!Backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    const bool ok = Backend->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount, outHasVoted, outVotersInResponse);
+    if (!ok) {
+        LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    } else {
+        requestDeferredLiveTrackerBackendSuccessNotify_();
+    }
+    return ok;
+}
+
+bool AppController::SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                                            std::string& outError) const {
     outUsers.clear();
     outError.clear();
@@ -1067,10 +1094,10 @@ bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector
         outError = "Jira backend is not initialized.";
         return false;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->SearchUsersByQuery(cfg, query, outUsers, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraSearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
+        LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -1078,24 +1105,24 @@ bool AppController::JiraSearchUsersByQuery(const std::string& query, std::vector
     return ok;
 }
 
-bool AppController::JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
+bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                              std::string& outError) {
     outError.clear();
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraAddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+        LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
 
-bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
+bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
                                                     const std::string& functionName, const std::string& filePath,
                                                     const int lineNumber, const std::string& changelist,
                                                     const std::string& date, const bool approximated,
@@ -1105,11 +1132,11 @@ bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
         outError = "Jira backend is not initialized.";
         return false;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
                                                              changelist, date, approximated, codeSnippet, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraAddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
+        LOG_ERROR("AppController::AddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -1117,7 +1144,7 @@ bool AppController::JiraAddIssueCommentBlameContext(const std::string& issueKey,
     return ok;
 }
 
-bool AppController::JiraFetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
+bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                             std::string& outError) const {
     outGroupNames.clear();
     outError.clear();
@@ -1125,13 +1152,20 @@ bool AppController::JiraFetchUserGroupNames(const std::string& accountId, std::v
         outError = "Jira backend is not initialized.";
         return false;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
-        LOG_ERROR("AppController::JiraFetchUserGroupNames failed account=%s err=%s",
+        LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s",
                   TruncateForLog(accountId, 40).c_str(), outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
+
+
+
+
+
+
+

@@ -25,3 +25,9 @@ bool FrameMatchesIgnoreKeywords(const ParsedCallstackFrame& frame, const std::ve
 std::vector<ParsedCallstackFrame> ParseCallstackText(const std::string& text);
 
 #endif
+
+
+
+
+
+

@@ -47,3 +47,9 @@ void SmatchetHost_FormatCachedRendererSummary(SmatchetImGuiHostHandle host, char
 }
 
 } // extern "C"
+
+
+
+
+
+

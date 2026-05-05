@@ -75,3 +75,9 @@ class Logger {
 #define LOG_INFO(fmt, ...) Logger::Instance().Logf(LogLevel::Info, (fmt), ##__VA_ARGS__)
 #define LOG_WARN(fmt, ...) Logger::Instance().Logf(LogLevel::Warn, (fmt), ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) Logger::Instance().Logf(LogLevel::Error, (fmt), ##__VA_ARGS__)
+
+
+
+
+
+

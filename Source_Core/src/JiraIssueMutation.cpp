@@ -1,14 +1,14 @@
  #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
-#include "JiraFieldValueParser.h"
-#include "JiraHttpUtils.h"
+#include "TrackerFieldValueParser.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
-#include "JiraFieldPayload.h"
+#include "TrackerFieldPayload.h"
 #include "IssueDraft.h"
-#include "JiraTrackerFieldAdapter.h"
+
 #include "TrackerFieldSchema.h"
 
 #include <cpr/cpr.h>
@@ -57,8 +57,8 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
         auditAction, "jira_client", issueId, auditOp,
         nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
 
-    JiraConfig cfg = ConfigManager::Load();
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    TrackerConfig cfg = ConfigManager::Load();
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
         return false;
     }
@@ -76,7 +76,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
     const auto iequals = [](const std::string& a, const std::string& b) {
         if (a.size() != b.size()) {
@@ -122,7 +122,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
         }
 
         const std::string transitionsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId) + "/transitions";
-        auto transitionsResp = JiraGetLogged(transitionsUrl, headers);
+        auto transitionsResp = TrackerGetLogged("JiraClient", transitionsUrl, headers);
         if (transitionsResp.status_code != 200) {
             outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -208,7 +208,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
 
         nlohmann::json transitionBody = {{"transition", {{"id", transitionId}}}};
         const std::string transitionBodyStr = transitionBody.dump();
-        auto transitionResp = JiraPostLogged(transitionsUrl, headers, transitionBodyStr);
+        auto transitionResp = TrackerPostLogged("JiraClient", transitionsUrl, headers, transitionBodyStr);
         if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
             outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
             if (!transitionResp.text.empty()) {
@@ -234,7 +234,7 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
     body["fields"] = fieldsAudited;
     const std::string updateUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId);
     const std::string putBodyStr = body.dump();
-    auto response = JiraPutLogged(updateUrl, headers, putBodyStr);
+    auto response = TrackerPutLogged("JiraClient", updateUrl, headers, putBodyStr);
 
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
@@ -285,13 +285,13 @@ nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
 
 } // namespace
 
-bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg, const std::string& issueKey, const std::string& plainText,
+bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey, const std::string& plainText,
                                       std::string& outError) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
     BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp,
                                    nlohmann::json{{"comment_text", plainText}});
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError);
         return false;
     }
@@ -302,13 +302,13 @@ bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg, const std::string& 
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
     nlohmann::json body = nlohmann::json::object();
     body["body"] = AdfDocumentFromPlainText(plainText);
     const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
     const std::string bodyStr = body.dump();
-    auto response = JiraPostLogged(postUrl, headers, bodyStr);
+    auto response = TrackerPostLogged("JiraClient", postUrl, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add comment failed: HTTP " + std::to_string(response.status_code);
@@ -322,7 +322,7 @@ bool JiraClient::AddIssueCommentPlain(const JiraConfig& cfg, const std::string& 
     return true;
 }
 
-bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg, const std::string& issueKey,
+bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey,
                                              const std::string& p4User, const std::string& functionName,
                                              const std::string& filePath, const int lineNumber,
                                              const std::string& changelist, const std::string& date,
@@ -337,7 +337,7 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg, const std::s
                                                     {"line", lineNumber},
                                                     {"changelist", changelist}};
     BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp, auditData);
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
         return false;
@@ -350,7 +350,7 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg, const std::s
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
     auto para = [](const std::string& text) {
         nlohmann::json p = nlohmann::json::object();
@@ -384,7 +384,7 @@ bool JiraClient::AddIssueCommentBlameContext(const JiraConfig& cfg, const std::s
     body["body"] = std::move(doc);
     const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
     const std::string bodyStr = body.dump();
-    auto response = JiraPostLogged(postUrl, headers, bodyStr);
+    auto response = TrackerPostLogged("JiraClient", postUrl, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
@@ -404,8 +404,8 @@ std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& o
     BackendAuditTrail::AppendBegin("issue_create", "jira_client", std::string(), auditOp,
                                    nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
 
-    JiraConfig cfg = ConfigManager::Load();
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    TrackerConfig cfg = ConfigManager::Load();
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_create", "jira_client", std::string(), auditOp, false, outError);
         return {};
     }
@@ -417,12 +417,12 @@ std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& o
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
     nlohmann::json body = nlohmann::json::object();
     body["fields"] = fields;
     const std::string url = base + "/rest/api/3/issue";
     const std::string bodyStr = body.dump();
-    auto response = JiraPostLogged(url, headers, bodyStr);
+    auto response = TrackerPostLogged("JiraClient", url, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Create issue failed: HTTP " + std::to_string(response.status_code);
@@ -479,8 +479,8 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
     BackendAuditTrail::AppendBegin("issue_attach_files", "jira_client", issueKey, auditOp,
                                    nlohmann::json{{"files", fileNames}, {"file_count", fileNames.size()}});
 
-    JiraConfig cfg = ConfigManager::Load();
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    TrackerConfig cfg = ConfigManager::Load();
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, false, outError);
         return false;
     }
@@ -497,7 +497,7 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     // Multipart: let cpr set Content-Type; always include X-Atlassian-Token.
-    cpr::Header headers = BuildJiraHeaders(cfg, false);
+    cpr::Header headers = BuildTrackerHeaders(cfg, false);
     headers["X-Atlassian-Token"] = "no-check";
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/attachments";
 
@@ -519,8 +519,8 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
         cpr::Multipart multipart{{"file", cpr::File{path}}};
         cpr::Redirect redirect(true, true);
         cpr::Response response =
-            cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kJiraConnectTimeoutMs},
-                      cpr::Timeout{kJiraOverallTimeoutMs});
+            cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                      cpr::Timeout{kTrackerOverallTimeoutMs});
         std::uint64_t approxBytes = 0;
         try {
             approxBytes = static_cast<std::uint64_t>(ghc::filesystem::file_size(path, ec));
@@ -529,7 +529,7 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
         } catch (...) {
             approxBytes = 0;
         }
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, approxBytes, response);
+        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, approxBytes, response);
         LogTrackerHttpResult("JiraClient", "POST", url, response);
 
         if (response.status_code != 200 && response.status_code != 201) {
@@ -563,17 +563,17 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
 }
 
 bool JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) {
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     return AddIssueToSprint(cfg, issueKey, sprintId, outError);
 }
 
-bool JiraClient::AddIssueToSprint(const JiraConfig& cfg, const std::string& issueKey, const std::string& sprintId,
+bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
                                   std::string& outError) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("sprint");
     BackendAuditTrail::AppendBegin("issue_add_to_sprint", "jira_client", issueKey, auditOp,
                                    nlohmann::json{{"sprint_id", sprintId}});
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"sprint_id", sprintId}});
         return false;
@@ -592,11 +592,11 @@ bool JiraClient::AddIssueToSprint(const JiraConfig& cfg, const std::string& issu
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg, true);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
     const std::string url = base + "/rest/agile/1.0/sprint/" + UrlEncode(sprintId) + "/issue";
     const nlohmann::json body = nlohmann::json{{"issues", nlohmann::json::array({issueKey})}};
     const std::string bodyStr = body.dump();
-    auto response = JiraPostLogged(url, headers, bodyStr);
+    auto response = TrackerPostLogged("JiraClient", url, headers, bodyStr);
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to add issue to sprint: HTTP " + std::to_string(response.status_code);
         if (!response.text.empty()) {
@@ -612,7 +612,7 @@ bool JiraClient::AddIssueToSprint(const JiraConfig& cfg, const std::string& issu
     return true;
 }
 
-#include "JiraTrackerFieldAdapter.h"
+
 
 bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values, std::string& outError) {
@@ -626,7 +626,7 @@ bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& fie
 bool JiraClient::BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
                                    nlohmann::json& outPayload, std::string& outError) {
     nlohmann::json builtValue;
-    if (!JiraFieldPayload::BuildValue(JiraTrackerFieldAdapter::ToJiraField(field), values, builtValue, outError)) {
+    if (!TrackerFieldPayload::BuildValue(field, values, builtValue, outError)) {
         return false;
     }
     outPayload = nlohmann::json::object({{field.Id, builtValue}});
@@ -679,12 +679,12 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
             field = &synthetic;
         }
 
-        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
-        if (JiraFieldPayload::IsSprintField(jiraField)) continue;
+        const TrackerField TrackerField = *field;
+        if (TrackerFieldPayload::IsSprintField(TrackerField)) continue;
 
         nlohmann::json value;
         std::string err;
-        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
+        if (!TrackerFieldPayload::BuildValue(TrackerField, {raw}, value, err)) {
             outError = "Field '" + fieldId + "': " + err;
             return false;
         }
@@ -726,12 +726,12 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
             field = &synthetic;
         }
 
-        const JiraField jiraField = JiraTrackerFieldAdapter::ToJiraField(*field);
-        if (JiraFieldPayload::IsSprintField(jiraField)) continue;
+        const TrackerField TrackerField = *field;
+        if (TrackerFieldPayload::IsSprintField(TrackerField)) continue;
 
         nlohmann::json value;
         std::string err;
-        if (!JiraFieldPayload::BuildValue(jiraField, {raw}, value, err)) {
+        if (!TrackerFieldPayload::BuildValue(TrackerField, {raw}, value, err)) {
             outError = "Field '" + fieldId + "': " + err;
             return false;
         }
@@ -742,6 +742,19 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
     return true;
 }
 
-std::string JiraClient::ResolveDisplayValue(const TrackerField& field, const std::string& value) {
-    return JiraFieldPayload::ResolveDisplayValueForSubmittedSelection(JiraTrackerFieldAdapter::ToJiraField(field), value);
+std::string JiraClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                    const std::string& value) const {
+    (void)fieldId;
+    if (!field) {
+        return value;
+    }
+    return TrackerFieldPayload::ResolveDisplayValueForSubmittedSelection(*field, value);
 }
+
+
+
+
+
+
+
+

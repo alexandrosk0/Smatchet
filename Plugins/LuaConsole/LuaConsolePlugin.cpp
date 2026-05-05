@@ -288,3 +288,9 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
 
     app.DrawLuaWindows();
 }
+
+
+
+
+
+

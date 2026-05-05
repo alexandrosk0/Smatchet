@@ -93,7 +93,7 @@ class AppController {
 #endif
 
     /**
-     * Optional host callback for showing Jira attachments inside Unreal.
+     * Optional host callback for showing tracker attachments inside Unreal.
      * If set, Smatchet will download the attachment bytes and save them to a local temp file,
      * then call this handler with the file path.
      */
@@ -217,7 +217,7 @@ class AppController {
      * Pass the in-memory UI config + views store when syncing from the app so JQL/fields match
      * the active view without relying on an immediate disk round-trip.
      */
-    void SyncWithBackend(const JiraConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
+    void SyncWithBackend(const TrackerConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
 
     /** Clears the live ticket-sync warning banner (e.g. before kicking off a background fetch). */
     void ClearLastTrackerTicketSyncWarning();
@@ -226,7 +226,7 @@ class AppController {
      * Runs FetchIssues under an internal mutex (safe with concurrent UI-triggered syncs).
      * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
      */
-    TrackerIssueFetchPack FetchIssuesForActiveView(const JiraConfig* configOverride = nullptr,
+    TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                   const ViewsStore* viewsOverride = nullptr);
 
     /** Merges fetch results into the local cache and updates connectivity banners. */
@@ -247,10 +247,15 @@ class AppController {
     std::uint64_t GetTrackerFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
     std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
 
-    bool RefreshFieldCatalog(const JiraConfig& cfg);
-    bool FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
-    std::string BuildIssueBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const;
-    std::string BuildJqlSearchUrl(const JiraConfig& cfg, const std::string& jql) const;
+    bool RefreshFieldCatalog(const TrackerConfig& cfg);
+    bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
+
+    /** Resolve a raw tracker value (e.g. accountId, label UUID) to a display name. */
+    std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                    const std::string& value) const;
+
+    std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
+    std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) const;
 
     const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
@@ -275,7 +280,7 @@ class AppController {
         ServiceUnavailable,
     };
     /** Rate-limited background probe; updates connectivity state and recovery latch. */
-    void TickTrackerConnectivityMonitor(const JiraConfig& cfg);
+    void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
@@ -289,8 +294,9 @@ class AppController {
      */
     bool ConsumeFieldCatalogRefetchAfterLiveTicketSync();
     /**
-     * Main-thread: applies connectivity + ticket/catalog banner updates latched after any successful
-     * Jira HTTP work (including from background workers). Call once per frame early in `SmatchetUI::Draw`.
+     * Main-thread: Dispatches any deferred UI notifications or results from background 
+     * tracker HTTP work (including from background workers). Call once per frame 
+     * early in `SmatchetUI::Draw`.
      */
     /** @return true if a deferred notify was applied this call (live tracker request succeeded). */
     bool ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny();
@@ -299,15 +305,15 @@ class AppController {
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
 
-    const std::vector<TrackerIssueTypeCreateMeta>& GetIssueTypeCreateMeta() const { return AvailableIssueTypeMeta; }
+    const std::vector<TrackerIssueTypeCreateMeta>& GetTrackerIssueTypeCreateMeta() const { return AvailableIssueTypeMeta; }
 
     // ---- Create issue flow -------------------------------------------------
 
     /**
      * Build a draft seeded from the last ticket currently displayed + the
-     * configured JiraConfig defaults. Safe to call from the UI thread.
+     * configured TrackerConfig defaults. Safe to call from the UI thread.
      */
-    IssueDraft BuildDraftFromLastTicket(const JiraConfig& cfg) const;
+    IssueDraft BuildDraftFromLastTicket(const TrackerConfig& cfg) const;
 
     /**
      * Resolve the required-field set for a draft using cached createmeta.
@@ -370,8 +376,8 @@ class AppController {
     static bool FieldEditSupportsOfflineQueue(const TrackerField& field);
 
     /**
-     * Persist a Jira `fields` payload for later replay when connectivity returns.
-     * @param fieldsPayloadJson JSON object map (field id -> Jira value), same shape as `UpdateIssueFields`.
+     * Persist a tracker field payload for later replay when connectivity returns.
+     * @param fieldsPayloadJson JSON object map (field id -> backend-specific value).
      */
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                        const std::string& fieldsPayloadJson, std::string& outError);
@@ -404,12 +410,16 @@ class AppController {
     const TrackerField* FindFieldById(const std::string& fieldId) const;
 
     /**
-     * Per-issue Jira edit metadata: true if the field may be edited for this issue.
-     * Matches SubmitFieldEdit: sprint fields, timetracking estimate columns, and `status` ignore
-     * editmeta (Jira does not list status like a normal settable field; updates use transitions).
-     * `priority`: if editmeta is loaded but omits `priority`, allow edit (Jira omits it inconsistently).
-     * Returns true when editmeta is not loaded yet (optimistic) or for non-Jira backends.
-     * After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
+     * Per-issue tracker edit metadata: true if the field may be edited for this issue.
+     * 
+     * For Jira, we handle special cases:
+     * `status`: never allow direct edit via field editmeta (Jira does not list status 
+     * like a normal settable field; updates use transitions).
+     * `priority`: if editmeta is loaded but omits `priority`, allow edit 
+     * (Jira omits it inconsistently).
+     * 
+     * Returns true when editmeta is not loaded yet (optimistic) or for 
+     * non-Jira backends (e.g. Plane). After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
      * @param fieldMeta optional catalog row for fieldId (avoids lookup; same as nullptr + catalog).
      */
     bool CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
@@ -438,20 +448,23 @@ class AppController {
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
-    /** Fetches watcher users for an issue. */
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const;
 
-    bool JiraSearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
+    bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
+                         std::string& outError, int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
+                         bool* outVotersInResponse = nullptr) const;
 
-    bool JiraAddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
+    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
 
-    bool JiraAddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
+    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
+
+    bool AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
                                          const std::string& functionName, const std::string& filePath, int lineNumber,
                                          const std::string& changelist, const std::string& date, bool approximated,
                                          const std::string& codeSnippet, std::string& outError);
 
-    bool JiraFetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
+    bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                  std::string& outError) const;
 
   private:
@@ -496,7 +509,7 @@ class AppController {
 
     struct IssueEditMetaCache {
         bool loaded = false;
-        /** Field id -> Jira allows an update operation (set/add/remove). */
+        /** Field id -> backend allows an update operation (set/add/remove). */
         std::unordered_map<std::string, bool> fieldCanEdit;
     };
 
@@ -513,13 +526,13 @@ class AppController {
      */
     bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
                                    const std::string* issueTypeKeyOverride = nullptr,
-                                   const JiraConfig* configSnapshot = nullptr);
+                                   const TrackerConfig* configSnapshot = nullptr);
     bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
                               const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
-    /** @param jiraCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside worker). */
-    void WarmIssueTypeEditMetaAtStartAsync(JiraConfig jiraCfgForWorker);
+    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside worker). */
+    void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
     void EnsureCatalogHistoryField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
                                             const std::vector<std::string>& rawValues,
@@ -578,3 +591,10 @@ class AppController {
 };
 
 #endif
+
+
+
+
+
+
+

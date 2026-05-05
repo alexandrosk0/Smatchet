@@ -1,4 +1,4 @@
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -8,8 +8,8 @@
 #include <iomanip>
 #include <sstream>
 
-constexpr std::size_t kMaxJiraHttpBodyLogBytes = 65536;
-constexpr const char* kJiraUserAgent = "Smatchet/1.0 Jira-Client";
+constexpr std::size_t kMaxTrackerHttpBodyLogBytes = 65536;
+constexpr const char* kTrackerUserAgent = "Smatchet/1.0 Jira-Client";
 
 // Redact URL query for logging: keeps scheme://host/path, drops ?query and #fragment.
 std::string RedactUrlForLog(const std::string& url) {
@@ -31,8 +31,8 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
     }
     std::string body = response.text;
     std::string suffix;
-    if (body.size() > kMaxJiraHttpBodyLogBytes) {
-        body.resize(kMaxJiraHttpBodyLogBytes);
+    if (body.size() > kMaxTrackerHttpBodyLogBytes) {
+        body.resize(kMaxTrackerHttpBodyLogBytes);
         suffix = "\n[truncated…]";
     }
     Logger::Instance().Log(LogLevel::Trace, std::string(clientName) + ": " + method + " response body (" +
@@ -84,63 +84,79 @@ std::string NormalizeBaseUrl(const std::string& domain) {
     }
     return base;
 }
-
-bool EnsureJiraAuthConfig(const JiraConfig& cfg, std::string& outError) {
+bool EnsureTrackerAuthConfig(const TrackerConfig& cfg, std::string& outError) {
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
-        LOG_WARN("JiraClient: %s (domain_set=%d token_set=%d)", outError.c_str(), cfg.Domain.empty() ? 0 : 1,
+        outError = "Missing tracker domain or API token.";
+        LOG_WARN("TrackerHttpUtils: %s (domain_set=%d token_set=%d)", outError.c_str(), cfg.Domain.empty() ? 0 : 1,
                  cfg.ApiToken.empty() ? 0 : 1);
         return false;
     }
     return true;
 }
 
-cpr::Header BuildJiraHeaders(const JiraConfig& cfg, bool includeJsonContentType) {
+cpr::Header BuildTrackerHeaders(const TrackerConfig& cfg, bool includeJsonContentType) {
     cpr::Header headers{{"Accept", "application/json"},
-                        {"Authorization", BuildJiraBasicAuthHeader(cfg)},
-                        {"User-Agent", kJiraUserAgent}};
+                        {"Authorization", BuildTrackerBasicAuthHeader(cfg)},
+                        {"User-Agent", kTrackerUserAgent}};
     if (includeJsonContentType) {
         headers["Content-Type"] = "application/json";
     }
     return headers;
 }
 
-std::string BuildJiraBasicAuthHeader(const JiraConfig& cfg) {
+std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg) {
     return "Basic " + Base64Encode(cfg.Email + ":" + cfg.ApiToken);
 }
 
-cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers) {
-    return JiraGetLogged(url, headers, kJiraConnectTimeoutMs, kJiraOverallTimeoutMs);
+cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers) {
+    return TrackerGetLogged(clientName, url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
 }
 
-cpr::Response JiraGetLogged(const std::string& url, const cpr::Header& headers, long connectTimeoutMs,
-                            long overallTimeoutMs) {
+cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                               const cpr::Parameters& params) {
+    cpr::Redirect redirect(true, true);
+    cpr::Response response = cpr::Get(cpr::Url{url}, headers, params, redirect,
+                                      cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                      cpr::Timeout{kTrackerOverallTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
+                                           response);
+    LogTrackerHttpResult(clientName, "GET", url, response);
+    return response;
+}
+
+cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                               long connectTimeoutMs, long overallTimeoutMs) {
     cpr::Redirect redirect(true, true);
     cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectTimeoutMs},
                                       cpr::Timeout{overallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, NetworkUsageTracker::kEstimatedGetUploadBytes,
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
-    LogTrackerHttpResult("JiraClient", "GET", url, response);
+    LogTrackerHttpResult(clientName, "GET", url, response);
     return response;
 }
 
-cpr::Response JiraPostLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
+cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                const std::string& body) {
     cpr::Redirect redirect(true, true);
     cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                       cpr::ConnectTimeout{kJiraConnectTimeoutMs}, cpr::Timeout{kJiraOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, static_cast<std::uint64_t>(body.size()), response);
-    LogTrackerHttpResult("JiraClient", "POST", url, response);
+                                       cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                       cpr::Timeout{kTrackerOverallTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    LogTrackerHttpResult(clientName, "POST", url, response);
     return response;
 }
 
-cpr::Response JiraPutLogged(const std::string& url, const cpr::Header& headers, const std::string& body) {
+cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                               const std::string& body) {
     cpr::Redirect redirect(true, true);
     cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                      cpr::ConnectTimeout{kJiraConnectTimeoutMs}, cpr::Timeout{kJiraOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Jira, static_cast<std::uint64_t>(body.size()), response);
-    LogTrackerHttpResult("JiraClient", "PUT", url, response);
+                                      cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                      cpr::Timeout{kTrackerOverallTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    LogTrackerHttpResult(clientName, "PUT", url, response);
     return response;
 }
+
 
 bool IsTrackerTransportErrorText(const std::string& error) {
     if (error.empty()) {
@@ -217,4 +233,21 @@ bool IsTrackerTransportErrorText(const std::string& error) {
         }
     }
     return false;
+}
+
+
+
+
+
+
+
+cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                 const std::string& body) {
+    cpr::Redirect redirect(true, true);
+    cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
+                                        cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                        cpr::Timeout{kTrackerOverallTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    LogTrackerHttpResult(clientName, "PATCH", url, response);
+    return response;
 }

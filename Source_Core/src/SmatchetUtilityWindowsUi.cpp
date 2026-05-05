@@ -169,3 +169,9 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     ImGui::EndChild();
     ImGui::End();
 }
+
+
+
+
+
+

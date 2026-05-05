@@ -1,9 +1,9 @@
 #include "TicketFieldEditor.h"
 
 #include "AppController.h"
-#include "JiraDateTimeFieldEditor.h"
-#include "JiraGridFieldDisplay.h"
-#include "JiraLabelsEditor.h"
+#include "TrackerDateTimeFieldEditor.h"
+#include "TrackerGridFieldDisplay.h"
+#include "TrackerLabelsEditor.h"
 #include "SmatchetFieldIconRender.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldValueUtils.h"
@@ -32,7 +32,8 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
-void RenderTextEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+                      const std::string& currentValue,
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
     const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
@@ -55,7 +56,7 @@ void RenderTextEditor(const CachedTicket& ticket, const TrackerField& field, con
         return;
     }
 
-    const std::string valueForDisplay = DisplayValueForTrackerDateField(field.Id, &field, currentValue);
+    const std::string valueForDisplay = app.ResolveDisplayValue(field.Id, &field, currentValue);
     bool hasNewlineInValue = false;
     for (size_t i = 0; i < valueForDisplay.size(); ++i) {
         if (valueForDisplay[i] == '\n' || valueForDisplay[i] == '\r') {
@@ -101,7 +102,7 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
     (void)overlayLoadErr;
 
     const std::string currentId = ResolveOptionId(field, currentValue);
-    const std::string preview = ResolveOptionLabel(field, currentId);
+    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
     const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     const char* previewCStr =
@@ -153,11 +154,12 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
     }
 }
 
-void RenderMultiSelectEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+                             const std::string& currentValue,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
-    const std::string preview = BuildSelectionPreview(field, selectedIds);
+    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
     const std::string comboId = "##MultiSelect_" + ticket.id + "_" + field.Id;
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -196,20 +198,13 @@ void RenderMultiSelectEditor(const CachedTicket& ticket, const TrackerField& fie
     }
 }
 
-void RenderCascadingSelectEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+void RenderCascadingSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+                                 const std::string& currentValue,
                                  std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::string parentId;
     std::string childId;
     TryResolveCascadingSelection(field, currentValue, parentId, childId);
-    std::string preview = currentValue.empty() ? std::string("<none>") : currentValue;
-    for (const auto& parent : field.AllowedValueOptions) {
-        if (parent.Id != parentId) {
-            continue;
-        }
-        preview =
-            BuildCascadingPreview(parent, childId.empty() ? nullptr : FindOptionRecursive(parent.Children, childId));
-        break;
-    }
+    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
 
     const std::string comboId = "##CascadeSelect_" + ticket.id + "_" + field.Id;
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
@@ -264,7 +259,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         const TrackerField* field, const std::string& currentValue, float availWidth,
                                         bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                         std::vector<PendingFieldEdit>& pendingEdits,
-                                        JiraGridFieldAsyncState& jiraGridAsync) {
+                                        TrackerGridFieldAsyncState& trackerGridAsync) {
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
     if (handledByLua) {
         return;
@@ -276,7 +271,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 
     auto renderPlainText = [&](bool disabled) {
-        const std::string display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue);
+        const std::string display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
         RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip);
     };
@@ -284,36 +279,36 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     switch (column.Plan) {
     case TicketGridColumn::RenderPlan::SpecialAttachment:
         if (field == nullptr || IsAttachmentFieldId(field->Id)) {
-            JiraGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
+            TrackerGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialWatchers:
-        if (field == nullptr || JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderWatchersField(ticket.id, currentValue, availWidth, tooltipsEnabled,
-                                                      jiraGridAsync);
+        if (field == nullptr || TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderWatchersField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
+                                                      trackerGridAsync);
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialVotes:
-        if (field == nullptr || JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderVotesField(ticket.id, currentValue, availWidth, tooltipsEnabled, jiraGridAsync);
+        if (field == nullptr || TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderVotesField(app, ticket.id, currentValue, availWidth, tooltipsEnabled, trackerGridAsync);
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialWorklog:
-        if (field == nullptr || JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
-            JiraGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
+        if (field == nullptr || TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialProgress:
-        if (JiraGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
+        if (TrackerGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialIssueRestriction:
-        if (JiraGridFieldDisplay::TryRenderIssueRestrictionField(currentValue, availWidth, tooltipsEnabled)) {
+        if (TrackerGridFieldDisplay::TryRenderIssueRestrictionField(currentValue, availWidth, tooltipsEnabled)) {
             return;
         }
         break;
@@ -325,7 +320,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        JiraLabelsEditor::RenderLabelsFieldEditor(
+        TrackerLabelsEditor::RenderLabelsFieldEditor(
             app, ticket, *field, currentValue,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
                 QueueEdit(issueId, fld, values, pendingEdits);
@@ -336,14 +331,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        RenderCascadingSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderCascadingSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
         return;
     case TicketGridColumn::RenderPlan::MultiSelect:
         if (!allowEdits) {
             renderPlainText(true);
             return;
         }
-        RenderMultiSelectEditor(ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderMultiSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
         return;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {
@@ -357,7 +352,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        JiraDateTimeFieldEditor::RenderDateTimeFieldEditor(
+        TrackerDateTimeFieldEditor::RenderDateTimeFieldEditor(
             ticket, *field, currentValue, state,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
                 QueueEdit(issueId, fld, values, pendingEdits);
@@ -368,7 +363,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        RenderTextEditor(ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
+        RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
         return;
     }
 }
+
+
+
+
+
+
+

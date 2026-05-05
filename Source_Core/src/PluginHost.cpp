@@ -88,7 +88,7 @@ McpServerStatus PluginHost::GetMcpServerStatus() const {
     return McpServerStatus();
 }
 
-void PluginHost::SyncMcpPluginWithConfig(AppController& app, const JiraConfig& cfg) {
+void PluginHost::SyncMcpPluginWithConfig(AppController& app, const TrackerConfig& cfg) {
     size_t mcpIndex = plugins_.size();
     for (size_t i = 0; i < plugins_.size(); ++i) {
         if (plugins_[i] && std::strcmp(plugins_[i]->Id(), "mcp") == 0) {
@@ -158,3 +158,9 @@ void PluginHost::SyncMcpPluginWithConfig(AppController& app, const JiraConfig& c
     }
 }
 #endif
+
+
+
+
+
+

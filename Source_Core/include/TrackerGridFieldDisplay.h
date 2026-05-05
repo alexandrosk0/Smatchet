@@ -26,7 +26,7 @@ struct VotesLoadResult {
 };
 
 /** Async UI state for watchers/votes side panels (owned by the main UI session). */
-struct JiraGridFieldAsyncState {
+struct TrackerGridFieldAsyncState {
     bool watchersPanelOpen = false;
     std::string watchersPopupIssueKey;
     bool watchersLoadInProgress = false;
@@ -47,9 +47,9 @@ struct JiraGridFieldAsyncState {
 
 /**
  * Renders Jira-specific grid cell types: attachments, watchers, votes, worklog summary.
- * List panels for watchers/votes use JiraGridFieldAsyncState on the UI session.
+ * List panels for watchers/votes use TrackerGridFieldAsyncState on the UI session.
  */
-class JiraGridFieldDisplay {
+class TrackerGridFieldDisplay {
   public:
     static bool IsWatchersColumnId(const std::string& id);
     static bool IsVotesColumnId(const std::string& id);
@@ -57,10 +57,10 @@ class JiraGridFieldDisplay {
 
     static void RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                        bool tooltipsEnabled);
-    static void RenderWatchersField(const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                    bool tooltipsEnabled, JiraGridFieldAsyncState& async);
-    static void RenderVotesField(const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                 bool tooltipsEnabled, JiraGridFieldAsyncState& async);
+    static void RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
+                                    bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
+    static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
+                                 bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
     static void RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
     /** Column key `aggregateprogress` (Jira schema id; case-insensitive). */
@@ -90,6 +90,12 @@ class JiraGridFieldDisplay {
      */
     static bool TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
-    static void DrawWatchersListWindow(JiraGridFieldAsyncState& async);
-    static void DrawVotesListWindow(JiraGridFieldAsyncState& async);
+    static void DrawWatchersListWindow(TrackerGridFieldAsyncState& async);
+    static void DrawVotesListWindow(TrackerGridFieldAsyncState& async);
 };
+
+
+
+
+
+

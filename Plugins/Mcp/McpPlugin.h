@@ -23,3 +23,9 @@ class McpPlugin : public IPlugin {
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+
+
+
+
+

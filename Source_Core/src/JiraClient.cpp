@@ -1,23 +1,23 @@
 #include "JiraClient.h"
 
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 
 #include <sstream>
 #include <string>
 
-TrackerReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& cfg) {
+TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig& cfg) {
     TrackerReachabilityProbeResult out;
     std::string authErr;
-    if (!EnsureJiraAuthConfig(cfg, authErr)) {
+    if (!EnsureTrackerAuthConfig(cfg, authErr)) {
         out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        out.Diagnostic = authErr.empty() ? std::string("Missing Jira domain or API token.") : authErr;
+        out.Diagnostic = authErr.empty() ? std::string("Missing Tracker domain or API token.") : authErr;
         return out;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const std::string url = base + "/rest/api/3/myself";
-    const cpr::Header headers = BuildJiraHeaders(cfg, false);
-    const cpr::Response resp = JiraGetLogged(url, headers, kJiraProbeConnectTimeoutMs, kJiraProbeOverallTimeoutMs);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, false);
+    const cpr::Response resp = TrackerGetLogged("JiraClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
 
     const long sc = resp.status_code;
     if (sc == 200) {
@@ -55,9 +55,16 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const JiraConfig& c
     return out;
 }
 
-std::string JiraClient::BuildBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const {
+std::string JiraClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     if (cfg.Domain.empty() || issueKey.empty()) {
         return std::string();
     }
     return NormalizeBaseUrl(cfg.Domain) + "/browse/" + issueKey;
 }
+
+
+
+
+
+
+

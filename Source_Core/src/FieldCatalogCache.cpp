@@ -261,7 +261,7 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
 
 namespace FieldCatalogCache {
 
-std::string BuildFieldCatalogCacheKey(const JiraConfig& cfg) {
+std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg) {
     const std::string bk = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
     if (bk == "Plane") {
         return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
@@ -387,3 +387,10 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
 }
 
 } // namespace FieldCatalogCache
+
+
+
+
+
+
+

@@ -31,3 +31,9 @@ std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::
 
 std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery);
 void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
+
+
+
+
+
+

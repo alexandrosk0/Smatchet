@@ -1,4 +1,4 @@
-#include "JiraFieldPayload.h"
+#include "TrackerFieldPayload.h"
 
 #include "CompactDateFormat.h"
 #include "StringUtil.h"
@@ -20,14 +20,14 @@ void DecodeCascadingSelection(const std::string& encoded, std::string& outParent
     outChildId = encoded.substr(sep + 1);
 }
 
-const JiraFieldOption* FindJiraFieldOptionByIdRecursive(const std::vector<JiraFieldOption>& options,
+const TrackerFieldOption* FindTrackerFieldOptionByIdRecursive(const std::vector<TrackerFieldOption>& options,
                                                         const std::string& id) {
     for (const auto& option : options) {
         if (option.Id == id) {
             return &option;
         }
         if (!option.Children.empty()) {
-            if (const JiraFieldOption* nested = FindJiraFieldOptionByIdRecursive(option.Children, id)) {
+            if (const TrackerFieldOption* nested = FindTrackerFieldOptionByIdRecursive(option.Children, id)) {
                 return nested;
             }
         }
@@ -35,14 +35,14 @@ const JiraFieldOption* FindJiraFieldOptionByIdRecursive(const std::vector<JiraFi
     return nullptr;
 }
 
-std::string ResolveJiraFieldOptionLabelRecursive(const std::vector<JiraFieldOption>& options,
+std::string ResolveTrackerFieldOptionLabelRecursive(const std::vector<TrackerFieldOption>& options,
                                                  const std::string& value) {
     for (const auto& option : options) {
         if (option.Id == value || option.Value == value) {
             return option.Value;
         }
         if (!option.Children.empty()) {
-            const std::string nested = ResolveJiraFieldOptionLabelRecursive(option.Children, value);
+            const std::string nested = ResolveTrackerFieldOptionLabelRecursive(option.Children, value);
             if (!nested.empty()) {
                 return nested;
             }
@@ -52,14 +52,14 @@ std::string ResolveJiraFieldOptionLabelRecursive(const std::vector<JiraFieldOpti
 }
 
 /** Match option by id or display label (grid often stores names, not Jira ids). */
-const JiraFieldOption* FindJiraFieldOptionByIdOrValueRecursive(const std::vector<JiraFieldOption>& options,
+const TrackerFieldOption* FindTrackerFieldOptionByIdOrValueRecursive(const std::vector<TrackerFieldOption>& options,
                                                                const std::string& idOrValue) {
     for (const auto& option : options) {
         if (option.Id == idOrValue || option.Value == idOrValue) {
             return &option;
         }
         if (!option.Children.empty()) {
-            if (const JiraFieldOption* nested = FindJiraFieldOptionByIdOrValueRecursive(option.Children, idOrValue)) {
+            if (const TrackerFieldOption* nested = FindTrackerFieldOptionByIdOrValueRecursive(option.Children, idOrValue)) {
                 return nested;
             }
         }
@@ -102,7 +102,7 @@ nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
     return raw;
 }
 
-bool TryBuildStructuredOptionPayload(const JiraFieldOption& option, const std::string& nestedChildId,
+bool TryBuildStructuredOptionPayload(const TrackerFieldOption& option, const std::string& nestedChildId,
                                      nlohmann::json& outPayload) {
     if (option.PayloadJson.empty()) {
         return false;
@@ -113,7 +113,7 @@ bool TryBuildStructuredOptionPayload(const JiraFieldOption& option, const std::s
     }
     outPayload = MinimalPayloadForStructuredOption(raw);
     if (!nestedChildId.empty()) {
-        const JiraFieldOption* child = FindJiraFieldOptionByIdOrValueRecursive(option.Children, nestedChildId);
+        const TrackerFieldOption* child = FindTrackerFieldOptionByIdOrValueRecursive(option.Children, nestedChildId);
         if (child == nullptr) {
             return false;
         }
@@ -129,32 +129,32 @@ bool TryBuildStructuredOptionPayload(const JiraFieldOption& option, const std::s
     return true;
 }
 
-bool TryBuildFieldOptionPayload(const JiraField& field, const std::string& selectedValue, nlohmann::json& outPayload) {
-    if (field.Family == JiraFieldFamily::CascadingSelect) {
+bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue, nlohmann::json& outPayload) {
+    if (field.Family == TrackerFieldFamily::CascadingSelect) {
         std::string parentId;
         std::string childId;
         DecodeCascadingSelection(selectedValue, parentId, childId);
-        const JiraFieldOption* option = FindJiraFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, parentId);
+        const TrackerFieldOption* option = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, parentId);
         if (option == nullptr) {
             return false;
         }
         return TryBuildStructuredOptionPayload(*option, childId, outPayload);
     }
-    const JiraFieldOption* option = FindJiraFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, selectedValue);
+    const TrackerFieldOption* option = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, selectedValue);
     if (option == nullptr) {
         return false;
     }
     return TryBuildStructuredOptionPayload(*option, std::string(), outPayload);
 }
 
-nlohmann::json FallbackPayloadForSelectableField(const JiraField& field, const std::string& scalarValue) {
+nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, const std::string& scalarValue) {
     if (field.IsUserType) {
         return nlohmann::json{{"accountId", scalarValue}};
     }
-    if (field.Family == JiraFieldFamily::Status) {
+    if (field.Family == TrackerFieldFamily::Status) {
         return nlohmann::json{{"name", scalarValue}};
     }
-    if (field.Family == JiraFieldFamily::IssueType) {
+    if (field.Family == TrackerFieldFamily::IssueType) {
         return nlohmann::json{{"id", scalarValue}};
     }
     if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
@@ -163,7 +163,7 @@ nlohmann::json FallbackPayloadForSelectableField(const JiraField& field, const s
     return scalarValue;
 }
 
-bool TryBuildUserFieldPayload(const JiraField& field, const std::string& scalarValue, nlohmann::json& outValue,
+bool TryBuildUserFieldPayload(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
                               std::string& outError) {
     outError.clear();
     const std::string trimmed = TrimCopy(scalarValue);
@@ -180,8 +180,8 @@ bool TryBuildUserFieldPayload(const JiraField& field, const std::string& scalarV
             }
             if (j.contains("displayName") && j["displayName"].is_string()) {
                 const std::string dn = j["displayName"].get<std::string>();
-                if (const JiraFieldOption* opt =
-                        FindJiraFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, dn)) {
+                if (const TrackerFieldOption* opt =
+                        FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, dn)) {
                     if (!opt->Id.empty()) {
                         outValue = nlohmann::json{{"accountId", opt->Id}};
                         return true;
@@ -190,7 +190,7 @@ bool TryBuildUserFieldPayload(const JiraField& field, const std::string& scalarV
             }
         }
     }
-    if (const JiraFieldOption* opt = FindJiraFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
+    if (const TrackerFieldOption* opt = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
         if (!opt->Id.empty()) {
             outValue = nlohmann::json{{"accountId", opt->Id}};
             return true;
@@ -292,9 +292,9 @@ std::string SanitizeJiraLabelToken(std::string s) {
 
 } // namespace
 
-namespace JiraFieldPayload {
+namespace TrackerFieldPayload {
 
-bool FieldUsesAdfDocument(const JiraField& field) {
+bool FieldUsesAdfDocument(const TrackerField& field) {
     const std::string idLower = ToLowerAsciiCopy(field.Id);
     if (idLower == "description" || idLower == "environment") {
         return true;
@@ -318,8 +318,8 @@ bool FieldUsesAdfDocument(const JiraField& field) {
         customLower.find("jira-wiki-renderer") != std::string::npos) {
         return true;
     }
-    if (!field.RestFieldDefinitionJson.empty()) {
-        const std::string r = ToLowerAsciiCopy(field.RestFieldDefinitionJson);
+    if (!field.RawFieldDefinitionJson.empty()) {
+        const std::string r = ToLowerAsciiCopy(field.RawFieldDefinitionJson);
         if (r.find("atlassian-document-format") != std::string::npos) {
             return true;
         }
@@ -340,9 +340,9 @@ std::string ExtractIssueKey(const std::string& value) {
     return LooksLikeIssueKey(key) ? key : std::string();
 }
 
-bool IsArrayLike(const JiraField& field) { return field.IsArray; }
+bool IsArrayLike(const TrackerField& field) { return field.IsArray; }
 
-bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
+bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError) {
     outError.clear();
     std::vector<std::string> values;
@@ -354,7 +354,7 @@ bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValue
     }
 
     // Grid stores labels as comma-separated text; Jira expects an array of separate label strings.
-    if (field.Id == "labels" || field.Family == JiraFieldFamily::Labels) {
+    if (field.Id == "labels" || field.Family == TrackerFieldFamily::Labels) {
         outValue = nlohmann::json::array();
         for (const auto& value : values) {
             for (const std::string& seg : SplitCommaSeparatedTrimmed(value)) {
@@ -383,8 +383,8 @@ bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValue
                 if (!one.is_null()) {
                     outValue.push_back(std::move(one));
                 }
-            } else if (field.Family == JiraFieldFamily::StructuredMulti || field.Family == JiraFieldFamily::IssueType ||
-                       field.Family == JiraFieldFamily::Status || field.Family == JiraFieldFamily::CascadingSelect) {
+            } else if (field.Family == TrackerFieldFamily::StructuredMulti || field.Family == TrackerFieldFamily::IssueType ||
+                       field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect) {
                 nlohmann::json optionPayload;
                 if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
                     outValue.push_back(std::move(optionPayload));
@@ -422,9 +422,9 @@ bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValue
     if (field.IsUserType) {
         return TryBuildUserFieldPayload(field, scalarValue, outValue, outError);
     }
-    if (field.Family == JiraFieldFamily::StructuredSingle || field.Family == JiraFieldFamily::IssueType ||
-        field.Family == JiraFieldFamily::Status || field.Family == JiraFieldFamily::CascadingSelect ||
-        field.Family == JiraFieldFamily::SelectSingle) {
+    if (field.Family == TrackerFieldFamily::StructuredSingle || field.Family == TrackerFieldFamily::IssueType ||
+        field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect ||
+        field.Family == TrackerFieldFamily::SelectSingle) {
         if (!TryBuildFieldOptionPayload(field, scalarValue, outValue)) {
             outValue = FallbackPayloadForSelectableField(field, scalarValue);
         }
@@ -529,16 +529,16 @@ std::vector<std::string> SplitCommaSeparatedValues(const std::string& input) {
     return segments;
 }
 
-bool IsSprintField(const JiraField& field) {
-    return field.Family == JiraFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
+bool IsSprintField(const TrackerField& field) {
+    return field.Family == TrackerFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
 }
 
-std::string ResolveSprintIdForAgile(const JiraField& field, const std::string& rawValue) {
+std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string& rawValue) {
     const std::string trimmed = TrimCopy(rawValue);
     if (trimmed.empty()) {
         return {};
     }
-    if (const JiraFieldOption* opt = FindJiraFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
+    if (const TrackerFieldOption* opt = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
         if (!opt->Id.empty()) {
             return opt->Id;
         }
@@ -548,26 +548,32 @@ std::string ResolveSprintIdForAgile(const JiraField& field, const std::string& r
     return allDigit ? trimmed : std::string{};
 }
 
-std::string ResolveDisplayValueForSubmittedSelection(const JiraField& field, const std::string& value) {
-    if (field.Family == JiraFieldFamily::CascadingSelect) {
+std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value) {
+    if (field.Family == TrackerFieldFamily::CascadingSelect) {
         std::string parentId;
         std::string childId;
         DecodeCascadingSelection(value, parentId, childId);
-        const JiraFieldOption* parent = FindJiraFieldOptionByIdRecursive(field.AllowedValueOptions, parentId);
+        const TrackerFieldOption* parent = FindTrackerFieldOptionByIdRecursive(field.AllowedValueOptions, parentId);
         if (parent == nullptr) {
             return value;
         }
         if (childId.empty()) {
             return parent->Value;
         }
-        const JiraFieldOption* child = FindJiraFieldOptionByIdRecursive(parent->Children, childId);
+        const TrackerFieldOption* child = FindTrackerFieldOptionByIdRecursive(parent->Children, childId);
         if (child == nullptr) {
             return parent->Value;
         }
         return parent->Value + " > " + child->Value;
     }
-    const std::string resolved = ResolveJiraFieldOptionLabelRecursive(field.AllowedValueOptions, value);
+    const std::string resolved = ResolveTrackerFieldOptionLabelRecursive(field.AllowedValueOptions, value);
     return resolved.empty() ? value : resolved;
 }
 
-} // namespace JiraFieldPayload
+} // namespace TrackerFieldPayload
+
+
+
+
+
+

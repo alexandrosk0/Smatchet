@@ -1,7 +1,7 @@
 #include "JiraClient.h"
 
-#include "JiraFieldValueParser.h"
-#include "JiraHttpUtils.h"
+#include "TrackerFieldValueParser.h"
+#include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -25,7 +25,7 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
         const std::string commentsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) +
                                         "/comment?startAt=" + std::to_string(startAt) +
                                         "&maxResults=" + std::to_string(maxResults);
-        auto commentsResp = JiraGetLogged(commentsUrl, headers);
+        auto commentsResp = TrackerGetLogged("JiraClient", commentsUrl, headers);
         if (commentsResp.status_code != 200) {
             LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d", issueKey.c_str(),
                      commentsResp.status_code);
@@ -129,7 +129,7 @@ bool JiraAppendCachedTicketFromSearchIssue(
             if (v.is_object() || v.is_array()) {
                 return v.dump();
             }
-            return NormalizeJiraFieldValue(v);
+            return NormalizeTrackerFieldValue(v);
         };
 
         for (const auto& fieldKey : selectedFields) {
@@ -169,9 +169,9 @@ bool JiraAppendCachedTicketFromSearchIssue(
                     }
                 } else if (fieldKey == "timetracking" || fieldKey == "aggregatetimetracking") {
                     if (rawValue.is_object()) {
-                        ticket.fieldValues[fieldKey] = FormatJiraTimetrackingDisplay(rawValue);
+                        ticket.fieldValues[fieldKey] = FormatTrackerTimetrackingDisplay(rawValue);
                     } else {
-                        ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
+                        ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
                     }
                 } else if (fieldKey == "attachment" || fieldKey == "attachments") {
                     ticket.fieldValues[fieldKey] = stringifyForGrid(rawValue);
@@ -186,14 +186,14 @@ bool JiraAppendCachedTicketFromSearchIssue(
                     }
                     ticket.fieldValues[fieldKey] = FormatWorkDurationFromSeconds(seconds);
                 } else {
-                    ticket.fieldValues[fieldKey] = NormalizeJiraFieldValue(rawValue);
+                    ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
                 }
             } else {
                 ticket.fieldValues[fieldKey] = std::string();
             }
         }
         if (issueFields.contains("issuetype")) {
-            ticket.fieldValues["issuetype"] = NormalizeJiraFieldValue(issueFields["issuetype"]);
+            ticket.fieldValues["issuetype"] = NormalizeTrackerFieldValue(issueFields["issuetype"]);
         }
         results.push_back(std::move(ticket));
         return true;
@@ -204,7 +204,7 @@ bool JiraAppendCachedTicketFromSearchIssue(
 
 } // namespace
 
-std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const JiraConfig* configOverride,
+std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                   const ViewsStore* viewsOverride, std::string* outFetchError) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
@@ -218,17 +218,17 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
         }
     };
 
-    JiraConfig cfgStorage;
-    const JiraConfig* cfgPtr = configOverride;
+    TrackerConfig cfgStorage;
+    const TrackerConfig* cfgPtr = configOverride;
     if (!cfgPtr) {
         cfgStorage = ConfigManager::Load();
         cfgPtr = &cfgStorage;
     }
-    const JiraConfig& cfg = *cfgPtr;
+    const TrackerConfig& cfg = *cfgPtr;
 
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         LOG_WARN("JiraClient: missing API token or domain; skipping FetchIssues.");
-        setFetchErr("Missing Jira domain or API token.");
+        setFetchErr("Missing Tracker domain or API token.");
         return {};
     }
 
@@ -260,7 +260,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
     std::string baseSearchUrl =
         base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
 
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
@@ -279,7 +279,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
         }
         LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
 
-        auto response = JiraGetLogged(pageUrl, headers);
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         lastResponseBody = response.text;
         if (response.status_code != 200) {
             LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.", page, response.status_code,
@@ -363,7 +363,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
         std::string who = cfg.Email;
         bool verifiedIdentity = false;
         std::string myselfUrl = base + "/rest/api/3/myself";
-        auto myselfResp = JiraGetLogged(myselfUrl, headers);
+        auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
         if (myselfResp.status_code == 200) {
             try {
                 auto me = nlohmann::json::parse(myselfResp.text);
@@ -395,14 +395,14 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
     return results;
 }
 
-bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
+bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                     const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets,
                                     std::string& outError) {
     outError.clear();
     if (issueKeys.empty()) {
         return true;
     }
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
 
@@ -426,7 +426,7 @@ bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std
     const std::string fields = JoinStrings(fieldsList, ",");
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
     auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
@@ -451,7 +451,7 @@ bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std
         const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
                                     "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
 
-        auto response = JiraGetLogged(pageUrl, headers);
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         if (response.status_code != 200) {
             outError = "Fetch by key failed: HTTP " + std::to_string(response.status_code);
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
@@ -483,7 +483,7 @@ bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std
                 if (!requestedKey.empty() && fetchedKeys.count(requestedKey) == 0) {
                     const std::string issueUrl = base + "/rest/api/3/issue/" + UrlEncode(requestedKey) +
                                                  "?fields=" + fields + "&expand=changelog";
-                    auto issueResp = JiraGetLogged(issueUrl, headers);
+                    auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers);
                     if (issueResp.status_code == 200) {
                         try {
                             auto issueJson = nlohmann::json::parse(issueResp.text);
@@ -502,3 +502,10 @@ bool JiraClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std
     }
     return true;
 }
+
+
+
+
+
+
+

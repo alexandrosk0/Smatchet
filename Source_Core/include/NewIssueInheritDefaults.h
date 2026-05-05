@@ -7,3 +7,9 @@
 inline std::vector<std::string> DefaultNewIssueInheritFieldIdsList() {
     return {"description", "priority", "assignee", "labels", "components"};
 }
+
+
+
+
+
+

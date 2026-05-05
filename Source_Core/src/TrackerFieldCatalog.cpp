@@ -1,8 +1,8 @@
 #include "JiraClient.h"
 
-#include "JiraFieldValueParser.h"
-#include "JiraHttpUtils.h"
-#include "JiraTrackerFieldAdapter.h"
+#include "TrackerFieldValueParser.h"
+#include "TrackerHttpUtils.h"
+
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -13,17 +13,17 @@
 #include <unordered_map>
 #include <vector>
 
-bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                    std::string& outError) {
     outCatalog = TrackerFieldCatalogResult{};
-    std::vector<JiraField> fields;
-    std::vector<JiraComponent> components;
-    std::vector<IssueTypeCreateMeta> issueTypeMeta;
+    std::vector<TrackerField> fields;
+    std::vector<TrackerComponent> components;
+    std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
     if (!FetchFieldCatalog(cfg, fields, components, issueTypeMeta, outError)) {
         return false;
     }
 
-    std::vector<JiraUser> users;
+    std::vector<TrackerUser> users;
     std::string usersError;
     if (!FetchUsers(cfg, users, usersError)) {
         outCatalog.Warning = usersError;
@@ -40,7 +40,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRes
             field.AllowedValueOptions.reserve(users.size());
             for (const auto& user : users) {
                 field.AllowedValues.push_back(user.DisplayName);
-                JiraFieldOption option;
+                TrackerFieldOption option;
                 option.Id = user.AccountId;
                 option.Value = user.DisplayName;
                 field.AllowedValueOptions.push_back(std::move(option));
@@ -48,31 +48,31 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRes
         }
     }
 
-    outCatalog.Fields = JiraTrackerFieldAdapter::ToTrackerFields(fields);
-    outCatalog.Components = JiraTrackerFieldAdapter::ToTrackerComponents(components);
-    outCatalog.IssueTypeMeta = JiraTrackerFieldAdapter::ToTrackerIssueTypeMeta(issueTypeMeta);
-    outCatalog.Users = JiraTrackerFieldAdapter::ToTrackerUsers(users);
+    outCatalog.Fields = fields;
+    outCatalog.Components = components;
+    outCatalog.IssueTypeMeta = issueTypeMeta;
+    outCatalog.Users = users;
     return true;
 }
 
-bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>& outFields,
-                                   std::vector<JiraComponent>& outComponents,
-                                   std::vector<IssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
+bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<TrackerField>& outFields,
+                                   std::vector<TrackerComponent>& outComponents,
+                                   std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
     outFields.clear();
     outComponents.clear();
     outIssueTypeMeta.clear();
     outError.clear();
 
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
     std::vector<std::string> sprintFieldIds;
 
     const std::string fieldsListUrl = base + "/rest/api/3/field";
-    auto fieldsResponse = JiraGetLogged(fieldsListUrl, headers);
+    auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
     if (fieldsResponse.status_code != 200) {
         outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -95,52 +95,52 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
 
             const std::string fieldId = field["id"].get<std::string>();
 
-            JiraField jiraField;
-            jiraField.Id = fieldId;
-            jiraField.Name = field["name"].get<std::string>();
-            jiraField.Type = "unknown";
-            jiraField.ReadOnly = field.value("isLocked", false);
+            TrackerField TrackerField;
+            TrackerField.Id = fieldId;
+            TrackerField.Name = field["name"].get<std::string>();
+            TrackerField.Type = "unknown";
+            TrackerField.ReadOnly = field.value("isLocked", false);
 
             if (field.contains("schema") && field["schema"].is_object()) {
                 const auto& schema = field["schema"];
                 if (schema.contains("type") && schema["type"].is_string()) {
-                    jiraField.Type = schema["type"].get<std::string>();
+                    TrackerField.Type = schema["type"].get<std::string>();
                 }
-                jiraField.SchemaSystem = (schema.contains("system") && schema["system"].is_string())
+                TrackerField.SchemaSystem = (schema.contains("system") && schema["system"].is_string())
                                              ? schema["system"].get<std::string>()
                                              : std::string();
-                jiraField.SchemaCustom = (schema.contains("custom") && schema["custom"].is_string())
+                TrackerField.SchemaCustom = (schema.contains("custom") && schema["custom"].is_string())
                                              ? schema["custom"].get<std::string>()
                                              : std::string();
 
-                jiraField.IsArray = (jiraField.Type == "array");
-                if (jiraField.IsArray && schema.contains("items")) {
+                TrackerField.IsArray = (TrackerField.Type == "array");
+                if (TrackerField.IsArray && schema.contains("items")) {
                     if (schema["items"].is_string()) {
-                        jiraField.ItemsType = schema["items"].get<std::string>();
+                        TrackerField.ItemsType = schema["items"].get<std::string>();
                     } else if (schema["items"].is_object() && schema["items"].contains("type") &&
                                schema["items"]["type"].is_string()) {
-                        jiraField.ItemsType = schema["items"]["type"].get<std::string>();
+                        TrackerField.ItemsType = schema["items"]["type"].get<std::string>();
                     }
                 }
-                jiraField.IsUserType =
-                    (jiraField.Type == "user") || (jiraField.IsArray && jiraField.ItemsType == "user");
-                if (!jiraField.SchemaCustom.empty() && jiraField.SchemaCustom.find("gh-sprint") != std::string::npos) {
+                TrackerField.IsUserType =
+                    (TrackerField.Type == "user") || (TrackerField.IsArray && TrackerField.ItemsType == "user");
+                if (!TrackerField.SchemaCustom.empty() && TrackerField.SchemaCustom.find("gh-sprint") != std::string::npos) {
                     sprintFieldIds.push_back(fieldId);
                 }
             }
 
-            jiraField.IsCustom = (fieldId.find("customfield_") == 0);
-            jiraField.Family = ClassifyJiraFieldFamily(jiraField);
+            TrackerField.IsCustom = (fieldId.find("customfield_") == 0);
+            TrackerField.Family = ClassifyTrackerFieldFamily(TrackerField);
             try {
-                jiraField.RestFieldDefinitionJson = field.dump(2);
+                TrackerField.RawFieldDefinitionJson = field.dump(2);
             } catch (const std::exception& ex) {
                 LOG_DEBUG("JiraClient: field definition dump failed field=%s err=%s", fieldId.c_str(), ex.what());
-                jiraField.RestFieldDefinitionJson.clear();
+                TrackerField.RawFieldDefinitionJson.clear();
             } catch (...) {
                 LOG_DEBUG("JiraClient: field definition dump failed field=%s (unknown)", fieldId.c_str());
-                jiraField.RestFieldDefinitionJson.clear();
+                TrackerField.RawFieldDefinitionJson.clear();
             }
-            outFields.push_back(std::move(jiraField));
+            outFields.push_back(std::move(TrackerField));
         }
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse /field response: ") + ex.what();
@@ -160,20 +160,20 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
 
     const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(cfg.ProjectKey) +
                                 "&expand=projects.issuetypes.fields";
-    auto metaResponse = JiraGetLogged(metaUrl, headers);
+    auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     std::set<std::string> uniqueIssueTypes;
     if (metaResponse.status_code == 200) {
         try {
             auto metaJson = nlohmann::json::parse(metaResponse.text);
             std::set<std::string> uniqueComponentIds;
             std::unordered_map<std::string, std::size_t> issueTypeMetaIndexByKey;
-            const auto issueTypeMetaKey = [](const IssueTypeCreateMeta& m) -> std::string {
+            const auto issueTypeMetaKey = [](const TrackerIssueTypeCreateMeta& m) -> std::string {
                 if (!m.IssueTypeId.empty()) {
                     return m.ProjectKey + '\x1f' + m.IssueTypeId;
                 }
                 return m.ProjectKey + '\x1f' + m.IssueTypeName;
             };
-            const auto upsertIssueTypeMeta = [&](IssueTypeCreateMeta entry) {
+            const auto upsertIssueTypeMeta = [&](TrackerIssueTypeCreateMeta entry) {
                 if (entry.IssueTypeId.empty() && entry.IssueTypeName.empty()) {
                     return;
                 }
@@ -184,7 +184,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                     outIssueTypeMeta.push_back(std::move(entry));
                     return;
                 }
-                IssueTypeCreateMeta& dst = outIssueTypeMeta[found->second];
+                TrackerIssueTypeCreateMeta& dst = outIssueTypeMeta[found->second];
                 dst.RequiredFieldIds.insert(entry.RequiredFieldIds.begin(), entry.RequiredFieldIds.end());
                 if (dst.IssueTypeName.empty() && !entry.IssueTypeName.empty()) {
                     dst.IssueTypeName = entry.IssueTypeName;
@@ -207,7 +207,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                             uniqueIssueTypes.insert(issueType["name"].get<std::string>());
                         }
 
-                        IssueTypeCreateMeta metaEntry;
+                        TrackerIssueTypeCreateMeta metaEntry;
                         metaEntry.ProjectKey = projectKey;
                         metaEntry.IsSubtask = issueType.value("subtask", false);
                         if (issueType.contains("id")) {
@@ -246,7 +246,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                                         val["name"].is_string()) {
                                         const std::string componentId = val["id"].get<std::string>();
                                         if (uniqueComponentIds.insert(componentId).second) {
-                                            JiraComponent component;
+                                            TrackerComponent component;
                                             component.Id = componentId;
                                             component.Name = val["name"].get<std::string>();
                                             outComponents.push_back(component);
@@ -270,15 +270,15 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                                 continue;
                             }
 
-                            JiraField& targetField = outFields[indexIt->second];
+                            TrackerField& targetField = outFields[indexIt->second];
                             for (const auto& val : fieldObj["allowedValues"]) {
-                                JiraFieldOption option = JiraFieldOptionFromJson(val);
+                                TrackerFieldOption option = TrackerFieldOptionFromJson(val);
                                 if (!option.Value.empty() || !option.Id.empty()) {
-                                    MergeJiraFieldOption(targetField.AllowedValueOptions, option);
+                                    MergeTrackerFieldOption(targetField.AllowedValueOptions, option);
                                 }
                             }
-                            RefreshAllowedValuesFromOptions(targetField);
-                            targetField.Family = ClassifyJiraFieldFamily(targetField);
+                            RefreshTrackerAllowedValuesFromOptions(targetField);
+                            targetField.Family = ClassifyTrackerFieldFamily(targetField);
                         }
 
                         upsertIssueTypeMeta(std::move(metaEntry));
@@ -297,15 +297,15 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
     {
         const auto issueTypeIt = fieldIndexById.find("issuetype");
         if (issueTypeIt != fieldIndexById.end()) {
-            JiraField& issueTypeField = outFields[issueTypeIt->second];
+            TrackerField& issueTypeField = outFields[issueTypeIt->second];
             bool filledFromProject = false;
             try {
                 const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey);
-                auto projectResp = JiraGetLogged(projectUrl, headers);
+                auto projectResp = TrackerGetLogged("JiraClient", projectUrl, headers);
                 if (projectResp.status_code == 200) {
                     auto projectJson = nlohmann::json::parse(projectResp.text);
                     if (projectJson.contains("issueTypes") && projectJson["issueTypes"].is_array()) {
-                        std::vector<JiraFieldOption> opts;
+                        std::vector<TrackerFieldOption> opts;
                         for (const auto& it : projectJson["issueTypes"]) {
                             if (!it.is_object()) {
                                 continue;
@@ -324,7 +324,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                             if (tid.empty() || tname.empty()) {
                                 continue;
                             }
-                            JiraFieldOption option;
+                            TrackerFieldOption option;
                             option.Id = std::move(tid);
                             option.Value = tname;
                             try {
@@ -335,12 +335,12 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                             opts.push_back(std::move(option));
                         }
                         if (!opts.empty()) {
-                            std::sort(opts.begin(), opts.end(), [](const JiraFieldOption& a, const JiraFieldOption& b) {
+                            std::sort(opts.begin(), opts.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
                                 return a.Value < b.Value;
                             });
                             issueTypeField.AllowedValueOptions = std::move(opts);
-                            RefreshAllowedValuesFromOptions(issueTypeField);
-                            issueTypeField.Family = ClassifyJiraFieldFamily(issueTypeField);
+                            RefreshTrackerAllowedValuesFromOptions(issueTypeField);
+                            issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
                             filledFromProject = true;
                         }
                     }
@@ -356,12 +356,12 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                 std::sort(issueTypeField.AllowedValues.begin(), issueTypeField.AllowedValues.end());
                 issueTypeField.AllowedValueOptions.clear();
                 for (const auto& issueTypeName : issueTypeField.AllowedValues) {
-                    JiraFieldOption option;
+                    TrackerFieldOption option;
                     option.Id = issueTypeName;
                     option.Value = issueTypeName;
                     issueTypeField.AllowedValueOptions.push_back(option);
                 }
-                issueTypeField.Family = ClassifyJiraFieldFamily(issueTypeField);
+                issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
             }
         }
     }
@@ -371,11 +371,11 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
         const auto statusFieldIt = fieldIndexById.find("status");
         if (statusFieldIt != fieldIndexById.end()) {
             const std::string statusCatalogUrl = base + "/rest/api/3/status";
-            auto statusResp = JiraGetLogged(statusCatalogUrl, headers);
+            auto statusResp = TrackerGetLogged("JiraClient", statusCatalogUrl, headers);
             if (statusResp.status_code == 200) {
                 auto statusJson = nlohmann::json::parse(statusResp.text);
                 if (statusJson.is_array()) {
-                    JiraField& statusField = outFields[statusFieldIt->second];
+                    TrackerField& statusField = outFields[statusFieldIt->second];
                     statusField.AllowedValues.clear();
                     statusField.AllowedValueOptions.clear();
                     std::set<std::string> seenIds;
@@ -400,7 +400,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                         }
 
                         statusField.AllowedValues.push_back(statusName);
-                        JiraFieldOption option;
+                        TrackerFieldOption option;
                         option.Id = statusId;
                         option.Value = statusName;
                         try {
@@ -410,7 +410,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                         }
                         statusField.AllowedValueOptions.push_back(std::move(option));
                     }
-                    statusField.Family = ClassifyJiraFieldFamily(statusField);
+                    statusField.Family = ClassifyTrackerFieldFamily(statusField);
                 }
             } else {
                 LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
@@ -432,7 +432,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                 const std::string boardsUrl =
                     base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(cfg.ProjectKey) +
                     "&maxResults=" + std::to_string(kBoardsPerPage) + "&startAt=" + std::to_string(startAt);
-                auto boardsResp = JiraGetLogged(boardsUrl, headers);
+                auto boardsResp = TrackerGetLogged("JiraClient", boardsUrl, headers);
                 if (boardsResp.status_code != 200) {
                     LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
                     break;
@@ -460,12 +460,12 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                 }
             }
 
-            std::vector<JiraFieldOption> sprintOptions;
+            std::vector<TrackerFieldOption> sprintOptions;
             std::set<std::string> seenSprintIds;
             for (int boardId : boardIds) {
                 const std::string sprintUrl = base + "/rest/agile/1.0/board/" + std::to_string(boardId) +
                                               "/sprint?state=active,future&maxResults=100";
-                auto sprintResp = JiraGetLogged(sprintUrl, headers);
+                auto sprintResp = TrackerGetLogged("JiraClient", sprintUrl, headers);
                 if (sprintResp.status_code != 200) {
                     continue;
                 }
@@ -490,7 +490,7 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
                     if (sprintId.empty() || sprintName.empty() || !seenSprintIds.insert(sprintId).second) {
                         continue;
                     }
-                    JiraFieldOption opt;
+                    TrackerFieldOption opt;
                     opt.Id = sprintId;
                     opt.Value = sprintName;
                     try {
@@ -504,24 +504,24 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
 
             if (!sprintOptions.empty()) {
                 std::sort(sprintOptions.begin(), sprintOptions.end(),
-                          [](const JiraFieldOption& a, const JiraFieldOption& b) { return a.Value < b.Value; });
+                          [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
                 for (const auto& sprintFieldId : sprintFieldIds) {
                     const auto fit = fieldIndexById.find(sprintFieldId);
                     if (fit == fieldIndexById.end()) {
                         continue;
                     }
-                    JiraField& targetField = outFields[fit->second];
+                    TrackerField& targetField = outFields[fit->second];
                     if (targetField.AllowedValueOptions.empty()) {
                         targetField.AllowedValueOptions = sprintOptions;
                     } else {
                         for (const auto& opt : sprintOptions) {
-                            MergeJiraFieldOption(targetField.AllowedValueOptions, opt);
+                            MergeTrackerFieldOption(targetField.AllowedValueOptions, opt);
                         }
                         std::sort(targetField.AllowedValueOptions.begin(), targetField.AllowedValueOptions.end(),
-                                  [](const JiraFieldOption& a, const JiraFieldOption& b) { return a.Value < b.Value; });
+                                  [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
                     }
-                    RefreshAllowedValuesFromOptions(targetField);
-                    targetField.Family = ClassifyJiraFieldFamily(targetField);
+                    RefreshTrackerAllowedValuesFromOptions(targetField);
+                    targetField.Family = ClassifyTrackerFieldFamily(targetField);
                 }
             }
         } catch (const std::exception& ex) {
@@ -532,7 +532,15 @@ bool JiraClient::FetchFieldCatalog(const JiraConfig& cfg, std::vector<JiraField>
     }
 
     for (auto& field : outFields) {
-        field.Family = ClassifyJiraFieldFamily(field);
+        field.Family = ClassifyTrackerFieldFamily(field);
     }
     return true;
 }
+
+
+
+
+
+
+
+

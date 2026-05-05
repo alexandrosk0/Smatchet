@@ -761,3 +761,9 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
         d.attachmentWindowSelectedIndex = 0;
     }
 }
+
+
+
+
+
+

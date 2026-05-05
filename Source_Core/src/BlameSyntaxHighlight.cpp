@@ -158,3 +158,9 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
     }
     ImGui::PopID();
 }
+
+
+
+
+
+

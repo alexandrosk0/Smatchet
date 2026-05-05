@@ -90,3 +90,9 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
 void DrawJqlQueryEditor(AppController& app, UiDrawSession& d, Views& viewState, const ViewDefinition& activeView);
 
 } // namespace SmatchetViewsDashboardUiDetail
+
+
+
+
+
+

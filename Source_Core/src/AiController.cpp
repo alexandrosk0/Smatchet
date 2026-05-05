@@ -149,3 +149,9 @@ AiController::AiResult AiController::ChatCompletion(const std::string& message, 
 
     return {false, "API Error: " + std::to_string(r.status_code)};
 }
+
+
+
+
+
+

@@ -168,3 +168,9 @@ bool SmatchetWin32PickOpenFilePaths(void*, bool, const std::string&, std::string
 }
 
 #endif
+
+
+
+
+
+

@@ -31,3 +31,9 @@ bool DrawInlineFieldIconIfAny(AppController& app, const TrackerField& field, con
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height);
 
 } // namespace SmatchetFieldIconRender
+
+
+
+
+
+

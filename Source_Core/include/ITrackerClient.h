@@ -6,7 +6,7 @@
 #include "LocalCacheManager.h" // For CachedTicket struct
 #include "TrackerFieldSchema.h"
 
-struct JiraConfig;
+struct TrackerConfig;
 struct ViewsStore;
 struct IssueDraft;
 struct RequiredFieldSet;
@@ -31,7 +31,7 @@ class ITrackerClient {
     /**
      * Periodic connectivity check.
      */
-    virtual TrackerReachabilityProbeResult ProbeReachability(const JiraConfig& cfg) = 0;
+    virtual TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) = 0;
 
     /**
      * Pull issues for the current JQL / tracker query.
@@ -46,26 +46,26 @@ class ITrackerClient {
      *        hard-failure UX (cached grid).
      */
     virtual std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
-                                                  const JiraConfig* configOverride = nullptr,
+                                                  const TrackerConfig* configOverride = nullptr,
                                                   const ViewsStore* viewsOverride = nullptr,
                                                   std::string* outFetchError = nullptr) = 0;
 
     /**
      * Fetch a specific set of issues by their keys.
      */
-    virtual bool FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
+    virtual bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                     const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                                     std::string& outError) = 0;
 
     // Fetch fields/options for the active tracker. Default impl is unsupported.
-    virtual bool FetchFieldCatalog(const JiraConfig& /*cfg*/, TrackerFieldCatalogResult& /*outCatalog*/,
+    virtual bool FetchFieldCatalog(const TrackerConfig& /*cfg*/, TrackerFieldCatalogResult& /*outCatalog*/,
                                    std::string& outError) {
         outError = "FetchFieldCatalog is not supported by this backend.";
         return false;
     }
 
     // Build a web URL for an issue if the backend supports one.
-    virtual std::string BuildBrowseUrl(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/) const { return {}; }
+    virtual std::string BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) const { return {}; }
 
     // Update one or more tracker field values on an issue.
     // `fields` is the backend-specific object payload under the update root.
@@ -89,7 +89,8 @@ class ITrackerClient {
         return false;
     }
 
-    virtual std::string ResolveDisplayValue(const TrackerField& field, const std::string& value) = 0;
+    virtual std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                            const std::string& value) const = 0;
 
     /**
      * Create a new issue and return its key (e.g. "PROJ-42") on success.
@@ -122,31 +123,38 @@ class ITrackerClient {
         return false;
     }
 
-    virtual bool FetchIssueEditMeta(const JiraConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+    virtual bool FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
                                     std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/, std::string& outError) {
         outError = "FetchIssueEditMeta is not supported by this backend.";
         return false;
     }
 
-    virtual bool FetchIssueWatchers(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outWatchers*/,
+    virtual bool FetchIssueWatchers(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outWatchers*/,
                                     std::string& outError) {
         outError = "FetchIssueWatchers is not supported by this backend.";
         return false;
     }
 
-    virtual bool SearchUsersByQuery(const JiraConfig& /*cfg*/, const std::string& /*query*/, std::vector<TrackerUser>& /*outUsers*/,
+    virtual bool FetchIssueVotes(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outVoters*/,
+                                 std::string& outError, int* /*outVoteCount*/ = nullptr, bool* /*outHasVoted*/ = nullptr,
+                                 bool* /*outVotersInResponse*/ = nullptr) {
+        outError = "FetchIssueVotes is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool SearchUsersByQuery(const TrackerConfig& /*cfg*/, const std::string& /*query*/, std::vector<TrackerUser>& /*outUsers*/,
                                     std::string& outError) {
         outError = "SearchUsersByQuery is not supported by this backend.";
         return false;
     }
 
-    virtual bool AddIssueCommentPlain(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*plainText*/,
+    virtual bool AddIssueCommentPlain(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*plainText*/,
                                       std::string& outError) {
         outError = "AddIssueCommentPlain is not supported by this backend.";
         return false;
     }
 
-    virtual bool AddIssueCommentBlameContext(const JiraConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*p4User*/,
+    virtual bool AddIssueCommentBlameContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*p4User*/,
                                              const std::string& /*functionName*/, const std::string& /*filePath*/, int /*lineNumber*/,
                                              const std::string& /*changelist*/, const std::string& /*date*/, bool /*approximated*/,
                                              const std::string& /*codeSnippet*/, std::string& outError) {
@@ -154,9 +162,16 @@ class ITrackerClient {
         return false;
     }
 
-    virtual bool FetchUserGroupNames(const JiraConfig& /*cfg*/, const std::string& /*accountId*/,
+    virtual bool FetchUserGroupNames(const TrackerConfig& /*cfg*/, const std::string& /*accountId*/,
                                      std::vector<std::string>& /*outGroupNames*/, std::string& outError) {
         outError = "FetchUserGroupNames is not supported by this backend.";
         return false;
     }
 };
+
+
+
+
+
+
+

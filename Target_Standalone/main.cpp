@@ -247,7 +247,7 @@ int main(int, char**) {
     smatchetApp.SetRuntimePluginHost(&pluginHost);
 #if defined(SMATCHET_WITH_MCP)
     {
-        const JiraConfig cfg = ConfigManager::Load();
+        const TrackerConfig cfg = ConfigManager::Load();
         if (cfg.McpEnabled) {
             const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : 8080;
             pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
@@ -320,3 +320,9 @@ int main(int, char**) {
 
     return 0;
 }
+
+
+
+
+
+

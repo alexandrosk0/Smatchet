@@ -281,9 +281,9 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                                    static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
                 ImGui::Separator();
                 ImGui::TextUnformatted("Jira API");
-                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.jiraRequests));
-                ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.jiraUploadBytes).c_str());
-                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.jiraDownloadBytes).c_str());
+                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.trackerRequests));
+                ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.trackerUploadBytes).c_str());
+                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.trackerDownloadBytes).c_str());
                 ImGui::Separator();
                 ImGui::TextUnformatted("OpenAI API");
                 ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.openAiRequests));
@@ -315,3 +315,9 @@ void SmatchetPerfUi::DrawFpsOverlay() {
     }
     ImGui::End();
 }
+
+
+
+
+
+

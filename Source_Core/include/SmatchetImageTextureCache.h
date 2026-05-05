@@ -33,3 +33,9 @@ bool GetOrLoadFromFile(const std::string& cacheKey, const std::string& absoluteP
 void EvictCacheKey(const std::string& cacheKey);
 
 } // namespace SmatchetImageTextureCache
+
+
+
+
+
+

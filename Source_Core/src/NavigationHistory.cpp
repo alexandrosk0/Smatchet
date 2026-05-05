@@ -44,3 +44,9 @@ const NavigationEntry* NavigationHistory::Current() const {
     }
     return &_entries[_index];
 }
+
+
+
+
+
+

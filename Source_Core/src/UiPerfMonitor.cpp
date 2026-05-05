@@ -89,3 +89,9 @@ UiPerfScope::~UiPerfScope() {
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0_);
     UiPerfMonitor::Instance().Record(name_, dt);
 }
+
+
+
+
+
+

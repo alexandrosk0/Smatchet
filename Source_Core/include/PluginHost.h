@@ -5,7 +5,7 @@
 #include <vector>
 
 class AppController;
-struct JiraConfig;
+struct TrackerConfig;
 #if defined(SMATCHET_WITH_MCP)
 #include "McpServerStatus.h"
 #endif
@@ -21,7 +21,7 @@ class PluginHost {
 
 #if defined(SMATCHET_WITH_MCP)
     /** Add/remove MCP plugin when config changes (UI thread; after first OnStart). */
-    void SyncMcpPluginWithConfig(AppController& app, const JiraConfig& cfg);
+    void SyncMcpPluginWithConfig(AppController& app, const TrackerConfig& cfg);
     McpServerStatus GetMcpServerStatus() const;
 #endif
 
@@ -31,3 +31,9 @@ class PluginHost {
     bool on_start_completed_ = false;
 #endif
 };
+
+
+
+
+
+

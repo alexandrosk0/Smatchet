@@ -92,3 +92,9 @@ class SmatchetImGuiHost {
     struct Impl;
     std::unique_ptr<Impl> ImplData;
 };
+
+
+
+
+
+

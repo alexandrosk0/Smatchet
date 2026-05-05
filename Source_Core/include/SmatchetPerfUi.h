@@ -31,3 +31,9 @@ class SmatchetPerfUi {
     double smoothFrameMs_ = 0.0;
     bool fpsSmoothInit_ = false;
 };
+
+
+
+
+
+

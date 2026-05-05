@@ -1,4 +1,4 @@
-#include "JiraFieldValueParser.h"
+#include "TrackerFieldValueParser.h"
 
 #include "Logger.h"
 #include "StringUtil.h"
@@ -55,7 +55,7 @@ std::string JsonIdToString(const nlohmann::json& value) {
     return {};
 }
 
-std::string BuildJiraOptionDisplayValue(const nlohmann::json& value) {
+std::string BuildTrackerOptionDisplayValue(const nlohmann::json& value) {
     if (value.is_null()) {
         return {};
     }
@@ -94,7 +94,7 @@ std::string BuildJiraOptionDisplayValue(const nlohmann::json& value) {
     return {};
 }
 
-std::string BuildJiraOptionId(const nlohmann::json& value) {
+std::string BuildTrackerOptionId(const nlohmann::json& value) {
     if (value.is_null()) {
         return {};
     }
@@ -132,10 +132,10 @@ bool IsSimpleOptionObject(const nlohmann::json& value) {
     return true;
 }
 
-JiraFieldOption JiraFieldOptionFromJson(const nlohmann::json& value) {
-    JiraFieldOption option;
-    option.Id = BuildJiraOptionId(value);
-    option.Value = BuildJiraOptionDisplayValue(value);
+TrackerFieldOption TrackerFieldOptionFromJson(const nlohmann::json& value) {
+    TrackerFieldOption option;
+    option.Id = BuildTrackerOptionId(value);
+    option.Value = BuildTrackerOptionDisplayValue(value);
     if (option.Value.empty()) {
         option.Value = option.Id;
     }
@@ -152,7 +152,7 @@ JiraFieldOption JiraFieldOptionFromJson(const nlohmann::json& value) {
         const auto childrenIt = value.find("children");
         if (childrenIt != value.end() && childrenIt->is_array()) {
             for (const auto& child : *childrenIt) {
-                option.Children.push_back(JiraFieldOptionFromJson(child));
+                option.Children.push_back(TrackerFieldOptionFromJson(child));
             }
         }
     }
@@ -164,17 +164,17 @@ JiraFieldOption JiraFieldOptionFromJson(const nlohmann::json& value) {
     return option;
 }
 
-std::string JiraFieldOptionKey(const JiraFieldOption& option) {
+std::string TrackerFieldOptionKey(const TrackerFieldOption& option) {
     if (!option.Id.empty()) {
         return "id:" + ToLowerAsciiCopy(option.Id);
     }
     return "value:" + ToLowerAsciiCopy(option.Value);
 }
 
-void MergeJiraFieldOption(std::vector<JiraFieldOption>& target, const JiraFieldOption& incoming) {
-    const std::string incomingKey = JiraFieldOptionKey(incoming);
+void MergeTrackerFieldOption(std::vector<TrackerFieldOption>& target, const TrackerFieldOption& incoming) {
+    const std::string incomingKey = TrackerFieldOptionKey(incoming);
     for (auto& existing : target) {
-        if (JiraFieldOptionKey(existing) != incomingKey) {
+        if (TrackerFieldOptionKey(existing) != incomingKey) {
             continue;
         }
         if (existing.Value.empty()) {
@@ -188,14 +188,14 @@ void MergeJiraFieldOption(std::vector<JiraFieldOption>& target, const JiraFieldO
         }
         existing.Disabled = existing.Disabled || incoming.Disabled;
         for (const auto& child : incoming.Children) {
-            MergeJiraFieldOption(existing.Children, child);
+            MergeTrackerFieldOption(existing.Children, child);
         }
         return;
     }
     target.push_back(incoming);
 }
 
-void RefreshAllowedValuesFromOptions(JiraField& field) {
+void RefreshTrackerAllowedValuesFromOptions(TrackerField& field) {
     field.AllowedValues.clear();
     field.AllowedValues.reserve(field.AllowedValueOptions.size());
     for (const auto& option : field.AllowedValueOptions) {
@@ -205,44 +205,44 @@ void RefreshAllowedValuesFromOptions(JiraField& field) {
     }
 }
 
-JiraFieldFamily ClassifyJiraFieldFamily(const JiraField& field) {
+TrackerFieldFamily ClassifyTrackerFieldFamily(const TrackerField& field) {
     const std::string lowerId = ToLowerAsciiCopy(field.Id);
     const std::string lowerCustom = ToLowerAsciiCopy(field.SchemaCustom);
     if (lowerId == "labels") {
-        return JiraFieldFamily::Labels;
+        return TrackerFieldFamily::Labels;
     }
     if (lowerId == "status") {
-        return JiraFieldFamily::Status;
+        return TrackerFieldFamily::Status;
     }
     if (lowerId == "issuetype") {
-        return JiraFieldFamily::IssueType;
+        return TrackerFieldFamily::IssueType;
     }
     if (lowerCustom.find("gh-sprint") != std::string::npos) {
-        return JiraFieldFamily::Sprint;
+        return TrackerFieldFamily::Sprint;
     }
     if (field.Type == "date") {
-        return JiraFieldFamily::Date;
+        return TrackerFieldFamily::Date;
     }
     if (field.Type == "datetime") {
-        return JiraFieldFamily::DateTime;
+        return TrackerFieldFamily::DateTime;
     }
     if (field.Type == "number") {
-        return JiraFieldFamily::Number;
+        return TrackerFieldFamily::Number;
     }
     if (field.IsUserType) {
-        return field.IsArray ? JiraFieldFamily::UserMulti : JiraFieldFamily::UserSingle;
+        return field.IsArray ? TrackerFieldFamily::UserMulti : TrackerFieldFamily::UserSingle;
     }
     if (lowerCustom.find("cascadingselect") != std::string::npos) {
-        return JiraFieldFamily::CascadingSelect;
+        return TrackerFieldFamily::CascadingSelect;
     }
     if (!field.AllowedValueOptions.empty()) {
         const bool hasChildren = std::any_of(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
-                                             [](const JiraFieldOption& option) { return !option.Children.empty(); });
+                                             [](const TrackerFieldOption& option) { return !option.Children.empty(); });
         if (hasChildren) {
-            return JiraFieldFamily::CascadingSelect;
+            return TrackerFieldFamily::CascadingSelect;
         }
         const bool likelyStructured = std::any_of(
-            field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(), [](const JiraFieldOption& option) {
+            field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(), [](const TrackerFieldOption& option) {
                 if (option.PayloadJson.empty()) {
                     return false;
                 }
@@ -250,11 +250,11 @@ JiraFieldFamily ClassifyJiraFieldFamily(const JiraField& field) {
                 return raw.is_object() && !IsSimpleOptionObject(raw);
             });
         if (likelyStructured) {
-            return field.IsArray ? JiraFieldFamily::StructuredMulti : JiraFieldFamily::StructuredSingle;
+            return field.IsArray ? TrackerFieldFamily::StructuredMulti : TrackerFieldFamily::StructuredSingle;
         }
-        return field.IsArray ? JiraFieldFamily::SelectMulti : JiraFieldFamily::SelectSingle;
+        return field.IsArray ? TrackerFieldFamily::SelectMulti : TrackerFieldFamily::SelectSingle;
     }
-    return JiraFieldFamily::Text;
+    return TrackerFieldFamily::Text;
 }
 
 std::string TrimTrailingZeros(const std::string& number) {
@@ -363,8 +363,8 @@ std::string ParseCommentAuthor(const nlohmann::json& commentNode) {
     return author;
 }
 
-void SortJiraUsersForDisplay(std::vector<JiraUser>& users) {
-    std::sort(users.begin(), users.end(), [](const JiraUser& a, const JiraUser& b) {
+void SortTrackerUsersForDisplay(std::vector<TrackerUser>& users) {
+    std::sort(users.begin(), users.end(), [](const TrackerUser& a, const TrackerUser& b) {
         const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
         const std::string& rhs = b.DisplayName.empty() ? b.AccountId : b.DisplayName;
         return std::lexicographical_compare(
@@ -373,7 +373,7 @@ void SortJiraUsersForDisplay(std::vector<JiraUser>& users) {
     });
 }
 
-void AppendJiraUsersFromJsonArray(const nlohmann::json& arr, std::vector<JiraUser>& outUsers) {
+void AppendTrackerUsersFromJsonArray(const nlohmann::json& arr, std::vector<TrackerUser>& outUsers) {
     if (!arr.is_array()) {
         return;
     }
@@ -381,7 +381,7 @@ void AppendJiraUsersFromJsonArray(const nlohmann::json& arr, std::vector<JiraUse
         if (!node.is_object()) {
             continue;
         }
-        JiraUser u;
+        TrackerUser u;
         u.AccountId = node.value("accountId", std::string());
         u.DisplayName = node.value("displayName", std::string());
         u.EmailAddress = node.value("emailAddress", std::string());
@@ -706,7 +706,7 @@ bool JsonLooksLikeJiraTimetracking(const nlohmann::json& o) {
 }
 
 // Jira returns timetracking as an object with human strings and parallel *Seconds fields.
-std::string FormatJiraTimetrackingDisplay(const nlohmann::json& o) {
+std::string FormatTrackerTimetrackingDisplay(const nlohmann::json& o) {
     if (!o.is_object()) {
         return o.dump();
     }
@@ -752,7 +752,7 @@ std::string FormatJiraTimetrackingDisplay(const nlohmann::json& o) {
     return {};
 }
 
-std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
+std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
     if (value.is_null()) {
         return std::string();
     }
@@ -822,7 +822,7 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
         if (value.contains("value") && value["value"].is_string() && value.contains("child") &&
             value["child"].is_object()) {
             const std::string parentValue = value["value"].get<std::string>();
-            const std::string childValue = BuildJiraOptionDisplayValue(value["child"]);
+            const std::string childValue = BuildTrackerOptionDisplayValue(value["child"]);
             if (!parentValue.empty() && !childValue.empty()) {
                 return parentValue + " > " + childValue;
             }
@@ -852,14 +852,14 @@ std::string NormalizeJiraFieldValue(const nlohmann::json& value) {
             }
         }
         if (JsonLooksLikeJiraTimetracking(value)) {
-            return FormatJiraTimetrackingDisplay(value);
+            return FormatTrackerTimetrackingDisplay(value);
         }
         return value.dump();
     }
     if (value.is_array()) {
         std::vector<std::string> parts;
         for (const auto& item : value) {
-            const std::string normalized = NormalizeJiraFieldValue(item);
+            const std::string normalized = NormalizeTrackerFieldValue(item);
             if (!normalized.empty()) {
                 parts.push_back(normalized);
             }
@@ -905,3 +905,9 @@ std::string FormatWorkDurationFromSeconds(long long seconds) {
     }
     return out.substr(start, end - start);
 }
+
+
+
+
+
+

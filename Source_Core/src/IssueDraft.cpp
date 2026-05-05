@@ -67,7 +67,7 @@ bool IsCreateSuppressedFieldId(const std::string& fieldId) {
         "aggregatetimeoriginalestimate",
         "aggregatetimeestimate",
         "workratio",
-        // Jira-managed / not on create screen (often present on cached issues).
+        // Tracker-managed / not on create screen (often present on cached issues).
         "statuscategorychangedate",
         "statusCategory",
         "issuerestriction",
@@ -316,7 +316,7 @@ bool IsDiffSkippedFieldId(const std::string& fieldId) {
         // Note: 'status' IS in this list, but we still want to diff status.
         return fieldId != "status";
     }
-    // key column never goes to Jira; ExistingIssueKey is carried separately.
+    // key column never goes to Tracker; ExistingIssueKey is carried separately.
     if (fieldId == "key" || fieldId == "issuekey") {
         return true;
     }
@@ -407,3 +407,10 @@ std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
 }
 
 } // namespace IssueDraftHelpers
+
+
+
+
+
+
+

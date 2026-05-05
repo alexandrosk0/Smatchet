@@ -23,3 +23,9 @@ class LuaConsolePlugin : public IPlugin {
     void LoadHooksEditorFile(AppController& app);
     void SaveHooksEditorFile(AppController& app);
 };
+
+
+
+
+
+

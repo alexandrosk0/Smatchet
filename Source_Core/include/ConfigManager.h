@@ -34,7 +34,7 @@
 #include <unistd.h>
 #endif
 
-struct JiraConfig {
+struct TrackerConfig {
     std::string Domain;   // e.g., "yourcompany.atlassian.net"
     std::string Email;    // e.g., "dev@company.com"
     std::string ApiToken; // Your Atlassian API Token
@@ -244,7 +244,7 @@ inline nlohmann::json SerializeWorkspace(const ViewWorkspaceState& ws) {
     return j;
 }
 
-inline ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backendKey, const JiraConfig& cfg) {
+inline ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backendKey, const TrackerConfig& cfg) {
     ViewWorkspaceState ws;
     if (backendKey == "Plane") {
         ViewDefinition v;
@@ -329,7 +329,7 @@ struct BlameAnalysisConfig {
     int ChangelistCacheMaxEntries = 512;
     BlameUiThemeColors UiColors{};
     /** Jira field id (e.g. customfield_10001) whose value populates the blame callstack text. */
-    std::string CallstackJiraFieldId;
+    std::string CallstackTrackerFieldId;
 };
 
 class ConfigManager {
@@ -418,7 +418,7 @@ class ConfigManager {
         }
     }
 
-    static void Save(const JiraConfig& config) {
+    static void Save(const TrackerConfig& config) {
         nlohmann::json j = LoadMergedConfigJson();
         j["domain"] = config.Domain;
         j["email"] = config.Email;
@@ -502,7 +502,7 @@ class ConfigManager {
         b.AiChatUrl = ba.value("ai_chat_url", std::string());
         b.DefaultMaxFrames = ba.value("default_max_frames", b.DefaultMaxFrames);
         b.ChangelistCacheMaxEntries = ba.value("cl_cache_max", b.ChangelistCacheMaxEntries);
-        b.CallstackJiraFieldId = ba.value("callstack_jira_field_id", std::string());
+        b.CallstackTrackerFieldId = ba.value("callstack_jira_field_id", std::string());
         if (ba.contains("default_ignore_keywords") && ba["default_ignore_keywords"].is_array()) {
             for (const auto& item : ba["default_ignore_keywords"]) {
                 if (item.is_string()) {
@@ -564,7 +564,7 @@ class ConfigManager {
         ba["ai_chat_url"] = b.AiChatUrl;
         ba["default_max_frames"] = b.DefaultMaxFrames;
         ba["cl_cache_max"] = b.ChangelistCacheMaxEntries;
-        ba["callstack_jira_field_id"] = b.CallstackJiraFieldId;
+        ba["callstack_jira_field_id"] = b.CallstackTrackerFieldId;
         ba["default_ignore_keywords"] = nlohmann::json::array();
         for (const auto& kw : b.DefaultIgnoreKeywords) {
             ba["default_ignore_keywords"].push_back(kw);
@@ -594,14 +594,14 @@ class ConfigManager {
         WriteConfigJson(j);
     }
 
-    static JiraConfig Load() {
+    static TrackerConfig Load() {
         nlohmann::json j = LoadMergedConfigJson();
         if (j.empty()) {
             return {};
         }
 
         try {
-            JiraConfig cfg;
+            TrackerConfig cfg;
             cfg.Domain = j.value("domain", std::string{});
             cfg.Email = j.value("email", std::string{});
 #if defined(_WIN32)
@@ -826,7 +826,7 @@ class ConfigManager {
     }
 
     static void EnsureViewBucketBootstrapped(PersistentViewsFile& disk, const std::string& backendKey,
-                                             const JiraConfig& cfg, bool& outDirty) {
+                                             const TrackerConfig& cfg, bool& outDirty) {
         ViewWorkspaceState& ws = disk.Backends[backendKey];
         if (!ws.Views.empty()) {
             if (ws.ActiveViewId.empty()) {
@@ -848,7 +848,7 @@ class ConfigManager {
     }
 
     /** Load+bootstrap active backend slice (used when no in-memory Views wrapper is available). */
-    static ViewsStore LoadViewsOrBootstrap(const JiraConfig& cfg) {
+    static ViewsStore LoadViewsOrBootstrap(const TrackerConfig& cfg) {
         try {
             PersistentViewsFile disk = LoadPersistentViewsFromDisk();
             const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
@@ -1081,3 +1081,9 @@ class ConfigManager {
 };
 
 #endif
+
+
+
+
+
+

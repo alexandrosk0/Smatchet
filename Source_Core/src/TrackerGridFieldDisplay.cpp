@@ -1,8 +1,8 @@
-#include "JiraGridFieldDisplay.h"
+#include "TrackerGridFieldDisplay.h"
 #include "AppController.h"
 #include "ConfigManager.h"
-#include "JiraClient.h"
-#include "JiraTrackerFieldAdapter.h"
+
+
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
@@ -447,7 +447,7 @@ WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
         ++shown;
     }
     if (s.Total > s.WorklogsOnPage) {
-        model.tooltip += "\n\nMore entries exist in Jira than are included in this cell.";
+        model.tooltip += "\n\nMore entries exist in Tracker than are included in this cell.";
     }
     return model;
 }
@@ -528,20 +528,20 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
 
 } // namespace
 
-bool JiraGridFieldDisplay::IsWatchersColumnId(const std::string& id) {
+bool TrackerGridFieldDisplay::IsWatchersColumnId(const std::string& id) {
     const std::string lower = ToLowerAsciiCopy(id);
     return lower == "watchers" || lower == "watches";
 }
 
-bool JiraGridFieldDisplay::IsVotesColumnId(const std::string& id) { return ColumnIdEqualsLower(id, "votes"); }
+bool TrackerGridFieldDisplay::IsVotesColumnId(const std::string& id) { return ColumnIdEqualsLower(id, "votes"); }
 
-bool JiraGridFieldDisplay::IsWorklogColumnId(const std::string& id) { return ColumnIdEqualsLower(id, "worklog"); }
+bool TrackerGridFieldDisplay::IsWorklogColumnId(const std::string& id) { return ColumnIdEqualsLower(id, "worklog"); }
 
-bool JiraGridFieldDisplay::IsProgressStyleColumnId(const std::string& fieldId) {
+bool TrackerGridFieldDisplay::IsProgressStyleColumnId(const std::string& fieldId) {
     return ColumnIdEqualsLower(fieldId, "aggregateprogress");
 }
 
-bool JiraGridFieldDisplay::IsProgressDisplayField(const TrackerField* field) {
+bool TrackerGridFieldDisplay::IsProgressDisplayField(const TrackerField* field) {
     if (field == nullptr) {
         return false;
     }
@@ -552,7 +552,7 @@ bool JiraGridFieldDisplay::IsProgressDisplayField(const TrackerField* field) {
            ColumnIdEqualsLower(field->Name, "aggregate progress");
 }
 
-bool JiraGridFieldDisplay::TryRenderProgressJsonField(const std::string& currentValue, float availWidth) {
+bool TrackerGridFieldDisplay::TryRenderProgressJsonField(const std::string& currentValue, float availWidth) {
     static thread_local std::unordered_map<std::string, ProgressRenderModel> cache;
     const ProgressRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildProgressRenderModel(currentValue); });
@@ -562,11 +562,11 @@ bool JiraGridFieldDisplay::TryRenderProgressJsonField(const std::string& current
     return model.rendered;
 }
 
-bool JiraGridFieldDisplay::IsIssueRestrictionColumnId(const std::string& fieldId) {
+bool TrackerGridFieldDisplay::IsIssueRestrictionColumnId(const std::string& fieldId) {
     return ColumnIdEqualsLower(fieldId, "issuerestriction");
 }
 
-bool JiraGridFieldDisplay::IsIssueRestrictionField(const TrackerField* field) {
+bool TrackerGridFieldDisplay::IsIssueRestrictionField(const TrackerField* field) {
     if (field == nullptr) {
         return false;
     }
@@ -577,7 +577,7 @@ bool JiraGridFieldDisplay::IsIssueRestrictionField(const TrackerField* field) {
            ColumnIdEqualsLower(field->Name, "issue restrictions");
 }
 
-bool JiraGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth,
+bool TrackerGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth,
                                                           bool tooltipsEnabled) {
     static thread_local std::unordered_map<std::string, IssueRestrictionRenderModel> cache;
     const IssueRestrictionRenderModel& model =
@@ -589,7 +589,7 @@ bool JiraGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& cur
     return model.rendered;
 }
 
-void JiraGridFieldDisplay::RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
+void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                                   bool tooltipsEnabled) {
     static thread_local std::unordered_map<std::string, AttachmentRenderModel> cache;
     const AttachmentRenderModel& model =
@@ -617,8 +617,8 @@ void JiraGridFieldDisplay::RenderAttachmentsField(AppController& app, const std:
     }
 }
 
-void JiraGridFieldDisplay::RenderWatchersField(const std::string& issueKey, const std::string& currentValue,
-                                               float availWidth, bool tooltipsEnabled, JiraGridFieldAsyncState& async) {
+void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                               float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
     static thread_local std::unordered_map<std::string, WatchersRenderModel> cache;
     const WatchersRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWatchersRenderModel(currentValue); });
@@ -644,14 +644,12 @@ void JiraGridFieldDisplay::RenderWatchersField(const std::string& issueKey, cons
         async.watchersLoadInProgress = true;
         async.watchersLoadedList.clear();
         async.watchersLoadedError.clear();
-        async.watchersFuture = std::async(std::launch::async, [issueKey]() {
+        async.watchersFuture = std::async(std::launch::async, [&app, issueKey]() {
             WatchersLoadResult r;
-            JiraClient client;
-            const JiraConfig cfg = ConfigManager::Load();
             std::string err;
-            std::vector<JiraUser> watchers;
-            if (client.FetchIssueWatchers(cfg, issueKey, watchers, err)) {
-                r.Watchers = JiraTrackerFieldAdapter::ToTrackerUsers(watchers);
+            std::vector<TrackerUser> watchers;
+            if (app.FetchIssueWatchers(issueKey, watchers, err)) {
+                r.Watchers = watchers;
                 r.Ok = true;
             } else {
                 r.Ok = false;
@@ -664,12 +662,12 @@ void JiraGridFieldDisplay::RenderWatchersField(const std::string& issueKey, cons
         ImGui::EndDisabled();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(watchersBusy ? "Loading watchers..." : "Load watcher list from Jira");
+        ImGui::SetTooltip(watchersBusy ? "Loading watchers..." : "Load watcher list from Tracker");
     }
 }
 
-void JiraGridFieldDisplay::RenderVotesField(const std::string& issueKey, const std::string& currentValue,
-                                            float availWidth, bool tooltipsEnabled, JiraGridFieldAsyncState& async) {
+void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                            float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
     static thread_local std::unordered_map<std::string, VotesRenderModel> cache;
     const VotesRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildVotesRenderModel(currentValue); });
@@ -698,15 +696,13 @@ void JiraGridFieldDisplay::RenderVotesField(const std::string& issueKey, const s
         async.votesLoadedVoteCount = 0;
         async.votesLoadedHasVoted = false;
         async.votesLoadedVotersArrayInResponse = false;
-        async.votesFuture = std::async(std::launch::async, [issueKey]() {
+        async.votesFuture = std::async(std::launch::async, [&app, issueKey]() {
             VotesLoadResult r;
-            JiraClient client;
-            const JiraConfig cfg = ConfigManager::Load();
             std::string err;
-            std::vector<JiraUser> voters;
-            if (client.FetchIssueVotes(cfg, issueKey, voters, err, &r.VoteCount, &r.HasVoted,
-                                       &r.VotersArrayInResponse)) {
-                r.Voters = JiraTrackerFieldAdapter::ToTrackerUsers(voters);
+            std::vector<TrackerUser> voters;
+            if (app.FetchIssueVotes(issueKey, voters, err, &r.VoteCount, &r.HasVoted,
+                                    &r.VotersArrayInResponse)) {
+                r.Voters = voters;
                 r.Ok = true;
             } else {
                 r.Ok = false;
@@ -719,11 +715,11 @@ void JiraGridFieldDisplay::RenderVotesField(const std::string& issueKey, const s
         ImGui::EndDisabled();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(votesBusy ? "Loading votes..." : "Load voter list from Jira");
+        ImGui::SetTooltip(votesBusy ? "Loading votes..." : "Load voter list from Tracker");
     }
 }
 
-void JiraGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled) {
+void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled) {
     static thread_local std::unordered_map<std::string, WorklogRenderModel> cache;
     const WorklogRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWorklogRenderModel(currentValue); });
@@ -738,7 +734,7 @@ void JiraGridFieldDisplay::RenderWorklogField(const std::string& currentValue, f
     }
 }
 
-void JiraGridFieldDisplay::DrawWatchersListWindow(JiraGridFieldAsyncState& d) {
+void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState& d) {
     if (d.watchersFuture.valid()) {
         if (d.watchersFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
@@ -755,13 +751,13 @@ void JiraGridFieldDisplay::DrawWatchersListWindow(JiraGridFieldAsyncState& d) {
                 d.watchersLoadInProgress = false;
                 d.watchersLoadedList.clear();
                 d.watchersLoadedError = std::string("Failed to load watchers: ") + ex.what();
-                LOG_ERROR("JiraGridFieldDisplay: watchers future exception issue=%s err=%s",
+                LOG_ERROR("TrackerGridFieldDisplay: watchers future exception issue=%s err=%s",
                           d.watchersPopupIssueKey.c_str(), ex.what());
             } catch (...) {
                 d.watchersLoadInProgress = false;
                 d.watchersLoadedList.clear();
                 d.watchersLoadedError = "Failed to load watchers.";
-                LOG_ERROR("JiraGridFieldDisplay: watchers future unknown exception issue=%s",
+                LOG_ERROR("TrackerGridFieldDisplay: watchers future unknown exception issue=%s",
                           d.watchersPopupIssueKey.c_str());
             }
         }
@@ -802,7 +798,7 @@ void JiraGridFieldDisplay::DrawWatchersListWindow(JiraGridFieldAsyncState& d) {
     ImGui::End();
 }
 
-void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
+void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d) {
     if (d.votesFuture.valid()) {
         if (d.votesFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
@@ -828,7 +824,7 @@ void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
                 d.votesLoadedVoteCount = 0;
                 d.votesLoadedHasVoted = false;
                 d.votesLoadedVotersArrayInResponse = false;
-                LOG_ERROR("JiraGridFieldDisplay: votes future exception issue=%s err=%s", d.votesPopupIssueKey.c_str(),
+                LOG_ERROR("TrackerGridFieldDisplay: votes future exception issue=%s err=%s", d.votesPopupIssueKey.c_str(),
                           ex.what());
             } catch (...) {
                 d.votesLoadInProgress = false;
@@ -837,7 +833,7 @@ void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
                 d.votesLoadedVoteCount = 0;
                 d.votesLoadedHasVoted = false;
                 d.votesLoadedVotersArrayInResponse = false;
-                LOG_ERROR("JiraGridFieldDisplay: votes future unknown exception issue=%s",
+                LOG_ERROR("TrackerGridFieldDisplay: votes future unknown exception issue=%s",
                           d.votesPopupIssueKey.c_str());
             }
         }
@@ -873,7 +869,7 @@ void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
                 if (d.votesLoadedVoteCount == 0) {
                     ImGui::TextDisabled("No votes.");
                 } else if (!d.votesLoadedVotersArrayInResponse) {
-                    ImGui::TextDisabled("Voter names are hidden by Jira permissions (View voters and watchers).");
+                    ImGui::TextDisabled("Voter names are hidden by Tracker permissions (View voters and watchers).");
                 } else {
                     ImGui::TextDisabled("No voters to list.");
                 }
@@ -892,3 +888,12 @@ void JiraGridFieldDisplay::DrawVotesListWindow(JiraGridFieldAsyncState& d) {
     }
     ImGui::End();
 }
+
+
+
+
+
+
+
+
+

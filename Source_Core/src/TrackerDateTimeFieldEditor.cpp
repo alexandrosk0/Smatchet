@@ -1,4 +1,4 @@
-#include "JiraDateTimeFieldEditor.h"
+#include "TrackerDateTimeFieldEditor.h"
 #include "CompactDateFormat.h"
 #include "imgui.h"
 
@@ -112,9 +112,9 @@ const char* const kMonthAbbr[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "J
 
 } // namespace
 
-namespace JiraDateTimeFieldEditor {
+namespace TrackerDateTimeFieldEditor {
 
-bool IsJiraDateTimePickerField(const TrackerField& field) {
+bool IsTrackerDateTimePickerField(const TrackerField& field) {
     if (field.ReadOnly) {
         return false;
     }
@@ -343,4 +343,11 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     ImGui::PopID();
 }
 
-} // namespace JiraDateTimeFieldEditor
+} // namespace TrackerDateTimeFieldEditor
+
+
+
+
+
+
+

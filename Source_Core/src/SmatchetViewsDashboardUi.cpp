@@ -38,9 +38,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     }
 
     ViewsStore& store = ViewState.GetStoreMutable();
-    if (store.Views.empty()) {
-        ViewState.EnsureLoaded(d.cfg);
-    }
+    ViewState.EnsureLoaded(d.cfg);
 
     {
         const std::string* sessionCatalogNote = d.fieldCatalogWarning.empty() ? nullptr : &d.fieldCatalogWarning;
@@ -65,14 +63,13 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         d.jqlAcpReplaceStart = -1;
         d.jqlAcpReplaceEnd = -1;
         d.jqlAcpReplaceText.clear();
-        d.jqlAcpListSelected = 0;
+        d.jqlAcpListSelected = -1;
         d.jqlAcpLastCursor = 0;
         d.jqlAcpLastSelectionStart = 0;
         d.jqlAcpLastSelectionEnd = 0;
         d.jqlAcpWantsJqlInputFocus = false;
         d.jqlAcpScrollToSelected = false;
-        d.jqlAcpWantsCursorPos = -1;
-        d.jqlAcpPendingMouseCaretAfterPick = false;
+        d.jqlAcpCaretSnapFramesRemaining = 0;
         d.jqlWantsApplyFromEnter = false;
         SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
         SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, view.Jql);
@@ -445,3 +442,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     ImGui::End();
 }
+
+
+
+
+
+

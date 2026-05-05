@@ -10,7 +10,7 @@
 
 #include "AttachmentMimeUtils.h"
 #include "ConfigManager.h"
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -110,7 +110,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
         return false;
     }
 
-    JiraConfig cfg = ConfigManager::Load();
+    TrackerConfig cfg = ConfigManager::Load();
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         outError = "Missing Jira credentials/domain.";
         return false;
@@ -127,7 +127,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     }
 
     cpr::Header headers{{"Accept", "*/*"},
-                        {"Authorization", BuildJiraBasicAuthHeader(cfg)},
+                        {"Authorization", BuildTrackerBasicAuthHeader(cfg)},
                         {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
     cpr::Redirect redirect(true, false);
 
@@ -382,3 +382,9 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url, const s
     }
     return true;
 }
+
+
+
+
+
+

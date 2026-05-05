@@ -34,3 +34,9 @@ class SmatchetUI {
     void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     void drawBulkExportWindow(AppController& app, UiDrawSession& d);
 };
+
+
+
+
+
+

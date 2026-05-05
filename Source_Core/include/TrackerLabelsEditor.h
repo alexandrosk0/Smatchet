@@ -8,7 +8,7 @@
 
 class AppController;
 
-namespace JiraLabelsEditor {
+namespace TrackerLabelsEditor {
 
 bool IsLabelsField(const std::string& fieldId);
 
@@ -18,4 +18,10 @@ using QueueLabelEditFn =
 void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, const QueueLabelEditFn& queueEdit);
 
-} // namespace JiraLabelsEditor
+} // namespace TrackerLabelsEditor
+
+
+
+
+
+

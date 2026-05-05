@@ -1,9 +1,9 @@
 #include "TicketGridModel.h"
 
 #include "CompactDateFormat.h"
-#include "JiraDateTimeFieldEditor.h"
-#include "JiraGridFieldDisplay.h"
-#include "JiraLabelsEditor.h"
+#include "TrackerDateTimeFieldEditor.h"
+#include "TrackerGridFieldDisplay.h"
+#include "TrackerLabelsEditor.h"
 #include "StringUtil.h"
 
 #include <algorithm>
@@ -112,19 +112,19 @@ TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const
         if (IsAttachmentFieldId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialAttachment;
         }
-        if (JiraGridFieldDisplay::IsWatchersColumnId(fieldId)) {
+        if (TrackerGridFieldDisplay::IsWatchersColumnId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialWatchers;
         }
-        if (JiraGridFieldDisplay::IsVotesColumnId(fieldId)) {
+        if (TrackerGridFieldDisplay::IsVotesColumnId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialVotes;
         }
-        if (JiraGridFieldDisplay::IsWorklogColumnId(fieldId)) {
+        if (TrackerGridFieldDisplay::IsWorklogColumnId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialWorklog;
         }
-        if (JiraGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
+        if (TrackerGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialProgress;
         }
-        if (JiraGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
+        if (TrackerGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
         }
         return TicketGridColumn::RenderPlan::PlainText;
@@ -133,25 +133,25 @@ TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const
     if (IsAttachmentFieldId(field->Id)) {
         return TicketGridColumn::RenderPlan::SpecialAttachment;
     }
-    if (JiraGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
         return TicketGridColumn::RenderPlan::SpecialWatchers;
     }
-    if (JiraGridFieldDisplay::IsVotesColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
         return TicketGridColumn::RenderPlan::SpecialVotes;
     }
-    if (JiraGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
         return TicketGridColumn::RenderPlan::SpecialWorklog;
     }
-    if (JiraGridFieldDisplay::IsProgressDisplayField(field)) {
+    if (TrackerGridFieldDisplay::IsProgressDisplayField(field)) {
         return TicketGridColumn::RenderPlan::SpecialProgress;
     }
-    if (JiraGridFieldDisplay::IsIssueRestrictionField(field)) {
+    if (TrackerGridFieldDisplay::IsIssueRestrictionField(field)) {
         return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
     }
     if (field->ReadOnly) {
         return TicketGridColumn::RenderPlan::PlainText;
     }
-    if (JiraLabelsEditor::IsLabelsField(field->Id)) {
+    if (TrackerLabelsEditor::IsLabelsField(field->Id)) {
         return TicketGridColumn::RenderPlan::Labels;
     }
     if (field->Family == TrackerFieldFamily::CascadingSelect) {
@@ -174,7 +174,7 @@ TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const
     if (!field->AllowedValueOptions.empty()) {
         return TicketGridColumn::RenderPlan::SingleSelect;
     }
-    if (JiraDateTimeFieldEditor::IsJiraDateTimePickerField(*field)) {
+    if (TrackerDateTimeFieldEditor::IsTrackerDateTimePickerField(*field)) {
         return TicketGridColumn::RenderPlan::DateTimeEditor;
     }
     return TicketGridColumn::RenderPlan::TextEditor;
@@ -371,3 +371,10 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     return columns;
 }
+
+
+
+
+
+
+

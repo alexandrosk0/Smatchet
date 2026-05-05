@@ -8,7 +8,7 @@
 
 class Views {
   public:
-    void EnsureLoaded(const JiraConfig& cfg) {
+    void EnsureLoaded(const TrackerConfig& cfg) {
         if (!Loaded) {
             Disk = ConfigManager::LoadPersistentViewsFromDisk();
             Loaded = true;
@@ -114,7 +114,7 @@ class Views {
     }
 
   private:
-    void ApplyTrackerFromConfig(const JiraConfig& cfg) {
+    void ApplyTrackerFromConfig(const TrackerConfig& cfg) {
         const std::string newKey = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
         if (HasActiveBackend && newKey == ActiveBackendKey) {
             if (Slice_.Views.empty()) {
@@ -177,3 +177,9 @@ class Views {
     PersistentViewsFile Disk;
     ViewsStore Slice_;
 };
+
+
+
+
+
+

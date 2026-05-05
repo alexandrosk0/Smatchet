@@ -1,5 +1,5 @@
 #include "PlaneClient.h"
-#include "JiraHttpUtils.h"
+#include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "IssueDraft.h"
@@ -131,7 +131,7 @@ PlaneClient::PlaneClient() : planeProjectId_(""), planeProjectIdentifier_("") {}
 
 PlaneClient::~PlaneClient() {}
 
-std::unordered_map<std::string, std::string> PlaneClient::BuildPlaneHeaders(const JiraConfig& cfg) const {
+std::unordered_map<std::string, std::string> PlaneClient::BuildPlaneHeaders(const TrackerConfig& cfg) const {
     return {
         {"Accept", "application/json"},
         {"Content-Type", "application/json"},
@@ -170,13 +170,13 @@ bool LooksLikeUuid(const std::string& s) {
     return true;
 }
 
-bool ResolvePlaneProject(const std::string& planeApi, const JiraConfig& cfg, const cpr::Header& headers,
+bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const cpr::Header& headers,
                          std::string& outId, std::string& outIdentifier, std::string* outError) {
     const std::string projectsUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
     cpr::Parameters params;
     params.Add({"per_page", "100"});
-    auto response = cpr::Get(cpr::Url{projectsUrl}, headers, params, cpr::Timeout{kJiraOverallTimeoutMs});
+    auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
     if (response.status_code != 200) {
         const std::string err = "Plane API error " + std::to_string(response.status_code) +
                                 " resolving project '" + cfg.PlaneProjectId + "': " +
@@ -240,7 +240,7 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         if (!cursor.empty()) {
             params.Add({"cursor", cursor});
         }
-        auto response = cpr::Get(cpr::Url{listUrl}, headers, params, cpr::Timeout{kJiraOverallTimeoutMs});
+        auto response = TrackerGetLogged("PlaneClient", listUrl, headers, params);
         if (response.status_code != 200) {
             if (outWarn && outWarn->size() < 400) {
                 if (!outWarn->empty()) *outWarn += "; ";
@@ -364,12 +364,12 @@ bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out
 } // namespace
 
 std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
-                                                   const JiraConfig* configOverride,
+                                                   const TrackerConfig* configOverride,
                                                    const ViewsStore* /*viewsOverride*/,
                                                    std::string* outFetchError) {
     if (outFullSyncCompleted) *outFullSyncCompleted = false;
 
-    const JiraConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
+    const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || cfg.PlaneProjectId.empty()) {
         if (outFetchError) *outFetchError = "Plane is not configured. Set URL, Workspace Slug, and Project ID in Preferences.";
@@ -411,7 +411,7 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
         {
             const std::string statesUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
                                           "/projects/" + planeProjectId + "/states/";
-            auto r = cpr::Get(cpr::Url{statesUrl}, headers, cpr::Timeout{kJiraOverallTimeoutMs});
+            auto r = TrackerGetLogged("PlaneClient", statesUrl, headers);
             if (r.status_code == 200) {
                 const std::string statesBody = StripUtf8BomCopy(r.text);
                 nlohmann::json j = nlohmann::json::parse(statesBody, nullptr, false);
@@ -445,7 +445,7 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
             params.Add({"cursor", listCursor});
         }
 
-        auto response = cpr::Get(cpr::Url{listBase}, headers, params, cpr::Timeout{kJiraOverallTimeoutMs});
+        auto response = TrackerGetLogged("PlaneClient", listBase, headers, params);
 
         if (response.status_code != 200) {
             const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
@@ -680,7 +680,7 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
 
 
 
-TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const JiraConfig& cfg) {
+TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfig& cfg) {
     TrackerReachabilityProbeResult out;
     if (cfg.PlaneUrl.empty() || cfg.PlaneApiKey.empty()) {
         out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
@@ -695,7 +695,7 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const JiraConfig& 
         headers.insert({kv.first, kv.second});
     }
 
-    auto resp = cpr::Get(cpr::Url{url}, headers, cpr::Timeout{kJiraProbeOverallTimeoutMs});
+    auto resp = cpr::Get(cpr::Url{url}, headers, cpr::Timeout{kTrackerProbeOverallTimeoutMs});
     const long sc = resp.status_code;
 
     if (sc == 200) {
@@ -714,7 +714,7 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const JiraConfig& 
     return out;
 }
 
-bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                     std::string& outError) {
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
@@ -788,7 +788,6 @@ bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRe
     fields.push_back(std::move(statusField));
 
     fields.push_back(makeCore("assignee", "Assignee", "user", TrackerFieldFamily::UserSingle, false));
-    fields.push_back(makeCore("labels", "Labels", "array", TrackerFieldFamily::Labels, false));
 
     cachedCycles_.clear();
     TrackerField sprintField = makeCore("sprint", "Cycle", "string", TrackerFieldFamily::Sprint, false);
@@ -876,6 +875,8 @@ bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRe
     std::string labelsWarn;
     std::vector<nlohmann::json> labelRows;
     AppendPagedResults(labelsUrl, headers, labelRows, &labelsWarn);
+    
+    TrackerField labelsField = makeCore("labels", "Labels", "array", TrackerFieldFamily::Labels, false);
     for (const auto& l : labelRows) {
         if (!l.is_object()) continue;
         CachedLabel cl;
@@ -883,11 +884,17 @@ bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRe
         cl.Name = JsonFieldToString(l, "name");
         if (cl.Id.empty()) continue;
         cachedLabels_.push_back(cl);
+        
+        TrackerFieldOption opt;
+        opt.Id = cl.Id;
+        opt.Value = cl.Name.empty() ? cl.Id : cl.Name;
+        labelsField.AllowedValueOptions.push_back(std::move(opt));
     }
     if (cachedLabels_.empty() && !labelsWarn.empty()) {
         warns.push_back(std::string("labels: ") + labelsWarn);
     }
     LOG_INFO("PlaneClient: Fetched %zu project labels.", cachedLabels_.size());
+    fields.push_back(std::move(labelsField));
 
 
 
@@ -932,7 +939,7 @@ bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRe
         const std::string propsUrl =
             planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId +
             "/work-item-types/" + typeId + "/work-item-properties/";
-        auto pResp = cpr::Get(cpr::Url{propsUrl}, headers, cpr::Timeout{kJiraOverallTimeoutMs});
+        auto pResp = TrackerGetLogged("PlaneClient", propsUrl, headers);
         if (pResp.status_code != 200) {
             warns.push_back("work-item-properties HTTP " + std::to_string(pResp.status_code) +
                             " for type " + typeId.substr(0, 8));
@@ -995,7 +1002,7 @@ bool PlaneClient::FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogRe
     return true;
 }
 
-bool PlaneClient::FetchIssueEditMeta(const JiraConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit,
                                      std::string& outError) {
     outError.clear();
@@ -1006,14 +1013,14 @@ bool PlaneClient::FetchIssueEditMeta(const JiraConfig& /*cfg*/, const std::strin
     return true;
 }
 
-std::string PlaneClient::BuildBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const {
+std::string PlaneClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     // User wants: https://app.plane.so/<workspace-slug>/browse/<issue-key>/
     const std::string webBase = NormalizePlaneWebBase(cfg.PlaneUrl);
     return webBase + "/" + cfg.PlaneWorkspaceSlug + "/browse/" + issueKey + "/";
 }
 
 bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) {
-    JiraConfig cfg = ConfigManager::Load();
+    TrackerConfig cfg = ConfigManager::Load();
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
     for (const auto& kv : BuildPlaneHeaders(cfg)) {
@@ -1045,7 +1052,7 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
     std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
                       "/projects/" + planeProjectId_ + "/work-items/" + targetUuid + "/";
     
-    auto response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{fields.dump()}, cpr::Timeout{kJiraOverallTimeoutMs});
+    auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "PATCH", url, response);
 
     if (response.status_code != 200 && response.status_code != 204) {
@@ -1107,45 +1114,80 @@ bool PlaneClient::UpdateField(const std::string& issueId, const TrackerField& fi
     return UpdateIssueFields(issueId, payload, outError);
 }
 
-std::string PlaneClient::ResolveDisplayValue(const TrackerField& field, const std::string& value) {
-    if (field.Id == "status") {
+std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                        const std::string& value) const {
+    if (fieldId == "status") {
         for (const auto& s : cachedStates_) {
             if (s.Id == value) return s.Name;
         }
     }
-    if (field.Id == "sprint") {
+
+    if (!field) {
+        return value;
+    }
+    if (field->Id == "sprint") {
         for (const auto& c : cachedCycles_) {
             if (c.Id == value) return c.Name;
         }
     }
-    if (field.Id == "issuetype") {
-        for (const auto& opt : field.AllowedValueOptions) {
+    if (field->Id == "issuetype") {
+        for (const auto& opt : field->AllowedValueOptions) {
             if (opt.Id == value) return opt.Value;
         }
     }
-    if (field.Id == "assignee") {
+    if (field->Id == "assignee" || field->IsUserType) {
         for (const auto& u : cachedUsers_) {
             if (u.AccountId == value) return u.DisplayName;
         }
-        LOG_DEBUG("PlaneClient: Failed to resolve assignee UUID '%s' (cache size: %zu)", value.c_str(), cachedUsers_.size());
+        // Fallback to searching AllowedValueOptions if not in cachedUsers_
+        for (const auto& opt : field->AllowedValueOptions) {
+            if (opt.Id == value) return opt.Value;
+        }
+        LOG_DEBUG("PlaneClient: Failed to resolve user UUID '%s' for field '%s' (cache size: %zu)", value.c_str(), field->Id.c_str(), cachedUsers_.size());
     }
-    if (field.Id == "labels") {
-        for (const auto& l : cachedLabels_) {
-            if (l.Id == value) return l.Name;
+    if (field->Id == "labels") {
+        // Multi-select labels might be comma-separated or single UUID
+        if (value.find(',') != std::string::npos) {
+            std::vector<std::string> parts = SplitAndTrim(value);
+            std::string resolved;
+            for (size_t i = 0; i < parts.size(); ++i) {
+                if (i > 0) resolved += ", ";
+                bool found = false;
+                for (const auto& l : cachedLabels_) {
+                    if (l.Id == parts[i]) {
+                        resolved += l.Name;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Check AllowedValueOptions too
+                    for (const auto& opt : field->AllowedValueOptions) {
+                        if (opt.Id == parts[i]) {
+                            resolved += opt.Value;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) resolved += parts[i];
+            }
+            return resolved;
+        } else {
+            for (const auto& l : cachedLabels_) {
+                if (l.Id == value) return l.Name;
+            }
+            for (const auto& opt : field->AllowedValueOptions) {
+                if (opt.Id == value) return opt.Value;
+            }
         }
     }
-    if (field.IsUserType) {
-        for (const auto& u : cachedUsers_) {
-            if (u.AccountId == value) return u.DisplayName;
-        }
-    }
-
 
     return value;
 }
 
 std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
-    JiraConfig cfg = ConfigManager::Load();
+    TrackerConfig cfg = ConfigManager::Load();
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
     for (const auto& kv : BuildPlaneHeaders(cfg)) {
@@ -1161,7 +1203,7 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
     std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
                       "/projects/" + planeProjectId_ + "/work-items/";
 
-    auto response = cpr::Post(cpr::Url{url}, headers, cpr::Body{fields.dump()}, cpr::Timeout{kJiraOverallTimeoutMs});
+    auto response = TrackerPostLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "POST", url, response);
 
     if (response.status_code != 200 && response.status_code != 201) {
@@ -1271,7 +1313,7 @@ bool PlaneClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<
     return BuildCreatePayload(draft, catalog, outPayload, outError);
 }
 
-bool PlaneClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
+bool PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                      std::string& outError) {
     // Basic implementation: fetch all issues and filter. 
@@ -1291,3 +1333,12 @@ bool PlaneClient::FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<st
     }
     return true;
 }
+
+
+
+
+
+
+
+
+

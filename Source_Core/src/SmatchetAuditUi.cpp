@@ -374,3 +374,9 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
                         "1000+ events.");
     ImGui::End();
 }
+
+
+
+
+
+

@@ -1,8 +1,8 @@
 #include "IssueCreatePipeline.h"
 
 #include "ITrackerClient.h"
-#include "JiraFieldPayload.h"
-#include "JiraTrackerFieldAdapter.h"
+#include "TrackerFieldPayload.h"
+
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -47,7 +47,7 @@ bool IsSprintCatalogFieldId(const std::string& fieldId, const std::vector<Tracke
     if (!sprintField) {
         return false;
     }
-    return JiraFieldPayload::IsSprintField(JiraTrackerFieldAdapter::ToJiraField(*sprintField));
+    return TrackerFieldPayload::IsSprintField(*sprintField);
 }
 
 PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::string& issueKey,
@@ -64,10 +64,10 @@ PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::str
                 statusSynthetic = MakeSyntheticField("status");
                 statusField = &statusSynthetic;
             }
-            const JiraField jiraStatusField = JiraTrackerFieldAdapter::ToJiraField(*statusField);
+            const TrackerField jiraStatusField = *statusField;
             nlohmann::json statusValue;
             std::string statusBuildErr;
-            if (JiraFieldPayload::BuildValue(jiraStatusField, {statusRaw}, statusValue, statusBuildErr) &&
+            if (TrackerFieldPayload::BuildValue(jiraStatusField, {statusRaw}, statusValue, statusBuildErr) &&
                 !statusValue.is_null()) {
                 nlohmann::json statusUpdate = nlohmann::json::object();
                 statusUpdate["status"] = std::move(statusValue);
@@ -102,8 +102,8 @@ PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::str
         if (sprintField == nullptr) {
             continue;
         }
-        const JiraField jiraSprintField = JiraTrackerFieldAdapter::ToJiraField(*sprintField);
-        if (!JiraFieldPayload::IsSprintField(jiraSprintField)) {
+        const TrackerField jiraSprintField = *sprintField;
+        if (!TrackerFieldPayload::IsSprintField(jiraSprintField)) {
             continue;
         }
         const std::string raw = TrimCopy(kv.second);
@@ -112,9 +112,9 @@ PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::str
         }
         sprintWork = true;
         bool sprintSegmentSeen = false;
-        for (const std::string& seg : JiraFieldPayload::SplitCommaSeparatedValues(raw)) {
+        for (const std::string& seg : TrackerFieldPayload::SplitCommaSeparatedValues(raw)) {
             sprintSegmentSeen = true;
-            const std::string sprintId = JiraFieldPayload::ResolveSprintIdForAgile(jiraSprintField, seg);
+            const std::string sprintId = TrackerFieldPayload::ResolveSprintIdForAgile(jiraSprintField, seg);
             if (sprintId.empty()) {
                 sprintAllOk = false;
                 LOG_WARN("IssueCreatePipeline: issue %s: sprint segment could not be resolved to id "
@@ -249,7 +249,7 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
 IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
                                     const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
-    std::string issueKey = JiraFieldPayload::ExtractIssueKey(draft.ExistingIssueKey);
+    std::string issueKey = TrackerFieldPayload::ExtractIssueKey(draft.ExistingIssueKey);
     if (issueKey.empty()) {
         issueKey = TrimCopy(draft.ExistingIssueKey);
     }
@@ -309,7 +309,7 @@ IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const Is
     if (work.ExistingIssueKey.empty()) {
         const auto kit = work.FieldValues.find("key");
         if (kit != work.FieldValues.end() && !TrimCopy(kit->second).empty()) {
-            std::string ev = JiraFieldPayload::ExtractIssueKey(kit->second);
+            std::string ev = TrackerFieldPayload::ExtractIssueKey(kit->second);
             work.ExistingIssueKey = ev.empty() ? TrimCopy(kit->second) : ev;
         }
     }
@@ -358,3 +358,9 @@ IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const Is
 }
 
 } // namespace IssueCreatePipeline
+
+
+
+
+
+

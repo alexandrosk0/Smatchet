@@ -7,10 +7,11 @@
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
-#include "JiraGridFieldDisplay.h"
+#include "TrackerGridFieldDisplay.h"
 #include "NavigationHistory.h"
 #include "SpreadsheetState.h"
 #include "TrackerFieldSchema.h"
+#include "QuerySuggestTypes.h"
 
 #include "imgui.h"
 
@@ -92,7 +93,7 @@ struct CellWriteFeedback {
 
 struct UiDrawSession {
     bool cfgInitialized = false;
-    JiraConfig cfg;
+    TrackerConfig cfg;
 
     bool showPreferences = false;
     bool showViewsDashboard = true;
@@ -175,16 +176,23 @@ struct UiDrawSession {
     int jqlAcpReplaceEnd = -1;
     std::string jqlAcpReplaceText;
     bool jqlAcpApplyReplace = false;
-    int jqlAcpListSelected = 0;
+    int jqlAcpListSelected = -1;
     /** Set after JQL apply from popup; next frame: refocus JQL so typing continues. */
     bool jqlAcpWantsJqlInputFocus = false;
     bool jqlAcpScrollToSelected = false;
-    /** After mouse autocomplete flush: move caret here (-1 = ignore). Applied in InputText CallbackAlways. */
-    int jqlAcpWantsCursorPos = -1;
-    /** QueueJqlApplyFromBuild from list click; flush sets jqlAcpWantsCursorPos from replace range + insert. */
-    bool jqlAcpPendingMouseCaretAfterPick = false;
+    /** After inline apply: force cursor to BufTextLen for N more CallbackAlways passes so ImGui scrolls to end. */
+    int jqlAcpCaretSnapFramesRemaining = 0;
     /** Set from JQL InputText callback when Enter pressed with no autocomplete rows; UI runs Apply JQL. */
     bool jqlWantsApplyFromEnter = false;
+    /** Esc closed suggestion list until focus leaves input. */
+    bool jqlAcpListDismissed = false;
+    /** Debounced Jira user search (hybrid async on main thread). */
+    uint64_t jqlAcpUserSearchRequestId = 0;
+    double jqlAcpUserSearchFireAt = 0.0;
+    uint64_t jqlAcpUserSearchArmedId = 0;
+    std::string jqlAcpUserSearchQuery;
+    std::vector<QuerySuggestion> jqlAcpAsyncUserItems;
+    std::string jqlAcpAsyncUserError;
 
     char selectedFieldsBuf[1024]{};
     char fieldSearchBuf[128]{};
@@ -249,7 +257,7 @@ struct UiDrawSession {
     bool pendingViewStateSave = false;
     std::chrono::steady_clock::time_point pendingViewStateSaveAt{};
 
-    JiraGridFieldAsyncState jiraGridAsync;
+    TrackerGridFieldAsyncState trackerGridAsync;
 
     bool newIssueDraftActive = false;
     /** After "+ New issue", scroll table once so Create/Queue/Cancel stay in view. */
@@ -304,3 +312,10 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
+
+
+
+
+
+
+

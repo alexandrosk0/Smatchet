@@ -7,3 +7,9 @@
 void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& theme);
 
 #endif
+
+
+
+
+
+

@@ -1,5 +1,5 @@
-#ifndef SMATCHET_JIRA_FIELD_PAYLOAD_H
-#define SMATCHET_JIRA_FIELD_PAYLOAD_H
+#ifndef SMATCHET_TRACKER_FIELD_PAYLOAD_H
+#define SMATCHET_TRACKER_FIELD_PAYLOAD_H
 
 #include "JiraClient.h"
 
@@ -19,13 +19,13 @@
  *     `ResolveSprintIdForAgile` + `ITrackerClient::AddIssueToSprint` after create.
  *   - Timetracking containers (merge originalEstimate/remainingEstimate).
  */
-namespace JiraFieldPayload {
+namespace TrackerFieldPayload {
 
 /**
  * True when Jira Cloud REST v3 expects an Atlassian Document (ADF) object for this field
  * (system description / environment, textarea-style customfields, wiki renderer, etc.).
  */
-bool FieldUsesAdfDocument(const JiraField& field);
+bool FieldUsesAdfDocument(const TrackerField& field);
 
 /**
  * Convert raw string values into the JSON value for Jira's `fields` map.
@@ -33,7 +33,7 @@ bool FieldUsesAdfDocument(const JiraField& field);
  * values become `null` (meaning "clear field") unless the field is an array
  * type, where an empty list is produced.
  */
-bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
+bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError);
 
 /**
@@ -43,10 +43,10 @@ bool BuildValue(const JiraField& field, const std::vector<std::string>& rawValue
 std::string ExtractIssueKey(const std::string& value);
 
 /** True for array/multi allow-list fields (options, components, users, labels, sprints, ...). */
-bool IsArrayLike(const JiraField& field);
+bool IsArrayLike(const TrackerField& field);
 
 /** Agile sprint field: must not be embedded in issue create `fields` JSON. */
-bool IsSprintField(const JiraField& field);
+bool IsSprintField(const TrackerField& field);
 
 /** Comma-separated tokens (trim each, drop empties). */
 std::vector<std::string> SplitCommaSeparatedValues(const std::string& input);
@@ -55,13 +55,19 @@ std::vector<std::string> SplitCommaSeparatedValues(const std::string& input);
  * Map draft/grid text (option id, label, or plain digits) to numeric sprint id for Agile API.
  * Returns empty when the value cannot be resolved.
  */
-std::string ResolveSprintIdForAgile(const JiraField& field, const std::string& rawValue);
+std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string& rawValue);
 
 /**
  * Value to store in CachedTicket.fieldValues after a successful edit (option labels, cascading "a > b").
  */
-std::string ResolveDisplayValueForSubmittedSelection(const JiraField& field, const std::string& value);
+std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value);
 
-} // namespace JiraFieldPayload
+} // namespace TrackerFieldPayload
 
 #endif
+
+
+
+
+
+

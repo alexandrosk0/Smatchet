@@ -93,3 +93,9 @@ void SmatchetToastManager::Render() {
         currentY -= (toastHeight + 10.0f);
     }
 }
+
+
+
+
+
+

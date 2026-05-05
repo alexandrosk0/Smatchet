@@ -15,3 +15,9 @@ struct McpServerStatus {
     bool RoutesInstalled = false;
     bool ThreadJoinable = false;
 };
+
+
+
+
+
+

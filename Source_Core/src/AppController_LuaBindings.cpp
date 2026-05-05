@@ -172,7 +172,7 @@ std::tuple<bool, std::string> TicketSetFieldGlue(CachedTicket& t, const std::str
     }
     const TrackerField* fieldMeta = gApp->FindFieldById(fieldId);
     if (!fieldMeta) {
-        return {false, "Field not found in Jira catalog: " + fieldId};
+        return {false, "Field not found in tracker catalog: " + fieldId};
     }
     std::string err;
     std::vector<std::string> vals;
@@ -189,7 +189,7 @@ std::tuple<bool, std::string> TicketTransitionGlue(CachedTicket& t, const std::s
     }
     const TrackerField* statusField = gApp->FindFieldById("status");
     if (!statusField) {
-        return {false, "Jira 'status' field meta not found"};
+        return {false, "Tracker 'status' field meta not found"};
     }
     std::string err;
     const bool ok = gApp->SubmitFieldEdit(t.id, *statusField, {statusName}, err);
@@ -923,3 +923,9 @@ bool AppController::ExecuteLuaGlobalAction(const std::string& name, std::string&
     outError = "Action not found";
     return false;
 }
+
+
+
+
+
+

@@ -247,3 +247,9 @@ void EvictCacheKey(const std::string& cacheKey) {
 }
 
 } // namespace SmatchetImageTextureCache
+
+
+
+
+
+

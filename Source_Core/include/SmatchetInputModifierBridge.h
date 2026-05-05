@@ -5,3 +5,9 @@
 void SmatchetInput_SetPluginModifiersPushed(bool ctrl, bool shift);
 bool SmatchetInput_GetPluginModifiersPushedCtrl();
 bool SmatchetInput_GetPluginModifiersPushedShift();
+
+
+
+
+
+

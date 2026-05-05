@@ -59,3 +59,9 @@ class TicketGridColumnsBuilder {
   public:
     static std::vector<TicketGridColumn> Build(const ViewDefinition& view, const TrackerFieldCatalogIndex& catalog);
 };
+
+
+
+
+
+

@@ -1,11 +1,11 @@
 #include "JiraClient.h"
 
-#include "JiraFieldValueParser.h"
-#include "JiraHttpUtils.h"
+#include "TrackerFieldValueParser.h"
+#include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
-#include "JiraTrackerFieldAdapter.h"
+
 
 #include <set>
 #include <string>
@@ -14,7 +14,7 @@
 
 namespace {
 
-void ParseJiraUserObject(const nlohmann::json& user, JiraUser& out) {
+void ParseTrackerUserObject(const nlohmann::json& user, TrackerUser& out) {
     out.AccountId = user.value("accountId", std::string());
     out.DisplayName = user.value("displayName", std::string());
     out.EmailAddress = user.value("emailAddress", std::string());
@@ -23,19 +23,19 @@ void ParseJiraUserObject(const nlohmann::json& user, JiraUser& out) {
 
 } // namespace
 
-bool JiraClient::FetchUsers(const JiraConfig& cfg, std::vector<JiraUser>& outUsers, std::string& outError) {
+bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& outUsers, std::string& outError) {
     outUsers.clear();
     outError.clear();
 
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
-    auto usersResponse = JiraGetLogged(usersUrl, headers);
+    auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
     if (usersResponse.status_code != 200) {
         outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -53,26 +53,26 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg, std::vector<JiraUser>& outUse
         std::set<std::string> seenAccountIds;
         std::set<std::string> seenDisplayNames;
         for (const auto& user : usersJson) {
-            JiraUser jiraUser;
-            jiraUser.AccountId = user.value("accountId", std::string());
-            jiraUser.DisplayName = user.value("displayName", std::string());
-            jiraUser.EmailAddress = user.value("emailAddress", std::string());
-            jiraUser.Active = user.value("active", true);
+            TrackerUser TrackerUser;
+            TrackerUser.AccountId = user.value("accountId", std::string());
+            TrackerUser.DisplayName = user.value("displayName", std::string());
+            TrackerUser.EmailAddress = user.value("emailAddress", std::string());
+            TrackerUser.Active = user.value("active", true);
 
-            if (jiraUser.DisplayName.empty() || jiraUser.AccountId.empty() || !jiraUser.Active ||
-                !seenAccountIds.insert(jiraUser.AccountId).second) {
+            if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
+                !seenAccountIds.insert(TrackerUser.AccountId).second) {
                 continue;
             }
 
-            if (!seenDisplayNames.insert(jiraUser.DisplayName).second) {
-                const std::string suffix = jiraUser.AccountId.substr(0, std::min<size_t>(4, jiraUser.AccountId.size()));
-                jiraUser.DisplayName += "_" + suffix;
+            if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
+                const std::string suffix = TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
+                TrackerUser.DisplayName += "_" + suffix;
             }
 
-            outUsers.push_back(std::move(jiraUser));
+            outUsers.push_back(std::move(TrackerUser));
         }
 
-        SortJiraUsersForDisplay(outUsers);
+        SortTrackerUsersForDisplay(outUsers);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse users response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -82,12 +82,12 @@ bool JiraClient::FetchUsers(const JiraConfig& cfg, std::vector<JiraUser>& outUse
     return true;
 }
 
-bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey,
-                                    std::vector<JiraUser>& outWatchers, std::string& outError) {
+bool JiraClient::FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey,
+                                    std::vector<TrackerUser>& outWatchers, std::string& outError) {
     outWatchers.clear();
     outError.clear();
 
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -96,10 +96,10 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& is
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/watchers";
-    auto response = JiraGetLogged(url, headers);
+    auto response = TrackerGetLogged("JiraClient", url, headers);
     if (response.status_code != 200) {
         outError = "Failed to fetch watchers: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -121,8 +121,8 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& is
                       TruncateForLog(response.text, 300).c_str());
             return false;
         }
-        AppendJiraUsersFromJsonArray(watchers, outWatchers);
-        SortJiraUsersForDisplay(outWatchers);
+        AppendTrackerUsersFromJsonArray(watchers, outWatchers);
+        SortTrackerUsersForDisplay(outWatchers);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse watchers response: ") + ex.what();
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -132,12 +132,12 @@ bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& is
     return true;
 }
 
-bool JiraClient::FetchIssueEditMeta(const JiraConfig& cfg, const std::string& issueKeyOrId,
+bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
                                     std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     outFieldIdCanEdit.clear();
     outError.clear();
 
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKeyOrId.empty()) {
@@ -146,9 +146,9 @@ bool JiraClient::FetchIssueEditMeta(const JiraConfig& cfg, const std::string& is
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKeyOrId) + "/editmeta";
-    auto response = JiraGetLogged(url, headers);
+    auto response = TrackerGetLogged("JiraClient", url, headers);
     if (response.status_code != 200) {
         outError = "Failed to fetch issue editmeta: HTTP " + std::to_string(response.status_code);
         if (!response.text.empty()) {
@@ -231,7 +231,7 @@ bool JiraClient::FetchIssueEditMeta(const JiraConfig& cfg, const std::string& is
     return true;
 }
 
-bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issueKey, std::vector<JiraUser>& outVoters,
+bool JiraClient::FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outVoters,
                                  std::string& outError, int* outVoteCount, bool* outHasVoted,
                                  bool* outVotersArrayInResponse) {
     outVoters.clear();
@@ -246,7 +246,7 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issue
         *outVotersArrayInResponse = false;
     }
 
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
     if (issueKey.empty()) {
@@ -255,10 +255,10 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issue
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/votes";
-    auto response = JiraGetLogged(url, headers);
+    auto response = TrackerGetLogged("JiraClient", url, headers);
     if (response.status_code != 200) {
         outError = "Failed to fetch votes: HTTP " + std::to_string(response.status_code);
         LOG_ERROR("JiraClient: %s", outError.c_str());
@@ -296,8 +296,8 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issue
             }
             const auto voters = j.value("voters", nlohmann::json::array());
             if (voters.is_array()) {
-                AppendJiraUsersFromJsonArray(voters, outVoters);
-                SortJiraUsersForDisplay(outVoters);
+                AppendTrackerUsersFromJsonArray(voters, outVoters);
+                SortTrackerUsersForDisplay(outVoters);
             }
         }
     } catch (const std::exception& ex) {
@@ -309,12 +309,12 @@ bool JiraClient::FetchIssueVotes(const JiraConfig& cfg, const std::string& issue
     return true;
 }
 
-bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& query, std::vector<JiraUser>& outUsers,
+bool JiraClient::SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,
                                     std::string& outError) {
     outUsers.clear();
     outError.clear();
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira domain or API token.";
+        outError = "Missing Tracker domain or API token.";
         return false;
     }
     if (query.empty()) {
@@ -322,10 +322,10 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& qu
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     const std::string url = base + "/rest/api/3/user/search?query=" + UrlEncode(query) + "&maxResults=100";
-    auto resp = JiraGetLogged(url, headers);
+    auto resp = TrackerGetLogged("JiraClient", url, headers);
     if (resp.status_code != 200) {
         outError = "user/search failed: HTTP " + std::to_string(resp.status_code);
         LOG_ERROR("JiraClient: %s query=%s", outError.c_str(), TruncateForLog(query, 120).c_str());
@@ -344,8 +344,8 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& qu
             if (!node.is_object()) {
                 continue;
             }
-            JiraUser u;
-            ParseJiraUserObject(node, u);
+            TrackerUser u;
+            ParseTrackerUserObject(node, u);
             if (u.AccountId.empty() || !u.Active || !seen.insert(u.AccountId).second) {
                 continue;
             }
@@ -359,11 +359,11 @@ bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& qu
     return true;
 }
 
-bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg, const std::string& accountId,
+bool JiraClient::FetchUserGroupNames(const TrackerConfig& cfg, const std::string& accountId,
                                      std::vector<std::string>& outGroupNames, std::string& outError) {
     outGroupNames.clear();
     outError.clear();
-    if (!EnsureJiraAuthConfig(cfg, outError)) {
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
     if (accountId.empty()) {
@@ -371,11 +371,11 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg, const std::string& a
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildJiraHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     const std::string url =
         base + "/rest/api/3/user?accountId=" + UrlEncode(accountId) + "&expand=groups,applicationRoles";
-    auto resp = JiraGetLogged(url, headers);
+    auto resp = TrackerGetLogged("JiraClient", url, headers);
     if (resp.status_code != 200) {
         outError = "user lookup failed: HTTP " + std::to_string(resp.status_code);
         LOG_ERROR("JiraClient: %s accountId=%s", outError.c_str(), TruncateForLog(accountId, 40).c_str());
@@ -402,22 +402,11 @@ bool JiraClient::FetchUserGroupNames(const JiraConfig& cfg, const std::string& a
     return true;
 }
 
-bool JiraClient::FetchIssueWatchers(const JiraConfig& cfg, const std::string& issueKey,
-                                    std::vector<TrackerUser>& outWatchers, std::string& outError) {
-    std::vector<JiraUser> jiraWatchers;
-    if (!FetchIssueWatchers(cfg, issueKey, jiraWatchers, outError)) {
-        return false;
-    }
-    outWatchers = JiraTrackerFieldAdapter::ToTrackerUsers(jiraWatchers);
-    return true;
-}
 
-bool JiraClient::SearchUsersByQuery(const JiraConfig& cfg, const std::string& query,
-                                    std::vector<TrackerUser>& outUsers, std::string& outError) {
-    std::vector<JiraUser> jiraUsers;
-    if (!SearchUsersByQuery(cfg, query, jiraUsers, outError)) {
-        return false;
-    }
-    outUsers = JiraTrackerFieldAdapter::ToTrackerUsers(jiraUsers);
-    return true;
-}
+
+
+
+
+
+
+

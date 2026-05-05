@@ -12,21 +12,21 @@ class PlaneClient : public ITrackerClient {
     PlaneClient();
     ~PlaneClient() override;
     std::string GetTrackerType() const override { return "Plane"; }
-    TrackerReachabilityProbeResult ProbeReachability(const JiraConfig& cfg) override;
+    TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
 
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
-                                          const JiraConfig* configOverride = nullptr,
+                                          const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
                                           std::string* outFetchError = nullptr) override;
 
-    bool FetchIssuesForKeys(const JiraConfig& cfg, const std::vector<std::string>& issueKeys,
+    bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;
 
-    bool FetchFieldCatalog(const JiraConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+    bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                            std::string& outError) override;
 
-    std::string BuildBrowseUrl(const JiraConfig& cfg, const std::string& issueKey) const override;
+    std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
     bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
 
@@ -39,7 +39,8 @@ class PlaneClient : public ITrackerClient {
                             nlohmann::json& outPayload, std::string& outError) override;
     bool BuildUpdatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
                             nlohmann::json& outPayload, std::string& outError) override;
-    std::string ResolveDisplayValue(const TrackerField& field, const std::string& value) override;
+    std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                    const std::string& value) const override;
 
     std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;
 
@@ -50,7 +51,7 @@ class PlaneClient : public ITrackerClient {
     bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId,
                           std::string& outError) override;
 
-    bool FetchIssueEditMeta(const JiraConfig& cfg, const std::string& issueKeyOrId,
+    bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
                             std::unordered_map<std::string, bool>& outFieldIdCanEdit,
                             std::string& outError) override;
 
@@ -76,5 +77,11 @@ class PlaneClient : public ITrackerClient {
     std::string planeProjectIdentifier_;
     std::unordered_map<std::string, std::string> keyToId_;
 
-    std::unordered_map<std::string, std::string> BuildPlaneHeaders(const JiraConfig& cfg) const;
+    std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg) const;
 };
+
+
+
+
+
+

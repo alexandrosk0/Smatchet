@@ -15,3 +15,9 @@ void SmatchetInput_SetPluginModifiersPushed(bool ctrl, bool shift) {
 bool SmatchetInput_GetPluginModifiersPushedCtrl() { return gPluginCtrlPushed.load(std::memory_order_relaxed); }
 
 bool SmatchetInput_GetPluginModifiersPushedShift() { return gPluginShiftPushed.load(std::memory_order_relaxed); }
+
+
+
+
+
+

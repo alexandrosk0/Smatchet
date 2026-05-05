@@ -24,3 +24,9 @@ class BlameAnalysisUi {
     bool blamePanelOpen_ = false;
     bool blameOpenPrev_ = false;
 };
+
+
+
+
+
+

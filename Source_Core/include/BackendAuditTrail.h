@@ -33,3 +33,9 @@ void AppendEvent(const AuditEvent& event);
 std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string* outError = nullptr);
 
 } // namespace BackendAuditTrail
+
+
+
+
+
+

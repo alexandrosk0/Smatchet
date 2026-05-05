@@ -40,7 +40,7 @@ std::string GetCachedJiraDomainForPriorityIcons() {
     if (!g_jiraDomainForPriorityIconsCache.empty() && now - g_jiraDomainForPriorityIconsCacheAt < kTtl) {
         return g_jiraDomainForPriorityIconsCache;
     }
-    const JiraConfig cfg = ConfigManager::Load();
+    const TrackerConfig cfg = ConfigManager::Load();
     g_jiraDomainForPriorityIconsCache = TrimCopyAsciiWhitespace(cfg.Domain);
     g_jiraDomainForPriorityIconsCacheAt = now;
     return g_jiraDomainForPriorityIconsCache;
@@ -427,3 +427,9 @@ bool TryDrawFieldValueIcon(AppController& app, const std::string& fieldId, const
 }
 
 } // namespace SmatchetFieldIconRender
+
+
+
+
+
+

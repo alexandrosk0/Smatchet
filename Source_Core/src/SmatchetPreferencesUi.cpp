@@ -139,6 +139,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf),
                                  ImGuiInputTextFlags_CharsUppercase);
                 ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+                ImGui::Spacing();
+                ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf, sizeof(d.newIssueInheritFieldsBuf));
+                ImGui::SetItemTooltip(
+                    "Comma-separated Jira field ids copied from the last grid row when you click + New issue "
+                    "(e.g. description, priority, assignee, labels, components).");
             } else {
                 ImGui::TextUnformatted("Plane Configuration (plane.so)");
                 ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
@@ -146,17 +151,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::InputText("Project ID (UUID)", d.planeProjectBuf, sizeof(d.planeProjectBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::InputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf), ImGuiInputTextFlags_Password);
+                ImGui::Spacing();
+                ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf, sizeof(d.newIssueInheritFieldsPlaneBuf));
+                ImGui::SetItemTooltip(
+                    "Comma-separated Plane field ids copied from the last grid row when you click + New issue "
+                    "(e.g. description, priority, assignee, labels).");
             }
-
-            ImGui::Spacing();
-            char* inheritBuf = (currentItem == 1) ? d.newIssueInheritFieldsPlaneBuf : d.newIssueInheritFieldsBuf;
-            size_t inheritBufSize = (currentItem == 1) ? sizeof(d.newIssueInheritFieldsPlaneBuf) : sizeof(d.newIssueInheritFieldsBuf);
-            ImGui::InputText("New issue: inherit fields from last row", inheritBuf, inheritBufSize);
-            ImGui::SetItemTooltip(
-                "Comma-separated tracker field ids copied from the last grid row when you click + New issue "
-                "(e.g. description, priority, assignee, labels, components). "
-                "Summary is never copied from the last row. "
-                "Clear and Save & Sync to restore the built-in default list.");
             ImGui::Spacing();
             ImGui::TextWrapped("Query/JQL and column fields are configured in the Views dashboard.");
             if (ImGui::Button("Open Views Dashboard")) {
@@ -406,3 +406,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
+
+
+
+
+
+

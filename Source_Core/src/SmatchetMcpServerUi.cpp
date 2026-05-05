@@ -73,7 +73,7 @@ void SaveMcpWindowLayoutDebounced(UiDrawSession& d) {
 
 } // namespace
 
-void SmatchetDrawMcpServerPanel(AppController& app, const JiraConfig& cfgOnDisk, UiDrawSession& d) {
+void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDisk, UiDrawSession& d) {
     static std::vector<char> s_infoScratch;
     static std::vector<char> s_logScratch;
 
@@ -227,3 +227,9 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
 }
 
 #endif // SMATCHET_WITH_MCP
+
+
+
+
+
+
