@@ -1,5 +1,8 @@
 #include "TrackerFieldValueUtils.h"
 #include "StringUtil.h"
+#include "ConfigManager.h"
+#include <fstream>
+#include <algorithm>
 
 namespace {
 } // namespace
@@ -102,6 +105,26 @@ bool TryResolveCascadingSelection(const TrackerField& field, const std::string& 
     }
     outParentId = option->Id.empty() ? option->Value : option->Id;
     return true;
+}
+
+std::vector<std::string> LoadDurationSuggestions() {
+    return ConfigManager::Load().DurationSuggestions;
+}
+
+void SaveDurationSuggestions(const std::vector<std::string>& list) {
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.DurationSuggestions = list;
+    ConfigManager::Save(cfg);
+}
+
+std::vector<std::string> LoadCommentTemplates() {
+    return ConfigManager::Load().WorkLogCommentTemplates;
+}
+
+void SaveCommentTemplates(const std::vector<std::string>& list) {
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.WorkLogCommentTemplates = list;
+    ConfigManager::Save(cfg);
 }
 
 } // namespace TrackerFieldValueUtils

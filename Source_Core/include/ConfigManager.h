@@ -156,6 +156,16 @@ struct TrackerConfig {
     std::vector<CommentTemplate> QuickCommentTemplates = GetDefaultQuickCommentTemplates();
     std::vector<CommentTemplate> BlameCommentTemplates = GetDefaultBlameCommentTemplates();
 
+    // Custom suggestions and templates saved in smatchet_config.json
+    std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
+    std::vector<std::string> WorkLogCommentTemplates = {
+        "Investigated and resolved the issue.",
+        "Tested and verified on local environment.",
+        "Refactored code and ran static analysis.",
+        "Discussed with team and updated implementation.",
+        "Wrote unit tests and verified all passing."
+    };
+
     // Date formatting preferences
     std::string DateFormatOption = "compact";
     int DateCompactRelativeThresholdDays = 21;
@@ -538,6 +548,8 @@ class ConfigManager {
         j["show_mcp_server_window"] = config.ShowMcpServerWindow;
         j["quick_comment_templates"] = config.QuickCommentTemplates;
         j["blame_comment_templates"] = config.BlameCommentTemplates;
+        j["duration_suggestions"] = config.DurationSuggestions;
+        j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
         j["date_format_option"] = config.DateFormatOption;
         j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
         j.erase("mcp_server_window_layout_valid");
@@ -801,6 +813,35 @@ class ConfigManager {
                 } else {
                     cfg.BlameCommentTemplates = GetDefaultBlameCommentTemplates();
                 }
+
+                if (j.contains("duration_suggestions") && j["duration_suggestions"].is_array()) {
+                    cfg.DurationSuggestions.clear();
+                    for (const auto& item : j["duration_suggestions"]) {
+                        if (item.is_string()) {
+                            cfg.DurationSuggestions.push_back(item.get<std::string>());
+                        }
+                    }
+                } else {
+                    cfg.DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
+                }
+
+                if (j.contains("worklog_comment_templates") && j["worklog_comment_templates"].is_array()) {
+                    cfg.WorkLogCommentTemplates.clear();
+                    for (const auto& item : j["worklog_comment_templates"]) {
+                        if (item.is_string()) {
+                            cfg.WorkLogCommentTemplates.push_back(item.get<std::string>());
+                        }
+                    }
+                } else {
+                    cfg.WorkLogCommentTemplates = {
+                        "Investigated and resolved the issue.",
+                        "Tested and verified on local environment.",
+                        "Refactored code and ran static analysis.",
+                        "Discussed with team and updated implementation.",
+                        "Wrote unit tests and verified all passing."
+                    };
+                }
+
                 {
                     cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
                     if (j.contains("new_issue_inherit_field_ids") && j["new_issue_inherit_field_ids"].is_array()) {

@@ -108,6 +108,9 @@ std::string TrimFieldId(const std::string& value) {
 }
 
 TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const TrackerField* field) {
+    if (fieldId == "timespent" || (field && field->Id == "timespent")) {
+        return TicketGridColumn::RenderPlan::SpecialTimeSpent;
+    }
     if (field == nullptr) {
         if (IsAttachmentFieldId(fieldId)) {
             return TicketGridColumn::RenderPlan::SpecialAttachment;

@@ -128,7 +128,321 @@ void ClampDayToMonth(ParsedJiraDateTime& w, int year, int month) {
     }
 }
 
-const char* const kMonthAbbr[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+std::string FormatFriendlyDate(const ParsedJiraDateTime& p) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%d/%d/%04d", p.Month, p.Day, p.Year);
+    return std::string(buf);
+}
+
+bool ParseFriendlyDate(const std::string& s, int& outY, int& outM, int& outD) {
+    int m = 0, d = 0, y = 0;
+    if (std::sscanf(s.c_str(), "%d/%d/%d", &m, &d, &y) == 3) {
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1900 && y <= 3000) {
+            outY = y;
+            outM = m;
+            outD = d;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string FormatFriendlyTime(const ParsedJiraDateTime& p) {
+    int h = p.Hour;
+    const char* ampm = "AM";
+    if (h >= 12) {
+        ampm = "PM";
+        if (h > 12) h -= 12;
+    }
+    if (h == 0) h = 12;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d %s", h, p.Minute, ampm);
+    return std::string(buf);
+}
+
+bool ParseFriendlyTime(const std::string& s, int& outH, int& outM) {
+    int h = 0, m = 0;
+    char ampm[8] = "";
+    if (std::sscanf(s.c_str(), "%d:%d %7s", &h, &m, ampm) == 3) {
+        std::string ampmStr = ampm;
+        for (auto& c : ampmStr) c = std::toupper(static_cast<unsigned char>(c));
+        if (ampmStr == "PM" && h < 12) h += 12;
+        if (ampmStr == "AM" && h == 12) h = 0;
+        if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+            outH = h;
+            outM = m;
+            return true;
+        }
+    } else if (std::sscanf(s.c_str(), "%d:%d", &h, &m) == 2) {
+        if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+            outH = h;
+            outM = m;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* const kFullMonthNames[12] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
+
+enum class PickerAction {
+    None,
+    Apply,
+    Clear,
+    Cancel
+};
+
+PickerAction DrawCalendarPicker(
+    ParsedJiraDateTime& working,
+    int& viewYear,
+    int& viewMonth,
+    bool& forceTextMode,
+    bool isDateOnly,
+    const std::string& originalValue,
+    char* textModeBuffer,
+    size_t textModeBufferSize,
+    ImGuiInputTextCallback callback = nullptr,
+    void* callbackUserData = nullptr,
+    bool isDropdown = false
+) {
+    if (forceTextMode) {
+        ImGui::TextUnformatted("Edit raw ISO string:");
+        ImGui::SetNextItemWidth(420.0f);
+        ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
+        if (callback) {
+            flags |= ImGuiInputTextFlags_CallbackAlways;
+        }
+        const bool submitted = ImGui::InputText("##rawiso", textModeBuffer, textModeBufferSize, flags, callback, callbackUserData);
+        ParsedJiraDateTime tmp;
+        const bool canParse = TryParseJiraDateTime(textModeBuffer, tmp);
+        if (!canParse) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Apply parsed value") || (submitted && canParse)) {
+            working = tmp;
+            return PickerAction::Apply;
+        }
+        if (!canParse) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            return PickerAction::Cancel;
+        }
+    } else {
+        if (!isDropdown) {
+            std::string initialText = originalValue.empty() ? "" : FormatCompactJiraDateForDisplay(originalValue, "absolute_friendly");
+            if (initialText.empty() && !originalValue.empty()) {
+                initialText = originalValue;
+            }
+
+            std::string workingText;
+            if (working.Year > 0) {
+                if (isDateOnly) {
+                    char temp[64];
+                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d", working.Year, working.Month, working.Day);
+                    workingText = temp;
+                } else {
+                    char temp[128];
+                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d, %02d:%02d:%02d UTC",
+                                  working.Year, working.Month, working.Day,
+                                  working.Hour, working.Minute, working.Second);
+                    workingText = temp;
+                }
+            } else {
+                workingText = "";
+            }
+
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "Original: ");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(initialText.c_str());
+
+            ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "Selected: ");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(workingText.c_str());
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
+        // Header chevrons (<<, <, Title, >, >>)
+        char title[64];
+        if (viewMonth >= 1 && viewMonth <= 12) {
+            std::snprintf(title, sizeof(title), "%s %d", kFullMonthNames[viewMonth - 1], viewYear);
+        } else {
+            std::snprintf(title, sizeof(title), "%d-%02d", viewYear, viewMonth);
+        }
+
+        const float calendarWidth = 220.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
+        
+        // Left chevrons
+        if (ImGui::Button("<<")) {
+            viewYear--;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("<")) {
+            DecMonth(viewYear, viewMonth);
+        }
+        
+        // Centered Title
+        float titleWidth = ImGui::CalcTextSize(title).x;
+        float titlePos = (calendarWidth - titleWidth) * 0.5f;
+        ImGui::SameLine(titlePos);
+        ImGui::TextUnformatted(title);
+        
+        // Right chevrons
+        float rightChevronsWidth = ImGui::CalcTextSize(">").x + ImGui::CalcTextSize(">>").x + 4.0f; // 4px spacing
+        float rightPos = calendarWidth - rightChevronsWidth;
+        ImGui::SameLine(rightPos);
+        if (ImGui::Button(">")) {
+            IncMonth(viewYear, viewMonth);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(">>")) {
+            viewYear++;
+        }
+        ImGui::PopStyleVar();
+
+        ImGui::Spacing();
+
+        // Sunday-first columns
+        const int wday0Sun = FirstOfMonthWeekday0Sun(viewYear, viewMonth);
+        const int startOffset = wday0Sun;
+        const int dim = DaysInMonth(viewYear, viewMonth);
+
+        int prevYear = viewYear;
+        int prevMonth = viewMonth;
+        DecMonth(prevYear, prevMonth);
+        const int prevDim = DaysInMonth(prevYear, prevMonth);
+
+        const char* dow[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+        for (int c = 0; c < 7; ++c) {
+            if (c > 0) {
+                ImGui::SameLine();
+            }
+            ImGui::TextDisabled("%s", dow[c]);
+        }
+        
+        int dayCounter = 1 - startOffset;
+        for (int row = 0; row < 6; ++row) {
+            for (int col = 0; col < 7; ++col) {
+                if (col > 0) {
+                    ImGui::SameLine();
+                }
+                ImGui::PushID(row * 10 + col);
+                if (dayCounter < 1) {
+                    const int d = prevDim + dayCounter;
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::SmallButton(std::to_string(d).c_str())) {
+                        DecMonth(viewYear, viewMonth);
+                        working.Year = viewYear;
+                        working.Month = viewMonth;
+                        working.Day = d;
+                        if (isDropdown) {
+                            ImGui::PopStyleColor();
+                            ImGui::PopID();
+                            return PickerAction::Apply;
+                        }
+                    }
+                    ImGui::PopStyleColor();
+                } else if (dayCounter > dim) {
+                    const int d = dayCounter - dim;
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::SmallButton(std::to_string(d).c_str())) {
+                        IncMonth(viewYear, viewMonth);
+                        working.Year = viewYear;
+                        working.Month = viewMonth;
+                        working.Day = d;
+                        if (isDropdown) {
+                            ImGui::PopStyleColor();
+                            ImGui::PopID();
+                            return PickerAction::Apply;
+                        }
+                    }
+                    ImGui::PopStyleColor();
+                } else {
+                    const int d = dayCounter;
+                    const bool selected =
+                        (working.Year == viewYear && working.Month == viewMonth && working.Day == d);
+                    if (selected) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(31.0f/255.0f, 116.0f/255.0f, 236.0f/255.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(51.0f/255.0f, 136.0f/255.0f, 255.0f/255.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(21.0f/255.0f, 96.0f/255.0f, 216.0f/255.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    }
+                    if (ImGui::SmallButton(std::to_string(d).c_str())) {
+                        working.Year = viewYear;
+                        working.Month = viewMonth;
+                        working.Day = d;
+                        if (isDropdown) {
+                            if (selected) ImGui::PopStyleColor(4);
+                            ImGui::PopID();
+                            return PickerAction::Apply;
+                        }
+                    }
+                    if (selected) {
+                        ImGui::PopStyleColor(4);
+                    }
+                }
+                ImGui::PopID();
+                ++dayCounter;
+            }
+        }
+
+        if (!isDropdown) {
+            if (!isDateOnly) {
+                ImGui::Separator();
+                int h = working.Hour;
+                int m = working.Minute;
+                int sec = working.Second;
+                ImGui::TextUnformatted("Time (UTC wall)");
+                ImGui::SetNextItemWidth(60.0f);
+                ImGui::DragInt("##h", &h, 0.25f, 0, 23, "%02d h");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60.0f);
+                ImGui::DragInt("##m", &m, 0.25f, 0, 59, "%02d m");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60.0f);
+                ImGui::DragInt("##s", &sec, 0.25f, 0, 59, "%02d s");
+                working.HasWallTime = true;
+                working.Hour = (std::max)(0, (std::min)(23, h));
+                working.Minute = (std::max)(0, (std::min)(59, m));
+                working.Second = (std::max)(0, (std::min)(59, sec));
+            } else {
+                working.HasWallTime = false;
+                working.Hour = 0;
+                working.Minute = 0;
+                working.Second = 0;
+            }
+
+            ImGui::Separator();
+            if (ImGui::Button("Apply")) {
+                return PickerAction::Apply;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) {
+                return PickerAction::Clear;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                return PickerAction::Cancel;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Raw ISO…")) {
+                const std::string preview = FormatJiraDateOrDateTimeForApi(isDateOnly, working);
+                std::snprintf(textModeBuffer, textModeBufferSize, "%s", preview.c_str());
+                textModeBuffer[textModeBufferSize - 1] = '\0';
+                forceTextMode = true;
+            }
+        }
+    }
+    return PickerAction::None;
+}
 
 } // namespace
 
@@ -177,7 +491,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
             }
         }
         if (display.empty()) {
-            display = "(empty)";
+            display = "";
         }
         const bool blankValue = [&] {
             for (unsigned char ch : currentValue) {
@@ -226,177 +540,28 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
             state.ClearEditing();
             ImGui::CloseCurrentPopup();
         }
-        if (s_forceTextMode) {
-            ImGui::TextUnformatted("Unparseable value; edit raw ISO string:");
-            ImGui::SetNextItemWidth(420.0f);
-            const bool submitted =
-                ImGui::InputText("##rawiso", state.EditBuffer, sizeof(state.EditBuffer),
-                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
-                                 InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&state));
-            ParsedJiraDateTime tmp;
-            const bool canParse = TryParseJiraDateTime(state.EditBuffer, tmp);
-            if (!canParse) {
-                ImGui::BeginDisabled();
-            }
-            if (ImGui::Button("Apply parsed value") || (submitted && canParse)) {
-                const std::string canon = FormatJiraDateOrDateTimeForApi(isDateOnly, tmp);
-                queue({canon});
-                state.ClearEditing();
-                ImGui::CloseCurrentPopup();
-            }
-            if (!canParse) {
-                ImGui::EndDisabled();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                state.ClearEditing();
-                ImGui::CloseCurrentPopup();
-            }
-        } else {
-            // Show original and real-time selected values at the top of the picker
-            std::string initialText = currentValue.empty() ? "(empty)" : FormatCompactJiraDateForDisplay(currentValue, "absolute_friendly");
-            if (initialText.empty() && !currentValue.empty()) {
-                initialText = currentValue;
-            }
-
-            std::string workingText;
-            if (s_working.Year > 0) {
-                if (isDateOnly) {
-                    char temp[64];
-                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d", s_working.Year, s_working.Month, s_working.Day);
-                    workingText = temp;
-                } else {
-                    char temp[128];
-                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d, %02d:%02d:%02d UTC",
-                                  s_working.Year, s_working.Month, s_working.Day,
-                                  s_working.Hour, s_working.Minute, s_working.Second);
-                    workingText = temp;
-                }
-            } else {
-                workingText = "(empty)";
-            }
-
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "Original: ");
-            ImGui::SameLine();
-            ImGui::TextUnformatted(initialText.c_str());
-
-            ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "Selected: ");
-            ImGui::SameLine();
-            ImGui::TextUnformatted(workingText.c_str());
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (ImGui::Button("<")) {
-                DecMonth(s_viewYear, s_viewMonth);
-            }
-            ImGui::SameLine();
-            char title[64];
-            if (s_viewMonth >= 1 && s_viewMonth <= 12) {
-                std::snprintf(title, sizeof(title), "%s %d", kMonthAbbr[s_viewMonth - 1], s_viewYear);
-            } else {
-                std::snprintf(title, sizeof(title), "%d-%02d", s_viewYear, s_viewMonth);
-            }
-            ImGui::TextUnformatted(title);
-            ImGui::SameLine();
-            if (ImGui::Button(">")) {
-                IncMonth(s_viewYear, s_viewMonth);
-            }
-
-            const int wday0Sun = FirstOfMonthWeekday0Sun(s_viewYear, s_viewMonth);
-            const int startOffset = (wday0Sun + 6) % 7; // Monday-first column index for day 1
-            const int dim = DaysInMonth(s_viewYear, s_viewMonth);
-
-            const char* dow[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
-            for (int c = 0; c < 7; ++c) {
-                if (c > 0) {
-                    ImGui::SameLine();
-                }
-                ImGui::TextDisabled("%s", dow[c]);
-            }
-            int dayCounter = 1 - startOffset;
-            for (int row = 0; row < 6; ++row) {
-                for (int col = 0; col < 7; ++col) {
-                    if (col > 0) {
-                        ImGui::SameLine();
-                    }
-                    ImGui::PushID(row * 10 + col);
-                    if (dayCounter < 1 || dayCounter > dim) {
-                        ImGui::Dummy(ImVec2(28.0f, 22.0f));
-                    } else {
-                        const int d = dayCounter;
-                        const bool selected =
-                            (s_working.Year == s_viewYear && s_working.Month == s_viewMonth && s_working.Day == d);
-                        if (selected) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
-                        }
-                        if (ImGui::SmallButton(std::to_string(d).c_str())) {
-                            s_working.Year = s_viewYear;
-                            s_working.Month = s_viewMonth;
-                            s_working.Day = d;
-                        }
-                        if (selected) {
-                            ImGui::PopStyleColor();
-                        }
-                    }
-                    ImGui::PopID();
-                    ++dayCounter;
-                }
-            }
-
-            if (!isDateOnly) {
-                ImGui::Separator();
-                int h = s_working.Hour;
-                int m = s_working.Minute;
-                int sec = s_working.Second;
-                ImGui::TextUnformatted("Time (UTC wall)");
-                ImGui::SetNextItemWidth(60.0f);
-                ImGui::DragInt("##h", &h, 0.25f, 0, 23, "%02d h");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(60.0f);
-                ImGui::DragInt("##m", &m, 0.25f, 0, 59, "%02d m");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(60.0f);
-                ImGui::DragInt("##s", &sec, 0.25f, 0, 59, "%02d s");
-                s_working.HasWallTime = true;
-                s_working.Hour = (std::max)(0, (std::min)(23, h));
-                s_working.Minute = (std::max)(0, (std::min)(59, m));
-                s_working.Second = (std::max)(0, (std::min)(59, sec));
-            } else {
-                s_working.HasWallTime = false;
-                s_working.Hour = 0;
-                s_working.Minute = 0;
-                s_working.Second = 0;
-            }
-
-            ImGui::Separator();
-            if (ImGui::Button("Apply")) {
-                ClampDayToMonth(s_working, s_working.Year, s_working.Month);
-                const std::string canon = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
-                queue({canon});
-                state.ClearEditing();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear")) {
-                queue({});
-                state.ClearEditing();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                state.ClearEditing();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Raw ISO…")) {
-                const std::string preview = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
-                std::snprintf(state.EditBuffer, sizeof(state.EditBuffer), "%s", preview.c_str());
-                state.EditBuffer[sizeof(state.EditBuffer) - 1] = '\0';
-                s_forceTextMode = true;
-            }
+        
+        PickerAction action = DrawCalendarPicker(
+            s_working, s_viewYear, s_viewMonth, s_forceTextMode, isDateOnly, currentValue,
+            state.EditBuffer, sizeof(state.EditBuffer),
+            InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&state)
+        );
+        
+        if (action == PickerAction::Apply) {
+            ClampDayToMonth(s_working, s_working.Year, s_working.Month);
+            const std::string canon = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
+            queue({canon});
+            state.ClearEditing();
+            ImGui::CloseCurrentPopup();
+        } else if (action == PickerAction::Clear) {
+            queue({});
+            state.ClearEditing();
+            ImGui::CloseCurrentPopup();
+        } else if (action == PickerAction::Cancel) {
+            state.ClearEditing();
+            ImGui::CloseCurrentPopup();
         }
+        
         ImGui::EndPopup();
     } else {
         ImGui::Dummy(ImVec2(1.0f, 1.0f));
@@ -407,6 +572,171 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     }
 
     ImGui::PopID();
+}
+
+bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime) {
+    ImGui::PushID(label);
+    
+    // Parse underlying ISO-8601 string to a ParsedJiraDateTime
+    ParsedJiraDateTime parsed;
+    if (!TryParseJiraDateTime(ioValue, parsed)) {
+        parsed = TodayUtcParsed(isDateTime);
+    }
+    
+    // Format localized / friendly strings for buffers
+    char dateBuf[32];
+    std::string fDate = FormatFriendlyDate(parsed);
+    std::strncpy(dateBuf, fDate.c_str(), sizeof(dateBuf) - 1);
+    dateBuf[sizeof(dateBuf) - 1] = '\0';
+    
+    char timeBuf[16];
+    std::string fTime = FormatFriendlyTime(parsed);
+    std::strncpy(timeBuf, fTime.c_str(), sizeof(timeBuf) - 1);
+    timeBuf[sizeof(timeBuf) - 1] = '\0';
+    
+    bool valueChanged = false;
+    
+    const float totalWidth = 340.0f;
+    const float colWidth = isDateTime ? ((totalWidth - 8.0f) * 0.5f) : totalWidth;
+    
+    // Column 1: Date Input Field with Calendar Icon
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+    ImGui::SetNextItemWidth(colWidth - 26.0f);
+    if (ImGui::InputText("##FriendlyDate", dateBuf, sizeof(dateBuf))) {
+        int y = 0, m = 0, d = 0;
+        if (ParseFriendlyDate(dateBuf, y, m, d)) {
+            parsed.Year = y;
+            parsed.Month = m;
+            parsed.Day = d;
+            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+            valueChanged = true;
+        }
+    }
+    if (ImGui::IsItemClicked()) {
+        ImGui::OpenPopup("calendar_dropdown");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("📅", ImVec2(24.0f, 0.0f))) {
+        ImGui::OpenPopup("calendar_dropdown");
+    }
+    ImGui::PopStyleVar();
+    
+    // Dropdown Calendar Popup
+    static ParsedJiraDateTime s_genWorking{};
+    static int s_genViewYear = 2000;
+    static int s_genViewMonth = 1;
+    static bool s_genForceTextMode = false;
+    static bool s_initWorking = false;
+    
+    if (!ImGui::IsPopupOpen("calendar_dropdown")) {
+        s_initWorking = false;
+    }
+    
+    ImGui::SetNextWindowSize(ImVec2(236.0f, 0.0f));
+    if (ImGui::BeginPopup("calendar_dropdown")) {
+        if (!s_initWorking) {
+            s_genWorking = parsed;
+            s_genViewYear = parsed.Year;
+            s_genViewMonth = parsed.Month;
+            s_genForceTextMode = false;
+            s_initWorking = true;
+        }
+        
+        static char genRawBuf[128] = "";
+        
+        PickerAction action = DrawCalendarPicker(
+            s_genWorking, s_genViewYear, s_genViewMonth, s_genForceTextMode, !isDateTime, ioValue,
+            genRawBuf, sizeof(genRawBuf), nullptr, nullptr, true
+        );
+        
+        if (action == PickerAction::Apply) {
+            ClampDayToMonth(s_genWorking, s_genWorking.Year, s_genWorking.Month);
+            // Retain existing time
+            s_genWorking.Hour = parsed.Hour;
+            s_genWorking.Minute = parsed.Minute;
+            s_genWorking.Second = parsed.Second;
+            s_genWorking.HasWallTime = parsed.HasWallTime;
+            
+            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, s_genWorking);
+            valueChanged = true;
+            s_initWorking = false;
+            ImGui::CloseCurrentPopup();
+        } else if (action == PickerAction::Cancel) {
+            s_initWorking = false;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
+    }
+    
+    // Column 2 (Time Field): Side-by-side with close button, only if isDateTime is true
+    if (isDateTime) {
+        ImGui::SameLine(0.0f, 6.0f);
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+        ImGui::SetNextItemWidth(colWidth - 26.0f);
+        if (ImGui::InputText("##FriendlyTime", timeBuf, sizeof(timeBuf))) {
+            int h = 0, m = 0;
+            if (ParseFriendlyTime(timeBuf, h, m)) {
+                parsed.Hour = h;
+                parsed.Minute = m;
+                parsed.Second = 0;
+                parsed.HasWallTime = true;
+                ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+                valueChanged = true;
+            }
+        }
+        if (ImGui::IsItemClicked()) {
+            ImGui::OpenPopup("time_dropdown");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("✖", ImVec2(24.0f, 0.0f))) {
+            parsed.Hour = 0;
+            parsed.Minute = 0;
+            parsed.Second = 0;
+            parsed.HasWallTime = true;
+            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+            valueChanged = true;
+        }
+        ImGui::PopStyleVar();
+        
+        // Scrollable dropdown popup for recommended times
+        ImGui::SetNextWindowSize(ImVec2(colWidth, 200.0f));
+        if (ImGui::BeginPopup("time_dropdown")) {
+            for (int h = 0; h < 24; ++h) {
+                for (int m : {0, 30}) {
+                    int displayH = h;
+                    const char* ampm = "AM";
+                    if (displayH >= 12) {
+                        ampm = "PM";
+                        if (displayH > 12) displayH -= 12;
+                    }
+                    if (displayH == 0) displayH = 12;
+                    
+                    char timeStr[16];
+                    std::snprintf(timeStr, sizeof(timeStr), "%d:%02d %s", displayH, m, ampm);
+                    
+                    const bool isSelected = (parsed.Hour == h && parsed.Minute == m);
+                    if (ImGui::Selectable(timeStr, isSelected)) {
+                        parsed.Hour = h;
+                        parsed.Minute = m;
+                        parsed.Second = 0;
+                        parsed.HasWallTime = true;
+                        ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+                        valueChanged = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (isSelected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+    
+    ImGui::PopID();
+    return valueChanged;
 }
 
 } // namespace TrackerDateTimeFieldEditor

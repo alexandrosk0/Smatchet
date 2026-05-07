@@ -8,20 +8,81 @@
 #include "SmatchetFieldIconRender.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldValueUtils.h"
+#include "TrackerFieldValueParser.h"
+#include "JiraClient.h"
+#include "CompactDateFormat.h"
 
 #include "imgui.h"
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <fstream>
+#include <sstream>
 
 namespace {
 
 using namespace TrackerFieldValueUtils;
+
+std::string GetCurrentJiraDateTimeString() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t tt = std::chrono::system_clock::to_time_t(now);
+    std::tm tmLocal{};
+    std::tm tmUtc{};
+#if defined(_WIN32)
+    localtime_s(&tmLocal, &tt);
+    gmtime_s(&tmUtc, &tt);
+#else
+    localtime_r(&tt, &tmLocal);
+    gmtime_r(&tt, &tmUtc);
+#endif
+
+    int localMin = tmLocal.tm_hour * 60 + tmLocal.tm_min;
+    int utcMin = tmUtc.tm_hour * 60 + tmUtc.tm_min;
+    
+    if (tmLocal.tm_yday > tmUtc.tm_yday || (tmLocal.tm_yday == 0 && tmUtc.tm_yday > 300)) {
+        localMin += 24 * 60;
+    } else if (tmLocal.tm_yday < tmUtc.tm_yday || (tmUtc.tm_yday == 0 && tmLocal.tm_yday > 300)) {
+        utcMin += 24 * 60;
+    }
+    const int offsetSec = (localMin - utcMin) * 60;
+
+    ParsedJiraDateTime p;
+    p.Year = tmLocal.tm_year + 1900;
+    p.Month = tmLocal.tm_mon + 1;
+    p.Day = tmLocal.tm_mday;
+    p.Hour = tmLocal.tm_hour;
+    p.Minute = tmLocal.tm_min;
+    p.Second = tmLocal.tm_sec;
+    p.HasWallTime = true;
+    p.OffsetSec = offsetSec;
+    p.HasTimeZoneSuffix = true;
+    p.TimeZoneWasZ = (offsetSec == 0);
+
+    return FormatJiraDateOrDateTimeForApi(false, p);
+}
+
+struct ActiveWorklogDialogState {
+    std::string IssueId;
+    char TimeSpent[64] = "";
+    char TimeRemaining[64] = "";
+    std::string DateStarted;
+    char WorkDescription[1024] = "";
+    std::string OriginalEstimate;
+    std::string TotalTimeSpent;
+    std::string TotalTimeRemaining;
+    bool Initialized = false;
+    std::string ErrorMsg;
+    bool JustOpened = false;
+    bool TimeRemainingManuallyEdited = false;
+};
+
+static ActiveWorklogDialogState s_ActiveWorklogState;
 
 // #region agent log
 struct EditCbUser {
@@ -85,6 +146,132 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     return 0;
 }
 
+bool IsTimeDurationField(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" || 
+           fieldId == "timeestimate" || 
+           fieldId == "timespent" || 
+           fieldId == "aggregatetimeoriginalestimate" || 
+           fieldId == "aggregatetimeestimate" || 
+           fieldId == "aggregatetimespent";
+}
+
+struct DurationCallbackWrapperData {
+    ImGuiInputTextCallback OriginalCallback;
+    void* OriginalUserData;
+    bool* NeedRepositionAndFocus;
+};
+
+static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
+    auto* wrapper = static_cast<DurationCallbackWrapperData*>(data->UserData);
+    if (!wrapper) return 0;
+    
+    if (wrapper->NeedRepositionAndFocus && *(wrapper->NeedRepositionAndFocus)) {
+        if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+            data->CursorPos = data->BufTextLen;
+            data->SelectionStart = data->BufTextLen;
+            data->SelectionEnd = data->BufTextLen;
+            *(wrapper->NeedRepositionAndFocus) = false;
+        }
+    }
+    
+    if (wrapper->OriginalCallback) {
+        data->UserData = wrapper->OriginalUserData;
+        int res = wrapper->OriginalCallback(data);
+        data->UserData = wrapper;
+        return res;
+    }
+    return 0;
+}
+
+bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize,
+                                      ImGuiInputTextFlags flags = 0,
+                                      ImGuiInputTextCallback callback = nullptr,
+                                      void* callbackUserData = nullptr,
+                                      bool* outManuallyEdited = nullptr,
+                                      bool forceOpenPopup = false) {
+    static bool s_needRepositionAndFocus = false;
+    bool submitted = false;
+    ImGui::PushID(label);
+    
+    float totalWidth = ImGui::GetContentRegionAvail().x;
+    float inputWidth = totalWidth - 26.0f;
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+    ImGui::SetNextItemWidth(inputWidth);
+    
+    if (forceOpenPopup) {
+        ImGui::OpenPopup("duration_suggestions");
+    }
+    
+    if (s_needRepositionAndFocus) {
+        ImGui::SetKeyboardFocusHere();
+    }
+    
+    DurationCallbackWrapperData wrapperData;
+    wrapperData.OriginalCallback = callback;
+    wrapperData.OriginalUserData = callbackUserData;
+    wrapperData.NeedRepositionAndFocus = &s_needRepositionAndFocus;
+    
+    if (ImGui::InputText("##duration_input", buf, bufSize, flags | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways, DurationInputTextCallback, &wrapperData)) {
+        submitted = true;
+        if (outManuallyEdited) {
+            *outManuallyEdited = true;
+        }
+    }
+    
+    static ImGuiID lastActiveId = 0;
+    ImGuiID currentId = ImGui::GetID("##duration_input");
+    
+    bool shouldOpen = false;
+    if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        shouldOpen = true;
+    }
+    if (ImGui::IsItemActive()) {
+        if (lastActiveId != currentId) {
+            lastActiveId = currentId;
+            if (buf[0] == '\0') {
+                shouldOpen = true;
+            }
+        }
+    } else {
+        if (lastActiveId == currentId) {
+            lastActiveId = 0;
+        }
+    }
+    if (shouldOpen) {
+        ImGui::OpenPopup("duration_suggestions");
+    }
+    
+    ImGui::SameLine();
+    if (ImGui::Button("▼", ImVec2(24.0f, 0.0f))) {
+        ImGui::OpenPopup("duration_suggestions");
+    }
+    ImGui::PopStyleVar();
+    
+    // Suggestions popup
+    if (ImGui::BeginPopup("duration_suggestions")) {
+        std::vector<std::string> suggestions = LoadDurationSuggestions();
+        
+        for (size_t i = 0; i < suggestions.size(); ++i) {
+            const auto& item = suggestions[i];
+            if (ImGui::Selectable(item.c_str())) {
+                std::strncpy(buf, item.c_str(), bufSize - 1);
+                buf[bufSize - 1] = '\0';
+                if (outManuallyEdited) {
+                    *outManuallyEdited = true;
+                }
+                s_needRepositionAndFocus = true;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        
+        ImGui::EndPopup();
+    }
+    
+    ImGui::PopID();
+    return submitted;
+}
+
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
                std::vector<PendingFieldEdit>& pendingEdits) {
     PendingFieldEdit edit;
@@ -112,15 +299,32 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                 AgentLogTicketField("E", "TicketFieldEditor:enter_edit", editJustStarted ? 1 : 0, 0, 0, 0);
             }
         }
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        if (editJustStarted) {
-            ImGui::SetKeyboardFocusHere();
+        const bool isDuration = IsTimeDurationField(field.Id);
+        bool submitted = false;
+        
+        if (isDuration) {
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (editJustStarted) {
+                ImGui::SetKeyboardFocusHere();
+            }
+            EditCbUser cbUser{&state, field.Id.c_str()};
+            submitted = DrawDurationFieldWithSuggestions(
+                itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+                ImGuiInputTextFlags_CallbackAlways,
+                InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser),
+                nullptr, editJustStarted
+            );
+        } else {
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (editJustStarted) {
+                ImGui::SetKeyboardFocusHere();
+            }
+            EditCbUser cbUser{&state, field.Id.c_str()};
+            submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                                         InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
         }
-        EditCbUser cbUser{&state, field.Id.c_str()};
-        const bool submitted =
-            ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
-                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
-                             InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
+
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             state.ClearEditing();
         } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
@@ -364,6 +568,9 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         } else {
             display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
         }
+        if (disabled && display.empty()) {
+            display = "-";
+        }
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
         RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip);
     };
@@ -404,6 +611,46 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             return;
         }
         break;
+    case TicketGridColumn::RenderPlan::SpecialTimeSpent: {
+        std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
+        std::string buttonId = "##TimeSpentBtn_" + ticket.id;
+        
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); // invisible background when normal
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+        
+        if (ImGui::Button((buttonText + buttonId).c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
+            s_ActiveWorklogState.IssueId = ticket.id;
+            s_ActiveWorklogState.TimeSpent[0] = '\0';
+            s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
+            s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
+            s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
+            std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+            s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+            
+            s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
+            
+            s_ActiveWorklogState.WorkDescription[0] = '\0';
+            s_ActiveWorklogState.ErrorMsg.clear();
+            s_ActiveWorklogState.Initialized = true;
+            s_ActiveWorklogState.JustOpened = true;
+            s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            if (currentValue.empty()) {
+                ImGui::TextUnformatted("No work logged yet. Click to log work.");
+            } else {
+                ImGui::Text("Total Time Spent: %s\nClick to log work / edit estimates.", currentValue.c_str());
+            }
+            ImGui::EndTooltip();
+        }
+        break;
+    }
     case TicketGridColumn::RenderPlan::PlainText:
         renderPlainText(column.CatalogReadOnly);
         return;
@@ -458,6 +705,164 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         }
         RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
         return;
+    }
+
+    if (s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id) {
+        ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
+        if (s_ActiveWorklogState.JustOpened) {
+            ImGui::OpenPopup("TimeTrackingPopup");
+            s_ActiveWorklogState.JustOpened = false;
+        }
+        
+        if (ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Time tracking: %s", ticket.id.c_str());
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // Logged & Remaining progress bar
+            long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
+            long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
+            long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+            
+            long long displaySpentSec = spentSec + newSpentSec;
+            long long displayRemSec = remSec;
+            if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+                displayRemSec = (std::max)(0LL, remSec - newSpentSec);
+            } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+                displayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
+            }
+            
+            long long totalSec = displaySpentSec + displayRemSec;
+            float fraction = 0.0f;
+            if (totalSec > 0) {
+                fraction = (float)displaySpentSec / (float)totalSec;
+            }
+            
+            std::string loggedLabel = FormatWorkDurationFromSeconds(displaySpentSec);
+            if (loggedLabel.empty()) loggedLabel = "0m";
+            loggedLabel += " logged";
+            
+            std::string remainingLabel = FormatWorkDurationFromSeconds(displayRemSec);
+            if (remainingLabel.empty()) remainingLabel = "0m";
+            remainingLabel += " remaining";
+            
+            ImGui::TextUnformatted(loggedLabel.c_str());
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(remainingLabel.c_str()).x);
+            ImGui::TextUnformatted(remainingLabel.c_str());
+            
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.12f, 0.45f, 0.88f, 1.00f)); // Jira blue
+            ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 14.0f), "");
+            ImGui::PopStyleColor();
+            
+            if (!s_ActiveWorklogState.OriginalEstimate.empty()) {
+                ImGui::TextDisabled("The original estimate for this work item was %s.", s_ActiveWorklogState.OriginalEstimate.c_str());
+            }
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // Inputs
+            ImGui::Text("Time spent *");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent))) {
+                if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+                    long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+                    long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
+                    if (spentVal > 0) {
+                        long long newRem = (std::max)(0LL, remVal - spentVal);
+                        std::string formattedRem = FormatWorkDurationFromSeconds(newRem);
+                        std::strncpy(s_ActiveWorklogState.TimeRemaining, formattedRem.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+                    } else {
+                        std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+                    }
+                }
+            }
+            ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
+            
+            ImGui::Spacing();
+            ImGui::Text("Time remaining");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining, sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr, &s_ActiveWorklogState.TimeRemainingManuallyEdited)) {
+                // value changed!
+            }
+            
+            ImGui::Spacing();
+            ImGui::Text("Date started *");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
+            
+            ImGui::Spacing();
+            ImGui::Text("Work description");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
+            if (ImGui::Button("Templates ▼", ImVec2(90.0f, 0.0f))) {
+                ImGui::OpenPopup("comment_templates_popup");
+            }
+            if (ImGui::BeginPopup("comment_templates_popup")) {
+                std::vector<std::string> templates = LoadCommentTemplates();
+                if (templates.empty()) {
+                    ImGui::TextDisabled("No templates configured in Preferences.");
+                } else {
+                    for (const auto& item : templates) {
+                        if (ImGui::Selectable(item.c_str())) {
+                            std::strncpy(s_ActiveWorklogState.WorkDescription, item.c_str(), sizeof(s_ActiveWorklogState.WorkDescription) - 1);
+                            s_ActiveWorklogState.WorkDescription[sizeof(s_ActiveWorklogState.WorkDescription) - 1] = '\0';
+                        }
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription, sizeof(s_ActiveWorklogState.WorkDescription), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+            
+            if (!s_ActiveWorklogState.ErrorMsg.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", s_ActiveWorklogState.ErrorMsg.c_str());
+            }
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // Buttons
+            if (ImGui::Button("Save", ImVec2(80, 0))) {
+                s_ActiveWorklogState.ErrorMsg.clear();
+                long long sVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+                if (sVal <= 0) {
+                    s_ActiveWorklogState.ErrorMsg = "Invalid Time spent format. Please use e.g. 2h 30m.";
+                } else {
+                    ParsedJiraDateTime dummyDt;
+                    if (!TryParseJiraDateTime(s_ActiveWorklogState.DateStarted, dummyDt)) {
+                        s_ActiveWorklogState.ErrorMsg = "Invalid Date started format.";
+                    } else {
+                        std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
+                        std::string outErr;
+                        if (app.SubmitWorklog(s_ActiveWorklogState.IssueId,
+                                              s_ActiveWorklogState.TimeSpent,
+                                              s_ActiveWorklogState.TimeRemaining,
+                                              adjEst,
+                                              s_ActiveWorklogState.WorkDescription,
+                                              s_ActiveWorklogState.DateStarted,
+                                              outErr)) {
+                            ImGui::CloseCurrentPopup();
+                            s_ActiveWorklogState.Initialized = false;
+                        } else {
+                            s_ActiveWorklogState.ErrorMsg = "Failed: " + outErr;
+                        }
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+                ImGui::CloseCurrentPopup();
+                s_ActiveWorklogState.Initialized = false;
+            }
+            
+            ImGui::EndPopup();
+        } else {
+            s_ActiveWorklogState.Initialized = false;
+        }
     }
 }
 

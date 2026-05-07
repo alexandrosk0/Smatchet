@@ -76,7 +76,7 @@ class JiraClient : public ITrackerClient {
      */
     bool FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outVoters,
                          std::string& outError, int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
-                         bool* outVotersArrayInResponse = nullptr);
+                         bool* outVotersArrayInResponse = nullptr) override;
 
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
@@ -97,6 +97,11 @@ class JiraClient : public ITrackerClient {
     /** POST /rest/api/3/issue/{key}/comment with Atlassian Document Format body. */
     bool AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey, const std::string& plainText,
                               std::string& outError) override;
+
+    bool AddWorklog(const TrackerConfig& cfg, const std::string& issueKey,
+                    const std::string& timeSpent, const std::string& timeRemaining,
+                    const std::string& adjustEstimate, const std::string& workDescription,
+                    const std::string& startedDate, std::string& outError) override;
 
     /** Blame-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
     bool AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey, const std::string& p4User,

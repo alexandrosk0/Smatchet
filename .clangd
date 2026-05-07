@@ -1,15 +1,5 @@
 CompileFlags:
   CompilationDatabase: build/ninja-debug
-  # Ensure clangd can query the real compiler for C++ standard include paths.
-  # This avoids false "'iostream' file not found" errors when compile_commands
-  # contains short 8.3 executable names (for example G__~1.EXE).
-  QueryDriver:
-    - "C:/PROGRA~1/JETBRA~1/CLION*/bin/mingw/bin/G__~1.EXE"
-    - "C:/PROGRA~1/JETBRA~1/CLION*/bin/mingw/bin/GCC.EXE"
-    - "C:/Program Files/JetBrains/CLion*/bin/mingw/bin/g++.exe"
-    - "C:/Program Files/JetBrains/CLion*/bin/mingw/bin/gcc.exe"
-    - "C:/msys64/*/bin/g++.exe"
-    - "C:/msys64/*/bin/gcc.exe"
 
 Diagnostics:
   UnusedIncludes: None

@@ -39,6 +39,7 @@ struct TicketGridColumn {
         SpecialWorklog,
         SpecialProgress,
         SpecialIssueRestriction,
+        SpecialTimeSpent,
         Labels,
         Cascading,
         MultiSelect,

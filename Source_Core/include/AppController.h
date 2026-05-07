@@ -476,6 +476,11 @@ class AppController {
 
     bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 
+    bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
+                       const std::string& timeRemaining, const std::string& adjustEstimate,
+                       const std::string& workDescription, const std::string& startedDate,
+                       std::string& outError);
+
     bool AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
                                          const std::string& functionName, const std::string& filePath, int lineNumber,
                                          const std::string& changelist, const std::string& date, bool approximated,

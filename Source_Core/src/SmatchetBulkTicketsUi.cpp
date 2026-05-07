@@ -365,9 +365,9 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                             for (const auto& c : changes) {
                                 ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", c.FieldId.c_str());
                                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "- %s",
-                                                   c.OldValue.empty() ? "(empty)" : c.OldValue.c_str());
+                                                   c.OldValue.empty() ? "-" : c.OldValue.c_str());
                                 ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "+ %s",
-                                                   c.NewValue.empty() ? "(empty)" : c.NewValue.c_str());
+                                                   c.NewValue.empty() ? "-" : c.NewValue.c_str());
                                 ImGui::Separator();
                             }
                             ImGui::PopTextWrapPos();

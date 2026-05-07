@@ -11,6 +11,7 @@
 #include <vector>
 
 class AppController;
+class Views;
 
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
@@ -31,6 +32,41 @@ std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::
 
 std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery);
 void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
+
+// Consolidated Shared Utilities
+bool ImGuiEffectiveKeyCtrl();
+bool ImGuiEffectiveKeyShift();
+std::string BuildCellKey(const std::string& issueId, const std::string& fieldId);
+std::string SanitizeClipboardCell(const std::string& value);
+void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
+
+// --- Extracted Grid Panels & Pipelines ---
+
+bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d);
+
+void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d,
+                            const std::vector<TicketGridColumn>& columns,
+                            const TrackerConfig& cfg,
+                            const CachedTicket* lastVisibleTicket);
+
+void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
+                           ViewDefinition*& activeViewForGrid,
+                           const std::vector<TicketGridColumn>& columns,
+                           const std::vector<CachedTicket>& tickets,
+                           bool readOnlyMode,
+                           Views& viewState,
+                           const TrackerConnectivityBannerForUi& trackerBanner);
+
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
+                           const std::vector<CachedTicket>& tickets,
+                           std::vector<PendingFieldEdit>& pendingEdits,
+                           bool readOnlyMode);
+
+void MaybeToastTrackerConnectivityBanner(AppController& app, UiDrawSession& d,
+                                         const TrackerConnectivityBannerForUi& banner);
+
+void MaybeToastGridBannerFromSession(UiDrawSession& d);
+
 
 
 

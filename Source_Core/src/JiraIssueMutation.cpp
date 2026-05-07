@@ -322,6 +322,68 @@ bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::strin
     return true;
 }
 
+bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKey,
+                            const std::string& timeSpent, const std::string& timeRemaining,
+                            const std::string& adjustEstimate, const std::string& workDescription,
+                            const std::string& startedDate, std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("worklog");
+    nlohmann::json auditData = nlohmann::json{
+        {"time_spent", timeSpent},
+        {"time_remaining", timeRemaining},
+        {"adjust_estimate", adjustEstimate},
+        {"work_description", workDescription},
+        {"started", startedDate}
+    };
+    BackendAuditTrail::AppendBegin("issue_add_worklog", "jira_client", issueKey, auditOp, auditData);
+
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        return false;
+    }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
+
+    nlohmann::json body = nlohmann::json::object();
+    body["timeSpent"] = timeSpent;
+    body["started"] = startedDate;
+    if (!workDescription.empty()) {
+        body["comment"] = AdfDocumentFromPlainText(workDescription);
+    }
+
+    std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/worklog";
+    if (!adjustEstimate.empty()) {
+        postUrl += "?adjustEstimate=" + UrlEncode(adjustEstimate);
+        if (adjustEstimate == "new" && !timeRemaining.empty()) {
+            postUrl += "&newEstimate=" + UrlEncode(timeRemaining);
+        } else if (adjustEstimate == "manual" && !timeRemaining.empty()) {
+            postUrl += "&reduceBy=" + UrlEncode(timeRemaining);
+        }
+    }
+
+    const std::string bodyStr = body.dump();
+    auto response = TrackerPostLogged("JiraClient", postUrl, headers, bodyStr);
+
+    if (response.status_code != 201 && response.status_code != 200) {
+        outError = "Add worklog failed: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — " + TruncateForLog(response.text, 1200);
+        }
+        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        return false;
+    }
+
+    BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, true, std::string(), auditData);
+    return true;
+}
+
 bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey,
                                              const std::string& p4User, const std::string& functionName,
                                              const std::string& filePath, const int lineNumber,
@@ -692,6 +754,29 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
             outPayload[fieldId] = std::move(value);
         }
     }
+
+    // Map timetracking estimates if present in FieldValues
+    std::string originalEstimate;
+    std::string remainingEstimate;
+    auto oIt = draft.FieldValues.find("timeoriginalestimate");
+    if (oIt != draft.FieldValues.end() && !oIt->second.empty()) {
+        originalEstimate = oIt->second;
+    }
+    auto rIt = draft.FieldValues.find("timeestimate");
+    if (rIt != draft.FieldValues.end() && !rIt->second.empty()) {
+        remainingEstimate = rIt->second;
+    }
+    if (!originalEstimate.empty() || !remainingEstimate.empty()) {
+        nlohmann::json timetrackingPayload = nlohmann::json::object();
+        if (!originalEstimate.empty()) {
+            timetrackingPayload["originalEstimate"] = originalEstimate;
+        }
+        if (!remainingEstimate.empty()) {
+            timetrackingPayload["remainingEstimate"] = remainingEstimate;
+        }
+        outPayload["timetracking"] = std::move(timetrackingPayload);
+    }
+
     return true;
 }
 
@@ -739,6 +824,29 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
             outPayload[fieldId] = std::move(value);
         }
     }
+
+    // Map timetracking estimates if present in FieldValues
+    std::string originalEstimate;
+    std::string remainingEstimate;
+    auto oIt = draft.FieldValues.find("timeoriginalestimate");
+    if (oIt != draft.FieldValues.end() && !oIt->second.empty()) {
+        originalEstimate = oIt->second;
+    }
+    auto rIt = draft.FieldValues.find("timeestimate");
+    if (rIt != draft.FieldValues.end() && !rIt->second.empty()) {
+        remainingEstimate = rIt->second;
+    }
+    if (!originalEstimate.empty() || !remainingEstimate.empty()) {
+        nlohmann::json timetrackingPayload = nlohmann::json::object();
+        if (!originalEstimate.empty()) {
+            timetrackingPayload["originalEstimate"] = originalEstimate;
+        }
+        if (!remainingEstimate.empty()) {
+            timetrackingPayload["remainingEstimate"] = remainingEstimate;
+        }
+        outPayload["timetracking"] = std::move(timetrackingPayload);
+    }
+
     return true;
 }
 

@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "IssueDraft.h"
 #include "SmatchetUiSession.h"
+#include "TrackerFieldValueUtils.h"
 
 #include "imgui.h"
 
@@ -76,9 +77,17 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 } // namespace
 
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
+    static bool s_suggestionsLoaded = false;
+    static bool s_templatesLoaded = false;
+    static bool s_quickTemplatesLoaded = false;
+    static bool s_blameTemplatesLoaded = false;
     if (!d.showPreferences) {
         d.preferencesBuffersLoaded = false;
         d.mcpPrefsSavedHintUntil = {};
+        s_suggestionsLoaded = false;
+        s_templatesLoaded = false;
+        s_quickTemplatesLoaded = false;
+        s_blameTemplatesLoaded = false;
         return;
     }
 
@@ -305,6 +314,462 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) to short absolute (e.g. May 07 '26).");
             }
 
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Fields Inputs")) {
+            if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
+                if (ImGui::BeginTabItem("Time Estimates")) {
+                    ImGui::TextUnformatted("Duration Suggestions");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Customize the default options displayed in the dropdown menus for Original Estimate, Remaining Estimate, and Time Spent fields.");
+                    ImGui::Spacing();
+                    
+                    static std::vector<std::string> s_suggestionsList;
+                    if (!s_suggestionsLoaded) {
+                        s_suggestionsList = TrackerFieldValueUtils::LoadDurationSuggestions();
+                        s_suggestionsLoaded = true;
+                    }
+                    
+                    // Render list of current suggestions in a premium boxed child frame
+                    ImGui::Text("Current Suggestions:");
+                    ImGui::BeginChild("SuggestionsListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    for (size_t i = 0; i < s_suggestionsList.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(s_suggestionsList[i].c_str());
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+                        if (i > 0) {
+                            if (ImGui::Button("▲")) {
+                                std::swap(s_suggestionsList[i], s_suggestionsList[i - 1]);
+                                TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▲");
+                            ImGui::EndDisabled();
+                        }
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+                        if (i < s_suggestionsList.size() - 1) {
+                            if (ImGui::Button("▼")) {
+                                std::swap(s_suggestionsList[i], s_suggestionsList[i + 1]);
+                                TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▼");
+                            ImGui::EndDisabled();
+                        }
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                        if (ImGui::Button("✖")) {
+                            s_suggestionsList.erase(s_suggestionsList.begin() + i);
+                            TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                            --i;
+                        }
+                        ImGui::PopStyleColor();
+                        
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    // Inline add controls
+                    static char s_prefNewSuggestionBuf[16] = "";
+                    ImGui::Text("Add Custom Suggestion");
+                    ImGui::SetNextItemWidth(140.0f);
+                    ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+                        std::string newVal = s_prefNewSuggestionBuf;
+                        if (!newVal.empty()) {
+                            if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
+                                s_suggestionsList.push_back(newVal);
+                                TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                            }
+                            s_prefNewSuggestionBuf[0] = '\0';
+                        }
+                    }
+                    ImGui::SetItemTooltip("Enter duration strings e.g. '15m', '2h', '3.5h', '1d', '2w'");
+                    
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Work Log Templates")) {
+                    ImGui::TextUnformatted("Work Log Description Templates");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown next to the Log Work description field.");
+                    ImGui::Spacing();
+                    
+                    static std::vector<std::string> s_templatesList;
+                    if (!s_templatesLoaded) {
+                        s_templatesList = TrackerFieldValueUtils::LoadCommentTemplates();
+                        s_templatesLoaded = true;
+                    }
+                    
+                    // Render list of current comment templates in a premium boxed child frame
+                    ImGui::Text("Current Comment Templates:");
+                    ImGui::BeginChild("TemplatesListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    for (size_t i = 0; i < s_templatesList.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(s_templatesList[i].c_str());
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+                        if (i > 0) {
+                            if (ImGui::Button("▲")) {
+                                std::swap(s_templatesList[i], s_templatesList[i - 1]);
+                                TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▲");
+                            ImGui::EndDisabled();
+                        }
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+                        if (i < s_templatesList.size() - 1) {
+                            if (ImGui::Button("▼")) {
+                                std::swap(s_templatesList[i], s_templatesList[i + 1]);
+                                TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▼");
+                            ImGui::EndDisabled();
+                        }
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                        if (ImGui::Button("✖")) {
+                            s_templatesList.erase(s_templatesList.begin() + i);
+                            TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                            --i;
+                        }
+                        ImGui::PopStyleColor();
+                        
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    // Inline add controls for templates
+                    static char s_prefNewTemplateBuf[128] = "";
+                    ImGui::Text("Add Comment Template");
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
+                    ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+                        std::string newVal = s_prefNewTemplateBuf;
+                        if (!newVal.empty()) {
+                            if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
+                                s_templatesList.push_back(newVal);
+                                TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                            }
+                            s_prefNewTemplateBuf[0] = '\0';
+                        }
+                    }
+                    ImGui::SetItemTooltip("Enter template text, e.g. 'Investigated and resolved issue #123.'");
+                    
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Quick Comments")) {
+                    ImGui::TextUnformatted("Grid Right-Click Quick Comments");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Customize templates displayed when right-clicking issue cells in the grid. Placeholders: {key} (or {issueKey})");
+                    ImGui::Spacing();
+                    
+                    static std::vector<CommentTemplate> s_quickTemplatesList;
+                    if (!s_quickTemplatesLoaded) {
+                        s_quickTemplatesList = d.cfg.QuickCommentTemplates;
+                        s_quickTemplatesLoaded = true;
+                    }
+                    static int s_selectedQuickIdx = -1;
+                    if (s_selectedQuickIdx >= static_cast<int>(s_quickTemplatesList.size())) {
+                        s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
+                    }
+                    
+                    // Render list of current comment templates on top
+                    ImGui::BeginChild("QuickListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    for (size_t i = 0; i < s_quickTemplatesList.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::AlignTextToFramePadding();
+                        std::string displayName = s_quickTemplatesList[i].Title + " (" + s_quickTemplatesList[i].Id + ")";
+                        if (ImGui::Selectable(displayName.c_str(), s_selectedQuickIdx == static_cast<int>(i))) {
+                            s_selectedQuickIdx = static_cast<int>(i);
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+                        if (i > 0) {
+                            if (ImGui::Button("▲")) {
+                                std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i - 1]);
+                                if (s_selectedQuickIdx == static_cast<int>(i)) s_selectedQuickIdx = static_cast<int>(i - 1);
+                                else if (s_selectedQuickIdx == static_cast<int>(i - 1)) s_selectedQuickIdx = static_cast<int>(i);
+                                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                                ConfigManager::Save(d.cfg);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▲");
+                            ImGui::EndDisabled();
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+                        if (i < s_quickTemplatesList.size() - 1) {
+                            if (ImGui::Button("▼")) {
+                                std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i + 1]);
+                                if (s_selectedQuickIdx == static_cast<int>(i)) s_selectedQuickIdx = static_cast<int>(i + 1);
+                                else if (s_selectedQuickIdx == static_cast<int>(i + 1)) s_selectedQuickIdx = static_cast<int>(i);
+                                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                                ConfigManager::Save(d.cfg);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▼");
+                            ImGui::EndDisabled();
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                        if (ImGui::Button("✖")) {
+                            s_quickTemplatesList.erase(s_quickTemplatesList.begin() + i);
+                            if (s_selectedQuickIdx == static_cast<int>(i)) {
+                                s_selectedQuickIdx = -1;
+                            } else if (s_selectedQuickIdx > static_cast<int>(i)) {
+                                s_selectedQuickIdx--;
+                            }
+                            d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                            --i;
+                        }
+                        ImGui::PopStyleColor();
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    
+                    ImGui::Spacing();
+                    
+                    // Detail section / Add section
+                    if (s_selectedQuickIdx >= 0 && s_selectedQuickIdx < static_cast<int>(s_quickTemplatesList.size())) {
+                        auto& t = s_quickTemplatesList[s_selectedQuickIdx];
+                        ImGui::TextDisabled("Edit Selected Template details:");
+                        
+                        static char titleBuf[64] = "";
+                        static char idBuf[64] = "";
+                        static char textBuf[512] = "";
+                        
+                        // Copy to buffer if different to avoid typing overwrites
+                        static int lastSelectedIdx = -2;
+                        if (lastSelectedIdx != s_selectedQuickIdx) {
+                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1); titleBuf[sizeof(titleBuf) - 1] = '\0';
+                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1); idBuf[sizeof(idBuf) - 1] = '\0';
+                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1); textBuf[sizeof(textBuf) - 1] = '\0';
+                            lastSelectedIdx = s_selectedQuickIdx;
+                        }
+                        
+                        ImGui::TextUnformatted("Title:");
+                        ImGui::SameLine(60.0f);
+                        ImGui::SetNextItemWidth(200.0f);
+                        if (ImGui::InputText("##EditQuickTitle", titleBuf, sizeof(titleBuf))) {
+                            t.Title = titleBuf;
+                            d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                        
+                        ImGui::SameLine(280.0f);
+                        ImGui::TextUnformatted("ID:");
+                        ImGui::SameLine(310.0f);
+                        ImGui::SetNextItemWidth(150.0f);
+                        if (ImGui::InputText("##EditQuickId", idBuf, sizeof(idBuf))) {
+                            t.Id = idBuf;
+                            d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                        
+                        ImGui::TextUnformatted("Body:");
+                        if (ImGui::InputTextMultiline("##EditQuickText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
+                            t.Text = textBuf;
+                            d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    } else {
+                        ImGui::TextDisabled("Select a template above to view or edit its details.");
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
+                        CommentTemplate t;
+                        t.Title = "New Template";
+                        t.Id = "new_template";
+                        t.Text = "Template text for {key}";
+                        s_quickTemplatesList.push_back(t);
+                        s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
+                        d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+                        ConfigManager::Save(d.cfg);
+                    }
+                    
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Blame Comments")) {
+                    ImGui::TextUnformatted("Blame Analysis Quick Comments");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Customize templates displayed when clicking on the Blame Analysis rows. Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
+                    ImGui::Spacing();
+                    
+                    static std::vector<CommentTemplate> s_blameTemplatesList;
+                    if (!s_blameTemplatesLoaded) {
+                        s_blameTemplatesList = d.cfg.BlameCommentTemplates;
+                        s_blameTemplatesLoaded = true;
+                    }
+                    static int s_selectedBlameIdx = -1;
+                    if (s_selectedBlameIdx >= static_cast<int>(s_blameTemplatesList.size())) {
+                        s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
+                    }
+                    
+                    // Render list of current comment templates on top
+                    ImGui::BeginChild("BlameListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    for (size_t i = 0; i < s_blameTemplatesList.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::AlignTextToFramePadding();
+                        std::string displayName = s_blameTemplatesList[i].Title + " (" + s_blameTemplatesList[i].Id + ")";
+                        if (ImGui::Selectable(displayName.c_str(), s_selectedBlameIdx == static_cast<int>(i))) {
+                            s_selectedBlameIdx = static_cast<int>(i);
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+                        if (i > 0) {
+                            if (ImGui::Button("▲")) {
+                                std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i - 1]);
+                                if (s_selectedBlameIdx == static_cast<int>(i)) s_selectedBlameIdx = static_cast<int>(i - 1);
+                                else if (s_selectedBlameIdx == static_cast<int>(i - 1)) s_selectedBlameIdx = static_cast<int>(i);
+                                d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                                ConfigManager::Save(d.cfg);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▲");
+                            ImGui::EndDisabled();
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+                        if (i < s_blameTemplatesList.size() - 1) {
+                            if (ImGui::Button("▼")) {
+                                std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i + 1]);
+                                if (s_selectedBlameIdx == static_cast<int>(i)) s_selectedBlameIdx = static_cast<int>(i + 1);
+                                else if (s_selectedBlameIdx == static_cast<int>(i + 1)) s_selectedBlameIdx = static_cast<int>(i);
+                                d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                                ConfigManager::Save(d.cfg);
+                            }
+                        } else {
+                            ImGui::BeginDisabled();
+                            ImGui::Button("▼");
+                            ImGui::EndDisabled();
+                        }
+                        
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                        if (ImGui::Button("✖")) {
+                            s_blameTemplatesList.erase(s_blameTemplatesList.begin() + i);
+                            if (s_selectedBlameIdx == static_cast<int>(i)) {
+                                s_selectedBlameIdx = -1;
+                            } else if (s_selectedBlameIdx > static_cast<int>(i)) {
+                                s_selectedBlameIdx--;
+                            }
+                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                            --i;
+                        }
+                        ImGui::PopStyleColor();
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    
+                    ImGui::Spacing();
+                    
+                    // Detail section / Add section
+                    if (s_selectedBlameIdx >= 0 && s_selectedBlameIdx < static_cast<int>(s_blameTemplatesList.size())) {
+                        auto& t = s_blameTemplatesList[s_selectedBlameIdx];
+                        ImGui::TextDisabled("Edit Selected Template details:");
+                        
+                        static char titleBuf[64] = "";
+                        static char idBuf[64] = "";
+                        static char textBuf[512] = "";
+                        
+                        // Copy to buffer if different to avoid typing overwrites
+                        static int lastSelectedIdx = -2;
+                        if (lastSelectedIdx != s_selectedBlameIdx) {
+                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1); titleBuf[sizeof(titleBuf) - 1] = '\0';
+                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1); idBuf[sizeof(idBuf) - 1] = '\0';
+                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1); textBuf[sizeof(textBuf) - 1] = '\0';
+                            lastSelectedIdx = s_selectedBlameIdx;
+                        }
+                        
+                        ImGui::TextUnformatted("Title:");
+                        ImGui::SameLine(60.0f);
+                        ImGui::SetNextItemWidth(200.0f);
+                        if (ImGui::InputText("##EditBlameTitle", titleBuf, sizeof(titleBuf))) {
+                            t.Title = titleBuf;
+                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                        
+                        ImGui::SameLine(280.0f);
+                        ImGui::TextUnformatted("ID:");
+                        ImGui::SameLine(310.0f);
+                        ImGui::SetNextItemWidth(150.0f);
+                        if (ImGui::InputText("##EditBlameId", idBuf, sizeof(idBuf))) {
+                            t.Id = idBuf;
+                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                        
+                        ImGui::TextUnformatted("Body:");
+                        if (ImGui::InputTextMultiline("##EditBlameText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
+                            t.Text = textBuf;
+                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    } else {
+                        ImGui::TextDisabled("Select a template above to view or edit its details.");
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
+                        CommentTemplate t;
+                        t.Title = "New Template";
+                        t.Id = "new_template";
+                        t.Text = "Template text for {key}";
+                        s_blameTemplatesList.push_back(t);
+                        s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
+                        d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                        ConfigManager::Save(d.cfg);
+                    }
+                    
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Blame Analysis")) {

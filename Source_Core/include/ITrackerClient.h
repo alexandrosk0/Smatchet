@@ -154,6 +154,14 @@ class ITrackerClient {
         return false;
     }
 
+    virtual bool AddWorklog(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                            const std::string& /*timeSpent*/, const std::string& /*timeRemaining*/,
+                            const std::string& /*adjustEstimate*/, const std::string& /*workDescription*/,
+                            const std::string& /*startedDate*/, std::string& outError) {
+        outError = "AddWorklog is not supported by this backend.";
+        return false;
+    }
+
     virtual bool AddIssueCommentBlameContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*p4User*/,
                                              const std::string& /*functionName*/, const std::string& /*filePath*/, int /*lineNumber*/,
                                              const std::string& /*changelist*/, const std::string& /*date*/, bool /*approximated*/,

@@ -3,9 +3,22 @@
 #include "SmatchetUiSession.h"
 
 #include "AppController.h"
+#include "ConfigManager.h"
+#include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 
 #include <algorithm>
 #include <sstream>
@@ -107,7 +120,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         }
         ImGui::TextUnformatted("Value:");
         if (rawValue.empty()) {
-            ImGui::TextDisabled("(empty)");
+            ImGui::TextDisabled("-");
         } else {
             ImGui::BeginChild("cell_raw_cached_body", ImVec2(0, 140.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
@@ -379,6 +392,51 @@ void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
         d.newIssueDiscardAsyncCreateResult = true;
     }
 }
+
+#if defined(_WIN32)
+bool ImGuiEffectiveKeyCtrl() {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool pushed = SmatchetInput_GetPluginModifiersPushedCtrl();
+    const bool async =
+        ((::GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0);
+    return io.KeyCtrl || pushed || async;
+}
+bool ImGuiEffectiveKeyShift() {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool pushed = SmatchetInput_GetPluginModifiersPushedShift();
+    const bool async =
+        ((::GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0);
+    return io.KeyShift || pushed || async;
+}
+#else
+bool ImGuiEffectiveKeyCtrl() { return ImGui::GetIO().KeyCtrl; }
+bool ImGuiEffectiveKeyShift() { return ImGui::GetIO().KeyShift; }
+#endif
+
+std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) {
+    return issueId + "|" + fieldId;
+}
+
+std::string SanitizeClipboardCell(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char ch : value) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            out.push_back(' ');
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
+    ConfigManager::Save(d.cfg);
+    if (pushHistory)
+        d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
+    app.SyncWithBackend(&d.cfg, &store);
+}
+
 
 
 

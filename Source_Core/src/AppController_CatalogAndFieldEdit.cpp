@@ -1128,6 +1128,26 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
     return ok;
 }
 
+bool AppController::SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
+                                   const std::string& timeRemaining, const std::string& adjustEstimate,
+                                   const std::string& workDescription, const std::string& startedDate,
+                                   std::string& outError) {
+    outError.clear();
+    if (!Backend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    const bool ok = Backend->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate, workDescription, startedDate, outError);
+    if (!ok) {
+        LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outError.c_str());
+    } else {
+        requestDeferredLiveTrackerBackendSuccessNotify_();
+        PrefetchIssueTicketsForKeys({issueId}, true);
+    }
+    return ok;
+}
+
 bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
                                                     const std::string& functionName, const std::string& filePath,
                                                     const int lineNumber, const std::string& changelist,
