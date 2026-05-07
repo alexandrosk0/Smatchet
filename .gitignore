@@ -50,9 +50,5 @@ smatchet_views.json
 smatchet_backend_audit.jsonl
 smatchet_field_catalog_cache.json
 
-.vexp/mcp.port
-.vexp/manifest.json
-.vexp/healthy
-.vexp/.gitattributes
-# Keep .cursor/rules committable for shared agent guidance (ignore only local MCP secrets).
-.cursor/mcp.json
+.vexp/
+.cursor/
