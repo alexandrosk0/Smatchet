@@ -1,4 +1,5 @@
 #include "TrackerGridFieldDisplay.h"
+#include "UiPerfMonitor.h"
 #include "AppController.h"
 #include "ConfigManager.h"
 
@@ -508,6 +509,36 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
         model.fraction = 0.0f;
         return model;
     }
+
+    // High-performance zero-allocation fast-path scanner for typical progress JSON: {"progress":P,"total":T}
+    const size_t progPos = trimmed.find("\"progress\"");
+    const size_t totPos = trimmed.find("\"total\"");
+    if (progPos != std::string::npos && totPos != std::string::npos) {
+        const size_t col1 = trimmed.find(':', progPos);
+        const size_t col2 = trimmed.find(':', totPos);
+        if (col1 != std::string::npos && col2 != std::string::npos) {
+            auto parse_num = [&](size_t colonIdx) -> int {
+                size_t i = colonIdx + 1;
+                while (i < trimmed.size() && (std::isspace(static_cast<unsigned char>(trimmed[i])) || trimmed[i] == '"')) {
+                    i++;
+                }
+                int val = 0;
+                while (i < trimmed.size() && std::isdigit(static_cast<unsigned char>(trimmed[i]))) {
+                    val = val * 10 + (trimmed[i] - '0');
+                    i++;
+                }
+                return val;
+            };
+            const int p = parse_num(col1);
+            const int t = parse_num(col2);
+            if (t > 0) {
+                model.rendered = true;
+                model.fraction = static_cast<float>(p) / static_cast<float>(t);
+                return model;
+            }
+        }
+    }
+
     nlohmann::json j;
     if (!TryParseJsonMaybeDoubleEncoded(trimmed, j) || !j.is_object()) {
         return model;
@@ -553,6 +584,21 @@ bool TrackerGridFieldDisplay::IsProgressDisplayField(const TrackerField* field) 
 }
 
 bool TrackerGridFieldDisplay::TryRenderProgressJsonField(const std::string& currentValue, float availWidth) {
+    SMATCHET_UI_PERF_SCOPE("TryRenderProgressJsonField");
+
+    // Zero-overhead shortcut for empty cells (no hashing, no map lookups)
+    bool isEmpty = true;
+    for (char c : currentValue) {
+        if (!std::isspace(static_cast<unsigned char>(c))) {
+            isEmpty = false;
+            break;
+        }
+    }
+    if (isEmpty) {
+        ImGui::ProgressBar(0.0f, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
+        return true;
+    }
+
     static thread_local std::unordered_map<std::string, ProgressRenderModel> cache;
     const ProgressRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildProgressRenderModel(currentValue); });
@@ -579,6 +625,7 @@ bool TrackerGridFieldDisplay::IsIssueRestrictionField(const TrackerField* field)
 
 bool TrackerGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth,
                                                           bool tooltipsEnabled) {
+    SMATCHET_UI_PERF_SCOPE("TryRenderIssueRestrictionField");
     static thread_local std::unordered_map<std::string, IssueRestrictionRenderModel> cache;
     const IssueRestrictionRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildIssueRestrictionRenderModel(currentValue); });
@@ -591,6 +638,7 @@ bool TrackerGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& 
 
 void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                                   bool tooltipsEnabled) {
+    SMATCHET_UI_PERF_SCOPE("RenderAttachmentsField");
     static thread_local std::unordered_map<std::string, AttachmentRenderModel> cache;
     const AttachmentRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildAttachmentRenderModel(currentValue); });
@@ -619,6 +667,7 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
 
 void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue,
                                                float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
+    SMATCHET_UI_PERF_SCOPE("RenderWatchersField");
     static thread_local std::unordered_map<std::string, WatchersRenderModel> cache;
     const WatchersRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWatchersRenderModel(currentValue); });
@@ -668,6 +717,7 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
 
 void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
                                             float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
+    SMATCHET_UI_PERF_SCOPE("RenderVotesField");
     static thread_local std::unordered_map<std::string, VotesRenderModel> cache;
     const VotesRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildVotesRenderModel(currentValue); });
@@ -720,6 +770,7 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
 }
 
 void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled) {
+    SMATCHET_UI_PERF_SCOPE("RenderWorklogField");
     static thread_local std::unordered_map<std::string, WorklogRenderModel> cache;
     const WorklogRenderModel& model =
         GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWorklogRenderModel(currentValue); });

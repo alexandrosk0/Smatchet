@@ -1,9 +1,17 @@
 #include "AppController.h"
 
+#include "ConfigManager.h"
+#include "FieldEditAuditSource.h"
+#include "IssueTableSerializer.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
+#include <cmath>
 #include <exception>
+#include <future>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <tuple>
@@ -21,6 +29,13 @@
 #include "TrackerFieldValueUtils.h"
 
 namespace {
+
+std::string TruncateForTrace(const std::string& s, std::size_t maxLen = 480) {
+    if (s.size() <= maxLen) {
+        return s;
+    }
+    return s.substr(0, maxLen) + "...";
+}
 
 bool LuaTruthy(const sol::object& o) {
     if (!o.valid()) {
@@ -142,6 +157,132 @@ std::string AsciiLowerCopy(std::string s) {
     return s;
 }
 
+/** Flatten Lua values the same way as JSON import cells (strings, numbers, bools, simple arrays). */
+static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t maxDump = 4096) {
+    if (!v.valid() || v.get_type() == sol::type::lua_nil) {
+        return std::string();
+    }
+    if (v.is<bool>()) {
+        return v.as<bool>() ? std::string("true") : std::string("false");
+    }
+    if (v.is<double>()) {
+        const double d = v.as<double>();
+        if (d == std::floor(d) && d >= static_cast<double>(std::numeric_limits<std::int64_t>::min()) &&
+            d <= static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+            return std::to_string(static_cast<std::int64_t>(d));
+        }
+        return std::to_string(d);
+    }
+    if (v.is<std::string>()) {
+        return v.as<std::string>();
+    }
+    if (v.is<sol::table>()) {
+        sol::table tbl = v.as<sol::table>();
+        std::size_t maxIdx = 0;
+        bool hasNonIntKey = false;
+        tbl.for_each([&](sol::object k, sol::object /*val*/) {
+            if (hasNonIntKey) {
+                return;
+            }
+            std::size_t idx = 0;
+            if (k.is<std::size_t>()) {
+                idx = k.as<std::size_t>();
+            } else if (k.is<int>()) {
+                const int iv = k.as<int>();
+                if (iv < 1) {
+                    hasNonIntKey = true;
+                    return;
+                }
+                idx = static_cast<std::size_t>(iv);
+            } else {
+                hasNonIntKey = true;
+                return;
+            }
+            if (idx > maxIdx) {
+                maxIdx = idx;
+            }
+        });
+        if (!hasNonIntKey && maxIdx > 0 && maxIdx <= 100000) {
+            bool dense = true;
+            for (std::size_t i = 1; i <= maxIdx; ++i) {
+                const sol::object el = tbl[i];
+                if (!el.valid() || el.get_type() == sol::type::lua_nil) {
+                    dense = false;
+                    break;
+                }
+            }
+            if (dense) {
+                std::string joined;
+                for (std::size_t i = 1; i <= maxIdx; ++i) {
+                    if (!joined.empty()) {
+                        joined.push_back(',');
+                    }
+                    joined += LuaObjectToIssueFieldString(tbl[i], maxDump / (maxIdx + 1));
+                }
+                return joined;
+            }
+        }
+        try {
+            std::string dumped = LuaToJson(v).dump();
+            if (dumped.size() > maxDump) {
+                return dumped.substr(0, maxDump) + "...";
+            }
+            return dumped;
+        } catch (...) {
+            return std::string("?");
+        }
+    }
+    return std::string();
+}
+
+static void LuaApplyIssueCreateKv(IssueDraft& draft, const std::string& rawKey, const std::string& val,
+                                  const std::vector<TrackerField>& catalog) {
+    const std::string low = AsciiLowerCopy(rawKey);
+    if (low == "issuetypeid" || low == "issue_type_id") {
+        draft.IssueTypeId = val;
+        return;
+    }
+    if (low == "issuetypename" || low == "issue_type_name") {
+        draft.IssueTypeName = val;
+        return;
+    }
+    if (low == "projectkey" || low == "project_key") {
+        IssueTableSerializer::ApplyKeyValueToDraft(draft, "project", val);
+        return;
+    }
+    if (low == "parentkey" || low == "parent_key") {
+        IssueTableSerializer::ApplyKeyValueToDraft(draft, "parent", val);
+        return;
+    }
+    if (low == "existingissuekey" || low == "existing_issue_key") {
+        draft.ExistingIssueKey = val;
+        return;
+    }
+    const std::string resolved = IssueTableSerializer::ResolveColumnKey(rawKey, catalog);
+    if (resolved.empty()) {
+        return;
+    }
+    IssueTableSerializer::ApplyKeyValueToDraft(draft, resolved, val);
+}
+
+static void LuaMergeIssueCreateSpec(IssueDraft& draft, sol::table spec, const std::vector<TrackerField>& catalog) {
+    spec.for_each([&](sol::object kObj, sol::object vObj) {
+        if (!kObj.is<std::string>()) {
+            return;
+        }
+        const std::string rawKey = kObj.as<std::string>();
+        const std::string low = AsciiLowerCopy(rawKey);
+        if (low == "offline" || low == "queue_offline") {
+            return;
+        }
+        if (low == "fields" && vObj.is<sol::table>()) {
+            LuaMergeIssueCreateSpec(draft, vObj.as<sol::table>(), catalog);
+            return;
+        }
+        LuaApplyIssueCreateKv(draft, rawKey, LuaObjectToIssueFieldString(vObj), catalog);
+    });
+}
+
 sol::environment CreateSandboxEnvironment(sol::state& lua) {
     sol::environment sandbox(lua, sol::create, lua.globals());
     sandbox["dofile"] = sol::lua_nil;
@@ -170,6 +311,8 @@ std::tuple<bool, std::string> TicketSetFieldGlue(CachedTicket& t, const std::str
     if (gApp == nullptr) {
         return {false, "AppController not available for Ticket:set_field"};
     }
+    LOG_TRACE("Lua Ticket:set_field audit_source=%s issue=%s field=%s val_len=%zu", FieldEditAuditSource::Current(),
+              t.id.c_str(), fieldId.c_str(), val.size());
     const TrackerField* fieldMeta = gApp->FindFieldById(fieldId);
     if (!fieldMeta) {
         return {false, "Field not found in tracker catalog: " + fieldId};
@@ -187,6 +330,8 @@ std::tuple<bool, std::string> TicketTransitionGlue(CachedTicket& t, const std::s
     if (gApp == nullptr) {
         return {false, "AppController not available for Ticket:transition"};
     }
+    LOG_TRACE("Lua Ticket:transition audit_source=%s issue=%s status=%s", FieldEditAuditSource::Current(), t.id.c_str(),
+              statusName.c_str());
     const TrackerField* statusField = gApp->FindFieldById("status");
     if (!statusField) {
         return {false, "Tracker 'status' field meta not found"};
@@ -280,12 +425,12 @@ void LuaUiRegisterWindowGlue(const std::string& name, sol::function drawFn) {
     gApp->LuaUiRegisterWindowBind(name, std::move(drawFn));
 }
 
-void LuaUiRegisterTicketActionGlue(const std::string& name, sol::function cb) {
-    gApp->LuaUiRegisterTicketActionBind(name, std::move(cb));
+void LuaUiRegisterTicketActionGlue(const std::string& name, const std::string& cb) {
+    gApp->LuaUiRegisterTicketActionBind(name, cb);
 }
 
-void LuaUiRegisterGlobalActionGlue(const std::string& name, sol::function cb) {
-    gApp->LuaUiRegisterGlobalActionBind(name, std::move(cb));
+void LuaUiRegisterGlobalActionGlue(const std::string& name, const std::string& cb) {
+    gApp->LuaUiRegisterGlobalActionBind(name, cb);
 }
 
 void LuaAiAddContextGlue(const std::string& text) {
@@ -304,44 +449,110 @@ void LuaMcpRegisterToolGlue(sol::table toolDef, sol::function callback) {
     gApp->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
 }
 
+std::tuple<sol::object, std::string> LuaCreateIssueGlue(sol::table spec) {
+    if (gApp == nullptr) {
+        return {sol::object(), std::string("AppController not available for create_issue")};
+    }
+    return gApp->LuaCreateIssueBind(std::move(spec));
+}
+
+std::string LuaTrackerGetTypeGlue() {
+    return TrimCopy(ConfigManager::Load().TrackerType);
+}
+
+std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::table fields) {
+    if (gApp == nullptr) {
+        return {std::string(), std::string("AppController not available for tracker.create_issue")};
+    }
+    std::tuple<sol::object, std::string> bindRet = gApp->LuaCreateIssueBind(std::move(fields));
+    const std::string& preflightErr = std::get<1>(bindRet);
+    const sol::object& resObj = std::get<0>(bindRet);
+    if (!preflightErr.empty()) {
+        return {std::string(), preflightErr};
+    }
+    if (!resObj.valid() || resObj.get_type() == sol::type::lua_nil) {
+        return {std::string(), std::string("create_issue returned no result")};
+    }
+    if (!resObj.is<sol::table>()) {
+        return {std::string(), std::string("create_issue returned unexpected type")};
+    }
+    sol::table r = resObj.as<sol::table>();
+    const sol::object oko = r["ok"];
+    const bool ok = oko.valid() && oko.is<bool>() && oko.as<bool>();
+    std::string key;
+    const sol::object keyo = r["issue_key"];
+    if (keyo.valid() && keyo.is<std::string>()) {
+        key = keyo.as<std::string>();
+    }
+    std::string err;
+    const sol::object erro = r["error"];
+    if (erro.valid() && erro.is<std::string>()) {
+        err = erro.as<std::string>();
+    }
+    if (ok && !key.empty()) {
+        return {std::move(key), std::string()};
+    }
+    if (!err.empty()) {
+        return {std::string(), std::move(err)};
+    }
+    return {std::string(), std::string("create_issue failed (no issue_key)")};
+}
+
 } // namespace smatchet_lua_init_detail
 
 void AppController::InitLua() {
-    lua.open_libraries(sol::lib::base);
-    lua.open_libraries(sol::lib::string);
-    lua.open_libraries(sol::lib::table);
+    InitLuaCore(lua);
+    InitLuaUi(lua);
+}
+
+void AppController::InitLuaCore(sol::state& state) {
+    state.open_libraries(sol::lib::base);
+    state.open_libraries(sol::lib::string);
+    state.open_libraries(sol::lib::table);
 
     smatchet_lua_init_detail::gApp = this;
 
-    lua.new_usertype<CachedTicket>("Ticket",
+    state.new_usertype<CachedTicket>("Ticket",
         "id", &CachedTicket::id,
         "get_field", &CachedTicket::GetFieldValue,
         "set_field", &smatchet_lua_init_detail::TicketSetFieldGlue,
         "transition", &smatchet_lua_init_detail::TicketTransitionGlue);
 
-    sol::table smatchet = lua.create_table();
+    sol::table smatchet = state.create_table();
     smatchet.set_function("get_ticket", &smatchet_lua_init_detail::LuaGetTicketGlue);
     smatchet.set_function("get_active_tickets", &smatchet_lua_init_detail::LuaGetActiveTicketsGlue);
-    lua["smatchet"] = smatchet;
+    smatchet.set_function("create_issue", &smatchet_lua_init_detail::LuaCreateIssueGlue);
+    state["smatchet"] = smatchet;
 
-    lua.set_function("log_info", &smatchet_lua_init_detail::LuaLogInfoGlue);
+    sol::table tracker = state.create_table();
+    tracker.set_function("get_type", &smatchet_lua_init_detail::LuaTrackerGetTypeGlue);
+    tracker.set_function("create_issue", &smatchet_lua_init_detail::LuaTrackerCreateIssueGlue);
+    state["tracker"] = tracker;
 
-    lua.set_function("decode_json", &smatchet_lua_init_detail::LuaDecodeJsonGlue);
+    state.set_function("log_info", &smatchet_lua_init_detail::LuaLogInfoGlue);
+    state.set_function("decode_json", &smatchet_lua_init_detail::LuaDecodeJsonGlue);
 
-    lua.set_function("register_field_display", &smatchet_lua_init_detail::LuaRegisterFieldDisplayGlue);
+    sol::table ai = state.create_table();
+    ai.set_function("add_context", &smatchet_lua_init_detail::LuaAiAddContextGlue);
+    ai.set_function("prompt", &smatchet_lua_init_detail::LuaAiPromptGlue);
+    ai.set_function("clear_context", &smatchet_lua_init_detail::LuaAiClearContextGlue);
+    state["ai"] = ai;
 
-    lua.set_function("unregister_field_display", &smatchet_lua_init_detail::LuaUnregisterFieldDisplayGlue);
+    sol::table mcp = state.create_table();
+    mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
+    state["mcp"] = mcp;
+}
 
-    lua.set_function("register_field_display_by_name", &smatchet_lua_init_detail::LuaRegisterFieldDisplayByNameGlue);
-
-    lua.set_function("unregister_field_display_by_name",
+void AppController::InitLuaUi(sol::state& state) {
+    state.set_function("register_field_display", &smatchet_lua_init_detail::LuaRegisterFieldDisplayGlue);
+    state.set_function("unregister_field_display", &smatchet_lua_init_detail::LuaUnregisterFieldDisplayGlue);
+    state.set_function("register_field_display_by_name", &smatchet_lua_init_detail::LuaRegisterFieldDisplayByNameGlue);
+    state.set_function("unregister_field_display_by_name",
                      &smatchet_lua_init_detail::LuaUnregisterFieldDisplayByNameGlue);
+    state.set_function("register_field_icon_map", &smatchet_lua_init_detail::LuaRegisterFieldIconMapGlue);
+    state.set_function("unregister_field_icon_map", &smatchet_lua_init_detail::LuaUnregisterFieldIconMapGlue);
 
-    lua.set_function("register_field_icon_map", &smatchet_lua_init_detail::LuaRegisterFieldIconMapGlue);
-
-    lua.set_function("unregister_field_icon_map", &smatchet_lua_init_detail::LuaUnregisterFieldIconMapGlue);
-
-    sol::table imgui = lua.create_table();
+    sol::table imgui = state.create_table();
     imgui.set_function("progress_bar", &smatchet_lua_init_detail::ImGuiProgressBarGlue);
     imgui.set_function("text", &smatchet_lua_init_detail::LuaImGuiTextGlue);
     imgui.set_function("text_unformatted", &smatchet_lua_init_detail::LuaImGuiTextUnformattedGlue);
@@ -350,23 +561,13 @@ void AppController::InitLua() {
     imgui.set_function("same_line", &smatchet_lua_init_detail::ImGuiSameLineGlue);
     imgui.set_function("separator", &smatchet_lua_init_detail::ImGuiSeparatorGlue);
     imgui.set_function("image", &smatchet_lua_init_detail::LuaImGuiImageGlue);
-    lua["imgui"] = imgui;
+    state["imgui"] = imgui;
 
-    sol::table ui = lua.create_table();
+    sol::table ui = state.create_table();
     ui.set_function("register_window", &smatchet_lua_init_detail::LuaUiRegisterWindowGlue);
     ui.set_function("register_ticket_action", &smatchet_lua_init_detail::LuaUiRegisterTicketActionGlue);
     ui.set_function("register_global_action", &smatchet_lua_init_detail::LuaUiRegisterGlobalActionGlue);
-    lua["ui"] = ui;
-
-    sol::table ai = lua.create_table();
-    ai.set_function("add_context", &smatchet_lua_init_detail::LuaAiAddContextGlue);
-    ai.set_function("prompt", &smatchet_lua_init_detail::LuaAiPromptGlue);
-    ai.set_function("clear_context", &smatchet_lua_init_detail::LuaAiClearContextGlue);
-    lua["ai"] = ai;
-
-    sol::table mcp = lua.create_table();
-    mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
-    lua["mcp"] = mcp;
+    state["ui"] = ui;
 }
 
 void AppController::LuaLogInfoBind(std::string msg) {
@@ -405,6 +606,78 @@ std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(const std:
     } catch (const std::exception& e) {
         return {sol::make_object(lua, sol::nil), std::string(e.what())};
     }
+}
+
+std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::table spec) {
+    const TrackerConfig cfg = ConfigManager::Load();
+    // Same base as the grid new-issue row: config fallbacks plus last-row project / issue type when present.
+    IssueDraft draft = BuildDraftFromLastTicket(cfg);
+
+    sol::object offlineObj = spec["offline"];
+    if (!offlineObj.valid() || offlineObj.get_type() == sol::type::lua_nil) {
+        offlineObj = spec["queue_offline"];
+    }
+    const bool offline = LuaTruthy(offlineObj);
+
+    LuaMergeIssueCreateSpec(draft, std::move(spec), AvailableFields);
+
+    sol::table result = lua.create_table();
+
+    if (offline) {
+        if (!Cache) {
+            return {sol::make_object(lua, sol::nil),
+                    std::string("Local cache not initialized (cannot queue offline create)")};
+        }
+        const std::int64_t qid = QueueCreateOffline(draft);
+        if (qid <= 0) {
+            result["ok"] = false;
+            result["error"] = std::string("Failed to queue offline create (see logs)");
+            return {result, std::string()};
+        }
+        result["ok"] = true;
+        result["offline_queued_id"] = static_cast<double>(qid);
+        result["issue_key"] = std::string("offline:") + std::to_string(qid);
+        result["error"] = std::string();
+        return {result, std::string()};
+    }
+
+    std::future<IssueCreateResult> fut = CreateIssueAsync(draft);
+    IssueCreateResult r;
+    try {
+        r = fut.get();
+    } catch (const std::exception& e) {
+        return {sol::make_object(lua, sol::nil),
+                std::string("create_issue failed while waiting for result: ") + e.what()};
+    } catch (...) {
+        return {sol::make_object(lua, sol::nil),
+                std::string("create_issue failed while waiting for result: unknown exception")};
+    }
+
+    result["ok"] = r.Ok;
+    if (!r.IssueKey.empty()) {
+        result["issue_key"] = r.IssueKey;
+    }
+    result["error"] = r.Error;
+    if (!r.MissingFieldIds.empty()) {
+        sol::table miss = lua.create_table();
+        std::size_t i = 1;
+        for (const auto& id : r.MissingFieldIds) {
+            miss[i++] = id;
+        }
+        result["missing_field_ids"] = miss;
+    }
+    if (!r.AttachmentFailures.empty()) {
+        sol::table af = lua.create_table();
+        std::size_t i = 1;
+        for (const auto& p : r.AttachmentFailures) {
+            sol::table row = lua.create_table();
+            row["path"] = p.first;
+            row["reason"] = p.second;
+            af[i++] = row;
+        }
+        result["attachment_failures"] = af;
+    }
+    return {result, std::string()};
 }
 
 void AppController::LuaRegisterFieldDisplayBind(const std::string& fieldId, sol::function fn) {
@@ -480,25 +753,25 @@ void AppController::LuaUiRegisterWindowBind(const std::string& name, sol::functi
     }
 }
 
-void AppController::LuaUiRegisterTicketActionBind(const std::string& name, sol::function callback) {
+void AppController::LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName) {
     luaTicketActions_.erase(std::remove_if(luaTicketActions_.begin(), luaTicketActions_.end(),
-                                         [&](const std::pair<std::string, sol::protected_function>& p) {
+                                         [&](const std::pair<std::string, std::string>& p) {
                                              return p.first == name;
                                          }),
                           luaTicketActions_.end());
-    if (callback.valid()) {
-        luaTicketActions_.push_back({name, sol::protected_function(std::move(callback))});
+    if (!callbackFuncName.empty()) {
+        luaTicketActions_.push_back({name, callbackFuncName});
     }
 }
 
-void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, sol::function callback) {
+void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName) {
     luaGlobalActions_.erase(std::remove_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
-                                         [&](const std::pair<std::string, sol::protected_function>& p) {
+                                         [&](const std::pair<std::string, std::string>& p) {
                                              return p.first == name;
                                          }),
                           luaGlobalActions_.end());
-    if (callback.valid()) {
-        luaGlobalActions_.push_back({name, sol::protected_function(std::move(callback))});
+    if (!callbackFuncName.empty()) {
+        luaGlobalActions_.push_back({name, callbackFuncName});
     }
 }
 
@@ -543,6 +816,173 @@ void AppController::ClearLuaTicketContextGlue() {
     smatchet_lua_init_detail::gApp = nullptr;
 }
 
+void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds) {
+    std::lock_guard<std::mutex> lock(automationJobMutex_);
+    automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, ""});
+    automationJobCv_.notify_one();
+}
+
+void AppController::RunFlatScriptAsync(const std::string& scriptPath) {
+    std::lock_guard<std::mutex> lock(automationJobMutex_);
+    automationJobs_.push_back({AutomationJob::Type::RunFlatScript, scriptPath, {}, ""});
+    automationJobCv_.notify_one();
+}
+
+void AppController::AutomationWorkerLoop() {
+    while (true) {
+        AutomationJob job;
+        {
+            std::unique_lock<std::mutex> lock(automationJobMutex_);
+            automationJobCv_.wait(lock, [this]() {
+                return shuttingDown_.load() || automationWorkerShuttingDown_.load() || !automationJobs_.empty();
+            });
+            if (shuttingDown_.load() || automationWorkerShuttingDown_.load()) {
+                break;
+            }
+            job = std::move(automationJobs_.front());
+            automationJobs_.pop_front();
+        }
+        
+        sol::state bgState;
+        InitLuaCore(bgState);
+        
+        sol::environment sandbox = CreateSandboxEnvironment(bgState);
+        
+        // Load setup scripts so global actions are defined
+        for (const auto& path : activeSetupScripts_) {
+            std::string resolved = ResolveLuaScriptPath(path);
+            if (!resolved.empty()) {
+                auto script = bgState.load_file(resolved);
+                if (script.valid()) {
+                    sol::protected_function func = script;
+                    sandbox.set_on(func);
+                    func();
+                }
+            }
+        }
+        
+        RunAutomationJob(bgState, sandbox, job);
+    }
+}
+
+void AppController::RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job) {
+    FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
+
+    lua_sethook(state.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
+        // We could yield here if needed, but for now we just prevent infinite loops
+        if (smatchet_lua_init_detail::gApp && smatchet_lua_init_detail::gApp->shuttingDown_.load()) {
+            luaL_error(L, "Script execution aborted (shutdown).");
+        }
+    }, LUA_MASKCOUNT, 50000);
+
+    auto logErr = [this](const char* prefix, const std::string& detail) {
+        const std::string msg = std::string(prefix) + detail;
+        LuaLogInfoBind(msg);
+    };
+
+    if (job.type == AutomationJob::Type::RunAutoScript) {
+        const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+        if (path.empty()) {
+            logErr("[LUA auto] ", "invalid script path");
+            return;
+        }
+
+        sol::load_result script = state.load_file(path);
+        if (!script.valid()) {
+            sol::error err = script;
+            logErr("[LUA auto] ", err.what());
+            return;
+        }
+
+        sol::protected_function func = script;
+        sol::environment runEnv = CreateSandboxEnvironment(state);
+        runEnv.set_on(func);
+
+        sol::protected_function_result init_pfr = func();
+        if (!init_pfr.valid()) {
+            sol::error err = init_pfr;
+            logErr("[LUA auto] ", err.what());
+            return;
+        }
+
+        sol::protected_function process_func = runEnv["process_ticket"];
+        if (!process_func.valid()) {
+            logErr("[LUA auto] ", "script must define function process_ticket(ticket)");
+            return;
+        }
+
+        const auto snap = GetActiveTicketsSnapshot();
+        std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
+
+        for (auto& ticket : *snap) {
+            if (!selectedSet.empty() && selectedSet.find(ticket.id) == selectedSet.end()) {
+                continue;
+            }
+            if (selectedSet.empty()) {
+                break;
+            }
+
+            // Copy ticket so we don't modify the snapshot elements in-place directly without protection
+            CachedTicket ticketCopy = ticket;
+            sol::protected_function_result pfr = process_func(&ticketCopy);
+            if (!pfr.valid()) {
+                sol::error err = pfr;
+                logErr("[LUA auto] ", err.what());
+            }
+        }
+    } else if (job.type == AutomationJob::Type::TicketAction) {
+        sol::protected_function func = env[job.scriptPathOrActionName];
+        if (func.valid()) {
+            sol::protected_function_result pfr = func(job.targetIssueId);
+            if (!pfr.valid()) {
+                sol::error err = pfr;
+                logErr("[LUA action] ", err.what());
+            }
+        } else {
+            logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
+        }
+    } else if (job.type == AutomationJob::Type::GlobalAction) {
+        sol::protected_function func = env[job.scriptPathOrActionName];
+        if (func.valid()) {
+            sol::protected_function_result pfr = func();
+            if (!pfr.valid()) {
+                sol::error err = pfr;
+                logErr("[LUA action] ", err.what());
+            }
+        } else {
+            logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
+        }
+    } else if (job.type == AutomationJob::Type::RunFlatScript) {
+        const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+        if (path.empty()) {
+            logErr("[LUA run] ", "invalid script path");
+            return;
+        }
+
+        sol::load_result script = state.load_file(path);
+        if (!script.valid()) {
+            sol::error err = script;
+            logErr("[LUA run] ", err.what());
+            return;
+        }
+
+        sol::protected_function func = script;
+        sol::environment runEnv = CreateSandboxEnvironment(state);
+        runEnv.set_on(func);
+
+        sol::protected_function_result pfr = func();
+        if (!pfr.valid()) {
+            sol::error err = pfr;
+            logErr("[LUA run] ", err.what());
+        } else {
+            LOG_TRACE("RunAutomationJob: flat script finished.");
+        }
+    }
+
+    lua_sethook(state.lua_state(), nullptr, 0, 0);
+}
+
+
 void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string msg = std::string(prefix) + detail;
@@ -560,12 +1000,20 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
         logErr("[LUA setup] ", "invalid script path");
         return;
     }
-    
+
+    if (std::find(activeSetupScripts_.begin(), activeSetupScripts_.end(), scriptPath) == activeSetupScripts_.end()) {
+        activeSetupScripts_.push_back(scriptPath);
+    }
+
+    LOG_TRACE("RunLuaSetupScript: begin path=%s scriptPath=%s", path.c_str(), scriptPath.c_str());
+    FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
+
     sol::environment sandbox = CreateSandboxEnvironment(lua);
     sol::load_result script = lua.load_file(path);
     if (!script.valid()) {
         sol::error err = script;
         logErr("[LUA setup] ", err.what());
+        LOG_TRACE("RunLuaSetupScript: load_error path=%s %s", path.c_str(), err.what());
         return;
     }
     sol::protected_function func = script;
@@ -582,6 +1030,9 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     if (!res.valid()) {
         sol::error err = res;
         logErr("[LUA setup] ", err.what());
+        LOG_TRACE("RunLuaSetupScript: failed path=%s", path.c_str());
+    } else {
+        LOG_TRACE("RunLuaSetupScript: ok path=%s", path.c_str());
     }
 }
 
@@ -592,7 +1043,7 @@ bool AppController::TryLuaFieldDisplay(const std::string& fieldId, const CachedT
     const auto itId = fieldDisplayHandlers_.find(fieldId);
     if (itId != fieldDisplayHandlers_.end() && itId->second.valid()) {
         handler = &itId->second;
-    } else if (fieldMeta && !fieldMeta->Name.empty()) {
+    } else if (fieldMeta && !fieldMeta->Name.empty() && !fieldDisplayHandlersByDisplayName_.empty()) {
         const auto itName = fieldDisplayHandlersByDisplayName_.find(AsciiLowerCopy(fieldMeta->Name));
         if (itName != fieldDisplayHandlersByDisplayName_.end() && itName->second.valid()) {
             handler = &itName->second;
@@ -688,78 +1139,6 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const T
     return false;
 }
 
-void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds) {
-    const std::string path = ResolveLuaScriptPath(scriptPath);
-    if (path.empty()) {
-        LOG_WARN("RunAutoScript: invalid script path=%s", scriptPath.c_str());
-        return;
-    }
-
-    sol::environment sandbox = CreateSandboxEnvironment(lua);
-    sol::load_result script = lua.load_file(path);
-    if (!script.valid()) {
-        sol::error err = script;
-        LOG_ERROR("RunAutoScript: lua error path=%s err=%s", path.c_str(), err.what());
-        return;
-    }
-    sol::protected_function func = script;
-    sandbox.set_on(func);
-
-    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-        luaL_error(L, "Script execution timeout exceeded.");
-    }, LUA_MASKCOUNT, 100000);
-
-    auto res = func();
-    
-    lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-    if (!res.valid()) {
-        sol::error err = res;
-        LOG_ERROR("RunAutoScript: init error path=%s err=%s", path.c_str(), err.what());
-        return;
-    }
-
-    sol::protected_function process_func = sandbox["process_ticket"];
-    if (!process_func.valid()) {
-        LOG_WARN("RunAutoScript: script must define function process_ticket(ticket)");
-        return;
-    }
-
-    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-        luaL_error(L, "Script execution timeout exceeded.");
-    }, LUA_MASKCOUNT, 100000);
-
-    const auto snap = GetActiveTicketsSnapshot();
-    std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
-    
-    int processedCount = 0;
-    for (auto& ticket : *snap) {
-        if (!selectedSet.empty() && selectedSet.find(ticket.id) == selectedSet.end()) {
-            continue; // Not in selection
-        }
-        if (selectedSet.empty()) {
-            // If nothing is selected, we choose not to run it at all for safety,
-            // or perhaps run on the actively focused ticket? 
-            // The requirement says "applies on selected rows only". If none selected, do nothing.
-            break;
-        }
-
-        sol::protected_function_result result = process_func(&ticket);
-        if (!result.valid()) {
-            sol::error e = result;
-            LOG_ERROR("RunAutoScript: lua error ticket=%s path=%s err=%s", ticket.id.c_str(), path.c_str(), e.what());
-        }
-        processedCount++;
-    }
-    
-    if (processedCount > 0) {
-        LOG_INFO("RunAutoScript: processed %d tickets", processedCount);
-    } else {
-        LOG_WARN("RunAutoScript: no tickets were selected/processed");
-    }
-    
-    lua_sethook(lua.lua_state(), nullptr, 0, 0);
-}
 
 std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() const {
     return luaMcpTools_;
@@ -768,6 +1147,7 @@ std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() co
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError) {
     for (auto& tool : luaMcpTools_) {
         if (tool.name == name) {
+            LOG_TRACE("ExecuteLuaMcpTool: begin name=%s params_len=%zu", name.c_str(), paramsJson.size());
             lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
                 luaL_error(L, "Script execution timeout exceeded.");
             }, LUA_MASKCOUNT, 100000);
@@ -778,35 +1158,237 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
             } catch (...) {
                 jParams = nlohmann::json::object();
             }
+            try {
+                LOG_TRACE("ExecuteLuaMcpTool: params_json=%s", TruncateForTrace(jParams.dump()).c_str());
+            } catch (...) {
+                LOG_TRACE("ExecuteLuaMcpTool: params (dump failed)");
+            }
 
+            FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
             sol::protected_function_result result = tool.callback(JsonToLua(lua, jParams));
-            
+
             lua_sethook(lua.lua_state(), nullptr, 0, 0);
 
             if (!result.valid()) {
                 sol::error e = result;
                 outError = e.what();
+                LOG_TRACE("ExecuteLuaMcpTool: error name=%s err=%s", name.c_str(), TruncateForTrace(outError).c_str());
                 return "";
             }
+            std::string ret;
             if (result.return_count() > 0) {
                 sol::object obj = result[0];
                 if (obj.is<std::string>()) {
-                    return obj.as<std::string>();
+                    ret = obj.as<std::string>();
                 } else {
-                    return LuaToJson(obj).dump();
+                    ret = LuaToJson(obj).dump();
                 }
+            } else {
+                ret = "{}";
             }
-            return "{}";
+            LOG_TRACE("ExecuteLuaMcpTool: ok name=%s result_len=%zu", name.c_str(), ret.size());
+            return ret;
         }
     }
     outError = "Tool not found";
+    LOG_TRACE("ExecuteLuaMcpTool: not_found name=%s", name.c_str());
     return "";
+}
+
+
+std::string AppController::ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args,
+                                                   std::string& outError) {
+    if (code.empty()) {
+        outError = "Missing snippet code";
+        return "";
+    }
+
+    try {
+        LOG_TRACE("ExecuteLuaSnippetForMcp: begin code_len=%zu args=%s", code.size(),
+                  TruncateForTrace(args.dump()).c_str());
+    } catch (...) {
+        LOG_TRACE("ExecuteLuaSnippetForMcp: begin code_len=%zu (args dump failed)", code.size());
+    }
+
+    sol::environment sandbox = CreateSandboxEnvironment(lua);
+    sandbox["args"] = JsonToLua(lua, args);
+
+    sol::load_result script = lua.load(code, "mcp.run_lua.snippet");
+    if (!script.valid()) {
+        sol::error err = script;
+        outError = err.what();
+        lua_sethook(lua.lua_state(), nullptr, 0, 0);
+        LOG_TRACE("ExecuteLuaSnippetForMcp: load_error %s", TruncateForTrace(outError).c_str());
+        return "";
+    }
+
+    sol::protected_function func = script;
+    sandbox.set_on(func);
+
+    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
+        luaL_error(L, "Script execution timeout exceeded.");
+    }, LUA_MASKCOUNT, 100000);
+
+    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+    sol::protected_function_result result = func();
+    lua_sethook(lua.lua_state(), nullptr, 0, 0);
+
+    if (!result.valid()) {
+        sol::error e = result;
+        outError = e.what();
+        LOG_TRACE("ExecuteLuaSnippetForMcp: runtime_error %s", TruncateForTrace(outError).c_str());
+        return "";
+    }
+    std::string ret;
+    if (result.return_count() > 0) {
+        sol::object obj = result[0];
+        if (obj.is<std::string>()) {
+            ret = obj.as<std::string>();
+        } else {
+            ret = LuaToJson(obj).dump();
+        }
+    } else {
+        ret = "{}";
+    }
+    LOG_TRACE("ExecuteLuaSnippetForMcp: ok result_len=%zu", ret.size());
+    return ret;
+}
+
+bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError,
+                                             std::string& outResultSummary) {
+    outError.clear();
+    outResultSummary.clear();
+    if (code.empty()) {
+        outError = "No code to run";
+        return false;
+    }
+    constexpr size_t kMaxConsoleSnippetBytes = 512u * 1024u;
+    if (code.size() > kMaxConsoleSnippetBytes) {
+        outError = "Code exceeds maximum size (512 KB)";
+        return false;
+    }
+
+    LOG_TRACE("ExecuteLuaConsoleSnippet: begin code_len=%zu", code.size());
+
+    sol::environment sandbox = CreateSandboxEnvironment(lua);
+    sol::load_result script = lua.load(code, "lua_console.oneshot");
+    if (!script.valid()) {
+        sol::error err = script;
+        outError = err.what();
+        LOG_TRACE("ExecuteLuaConsoleSnippet: load_error %s", TruncateForTrace(outError).c_str());
+        return false;
+    }
+
+    sol::protected_function func = script;
+    sandbox.set_on(func);
+
+    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
+        luaL_error(L, "Script execution timeout exceeded.");
+    }, LUA_MASKCOUNT, 100000);
+
+    FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
+    sol::protected_function_result result = func();
+    lua_sethook(lua.lua_state(), nullptr, 0, 0);
+
+    if (!result.valid()) {
+        sol::error e = result;
+        outError = e.what();
+        LOG_TRACE("ExecuteLuaConsoleSnippet: runtime_error %s", TruncateForTrace(outError).c_str());
+        return false;
+    }
+
+    if (result.return_count() > 0) {
+        try {
+            const sol::object obj = result[0];
+            if (obj.valid() && obj.get_type() != sol::type::lua_nil) {
+                if (obj.is<std::string>()) {
+                    outResultSummary = obj.as<std::string>();
+                } else {
+                    outResultSummary = LuaToJson(obj).dump();
+                }
+            }
+        } catch (const std::exception& e) {
+            outResultSummary = std::string("(return stringify failed: ") + e.what() + ")";
+        } catch (...) {
+            outResultSummary = "(return stringify failed)";
+        }
+        constexpr size_t kMaxSummary = 800;
+        if (outResultSummary.size() > kMaxSummary) {
+            outResultSummary.resize(kMaxSummary);
+            outResultSummary += "...";
+        }
+    }
+
+    LOG_TRACE("ExecuteLuaConsoleSnippet: ok summary_len=%zu", outResultSummary.size());
+    return true;
+}
+
+std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args,
+                                                  std::string& outError) {
+    const std::string path = ResolveLuaScriptPath(scriptName);
+    if (path.empty()) {
+        outError = "Invalid script path";
+        LOG_TRACE("ExecuteLuaScriptForMcp: invalid scriptName=%s", scriptName.c_str());
+        return "";
+    }
+
+    try {
+        LOG_TRACE("ExecuteLuaScriptForMcp: begin path=%s scriptName=%s args=%s", path.c_str(), scriptName.c_str(),
+                  TruncateForTrace(args.dump()).c_str());
+    } catch (...) {
+        LOG_TRACE("ExecuteLuaScriptForMcp: begin path=%s (args dump failed)", path.c_str());
+    }
+
+    sol::environment sandbox = CreateSandboxEnvironment(lua);
+    sandbox["args"] = JsonToLua(lua, args);
+
+    sol::load_result script = lua.load_file(path);
+    if (!script.valid()) {
+        sol::error err = script;
+        outError = err.what();
+        lua_sethook(lua.lua_state(), nullptr, 0, 0);
+        LOG_TRACE("ExecuteLuaScriptForMcp: load_error path=%s %s", path.c_str(), TruncateForTrace(outError).c_str());
+        return "";
+    }
+
+    sol::protected_function func = script;
+    sandbox.set_on(func);
+
+    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
+        luaL_error(L, "Script execution timeout exceeded.");
+    }, LUA_MASKCOUNT, 100000);
+
+    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+    sol::protected_function_result result = func();
+    lua_sethook(lua.lua_state(), nullptr, 0, 0);
+
+    if (!result.valid()) {
+        sol::error e = result;
+        outError = e.what();
+        LOG_TRACE("ExecuteLuaScriptForMcp: runtime_error path=%s %s", path.c_str(),
+                  TruncateForTrace(outError).c_str());
+        return "";
+    }
+    std::string ret;
+    if (result.return_count() > 0) {
+        sol::object obj = result[0];
+        if (obj.is<std::string>()) {
+            ret = obj.as<std::string>();
+        } else {
+            ret = LuaToJson(obj).dump();
+        }
+    } else {
+        ret = "{}";
+    }
+    LOG_TRACE("ExecuteLuaScriptForMcp: ok path=%s result_len=%zu", path.c_str(), ret.size());
+    return ret;
 }
 
 void AppController::DrawLuaWindows() {
     for (auto& pair : luaWindows_) {
         bool open = true;
         if (ImGui::Begin(pair.first.c_str(), &open)) {
+            FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
             lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
                 luaL_error(L, "Script execution timeout exceeded.");
             }, LUA_MASKCOUNT, 100000);
@@ -817,6 +1399,7 @@ void AppController::DrawLuaWindows() {
 
             if (!res.valid()) {
                 sol::error e = res;
+                LOG_TRACE("DrawLuaWindows: error window=%s %s", pair.first.c_str(), e.what());
                 ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Lua Error: %s", e.what());
             }
         }
@@ -840,33 +1423,6 @@ std::vector<std::string> AppController::GetLuaTicketActionNames() const {
     return names;
 }
 
-bool AppController::ExecuteLuaTicketAction(const std::string& name, const std::string& issueId, std::string& outError) {
-    for (auto& pair : luaTicketActions_) {
-        if (pair.first == name) {
-            CachedTicket ticket;
-            if (!Cache->TryGetTicket(issueId, ticket)) {
-                outError = "Ticket not found in cache";
-                return false;
-            }
-            lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-                luaL_error(L, "Script execution timeout exceeded.");
-            }, LUA_MASKCOUNT, 100000);
-
-            sol::protected_function_result res = pair.second(sol::make_object(lua, ticket));
-            
-            lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-            if (!res.valid()) {
-                sol::error e = res;
-                outError = e.what();
-                return false;
-            }
-            return true;
-        }
-    }
-    outError = "Action not found";
-    return false;
-}
 
 void AppController::AddAiContext(const std::string& text) {
     aiContext_.push_back(text);
@@ -901,31 +1457,40 @@ std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
     return names;
 }
 
-bool AppController::ExecuteLuaGlobalAction(const std::string& name, std::string& outError) {
-    for (auto& pair : luaGlobalActions_) {
+
+void AppController::ExecuteLuaTicketAction(const std::string& name, const std::string& issueId) {
+    std::string callbackFuncName;
+    for (const auto& pair : luaTicketActions_) {
         if (pair.first == name) {
-            lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-                luaL_error(L, "Script execution timeout exceeded.");
-            }, LUA_MASKCOUNT, 100000);
-
-            sol::protected_function_result res = pair.second();
-
-            lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-            if (!res.valid()) {
-                sol::error e = res;
-                outError = e.what();
-                return false;
-            }
-            return true;
+            callbackFuncName = pair.second;
+            break;
         }
     }
-    outError = "Action not found";
-    return false;
+    if (callbackFuncName.empty()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        automationJobs_.push_back({AutomationJob::Type::TicketAction, callbackFuncName, {}, issueId});
+    }
+    automationJobCv_.notify_one();
 }
 
-
-
-
-
+void AppController::ExecuteLuaGlobalAction(const std::string& name) {
+    std::string callbackFuncName;
+    for (auto& pair : luaGlobalActions_) {
+        if (pair.first == name) {
+            callbackFuncName = pair.second;
+            break;
+        }
+    }
+    if (callbackFuncName.empty()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        automationJobs_.push_back({AutomationJob::Type::GlobalAction, callbackFuncName, {}, ""});
+    }
+    automationJobCv_.notify_one();
+}
 

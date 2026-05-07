@@ -6,6 +6,8 @@
 #include <memory>
 #include <string>
 
+#include "SmatchetDefaults.h"
+
 class AppController;
 class PluginHost;
 class SmatchetUI;
@@ -33,9 +35,9 @@ struct SmatchetRendererInitInfo {
 class SmatchetImGuiHost {
   public:
     struct InitOptions {
-        std::string DbPath = "Smatchet_LocalCache.sqlite";
-        std::string BackendType = "Jira";
-        int McpPort = 8080;
+        std::string DbPath = SmatchetDefaults::kDefaultDbPath;
+        std::string BackendType = SmatchetDefaults::kDefaultBackendType;
+        int McpPort = SmatchetDefaults::Mcp::kDefaultPort;
         SmatchetRendererInitInfo Renderer;
 
         std::function<void(const std::string&)> OpenUrlHandler;

@@ -20,8 +20,9 @@ The MCP server in Smatchet acts as a bridge between your local Jira data and ext
 2. Go to **File** → **Preferences**.
 3. Locate the **MCP (Model Context Protocol)** section.
 4. Check **Enable MCP server**.
-5. (Optional) Set a custom **MCP Port** (default is `8080`).
+5. (Optional) Set a custom **MCP Port** (default is `42360`).
 6. (Optional) Set an **MCP auth token** for security.
+7. (Optional, default off) Enable **Allow MCP run_lua tool (dangerous)** if you want MCP clients to execute Lua snippets/scripts.
 
 ### Connecting an AI Client
 Smatchet uses the **SSE (Server-Sent Events)** transport for MCP.
@@ -33,7 +34,7 @@ To connect a client (like Claude Desktop), use the following configuration patte
 {
   "mcpServers": {
     "smatchet": {
-      "url": "http://127.0.0.1:8080/mcp/sse"
+      "url": "http://127.0.0.1:42360/mcp/sse"
     }
   }
 }
@@ -52,6 +53,7 @@ Smatchet exposes several core tools to connected AI agents by default:
 | :--- | :--- | :--- |
 | `list_active_tickets` | Returns a list of all Jira issue keys currently loaded in Smatchet's project grid. | None |
 | `search_active_tickets` | Searches for a specific string within the IDs and field values of all loaded tickets. | `query` (string) |
+| `run_lua` (opt-in) | Executes sandboxed Lua from MCP. Hidden unless **Allow MCP run_lua tool (dangerous)** is enabled. | `mode` (`snippet`/`script`), plus `code` or `script`, optional `args` object |
 
 ---
 
@@ -116,11 +118,12 @@ If you are building a custom integration or debugging, the following endpoints a
 - **LAN Access**: If you enable **Bind on all interfaces (LAN)** in Preferences, the server will listen on `0.0.0.0`. 
 - **Authentication**: We strongly recommend setting an **Auth Token** if LAN access is enabled. Clients must provide this token via the `X-Smatchet-Token` HTTP header.
 - **Instruction Limits**: All custom Lua tool callbacks are subject to a **100,000 instruction limit** to prevent AI-triggered infinite loops or hangs.
+- **run_lua Gating**: `run_lua` is disabled by default and only appears in `tools/list` after you enable the dangerous opt-in in Preferences -> Integrations. Saving Preferences restarts MCP so the toggle applies immediately.
 
 ---
 
 ## 7. Troubleshooting
 
-- **Server won't start**: Ensure the port (default `8080`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Scripts** → **MCP Server...**) for error messages.
+- **Server won't start**: Ensure the port (default `42360`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Windows** → **MCP Server…**) for error messages.
 - **Connection Refused**: Check your firewall settings. If the client is on the same machine, ensure it's trying to connect to `127.0.0.1` and not your external IP (unless LAN access is enabled).
-- **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have clicked **Save && Reload hooks** in the Lua & Automation panel.
+- **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have used **Save and Reload Hooks** in **Windows → Scripting…** (`SmatchetHooks.lua`).

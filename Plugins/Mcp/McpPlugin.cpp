@@ -12,6 +12,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "Logger.h"
 #include <httplib.h>
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 
 namespace {
 std::string Base64Encode(const std::string& in) {
@@ -111,7 +113,8 @@ std::string ExtractHostFromUrl(const std::string& url) {
 
 bool IsLoopbackAddress(const std::string& remoteAddr) {
     const std::string lowered = ToLowerAscii(TrimAsciiWhitespace(remoteAddr));
-    return lowered == "127.0.0.1" || lowered == "::1" || lowered == "localhost" || lowered == "::ffff:127.0.0.1";
+    return lowered == SmatchetDefaults::Mcp::kBindLocalhost || lowered == "::1" || lowered == "localhost"
+           || lowered == "::ffff:127.0.0.1";
 }
 
 // Constant-time string compare: return true iff a == b. Always reads max(|a|,|b|) bytes.
@@ -140,6 +143,119 @@ bool IsAllowedAttachmentHost(const std::string& host, const std::string& tracker
     }
     return host == "api.media.atlassian.com";
 }
+
+void AppendMcpActivityLine(AppController* app, const std::string& line) {
+    if (app != nullptr) {
+        app->AppendMcpActivity(line);
+    }
+}
+
+std::string TruncateOneLine(const std::string& s, std::size_t maxChars) {
+    if (s.size() <= maxChars) {
+        return s;
+    }
+    return s.substr(0, maxChars) + "...";
+}
+
+std::string BasenameForDisplay(const std::string& path) {
+    if (path.empty()) {
+        return std::string();
+    }
+    const size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) {
+        return path;
+    }
+    return path.substr(slash + 1);
+}
+
+static void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::json& obj) {
+    if (!obj.is_object()) {
+        return;
+    }
+    static const char* kKeys[] = {"issue_key", "key", "id", "priority"};
+    for (const char* k : kKeys) {
+        if (!obj.contains(k)) {
+            continue;
+        }
+        const nlohmann::json& v = obj.at(k);
+        oss << ' ' << k << '=';
+        if (v.is_string()) {
+            oss << TruncateOneLine(v.get<std::string>(), 80);
+        } else if (v.is_number_integer()) {
+            oss << v.get<std::int64_t>();
+        } else if (v.is_number_unsigned()) {
+            oss << v.get<std::uint64_t>();
+        } else if (v.is_number_float()) {
+            oss << v.get<double>();
+        } else if (v.is_boolean()) {
+            oss << (v.get<bool>() ? "true" : "false");
+        } else {
+            try {
+                oss << TruncateOneLine(v.dump(), 80);
+            } catch (...) {
+                oss << "?";
+            }
+        }
+    }
+}
+
+/** Summarize `run_lua` arguments (mode, code/script size or basename, allowlisted nested `args`). */
+std::string BuildRunLuaSummary(const nlohmann::json& arguments) {
+    if (!arguments.is_object()) {
+        return std::string();
+    }
+    std::ostringstream oss;
+    const std::string mode = arguments.value("mode", "");
+    oss << "mode=" << mode;
+    if (mode == "snippet") {
+        const std::string code = arguments.value("code", std::string());
+        oss << " code_len=" << code.size();
+    } else if (mode == "script") {
+        oss << " script=" << TruncateOneLine(BasenameForDisplay(arguments.value("script", std::string())), 48);
+    }
+    AppendAllowlistedArgKvs(oss, arguments.value("args", nlohmann::json::object()));
+    return oss.str();
+}
+
+/** Tool name plus sorted argument keys and allowlisted identifier values. */
+std::string BuildToolCallSummary(const std::string& toolName, const nlohmann::json& arguments) {
+    std::ostringstream oss;
+    oss << "tool=" << toolName;
+    if (!arguments.is_object()) {
+        return oss.str();
+    }
+    oss << " arg_keys=[";
+    bool first = true;
+    for (auto it = arguments.begin(); it != arguments.end(); ++it) {
+        if (!first) {
+            oss << ',';
+        }
+        first = false;
+        oss << it.key();
+    }
+    oss << ']';
+    AppendAllowlistedArgKvs(oss, arguments);
+    return oss.str();
+}
+
+std::string ExtractJsonRpcErrorMessage(const nlohmann::json& jres, std::size_t maxLen) {
+    if (!jres.contains("error")) {
+        return std::string();
+    }
+    const nlohmann::json& e = jres["error"];
+    if (!e.is_object()) {
+        return TruncateOneLine(e.dump(), maxLen);
+    }
+    if (e.contains("message") && e["message"].is_string()) {
+        return TruncateOneLine(e["message"].get<std::string>(), maxLen);
+    }
+    try {
+        return TruncateOneLine(e.dump(), maxLen);
+    } catch (...) {
+        return "error";
+    }
+}
+
 } // namespace
 
 struct McpPlugin::Impl {
@@ -147,10 +263,11 @@ struct McpPlugin::Impl {
     httplib::Server svr;
     std::thread thread;
     bool routes_installed = false;
-    std::string bind_host = "127.0.0.1";
+    std::string bind_host = SmatchetDefaults::Mcp::kBindLocalhost;
     std::string auth_token;
     std::string tracker_domain;
     std::vector<std::string> export_fields;
+    bool allow_lua_execution = false;
 };
 
 McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
@@ -179,14 +296,22 @@ bool McpPlugin::AuthTokenMatches(const std::string& cfgToken) const {
     return impl_->auth_token == cfgToken;
 }
 
+bool McpPlugin::LuaExecutionEnabledMatches(const bool enabled) const {
+    if (!impl_) {
+        return true;
+    }
+    return impl_->allow_lua_execution == enabled;
+}
+
 void McpPlugin::OnStart(AppController& app) {
     if (!impl_) {
         return;
     }
     impl_->app = &app;
     const TrackerConfig cfg = ConfigManager::Load();
-    impl_->bind_host = cfg.McpAllowRemote ? "0.0.0.0" : "127.0.0.1";
+    impl_->bind_host = cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     impl_->auth_token = cfg.McpAuthToken;
+    impl_->allow_lua_execution = cfg.McpAllowLuaExecution;
     impl_->tracker_domain = NormalizeDomain(cfg.Domain);
     if (cfg.McpExportFields.empty()) {
         impl_->export_fields = {
@@ -209,6 +334,8 @@ void McpPlugin::OnStart(AppController& app) {
                 if (!IsLoopbackAddress(req.remote_addr)) {
                     res.status = 403;
                     res.set_content("MCP access denied: localhost only.", "text/plain");
+                    AppendMcpActivityLine(impl_->app, std::string("MCP: auth denied remote=") + req.remote_addr +
+                                                         " status=403 reason=localhost_only");
                     return false;
                 }
                 return true;
@@ -218,6 +345,8 @@ void McpPlugin::OnStart(AppController& app) {
                 res.status = 401;
                 res.set_header("WWW-Authenticate", "Token realm=\"Smatchet MCP\"");
                 res.set_content("Missing or invalid MCP token.", "text/plain");
+                AppendMcpActivityLine(impl_->app, std::string("MCP: auth denied remote=") + req.remote_addr +
+                                                     " status=401 reason=invalid_or_missing_token");
                 return false;
             }
             return true;
@@ -246,7 +375,7 @@ void McpPlugin::OnStart(AppController& app) {
         // Attachment proxy:
         // Tracker attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
         // We proxy through the MCP server (running in the same process) so Unreal can embed/load it.
-        impl_->svr.Get("/mcp/attachment_proxy", [this, authorize, cfg](const httplib::Request& req,
+        impl_->svr.Get("/mcp/attachment_proxy", [this, authorize](const httplib::Request& req,
                                                                        httplib::Response& res) {
             if (!authorize(req, res)) {
                 return;
@@ -274,13 +403,14 @@ void McpPlugin::OnStart(AppController& app) {
                 return;
             }
 
-            if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+            const TrackerConfig currentCfg = ConfigManager::Load();
+            if (currentCfg.Email.empty() || currentCfg.ApiToken.empty() || currentCfg.Domain.empty()) {
                 res.status = 500;
                 res.set_content("Missing Tracker configuration (email/token/domain).", "text/plain");
                 return;
             }
 
-            const std::string basicCred = cfg.Email + ":" + cfg.ApiToken;
+            const std::string basicCred = currentCfg.Email + ":" + currentCfg.ApiToken;
             const std::string authHeader = "Basic " + Base64Encode(basicCred);
 
             cpr::Header headers{
@@ -369,9 +499,22 @@ void McpPlugin::OnStart(AppController& app) {
         impl_->svr.Get("/mcp/tools/list", [this, authorize](const httplib::Request& req, httplib::Response& res) {
             if (!authorize(req, res))
                 return;
+            LOG_TRACE("MCP: GET /mcp/tools/list remote=%s", req.remote_addr.c_str());
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
             auto tools = impl_->app->GetLuaMcpTools();
             nlohmann::json j = nlohmann::json::array();
+            if (impl_->allow_lua_execution) {
+                j.push_back({{"name", "run_lua"},
+                             {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},
+                             {"inputSchema",
+                              {{"type", "object"},
+                               {"properties",
+                                {{"mode", {{"type", "string"}, {"enum", {"snippet", "script"}}}},
+                                 {"code", {{"type", "string"}}},
+                                 {"script", {{"type", "string"}}},
+                                 {"args", {{"type", "object"}}}}},
+                               {"required", {"mode"}}}}});
+            }
             for (const auto& t : tools) {
                 j.push_back({{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}});
             }
@@ -384,35 +527,76 @@ void McpPlugin::OnStart(AppController& app) {
         impl_->svr.Post("/mcp/tools/call", [this, authorize](const httplib::Request& req, httplib::Response& res) {
             if (!authorize(req, res))
                 return;
+            const std::string remote = req.remote_addr;
             try {
                 auto body = nlohmann::json::parse(req.body);
                 std::string name = body.value("name", "");
-                std::string paramsStr = body.value("arguments", nlohmann::json::object()).dump();
+                const nlohmann::json arguments = body.value("arguments", nlohmann::json::object());
+                std::string paramsStr = arguments.dump();
+                LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu",
+                          req.remote_addr.c_str(), name.c_str(), paramsStr.size(), req.body.size());
                 std::string error;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                std::string result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+                std::string result;
+                if (name == "run_lua") {
+                    if (!impl_->allow_lua_execution) {
+                        error = "run_lua is disabled by configuration";
+                        LOG_TRACE("MCP: run_lua rejected (disabled in config)");
+                        AppendMcpActivityLine(impl_->app, "MCP: REST tools/call run_lua FAIL remote=" + remote +
+                                                             " err=disabled by configuration");
+                    } else {
+                        const nlohmann::json args = arguments;
+                        const std::string mode = args.value("mode", "");
+                        LOG_TRACE("MCP: run_lua mode=%s", mode.c_str());
+                        if (mode == "snippet") {
+                            result = impl_->app->ExecuteLuaSnippetForMcp(
+                                args.value("code", std::string()), args.value("args", nlohmann::json::object()), error);
+                        } else if (mode == "script") {
+                            result = impl_->app->ExecuteLuaScriptForMcp(
+                                args.value("script", std::string()), args.value("args", nlohmann::json::object()), error);
+                        } else {
+                            error = "run_lua requires mode='snippet' or mode='script'";
+                        }
+                    }
+                } else {
+                    result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+                }
 #else
                 std::string result = "";
                 error = "Lua automation disabled";
 #endif
                 if (!error.empty()) {
-                    res.status = 500;
+                    LOG_TRACE("MCP: REST tools/call error tool=%s %s", name.c_str(), error.c_str());
+                    res.status = (name == "run_lua" && !impl_->allow_lua_execution) ? 404 : 500;
                     res.set_content(
                         nlohmann::json{{"isError", true}, {"content", {{{"type", "text"}, {"text", error}}}}}.dump(),
                         "application/json");
+                    if (!(name == "run_lua" && !impl_->allow_lua_execution)) {
+                        AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
+                                                             " FAIL remote=" + remote + " err=" +
+                                                             TruncateOneLine(error, 200));
+                    }
                 } else {
+                    LOG_TRACE("MCP: REST tools/call ok tool=%s result_len=%zu", name.c_str(), result.size());
                     res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", result}}}}}.dump(),
                                     "application/json");
+                    const std::string summary =
+                        (name == "run_lua") ? BuildRunLuaSummary(arguments) : BuildToolCallSummary(name, arguments);
+                    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
+                                                         " ok remote=" + remote + " " + summary);
                 }
             } catch (const std::exception& e) {
+                LOG_TRACE("MCP: REST tools/call parse_exception %s", e.what());
                 res.status = 400;
                 res.set_content(nlohmann::json{{"isError", true}, {"error", e.what()}}.dump(), "application/json");
+                AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote +
+                                                     " err=parse error: " + TruncateOneLine(e.what(), 200));
             }
         });
 
         // --- Actual MCP JSON-RPC Specification (SSE) ---
 
-        impl_->svr.Get("/mcp/sse", [authorize](const httplib::Request& req, httplib::Response& res) {
+        impl_->svr.Get(SmatchetDefaults::Mcp::kSsePath, [authorize](const httplib::Request& req, httplib::Response& res) {
             if (!authorize(req, res))
                 return;
 
@@ -434,26 +618,44 @@ void McpPlugin::OnStart(AppController& app) {
                     }
                     // Keep-alive heartbeat
                     std::this_thread::sleep_for(std::chrono::seconds(15));
-                    sink.write(": heartbeat\n\n", 12);
+                    constexpr char kSseHeartbeat[] = ": heartbeat\n\n";
+                    sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
                     return true;
                 },
                 nullptr);
         });
 
-        impl_->svr.Post("/mcp/messages", [this, authorize](const httplib::Request& req, httplib::Response& res) {
+        // Streamable HTTP clients (e.g. Cursor) POST JSON-RPC to the same URL as the SSE endpoint; legacy clients
+        // POST to /mcp/messages after reading the endpoint event from GET /mcp/sse.
+        auto handleMcpJsonRpcPost = [this, authorize](const httplib::Request& req, httplib::Response& res) {
             if (!authorize(req, res))
                 return;
 
             try {
                 auto jreq = nlohmann::json::parse(req.body);
                 std::string method = jreq.value("method", "");
+                const bool isNotification = !jreq.contains("id");
+                LOG_TRACE("MCP: JSON-RPC remote=%s method=%s notification=%d body_len=%zu", req.remote_addr.c_str(),
+                          method.c_str(), isNotification ? 1 : 0, req.body.size());
+                if (isNotification) {
+                    res.status = 200;
+                    return;
+                }
                 auto id = jreq["id"];
                 nlohmann::json jres = {{"jsonrpc", "2.0"}, {"id", id}};
 
                 if (method == "initialize") {
-                    jres["result"] = {{"protocolVersion", "2024-11-05"},
+                    const auto initParams = jreq.value("params", nlohmann::json::object());
+                    std::string negotiatedProtocol = initParams.value("protocolVersion", std::string("2024-11-05"));
+                    if (negotiatedProtocol.empty()) {
+                        negotiatedProtocol = "2024-11-05";
+                    }
+                    jres["result"] = {{"protocolVersion", negotiatedProtocol},
                                       {"capabilities", {{"tools", nlohmann::json::object()}}},
                                       {"serverInfo", {{"name", "Smatchet"}, {"version", "1.2"}}}};
+                    AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC initialize ok remote=") +
+                                                         req.remote_addr + " protocol=" +
+                                                         TruncateOneLine(negotiatedProtocol, 64));
                 } else if (method == "tools/list") {
                     nlohmann::json toolList = nlohmann::json::array();
 
@@ -472,6 +674,18 @@ void McpPlugin::OnStart(AppController& app) {
                            {"required", {"query"}}}}});
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                    if (impl_->allow_lua_execution) {
+                        toolList.push_back({{"name", "run_lua"},
+                                            {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},
+                                            {"inputSchema",
+                                             {{"type", "object"},
+                                              {"properties",
+                                               {{"mode", {{"type", "string"}, {"enum", {"snippet", "script"}}}},
+                                                {"code", {{"type", "string"}}},
+                                                {"script", {{"type", "string"}}},
+                                                {"args", {{"type", "object"}}}}},
+                                              {"required", {"mode"}}}}});
+                    }
                     auto tools = impl_->app->GetLuaMcpTools();
                     for (const auto& t : tools) {
                         toolList.push_back(
@@ -479,11 +693,57 @@ void McpPlugin::OnStart(AppController& app) {
                     }
 #endif
                     jres["result"] = {{"tools", toolList}};
+                    AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC tools/list ok remote=") +
+                                                         req.remote_addr + " tools=" +
+                                                         std::to_string(toolList.size()));
                 } else if (method == "tools/call") {
                     auto params = jreq.value("params", nlohmann::json::object());
                     std::string name = params.value("name", "");
+                    const std::string rpcRemote = req.remote_addr;
+                    LOG_TRACE("MCP: JSON-RPC tools/call tool=%s", name.c_str());
 
-                    if (name == "list_active_tickets") {
+                    if (name == "run_lua") {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                        const nlohmann::json luaArgs = params.value("arguments", nlohmann::json::object());
+                        if (!impl_->allow_lua_execution) {
+                            jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+                            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" +
+                                                                 rpcRemote + " err=disabled by configuration");
+                        } else {
+                            std::string error;
+                            std::string result;
+                            const std::string mode = luaArgs.value("mode", "");
+                            if (mode == "snippet") {
+                                result = impl_->app->ExecuteLuaSnippetForMcp(luaArgs.value("code", std::string()),
+                                                                             luaArgs.value("args", nlohmann::json::object()),
+                                                                             error);
+                            } else if (mode == "script") {
+                                result = impl_->app->ExecuteLuaScriptForMcp(luaArgs.value("script", std::string()),
+                                                                            luaArgs.value("args", nlohmann::json::object()),
+                                                                            error);
+                            } else {
+                                error = "run_lua requires mode='snippet' or mode='script'";
+                            }
+                            if (!error.empty()) {
+                                jres["error"] = {{"code", -32603}, {"message", error}};
+                            } else {
+                                jres["result"] = {{"content", {{{"type", "text"}, {"text", result}}}}};
+                            }
+                            if (jres.contains("error")) {
+                                AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" +
+                                                                     rpcRemote + " err=" +
+                                                                     ExtractJsonRpcErrorMessage(jres, 256));
+                            } else {
+                                AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua ok remote=" +
+                                                                     rpcRemote + " " + BuildRunLuaSummary(luaArgs));
+                            }
+                        }
+#else
+                        jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+                        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
+                                                             " err=Lua automation disabled");
+#endif
+                    } else if (name == "list_active_tickets") {
                         const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
                         nlohmann::json ticketIds = nlohmann::json::array();
                         for (const auto& t : *ticketsPtr) {
@@ -491,6 +751,8 @@ void McpPlugin::OnStart(AppController& app) {
                         }
                         jres["result"] = {
                             {"content", {{{"type", "text"}, {"text", "Active Tickets: " + ticketIds.dump()}}}}};
+                        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call list_active_tickets ok remote=" +
+                                                             rpcRemote + " count=" + std::to_string(ticketIds.size()));
                     } else if (name == "search_active_tickets") {
                         auto args = params.value("arguments", nlohmann::json::object());
                         std::string query = args.value("query", "");
@@ -511,9 +773,13 @@ void McpPlugin::OnStart(AppController& app) {
                         jres["result"] = {
                             {"content",
                              {{{"type", "text"}, {"text", "Search Results for '" + query + "': " + matches.dump()}}}}};
+                        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call search_active_tickets ok remote=" +
+                                                             rpcRemote + " query=" + TruncateOneLine(query, 80) +
+                                                             " matches=" + std::to_string(matches.size()));
                     } else {
                         // Check Lua tools
-                        std::string argsStr = params.value("arguments", nlohmann::json::object()).dump();
+                        const nlohmann::json argObj = params.value("arguments", nlohmann::json::object());
+                        std::string argsStr = argObj.dump();
                         std::string error;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                         std::string result = impl_->app->ExecuteLuaMcpTool(name, argsStr, error);
@@ -527,9 +793,22 @@ void McpPlugin::OnStart(AppController& app) {
 #else
                         jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
 #endif
+                        if (jres.contains("error")) {
+                            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call " +
+                                                                 (name.empty() ? "?" : name) + " FAIL remote=" +
+                                                                 rpcRemote + " err=" +
+                                                                 ExtractJsonRpcErrorMessage(jres, 256));
+                        } else {
+                            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call " +
+                                                                 (name.empty() ? "?" : name) + " ok remote=" +
+                                                                 rpcRemote + " " + BuildToolCallSummary(name, argObj));
+                        }
                     }
                 } else {
                     jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+                    AppendMcpActivityLine(impl_->app,
+                                          std::string("MCP: JSON-RPC FAIL remote=") + req.remote_addr + " method=" +
+                                              TruncateOneLine(method, 120) + " err=method not found");
                 }
 
                 res.set_content(jres.dump(), "application/json");
@@ -540,8 +819,13 @@ void McpPlugin::OnStart(AppController& app) {
                                    {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + e.what()}}}}
                         .dump(),
                     "application/json");
+                AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC parse FAIL remote=") + req.remote_addr +
+                                                     " err=" + TruncateOneLine(e.what(), 200));
             }
-        });
+        };
+
+        impl_->svr.Post("/mcp/messages", handleMcpJsonRpcPost);
+        impl_->svr.Post(SmatchetDefaults::Mcp::kSsePath, handleMcpJsonRpcPost);
     }
 
     if (impl_->thread.joinable()) {
@@ -551,9 +835,26 @@ void McpPlugin::OnStart(AppController& app) {
     AppController* appPtr = &app;
     impl_->thread = std::thread([this, appPtr]() {
         try {
-            const bool ok = impl_->svr.listen(impl_->bind_host.c_str(), port_);
+            // `listen()` blocks until `stop()`, so activity would stay empty during normal use.
+            // Split bind vs accept loop so we can log as soon as the port is open.
             if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity(std::string("MCP: HTTP listen finished (returned ") +
+                appPtr->AppendMcpActivity(std::string("MCP: binding ") + impl_->bind_host + ":" +
+                                          std::to_string(port_) + "...");
+            }
+            if (!impl_->svr.bind_to_port(impl_->bind_host.c_str(), port_)) {
+                if (appPtr != nullptr) {
+                    appPtr->AppendMcpActivity("MCP: bind failed (port in use or permission denied).");
+                }
+                std::cerr << "MCP server: bind_to_port failed for " << impl_->bind_host << ":" << port_ << std::endl;
+                return;
+            }
+            if (appPtr != nullptr) {
+                appPtr->AppendMcpActivity(std::string("MCP: listening on http://") + impl_->bind_host + ":" +
+                                          std::to_string(port_) + " (MCP routes ready).");
+            }
+            const bool ok = impl_->svr.listen_after_bind();
+            if (appPtr != nullptr) {
+                appPtr->AppendMcpActivity(std::string("MCP: HTTP server stopped (listen returned ") +
                                             (ok ? "true" : "false") + ").");
             }
         } catch (const std::exception& e) {

@@ -698,20 +698,45 @@ std::string BuildBlameExportJson() {
     return root.dump(2);
 }
 
+static std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder, const std::string& replacement) {
+    size_t pos = 0;
+    while ((pos = str.find(placeholder, pos)) != std::string::npos) {
+        str.replace(pos, placeholder.length(), replacement);
+        pos += replacement.length();
+    }
+    return str;
+}
+
 std::string BuildBlameQuickCommentTemplate(const std::string& issueKey, const std::string& templateId,
-                                           const BlameRow& row) {
-    if (templateId == "need_repro") {
-        return "Need repro details for " + issueKey + " (blame context: " + row.PathForP4 + ":" +
-               std::to_string(row.Parsed.LineNumber) + ", CL " + row.Blame.Changelist + ").";
+                                           const BlameRow& row, const std::vector<CommentTemplate>& templates) {
+    std::string text;
+    bool found = false;
+    for (const auto& t : templates) {
+        if (t.Id == templateId) {
+            text = t.Text;
+            found = true;
+            break;
+        }
     }
-    if (templateId == "need_logs") {
-        return "Please attach logs/diagnostics for " + issueKey +
-               " to continue triage.\nReference: " + row.Parsed.Function + " @ " + row.PathForP4 + ":" +
-               std::to_string(row.Parsed.LineNumber) + ".";
+    if (!found) {
+        if (templateId == "need_repro") {
+            text = "Need repro details for {key} (blame context: {path}:{line}, CL {cl}).";
+        } else if (templateId == "need_logs") {
+            text = "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}.";
+        } else {
+            text = "Triage handoff for {key}:\n- Suggested owner: {user}\n- Suspect location: {function} ({path}:{line})\n- CL: {cl}";
+        }
     }
-    return "Triage handoff for " + issueKey + ":\n- Suggested owner: " + row.Blame.User +
-           "\n- Suspect location: " + row.Parsed.Function + " (" + row.PathForP4 + ":" +
-           std::to_string(row.Parsed.LineNumber) + ")\n- CL: " + row.Blame.Changelist;
+
+    text = ReplaceStringPlaceholder(text, "{key}", issueKey);
+    text = ReplaceStringPlaceholder(text, "{issueKey}", issueKey);
+    text = ReplaceStringPlaceholder(text, "{path}", row.PathForP4);
+    text = ReplaceStringPlaceholder(text, "{line}", std::to_string(row.Parsed.LineNumber));
+    text = ReplaceStringPlaceholder(text, "{cl}", row.Blame.Changelist);
+    text = ReplaceStringPlaceholder(text, "{function}", row.Parsed.Function);
+    text = ReplaceStringPlaceholder(text, "{user}", row.Blame.User);
+
+    return text;
 }
 
 ImVec4 ThCol(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
@@ -1790,37 +1815,19 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             ImGui::Separator();
             ImGui::TextDisabled("Quick comment templates");
             ImGui::BeginDisabled(readOnlyMode);
-            if (ImGui::Selectable("Need repro details", false)) {
-                std::string err;
-                if (app.AddIssueCommentPlain(
-                        selectedJiraIssueKey,
-                        BuildBlameQuickCommentTemplate(selectedJiraIssueKey, "need_repro", g_assignRow), err)) {
-                    g_lastUiStatus = "Posted 'Need repro details' comment.";
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
-                }
-            }
-            if (ImGui::Selectable("Need logs / diagnostics", false)) {
-                std::string err;
-                if (app.AddIssueCommentPlain(
-                        selectedJiraIssueKey,
-                        BuildBlameQuickCommentTemplate(selectedJiraIssueKey, "need_logs", g_assignRow), err)) {
-                    g_lastUiStatus = "Posted 'Need logs / diagnostics' comment.";
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
-                }
-            }
-            if (ImGui::Selectable("Triage handoff summary", false)) {
-                std::string err;
-                if (app.AddIssueCommentPlain(
-                        selectedJiraIssueKey,
-                        BuildBlameQuickCommentTemplate(selectedJiraIssueKey, "handoff", g_assignRow), err)) {
-                    g_lastUiStatus = "Posted triage handoff comment.";
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
+            {
+                const TrackerConfig jiraCfg = ConfigManager::Load();
+                for (const auto& t : jiraCfg.BlameCommentTemplates) {
+                    if (ImGui::Selectable(t.Title.c_str(), false)) {
+                        std::string err;
+                        std::string commentBody = BuildBlameQuickCommentTemplate(selectedJiraIssueKey, t.Id, g_assignRow, jiraCfg.BlameCommentTemplates);
+                        if (app.AddIssueCommentPlain(selectedJiraIssueKey, commentBody, err)) {
+                            g_lastUiStatus = "Posted '" + t.Title + "' comment.";
+                            ImGui::CloseCurrentPopup();
+                        } else {
+                            g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
+                        }
+                    }
                 }
             }
             ImGui::EndDisabled();

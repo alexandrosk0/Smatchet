@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "BackendAuditTrail.h"
+#include "FieldEditAuditSource.h"
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
 #include "JiraClient.h"
@@ -617,6 +618,9 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     }
 
     const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
+    const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
+    LOG_TRACE("SubmitFieldEdit: source=%s issue=%s field=%s raw_values=%zu", fieldEditAuditSource, issueId.c_str(),
+              field.Id.c_str(), rawValues.size());
 
     std::vector<std::string> values;
     values.reserve(rawValues.size());
@@ -644,13 +648,13 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         TrackerConfig cfg = ConfigManager::Load();
         auto ticketIt = std::find_if(tickets.begin(), tickets.end(),
                                      [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-        BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+        BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
         if (!Backend->AddIssueToSprint(issueId, sprintId, outError)) {
             LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
                       issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
             BackendAuditTrail::AppendResult(
-                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
                 nlohmann::json{
                     {"field_id", field.Id},
                     {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
@@ -672,7 +676,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             RefreshLocalData();
         }
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", values.empty() ? std::string() : values.front()}});
@@ -725,7 +729,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
         nlohmann::json fieldsPayload = nlohmann::json::object();
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+        BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
         if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outError)) {
             std::string payloadForLog;
@@ -737,7 +741,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             LOG_ERROR("AppController::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
                       issueId.c_str(), field.Id.c_str(), outError.c_str(), TruncateForLog(payloadForLog, 1200).c_str());
             BackendAuditTrail::AppendResult(
-                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
                 nlohmann::json{{"field_id", "timetracking"},
                                {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
                                                          {"timeestimate", beforeRemainingEstimate}}},
@@ -754,7 +758,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             RefreshLocalData();
         }
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
             nlohmann::json{{"field_id", "timetracking"},
                            {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
                                                      {"timeestimate", beforeRemainingEstimate}}},
@@ -782,7 +786,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return false;
     }
 
-    BackendAuditTrail::AppendBegin("field_edit_diff", "ui", issueId, fieldEditAuditOp,
+    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
     bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
     bool didRetryAfter400 = false;
@@ -794,7 +798,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             LOG_WARN("AppController::SubmitFieldEdit blocked after editmeta refresh issue=%s field=%s", issueId.c_str(),
                      field.Id.c_str());
             BackendAuditTrail::AppendResult(
-                "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
                 nlohmann::json{
                     {"field_id", field.Id},
                     {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
@@ -815,7 +819,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             issueId.c_str(), field.Id.c_str(), didRetryAfter400 ? 1 : 0, outError.c_str(),
             TruncateForLog(payloadForLog, 1200).c_str());
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", "ui", issueId, fieldEditAuditOp, false, outError,
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", rawValues}});
@@ -838,14 +842,14 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
         updatedTicket.fieldValues[field.Id] = displayValue;
         UpdateTicket(updatedTicket);
-        BackendAuditTrail::AppendResult("field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+        BackendAuditTrail::AppendResult("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
                                         nlohmann::json{{"field_id", field.Id},
                                                        {"before", ticketIt->GetFieldValue(field.Id)},
                                                        {"after", displayValue}});
     } else {
         RefreshLocalData();
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", "ui", issueId, fieldEditAuditOp, true, std::string(),
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
             nlohmann::json{{"field_id", field.Id}, {"before", "unknown"}, {"after", rawValues}});
     }
 
@@ -859,6 +863,8 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                                                const std::string& remainingEstimateSnapshot,
                                                const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
     outResult = FieldEditResult{};
+    LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu",
+              FieldEditAuditSource::Current(), issueId.c_str(), field.Id.c_str(), rawValues.size());
     if (issueId.empty()) {
         outResult.Error = "Issue id is empty.";
         return false;

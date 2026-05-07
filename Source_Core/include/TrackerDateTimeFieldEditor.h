@@ -15,7 +15,8 @@ using QueueDateTimeEditFn =
     std::function<void(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values)>;
 
 void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
-                               SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit);
+                               SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit,
+                               const std::string& dateFormatOption = {}, int thresholdDays = 0);
 
 } // namespace TrackerDateTimeFieldEditor
 

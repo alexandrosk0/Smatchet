@@ -411,11 +411,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 }
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
-#ifndef SMATCHET_EMBEDDED_IN_UNREAL
-#if !defined(SMATCHET_WITH_LUA_AUTOMATION)
     (void)app;
-#endif
-#endif
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Settings")) {
             if (ImGui::MenuItem("Preferences...")) {
@@ -441,6 +437,18 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.showAuditTrail = true;
                 d.requestAuditTrailFocus = true;
             }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            ImGui::Separator();
+            if (ImGui::MenuItem("Scripting...", nullptr, &d.showLuaAutomationWindow) && d.showLuaAutomationWindow) {
+                d.requestLuaAutomationFocus = true;
+                d.requestScriptingEditorTabFocus = true;
+            }
+#if defined(SMATCHET_WITH_MCP)
+            if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
+                d.requestMcpServerFocus = true;
+            }
+#endif
+#endif
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Bulk")) {
@@ -452,47 +460,12 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::EndMenu();
         }
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+#if !defined(SMATCHET_WITH_LUA_AUTOMATION)
         {
-            const auto globalActions = app.GetLuaGlobalActionNames();
-            if (ImGui::BeginMenu("Scripts")) {
-                if (ImGui::MenuItem("Scripting (Global Actions)...")) {
-                    d.showLuaAutomationWindow = true;
-                    d.requestScriptsWindowFocus = true;
-                }
-                if (ImGui::MenuItem("Lua && Automation...", nullptr, &d.showLuaAutomationWindow) &&
-                    d.showLuaAutomationWindow) {
-                    d.requestLuaAutomationFocus = true;
-                }
-#if defined(SMATCHET_WITH_MCP)
-                if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
-                    d.requestMcpServerFocus = true;
-                }
-#endif
-                if (!globalActions.empty()) {
-                    ImGui::Separator();
-                    for (const auto& name : globalActions) {
-                        if (ImGui::MenuItem(name.c_str())) {
-                            std::string err;
-                            if (!app.ExecuteLuaGlobalAction(name, err)) {
-                                d.gridEditError = "Lua Error: " + err;
-                                d.gridEditSuccess.clear();
-                            } else {
-                                d.gridEditSuccess = "Ran Lua Script: " + name;
-                                d.gridEditError.clear();
-                            }
-                        }
-                    }
-                }
-                ImGui::EndMenu();
-            }
-        }
-#else
-        {
-            static bool s_loggedScriptsMenuAbsent = false;
-            if (!s_loggedScriptsMenuAbsent) {
-                s_loggedScriptsMenuAbsent = true;
-                LOG_WARN("SmatchetUI: no Scripts menu in this binary (SMATCHET_WITH_LUA_AUTOMATION off).");
+            static bool s_loggedLuaMenuAbsent = false;
+            if (!s_loggedLuaMenuAbsent) {
+                s_loggedLuaMenuAbsent = true;
+                LOG_WARN("SmatchetUI: Lua automation disabled in this binary (no Scripting window).");
             }
         }
 #endif
@@ -556,8 +529,6 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     d.connectivityRecoveryTicketFetchLoading = false;
     d.connectivityRecoveryTicketResyncPending = false;
 
-    DrainFutureJoinQuiet(d.inFlightCommitFuture);
-    d.inFlightCommitStarted = false;
     d.hasInFlightEdit = false;
 
     DrainFutureJoinQuiet(d.newIssueCreateFuture);

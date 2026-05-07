@@ -30,7 +30,9 @@ bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out);
 std::string FormatJiraDateOrDateTimeForApi(bool isDateField, const ParsedJiraDateTime& in);
 
 /** Compact display for Jira ISO date/datetime strings (grid/tooltips use raw elsewhere). */
-std::string FormatCompactJiraDateForDisplay(const std::string& raw);
+std::string FormatCompactJiraDateForDisplay(const std::string& raw,
+                                            const std::string& formatOption = "compact",
+                                            int thresholdDays = 21);
 
 
 

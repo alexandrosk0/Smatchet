@@ -16,7 +16,8 @@ class TicketFieldEditor {
     static void RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                 const TrackerField* field, const std::string& currentValue, float availWidth,
                                 bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
-                                std::vector<PendingFieldEdit>& pendingEdits, TrackerGridFieldAsyncState& trackerGridAsync);
+                                std::vector<PendingFieldEdit>& pendingEdits, TrackerGridFieldAsyncState& trackerGridAsync,
+                                const std::string& dateFormatOption = {}, int thresholdDays = 0);
 };
 
 

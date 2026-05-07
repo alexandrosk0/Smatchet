@@ -30,11 +30,12 @@ std::string FormatNetworkBytes(std::uint64_t n) {
 
 enum class PerfTableCol : ImGuiID {
     Scope = 1,
+    Calls,
     Last,
     Avg,
     Ema,
     Max,
-    Calls,
+    LifetimeHits,
 };
 
 int CompareRoundedMs(double x, double y) {
@@ -97,10 +98,10 @@ void SortUiPerfRows(std::vector<UiPerfRow>& rows, const ImGuiTableSortSpecs* sor
             cmp = CompareRoundedMs(a.maxMs, b.maxMs);
             break;
         case PerfTableCol::Calls:
+            cmp = a.calls < b.calls ? -1 : (a.calls > b.calls ? 1 : 0);
+            break;
+        case PerfTableCol::LifetimeHits:
             cmp = a.lifetimeHits < b.lifetimeHits ? -1 : (a.lifetimeHits > b.lifetimeHits ? 1 : 0);
-            if (cmp == 0) {
-                cmp = a.calls < b.calls ? -1 : (a.calls > b.calls ? 1 : 0);
-            }
             break;
         default:
             cmp = 0;
@@ -226,17 +227,17 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                 ImGui::TextUnformatted(
                     "Wall time per scoped UI path; nested scopes overlap (not additive). "
                     "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
-                    "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame. "
-                    "Hits: last frame count and running total while the app runs.");
+                    "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.");
                 ImGui::Separator();
                 std::vector<UiPerfRow> rows;
                 buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dt);
-                SortRowsByStableLastDesc(rows);
-                if (ImGui::BeginTable("UiPerfTable", 6,
+                if (ImGui::BeginTable("UiPerfTable", 7,
                                       ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
                                           ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable)) {
                     ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_None, 0.0f,
                                             static_cast<ImGuiID>(PerfTableCol::Scope));
+                    ImGui::TableSetupColumn("Calls/Frame", ImGuiTableColumnFlags_None, 0.0f,
+                                            static_cast<ImGuiID>(PerfTableCol::Calls));
                     ImGui::TableSetupColumn(
                         "Last (ms)", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
                         0.0f, static_cast<ImGuiID>(PerfTableCol::Last));
@@ -246,19 +247,27 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                                             static_cast<ImGuiID>(PerfTableCol::Ema));
                     ImGui::TableSetupColumn("Max (ms)", ImGuiTableColumnFlags_None, 0.0f,
                                             static_cast<ImGuiID>(PerfTableCol::Max));
-                    ImGui::TableSetupColumn("Calls", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Calls));
+                    ImGui::TableSetupColumn("Total Calls", ImGuiTableColumnFlags_None, 0.0f,
+                                            static_cast<ImGuiID>(PerfTableCol::LifetimeHits));
                     ImGui::TableHeadersRow();
                     if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
-                        if (sort_specs->SpecsDirty) {
+                        if (sort_specs->SpecsCount > 0) {
                             SortUiPerfRows(rows, sort_specs);
-                            sort_specs->SpecsDirty = false;
+                            if (sort_specs->SpecsDirty) {
+                                sort_specs->SpecsDirty = false;
+                            }
+                        } else {
+                            SortRowsByStableLastDesc(rows);
                         }
+                    } else {
+                        SortRowsByStableLastDesc(rows);
                     }
                     for (const UiPerfRow& r : rows) {
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
                         ImGui::TextUnformatted(r.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%llu", static_cast<unsigned long long>(r.calls));
                         ImGui::TableNextColumn();
                         ImGui::Text("%.2f", r.lastTotalMs);
                         ImGui::TableNextColumn();
@@ -268,7 +277,7 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                         ImGui::TableNextColumn();
                         ImGui::Text("%.2f", r.maxMs);
                         ImGui::TableNextColumn();
-                        ImGui::Text("%u / %llu", r.calls, static_cast<unsigned long long>(r.lifetimeHits));
+                        ImGui::Text("%llu", static_cast<unsigned long long>(r.lifetimeHits));
                     }
                     ImGui::EndTable();
                 }

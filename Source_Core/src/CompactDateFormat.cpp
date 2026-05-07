@@ -1,4 +1,6 @@
 #include "CompactDateFormat.h"
+#include "UiPerfMonitor.h"
+#include "imgui.h"
 
 // For timegm() on glibc / BSD (not MSVC).
 #if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
@@ -12,6 +14,7 @@
 #include <cstring>
 #include <ctime>
 #include <sstream>
+#include <unordered_map>
 
 #if !defined(_WIN32)
 #include <time.h>
@@ -143,6 +146,50 @@ void AppendOffsetJira(std::string& out, int offsetSec) {
     out += buf;
 }
 
+std::string FormatAbsoluteIso(const std::chrono::system_clock::time_point& tp, bool hasTime) {
+    const std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+    std::tm tmLocal{};
+#if defined(_WIN32)
+    if (localtime_s(&tmLocal, &tt) != 0) {
+        return std::string();
+    }
+#else
+    if (localtime_r(&tt, &tmLocal) == nullptr) {
+        return std::string();
+    }
+#endif
+    char buf[64];
+    size_t n = 0;
+    if (hasTime) {
+        n = std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tmLocal);
+    } else {
+        n = std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmLocal);
+    }
+    return (n == 0) ? std::string() : std::string(buf, n);
+}
+
+std::string FormatAbsoluteFriendly(const std::chrono::system_clock::time_point& tp, bool hasTime) {
+    const std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+    std::tm tmLocal{};
+#if defined(_WIN32)
+    if (localtime_s(&tmLocal, &tt) != 0) {
+        return std::string();
+    }
+#else
+    if (localtime_r(&tt, &tmLocal) == nullptr) {
+        return std::string();
+    }
+#endif
+    char buf[128];
+    size_t n = 0;
+    if (hasTime) {
+        n = std::strftime(buf, sizeof(buf), "%b %d, %Y, %H:%M", &tmLocal);
+    } else {
+        n = std::strftime(buf, sizeof(buf), "%b %d, %Y", &tmLocal);
+    }
+    return (n == 0) ? std::string() : std::string(buf, n);
+}
+
 } // namespace
 
 bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
@@ -232,78 +279,132 @@ std::string FormatJiraDateOrDateTimeForApi(bool isDateField, const ParsedJiraDat
     return result;
 }
 
-std::string FormatCompactJiraDateForDisplay(const std::string& raw) {
-    const std::string s = TrimCopy(raw);
-    if (s.empty()) {
-        return raw;
+std::string FormatCompactJiraDateForDisplay(const std::string& raw,
+                                            const std::string& formatOption,
+                                            int thresholdDays) {
+    SMATCHET_UI_PERF_SCOPE("FormatCompactJiraDateForDisplay");
+
+    struct CachedFormattedDate {
+        std::string formatted;
+        double lastUpdatedSec = 0.0;
+        int lastFrameCount = -1;
+        std::string formatOption;
+        int thresholdDays = 0;
+    };
+    thread_local static std::unordered_map<std::string, CachedFormattedDate> s_formatCache;
+
+    const ImGuiContext* ctx = ImGui::GetCurrentContext();
+    const int frameCount = ctx ? ImGui::GetFrameCount() : -1;
+
+    auto formatIt = s_formatCache.find(raw);
+    if (formatIt != s_formatCache.end()) {
+        CachedFormattedDate& entry = formatIt->second;
+        // Within the same frame the date string cannot change: skip everything.
+        if (frameCount >= 0 && entry.lastFrameCount == frameCount &&
+            entry.formatOption == formatOption && entry.thresholdDays == thresholdDays) {
+            return entry.formatted;
+        }
+        // Cross-frame: check 2-second TTL so relative labels ("-3d") stay fresh.
+        const double nowSec = ctx ? ImGui::GetTime()
+                                  : static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (entry.formatOption == formatOption && entry.thresholdDays == thresholdDays &&
+            (nowSec - entry.lastUpdatedSec) < 2.0) {
+            entry.lastFrameCount = frameCount;
+            return entry.formatted;
+        }
     }
 
-    ParsedJiraDateTime p;
-    if (!TryParseJiraDateTime(s, p)) {
-        return raw;
-    }
+    auto computeFormat = [&]() -> std::string {
+        struct CachedParsedDate {
+            std::chrono::system_clock::time_point Tp;
+            bool HasWallTime = false;
+            bool Success = false;
+        };
+        thread_local static std::unordered_map<std::string, CachedParsedDate> s_parseCache;
 
-    std::tm wall{};
-    if (!ParsedToTm(p, wall)) {
-        return raw;
-    }
+        CachedParsedDate cp;
+        auto it = s_parseCache.find(raw);
+        if (it != s_parseCache.end()) {
+            cp = it->second;
+        } else {
+            const std::string s = TrimCopy(raw);
+            if (!s.empty()) {
+                ParsedJiraDateTime p;
+                if (TryParseJiraDateTime(s, p)) {
+                    std::tm wall{};
+                    if (ParsedToTm(p, wall)) {
+                        const int offsetSec = p.HasTimeZoneSuffix ? p.OffsetSec : 0;
+                        const std::time_t wallAsUtcGuess = TimeGmPortable(&wall);
+                        if (wallAsUtcGuess != static_cast<std::time_t>(-1)) {
+                            cp.Tp = std::chrono::system_clock::from_time_t(wallAsUtcGuess - static_cast<std::time_t>(offsetSec));
+                            cp.HasWallTime = p.HasWallTime;
+                            cp.Success = true;
+                        }
+                    }
+                }
+            }
+            if (s_parseCache.size() > 8192) {
+                s_parseCache.clear();
+            }
+            s_parseCache[raw] = cp;
+        }
 
-    const int offsetSec = p.HasTimeZoneSuffix ? p.OffsetSec : 0;
+        if (!cp.Success) {
+            return raw;
+        }
 
-    const std::time_t wallAsUtcGuess = TimeGmPortable(&wall);
-    if (wallAsUtcGuess == static_cast<std::time_t>(-1)) {
-        return raw;
-    }
+        const auto& tp = cp.Tp;
 
-    const auto tp = std::chrono::system_clock::from_time_t(wallAsUtcGuess - static_cast<std::time_t>(offsetSec));
-    const auto now = std::chrono::system_clock::now();
-    const auto diffSec = std::chrono::duration_cast<std::chrono::seconds>(now - tp).count();
+        if (formatOption == "absolute_iso") {
+            const std::string val = FormatAbsoluteIso(tp, cp.HasWallTime);
+            return val.empty() ? raw : val;
+        }
+        if (formatOption == "absolute_friendly") {
+            const std::string val = FormatAbsoluteFriendly(tp, cp.HasWallTime);
+            return val.empty() ? raw : val;
+        }
 
-    constexpr long long kMinute = 60;
-    constexpr long long kHour = 3600;
-    constexpr long long kDay = 86400;
-    constexpr long long kWeek = 604800;
-    constexpr long long kThreeWeeks = 21 * kDay;
+        const auto now = std::chrono::system_clock::now();
+        const auto diffSec = std::chrono::duration_cast<std::chrono::seconds>(now - tp).count();
 
-    const long long mag = (diffSec < 0) ? static_cast<long long>(-diffSec) : static_cast<long long>(diffSec);
-    const char sign = (diffSec >= 0) ? '-' : '+';
+        constexpr long long kMinute = 60;
+        constexpr long long kHour = 3600;
+        constexpr long long kDay = 86400;
+        constexpr long long kWeek = 604800;
+        constexpr long long kMonth = 2592000;
+        constexpr long long kYear = 31536000;
 
-    if (mag >= kThreeWeeks) {
-        const std::string shortDate = FormatShortLocalDate(tp);
-        return shortDate.empty() ? raw : shortDate;
-    }
+        const long long mag = (diffSec < 0) ? static_cast<long long>(-diffSec) : static_cast<long long>(diffSec);
+        const std::string sign = (diffSec >= 0) ? "-" : "+";
 
-    if (mag >= 7 * kDay) {
-        const long long w = mag / kWeek;
-        const long long weeks = (std::max)(1LL, w);
-        std::ostringstream oss;
-        oss << sign << weeks << 'w';
-        return oss.str();
+        if (formatOption == "compact") {
+            const long long thresholdSec = static_cast<long long>(thresholdDays) * kDay;
+            if (mag >= thresholdSec) {
+                const std::string shortDate = FormatShortLocalDate(tp);
+                return shortDate.empty() ? raw : shortDate;
+            }
+        }
+
+        if (mag >= kYear)  { return sign + std::to_string(mag / kYear)  + "y";  }
+        if (mag >= kMonth) { return sign + std::to_string(mag / kMonth) + "mo"; }
+        if (mag >= kWeek)  { return sign + std::to_string(mag / kWeek)  + "w";  }
+        if (mag >= kDay)   { return sign + std::to_string(mag / kDay)   + "d";  }
+        if (mag >= kHour)  { return sign + std::to_string(mag / kHour)  + "h";  }
+        if (mag >= kMinute){ return sign + std::to_string(mag / kMinute) + "m"; }
+        if (mag > 0)       { return sign + "1m"; }
+        return "0m";
+    };
+
+    const double nowSec = ctx ? ImGui::GetTime()
+                              : static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count());
+    std::string formattedVal = computeFormat();
+    if (s_formatCache.size() > 8192) {
+        s_formatCache.clear();
     }
-    if (mag >= kDay) {
-        const long long d = mag / kDay;
-        std::ostringstream oss;
-        oss << sign << d << 'd';
-        return oss.str();
-    }
-    if (mag >= kHour) {
-        const long long h = mag / kHour;
-        std::ostringstream oss;
-        oss << sign << h << 'h';
-        return oss.str();
-    }
-    if (mag >= kMinute) {
-        const long long m = mag / kMinute;
-        std::ostringstream oss;
-        oss << sign << m << 'm';
-        return oss.str();
-    }
-    if (mag > 0) {
-        std::ostringstream oss;
-        oss << sign << 1 << 'm';
-        return oss.str();
-    }
-    return std::string("0m");
+    s_formatCache[raw] = CachedFormattedDate{formattedVal, nowSec, frameCount, formatOption, thresholdDays};
+    return formattedVal;
 }
 
 

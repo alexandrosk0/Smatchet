@@ -120,6 +120,14 @@ bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::stri
 AppController::~AppController() {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ClearLuaTicketContextGlue();
+    {
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        automationWorkerShuttingDown_.store(true);
+    }
+    automationJobCv_.notify_all();
+    if (automationWorker_.joinable()) {
+        automationWorker_.join();
+    }
 #endif
     // Join UiDrawSession std::async futures that captured this controller (via static `g_ui`) before
     // tearing down members other threads may still touch.
@@ -440,7 +448,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     LogLuaScriptFileProbe("SmatchetHooks.lua", ResolveLuaScriptPath("SmatchetHooks.lua"));
     LogLuaScriptFileProbe("Automation.lua", ResolveLuaScriptPath("Automation.lua"));
 #else
-    LOG_INFO("AppController: SMATCHET_WITH_LUA_AUTOMATION off — no Lua init; Scripts menu not in this build.");
+    LOG_INFO("AppController: SMATCHET_WITH_LUA_AUTOMATION off — no Lua init in this build.");
 #endif
 
     // Defer SyncWithBackend to first SmatchetUI::Draw so active view JQL/fields are
@@ -490,6 +498,11 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     InitLua();
 
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    RunLuaSetupScript("SmatchetHooks.lua");
+    automationWorker_ = std::thread(&AppController::AutomationWorkerLoop, this);
+#endif
+
     if (activeTrackerType == "Jira") {
         WarmIssueTypeEditMetaAtStartAsync(std::move(jiraCfgForEditMetaWarmup));
     }
@@ -505,6 +518,52 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
         return luaScriptsDirectory_ + filename;
     }
     return std::string("Scripts/") + filename;
+}
+
+std::vector<std::string> AppController::ListLuaScriptFiles() const {
+    namespace fs = ghc::filesystem;
+    std::vector<std::string> out;
+    try {
+        std::error_code ec;
+        fs::path root;
+        if (!luaScriptsDirectory_.empty()) {
+            root = fs::path(luaScriptsDirectory_);
+        } else {
+            root = fs::path("Scripts");
+        }
+        if (!fs::is_directory(root, ec)) {
+            return out;
+        }
+        for (const auto& ent : fs::directory_iterator(root, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!ent.is_regular_file(ec)) {
+                continue;
+            }
+            const std::string fname = ent.path().filename().string();
+            if (fname.size() < 5) {
+                continue;
+            }
+            std::string ext = fname.substr(fname.size() - 4);
+            for (char& c : ext) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (ext != ".lua") {
+                continue;
+            }
+            out.push_back(fname);
+        }
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+    } catch (const std::exception& ex) {
+        LOG_WARN("ListLuaScriptFiles: exception (returning partial/empty): %s", ex.what());
+        out.clear();
+    } catch (...) {
+        LOG_WARN("ListLuaScriptFiles: unknown exception (returning empty).");
+        out.clear();
+    }
+    return out;
 }
 
 std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUrl) const {

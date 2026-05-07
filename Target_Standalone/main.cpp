@@ -142,7 +142,7 @@ static void SmatchetLogOpenGLInfo() {
     ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)");
 }
 
-int main(int, char**) {
+int main(int argc, char** argv) {
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
@@ -241,15 +241,48 @@ int main(int, char**) {
         return 1;
     }
 
-    // 3. Initialize Smatchet Core + plugins
+    // 3. Load merged configuration with command-line overrides
+    ConfigManager::CliOverrides cli;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            ::printf("Smatchet Standalone Client\n");
+            ::printf("Usage: SmatchetStandalone [options]\n");
+            ::printf("Options:\n");
+            ::printf("  -d, --db-path <path>         Path to sqlite database\n");
+            ::printf("  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n");
+            ::printf("  -p, --mcp-port <port>        MCP server port number\n");
+            ::printf("      --mcp-allow-remote       Allow remote connections to MCP server\n");
+            ::printf("  -h, --help                   Show help message\n");
+            glfwTerminate();
+            return 0;
+        } else if ((arg == "--db-path" || arg == "-d") && i + 1 < argc) {
+            cli.HasDbPath = true;
+            cli.DbPath = argv[++i];
+        } else if ((arg == "--backend-type" || arg == "--tracker-type" || arg == "-b") && i + 1 < argc) {
+            cli.HasBackendType = true;
+            cli.BackendType = argv[++i];
+        } else if ((arg == "--mcp-port" || arg == "-p") && i + 1 < argc) {
+            try {
+                cli.HasMcpPort = true;
+                cli.McpPort = std::stoi(argv[++i]);
+            } catch (...) {}
+        } else if (arg == "--mcp-allow-remote") {
+            cli.HasMcpAllowRemote = true;
+            cli.McpAllowRemote = true;
+        }
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load(cli);
+
     AppController smatchetApp;
     PluginHost pluginHost;
     smatchetApp.SetRuntimePluginHost(&pluginHost);
 #if defined(SMATCHET_WITH_MCP)
     {
-        const TrackerConfig cfg = ConfigManager::Load();
         if (cfg.McpEnabled) {
-            const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : 8080;
+            const int mcpPort =
+                (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
             pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
         }
     }
@@ -259,7 +292,7 @@ int main(int, char**) {
 #endif
     pluginHost.OnEarlyInit(smatchetApp);
 
-    smatchetApp.Initialize("Smatchet_LocalCache.sqlite", "Jira");
+    smatchetApp.Initialize(cfg.DbPath, cfg.TrackerType);
     pluginHost.OnStart(smatchetApp);
 
     SmatchetUI mainWindow;

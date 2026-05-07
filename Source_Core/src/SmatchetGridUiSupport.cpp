@@ -1,5 +1,6 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetToast.h"
+#include "SmatchetUiSession.h"
 
 #include "AppController.h"
 #include "StringUtil.h"
@@ -37,27 +38,42 @@ static void DrawLuaTicketActionMenuItems(AppController* app, UiDrawSession* ui, 
     ImGui::TextDisabled("Lua Actions");
     for (const auto& name : luaActions) {
         if (ImGui::MenuItem(name.c_str())) {
-            std::string err;
-            if (!app->ExecuteLuaTicketAction(name, issueKey, err)) {
-                SmatchetToastManager::Instance().Push("Lua Error", err, ToastType::Error);
-            } else {
-                SmatchetToastManager::Instance().Push("Lua Action", "Ran: " + name, ToastType::Success);
-            }
+            app->ExecuteLuaTicketAction(name, issueKey);
+            SmatchetToastManager::Instance().Push("Lua Action", "Queued: " + name, ToastType::Success);
         }
     }
 }
 #endif
 
-static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId) {
+static std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder, const std::string& replacement) {
+    size_t pos = 0;
+    while ((pos = str.find(placeholder, pos)) != std::string::npos) {
+        str.replace(pos, placeholder.length(), replacement);
+        pos += replacement.length();
+    }
+    return str;
+}
+
+static std::string ResolveCommentTemplate(std::string text, const std::string& issueKey) {
+    text = ReplaceStringPlaceholder(text, "{key}", issueKey);
+    text = ReplaceStringPlaceholder(text, "{issueKey}", issueKey);
+    return text;
+}
+
+static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId,
+                                            const std::vector<CommentTemplate>& templates) {
+    for (const auto& t : templates) {
+        if (t.Id == templateId) {
+            return ResolveCommentTemplate(t.Text, issueKey);
+        }
+    }
     if (templateId == "need_repro") {
-        return "Need reproduction details for " + issueKey +
-               ":\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details";
+        return ResolveCommentTemplate("Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details", issueKey);
     }
     if (templateId == "need_logs") {
-        return "Please attach diagnostic data for " + issueKey +
-               ":\n- Relevant logs\n- Callstack / crash context\n- Local repro notes";
+        return ResolveCommentTemplate("Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash context\n- Local repro notes", issueKey);
     }
-    return "Triage handoff for " + issueKey + ":\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:";
+    return ResolveCommentTemplate("Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:", issueKey);
 }
 
 } // namespace
@@ -120,19 +136,17 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             if (readOnlyMode) {
                 ImGui::TextDisabled("(disabled while offline/read-only)");
             } else {
-                auto postTemplate = [&](const char* title, const char* id) {
-                    if (ImGui::MenuItem(title)) {
+                for (const auto& t : ui->cfg.QuickCommentTemplates) {
+                    if (ImGui::MenuItem(t.Title.c_str())) {
                         std::string err;
-                        if (app->AddIssueCommentPlain(issueKey, BuildTemplateCommentBody(issueKey, id), err)) {
+                        std::string commentBody = BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
+                        if (app->AddIssueCommentPlain(issueKey, commentBody, err)) {
                             SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey, ToastType::Success);
                         } else {
                             SmatchetToastManager::Instance().Push("Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
                         }
                     }
-                };
-                postTemplate("Need repro details", "need_repro");
-                postTemplate("Need logs / diagnostics", "need_logs");
-                postTemplate("Triage handoff summary", "handoff");
+                }
             }
         }
         ImGui::EndPopup();

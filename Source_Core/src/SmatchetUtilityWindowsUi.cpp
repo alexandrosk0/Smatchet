@@ -4,6 +4,7 @@
 #include "AiController.h"
 #endif
 #include "AppController.h"
+#include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetUiSession.h"
@@ -105,12 +106,65 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
 void SmatchetUI::drawAIAssistantWindow(AppController&, UiDrawSession&) {}
 #endif
 
+namespace {
+
+void DrawLogWindowPreferences(UiDrawSession& d) {
+    static const LogLevel kLogLevels[] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn,
+                                          LogLevel::Error};
+    LogLevel parsedLevel = Logger::ParseLogLevelString(d.cfg.LogMinLevel, LogLevel::Info);
+    int levelComboIndex = 2;
+    for (int i = 0; i < 5; ++i) {
+        if (kLogLevels[i] == parsedLevel) {
+            levelComboIndex = i;
+            break;
+        }
+    }
+    ImGui::TextUnformatted("Min log level");
+    ImGui::SameLine();
+    if (ImGui::Combo("##LogWinMinLevel", &levelComboIndex,
+                     "Trace\0"
+                     "Debug\0"
+                     "Info\0"
+                     "Warn\0"
+                     "Error\0"
+                     "\0")) {
+        d.cfg.LogMinLevel = Logger::LogLevelToString(kLogLevels[levelComboIndex]);
+        Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
+        ConfigManager::Save(d.cfg);
+    }
+    bool trackerBodies = d.cfg.LogTrackerHttpBodies;
+    if (ImGui::Checkbox("Log Tracker HTTP bodies (truncated)", &trackerBodies)) {
+        d.cfg.LogTrackerHttpBodies = trackerBodies;
+        Logger::Instance().SetLogTrackerHttpBodies(trackerBodies);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Verbose: logs response text (capped per request). May include issue summaries and user-visible data.");
+    }
+    bool logP4Io = d.cfg.LogP4Io;
+    if (ImGui::Checkbox("Log Perforce p4 stdout (truncated, Trace level)", &logP4Io)) {
+        d.cfg.LogP4Io = logP4Io;
+        Logger::Instance().SetLogP4Io(logP4Io);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
+    }
+}
+
+} // namespace
+
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     Logger& logger = Logger::Instance();
     if (!ImGui::Begin("Log", &d.showLogWindow)) {
         ImGui::End();
         return;
     }
+
+    DrawLogWindowPreferences(d);
+    ImGui::Separator();
 
     if (ImGui::Button("Clear Log")) {
         logger.Clear();
@@ -119,8 +173,6 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(application log)");
-    ImGui::SameLine();
-    ImGui::TextDisabled("Log level and verbose options: Settings -> Preferences -> Diagnostics.");
 
     ImGui::Separator();
 

@@ -49,6 +49,9 @@ option(SMATCHET_WITH_AI "Build with AI assistance client (OpenAI-compatible HTTP
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
+# Unreal-packaged DX12 artifacts intentionally ship without MCP server support.
+set(SMATCHET_WITH_MCP_UNREAL OFF)
+
 
 function(smatchet_apply_strict_warnings _target)
     if(NOT SMATCHET_ENABLE_STRICT_WARNINGS)
@@ -433,6 +436,13 @@ endfunction()
 
 function(smatchet_configure_dx12_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
+    if(NOT SMATCHET_WITH_MCP_UNREAL)
+        if(MSVC)
+            target_compile_options("${_target}" PRIVATE /USMATCHET_WITH_MCP)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options("${_target}" PRIVATE -USMATCHET_WITH_MCP)
+        endif()
+    endif()
     target_link_libraries("${_target}" PRIVATE
             ImGuiLib_DX12
             d3d12
@@ -464,39 +474,62 @@ if(SMATCHET_WITH_MCP)
 endif()
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
-    add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
-    target_include_directories(SmatchetPlugin_LuaConsole PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+    set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+    add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+    target_include_directories(SmatchetPlugin_LuaConsole PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit")
     target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
     smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
+    if(MSVC)
+        set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
+    endif()
 endif()
 
 if(WIN32)
-    if(SMATCHET_WITH_MCP)
+    if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
         target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
         target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12)
         smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
-        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
-        target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
+        set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+        target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit")
         target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
         smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole_DX12)
+        if(MSVC)
+            set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
+        endif()
     endif()
 
     add_library(SmatchetImGuiHost_DX12 STATIC
             Source_Core/src/SmatchetImGuiHost.cpp
             Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp
     )
+    if(NOT SMATCHET_WITH_MCP_UNREAL)
+        if(MSVC)
+            target_compile_options(SmatchetImGuiHost_DX12 PRIVATE /USMATCHET_WITH_MCP)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(SmatchetImGuiHost_DX12 PRIVATE -USMATCHET_WITH_MCP)
+        endif()
+    endif()
     target_include_directories(SmatchetImGuiHost_DX12 PUBLIC Source_Core/include)
-    if(SMATCHET_WITH_MCP)
+    if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
     endif()
     target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12 d3d12 dxgi)
-    if(SMATCHET_WITH_MCP)
+    if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         target_link_libraries(SmatchetImGuiHost_DX12 PUBLIC SmatchetPlugin_Mcp_DX12)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
@@ -517,6 +550,9 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHostC.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHostC.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetDefaults.h"
+                "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetDefaults.h"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${imgui_SOURCE_DIR}/imgui.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/imgui.h"
@@ -545,7 +581,7 @@ if(WIN32)
                 "$<TARGET_FILE:libcurl>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:libcurl>"
     )
-    if(SMATCHET_WITH_MCP)
+    if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         list(APPEND _SMATCHET_PKG_CMDS
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
@@ -592,6 +628,13 @@ if(WIN32)
 endif()
 
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
+if(WIN32)
+    set_target_properties(SmatchetStandalone PROPERTIES WIN32_EXECUTABLE TRUE)
+    # WIN32_EXECUTABLE -> /SUBSYSTEM:WINDOWS, whose default entry is WinMain. Standalone uses int main().
+    if(MSVC)
+        target_link_options(SmatchetStandalone PRIVATE "/ENTRY:mainCRTStartup")
+    endif()
+endif()
 smatchet_configure_opengl_core_impl_target(SmatchetStandalone)
 smatchet_apply_strict_warnings(SmatchetStandalone)
 
@@ -600,7 +643,13 @@ if(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
 endif()
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
-    set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+        set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+        set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+    else()
+        set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
+    endif()
     add_custom_command(TARGET SmatchetStandalone POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
             COMMENT "Copy Scripts (Lua + bundled art) next to SmatchetStandalone"

@@ -144,6 +144,11 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         if (result.Ok) {
             RefreshLocalData();
             requestDeferredLiveTrackerBackendSuccessNotify_();
+            // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.
+            const std::string key = result.IssueKey;
+            if (!key.empty()) {
+                PrefetchIssueTicketsForKeys({key}, true);
+            }
         }
         promise->set_value(std::move(result));
     });

@@ -86,6 +86,24 @@ cmake --preset ninja-unreal-dx12-release
 cmake --build --preset ninja-unreal-dx12-release
 ```
 
+### GitHub Release Bundles
+
+Use `scripts/release_github.ps1` to build/package release artifacts:
+- Standalone Windows bundle (`SmatchetStandalone.exe` + runtime files)
+- Unreal plugin bundle (`UnrealPlugins/SmatchetImGuiPlugin`)
+- Source zip (`git archive`)
+
+```powershell
+# Local artifact bundles only (no GitHub publish)
+.\scripts\release_github.ps1 -Tag v1.2.3
+
+# Create/update GitHub draft release and upload assets
+.\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Draft -NotesFile .\RELEASE_NOTES.md
+
+# Re-upload assets to existing release (overwrite matching filenames)
+.\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Clobber
+```
+
 ## Architecture
 
 * **`Source_Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerClient`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
@@ -93,7 +111,7 @@ cmake --build --preset ninja-unreal-dx12-release
 * **`Plugins/`**: Optional plugin modules (Lua Console, MCP server).
 * **`UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.
 * **`ThirdParty/`**: Holds custom fixes or scripts for external dependencies.
-* **`scripts/`**: Default Lua scripts (`Automation.lua`, `SmatchetHooks.lua`).
+* **`scripts/`**: Default Lua scripts (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`). Edit them in-app via **Windows → Scripting…** (standalone copies this tree next to the exe as `Scripts/`).
 * **`cmake/`**: Additional CMake helper modules.
 
 ## License

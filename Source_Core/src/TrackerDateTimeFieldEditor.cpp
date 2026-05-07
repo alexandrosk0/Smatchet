@@ -1,5 +1,6 @@
 #include "TrackerDateTimeFieldEditor.h"
 #include "CompactDateFormat.h"
+#include "ConfigManager.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -10,6 +11,25 @@
 #include <string>
 
 namespace {
+
+static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways || !data->UserData) {
+        return 0;
+    }
+    auto* state = static_cast<SpreadsheetState*>(data->UserData);
+    if (!state->PendingGridInputTextDeselect) {
+        return 0;
+    }
+    const bool fullRange =
+        data->BufTextLen > 0 && data->SelectionStart == 0 && data->SelectionEnd == data->BufTextLen;
+    if (!data->EventActivated && !fullRange) {
+        return 0;
+    }
+    const int end = data->BufTextLen;
+    data->SetSelection(end, end);
+    state->PendingGridInputTextDeselect = false;
+    return 0;
+}
 
 #if defined(_WIN32)
 std::time_t TimeGmPortable(std::tm* tmUtc) { return _mkgmtime(tmUtc); }
@@ -122,7 +142,8 @@ bool IsTrackerDateTimePickerField(const TrackerField& field) {
 }
 
 void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
-                               SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit) {
+                               SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit,
+                               const std::string& dateFormatOption, int thresholdDays) {
     const std::string editorKey = ticket.id + "::" + field.Id;
     const std::string itemId = "##DateCell_" + ticket.id + "_" + field.Id;
     const bool isDateOnly = (field.Type == "date");
@@ -137,7 +158,15 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     static bool s_forceTextMode = false;
 
     if (!state.IsEditingField(ticket.id, field.Id)) {
-        std::string display = FormatCompactJiraDateForDisplay(currentValue);
+        // Use caller-supplied format params when available; only Load() when called from non-hot paths.
+        std::string fmt = dateFormatOption;
+        int thresh = thresholdDays;
+        if (fmt.empty() || thresh <= 0) {
+            const auto cfg = ConfigManager::Load();
+            if (fmt.empty()) fmt = cfg.DateFormatOption;
+            if (thresh <= 0) thresh = cfg.DateCompactRelativeThresholdDays;
+        }
+        std::string display = FormatCompactJiraDateForDisplay(currentValue, fmt, thresh);
         if (display.empty()) {
             display = currentValue;
         }
@@ -200,8 +229,10 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
         if (s_forceTextMode) {
             ImGui::TextUnformatted("Unparseable value; edit raw ISO string:");
             ImGui::SetNextItemWidth(420.0f);
-            const bool submitted = ImGui::InputText("##rawiso", state.EditBuffer, sizeof(state.EditBuffer),
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool submitted =
+                ImGui::InputText("##rawiso", state.EditBuffer, sizeof(state.EditBuffer),
+                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                                 InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&state));
             ParsedJiraDateTime tmp;
             const bool canParse = TryParseJiraDateTime(state.EditBuffer, tmp);
             if (!canParse) {
@@ -222,6 +253,41 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
                 ImGui::CloseCurrentPopup();
             }
         } else {
+            // Show original and real-time selected values at the top of the picker
+            std::string initialText = currentValue.empty() ? "(empty)" : FormatCompactJiraDateForDisplay(currentValue, "absolute_friendly");
+            if (initialText.empty() && !currentValue.empty()) {
+                initialText = currentValue;
+            }
+
+            std::string workingText;
+            if (s_working.Year > 0) {
+                if (isDateOnly) {
+                    char temp[64];
+                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d", s_working.Year, s_working.Month, s_working.Day);
+                    workingText = temp;
+                } else {
+                    char temp[128];
+                    std::snprintf(temp, sizeof(temp), "%04d-%02d-%02d, %02d:%02d:%02d UTC",
+                                  s_working.Year, s_working.Month, s_working.Day,
+                                  s_working.Hour, s_working.Minute, s_working.Second);
+                    workingText = temp;
+                }
+            } else {
+                workingText = "(empty)";
+            }
+
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "Original: ");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(initialText.c_str());
+
+            ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "Selected: ");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(workingText.c_str());
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
             if (ImGui::Button("<")) {
                 DecMonth(s_viewYear, s_viewMonth);
             }

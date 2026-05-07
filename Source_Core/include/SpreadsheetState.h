@@ -73,6 +73,8 @@ struct SpreadsheetState {
     std::string EditingFieldId;
     int EditingColumn = -1;
     bool EditJustStarted = false;
+    /** Set when grid cell text edit opens; ImGui may defer `EventActivated` until after `EditJustStarted` clears. */
+    bool PendingGridInputTextDeselect = false;
     char EditBuffer[512] = "";
     GridRectSelection RectSel;
 
@@ -82,6 +84,7 @@ struct SpreadsheetState {
         EditingFieldId = "";
         EditingColumn = -1;
         EditJustStarted = false;
+        PendingGridInputTextDeselect = false;
     }
 
     void StartEditing(const std::string& id, int col, const std::string& val) {
@@ -89,6 +92,7 @@ struct SpreadsheetState {
         EditingFieldId.clear();
         EditingColumn = col;
         EditJustStarted = true;
+        PendingGridInputTextDeselect = true;
         CopyToEditBuffer(val);
     }
 
@@ -97,6 +101,7 @@ struct SpreadsheetState {
         EditingFieldId = fieldId;
         EditingColumn = -1;
         EditJustStarted = true;
+        PendingGridInputTextDeselect = true;
         CopyToEditBuffer(val);
     }
 

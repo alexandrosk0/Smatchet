@@ -11,8 +11,6 @@
 
 namespace IssueTableSerializer {
 
-namespace {
-
 std::string LowerAscii(std::string s) {
     for (char& c : s)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -26,80 +24,6 @@ std::string Trim(const std::string& s) {
     while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1])))
         --b;
     return s.substr(a, b - a);
-}
-
-// RFC4180-ish CSV parse: respects quoted fields with "" escapes and embedded
-// newlines. `delim` selects comma vs tab.
-std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, char delim) {
-    std::vector<std::vector<std::string>> rows;
-    std::vector<std::string> row;
-    std::string cell;
-    bool inQuotes = false;
-
-    auto flushCell = [&]() {
-        row.emplace_back(std::move(cell));
-        cell.clear();
-    };
-    auto flushRow = [&]() {
-        rows.emplace_back(std::move(row));
-        row.clear();
-    };
-
-    for (size_t i = 0; i < text.size(); ++i) {
-        char c = text[i];
-        if (inQuotes) {
-            if (c == '"') {
-                if (i + 1 < text.size() && text[i + 1] == '"') {
-                    cell.push_back('"');
-                    ++i;
-                } else {
-                    inQuotes = false;
-                }
-            } else {
-                cell.push_back(c);
-            }
-        } else {
-            if (c == '"') {
-                inQuotes = true;
-            } else if (c == delim) {
-                flushCell();
-            } else if (c == '\r') {
-                // swallow; handled by \n or end
-            } else if (c == '\n') {
-                flushCell();
-                flushRow();
-            } else {
-                cell.push_back(c);
-            }
-        }
-    }
-    if (!cell.empty() || !row.empty()) {
-        flushCell();
-        flushRow();
-    }
-    return rows;
-}
-
-std::string EscapeCsvCell(const std::string& s, char delim) {
-    bool needsQuote = false;
-    for (char c : s) {
-        if (c == delim || c == '"' || c == '\n' || c == '\r') {
-            needsQuote = true;
-            break;
-        }
-    }
-    if (!needsQuote)
-        return s;
-    std::string out;
-    out.reserve(s.size() + 2);
-    out.push_back('"');
-    for (char c : s) {
-        if (c == '"')
-            out.push_back('"');
-        out.push_back(c);
-    }
-    out.push_back('"');
-    return out;
 }
 
 // Column header → field id resolver.
@@ -173,18 +97,94 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
         std::stringstream ss(value);
         std::string path;
         while (std::getline(ss, path, '|')) {
-            const std::string trimmed = Trim(path);
-            if (trimmed.empty())
+            const std::string trimmedPath = Trim(path);
+            if (trimmedPath.empty())
                 continue;
             StagedAttachment att;
-            att.AbsPath = trimmed;
-            auto slash = trimmed.find_last_of("/\\");
-            att.FileName = (slash == std::string::npos) ? trimmed : trimmed.substr(slash + 1);
+            att.AbsPath = trimmedPath;
+            auto slash = trimmedPath.find_last_of("/\\");
+            att.FileName = (slash == std::string::npos) ? trimmedPath : trimmedPath.substr(slash + 1);
             draft.StagedAttachments.push_back(std::move(att));
         }
     } else {
         draft.FieldValues[key] = value;
     }
+}
+
+namespace {
+
+// RFC4180-ish CSV parse: respects quoted fields with "" escapes and embedded
+// newlines. `delim` selects comma vs tab.
+std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, char delim) {
+    std::vector<std::vector<std::string>> rows;
+    std::vector<std::string> row;
+    std::string cell;
+    bool inQuotes = false;
+
+    auto flushCell = [&]() {
+        row.emplace_back(std::move(cell));
+        cell.clear();
+    };
+    auto flushRow = [&]() {
+        rows.emplace_back(std::move(row));
+        row.clear();
+    };
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        if (inQuotes) {
+            if (c == '"') {
+                if (i + 1 < text.size() && text[i + 1] == '"') {
+                    cell.push_back('"');
+                    ++i;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                cell.push_back(c);
+            }
+        } else {
+            if (c == '"') {
+                inQuotes = true;
+            } else if (c == delim) {
+                flushCell();
+            } else if (c == '\r') {
+                // swallow; handled by \n or end
+            } else if (c == '\n') {
+                flushCell();
+                flushRow();
+            } else {
+                cell.push_back(c);
+            }
+        }
+    }
+    if (!cell.empty() || !row.empty()) {
+        flushCell();
+        flushRow();
+    }
+    return rows;
+}
+
+std::string EscapeCsvCell(const std::string& s, char delim) {
+    bool needsQuote = false;
+    for (char c : s) {
+        if (c == delim || c == '"' || c == '\n' || c == '\r') {
+            needsQuote = true;
+            break;
+        }
+    }
+    if (!needsQuote)
+        return s;
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('"');
+    for (char c : s) {
+        if (c == '"')
+            out.push_back('"');
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
 }
 
 ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vector<TrackerField>& catalog,

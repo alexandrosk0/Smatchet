@@ -80,6 +80,27 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
     ImGui::TextUnformatted("Select text below and use Ctrl+C to copy.");
     ImGui::Spacing();
 
+    ImGui::TextUnformatted("Recent actions");
+    const std::vector<std::string> log = app.CopyMcpActivityLog();
+    std::string logText;
+    if (log.empty()) {
+        logText = "No MCP activity yet.\n";
+    } else {
+        logText.reserve(log.size() * 64u);
+        for (auto it = log.rbegin(); it != log.rend(); ++it) {
+            const std::string& lineEntry = *it;
+            logText += lineEntry;
+            logText.push_back('\n');
+        }
+    }
+    float actH = d.cfg.McpServerActivityPanelHeightPx;
+    actH = (std::max)(80.0f, (std::min)(480.0f, actH));
+    d.cfg.McpServerActivityPanelHeightPx = actH;
+    DrawCopyableMultiline("##mcp_activity_log", logText, actH, s_logScratch);
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
     std::string info;
     info.reserve(2048);
     info += "Configured (saved on disk)\n";
@@ -99,8 +120,9 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
                 "app restart in this host.\n";
     } else {
         const McpServerStatus st = ph->GetMcpServerStatus();
-        const int cfgPortClamped =
-            (cfgOnDisk.McpPort >= 1 && cfgOnDisk.McpPort <= 65535) ? cfgOnDisk.McpPort : 8080;
+        const int cfgPortClamped = (cfgOnDisk.McpPort >= 1 && cfgOnDisk.McpPort <= 65535)
+                                       ? cfgOnDisk.McpPort
+                                       : SmatchetDefaults::Mcp::kDefaultPort;
         AppendLine(info, "- MCP plugin loaded: %s", st.PluginRegistered ? "yes" : "no");
         AppendLine(info, "- HTTP server running: %s", st.ServerRunning ? "yes" : "no");
         AppendLine(info, "- Listen port: %d", st.ListenPort);
@@ -108,7 +130,8 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
         AppendLine(info, "- Routes installed: %s", st.RoutesInstalled ? "yes" : "no");
         AppendLine(info, "- Listen thread joinable: %s", st.ThreadJoinable ? "yes" : "no");
 
-        const std::string expectedBind = cfgOnDisk.McpAllowRemote ? "0.0.0.0" : "127.0.0.1";
+        const std::string expectedBind =
+            cfgOnDisk.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
         const bool cfgAuthSet = !cfgOnDisk.McpAuthToken.empty();
         if (cfgOnDisk.McpEnabled && st.PluginRegistered &&
             (st.ListenPort != cfgPortClamped || st.BindHost != expectedBind || st.AuthRequired != cfgAuthSet)) {
@@ -126,7 +149,7 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
         const int runtimePort = (st.ListenPort >= 1 && st.ListenPort <= 65535) ? st.ListenPort : 0;
         const int urlPort = (st.PluginRegistered && runtimePort > 0) ? runtimePort : cfgPortClamped;
         char baseUrl[128];
-        std::snprintf(baseUrl, sizeof(baseUrl), "http://127.0.0.1:%d", urlPort);
+        std::snprintf(baseUrl, sizeof(baseUrl), "http://%s:%d", SmatchetDefaults::Mcp::kBindLocalhost, urlPort);
         info += "\nEndpoints (base URL for local use)\n";
         AppendLine(info, "%s", baseUrl);
         if (cfgOnDisk.McpAllowRemote) {
@@ -141,7 +164,7 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
         AppendLine(info, "- %s", ep);
         std::snprintf(ep, sizeof(ep), "%s/mcp/tools/call (POST)", baseUrl);
         AppendLine(info, "- %s", ep);
-        std::snprintf(ep, sizeof(ep), "%s/mcp/sse", baseUrl);
+        std::snprintf(ep, sizeof(ep), "%s%s", baseUrl, SmatchetDefaults::Mcp::kSsePath);
         AppendLine(info, "- %s", ep);
         std::snprintf(ep, sizeof(ep), "%s/mcp/messages (POST)", baseUrl);
         AppendLine(info, "- %s", ep);
@@ -174,24 +197,6 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
             SaveMcpWindowLayoutDebounced(d);
         }
     }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Recent actions");
-    const std::vector<std::string> log = app.CopyMcpActivityLog();
-    std::string logText;
-    if (log.empty()) {
-        logText = "No MCP activity yet.\n";
-    } else {
-        logText.reserve(log.size() * 64u);
-        for (const std::string& lineEntry : log) {
-            logText += lineEntry;
-            logText.push_back('\n');
-        }
-    }
-    float actH = d.cfg.McpServerActivityPanelHeightPx;
-    actH = (std::max)(80.0f, (std::min)(480.0f, actH));
-    d.cfg.McpServerActivityPanelHeightPx = actH;
-    DrawCopyableMultiline("##mcp_activity_log", logText, actH, s_logScratch);
 
     ImGui::TextDisabled("Edit MCP fields in Preferences → Integrations.");
 }

@@ -13,7 +13,9 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
 bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field);
 bool IsAttachmentFieldId(const std::string& fieldId);
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
-                                            const std::string& currentValue);
+                                            const std::string& currentValue,
+                                            const std::string& dateFormatOption = {},
+                                            int thresholdDays = 0);
 
 class TrackerFieldCatalogIndex {
   public:

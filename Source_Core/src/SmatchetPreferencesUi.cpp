@@ -3,7 +3,6 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
-#include "Logger.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -110,6 +109,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
         d.mcpAllowRemote = d.cfg.McpAllowRemote;
+        d.mcpAllowLuaExecution = d.cfg.McpAllowLuaExecution;
         CopyStringToBuffer(d.mcpAuthTokenBuf, d.cfg.McpAuthToken);
 #endif
         d.preferencesBuffersLoaded = true;
@@ -200,14 +200,20 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::SetItemTooltip("If set, clients must send header X-Smatchet-Token with this value. If empty and "
                                   "bind is localhost-only, "
                                   "only loopback clients may connect.");
+            ImGui::Checkbox("Allow MCP run_lua tool (dangerous)", &d.mcpAllowLuaExecution);
+            ImGui::SetItemTooltip("Off by default. When enabled, MCP clients can execute Lua snippets or Scripts/*.lua "
+                                  "via the built-in run_lua tool.");
             {
                 const std::string tokenBufStr(d.mcpAuthTokenBuf);
                 const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||
-                                     (d.mcpAllowRemote != d.cfg.McpAllowRemote) || (tokenBufStr != d.cfg.McpAuthToken);
+                                     (d.mcpAllowRemote != d.cfg.McpAllowRemote) ||
+                                     (d.mcpAllowLuaExecution != d.cfg.McpAllowLuaExecution) ||
+                                     (tokenBufStr != d.cfg.McpAuthToken);
                 if (dirty) {
                     d.cfg.McpEnabled = d.mcpEnabled;
                     d.cfg.McpPort = d.mcpPort;
                     d.cfg.McpAllowRemote = d.mcpAllowRemote;
+                    d.cfg.McpAllowLuaExecution = d.mcpAllowLuaExecution;
                     d.cfg.McpAuthToken = tokenBufStr;
                     ConfigManager::Save(d.cfg);
                     LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)", static_cast<int>(d.cfg.McpEnabled),
@@ -233,7 +239,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 "MCP settings save when changed. With a running app host, the MCP server starts or stops immediately; "
                 "otherwise restart the app once.");
             ImGui::Spacing();
-            ImGui::TextDisabled("Runtime status, endpoints, and action log: Scripts → MCP Server… (separate window).");
+            ImGui::TextDisabled("Runtime status, endpoints, and action log: Windows → MCP Server… (separate window).");
             ImGui::EndTabItem();
         }
 #endif
@@ -260,55 +266,45 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::SetItemTooltip(
                 "At top/bottom of the ticket grid, vertical wheel starts horizontal scrolling after this many wheel "
                 "ticks. 0 routes immediately.");
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Diagnostics")) {
-            static const LogLevel kLogLevels[] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn,
-                                                  LogLevel::Error};
-            LogLevel parsedLevel = Logger::ParseLogLevelString(d.cfg.LogMinLevel, LogLevel::Info);
-            int levelComboIndex = 2;
-            for (int i = 0; i < 5; ++i) {
-                if (kLogLevels[i] == parsedLevel) {
-                    levelComboIndex = i;
-                    break;
-                }
-            }
-            ImGui::TextUnformatted("Logging");
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Date Formatting");
             ImGui::Separator();
-            ImGui::TextUnformatted("Min log level");
-            ImGui::SameLine();
-            if (ImGui::Combo("##LogMinLevel", &levelComboIndex,
-                             "Trace\0"
-                             "Debug\0"
-                             "Info\0"
-                             "Warn\0"
-                             "Error\0"
-                             "\0")) {
-                d.cfg.LogMinLevel = Logger::LogLevelToString(kLogLevels[levelComboIndex]);
-                Logger::Instance().SetMinLevel(kLogLevels[levelComboIndex]);
+            ImGui::Spacing();
+
+            const char* dateFormats[] = { "Relative / Compact", "Always Relative", "Absolute ISO", "Absolute Friendly" };
+            int currentDateFormatIdx = 0;
+            if (d.cfg.DateFormatOption == "always_relative") {
+                currentDateFormatIdx = 1;
+            } else if (d.cfg.DateFormatOption == "absolute_iso") {
+                currentDateFormatIdx = 2;
+            } else if (d.cfg.DateFormatOption == "absolute_friendly") {
+                currentDateFormatIdx = 3;
+            }
+
+            if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {
+                if (currentDateFormatIdx == 0) {
+                    d.cfg.DateFormatOption = "compact";
+                } else if (currentDateFormatIdx == 1) {
+                    d.cfg.DateFormatOption = "always_relative";
+                } else if (currentDateFormatIdx == 2) {
+                    d.cfg.DateFormatOption = "absolute_iso";
+                } else if (currentDateFormatIdx == 3) {
+                    d.cfg.DateFormatOption = "absolute_friendly";
+                }
                 ConfigManager::Save(d.cfg);
             }
-            bool trackerBodies = d.cfg.LogTrackerHttpBodies;
-            if (ImGui::Checkbox("Log Tracker HTTP bodies (truncated)", &trackerBodies)) {
-                d.cfg.LogTrackerHttpBodies = trackerBodies;
-                Logger::Instance().SetLogTrackerHttpBodies(trackerBodies);
-                ConfigManager::Save(d.cfg);
+            ImGui::SetItemTooltip("Select how date and datetime values are rendered in the grids and UI panels.");
+
+            if (currentDateFormatIdx == 0) {
+                int threshold = d.cfg.DateCompactRelativeThresholdDays;
+                if (ImGui::SliderInt("Compact Relative Threshold (Days)", &threshold, 1, 90, "%d days")) {
+                    d.cfg.DateCompactRelativeThresholdDays = threshold;
+                    ConfigManager::Save(d.cfg);
+                }
+                ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) to short absolute (e.g. May 07 '26).");
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Verbose: logs response text (capped per request). May include issue summaries and user-visible "
-                    "data.");
-            }
-            bool logP4Io = d.cfg.LogP4Io;
-            if (ImGui::Checkbox("Log Perforce p4 stdout (truncated, Trace level)", &logP4Io)) {
-                d.cfg.LogP4Io = logP4Io;
-                Logger::Instance().SetLogP4Io(logP4Io);
-                ConfigManager::Save(d.cfg);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Requires min level Trace. Logs capped p4 stdout per command; stderr is logged on non-zero exit.");
-            }
+
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Blame Analysis")) {
@@ -322,8 +318,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Separator();
     ImGui::TextWrapped(
         "Save & Sync writes the Tracker tab (and optional Assistant / Integrations tabs when enabled in this build) to "
-        "disk and refreshes the tracker connection. MCP runtime status: Scripts → MCP Server…. "
-        "Appearance and Diagnostics options save immediately when changed. The Blame Analysis tab has its own Save "
+        "disk and refreshes the tracker connection. MCP runtime status: Windows → MCP Server…. "
+        "Appearance options save immediately when changed. Log level and verbose logging: Windows → Log. The Blame "
+        "Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
     if (ImGui::Button("Save & Sync", ImVec2(140.0f, 0.0f))) {
@@ -371,6 +368,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.cfg.McpEnabled = d.mcpEnabled;
         d.cfg.McpPort = d.mcpPort;
         d.cfg.McpAllowRemote = d.mcpAllowRemote;
+        d.cfg.McpAllowLuaExecution = d.mcpAllowLuaExecution;
         d.cfg.McpAuthToken = d.mcpAuthTokenBuf;
 #endif
 

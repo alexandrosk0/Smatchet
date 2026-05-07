@@ -137,8 +137,12 @@ class AppController {
                                       std::string* outError = nullptr);
 
     void InitLua();
+    void InitLuaCore(sol::state& state);
+    void InitLuaUi(sol::state& state);
     
     std::string ResolveLuaScriptPath(const std::string& filename) const;
+    /** Basenames of `*.lua` files in the configured scripts directory (non-recursive). */
+    std::vector<std::string> ListLuaScriptFiles() const;
 
     /**
      * Resolve a URL or local path for field icons / Lua `imgui.image`.
@@ -147,6 +151,7 @@ class AppController {
     std::string ResolveFieldIconAssetPath(const std::string& pathOrUrl) const;
 
     void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds);
+    void RunFlatScriptAsync(const std::string& scriptPath);
 
     std::string GetAutomationScriptContent();
     bool SaveAutomationScriptContent(const std::string& content, std::string& outError);
@@ -156,14 +161,20 @@ class AppController {
 
     /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
     std::vector<std::string> GetLuaTicketActionNames() const;
-    bool ExecuteLuaTicketAction(const std::string& name, const std::string& issueId, std::string& outError);
+    void ExecuteLuaTicketAction(const std::string& name, const std::string& issueId);
     void AddAiContext(const std::string& text);
     const std::vector<std::string>& GetAiContext() const;
     void ClearAiContext();
     void PromptAi(const std::string& message);
     void SetAiPromptHandler(std::function<void(const std::string&)> handler);
     std::vector<std::string> GetLuaGlobalActionNames() const;
-    bool ExecuteLuaGlobalAction(const std::string& name, std::string& outError);
+    void ExecuteLuaGlobalAction(const std::string& name);
+    /**
+     * Run a one-off Lua chunk from the automation UI (same globals as hooks: smatchet, ui, tracker, …).
+     * On failure sets @p outError; on success clears @p outError and may set @p outResultSummary from the
+     * first return value (short string / JSON, truncated when long).
+     */
+    bool ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError, std::string& outResultSummary);
     /** Lua `register_field_icon_map`; returns false when Lua automation is disabled. */
     bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field, const std::string& rawValue,
                                   std::string& outPathOrUrl) const;
@@ -186,12 +197,14 @@ class AppController {
     void LuaImGuiTextUnformattedBind(const std::string& s);
     bool LuaImGuiImageBind(const std::string& path, float w, float h);
     void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
-    void LuaUiRegisterTicketActionBind(const std::string& name, sol::function callback);
-    void LuaUiRegisterGlobalActionBind(const std::string& name, sol::function callback);
+    void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
+    void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaAiAddContextBind(const std::string& text);
     void LuaAiPromptBind(const std::string& message);
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
     std::vector<CachedTicket> LuaGetActiveTicketsBind();
+    /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
+    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec);
     void ClearLuaTicketContextGlue();
 
     struct McpToolDefinition {
@@ -202,6 +215,8 @@ class AppController {
     };
     std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
+    std::string ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args, std::string& outError);
+    std::string ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args, std::string& outError);
     void DrawLuaWindows();
 #endif
 
@@ -281,6 +296,8 @@ class AppController {
     };
     /** Rate-limited background probe; updates connectivity state and recovery latch. */
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
+    /** Latest reachability from background probe (or after a successful live backend request). */
+    TrackerConnectivityState GetLastTrackerConnectivityState() const { return lastTrackerConnectivityState_; }
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
@@ -497,8 +514,8 @@ class AppController {
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
     std::vector<McpToolDefinition> luaMcpTools_;
     std::vector<std::pair<std::string, sol::protected_function>> luaWindows_;
-    std::vector<std::pair<std::string, sol::protected_function>> luaTicketActions_;
-    std::vector<std::pair<std::string, sol::protected_function>> luaGlobalActions_;
+    std::vector<std::pair<std::string, std::string>> luaTicketActions_;
+    std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
     mutable std::mutex fieldIconMapsMutex_;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByFieldId_;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
@@ -587,6 +604,29 @@ class AppController {
     static constexpr size_t kMcpActivityLogMax = 100;
     mutable std::mutex mcpActivityMutex_;
     std::deque<std::string> mcpActivityLog_;
+#endif
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    struct AutomationJob {
+        enum class Type {
+            RunAutoScript,
+            TicketAction,
+            GlobalAction,
+            RunFlatScript
+        };
+        Type type;
+        std::string scriptPathOrActionName;
+        std::vector<std::string> selectedIds;
+        std::string targetIssueId;
+    };
+    mutable std::mutex automationJobMutex_;
+    std::condition_variable automationJobCv_;
+    std::deque<AutomationJob> automationJobs_;
+    std::thread automationWorker_;
+    std::atomic<bool> automationWorkerShuttingDown_{false};
+    void AutomationWorkerLoop();
+    void RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job);
+    std::vector<std::string> activeSetupScripts_;
 #endif
 };
 

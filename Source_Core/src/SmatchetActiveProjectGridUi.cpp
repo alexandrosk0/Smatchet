@@ -1309,8 +1309,7 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
             d.newIssueQueueFallbackError.clear();
             d.gridEditError.clear();
             d.gridEditSuccess = "Created " + r.IssueKey + ".";
-            // Reload server-truth fields for the created issue and merge into cache.
-            app.PrefetchIssueTicketsForKeys({r.IssueKey}, true);
+            // Server-truth hydration is kicked off from AppController::CreateIssueAsync on success.
         } else {
             d.newIssueMissingFieldIds = r.MissingFieldIds;
             if (IsLikelyOfflineCreateError(r.Error)) {
@@ -1336,7 +1335,9 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
         }
     }
 
-    ImGui::TableNextRow();
+    // Match one line of text + table cell Y padding (not TextLineHeightWithSpacing — that adds extra gap).
+    const float kNewIssueRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+    ImGui::TableNextRow(0, kNewIssueRowH);
 
     if (!d.newIssueDraftActive) {
         ImGui::TableSetColumnIndex(0);
@@ -1583,22 +1584,113 @@ static void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const s
 
 } // namespace
 
+namespace {
+
+constexpr auto kTrackerWarningToastStartupGrace = std::chrono::seconds(3);
+
+void MaybeToastTrackerConnectivityBanner(AppController& app, UiDrawSession& d,
+                                         const TrackerConnectivityBannerForUi& banner) {
+    using Level = TrackerConnectivityBannerForUi::Level;
+    if (banner.Kind == Level::None) {
+        d.lastToastedTrackerBannerKind = Level::None;
+        d.lastToastedTrackerBannerMessage.clear();
+        return;
+    }
+    if (banner.Kind == Level::Warning) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!d.trackerWarningToastStartupGateInitialized) {
+            d.trackerWarningToastStartupGateInitialized = true;
+            d.trackerWarningToastStartupGraceUntil = now + kTrackerWarningToastStartupGrace;
+        }
+        if (now < d.trackerWarningToastStartupGraceUntil) {
+            const AppController::TrackerConnectivityState st = app.GetLastTrackerConnectivityState();
+            if (st == AppController::TrackerConnectivityState::Unknown ||
+                st == AppController::TrackerConnectivityState::AuthenticatedReachable) {
+                return;
+            }
+        }
+    }
+    if (banner.Kind == d.lastToastedTrackerBannerKind && banner.Message == d.lastToastedTrackerBannerMessage) {
+        return;
+    }
+    std::string body = banner.Message;
+    if (banner.Kind == Level::Error) {
+        body += "\n\nGrid edits and quick comment actions stay disabled until Tracker is reachable.";
+        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Error, 7000);
+    } else {
+        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Warning, 5500);
+    }
+    d.lastToastedTrackerBannerKind = banner.Kind;
+    d.lastToastedTrackerBannerMessage = banner.Message;
+}
+
+void MaybeToastGridBannerFromSession(UiDrawSession& d) {
+    int curKind = 0;
+    std::string curMsg;
+    if (!d.gridEditError.empty()) {
+        curKind = 1;
+        curMsg = d.gridEditError;
+    } else if (!d.gridEditSuccess.empty()) {
+        curKind = 2;
+        curMsg = d.gridEditSuccess;
+    }
+    if (curKind == 0) {
+        d.lastToastedGridBannerKind = 0;
+        d.lastToastedGridBannerMessage.clear();
+        return;
+    }
+    if (curKind == d.lastToastedGridBannerKind && curMsg == d.lastToastedGridBannerMessage) {
+        return;
+    }
+    if (curKind == 1) {
+        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Error);
+    } else {
+        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Success);
+    }
+    d.lastToastedGridBannerKind = curKind;
+    d.lastToastedGridBannerMessage = std::move(curMsg);
+}
+
+} // namespace
+
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     ImGui::Begin("Smatchet - Active Project");
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+    MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
     const bool readOnlyMode = (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+
+    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsSnap;
+
+    TrackerFieldCatalogIndex catalogIndex(app.GetAvailableFields());
+    ViewDefinition* activeViewForGrid = ViewState.GetActiveViewMutable();
+    const std::vector<TicketGridColumn> columns =
+        activeViewForGrid ? TicketGridColumnsBuilder::Build(*activeViewForGrid, catalogIndex)
+                          : std::vector<TicketGridColumn>();
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");
         ImGui::Separator();
-        const ViewDefinition* activeView = ViewState.GetActiveView();
-        if (activeView) {
-            ImGui::Text("View: %s", activeView->Name.c_str());
-            ImGui::SameLine();
-            if (ImGui::Button("Refresh View")) {
-                d.cfg.JqlQuery = activeView->Jql;
-                d.cfg.SelectedFields = activeView->Fields;
-                SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+        if (activeViewForGrid) {
+            if (d.viewSortDirty) {
+                ImGui::Text("View: %s *", activeViewForGrid->Name.c_str());
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.65f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.75f, 0.35f, 1.0f));
+                if (ImGui::Button("Save View")) {
+                    ViewState.Save();
+                    d.viewSortDirty = false;
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save sort order changes to this view.");
+            } else {
+                ImGui::Text("View: %s", activeViewForGrid->Name.c_str());
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh View")) {
+                    d.cfg.JqlQuery = activeViewForGrid->Jql;
+                    d.cfg.SelectedFields = activeViewForGrid->Fields;
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+                }
             }
         }
 
@@ -1613,18 +1705,175 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Button("Clear")) { d.gridFilterBuf[0] = '\0'; }
         }
 
+        // Modern Sort By Popup UX
+        if (activeViewForGrid) {
+            ImGui::SameLine(0, 30.0f);
+            if (ImGui::Button("Sort By \xE2\x86\x95")) {
+                ImGui::OpenPopup("SortByPopup");
+            }
+            if (ImGui::BeginPopup("SortByPopup")) {
+                ImGui::TextDisabled("Active Sort Rules");
+                bool sortChanged = false;
+                
+                for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ) {
+                    ViewSortSpec& spec = activeViewForGrid->SortSpecs[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    
+                    std::string colName = spec.ColumnKey;
+                    for (const auto& c : columns) {
+                        if (c.Key == spec.ColumnKey) { colName = c.Label; break; }
+                    }
+                    
+                    if (ImGui::Button("X")) {
+                        activeViewForGrid->SortSpecs.erase(activeViewForGrid->SortSpecs.begin() + i);
+                        sortChanged = true;
+                        ImGui::PopID();
+                        continue; // Do not increment i
+                    }
+                    ImGui::SameLine();
+                    
+                    const char* dirStr = (spec.Direction == 1) ? "Ascending" : "Descending";
+                    ImGui::SetNextItemWidth(100.0f);
+                    if (ImGui::BeginCombo("##dir", dirStr, ImGuiComboFlags_NoArrowButton)) {
+                        if (ImGui::Selectable("Ascending", spec.Direction == 1)) { spec.Direction = 1; sortChanged = true; }
+                        if (ImGui::Selectable("Descending", spec.Direction == 2)) { spec.Direction = 2; sortChanged = true; }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("%s", colName.c_str());
+                    
+                    ImGui::PopID();
+                    ++i;
+                }
+                
+                if (activeViewForGrid->SortSpecs.empty()) {
+                    ImGui::TextDisabled("  No sort active.");
+                }
+                
+                ImGui::Separator();
+                
+                if (ImGui::BeginMenu("+ Add Sort Rule")) {
+                    for (const auto& c : columns) {
+                        bool alreadySorted = false;
+                        for (const auto& s : activeViewForGrid->SortSpecs) {
+                            if (s.ColumnKey == c.Key) { alreadySorted = true; break; }
+                        }
+                        if (!alreadySorted && ImGui::MenuItem(c.Label.c_str())) {
+                            ViewSortSpec newSpec;
+                            newSpec.ColumnKey = c.Key;
+                            newSpec.Direction = 1; // Default Ascending
+                            activeViewForGrid->SortSpecs.push_back(newSpec);
+                            sortChanged = true;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                
+                if (sortChanged) {
+                    d.viewSortDirty = true;
+                    d.forceApplySortSpecs = true;
+                }
+                
+                ImGui::EndPopup();
+            }
+        }
+
+        const char* trLabel = "● TRACKER";
+        ImVec4 trColor(0.65f, 0.68f, 0.72f, 1.0f);
+        std::string trTip;
+        if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
+            trLabel = "● TRACKER ERROR";
+            trColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+            trTip = TrackerBanner.Message;
+        } else if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
+            trLabel = "● TRACKER OFFLINE";
+            trColor = ImVec4(1.0f, 0.82f, 0.22f, 1.0f);
+            trTip = TrackerBanner.Message;
+        } else {
+            const AppController::TrackerConnectivityState connSt = app.GetLastTrackerConnectivityState();
+            switch (connSt) {
+            case AppController::TrackerConnectivityState::Unknown:
+                trLabel = "● TRACKER …";
+                trColor = ImVec4(0.55f, 0.58f, 0.62f, 1.0f);
+                trTip = "Checking tracker reachability.";
+                break;
+            case AppController::TrackerConnectivityState::AuthenticatedReachable:
+                trLabel = "● TRACKER OK";
+                trColor = ImVec4(0.2f, 0.82f, 0.38f, 1.0f);
+                trTip = "Live tracker connection.";
+                break;
+            case AppController::TrackerConnectivityState::ReachableAuthOrConfigError:
+                trLabel = "● TRACKER AUTH";
+                trColor = ImVec4(1.0f, 0.72f, 0.28f, 1.0f);
+                trTip = "Host answered; fix credentials or Preferences → Tracker.";
+                break;
+            case AppController::TrackerConnectivityState::TransportDown:
+            case AppController::TrackerConnectivityState::ServiceUnavailable:
+                trLabel = "● TRACKER DOWN";
+                trColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+                {
+                    const std::string& tw = app.GetLastTicketSyncWarning();
+                    trTip = !tw.empty() ? tw : std::string("Tracker not reachable.");
+                }
+                break;
+            default:
+                trTip = "Tracker connectivity state is indeterminate.";
+                break;
+            }
+        }
+
+        const bool connectivityGoodOk =
+            (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::None) &&
+            (app.GetLastTrackerConnectivityState() == AppController::TrackerConnectivityState::AuthenticatedReachable);
+        const auto nowChip = std::chrono::steady_clock::now();
+        bool showTrackerChip = true;
+        if (connectivityGoodOk) {
+            if (!d.trackerOkChipHideTimerArmed) {
+                d.trackerOkChipHideTimerArmed = true;
+                d.trackerOkChipHideAt = nowChip + std::chrono::seconds(10);
+            }
+            if (nowChip >= d.trackerOkChipHideAt) {
+                showTrackerChip = false;
+            }
+        } else {
+            d.trackerOkChipHideTimerArmed = false;
+        }
+
 #if defined(SMATCHET_WITH_MCP)
-        ImGui::SameLine();
-        {
-            const char* mcpLabel = d.cfg.McpEnabled ? "● MCP LIVE" : "● MCP DISABLED";
-            float mcpWidth = ImGui::CalcTextSize(mcpLabel).x + 40.0f; 
-            if (d.cfg.McpEnabled) mcpWidth += 50.0f; // extra for port
-            
-            float targetX = ImGui::GetWindowContentRegionMax().x - mcpWidth;
+        const bool haveMcpUi = true;
+#else
+        const bool haveMcpUi = false;
+#endif
+        if (showTrackerChip || haveMcpUi) {
+            ImGui::SameLine();
+            const float trW = showTrackerChip ? ImGui::CalcTextSize(trLabel).x : 0.0f;
+#if defined(SMATCHET_WITH_MCP)
+            const char* mcpShortLabel = d.cfg.McpEnabled ? "● MCP LIVE" : "● MCP DISABLED";
+            float mcpW = ImGui::CalcTextSize(mcpShortLabel).x + 40.0f;
+            if (d.cfg.McpEnabled) {
+                mcpW += 50.0f;
+            }
+            const float between = ImGui::GetStyle().ItemSpacing.x * 2.5f;
+            const float totalW = trW + (showTrackerChip && haveMcpUi ? between : 0.0f) + (haveMcpUi ? mcpW : 0.0f);
+#else
+            const float totalW = trW;
+#endif
+            const float targetX = ImGui::GetWindowContentRegionMax().x - totalW;
             if (targetX > ImGui::GetCursorPosX()) {
                 ImGui::SetCursorPosX(targetX);
             }
 
+            if (showTrackerChip) {
+                ImGui::TextColored(trColor, "%s", trLabel);
+                if (!trTip.empty() && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", trTip.c_str());
+                }
+            }
+
+#if defined(SMATCHET_WITH_MCP)
+            if (showTrackerChip) {
+                ImGui::SameLine(0.0f, between);
+            }
             if (d.cfg.McpEnabled) {
                 if (d.cfg.McpAllowRemote) {
                     ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d (LAN)", d.cfg.McpPort);
@@ -1644,39 +1893,20 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
                 }
             }
-        }
 #endif
+        }
 
         ImGui::Separator();
-        if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", TrackerBanner.Message.c_str());
-            ImGui::PopStyleColor();
-            ImGui::TextDisabled("Grid edits and quick comment actions stay disabled until Tracker is reachable.");
-            ImGui::Separator();
-        } else if (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", TrackerBanner.Message.c_str());
-            ImGui::PopStyleColor();
-            ImGui::Separator();
-        }
     }
-
-    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
-    const auto& tickets = *ticketsSnap;
-
-    TrackerFieldCatalogIndex catalogIndex(app.GetAvailableFields());
-    const ViewDefinition* activeViewForGrid = ViewState.GetActiveView();
-    const std::vector<TicketGridColumn> columns =
-        activeViewForGrid ? TicketGridColumnsBuilder::Build(*activeViewForGrid, catalogIndex)
-                          : std::vector<TicketGridColumn>();
 
     const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
     if (viewChanged && activeViewForGrid) {
         d.lastGridActiveViewId = activeViewForGrid->Id;
+        d.viewSortDirty = false;
     }
     if (!activeViewForGrid) {
         d.lastGridActiveViewId.clear();
+        d.viewSortDirty = false;
     }
 
     const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
@@ -1688,19 +1918,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     d.lastGridContextSignature = gridContextSignature;
 
     const bool gridSortEnvironmentChanged = viewChanged || gridContextChanged;
-
-    {
-        SMATCHET_UI_PERF_SCOPE("activeProject:prep");
-        if (!d.gridEditError.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", d.gridEditError.c_str());
-            ImGui::PopStyleColor();
-        } else if (!d.gridEditSuccess.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-            ImGui::TextWrapped("%s", d.gridEditSuccess.c_str());
-            ImGui::PopStyleColor();
-        }
-    }
 
     const bool drewOfflineSection = DrawUnifiedOfflineQueuesPanel(app, d);
     if (drewOfflineSection) {
@@ -1723,29 +1940,30 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     
     ImGui::Separator();
 
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
             for (const auto& column : columns) {
-                const float persistedWidth = activeViewForGrid ? (activeViewForGrid->ColumnWidths.count(column.Key)
-                                                                      ? activeViewForGrid->ColumnWidths.at(column.Key)
-                                                                      : 0.0f)
-                                                               : 0.0f;
-                const float defaultWidth = (column.ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
-                const float width = persistedWidth > 0.0f ? persistedWidth : defaultWidth;
-                if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-                    ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
-                } else {
-                    ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
+                float width = (column.ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
+                if (activeViewForGrid) {
+                    const auto it = activeViewForGrid->ColumnWidths.find(column.Key);
+                    if (it != activeViewForGrid->ColumnWidths.end() && it->second > 0.0f) {
+                        width = it->second;
+                    }
                 }
+                ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
             }
             ImGui::TableSetupScrollFreeze(1, 1);
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
             for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
                 ImGui::TableSetColumnIndex(hci);
                 const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
-                ImGui::PushID(hci);
+                
+                // TableHeader must use the Table's native ID stack
                 ImGui::TableHeader(hcol.Label.c_str());
+                
+                ImGui::PushID(hci);
                 const TrackerField* hdrMeta =
                     (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
                 DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
@@ -1755,7 +1973,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             // Apply persisted sort from view when ImGui has no sort yet, or when we just switched view.
             if (activeViewForGrid && !activeViewForGrid->SortSpecs.empty()) {
                 ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-                if (specs && (specs->SpecsCount == 0 || gridSortEnvironmentChanged)) {
+                if (specs && (specs->SpecsCount == 0 || gridSortEnvironmentChanged || d.forceApplySortSpecs)) {
+                    // Clear existing sort state from ImGui internally before re-applying our custom specs
+                    if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
+                        for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
+                            ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
+                        }
+                    }
                     for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ++i) {
                         const ViewSortSpec& vs = activeViewForGrid->SortSpecs[i];
                         if (vs.Direction == 0)
@@ -1776,15 +2000,48 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             }
         }
 
-        {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
-            ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
-            if (gridSortEnvironmentChanged) {
+    bool sortedThisFrame = false;
+    {
+        SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
+        ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+            if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
                 d.cachedSortValid = false;
+                d.forceApplySortSpecs = false;
             }
             if (sortSpecs && sortSpecs->SpecsDirty) {
                 d.cachedSortValid = false;
                 sortSpecs->SpecsDirty = false;
+                
+                // Sync header clicks back to View definition
+                if (activeViewForGrid) {
+                    std::vector<ViewSortSpec> newSpecs;
+                    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+                        const ImGuiTableColumnSortSpecs& sp = sortSpecs->Specs[s];
+                        if (sp.ColumnIndex >= 0 && sp.ColumnIndex < static_cast<int>(columns.size())) {
+                            ViewSortSpec vs;
+                            vs.ColumnKey = columns[sp.ColumnIndex].Key;
+                            vs.Direction = static_cast<int>(sp.SortDirection);
+                            newSpecs.push_back(vs);
+                        }
+                    }
+                    
+                    // Only mark dirty if the sorting rules actually changed (prevent startup/view-switch false dirty)
+                    bool changed = (newSpecs.size() != activeViewForGrid->SortSpecs.size());
+                    if (!changed) {
+                        for (size_t i = 0; i < newSpecs.size(); ++i) {
+                            if (newSpecs[i].ColumnKey != activeViewForGrid->SortSpecs[i].ColumnKey ||
+                                newSpecs[i].Direction != activeViewForGrid->SortSpecs[i].Direction) {
+                                changed = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (changed) {
+                        activeViewForGrid->SortSpecs = std::move(newSpecs);
+                        d.viewSortDirty = true;
+                    }
+                }
             }
             const std::uint64_t activeTicketsRevision = app.GetActiveTicketsRevision();
             if (activeTicketsRevision != d.cachedSortTicketsRevision) {
@@ -1850,6 +2107,24 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     d.cachedSortValid = true;
                     d.cachedSortTicketsRevision = activeTicketsRevision;
                     d.cachedSortCatalogRevision = catalogRevision;
+                    sortedThisFrame = true;
+                }
+            } else if (sortSpecs && sortSpecs->SpecsCount == 0) {
+                // No active sort: identity order. Without this, cachedSortValid stays false and the filter
+                // path rebuilds from the full ticket set every frame.
+                const std::string fingerprint;
+                if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
+                    d.cachedSortedIndices.size() != tickets.size() ||
+                    activeTicketsRevision != d.cachedSortTicketsRevision ||
+                    catalogRevision != d.cachedSortCatalogRevision) {
+                    d.cachedSortedIndices.resize(tickets.size());
+                    for (size_t i = 0; i < tickets.size(); ++i)
+                        d.cachedSortedIndices[i] = i;
+                    d.cachedSortFingerprint = fingerprint;
+                    d.cachedSortValid = true;
+                    d.cachedSortTicketsRevision = activeTicketsRevision;
+                    d.cachedSortCatalogRevision = catalogRevision;
+                    sortedThisFrame = true;
                 }
             }
         }
@@ -1861,7 +2136,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         if (filterChanged) {
             d.gridState.RectSel.ClearAll();
         }
-        if (filterChanged || !d.cachedSortValid || tickets.size() != lastTicketCount) {
+        if (filterChanged || !d.cachedSortValid || tickets.size() != lastTicketCount || sortedThisFrame) {
             d.filteredIndices.clear();
             const std::vector<size_t>& baseIndices = d.cachedSortedIndices.empty() ? std::vector<size_t>() : d.cachedSortedIndices;
             
@@ -2016,7 +2291,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         rowPerfScopeName = rowPerfLabel;
                     }
                     SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
-                    ImGui::TableNextRow();
+                    // One line of text + table cell Y padding (compact; close to a single-line InputText without
+                    // TextLineHeightWithSpacing’s extra line gap). Do not use GetContentRegionAvail().y for row height.
+                    const float kTicketGridRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+                    ImGui::TableNextRow(0, kTicketGridRowH);
 
                     // Status-based Row Highlighting
                     const std::string statusRaw = ticket.GetFieldValue("status");
@@ -2037,7 +2315,14 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
                     for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
                         const auto& column = columns[static_cast<size_t>(colIndex)];
-                        ImGui::TableSetColumnIndex(colIndex);
+                        if (!ImGui::TableSetColumnIndex(colIndex)) {
+                            if (!d.gridState.IsEditingField(ticket.id, column.FieldId)) {
+                                // Horizontally clipped columns must still contribute layout height or row height
+                                // tracks only visible cells (ImGui::TableSetColumnIndex doc).
+                                ImGui::Dummy(ImVec2(1.0f, kTicketGridRowH));
+                                continue;
+                            }
+                        }
 
                         // Captured before any widget advances the cursor so rect-
                         // select hit boxes cover the entire column cell area
@@ -2049,6 +2334,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
                         if (column.ColumnKind == TicketGridColumn::Kind::Id) {
                             ImGui::BeginGroup();
+                            ImGui::PushClipRect(cellOriginForSel,
+                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
+                                                        cellOriginForSel.y + kTicketGridRowH),
+                                                true);
                             if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected,
                                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                                 if (!ImGuiEffectiveKeyCtrl()) {
@@ -2059,6 +2348,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                     app.OpenUrl(url);
                                 }
                             }
+                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -2072,7 +2362,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         const std::string currentValue = ticket.GetFieldValue(column.FieldId);
                         const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
                         const float cellStartY = ImGui::GetCursorScreenPos().y;
-                        const float cellRightX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+                        const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidthForSel;
                         const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
                         const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
                         const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
@@ -2103,12 +2393,18 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             badgeText = "...";
                             badgeTooltip = "Saving...";
                             ImGui::BeginGroup();
+                            ImGui::PushClipRect(cellOriginForSel,
+                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
+                                                        cellOriginForSel.y + kTicketGridRowH),
+                                                true);
                             const std::string saveDisplay =
-                                DisplayValueForTrackerDateField(column.FieldId, fieldMeta, currentValue);
-                            const std::string* saveTip =
-                                IsTrackerDateOrDateTimeField(column.FieldId, fieldMeta) ? &currentValue : nullptr;
+                                DisplayValueForTrackerDateField(column.FieldId, fieldMeta, currentValue,
+                                                               d.cfg.DateFormatOption,
+                                                               d.cfg.DateCompactRelativeThresholdDays);
+                            const std::string* saveTip = column.IsDateLike ? &currentValue : nullptr;
                             RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                    true, saveTip);
+                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -2119,10 +2415,17 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                 !readOnlyMode && column.NeedsAllowEditsCheck &&
                                 app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
                             ImGui::BeginGroup();
+                            ImGui::PushClipRect(cellOriginForSel,
+                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
+                                                        cellOriginForSel.y + kTicketGridRowH),
+                                                true);
                             TicketFieldEditor::RenderFieldCell(app, ticket, column, fieldMeta, currentValue,
                                                                valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                                allowEditsForCell, d.gridState, pendingEdits,
-                                                               d.trackerGridAsync);
+                                                               d.trackerGridAsync,
+                                                               d.cfg.DateFormatOption,
+                                                               d.cfg.DateCompactRelativeThresholdDays);
+                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -2237,6 +2540,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         }
         ImGui::EndTable();
     }
+    ImGui::PopStyleVar();
 
     // Google-Sheets-style selection: end drag on mouse release, clear when the
     // user clicks outside the current selection, and service Ctrl+C (copy as
@@ -2343,7 +2647,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.inFlightIssueTypeKeySnapshot = ToLowerAsciiCopy(TrimCopy(snapshotIt->GetFieldValue("issuetype")));
             }
             d.hasInFlightEdit = true;
-            d.inFlightCommitStarted = false;
             d.inFlightDelayFrames = 1;
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Saving;
@@ -2355,113 +2658,107 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         if (d.hasInFlightEdit) {
             if (d.inFlightDelayFrames > 0) {
                 --d.inFlightDelayFrames;
-            } else if (!d.inFlightCommitStarted) {
+            } else {
                 const PendingFieldEdit edit = d.inFlightEdit;
                 const std::string originalEstimateSnapshot = d.inFlightOriginalEstimateSnapshot;
                 const std::string remainingEstimateSnapshot = d.inFlightRemainingEstimateSnapshot;
-                const std::string issueTypeKeySnapshot = d.inFlightIssueTypeKeySnapshot;
-                d.inFlightCommitFuture =
-                    std::async(std::launch::async, [&app, edit, originalEstimateSnapshot, remainingEstimateSnapshot,
-                                                    issueTypeKeySnapshot]() {
-                        FieldEditCommitResult result;
-                        result.CommitKind = FieldEditCommitResult::Kind::Failed;
-                        if (app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values,
-                                                           originalEstimateSnapshot, remainingEstimateSnapshot,
-                                                           issueTypeKeySnapshot, result.ApplyResult)) {
-                            result.Ok = true;
-                            result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
-                            result.Error.clear();
-                            return result;
-                        }
-                        result.Error = result.ApplyResult.Error;
-                        if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
-                            AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
-                            AppController::FieldEditResult prepared;
-                            std::string payloadJson;
-                            std::string prepErr;
-                            if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values,
-                                                               originalEstimateSnapshot, remainingEstimateSnapshot,
-                                                               issueTypeKeySnapshot, prepared, payloadJson, prepErr)) {
-                                result.ApplyResult = std::move(prepared);
-                                result.QueuedFieldsPayloadJson = std::move(payloadJson);
-                                result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
-                                result.Ok = true;
-                                result.Error.clear();
-                                return result;
-                            }
-                            if (!prepErr.empty()) {
-                                result.Error = prepErr;
-                            }
-                        }
-                        result.Ok = false;
-                        result.CommitKind = FieldEditCommitResult::Kind::Failed;
-                        return result;
-                    });
-                d.inFlightCommitStarted = true;
-            } else {
-                const std::string editKey = BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id);
-                if (d.inFlightCommitFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-                    // Async Tracker commit still running; keep UI responsive.
+                const std::string issueTypeKeyForNetwork = d.inFlightIssueTypeKeySnapshot;
+                const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
+
+                FieldEditCommitResult result;
+                result.CommitKind = FieldEditCommitResult::Kind::Failed;
+                if (app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
+                                                   remainingEstimateSnapshot, issueTypeKeyForNetwork,
+                                                   result.ApplyResult)) {
+                    result.Ok = true;
+                    result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
+                    result.Error.clear();
                 } else {
-                    const FieldEditCommitResult result = d.inFlightCommitFuture.get();
-                    std::string applyError;
-                    if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
-                        std::string qerr;
-                        const std::int64_t qid = app.QueueFieldEditOffline(
-                            d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id, result.QueuedFieldsPayloadJson, qerr);
-                        if (qid <= 0) {
-                            SmatchetToastManager::Instance().Push("Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);
-                            CellWriteFeedback feedback;
-                            feedback.State = CellWriteState::Error;
-                            feedback.Message = qerr;
-                            feedback.FramesRemaining = 0;
-                            d.cellFeedbackByKey[editKey] = feedback;
-                        } else if (!app.ApplyFieldEditResult(d.inFlightEdit.IssueId, result.ApplyResult, applyError)) {
-                            SmatchetToastManager::Instance().Push("Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError, ToastType::Error);
-                            CellWriteFeedback feedback;
-                            feedback.State = CellWriteState::Error;
-                            feedback.Message = applyError;
-                            feedback.FramesRemaining = 0;
-                            d.cellFeedbackByKey[editKey] = feedback;
-                        } else {
-                            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Tracker is reachable.", ToastType::Info);
-                            CellWriteFeedback feedback;
-                            feedback.State = CellWriteState::Success;
-                            feedback.Message = "Queued";
-                            feedback.FramesRemaining = 240;
-                            d.cellFeedbackByKey[editKey] = feedback;
+                    result.Error = result.ApplyResult.Error;
+                    if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
+                        AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
+                        AppController::FieldEditResult prepared;
+                        std::string payloadJson;
+                        std::string prepErr;
+                        if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values,
+                                                           originalEstimateSnapshot, remainingEstimateSnapshot,
+                                                           issueTypeKeyForNetwork, prepared, payloadJson, prepErr)) {
+                            result.ApplyResult = std::move(prepared);
+                            result.QueuedFieldsPayloadJson = std::move(payloadJson);
+                            result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
+                            result.Ok = true;
+                            result.Error.clear();
+                        } else if (!prepErr.empty()) {
+                            result.Error = prepErr;
                         }
-                    } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
-                        const bool applied =
-                            app.ApplyFieldEditResult(d.inFlightEdit.IssueId, result.ApplyResult, applyError);
-                        if (!applied) {
-                            SmatchetToastManager::Instance().Push("Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError, ToastType::Error);
-                            CellWriteFeedback feedback;
-                            feedback.State = CellWriteState::Error;
-                            feedback.Message = applyError;
-                            feedback.FramesRemaining = 0;
-                            d.cellFeedbackByKey[editKey] = feedback;
-                        } else {
-                            SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.", ToastType::Success);
-                            CellWriteFeedback feedback;
-                            feedback.State = CellWriteState::Success;
-                            feedback.Message = "Saved";
-                            feedback.FramesRemaining = 180;
-                            d.cellFeedbackByKey[editKey] = feedback;
-                        }
-                    } else {
-                        d.gridEditError =
-                            result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
-                        d.gridEditSuccess.clear();
+                    }
+                }
+
+                std::string applyError;
+                if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
+                    std::string qerr;
+                    const std::int64_t qid =
+                        app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr);
+                    if (qid <= 0) {
+                        SmatchetToastManager::Instance().Push(
+                            "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr,
+                            ToastType::Error);
                         CellWriteFeedback feedback;
                         feedback.State = CellWriteState::Error;
-                        feedback.Message = d.gridEditError;
+                        feedback.Message = qerr;
                         feedback.FramesRemaining = 0;
                         d.cellFeedbackByKey[editKey] = feedback;
+                    } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
+                        SmatchetToastManager::Instance().Push(
+                            "Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError,
+                            ToastType::Error);
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Error;
+                        feedback.Message = applyError;
+                        feedback.FramesRemaining = 0;
+                        d.cellFeedbackByKey[editKey] = feedback;
+                    } else {
+                        SmatchetToastManager::Instance().Push("Queued Offline",
+                                                              "Field edit will sync when Tracker is reachable.",
+                                                              ToastType::Info);
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Success;
+                        feedback.Message = "Queued";
+                        feedback.FramesRemaining = 240;
+                        d.cellFeedbackByKey[editKey] = feedback;
                     }
-                    d.hasInFlightEdit = false;
-                    d.inFlightCommitStarted = false;
+                } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
+                    const bool applied = app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError);
+                    if (!applied) {
+                        SmatchetToastManager::Instance().Push(
+                            "Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError,
+                            ToastType::Error);
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Error;
+                        feedback.Message = applyError;
+                        feedback.FramesRemaining = 0;
+                        d.cellFeedbackByKey[editKey] = feedback;
+                    } else {
+                        SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.",
+                                                              ToastType::Success);
+                        CellWriteFeedback feedback;
+                        feedback.State = CellWriteState::Success;
+                        feedback.Message = "Saved";
+                        feedback.FramesRemaining = 180;
+                        d.cellFeedbackByKey[editKey] = feedback;
+                    }
+                } else {
+                    d.gridEditError =
+                        result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
+                    d.gridEditSuccess.clear();
+                    CellWriteFeedback feedback;
+                    feedback.State = CellWriteState::Error;
+                    feedback.Message = d.gridEditError;
+                    feedback.FramesRemaining = 0;
+                    d.cellFeedbackByKey[editKey] = feedback;
                 }
+
+                d.hasInFlightEdit = false;
             }
         }
     }
@@ -2484,6 +2781,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     if (!pendingEdits.empty()) {
         d.gridEditError.clear();
     }
+    MaybeToastGridBannerFromSession(d);
     ImGui::End();
 }
 

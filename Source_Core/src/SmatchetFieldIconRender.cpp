@@ -324,7 +324,7 @@ bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float 
     float drawW = width;
     float drawH = height;
     if (drawW <= 0.0f || drawH <= 0.0f) {
-        const float maxEdge = ImGui::GetTextLineHeight() + 4.0f;
+        const float maxEdge = ImGui::GetFrameHeight();
         DrawLoadedIconSized(icon, maxEdge);
         return true;
     }
@@ -368,7 +368,7 @@ bool DrawInlineFieldIconIfAny(AppController& app, const TrackerField& field, con
     if (!TryGetInlineFieldIconTexture(app, field, rawValue, icon, err)) {
         return false;
     }
-    DrawLoadedIconSized(icon, 16.0f);
+    DrawLoadedIconSized(icon, ImGui::GetFrameHeight());
     ImGui::SameLine(0.0f, 6.0f);
     return true;
 }
@@ -393,7 +393,7 @@ bool TryDrawFieldValueIcon(AppController& app, const std::string& fieldId, const
         std::string err;
         SmatchetLoadedIconTexture icon;
         if (LoadTextureForResolvedPath(loadPath, icon, err)) {
-            const float maxEdge = ImGui::GetTextLineHeight() + 4.0f;
+            const float maxEdge = ImGui::GetFrameHeight();
             const std::string display =
                 field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(rawValue);
             DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);
@@ -419,7 +419,7 @@ bool TryDrawFieldValueIcon(AppController& app, const std::string& fieldId, const
         return false;
     }
 
-    const float maxEdge = ImGui::GetTextLineHeight() + 4.0f;
+    const float maxEdge = ImGui::GetFrameHeight();
     const std::string display =
         field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(label.empty() ? rawValue : label);
     DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);

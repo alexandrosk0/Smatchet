@@ -2,17 +2,17 @@
 
 void AppController::InitLua() {}
 
+std::vector<std::string> AppController::ListLuaScriptFiles() const {
+    return {};
+}
+
 void AppController::RunLuaSetupScript(const std::string& /*scriptPath*/) {}
 
 std::vector<std::string> AppController::GetLuaTicketActionNames() const {
     return {};
 }
 
-bool AppController::ExecuteLuaTicketAction(const std::string& /*name*/, const std::string& /*issueId*/,
-                                           std::string& outError) {
-    outError = "Lua automation disabled";
-    return false;
-}
+void AppController::ExecuteLuaTicketAction(const std::string& /*name*/, const std::string& /*issueId*/) {}
 
 void AppController::AddAiContext(const std::string& text) {
     aiContext_.push_back(text);
@@ -40,8 +40,12 @@ std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
     return {};
 }
 
-bool AppController::ExecuteLuaGlobalAction(const std::string& /*name*/, std::string& outError) {
+void AppController::ExecuteLuaGlobalAction(const std::string& /*name*/) {}
+
+bool AppController::ExecuteLuaConsoleSnippet(const std::string& /*code*/, std::string& outError,
+                                             std::string& outResultSummary) {
     outError = "Lua automation disabled";
+    outResultSummary.clear();
     return false;
 }
 
@@ -57,6 +61,7 @@ bool AppController::TryLuaFieldDisplay(const std::string& /*fieldId*/, const Cac
 }
 
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
+void AppController::RunFlatScriptAsync(const std::string& /*scriptPath*/) {}
 
 
 

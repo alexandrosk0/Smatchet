@@ -4,6 +4,7 @@
 
 void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool tooltipsEnabled, bool disabled,
                             const std::string* rawForTooltip) {
+    ImGui::AlignTextToFramePadding();
     const std::string& displayValue = rawValue;
 
     bool hasNewline = false;

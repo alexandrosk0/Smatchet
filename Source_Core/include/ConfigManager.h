@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Logger.h"
+#include "SmatchetDefaults.h"
 #include "NewIssueInheritDefaults.h"
 
 #if defined(_WIN32)
@@ -34,7 +35,45 @@
 #include <unistd.h>
 #endif
 
+struct CommentTemplate {
+    std::string Id;
+    std::string Title;
+    std::string Text;
+
+    // Support nlohmann::json serialization
+    friend void to_json(nlohmann::json& j, const CommentTemplate& t) {
+        j = nlohmann::json{
+            {"id", t.Id},
+            {"title", t.Title},
+            {"text", t.Text}
+        };
+    }
+
+    friend void from_json(const nlohmann::json& j, CommentTemplate& t) {
+        t.Id = j.value("id", "");
+        t.Title = j.value("title", "");
+        t.Text = j.value("text", "");
+    }
+};
+
+inline std::vector<CommentTemplate> GetDefaultQuickCommentTemplates() {
+    return {
+        {"need_repro", "Need repro details", "Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details"},
+        {"need_logs", "Need logs / diagnostics", "Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash context\n- Local repro notes"},
+        {"handoff", "Triage handoff summary", "Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:"}
+    };
+}
+
+inline std::vector<CommentTemplate> GetDefaultBlameCommentTemplates() {
+    return {
+        {"need_repro", "Need repro details", "Need repro details for {key} (blame context: {path}:{line}, CL {cl})."},
+        {"need_logs", "Need logs / diagnostics", "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}."},
+        {"handoff", "Triage handoff summary", "Triage handoff for {key}:\n- Suggested owner: {user}\n- Suspect location: {function} ({path}:{line})\n- CL: {cl}"}
+    };
+}
+
 struct TrackerConfig {
+    std::string DbPath = SmatchetDefaults::kDefaultDbPath;
     std::string Domain;   // e.g., "yourcompany.atlassian.net"
     std::string Email;    // e.g., "dev@company.com"
     std::string ApiToken; // Your Atlassian API Token
@@ -42,7 +81,7 @@ struct TrackerConfig {
     std::string ProjectKey;
 
     // Tracker Type: "Jira" or "Plane"
-    std::string TrackerType = "Jira";
+    std::string TrackerType = SmatchetDefaults::kDefaultBackendType;
 
     // Plane.so specific configuration
     std::string PlaneUrl;           // API origin: https://api.plane.so (no path); https://app.plane.so normalized
@@ -77,15 +116,17 @@ struct TrackerConfig {
     // When true, MCP plugin HTTP server is started.
     bool McpEnabled = false;
     // MCP plugin listen port.
-    int McpPort = 8080;
+    int McpPort = SmatchetDefaults::Mcp::kDefaultPort;
     // When false (default), bind MCP to localhost only.
     bool McpAllowRemote = false;
     // Optional shared secret required via X-Smatchet-Token header.
     std::string McpAuthToken;
+    // Off by default: allow MCP clients to execute Lua code/snippets through built-in run_lua tool.
+    bool McpAllowLuaExecution = false;
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
-    /** Scripts → MCP Server… window open on launch (like ShowPerformanceWindow). */
+    /** Windows → MCP Server… window open on launch (like ShowPerformanceWindow). */
     bool ShowMcpServerWindow = false;
     /** Height of the copyable status/endpoints block; 0 = use default (line height × 18). */
     float McpServerInfoPanelHeightPx = 0.f;
@@ -110,6 +151,14 @@ struct TrackerConfig {
     std::vector<std::string> NewIssueInheritFieldIds;
     // Plane field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
     std::vector<std::string> NewIssueInheritFieldIdsPlane;
+
+    // Quick comment templates for context menus and blame analysis
+    std::vector<CommentTemplate> QuickCommentTemplates = GetDefaultQuickCommentTemplates();
+    std::vector<CommentTemplate> BlameCommentTemplates = GetDefaultBlameCommentTemplates();
+
+    // Date formatting preferences
+    std::string DateFormatOption = "compact";
+    int DateCompactRelativeThresholdDays = 21;
 };
 
 struct ViewSortSpec {
@@ -334,14 +383,42 @@ struct BlameAnalysisConfig {
 
 class ConfigManager {
   public:
+    struct CliOverrides {
+        bool HasDbPath;
+        std::string DbPath;
+        bool HasBackendType;
+        std::string BackendType;
+        bool HasMcpPort;
+        int McpPort;
+        bool HasMcpAllowRemote;
+        bool McpAllowRemote;
+
+        CliOverrides()
+            : HasDbPath(false)
+            , DbPath()
+            , HasBackendType(false)
+            , BackendType()
+            , HasMcpPort(false)
+            , McpPort(0)
+            , HasMcpAllowRemote(false)
+            , McpAllowRemote(false)
+        {}
+    };
+
     // Optional base directory for config/views (e.g. exe directory). If set, paths are baseDir + filename.
     static void SetBaseDirectoryForFiles(const std::string& baseDir) { GetBaseDirectoryRef() = baseDir; }
 
     /** Directory used for config/views (trailing separator if set). Empty if unset. */
     static const std::string& GetFilesBaseDirectory() { return GetBaseDirectoryRef(); }
 
-    static nlohmann::json LoadMergedConfigJson() {
-        const std::string path = GetConfigPath();
+    static std::string GetDefaultSettingsPath() {
+        const std::string& base = GetBaseDirectoryRef();
+        if (base.empty())
+            return "default_settings.json";
+        return base + "default_settings.json";
+    }
+
+    static nlohmann::json LoadJsonFile(const std::string& path) {
         std::lock_guard<std::mutex> lock(GetIoMutexRef());
         ScopedFileLock fileLock(path);
         std::string raw;
@@ -402,10 +479,22 @@ class ConfigManager {
             }
         }
         if (!j.is_object()) {
-            LOG_WARN("ConfigManager: config root is not an object for '%s'; using defaults", path.c_str());
             j = nlohmann::json::object();
         }
         return j;
+    }
+
+    static nlohmann::json LoadMergedConfigJson() {
+        nlohmann::json jDefault = LoadJsonFile(GetDefaultSettingsPath());
+        nlohmann::json jUser = LoadJsonFile(GetConfigPath());
+        if (jDefault.is_object() && jUser.is_object()) {
+            jDefault.update(jUser);
+            return jDefault;
+        } else if (jUser.is_object()) {
+            return jUser;
+        } else {
+            return jDefault;
+        }
     }
 
     static void WriteConfigJson(const nlohmann::json& j) {
@@ -419,6 +508,10 @@ class ConfigManager {
     }
 
     static void Save(const TrackerConfig& config) {
+        {
+            std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+            GetHasCachedConfigRef() = false;
+        }
         nlohmann::json j = LoadMergedConfigJson();
         j["domain"] = config.Domain;
         j["email"] = config.Email;
@@ -440,8 +533,13 @@ class ConfigManager {
         j["mcp_port"] = config.McpPort;
         j["mcp_allow_remote"] = config.McpAllowRemote;
         j["mcp_auth_token"] = config.McpAuthToken;
+        j["mcp_allow_lua_execution"] = config.McpAllowLuaExecution;
         j["mcp_export_fields"] = config.McpExportFields;
         j["show_mcp_server_window"] = config.ShowMcpServerWindow;
+        j["quick_comment_templates"] = config.QuickCommentTemplates;
+        j["blame_comment_templates"] = config.BlameCommentTemplates;
+        j["date_format_option"] = config.DateFormatOption;
+        j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
         j.erase("mcp_server_window_layout_valid");
         j.erase("mcp_server_window_x");
         j.erase("mcp_server_window_y");
@@ -594,144 +692,221 @@ class ConfigManager {
         WriteConfigJson(j);
     }
 
-    static TrackerConfig Load() {
+    static TrackerConfig Load(const CliOverrides& cli = CliOverrides()) {
+        const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
+        if (canUseCache) {
+            std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+            if (GetHasCachedConfigRef()) {
+                return GetCachedConfigRef();
+            }
+        }
+
         nlohmann::json j = LoadMergedConfigJson();
-        if (j.empty()) {
-            return {};
-        }
+        TrackerConfig cfg;
+        cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
+        cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
+        cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
 
-        try {
-            TrackerConfig cfg;
-            cfg.Domain = j.value("domain", std::string{});
-            cfg.Email = j.value("email", std::string{});
+        if (!j.empty()) {
+            try {
+                cfg.DbPath = j.value("db_path", cfg.DbPath);
+                cfg.Domain = j.value("domain", std::string{});
+                cfg.Email = j.value("email", std::string{});
 #if defined(_WIN32)
-            cfg.ApiToken = UnprotectSecretFromConfig(j.value("token_enc", std::string{}));
-            if (cfg.ApiToken.empty()) {
+                cfg.ApiToken = UnprotectSecretFromConfig(j.value("token_enc", std::string{}));
+                if (cfg.ApiToken.empty()) {
+                    cfg.ApiToken = j.value("token", std::string{});
+                }
+#else
                 cfg.ApiToken = j.value("token", std::string{});
-            }
-#else
-            cfg.ApiToken = j.value("token", std::string{});
 #endif
-            cfg.ProjectKey = j.value("project_key", std::string{});
-            cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
-            cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
-            cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
-            cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
+                cfg.ProjectKey = j.value("project_key", std::string{});
+                cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
+                cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
+                cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
+                cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
 
 #if defined(_WIN32)
-            cfg.PlaneApiKey = UnprotectSecretFromConfig(j.value("plane_api_key_enc", std::string{}));
-            if (cfg.PlaneApiKey.empty()) {
+                cfg.PlaneApiKey = UnprotectSecretFromConfig(j.value("plane_api_key_enc", std::string{}));
+                if (cfg.PlaneApiKey.empty()) {
+                    cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+                }
+#else
                 cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
-            }
-#else
-            cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
 #endif
 
-            cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
-            cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
-            cfg.GridEndWheelSwallowsBeforeHorizontal =
-                j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
-            cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
-            cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
-            cfg.LogTrackerHttpBodies = j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
-            cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
+                cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
+                cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+                cfg.GridEndWheelSwallowsBeforeHorizontal =
+                    j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
+                cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
+                cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
+                cfg.LogTrackerHttpBodies = j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
+                cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
 #if defined(_WIN32)
-            cfg.AiApiKey = UnprotectSecretFromConfig(j.value("ai_api_key_enc", std::string{}));
-            if (cfg.AiApiKey.empty()) {
-                cfg.AiApiKey = j.value("ai_api_key", std::string{});
-            }
+                cfg.AiApiKey = UnprotectSecretFromConfig(j.value("ai_api_key_enc", std::string{}));
+                if (cfg.AiApiKey.empty()) {
+                    cfg.AiApiKey = j.value("ai_api_key", std::string{});
+                }
 #else
-            cfg.AiApiKey = j.value("ai_api_key", std::string{});
+                cfg.AiApiKey = j.value("ai_api_key", std::string{});
 #endif
-            cfg.AiModel = j.value("ai_model", cfg.AiModel);
-            cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
-            cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
-            cfg.McpPort = j.value("mcp_port", cfg.McpPort);
-            cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
-            cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
-            if (j.contains("mcp_export_fields") && j["mcp_export_fields"].is_array()) {
-                for (const auto& item : j["mcp_export_fields"]) {
-                    if (item.is_string()) {
-                        cfg.McpExportFields.push_back(item.get<std::string>());
-                    }
-                }
-            }
-            cfg.ShowMcpServerWindow = j.value("show_mcp_server_window", cfg.ShowMcpServerWindow);
-            cfg.McpServerInfoPanelHeightPx =
-                static_cast<float>(j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
-            cfg.McpServerActivityPanelHeightPx = static_cast<float>(
-                j.value("mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
-            cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
-            cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
-            cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);
-            cfg.ImportMaxConcurrent = j.value("import_max_concurrent", cfg.ImportMaxConcurrent);
-            cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
-            cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
-            {
-                cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
-                if (j.contains("new_issue_inherit_field_ids") && j["new_issue_inherit_field_ids"].is_array()) {
-                    cfg.NewIssueInheritFieldIds.clear();
-                    for (const auto& item : j["new_issue_inherit_field_ids"]) {
+                cfg.AiModel = j.value("ai_model", cfg.AiModel);
+                cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
+                cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
+                cfg.McpPort = j.value("mcp_port", cfg.McpPort);
+                cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
+                cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
+                cfg.McpAllowLuaExecution = j.value("mcp_allow_lua_execution", cfg.McpAllowLuaExecution);
+                if (j.contains("mcp_export_fields") && j["mcp_export_fields"].is_array()) {
+                    for (const auto& item : j["mcp_export_fields"]) {
                         if (item.is_string()) {
-                            std::string s = item.get<std::string>();
-                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                                s.erase(0, 1);
-                            }
-                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                                s.pop_back();
-                            }
-                            if (!s.empty() && s != "summary") {
-                                cfg.NewIssueInheritFieldIds.push_back(std::move(s));
-                            }
+                            cfg.McpExportFields.push_back(item.get<std::string>());
                         }
                     }
                 }
-                if (cfg.NewIssueInheritFieldIds.empty()) {
+                cfg.ShowMcpServerWindow = j.value("show_mcp_server_window", cfg.ShowMcpServerWindow);
+                cfg.McpServerInfoPanelHeightPx =
+                    static_cast<float>(j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
+                cfg.McpServerActivityPanelHeightPx = static_cast<float>(
+                    j.value("mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
+                cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
+                cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
+                cfg.DateCompactRelativeThresholdDays = j.value("date_compact_relative_threshold_days", cfg.DateCompactRelativeThresholdDays);
+                if (cfg.DateCompactRelativeThresholdDays < 1) cfg.DateCompactRelativeThresholdDays = 1;
+                if (cfg.DateCompactRelativeThresholdDays > 365) cfg.DateCompactRelativeThresholdDays = 365;
+                cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
+                cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);
+                cfg.ImportMaxConcurrent = j.value("import_max_concurrent", cfg.ImportMaxConcurrent);
+                cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
+                cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
+                if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
+                    cfg.QuickCommentTemplates.clear();
+                    for (const auto& item : j["quick_comment_templates"]) {
+                        try {
+                            cfg.QuickCommentTemplates.push_back(item.get<CommentTemplate>());
+                        } catch (...) {}
+                    }
+                } else {
+                    cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
+                }
+
+                if (j.contains("blame_comment_templates") && j["blame_comment_templates"].is_array()) {
+                    cfg.BlameCommentTemplates.clear();
+                    for (const auto& item : j["blame_comment_templates"]) {
+                        try {
+                            cfg.BlameCommentTemplates.push_back(item.get<CommentTemplate>());
+                        } catch (...) {}
+                    }
+                } else {
+                    cfg.BlameCommentTemplates = GetDefaultBlameCommentTemplates();
+                }
+                {
                     cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
-                }
-            }
-            {
-                cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
-                if (j.contains("new_issue_inherit_field_ids_plane") && j["new_issue_inherit_field_ids_plane"].is_array()) {
-                    cfg.NewIssueInheritFieldIdsPlane.clear();
-                    for (const auto& item : j["new_issue_inherit_field_ids_plane"]) {
-                        if (item.is_string()) {
-                            std::string s = item.get<std::string>();
-                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                                s.erase(0, 1);
-                            }
-                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                                s.pop_back();
-                            }
-                            if (!s.empty() && s != "summary") {
-                                cfg.NewIssueInheritFieldIdsPlane.push_back(std::move(s));
+                    if (j.contains("new_issue_inherit_field_ids") && j["new_issue_inherit_field_ids"].is_array()) {
+                        cfg.NewIssueInheritFieldIds.clear();
+                        for (const auto& item : j["new_issue_inherit_field_ids"]) {
+                            if (item.is_string()) {
+                                std::string s = item.get<std::string>();
+                                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+                                    s.erase(0, 1);
+                                }
+                                while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+                                    s.pop_back();
+                                }
+                                if (!s.empty() && s != "summary") {
+                                    cfg.NewIssueInheritFieldIds.push_back(std::move(s));
+                                }
                             }
                         }
                     }
+                    if (cfg.NewIssueInheritFieldIds.empty()) {
+                        cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
+                    }
                 }
-                if (cfg.NewIssueInheritFieldIdsPlane.empty()) {
+                {
                     cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
+                    if (j.contains("new_issue_inherit_field_ids_plane") && j["new_issue_inherit_field_ids_plane"].is_array()) {
+                        cfg.NewIssueInheritFieldIdsPlane.clear();
+                        for (const auto& item : j["new_issue_inherit_field_ids_plane"]) {
+                            if (item.is_string()) {
+                                std::string s = item.get<std::string>();
+                                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+                                    s.erase(0, 1);
+                                }
+                                while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+                                    s.pop_back();
+                                }
+                                if (!s.empty() && s != "summary") {
+                                    cfg.NewIssueInheritFieldIdsPlane.push_back(std::move(s));
+                                }
+                            }
+                        }
+                    }
+                    if (cfg.NewIssueInheritFieldIdsPlane.empty()) {
+                        cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
+                    }
                 }
+            } catch (const std::exception& ex) {
+                LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
+            } catch (...) {
+                LOG_ERROR("ConfigManager: Load() parse error (unknown)");
             }
-            if (cfg.ImportMaxConcurrent < 1)
-                cfg.ImportMaxConcurrent = 1;
-            if (cfg.ImportMaxConcurrent > 32)
-                cfg.ImportMaxConcurrent = 32;
-            if (cfg.GridEndWheelSwallowsBeforeHorizontal < 0)
-                cfg.GridEndWheelSwallowsBeforeHorizontal = 0;
-            if (cfg.GridEndWheelSwallowsBeforeHorizontal > 32)
-                cfg.GridEndWheelSwallowsBeforeHorizontal = 32;
-            if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
-                cfg.McpPort = 8080;
-            }
-            return cfg;
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
-            return {};
-        } catch (...) {
-            LOG_ERROR("ConfigManager: Load() parse error (unknown)");
-            return {};
         }
+
+        // Apply Option 1 overrides (Environment Variables)
+        if (const char* envDbPath = std::getenv("SMATCHET_DB_PATH")) {
+            cfg.DbPath = envDbPath;
+        }
+        if (const char* envBackend = std::getenv("SMATCHET_BACKEND_TYPE")) {
+            cfg.TrackerType = envBackend;
+        } else if (const char* envTracker = std::getenv("SMATCHET_TRACKER_TYPE")) {
+            cfg.TrackerType = envTracker;
+        }
+        if (const char* envMcpPort = std::getenv("SMATCHET_MCP_PORT")) {
+            try {
+                cfg.McpPort = std::stoi(envMcpPort);
+            } catch (...) {}
+        }
+        if (const char* envMcpRemote = std::getenv("SMATCHET_MCP_ALLOW_REMOTE")) {
+            std::string s(envMcpRemote);
+            cfg.McpAllowRemote = (s == "true" || s == "1");
+        }
+
+        // Apply Option 4 overrides (CLI parameters)
+        if (cli.HasDbPath) {
+            cfg.DbPath = cli.DbPath;
+        }
+        if (cli.HasBackendType) {
+            cfg.TrackerType = cli.BackendType;
+        }
+        if (cli.HasMcpPort) {
+            cfg.McpPort = cli.McpPort;
+        }
+        if (cli.HasMcpAllowRemote) {
+            cfg.McpAllowRemote = cli.McpAllowRemote;
+        }
+
+        // Post-override clamp and safety bounds checking
+        if (cfg.ImportMaxConcurrent < 1)
+            cfg.ImportMaxConcurrent = 1;
+        if (cfg.ImportMaxConcurrent > 32)
+            cfg.ImportMaxConcurrent = 32;
+        if (cfg.GridEndWheelSwallowsBeforeHorizontal < 0)
+            cfg.GridEndWheelSwallowsBeforeHorizontal = 0;
+        if (cfg.GridEndWheelSwallowsBeforeHorizontal > 32)
+            cfg.GridEndWheelSwallowsBeforeHorizontal = 32;
+        if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
+            cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
+        }
+
+        if (canUseCache) {
+            std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+            GetCachedConfigRef() = cfg;
+            GetHasCachedConfigRef() = true;
+        }
+
+        return cfg;
     }
 
     static std::string GetConfigPath() {
@@ -758,7 +933,7 @@ class ConfigManager {
         if (t == "plane") {
             return "Plane";
         }
-        return "Jira";
+        return SmatchetDefaults::kDefaultBackendType;
     }
 
     static PersistentViewsFile LoadPersistentViewsFromDisk() {
@@ -788,7 +963,7 @@ class ConfigManager {
                 return disk;
             }
             // Legacy v1: top-level active_view_id + views → Jira bucket.
-            disk.Backends["Jira"] = SmatchetViewsDiskDetail::ParseWorkspaceObject(j);
+            disk.Backends[SmatchetDefaults::kDefaultBackendType] = SmatchetViewsDiskDetail::ParseWorkspaceObject(j);
             return disk;
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: failed to parse views '%s': %s", viewsPath.c_str(), ex.what());
@@ -1014,6 +1189,21 @@ class ConfigManager {
     static std::mutex& GetIoMutexRef() {
         static std::mutex s_mutex;
         return s_mutex;
+    }
+
+    static std::mutex& GetCacheMutexRef() {
+        static std::mutex s_mutex;
+        return s_mutex;
+    }
+
+    static TrackerConfig& GetCachedConfigRef() {
+        static TrackerConfig s_config;
+        return s_config;
+    }
+
+    static bool& GetHasCachedConfigRef() {
+        static bool s_has = false;
+        return s_has;
     }
 
     static std::string& GetBaseDirectoryRef() {

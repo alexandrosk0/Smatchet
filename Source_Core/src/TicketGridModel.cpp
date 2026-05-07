@@ -284,8 +284,36 @@ bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField
     if (kDateFieldIds.count(fieldId)) {
         return true;
     }
-    if (field && (field->Type == "date" || field->Type == "datetime")) {
+    if (field && (field->Type == "date" || field->Type == "datetime" ||
+                  field->Family == TrackerFieldFamily::Date || field->Family == TrackerFieldFamily::DateTime)) {
         return true;
+    }
+    // Case-insensitive heuristics for auto-detection of date-like fields
+    const std::string idLower = ToLowerAsciiCopy(fieldId);
+    if (idLower.find("date") != std::string::npos ||
+        idLower.find("time") != std::string::npos ||
+        idLower.find("created") != std::string::npos ||
+        idLower.find("updated") != std::string::npos ||
+        idLower.find("modified") != std::string::npos ||
+        idLower.find("viewed") != std::string::npos ||
+        idLower.find("changed") != std::string::npos ||
+        idLower.find("resolved") != std::string::npos ||
+        idLower.find("duedate") != std::string::npos) {
+        return true;
+    }
+    if (field) {
+        const std::string nameLower = ToLowerAsciiCopy(field->Name);
+        if (nameLower.find("date") != std::string::npos ||
+            nameLower.find("time") != std::string::npos ||
+            nameLower.find("created") != std::string::npos ||
+            nameLower.find("updated") != std::string::npos ||
+            nameLower.find("modified") != std::string::npos ||
+            nameLower.find("viewed") != std::string::npos ||
+            nameLower.find("changed") != std::string::npos ||
+            nameLower.find("resolved") != std::string::npos ||
+            nameLower.find("due date") != std::string::npos) {
+            return true;
+        }
     }
     return false;
 }
@@ -296,11 +324,28 @@ bool IsAttachmentFieldId(const std::string& fieldId) {
 }
 
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
-                                            const std::string& currentValue) {
-    if (!IsTrackerDateOrDateTimeField(fieldId, field)) {
+                                            const std::string& currentValue,
+                                            const std::string& dateFormatOption,
+                                            int thresholdDays) {
+    bool isDate = IsTrackerDateOrDateTimeField(fieldId, field);
+    if (!isDate) {
+        ParsedJiraDateTime dummy;
+        if (TryParseJiraDateTime(currentValue, dummy)) {
+            isDate = true;
+        }
+    }
+    if (!isDate) {
         return currentValue;
     }
-    const std::string compact = FormatCompactJiraDateForDisplay(currentValue);
+    // Use caller-supplied format params if provided; only hit disk when called from non-hot paths.
+    std::string fmt = dateFormatOption;
+    int thresh = thresholdDays;
+    if (fmt.empty() || thresh <= 0) {
+        const auto cfg = ConfigManager::Load();
+        if (fmt.empty()) fmt = cfg.DateFormatOption;
+        if (thresh <= 0) thresh = cfg.DateCompactRelativeThresholdDays;
+    }
+    const std::string compact = FormatCompactJiraDateForDisplay(currentValue, fmt, thresh);
     return compact.empty() ? currentValue : compact;
 }
 

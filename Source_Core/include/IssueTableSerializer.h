@@ -50,6 +50,15 @@ ImportResult ParseDrafts(const std::string& text, Format fmt, const std::vector<
                          const std::string& fallbackIssueTypeName);
 
 /**
+ * Map a CSV/JSON/Lua column header or loose key to an internal draft key or
+ * tracker field id (same rules as CSV/JSON import).
+ */
+std::string ResolveColumnKey(const std::string& header, const std::vector<TrackerField>& catalog);
+
+/** Apply one resolved key/value to an IssueDraft (project, issuetype, parent, attachments, fields). */
+void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::string& rawValue);
+
+/**
  * Serialize tickets to `fmt`. `fieldIds` = column order; if empty, uses union
  * of keys across all tickets (sorted for stability).
  */

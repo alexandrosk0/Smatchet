@@ -417,13 +417,14 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         warmupIo.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height); // Force atlas build / builder init.
     }
 
+    TrackerConfig cfg = ConfigManager::Load();
+
     ImplData->App.SetOpenUrlHandler(options.OpenUrlHandler);
     ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
     ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
 
 #if defined(SMATCHET_WITH_MCP)
     {
-        TrackerConfig cfg = ConfigManager::Load();
         const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
         if (cfg.McpEnabled) {
             ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
@@ -435,12 +436,22 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
-    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; main menu Scripts entry expects SMATCHET_WITH_LUA_AUTOMATION in UI build.");
+    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripting window opens from Windows menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
 #else
-    LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded, no Scripts menu.");
+    LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded.");
 #endif
     ImplData->Plugins.OnEarlyInit(ImplData->App);
-    ImplData->App.Initialize(options.DbPath, options.BackendType);
+
+    std::string resolvedDbPath = options.DbPath;
+    if (cfg.DbPath != SmatchetDefaults::kDefaultDbPath) {
+        resolvedDbPath = cfg.DbPath;
+    }
+    std::string resolvedBackend = options.BackendType;
+    if (cfg.TrackerType != SmatchetDefaults::kDefaultBackendType) {
+        resolvedBackend = cfg.TrackerType;
+    }
+
+    ImplData->App.Initialize(resolvedDbPath, resolvedBackend);
     ImplData->Plugins.OnStart(ImplData->App);
     ImplData->App.SetRuntimePluginHost(&ImplData->Plugins);
 

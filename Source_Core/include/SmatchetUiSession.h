@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
 #include "IssueCreatePipeline.h"
@@ -108,15 +109,15 @@ struct UiDrawSession {
     bool showLogWindow = true;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    /** Lua console / automation panel; dock tab X clears this; reopen from Settings. */
+    /** Scripting window; dock tab close clears this; reopen from Windows → Scripting…. */
     bool showLuaAutomationWindow = true;
     bool requestLuaAutomationFocus = false;
-    /** When true, the next draw will switch to the "Scripting" tab in the Lua window. */
-    bool requestScriptsWindowFocus = false;
+    /** When true, the next draw selects the Scripts editor tab (not Tools & Actions). */
+    bool requestScriptingEditorTabFocus = false;
 #endif
 
 #if defined(SMATCHET_WITH_MCP)
-    /** MCP status / endpoints / activity; reopen from Scripts (or MCP menu when Lua is off). */
+    /** MCP status / endpoints / activity; reopen from Windows (or MCP menu when Lua automation is off). */
     bool showMcpServerWindow = false;
     bool requestMcpServerFocus = false;
 #endif
@@ -158,8 +159,9 @@ struct UiDrawSession {
     char aiModelBuf[128]{};
     char aiBaseUrlBuf[256]{};
     bool mcpEnabled = false;
-    int mcpPort = 8080;
+    int mcpPort = SmatchetDefaults::Mcp::kDefaultPort;
     bool mcpAllowRemote = false;
+    bool mcpAllowLuaExecution = false;
     char mcpAuthTokenBuf[512]{};
     bool preferencesBuffersLoaded = false;
     /** Integrations tab: brief "saved" line after MCP fields persist. */
@@ -222,13 +224,23 @@ struct UiDrawSession {
     SpreadsheetState gridState;
     std::string gridEditError;
     std::string gridEditSuccess;
+    /** Edge-trigger dedupe for tracker connectivity toasts (Active Project window). */
+    TrackerConnectivityBannerForUi::Level lastToastedTrackerBannerKind = TrackerConnectivityBannerForUi::Level::None;
+    std::string lastToastedTrackerBannerMessage;
+    /** Suppress spurious offline toasts while probe is cold or live OK but banner text not yet cleared. */
+    bool trackerWarningToastStartupGateInitialized = false;
+    std::chrono::steady_clock::time_point trackerWarningToastStartupGraceUntil{};
+    /** Green "TRACKER OK" chip: hide after `trackerOkChipHideAt` while banner clear and reachable. */
+    bool trackerOkChipHideTimerArmed = false;
+    std::chrono::steady_clock::time_point trackerOkChipHideAt{};
+    /** 0 none, 1 error, 2 success — mirrors single-slot gridEdit banner before it became toast-only. */
+    int lastToastedGridBannerKind = 0;
+    std::string lastToastedGridBannerMessage;
     std::deque<PendingFieldEdit> queuedFieldEdits;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;
     std::string inFlightOriginalEstimateSnapshot;
     std::string inFlightRemainingEstimateSnapshot;
-    bool inFlightCommitStarted = false;
-    std::future<FieldEditCommitResult> inFlightCommitFuture;
     std::string inFlightIssueTypeKeySnapshot;
     int inFlightDelayFrames = 0;
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
@@ -243,6 +255,8 @@ struct UiDrawSession {
     std::uint64_t cachedSortTicketsRevision = 0;
     std::uint64_t cachedSortCatalogRevision = 0;
     bool cachedSortValid = false;
+    bool viewSortDirty = false;
+    bool forceApplySortSpecs = false;
 
     int gridBottomHorizontalWheelSwallowsRemaining = 0;
     int gridTopHorizontalWheelSwallowsRemaining = 0;

@@ -21,6 +21,7 @@
 #include "SmatchetImGuiInputProcessor.h"
 #include "SmatchetImGuiRenderBackend.h"
 #include "SmatchetImGuiViewExtension.h"
+#include "SmatchetDefaults.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiPlugin, Log, All);
 
@@ -178,7 +179,13 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
         FTCHARToUTF8 DbPathUtf8(*DbPath);
         SmatchetHost_SetInitOptions(
-            Host, DbPathUtf8.Get(), "Jira", 8080, Params.RendererBackend, Params.NumFramesInFlight, Params.ColorFormat,
+            Host,
+            DbPathUtf8.Get(),
+            SmatchetDefaults::kDefaultBackendType,
+            SmatchetDefaults::Mcp::kDefaultPort,
+            Params.RendererBackend,
+            Params.NumFramesInFlight,
+            Params.ColorFormat,
             Params.NativeDevice, Params.RendererResource0, Params.RendererResource1, Params.RendererResource2,
             Params.NativeCommandQueue, &SmatchetOpenUrlCallback, nullptr, &SmatchetAttachmentViewerCallback, nullptr);
         // DX12 dynamic-texture SRV allocator needs to know the heap capacity so it can hand out

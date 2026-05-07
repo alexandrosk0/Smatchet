@@ -1,4 +1,5 @@
 #include "TicketFieldEditor.h"
+#include "UiPerfMonitor.h"
 
 #include "AppController.h"
 #include "TrackerDateTimeFieldEditor.h"
@@ -11,6 +12,9 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -18,6 +22,68 @@
 namespace {
 
 using namespace TrackerFieldValueUtils;
+
+// #region agent log
+struct EditCbUser {
+    SpreadsheetState* state;
+    const char* fieldId;
+};
+
+static void AgentLogTicketField(const char* hypothesisId, const char* location, int a, int b, int c, int d) {
+    FILE* f = std::fopen("c:/Dev/Smatchet/debug-e99704.log", "a");
+    if (!f) {
+        return;
+    }
+    const long long ts = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+    std::fprintf(f,
+                 "{\"sessionId\":\"e99704\",\"hypothesisId\":\"%s\",\"location\":\"%s\",\"message\":\"tick\",\"data\":{"
+                 "\"a\":%d,\"b\":%d,\"c\":%d,\"d\":%d},\"timestamp\":%lld}\n",
+                 hypothesisId, location, a, b, c, d, ts);
+    std::fclose(f);
+}
+// #endregion agent log
+
+/** Collapse ImGui's initial select-all when a grid text cell opens. `EventActivated` can arrive the frame after
+ *  `EditJustStarted` is cleared; use `PendingGridInputTextDeselect` until we see activation or full-range selection. */
+static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* data) {
+    auto* u = static_cast<EditCbUser*>(data->UserData);
+    if (!u || !u->state) {
+        return 0;
+    }
+    SpreadsheetState* st = u->state;
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways) {
+        return 0;
+    }
+    const bool isSummary = u->fieldId && std::strcmp(u->fieldId, "summary") == 0;
+    if (isSummary && (data->EventActivated || st->EditJustStarted || st->PendingGridInputTextDeselect)) {
+        static int s_summaryCbLogBudget;
+        if (s_summaryCbLogBudget < 80) {
+            ++s_summaryCbLogBudget;
+            AgentLogTicketField("B", "TicketFieldEditor:InputText_cb_always", data->EventActivated ? 1 : 0,
+                                st->PendingGridInputTextDeselect ? 1 : 0, data->SelectionStart, data->SelectionEnd);
+        }
+    }
+    if (!st->PendingGridInputTextDeselect) {
+        return 0;
+    }
+    const bool fullRange =
+        data->BufTextLen > 0 && data->SelectionStart == 0 && data->SelectionEnd == data->BufTextLen;
+    if (!data->EventActivated && !fullRange) {
+        return 0;
+    }
+    const int end = data->BufTextLen;
+    data->SetSelection(end, end);
+    st->PendingGridInputTextDeselect = false;
+    if (isSummary) {
+        AgentLogTicketField("C", "TicketFieldEditor:InputText_cb_after_set", data->CursorPos, data->SelectionStart,
+                            data->SelectionEnd, end);
+        AgentLogTicketField("F", "TicketFieldEditor:collapse_applied", data->EventActivated ? 1 : 0, fullRange ? 1 : 0,
+                            0, 0);
+    }
+    return 0;
+}
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
                std::vector<PendingFieldEdit>& pendingEdits) {
@@ -39,12 +105,22 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
     if (state.IsEditingField(ticket.id, field.Id)) {
         const bool editJustStarted = state.EditJustStarted;
+        if (field.Id == "summary") {
+            static int s_enterEditLogBudget;
+            if (s_enterEditLogBudget < 30) {
+                ++s_enterEditLogBudget;
+                AgentLogTicketField("E", "TicketFieldEditor:enter_edit", editJustStarted ? 1 : 0, 0, 0, 0);
+            }
+        }
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (editJustStarted) {
             ImGui::SetKeyboardFocusHere();
         }
-        const bool submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
-                                                ImGuiInputTextFlags_EnterReturnsTrue);
+        EditCbUser cbUser{&state, field.Id.c_str()};
+        const bool submitted =
+            ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                             InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             state.ClearEditing();
         } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
@@ -129,7 +205,7 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
     ImVec2 overlayP0(0.0f, 0.0f);
     ImVec2 overlayP1(0.0f, 0.0f);
     if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
-        const float maxEdge = 16.0f;
+        const float maxEdge = ImGui::GetFrameHeight();
         const float iw = static_cast<float>(overlayIcon.Width);
         const float ih = static_cast<float>(overlayIcon.Height);
         const float scale = maxEdge / (std::max)(iw, ih);
@@ -259,8 +335,18 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         const TrackerField* field, const std::string& currentValue, float availWidth,
                                         bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                         std::vector<PendingFieldEdit>& pendingEdits,
-                                        TrackerGridFieldAsyncState& trackerGridAsync) {
+                                        TrackerGridFieldAsyncState& trackerGridAsync,
+                                        const std::string& dateFormatOption, int thresholdDays) {
+    SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
+    if (column.FieldId == "summary") {
+        static int s_summaryCellLogBudget;
+        if (s_summaryCellLogBudget < 50) {
+            ++s_summaryCellLogBudget;
+            AgentLogTicketField("A", "TicketFieldEditor:RenderFieldCell_summary", handledByLua ? 1 : 0,
+                                static_cast<int>(column.Plan), 0, 0);
+        }
+    }
     if (handledByLua) {
         return;
     }
@@ -271,7 +357,13 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 
     auto renderPlainText = [&](bool disabled) {
-        const std::string display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
+        std::string display;
+        if (column.IsDateLike) {
+            display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue,
+                                                     dateFormatOption, thresholdDays);
+        } else {
+            display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
+        }
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
         RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip);
     };
@@ -356,7 +448,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             ticket, *field, currentValue, state,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
                 QueueEdit(issueId, fld, values, pendingEdits);
-            });
+            },
+            dateFormatOption, thresholdDays);
         return;
     case TicketGridColumn::RenderPlan::TextEditor:
         if (!allowEdits) {

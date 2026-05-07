@@ -1,13 +1,14 @@
 #pragma once
 
 #include "IPlugin.h"
+#include "SmatchetDefaults.h"
 #include "McpServerStatus.h"
 #include <memory>
 #include <string>
 
 class McpPlugin : public IPlugin {
   public:
-    explicit McpPlugin(int port = 8080);
+    explicit McpPlugin(int port = SmatchetDefaults::Mcp::kDefaultPort);
     ~McpPlugin() override;
 
     const char* Id() const override { return "mcp"; }
@@ -17,6 +18,8 @@ class McpPlugin : public IPlugin {
     McpServerStatus GetStatus() const;
     /** Compare bound auth token to current config (for restart-on-change). */
     bool AuthTokenMatches(const std::string& cfgToken) const;
+    /** Compare run_lua exposure toggle to current config (for restart-on-change). */
+    bool LuaExecutionEnabledMatches(bool enabled) const;
 
   private:
     int port_;
