@@ -86,24 +86,6 @@ cmake --preset ninja-unreal-dx12-release
 cmake --build --preset ninja-unreal-dx12-release
 ```
 
-### GitHub Release Bundles
-
-Use `scripts/release_github.ps1` to build/package release artifacts:
-- Standalone Windows bundle (`SmatchetStandalone.exe` + runtime files)
-- Unreal plugin bundle (`UnrealPlugins/SmatchetImGuiPlugin`)
-- Source zip (`git archive`)
-
-```powershell
-# Local artifact bundles only (no GitHub publish)
-.\scripts\release_github.ps1 -Tag v1.2.3
-
-# Create/update GitHub draft release and upload assets
-.\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Draft -NotesFile .\RELEASE_NOTES.md
-
-# Re-upload assets to existing release (overwrite matching filenames)
-.\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Clobber
-```
-
 ## Architecture
 
 * **`Source_Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerClient`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
