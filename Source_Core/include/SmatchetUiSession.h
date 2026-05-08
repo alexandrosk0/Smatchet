@@ -269,8 +269,14 @@ struct UiDrawSession {
     bool aiPromptPending = false;
     std::string aiPromptMessage;
 
-    std::vector<char> logBuffer;
+    /** One visual row per string (embedded newlines in messages are split). */
+    std::vector<std::string> logViewLines;
     std::uint64_t lastSeenLogRevision = 0;
+    /** After log refresh: scroll to bottom until layout reports a real scroll range. */
+    bool logScrollToTailPending = false;
+    std::uint64_t logScrollTailGiveUpFrame = 0;
+    /** User scrolled up to read history; stay off tail until they scroll back to bottom or toggle auto-scroll. */
+    bool logTailReleasedByUser = false;
     bool pendingViewStateSave = false;
     std::chrono::steady_clock::time_point pendingViewStateSaveAt{};
 
