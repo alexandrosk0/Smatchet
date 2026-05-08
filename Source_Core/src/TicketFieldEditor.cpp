@@ -9,6 +9,7 @@
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
+#include "TrackerFieldPayload.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 
@@ -85,6 +86,48 @@ struct ActiveWorklogDialogState {
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
+
+/// Singleton state for the long-text / ADF field modal editor. Decoupled from `SpreadsheetState`
+/// so the modal survives the originating cell scrolling out of view: the cell triggers
+/// `JustOpened`, then the top-level `RenderLongTextModal` owns the lifecycle.
+struct ActiveLongTextEditorState {
+    std::string IssueId;
+    TrackerField Field;
+    std::string FieldLabel;
+    std::string OriginalValue;
+    /// Generously sized for descriptions; truncates beyond this. v2 plan replaces with a resize-callback buffer.
+    static constexpr size_t kBufferSize = 64 * 1024;
+    std::vector<char> Buffer;
+    bool Active = false;
+    bool JustOpened = false;
+};
+
+static ActiveLongTextEditorState s_ActiveLongTextState;
+
+static constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
+
+static void OpenLongTextEditor(const std::string& issueId, const TrackerField& field,
+                               const std::string& label, const std::string& currentValue) {
+    s_ActiveLongTextState.IssueId = issueId;
+    s_ActiveLongTextState.Field = field;
+    s_ActiveLongTextState.FieldLabel = label.empty() ? field.Id : label;
+    s_ActiveLongTextState.OriginalValue = currentValue;
+    s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+    const size_t copyLen = (std::min)(currentValue.size(), ActiveLongTextEditorState::kBufferSize - 1);
+    std::memcpy(s_ActiveLongTextState.Buffer.data(), currentValue.data(), copyLen);
+    s_ActiveLongTextState.Buffer[copyLen] = '\0';
+    s_ActiveLongTextState.Active = true;
+    s_ActiveLongTextState.JustOpened = true;
+}
+
+static void CloseLongTextEditor() {
+    s_ActiveLongTextState.Active = false;
+    s_ActiveLongTextState.JustOpened = false;
+    s_ActiveLongTextState.IssueId.clear();
+    s_ActiveLongTextState.FieldLabel.clear();
+    s_ActiveLongTextState.OriginalValue.clear();
+    s_ActiveLongTextState.Buffer.clear();
+}
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -291,7 +334,23 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
     const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
-    if (state.IsEditingField(ticket.id, field.Id)) {
+
+    // ADF / long-text fields (Jira description/environment, Plane description, custom textarea/wiki-renderer
+    // fields) are too constrained by the inline 512-byte single-line InputText. Route them through the modal
+    // editor singleton: the cell stays in display mode, the modal owns the lifecycle. v1: plain-text round-trip.
+    // v2 (see RICH_TEXT_EDITING_V2_PLAN.md) layers Markdown <-> ADF/HTML fidelity on top.
+    if (TrackerFieldPayload::FieldUsesAdfDocument(field)) {
+        if (state.IsEditingField(ticket.id, field.Id)) {
+            if (state.EditJustStarted) {
+                const std::string& label = !field.Name.empty() ? field.Name : field.Id;
+                OpenLongTextEditor(ticket.id, field, label, currentValue);
+                ImGui::OpenPopup(kLongTextModalPopupId);
+            }
+            // Hand the lifecycle to the modal singleton; the cell falls through to the read-only preview below.
+            state.ClearEditing();
+        }
+        // fall through to the display branch
+    } else if (state.IsEditingField(ticket.id, field.Id)) {
         const bool editJustStarted = state.EditJustStarted;
         const bool isDuration = IsTimeDurationField(field.Id);
         bool submitted = false;
@@ -845,9 +904,82 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 }
 
+void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendingEdits) {
+    if (!s_ActiveLongTextState.Active) {
+        return;
+    }
 
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (s_ActiveLongTextState.JustOpened) {
+        const ImVec2 modalSize(viewport->Size.x * 0.6f, viewport->Size.y * 0.65f);
+        ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(
+            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
 
+    if (ImGui::BeginPopupModal(kLongTextModalPopupId, nullptr,
+                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(),
+                    s_ActiveLongTextState.IssueId.c_str());
+        ImGui::Separator();
 
+        // Reserve room for the footer (status line + button row).
+        const float footerH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
+                              ImGui::GetStyle().ItemSpacing.y;
+        const ImVec2 inputSize(-FLT_MIN, ImGui::GetContentRegionAvail().y - footerH);
+
+        if (s_ActiveLongTextState.JustOpened) {
+            ImGui::SetKeyboardFocusHere();
+            s_ActiveLongTextState.JustOpened = false;
+        }
+
+        ImGui::InputTextMultiline("##LongTextEditorBuf",
+                                  s_ActiveLongTextState.Buffer.data(),
+                                  s_ActiveLongTextState.Buffer.size(),
+                                  inputSize,
+                                  ImGuiInputTextFlags_AllowTabInput);
+
+        // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
+        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        const bool ctrlEnter = ctrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+
+        ImGui::TextDisabled("Ctrl+Enter to save · Esc to cancel · v1: plain text only — see RICH_TEXT_EDITING_V2_PLAN.md");
+
+        bool save = ctrlEnter;
+        bool cancel = escPressed;
+        if (ImGui::Button("Save", ImVec2(100, 0))) {
+            save = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            cancel = true;
+        }
+
+        if (save) {
+            const std::string newValue(s_ActiveLongTextState.Buffer.data());
+            if (newValue != s_ActiveLongTextState.OriginalValue) {
+                PendingFieldEdit edit;
+                edit.IssueId = s_ActiveLongTextState.IssueId;
+                edit.Field = s_ActiveLongTextState.Field;
+                edit.Values = {newValue};
+                pendingEdits.push_back(std::move(edit));
+            }
+            ImGui::CloseCurrentPopup();
+            CloseLongTextEditor();
+        } else if (cancel) {
+            ImGui::CloseCurrentPopup();
+            CloseLongTextEditor();
+        }
+
+        ImGui::EndPopup();
+    } else {
+        // Popup was dismissed without our intervention (shouldn't normally happen for a modal,
+        // but stay self-consistent if it does).
+        CloseLongTextEditor();
+    }
+}
 
 
 

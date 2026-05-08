@@ -18,6 +18,12 @@ class TicketFieldEditor {
                                 bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits, TrackerGridFieldAsyncState& trackerGridAsync,
                                 const std::string& dateFormatOption = {}, int thresholdDays = 0);
+
+    /// Renders the floating modal used to edit ADF / long-text fields (Jira description/environment,
+    /// Plane description, etc.). Must be called once per frame from a stable top-level location so the
+    /// modal stays alive even if the originating cell scrolls out of view. Drains its own state when the
+    /// user submits or cancels, appending any accepted edit to `pendingEdits`.
+    static void RenderLongTextModal(std::vector<PendingFieldEdit>& pendingEdits);
 };
 
 

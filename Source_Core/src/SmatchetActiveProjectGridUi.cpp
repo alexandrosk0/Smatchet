@@ -877,6 +877,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         }
     }
 
+    // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
+    // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
+    // ProcessGridFieldEdits path below.
+    TicketFieldEditor::RenderLongTextModal(pendingEdits);
+
     ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
     MaybeToastGridBannerFromSession(d);
     ImGui::End();
