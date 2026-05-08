@@ -165,7 +165,12 @@ nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, cons
     }
     if (field.Type == "component" || field.ItemsType == "component") {
         const std::string trimmed = TrimCopy(scalarValue);
-        return IsDigitsOnly(trimmed) ? nlohmann::json{{"id", trimmed}} : nlohmann::json{{"name", trimmed}};
+        if (const TrackerFieldOption* opt = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
+            if (!opt->Id.empty()) {
+                return nlohmann::json{{"id", opt->Id}};
+            }
+        }
+        return nlohmann::json{{"name", trimmed}};
     }
     if (field.Type == "option" || !field.AllowedValueOptions.empty()) {
         return nlohmann::json{{"id", scalarValue}};
@@ -574,7 +579,6 @@ std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, 
 }
 
 } // namespace TrackerFieldPayload
-
 
 
 
