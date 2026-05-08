@@ -5,6 +5,7 @@ build_*/
 **/CMakeCache.txt
 **/cmake_install.cmake
 **/*.cmake.user
+CMakeUserPresets.json
 compile_commands.json
 
 # C/C++
@@ -52,6 +53,7 @@ smatchet_field_catalog_cache.json
 
 .vexp/
 .cursor/
+.claude/*.local.json
 *.cppcheck
 *.sln
 *.vcxproj

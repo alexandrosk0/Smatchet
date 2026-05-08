@@ -1,9 +1,10 @@
 <#.
-    Configure (cmake --preset ninja-debug), build SmatchetStandalone, then run it.
+    Configure, build, and run SmatchetStandalone using the ninja-debug preset.
+    Thin shim over build_and_run.ps1 -Preset ninja-debug.
 
-    From repo root:
+    Examples:
       .\scripts\build_and_run_ninja_debug.ps1
-      .\scripts\build_and_run_ninja_debug.ps1 -- extra args forwarded to SmatchetStandalone
+      .\scripts\build_and_run_ninja_debug.ps1 -StandaloneArgs '--config','C:\tmp\config.json'
 #>
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -13,26 +14,5 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $repoRoot "build/ninja-debug"
-
-Push-Location $repoRoot
-try {
-    cmake --preset ninja-debug
-    cmake --build --preset ninja-debug --target SmatchetStandalone
-}
-finally {
-    Pop-Location
-}
-
-$exe = Join-Path $buildDir "SmatchetStandalone.exe"
-if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-    throw "Expected executable missing: $exe"
-}
-
-if ($StandaloneArgs.Count -gt 0) {
-    & $exe @StandaloneArgs
-}
-else {
-    & $exe
-}
+$buildAndRun = Join-Path $PSScriptRoot "build_and_run.ps1"
+& $buildAndRun -Preset "ninja-debug" -StandaloneArgs $StandaloneArgs

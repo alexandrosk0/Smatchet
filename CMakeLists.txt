@@ -407,8 +407,13 @@ target_include_directories(SmatchetCoreInterface INTERFACE
 if(SMATCHET_WITH_LUA_AUTOMATION)
     target_include_directories(SmatchetCoreInterface INTERFACE
             ${LUA_SRC_DIR}/src
+    )
+    target_include_directories(SmatchetCoreInterface SYSTEM INTERFACE
             ${sol2_SOURCE_DIR}/single
     )
+    if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19.29)
+        target_compile_options(SmatchetCoreInterface INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:/external:W0>")
+    endif()
 endif()
 
 target_link_libraries(SmatchetCoreInterface INTERFACE
@@ -441,8 +446,10 @@ function(smatchet_configure_core_impl_target _target)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         target_include_directories("${_target}" PRIVATE
-                ${sol2_SOURCE_DIR}/single
                 ${LUA_SRC_DIR}/src
+        )
+        target_include_directories("${_target}" SYSTEM PRIVATE
+                ${sol2_SOURCE_DIR}/single
         )
         target_link_libraries("${_target}" PRIVATE Smatchet_Lua_Internal ghc_filesystem)
     else()
