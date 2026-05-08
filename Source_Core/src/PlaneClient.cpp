@@ -667,6 +667,12 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     ticket.fieldValues["created"] = JsonFieldToString(issue, "created_at");
                     ticket.fieldValues["updated"] = JsonFieldToString(issue, "updated_at");
                     ticket.fieldValues["description"] = JsonFieldToString(issue, "description_stripped");
+                    // Preserve the original HTML so the long-text modal editor can round-trip via
+                    // Markdown without destroying formatting on save. See RICH_TEXT_EDITING_V2_PLAN.md.
+                    const std::string descHtml = JsonFieldToString(issue, "description_html");
+                    if (!descHtml.empty()) {
+                        ticket.fieldRichValues["description"] = descHtml;
+                    }
 
                     // Issue Type
                     if (issue.contains("type_detail") && issue["type_detail"].is_object()) {
