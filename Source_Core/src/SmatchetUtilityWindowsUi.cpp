@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #if defined(SMATCHET_WITH_AI)
@@ -156,6 +157,23 @@ void DrawLogWindowPreferences(UiDrawSession& d) {
     }
 }
 
+void AppendLogEntryAsLines(std::vector<std::string>& out, const char* levelTag8, const std::string& message) {
+    constexpr const char* kPad = "        ";
+    size_t start = 0;
+    bool first = true;
+    for (;;) {
+        const size_t nl = message.find('\n', start);
+        const std::string part =
+            (nl == std::string::npos) ? message.substr(start) : message.substr(start, nl - start);
+        out.push_back(std::string(first ? levelTag8 : kPad) + part);
+        first = false;
+        if (nl == std::string::npos) {
+            break;
+        }
+        start = nl + 1;
+    }
+}
+
 } // namespace
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
@@ -170,22 +188,26 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
 
     if (ImGui::Button("Clear Log")) {
         logger.Clear();
-        d.lastSeenLogRevision = logger.GetRevision();
-        d.logBuffer.assign(1, '\0');
+        d.lastSeenLogRevision = (std::numeric_limits<std::uint64_t>::max)();
+        d.logViewLines.clear();
+        d.logScrollToTailPending = false;
+        d.logTailReleasedByUser = false;
     }
     ImGui::SameLine();
-    ImGui::Checkbox("Auto-scroll", &d.logAutoScroll);
+    if (ImGui::Checkbox("Auto-scroll", &d.logAutoScroll) && d.logAutoScroll) {
+        d.logTailReleasedByUser = false;
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("(application log)");
 
     ImGui::Separator();
 
     const std::uint64_t revision = logger.GetRevision();
-    const bool rebuildLogBuffer = d.logBuffer.empty() || revision != d.lastSeenLogRevision;
-    if (rebuildLogBuffer) {
+    const bool rebuildLog = d.logViewLines.empty() || revision != d.lastSeenLogRevision;
+    if (rebuildLog) {
         const auto entries = logger.GetEntriesSnapshot();
-        std::string aggregated;
-        aggregated.reserve(entries.size() * 64);
+        d.logViewLines.clear();
+        d.logViewLines.reserve(entries.size() * 2);
 
         for (const auto& e : entries) {
             const char* levelLabel;
@@ -209,29 +231,62 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
                 levelLabel = "";
                 break;
             }
-            aggregated += levelLabel;
-            aggregated += e.message;
-            aggregated += '\n';
+            AppendLogEntryAsLines(d.logViewLines, levelLabel, e.message);
         }
 
-        d.logBuffer.assign(aggregated.begin(), aggregated.end());
-        d.logBuffer.push_back('\0');
         d.lastSeenLogRevision = revision;
+
+        if (d.logAutoScroll && !d.logTailReleasedByUser) {
+            d.logScrollToTailPending = true;
+            d.logScrollTailGiveUpFrame = static_cast<std::uint64_t>(ImGui::GetFrameCount()) + 96;
+        }
+    }
+
+    if (!d.logAutoScroll) {
+        d.logScrollToTailPending = false;
     }
 
     ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    // Default ImGui wrapping makes row height != clipper item height → broken clipper and “empty” bands.
+    ImGui::PushTextWrapPos(FLT_MAX);
 
-    float height = ImGui::GetTextLineHeightWithSpacing() * (std::count(d.logBuffer.begin(), d.logBuffer.end(), '\n') + 2);
-    if (height < ImGui::GetContentRegionAvail().y) {
-        height = ImGui::GetContentRegionAvail().y;
+    const int lineCount = static_cast<int>(d.logViewLines.size());
+    constexpr int kMaxLogLinesDrawn = 8000;
+    const int skipLines = (lineCount > kMaxLogLinesDrawn) ? (lineCount - kMaxLogLinesDrawn) : 0;
+    if (skipLines > 0) {
+        ImGui::TextDisabled("(… %d older lines omitted …)", skipLines);
+    }
+    if (lineCount <= 0) {
+        ImGui::TextDisabled("(empty)");
+    } else {
+        for (int row = skipLines; row < lineCount; ++row) {
+            const std::string& line = d.logViewLines[static_cast<size_t>(row)];
+            ImGui::TextUnformatted(line.c_str(), line.c_str() + line.size());
+        }
     }
 
-    ImGui::InputTextMultiline("##LogText", d.logBuffer.data(), d.logBuffer.size(), ImVec2(-FLT_MIN, height),
-                              ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopTextWrapPos();
 
-    if (d.logAutoScroll && rebuildLogBuffer) {
-        ImGui::SetScrollHereY(1.0f);
+    if (d.logScrollToTailPending && d.logAutoScroll) {
+        ImGui::SetScrollY(ImGui::GetScrollMaxY());
+        const float smax = ImGui::GetScrollMaxY();
+        const float sy = ImGui::GetScrollY();
+        if ((smax > 2.0f && sy >= smax - 6.0f) ||
+            static_cast<std::uint64_t>(ImGui::GetFrameCount()) >= d.logScrollTailGiveUpFrame) {
+            d.logScrollToTailPending = false;
+        }
     }
+
+    const float smaxAfter = ImGui::GetScrollMaxY();
+    const float syAfter = ImGui::GetScrollY();
+    const bool nearBottom = smaxAfter <= 1.5f || syAfter >= smaxAfter - 36.0f;
+    if (d.logAutoScroll && nearBottom) {
+        d.logTailReleasedByUser = false;
+    } else if (d.logAutoScroll && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+               ImGui::GetIO().MouseWheel > 0.0f && syAfter < smaxAfter - 48.0f) {
+        d.logTailReleasedByUser = true;
+    }
+
     ImGui::EndChild();
     ImGui::End();
 }
