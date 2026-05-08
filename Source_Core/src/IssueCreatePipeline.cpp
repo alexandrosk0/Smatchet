@@ -13,12 +13,8 @@
 namespace {
 
 const TrackerField* FindFieldById(const std::vector<TrackerField>& catalog, const std::string& id) {
-    for (const auto& field : catalog) {
-        if (field.Id == id) {
-            return &field;
-        }
-    }
-    return nullptr;
+    auto it = std::find_if(catalog.begin(), catalog.end(), [&](const auto& field) { return field.Id == id; });
+    return it == catalog.end() ? nullptr : &(*it);
 }
 
 /** Synthesize a minimal field for fields that aren't in the catalog (unlikely, but safe). */

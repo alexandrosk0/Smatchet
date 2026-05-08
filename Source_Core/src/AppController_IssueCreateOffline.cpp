@@ -130,11 +130,9 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         const auto snap = GetActiveTicketsSnapshot();
         if (snap) {
             const std::string key = draftCopy.ExistingIssueKey;
-            for (const auto& t : *snap) {
-                if (t.id == key) {
-                    IssueDraftHelpers::PruneUnchangedFields(draftCopy, t);
-                    break;
-                }
+            auto tIt = std::find_if(snap->begin(), snap->end(), [&](const auto& t) { return t.id == key; });
+            if (tIt != snap->end()) {
+                IssueDraftHelpers::PruneUnchangedFields(draftCopy, *tIt);
             }
         }
     }

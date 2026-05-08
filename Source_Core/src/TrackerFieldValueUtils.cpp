@@ -51,27 +51,6 @@ std::vector<std::string> ResolveCurrentSelectionIds(const TrackerField& field, c
 
 const char* EmptySelectPreviewLabel(const TrackerField& field) { return field.IsUserType ? "Unassigned" : "<none>"; }
 
-std::string BuildSelectionPreview(const TrackerField& field, const std::vector<std::string>& selectedIds) {
-    if (selectedIds.empty()) {
-        return field.IsUserType ? std::string("Unassigned") : std::string("<none>");
-    }
-    std::string preview;
-    for (size_t i = 0; i < selectedIds.size(); ++i) {
-        if (i != 0) {
-            preview += ", ";
-        }
-        preview += ResolveOptionLabel(field, selectedIds[i]);
-    }
-    return preview;
-}
-
-std::string BuildCascadingPreview(const TrackerFieldOption& parent, const TrackerFieldOption* child) {
-    if (child == nullptr) {
-        return parent.Value;
-    }
-    return parent.Value + " > " + child->Value;
-}
-
 bool TryResolveCascadingSelection(const TrackerField& field, const std::string& currentValue, std::string& outParentId,
                                   std::string& outChildId) {
     outParentId.clear();
@@ -95,12 +74,13 @@ bool TryResolveCascadingSelection(const TrackerField& field, const std::string& 
             outParentId = parent.Id.empty() ? parent.Value : parent.Id;
             return true;
         }
-        for (const auto& child : parent.Children) {
-            if (&child == option || child.Id == option->Id || child.Value == option->Value) {
-                outParentId = parent.Id.empty() ? parent.Value : parent.Id;
-                outChildId = child.Id.empty() ? child.Value : child.Id;
-                return true;
-            }
+        auto childIt = std::find_if(parent.Children.begin(), parent.Children.end(), [&](const auto& child) {
+            return &child == option || child.Id == option->Id || child.Value == option->Value;
+        });
+        if (childIt != parent.Children.end()) {
+            outParentId = parent.Id.empty() ? parent.Value : parent.Id;
+            outChildId = childIt->Id.empty() ? childIt->Value : childIt->Id;
+            return true;
         }
     }
     outParentId = option->Id.empty() ? option->Value : option->Id;
@@ -125,6 +105,24 @@ void SaveCommentTemplates(const std::vector<std::string>& list) {
     TrackerConfig cfg = ConfigManager::Load();
     cfg.WorkLogCommentTemplates = list;
     ConfigManager::Save(cfg);
+}
+
+bool IsTimeDurationField(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" ||
+           fieldId == "timeestimate" ||
+           fieldId == "timespent" ||
+           fieldId == "aggregatetimeoriginalestimate" ||
+           fieldId == "aggregatetimeestimate" ||
+           fieldId == "aggregatetimespent";
+}
+
+bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" || fieldId == "timeestimate";
+}
+
+bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
+    return fieldId == "timespent" || fieldId == "aggregatetimeoriginalestimate" || fieldId == "aggregatetimeestimate" ||
+           fieldId == "aggregatetimespent";
 }
 
 } // namespace TrackerFieldValueUtils

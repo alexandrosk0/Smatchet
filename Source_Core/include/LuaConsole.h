@@ -1,6 +1,7 @@
 #ifndef LUA_CONSOLE_H
 #define LUA_CONSOLE_H
 
+#include "SmatchetLocalization.h"
 #include "imgui.h"
 #include <string>
 #include <vector>
@@ -26,21 +27,25 @@ class LuaConsole {
         bool copy_to_clipboard = false;
         if (showToolbar) {
             if (compactSingleLineToolbar) {
-                if (ImGui::Button("Clear")) {
+                if (ImGui::Button(SmatchetLocalization::Label("lua.clear", "Clear", "LuaConsoleClear"))) {
                     ClearLog();
                 }
                 ImGui::SameLine();
-                copy_to_clipboard = ImGui::Button("Copy to Clipboard");
+                copy_to_clipboard = ImGui::Button(
+                    SmatchetLocalization::Label("lua.copy_clipboard", "Copy to Clipboard", "LuaConsoleCopy"));
                 ImGui::SameLine();
-                ImGui::Checkbox("Auto-scroll", &AutoScroll);
+                ImGui::Checkbox(SmatchetLocalization::Label("lua.auto_scroll", "Auto-scroll", "LuaConsoleAutoScroll"),
+                                &AutoScroll);
             } else {
-                if (ImGui::Button("Clear")) {
+                if (ImGui::Button(SmatchetLocalization::Label("lua.clear", "Clear", "LuaConsoleClear"))) {
                     ClearLog();
                 }
                 ImGui::SameLine();
-                copy_to_clipboard = ImGui::Button("Copy to Clipboard");
+                copy_to_clipboard = ImGui::Button(
+                    SmatchetLocalization::Label("lua.copy_clipboard", "Copy to Clipboard", "LuaConsoleCopy"));
                 ImGui::SameLine();
-                ImGui::Checkbox("Auto-scroll", &AutoScroll);
+                ImGui::Checkbox(SmatchetLocalization::Label("lua.auto_scroll", "Auto-scroll", "LuaConsoleAutoScroll"),
+                                &AutoScroll);
                 ImGui::Separator();
             }
         }
@@ -81,7 +86,7 @@ class LuaConsole {
 
         if (showToolbar && !compactSingleLineToolbar && showBottomHint) {
             ImGui::Separator();
-            ImGui::TextDisabled("Smatchet Automation Output");
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("lua.output", "Smatchet Automation Output"));
         }
     }
 

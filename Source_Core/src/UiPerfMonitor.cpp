@@ -63,13 +63,14 @@ void UiPerfMonitor::Record(const char* name, std::chrono::nanoseconds duration) 
     }
     const std::uint64_t ns = static_cast<std::uint64_t>(duration.count());
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& p : working_) {
-        if (p.first == name) {
-            p.second.totalNs += ns;
-            p.second.calls += 1;
-            p.second.maxNs = std::max(p.second.maxNs, ns);
-            return;
-        }
+    auto it = std::find_if(working_.begin(), working_.end(), [&](const auto& p) {
+        return p.first == name;
+    });
+    if (it != working_.end()) {
+        it->second.totalNs += ns;
+        it->second.calls += 1;
+        it->second.maxNs = std::max(it->second.maxNs, ns);
+        return;
     }
     working_.push_back({std::string(name), Agg{ns, 1u, ns}});
 }

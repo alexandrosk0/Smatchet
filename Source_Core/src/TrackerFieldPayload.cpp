@@ -1,11 +1,11 @@
 #include "TrackerFieldPayload.h"
 
 #include "CompactDateFormat.h"
+#include "MarkdownConvert.h"
 #include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 
 namespace {
 
@@ -163,20 +163,18 @@ nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, cons
     return scalarValue;
 }
 
-bool TryBuildUserFieldPayload(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
-                              std::string& outError) {
-    outError.clear();
+void BuildUserFieldPayload(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue) {
     const std::string trimmed = TrimCopy(scalarValue);
     if (trimmed.empty()) {
         outValue = nullptr;
-        return true;
+        return;
     }
-    if (!trimmed.empty() && trimmed.front() == '{') {
+    if (trimmed.front() == '{') {
         const nlohmann::json j = nlohmann::json::parse(trimmed, nullptr, false);
         if (!j.is_discarded() && j.is_object()) {
             if (j.contains("accountId") && j["accountId"].is_string()) {
                 outValue = MinimalPayloadForStructuredOption(j);
-                return true;
+                return;
             }
             if (j.contains("displayName") && j["displayName"].is_string()) {
                 const std::string dn = j["displayName"].get<std::string>();
@@ -184,7 +182,7 @@ bool TryBuildUserFieldPayload(const TrackerField& field, const std::string& scal
                         FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, dn)) {
                     if (!opt->Id.empty()) {
                         outValue = nlohmann::json{{"accountId", opt->Id}};
-                        return true;
+                        return;
                     }
                 }
             }
@@ -193,12 +191,11 @@ bool TryBuildUserFieldPayload(const TrackerField& field, const std::string& scal
     if (const TrackerFieldOption* opt = FindTrackerFieldOptionByIdOrValueRecursive(field.AllowedValueOptions, trimmed)) {
         if (!opt->Id.empty()) {
             outValue = nlohmann::json{{"accountId", opt->Id}};
-            return true;
+            return;
         }
     }
     // Already an account id, or catalog could not resolve (Jira validates).
     outValue = nlohmann::json{{"accountId", trimmed}};
-    return true;
 }
 
 bool TryParseNumberValue(const std::string& rawValue, nlohmann::json& outValue) {
@@ -231,31 +228,12 @@ bool LooksLikeIssueKey(const std::string& value) {
             return false;
         }
     }
-    for (size_t i = dash + 1; i < value.size(); ++i) {
-        if (std::isdigit(static_cast<unsigned char>(value[i])) == 0) {
-            return false;
-        }
+    if (!std::all_of(value.begin() + static_cast<ptrdiff_t>(dash) + 1, value.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+    })) {
+        return false;
     }
     return true;
-}
-
-nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
-    nlohmann::json content = nlohmann::json::array();
-    std::string line;
-    std::istringstream iss(plainText);
-    while (std::getline(iss, line)) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", line}}});
-        content.push_back(std::move(para));
-    }
-    if (content.empty()) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
-        content.push_back(std::move(para));
-    }
-    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
 }
 
 std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input) {
@@ -282,11 +260,9 @@ std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input) {
 /** Jira label names cannot contain spaces; normalize for inherited / pasted CSV text. */
 std::string SanitizeJiraLabelToken(std::string s) {
     s = TrimCopy(s);
-    for (char& c : s) {
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-            c = '-';
-        }
-    }
+    std::replace_if(s.begin(), s.end(), [](char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    }, '-');
     return s;
 }
 
@@ -347,11 +323,9 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
     outError.clear();
     std::vector<std::string> values;
     values.reserve(rawValues.size());
-    for (const auto& value : rawValues) {
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-    }
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values), [](const std::string& value) {
+        return !value.empty();
+    });
 
     // Grid stores labels as comma-separated text; Jira expects an array of separate label strings.
     if (field.Id == "labels" || field.Family == TrackerFieldFamily::Labels) {
@@ -375,11 +349,7 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
         for (const auto& value : values) {
             if (field.IsUserType) {
                 nlohmann::json one;
-                std::string uerr;
-                if (!TryBuildUserFieldPayload(field, value, one, uerr)) {
-                    outError = uerr;
-                    return false;
-                }
+                BuildUserFieldPayload(field, value, one);
                 if (!one.is_null()) {
                     outValue.push_back(std::move(one));
                 }
@@ -420,7 +390,8 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
         return true;
     }
     if (field.IsUserType) {
-        return TryBuildUserFieldPayload(field, scalarValue, outValue, outError);
+        BuildUserFieldPayload(field, scalarValue, outValue);
+        return true;
     }
     if (field.Family == TrackerFieldFamily::StructuredSingle || field.Family == TrackerFieldFamily::IssueType ||
         field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect ||
@@ -485,7 +456,11 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
     }
 
     if (FieldUsesAdfDocument(field)) {
-        outValue = AdfDocumentFromPlainText(scalarValue);
+        // The long-text modal editor produces Markdown for ADF fields (description, environment,
+        // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
+        // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
+        // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
+        outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
         return true;
     }
     if (field.Type == "date" || field.Type == "datetime") {

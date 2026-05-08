@@ -130,9 +130,8 @@ nlohmann::json RedactJsonWithKey(const std::string& key, const nlohmann::json& v
     }
     if (value.is_array()) {
         nlohmann::json out = nlohmann::json::array();
-        for (const auto& item : value) {
-            out.push_back(RedactJsonWithKey(key, item));
-        }
+        std::transform(value.begin(), value.end(), std::back_inserter(out),
+                       [&key](const auto& item) { return RedactJsonWithKey(key, item); });
         return out;
     }
     if (value.is_string()) {

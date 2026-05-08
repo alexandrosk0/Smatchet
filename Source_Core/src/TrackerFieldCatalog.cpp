@@ -165,7 +165,6 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
     if (metaResponse.status_code == 200) {
         try {
             auto metaJson = nlohmann::json::parse(metaResponse.text);
-            std::set<std::string> uniqueComponentIds;
             std::unordered_map<std::string, std::size_t> issueTypeMetaIndexByKey;
             const auto issueTypeMetaKey = [](const TrackerIssueTypeCreateMeta& m) -> std::string {
                 if (!m.IssueTypeId.empty()) {
@@ -196,6 +195,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
             };
 
             if (metaJson.contains("projects") && metaJson["projects"].is_array()) {
+                std::set<std::string> uniqueComponentIds;
                 for (const auto& project : metaJson["projects"]) {
                     std::string projectKey = project.value("key", cfg.ProjectKey);
                     if (!project.contains("issuetypes") || !project["issuetypes"].is_array()) {

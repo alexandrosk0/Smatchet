@@ -7,6 +7,8 @@
 #include "Views.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cstring>
@@ -132,11 +134,8 @@ void DrawJqlQueryEditor(AppController& app, UiDrawSession& d, Views& viewState, 
         for (const auto& s : merged) {
             seen.insert(s.Insert);
         }
-        for (const auto& a : d.jqlAcpAsyncUserItems) {
-            if (seen.insert(a.Insert).second) {
-                merged.push_back(a);
-            }
-        }
+        std::copy_if(d.jqlAcpAsyncUserItems.begin(), d.jqlAcpAsyncUserItems.end(), std::back_inserter(merged),
+                     [&](const auto& a) { return seen.insert(a.Insert).second; });
     }
 
     const bool waitingUser =

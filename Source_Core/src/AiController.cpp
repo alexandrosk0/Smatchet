@@ -34,7 +34,7 @@ AiController::AiResult AiController::AnalyzeTicket(const std::string& key, const
     while (!apiBase.empty() && apiBase.back() == '/') {
         apiBase.pop_back();
     }
-    if (apiBase.find("http://") != 0 && apiBase.find("https://") != 0) {
+    if (apiBase.compare(0, 7, "http://") != 0 && apiBase.compare(0, 8, "https://") != 0) {
         apiBase = "https://" + apiBase;
     }
     const std::string endpoint = apiBase + "/v1/chat/completions";
@@ -111,7 +111,7 @@ AiController::AiResult AiController::ChatCompletion(const std::string& message, 
     while (!apiBase.empty() && apiBase.back() == '/') {
         apiBase.pop_back();
     }
-    if (apiBase.find("http://") != 0 && apiBase.find("https://") != 0) {
+    if (apiBase.compare(0, 7, "http://") != 0 && apiBase.compare(0, 8, "https://") != 0) {
         apiBase = "https://" + apiBase;
     }
     const std::string endpoint = apiBase + "/v1/chat/completions";

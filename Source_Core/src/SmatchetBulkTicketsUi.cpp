@@ -9,6 +9,8 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <chrono>
@@ -69,10 +71,11 @@ static const CachedTicket* BulkImportFindTicketInSnapshot(const std::string& iss
     if (!tickets || issueKey.empty()) {
         return nullptr;
     }
-    for (const auto& t : *tickets) {
-        if (t.id == issueKey) {
-            return &t;
-        }
+    auto it = std::find_if(tickets->begin(), tickets->end(), [&](const auto& t) {
+        return t.id == issueKey;
+    });
+    if (it != tickets->end()) {
+        return &(*it);
     }
     return nullptr;
 }

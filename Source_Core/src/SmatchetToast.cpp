@@ -1,4 +1,5 @@
 #include "SmatchetToast.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include <algorithm>
 
@@ -41,16 +42,18 @@ void SmatchetToastManager::Render() {
 
     for (int i = static_cast<int>(m_toasts.size()) - 1; i >= 0; --i) {
         auto& t = m_toasts[i];
+        const char* title = SmatchetLocalization::TranslateSource(t.Title.c_str());
+        const char* message = SmatchetLocalization::TranslateSource(t.Message.c_str());
         
         // Update fade
         t.FadeIn = (std::min)(1.0f, t.FadeIn + ImGui::GetIO().DeltaTime * 4.0f);
         
         // Calculate size
-        ImVec2 titleSize = ImGui::CalcTextSize(t.Title.c_str());
+        ImVec2 titleSize = ImGui::CalcTextSize(title);
         float wrapWidth = toastWidth - 30.0f;
-        ImVec2 msgSize = ImGui::CalcTextSize(t.Message.c_str(), nullptr, false, wrapWidth);
+        ImVec2 msgSize = ImGui::CalcTextSize(message, nullptr, false, wrapWidth);
         float toastHeight = titleSize.y + msgSize.y + 25.0f;
-        if (t.Message.empty()) toastHeight = titleSize.y + 20.0f;
+        if (!message || message[0] == '\0') toastHeight = titleSize.y + 20.0f;
 
         ImVec2 pos(workPos.x + workSize.x - toastWidth - padding, currentY - toastHeight);
         
@@ -83,17 +86,17 @@ void SmatchetToastManager::Render() {
 
         // Draw Text
         ImU32 textCol = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha));
-        dl->AddText(ImVec2(pos.x + 15.0f, pos.y + 10.0f), textCol, t.Title.c_str());
+        dl->AddText(ImVec2(pos.x + 15.0f, pos.y + 10.0f), textCol, title);
         
-        if (!t.Message.empty()) {
+        if (message && message[0] != '\0') {
             ImU32 msgCol = ImGui::GetColorU32(ImVec4(0.8f, 0.8f, 0.85f, 0.8f * alpha));
-            dl->AddText(nullptr, 0.0f, ImVec2(pos.x + 15.0f, pos.y + 10.0f + titleSize.y + 5.0f), msgCol, t.Message.c_str(), nullptr, wrapWidth);
+            dl->AddText(nullptr, 0.0f, ImVec2(pos.x + 15.0f, pos.y + 10.0f + titleSize.y + 5.0f), msgCol,
+                        message, nullptr, wrapWidth);
         }
 
         currentY -= (toastHeight + 10.0f);
     }
 }
-
 
 
 

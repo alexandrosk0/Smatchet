@@ -42,7 +42,7 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
 // Simple URL-encoder that is C++14 friendly.
 std::string UrlEncode(const std::string& value) {
     std::ostringstream escaped;
-    escaped.fill('0');
+    (void)escaped.fill('0');
     escaped << std::hex << std::uppercase;
 
     for (unsigned char c : value) {
@@ -76,7 +76,7 @@ std::string Base64Encode(const std::string& in) {
 
 std::string NormalizeBaseUrl(const std::string& domain) {
     std::string base = domain;
-    if (base.find("http://") != 0 && base.find("https://") != 0) {
+    if (base.compare(0, 7, "http://") != 0 && base.compare(0, 8, "https://") != 0) {
         base = "https://" + base;
     }
     while (!base.empty() && base.back() == '/') {

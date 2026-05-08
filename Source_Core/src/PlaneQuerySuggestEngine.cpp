@@ -18,12 +18,9 @@ static bool ValueNeedsQuotes(const std::string& s) {
     if (s.empty()) {
         return true;
     }
-    for (unsigned char ch : s) {
-        if (!IsPlaneIdChar(ch) || ch == '"' || ch == '\\') {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(s.begin(), s.end(), [](char ch) {
+        return !IsPlaneIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\';
+    });
 }
 
 static std::string QuotedValue(const std::string& s) {
@@ -86,15 +83,18 @@ static const TrackerField* FindFieldToken(const AppController& app, const std::s
         return nullptr;
     }
     const std::string key = ToLowerAsciiCopy(token);
-    for (const auto& f : app.GetAvailableFields()) {
-        if (AsciiEqualsIgnoreCaseToLowered(f.Id, key)) {
-            return &f;
-        }
+    const auto& fields = app.GetAvailableFields();
+    auto idIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
+        return AsciiEqualsIgnoreCaseToLowered(f.Id, key);
+    });
+    if (idIt != fields.end()) {
+        return &(*idIt);
     }
-    for (const auto& f : app.GetAvailableFields()) {
-        if (!f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key)) {
-            return &f;
-        }
+    auto nameIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
+        return !f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key);
+    });
+    if (nameIt != fields.end()) {
+        return &(*nameIt);
     }
     return nullptr;
 }
@@ -290,7 +290,6 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
     out.ReplaceEnd = replaceEnd;
 
     const TrackerField* valueField = nullptr;
-    static const char* kLogical[] = {"AND", "OR"};
     if (ParsePlaneValueContext(buf, bufLen, replaceStart, app, &valueField)) {
         if (valueField != nullptr &&
             (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
@@ -302,6 +301,7 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
         }
     } else {
         if (!prefix.empty()) {
+            static const char* kLogical[] = {"AND", "OR"};
             AppendTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
         }
         AppendFieldCatalog(app, prefix, out.Items, seen);

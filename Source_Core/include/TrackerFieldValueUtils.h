@@ -12,10 +12,12 @@ std::string ResolveOptionId(const TrackerField& field, const std::string& value)
 std::string ResolveOptionLabel(const TrackerField& field, const std::string& value);
 std::vector<std::string> ResolveCurrentSelectionIds(const TrackerField& field, const std::string& currentValue);
 const char* EmptySelectPreviewLabel(const TrackerField& field);
-std::string BuildSelectionPreview(const TrackerField& field, const std::vector<std::string>& selectedIds);
-std::string BuildCascadingPreview(const TrackerFieldOption& parent, const TrackerFieldOption* child);
 bool TryResolveCascadingSelection(const TrackerField& field, const std::string& currentValue, std::string& outParentId,
                                   std::string& outChildId);
+
+bool IsTimeDurationField(const std::string& fieldId);
+bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId);
+bool IsNonEditableTimetrackingFieldId(const std::string& fieldId);
 
 std::vector<std::string> LoadDurationSuggestions();
 void SaveDurationSuggestions(const std::vector<std::string>& list);

@@ -10,6 +10,8 @@
 #include "IssueDraft.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #include <algorithm>
 #include <chrono>
 #include <string>
@@ -95,8 +97,11 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                 ImGui::PushID(static_cast<int>(i));
                 
                 std::string colName = spec.ColumnKey;
-                for (const auto& c : columns) {
-                    if (c.Key == spec.ColumnKey) { colName = c.Label; break; }
+                auto colIt = std::find_if(columns.begin(), columns.end(), [&](const auto& c) {
+                    return c.Key == spec.ColumnKey;
+                });
+                if (colIt != columns.end()) {
+                    colName = colIt->Label;
                 }
                 
                 if (ImGui::Button("X")) {
@@ -129,10 +134,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
             
             if (ImGui::BeginMenu("+ Add Sort Rule")) {
                 for (const auto& c : columns) {
-                    bool alreadySorted = false;
-                    for (const auto& s : activeViewForGrid->SortSpecs) {
-                        if (s.ColumnKey == c.Key) { alreadySorted = true; break; }
-                    }
+                    bool alreadySorted = std::any_of(activeViewForGrid->SortSpecs.begin(), activeViewForGrid->SortSpecs.end(), [&](const auto& s) {
+                        return s.ColumnKey == c.Key;
+                    });
                     if (!alreadySorted && ImGui::MenuItem(c.Label.c_str())) {
                         ViewSortSpec newSpec;
                         newSpec.ColumnKey = c.Key;
@@ -279,7 +283,7 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
         }
 
 #if defined(SMATCHET_WITH_MCP)
-        if (showTrackerChip) {
+        if (showTrackerChip && haveMcpUi) {
             ImGui::SameLine(0.0f, between);
         }
         if (d.cfg.McpEnabled) {

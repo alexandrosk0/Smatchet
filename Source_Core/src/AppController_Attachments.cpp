@@ -34,7 +34,7 @@ std::string NormalizeDomain(const std::string& rawDomain) {
     }
     const size_t slashPos = value.find('/');
     if (slashPos != std::string::npos) {
-        value = value.substr(0, slashPos);
+        value.resize(slashPos);
     }
     const size_t atPos = value.rfind('@');
     if (atPos != std::string::npos) {
@@ -42,7 +42,7 @@ std::string NormalizeDomain(const std::string& rawDomain) {
     }
     const size_t colonPos = value.find(':');
     if (colonPos != std::string::npos) {
-        value = value.substr(0, colonPos);
+        value.resize(colonPos);
     }
     return ToLowerAsciiCopy(value);
 }
@@ -233,12 +233,12 @@ std::string GetTempDir() {
 
 std::string SanitizeFilename(const std::string& name) {
     std::string out = name;
-    for (auto& ch : out) {
-        if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' || ch == '<' || ch == '>' ||
-            ch == '|') {
-            ch = '_';
-        }
-    }
+    std::replace_if(out.begin(), out.end(),
+                    [](char ch) {
+                        return ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' ||
+                               ch == '<' || ch == '>' || ch == '|';
+                    },
+                    '_');
     if (out.empty())
         return std::string("attachment");
     return out;

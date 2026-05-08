@@ -9,12 +9,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
 
     bool hasNewline = false;
     std::string singleLine = displayValue;
-    for (size_t i = 0; i < singleLine.size(); ++i) {
-        if (singleLine[i] == '\n' || singleLine[i] == '\r') {
-            singleLine.erase(i);
-            hasNewline = true;
-            break;
-        }
+    const size_t pos = singleLine.find_first_of("\r\n");
+    if (pos != std::string::npos) {
+        singleLine.erase(pos);
+        hasNewline = true;
     }
 
     const ImVec2 textSize = ImGui::CalcTextSize(singleLine.c_str());

@@ -14,6 +14,8 @@
 #include "TicketGridModel.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #include <ghc/filesystem.hpp>
 #include <algorithm>
 #include <cstring>
@@ -39,7 +41,7 @@ void PrepareNewIssueDraftForSubmit(UiDrawSession& d) {
         std::string parentKey = parentIt->second;
         const size_t sep = parentKey.find(" - ");
         if (sep != std::string::npos)
-            parentKey = parentKey.substr(0, sep);
+            parentKey.resize(sep);
         d.newIssueDraft.ParentKey = parentKey;
         d.newIssueDraft.FieldValues.erase(parentIt);
     } else {
@@ -214,7 +216,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
 
             const bool disabled = d.newIssueCreateInFlight;
             const auto runAttachmentPicker = [&]() {
-                app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](std::vector<std::string> paths) {
+                app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](const std::vector<std::string>& paths) {
                     for (const auto& path : paths) {
                         TryAppendStagedFromAbsPath(d.newIssueDraft, path);
                     }
@@ -285,7 +287,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                     ImGui::PushID(static_cast<int>(i));
                     std::string label = att.FileName;
                     if (label.size() > 36) {
-                        label = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
+                        std::string temp = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
+                        label = std::move(temp);
                     }
                     const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
                     ImGui::AlignTextToFramePadding();
@@ -332,13 +335,10 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             continue;
         }
 
-        const TrackerField* field = nullptr;
-        for (const auto& f : catalog) {
-            if (f.Id == fieldId) {
-                field = &f;
-                break;
-            }
-        }
+        auto catIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
+            return f.Id == fieldId;
+        });
+        const TrackerField* field = (catIt != catalog.end()) ? &(*catIt) : nullptr;
 
         const bool isMissing = missing.count(fieldId) > 0 || (fieldId == "summary" && missing.count("summary") > 0) ||
                                (fieldId == "parent" && missing.count("__parent__") > 0);
@@ -364,11 +364,11 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             if (fieldId == "issuetype" && preview.empty())
                 preview = d.newIssueDraft.IssueTypeName;
             if (field && !field->AllowedValueOptions.empty()) {
-                for (const auto& opt : field->AllowedValueOptions) {
-                    if (opt.Id == current || opt.Value == current) {
-                        preview = opt.Value;
-                        break;
-                    }
+                auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
+                    return opt.Id == current || opt.Value == current;
+                });
+                if (optIt != field->AllowedValueOptions.end()) {
+                    preview = optIt->Value;
                 }
             }
             if (ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str())) {

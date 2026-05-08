@@ -2,6 +2,8 @@
 #include "AppController.h"
 #include "StringUtil.h"
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <string>
@@ -37,12 +39,9 @@ bool LabelsEqualCaseInsensitive(const std::string& a, const std::string& b) {
 }
 
 bool ContainsLabelCaseInsensitive(const std::vector<std::string>& values, const std::string& needle) {
-    for (const auto& value : values) {
-        if (LabelsEqualCaseInsensitive(value, needle)) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(values.begin(), values.end(), [&](const auto& value) {
+        return LabelsEqualCaseInsensitive(value, needle);
+    });
 }
 
 std::vector<std::string> SortAndUniqueLabels(std::vector<std::string> values) {
@@ -104,11 +103,9 @@ std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::stri
                                                      const std::string& filterLower) {
     std::vector<std::string> out;
     out.reserve(suggestions.size());
-    for (const auto& suggestion : suggestions) {
-        if (ContainsLabelCaseInsensitive(selectedLabels, suggestion) || LabelMatchesFilter(suggestion, filterLower)) {
-            out.push_back(suggestion);
-        }
-    }
+    std::copy_if(suggestions.begin(), suggestions.end(), std::back_inserter(out), [&](const auto& suggestion) {
+        return ContainsLabelCaseInsensitive(selectedLabels, suggestion) || LabelMatchesFilter(suggestion, filterLower);
+    });
     return out;
 }
 
@@ -120,21 +117,15 @@ bool IsLabelsField(const std::string& fieldId) { return ToLowerAsciiCopy(fieldId
 
 void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, const QueueLabelEditFn& queueEdit) {
-    static std::string activeEditorKey;
-    static char draftBuf[128] = "";
-    static char searchBuf[128] = "";
-
     const auto queue = [&queueEdit, &ticket, &field](const std::vector<std::string>& values) {
         queueEdit(ticket.id, field, values);
     };
 
     std::vector<std::string> selectedLabels = SortAndUniqueLabels(ParseCsv(currentValue));
     std::vector<std::string> suggestions = CollectLabelSuggestions(app, ticket, currentValue);
-    for (const auto& selectedLabel : selectedLabels) {
-        if (!ContainsLabelCaseInsensitive(suggestions, selectedLabel)) {
-            suggestions.push_back(selectedLabel);
-        }
-    }
+    std::copy_if(selectedLabels.begin(), selectedLabels.end(), std::back_inserter(suggestions), [&](const auto& selectedLabel) {
+        return !ContainsLabelCaseInsensitive(suggestions, selectedLabel);
+    });
     suggestions = SortAndUniqueLabels(std::move(suggestions));
 
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
@@ -145,6 +136,9 @@ void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, con
     const std::string editorKey = ticket.id + "::" + field.Id;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+        static std::string activeEditorKey;
+        static char draftBuf[128] = "";
+        static char searchBuf[128] = "";
         ImGui::PushID(editorKey.c_str());
         if (activeEditorKey != editorKey) {
             activeEditorKey = editorKey;

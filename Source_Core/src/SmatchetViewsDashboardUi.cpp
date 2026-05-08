@@ -9,6 +9,8 @@
 #include "TrackerFieldSchema.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cctype>
@@ -29,8 +31,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         ImGui::SetNextWindowFocus();
     }
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
+    const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     const std::string viewsWinTitle =
-        std::string("Views - ") + ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+        SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
     ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
     if (bFocusViews) {
         ImGui::SetWindowFocus();
@@ -308,7 +311,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         };
 
-        ImGui::BeginChild("ViewFieldsList", ImVec2(0, 220), true);
+        float pickerHeight = d.cfg.ViewFieldPickerHeight;
+        if (pickerHeight < 60.0f) {
+            pickerHeight = 220.0f;
+        }
+
+        ImGui::BeginChild("ViewFieldsList", ImVec2(0, pickerHeight), true);
         if (availableFields.empty()) {
             ImGui::TextDisabled("No field catalog loaded yet.");
         } else if (visibleFields.empty()) {
@@ -316,9 +324,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         } else {
             // Basic Fields group: ID (always shown) + core Jira fields.
             {
-                const char* groupName = "Basic Fields";
                 const bool hasVisibleId = SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
                 if (!basicFields.empty() || hasVisibleId) {
+                    const char* groupName = "Basic Fields";
                     const std::size_t count = basicFields.size() + 1; // +1 for ID
                     const std::string label = std::string(groupName) + " (" + std::to_string(count) + ")";
                     if (ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -362,6 +370,30 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         }
         ImGui::EndChild();
 
+        // Draggable splitter separator
+        ImGui::InvisibleButton("##FieldPickerSplitter", ImVec2(-FLT_MIN, 6.0f));
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        if (ImGui::IsItemActive()) {
+            pickerHeight += ImGui::GetIO().MouseDelta.y;
+            if (pickerHeight < 60.0f) pickerHeight = 60.0f;
+            if (pickerHeight > 600.0f) pickerHeight = 600.0f;
+            d.cfg.ViewFieldPickerHeight = pickerHeight;
+        }
+        if (ImGui::IsItemDeactivated()) {
+            ConfigManager::Save(d.cfg);
+        }
+
+        // Draw decorative thin horizontal bar for the splitter
+        {
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            pMin.y += 2.0f;
+            pMax.y -= 2.0f;
+            ImGui::GetWindowDrawList()->AddRectFilled(pMin, pMax, ImGui::GetColorU32(ImGuiCol_Separator));
+        }
+
         ImGui::Separator();
         ImGui::Text("Column Order");
         ImGui::SameLine();
@@ -382,12 +414,24 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         }
 
-        ImGui::BeginChild("ColumnOrderList", ImVec2(0, 120), true);
+        // Dynamic height for Column Order to fill the available space down to the buttons
+        float availY = ImGui::GetContentRegionAvail().y;
+        float buttonsHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+        float columnOrderHeight = availY - buttonsHeight;
+        if (columnOrderHeight < 60.0f) {
+            columnOrderHeight = 60.0f;
+        }
+
+        ImGui::BeginChild("ColumnOrderList", ImVec2(0, columnOrderHeight), true);
         for (int i = 0; i < static_cast<int>(d.editingColumnOrder.size()); ++i) {
             const std::string& key = d.editingColumnOrder[static_cast<size_t>(i)];
             const bool selected = (d.selectedColumnOrderIndex == i);
             if (ImGui::Selectable(key.c_str(), selected)) {
                 d.selectedColumnOrderIndex = i;
+            }
+            if (selected && d.scrollColumnOrderToIndex == i) {
+                ImGui::SetScrollHereY(0.5f);
+                d.scrollColumnOrderToIndex = -1;
             }
             if (ImGui::BeginPopupContextItem()) {
                 if (key != "id" && ImGui::MenuItem("Remove column from view")) {
@@ -421,6 +465,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             std::swap(d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex)],
                       d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex - 1)]);
             --d.selectedColumnOrderIndex;
+            d.scrollColumnOrderToIndex = d.selectedColumnOrderIndex;
         }
         ImGui::SameLine();
         if (ImGui::Button("Move Down") && d.selectedColumnOrderIndex >= 0 &&
@@ -428,6 +473,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             std::swap(d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex)],
                       d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex + 1)]);
             ++d.selectedColumnOrderIndex;
+            d.scrollColumnOrderToIndex = d.selectedColumnOrderIndex;
         }
         if (disableColumnMoveButtons) {
             ImGui::EndDisabled();
@@ -442,7 +488,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     ImGui::End();
 }
-
 
 
 

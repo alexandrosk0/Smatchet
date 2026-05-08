@@ -83,6 +83,12 @@ class JiraClient : public ITrackerClient {
                                           const ViewsStore* viewsOverride = nullptr,
                                           std::string* outFetchError = nullptr) override;
 
+    TrackerIssueFetchSummary FetchIssuesStreamed(
+        const BatchCallback& onBatch,
+        const CancelCallback& shouldCancel,
+        const TrackerConfig* configOverride = nullptr,
+        const ViewsStore* viewsOverride = nullptr) override;
+
     /**
      * Search by explicit issue keys (same field selection as FetchIssues for `viewStore`).
      * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.

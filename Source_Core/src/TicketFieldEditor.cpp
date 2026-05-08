@@ -9,10 +9,14 @@
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
+#include "TrackerFieldPayload.h"
+#include "MarkdownConvert.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <chrono>
@@ -44,7 +48,7 @@ std::string GetCurrentJiraDateTimeString() {
 
     int localMin = tmLocal.tm_hour * 60 + tmLocal.tm_min;
     int utcMin = tmUtc.tm_hour * 60 + tmUtc.tm_min;
-    
+
     if (tmLocal.tm_yday > tmUtc.tm_yday || (tmLocal.tm_yday == 0 && tmUtc.tm_yday > 300)) {
         localMin += 24 * 60;
     } else if (tmLocal.tm_yday < tmUtc.tm_yday || (tmUtc.tm_yday == 0 && tmLocal.tm_yday > 300)) {
@@ -84,27 +88,124 @@ struct ActiveWorklogDialogState {
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
 
-// #region agent log
-struct EditCbUser {
-    SpreadsheetState* state;
-    const char* fieldId;
+/// Source format of the original rich payload (`OriginalRichValue`). Determines which converter
+/// seeds the Markdown buffer on open and which target format is expected by the payload layer.
+enum class LongTextRichKind { None, Adf, Html };
+
+/// Singleton state for the long-text / ADF field modal editor. Decoupled from `SpreadsheetState`
+/// so the modal survives the originating cell scrolling out of view: the cell triggers
+/// `JustOpened`, then the top-level `RenderLongTextModal` owns the lifecycle.
+struct ActiveLongTextEditorState {
+    std::string IssueId;
+    TrackerField Field;
+    std::string FieldLabel;
+    /// Stripped display text of the field at the moment the modal opened — for "did the user actually
+    /// change anything?" detection on save.
+    std::string OriginalStrippedValue;
+    /// The Markdown that initially seeded the buffer (after converting from `OriginalRichValue`).
+    /// Used so save can detect "no change" against the actual editor surface, not the stripped text.
+    std::string OriginalMarkdown;
+    /// Original rich payload (ADF JSON or HTML) at modal-open time. Empty when the cache had no
+    /// rich value (legacy ticket pre-PR-B). v2 PR-E will pass this to the offline-replay merge.
+    std::string OriginalRichValue;
+    LongTextRichKind RichKind = LongTextRichKind::None;
+    /// True when HtmlSubsetToMarkdown tripped the fallback (unknown tags) — modal shows a banner
+    /// and falls back to editing the raw HTML directly.
+    bool RawMode = false;
+    /// ADF node types that AdfToMarkdown skipped because they aren't representable in our
+    /// Markdown subset (panels, mentions, smart links, ...). Surface as a soft warning.
+    std::vector<std::string> DroppedAdfNodeTypes;
+
+    /// Generously sized for descriptions; truncates beyond this. v2.1 candidate: resize callback.
+    static constexpr size_t kBufferSize = 64 * 1024;
+    std::vector<char> Buffer;
+    bool Active = false;
+    bool JustOpened = false;
 };
 
-static void AgentLogTicketField(const char* hypothesisId, const char* location, int a, int b, int c, int d) {
-    FILE* f = std::fopen("c:/Dev/Smatchet/debug-e99704.log", "a");
-    if (!f) {
-        return;
+static ActiveLongTextEditorState s_ActiveLongTextState;
+
+static constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
+
+/// Determine whether a stored rich payload looks like ADF JSON or HTML. Returns LongTextRichKind::None
+/// when the input is empty or unrecognizable (caller falls back to the stripped text).
+static LongTextRichKind ClassifyRichValue(const std::string& rich) {
+    if (rich.empty()) return LongTextRichKind::None;
+    // Cheap leading-whitespace skip.
+    size_t i = 0;
+    while (i < rich.size() && (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r')) ++i;
+    if (i >= rich.size()) return LongTextRichKind::None;
+    if (rich[i] == '{') {
+        try {
+            auto parsed = nlohmann::json::parse(rich, nullptr, false);
+            if (parsed.is_object() && parsed.value("type", std::string()) == "doc") {
+                return LongTextRichKind::Adf;
+            }
+        } catch (...) {
+            // fall through
+        }
     }
-    const long long ts = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-    std::fprintf(f,
-                 "{\"sessionId\":\"e99704\",\"hypothesisId\":\"%s\",\"location\":\"%s\",\"message\":\"tick\",\"data\":{"
-                 "\"a\":%d,\"b\":%d,\"c\":%d,\"d\":%d},\"timestamp\":%lld}\n",
-                 hypothesisId, location, a, b, c, d, ts);
-    std::fclose(f);
+    if (rich[i] == '<') {
+        return LongTextRichKind::Html;
+    }
+    return LongTextRichKind::None;
 }
-// #endregion agent log
+
+static void OpenLongTextEditor(const std::string& issueId, const TrackerField& field,
+                               const std::string& label, const std::string& currentStrippedValue,
+                               const std::string& currentRichValue) {
+    s_ActiveLongTextState.IssueId = issueId;
+    s_ActiveLongTextState.Field = field;
+    s_ActiveLongTextState.FieldLabel = label.empty() ? field.Id : label;
+    s_ActiveLongTextState.OriginalStrippedValue = currentStrippedValue;
+    s_ActiveLongTextState.OriginalRichValue = currentRichValue;
+    s_ActiveLongTextState.RichKind = ClassifyRichValue(currentRichValue);
+    s_ActiveLongTextState.RawMode = false;
+    s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
+
+    /// Compute the Markdown seed from the rich value when present; otherwise fall back to the
+    /// stripped text (legacy tickets pre-PR-B, or fields where the backend never returned rich).
+    std::string seed;
+    switch (s_ActiveLongTextState.RichKind) {
+        case LongTextRichKind::Adf: {
+            try {
+                const auto adf = nlohmann::json::parse(currentRichValue);
+                seed = MarkdownConvert::AdfToMarkdown(adf, &s_ActiveLongTextState.DroppedAdfNodeTypes);
+            } catch (...) {
+                seed = currentStrippedValue;
+            }
+            break;
+        }
+        case LongTextRichKind::Html: {
+            bool fellBack = false;
+            seed = MarkdownConvert::HtmlSubsetToMarkdown(currentRichValue, &fellBack);
+            if (fellBack) {
+                s_ActiveLongTextState.RawMode = true;
+                seed = currentRichValue; // edit the raw HTML directly so nothing is lost.
+            }
+            break;
+        }
+        case LongTextRichKind::None:
+            seed = currentStrippedValue;
+            break;
+    }
+    s_ActiveLongTextState.OriginalMarkdown = seed;
+
+    s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+    const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
+    std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
+    s_ActiveLongTextState.Buffer[copyLen] = '\0';
+    s_ActiveLongTextState.Active = true;
+    s_ActiveLongTextState.JustOpened = true;
+}
+
+static void CloseLongTextEditor() {
+    s_ActiveLongTextState = ActiveLongTextEditorState{};
+}
+
+struct EditCbUser {
+    SpreadsheetState* state;
+};
 
 /** Collapse ImGui's initial select-all when a grid text cell opens. `EventActivated` can arrive the frame after
  *  `EditJustStarted` is cleared; use `PendingGridInputTextDeselect` until we see activation or full-range selection. */
@@ -117,15 +218,6 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways) {
         return 0;
     }
-    const bool isSummary = u->fieldId && std::strcmp(u->fieldId, "summary") == 0;
-    if (isSummary && (data->EventActivated || st->EditJustStarted || st->PendingGridInputTextDeselect)) {
-        static int s_summaryCbLogBudget;
-        if (s_summaryCbLogBudget < 80) {
-            ++s_summaryCbLogBudget;
-            AgentLogTicketField("B", "TicketFieldEditor:InputText_cb_always", data->EventActivated ? 1 : 0,
-                                st->PendingGridInputTextDeselect ? 1 : 0, data->SelectionStart, data->SelectionEnd);
-        }
-    }
     if (!st->PendingGridInputTextDeselect) {
         return 0;
     }
@@ -137,22 +229,7 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     const int end = data->BufTextLen;
     data->SetSelection(end, end);
     st->PendingGridInputTextDeselect = false;
-    if (isSummary) {
-        AgentLogTicketField("C", "TicketFieldEditor:InputText_cb_after_set", data->CursorPos, data->SelectionStart,
-                            data->SelectionEnd, end);
-        AgentLogTicketField("F", "TicketFieldEditor:collapse_applied", data->EventActivated ? 1 : 0, fullRange ? 1 : 0,
-                            0, 0);
-    }
     return 0;
-}
-
-bool IsTimeDurationField(const std::string& fieldId) {
-    return fieldId == "timeoriginalestimate" || 
-           fieldId == "timeestimate" || 
-           fieldId == "timespent" || 
-           fieldId == "aggregatetimeoriginalestimate" || 
-           fieldId == "aggregatetimeestimate" || 
-           fieldId == "aggregatetimespent";
 }
 
 struct DurationCallbackWrapperData {
@@ -164,7 +241,7 @@ struct DurationCallbackWrapperData {
 static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
     auto* wrapper = static_cast<DurationCallbackWrapperData*>(data->UserData);
     if (!wrapper) return 0;
-    
+
     if (wrapper->NeedRepositionAndFocus && *(wrapper->NeedRepositionAndFocus)) {
         if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
             data->CursorPos = data->BufTextLen;
@@ -173,7 +250,7 @@ static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
             *(wrapper->NeedRepositionAndFocus) = false;
         }
     }
-    
+
     if (wrapper->OriginalCallback) {
         data->UserData = wrapper->OriginalUserData;
         int res = wrapper->OriginalCallback(data);
@@ -189,39 +266,53 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
                                       void* callbackUserData = nullptr,
                                       bool* outManuallyEdited = nullptr,
                                       bool forceOpenPopup = false) {
-    static bool s_needRepositionAndFocus = false;
     bool submitted = false;
     ImGui::PushID(label);
-    
+
+    // Resolve per-widget state using ImGuiStorage
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    ImGuiID needFocusKey = ImGui::GetID("##needRepositionAndFocus");
+    ImGuiID lastActiveIdKey = ImGui::GetID("##lastActiveId");
+
+    bool needRepositionAndFocus = storage->GetInt(needFocusKey, 0) != 0;
+    ImGuiID lastActiveId = static_cast<ImGuiID>(storage->GetInt(lastActiveIdKey, 0));
+    ImGuiID selectedFromPopupKey = ImGui::GetID("##valueSelectedFromPopup");
+    bool valueSelectedFromPopup = storage->GetInt(selectedFromPopupKey, 0) != 0;
+
     float totalWidth = ImGui::GetContentRegionAvail().x;
     float inputWidth = totalWidth - 26.0f;
-    
+
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
     ImGui::SetNextItemWidth(inputWidth);
-    
+
     if (forceOpenPopup) {
         ImGui::OpenPopup("duration_suggestions");
     }
-    
-    if (s_needRepositionAndFocus) {
+
+    if (needRepositionAndFocus) {
         ImGui::SetKeyboardFocusHere();
     }
-    
+
     DurationCallbackWrapperData wrapperData;
     wrapperData.OriginalCallback = callback;
     wrapperData.OriginalUserData = callbackUserData;
-    wrapperData.NeedRepositionAndFocus = &s_needRepositionAndFocus;
-    
+    wrapperData.NeedRepositionAndFocus = &needRepositionAndFocus;
+
+    bool deactivated = false;
     if (ImGui::InputText("##duration_input", buf, bufSize, flags | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways, DurationInputTextCallback, &wrapperData)) {
         submitted = true;
         if (outManuallyEdited) {
             *outManuallyEdited = true;
         }
     }
-    
-    static ImGuiID lastActiveId = 0;
+    deactivated = ImGui::IsItemDeactivatedAfterEdit();
+    if (!deactivated && ImGui::IsItemDeactivated() && valueSelectedFromPopup) {
+        deactivated = true;
+        valueSelectedFromPopup = false;
+    }
+
     ImGuiID currentId = ImGui::GetID("##duration_input");
-    
+
     bool shouldOpen = false;
     if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
         shouldOpen = true;
@@ -241,17 +332,21 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     if (shouldOpen) {
         ImGui::OpenPopup("duration_suggestions");
     }
-    
+
     ImGui::SameLine();
-    if (ImGui::Button("▼", ImVec2(24.0f, 0.0f))) {
+    bool buttonClicked = ImGui::Button("▼", ImVec2(24.0f, 0.0f));
+    bool buttonHovered = ImGui::IsItemHovered();
+    if (buttonClicked) {
         ImGui::OpenPopup("duration_suggestions");
     }
     ImGui::PopStyleVar();
-    
+
+    bool popupIsOpen = ImGui::IsPopupOpen("duration_suggestions");
+
     // Suggestions popup
     if (ImGui::BeginPopup("duration_suggestions")) {
         std::vector<std::string> suggestions = LoadDurationSuggestions();
-        
+
         for (size_t i = 0; i < suggestions.size(); ++i) {
             const auto& item = suggestions[i];
             if (ImGui::Selectable(item.c_str())) {
@@ -260,16 +355,39 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
                 if (outManuallyEdited) {
                     *outManuallyEdited = true;
                 }
-                s_needRepositionAndFocus = true;
+                needRepositionAndFocus = true;
+                valueSelectedFromPopup = true;
                 ImGui::CloseCurrentPopup();
             }
         }
-        
+
         ImGui::EndPopup();
     }
-    
+
+    // Resolve per-widget state using ImGuiStorage
+    ImGuiID popupOpenKey = ImGui::GetID("##popupWasOpen");
+    bool popupWasOpen = storage->GetInt(popupOpenKey, 0) != 0;
+
+    bool popupJustClosed = popupWasOpen && !popupIsOpen;
+
+    bool finalDeactivated = false;
+    if (deactivated) {
+        if (!buttonHovered && !popupIsOpen) {
+            finalDeactivated = true;
+        }
+    }
+    if (popupJustClosed && !needRepositionAndFocus) {
+        finalDeactivated = true;
+    }
+
+    storage->SetInt(popupOpenKey, popupIsOpen ? 1 : 0);
+    storage->SetInt(selectedFromPopupKey, valueSelectedFromPopup ? 1 : 0);
+    // Store updated state back to ImGuiStorage
+    storage->SetInt(needFocusKey, needRepositionAndFocus ? 1 : 0);
+    storage->SetInt(lastActiveIdKey, static_cast<int>(lastActiveId));
+
     ImGui::PopID();
-    return submitted;
+    return submitted || finalDeactivated;
 }
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
@@ -290,24 +408,34 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
     const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
-    if (state.IsEditingField(ticket.id, field.Id)) {
-        const bool editJustStarted = state.EditJustStarted;
-        if (field.Id == "summary") {
-            static int s_enterEditLogBudget;
-            if (s_enterEditLogBudget < 30) {
-                ++s_enterEditLogBudget;
-                AgentLogTicketField("E", "TicketFieldEditor:enter_edit", editJustStarted ? 1 : 0, 0, 0, 0);
+
+    // ADF / long-text fields (Jira description/environment, Plane description, custom textarea/wiki-renderer
+    // fields) are too constrained by the inline 512-byte single-line InputText. Route them through the modal
+    // editor singleton: the cell stays in display mode, the modal owns the lifecycle. v1: plain-text round-trip.
+    // v2 (see RICH_TEXT_EDITING_V2_PLAN.md) layers Markdown <-> ADF/HTML fidelity on top.
+    if (TrackerFieldPayload::FieldUsesAdfDocument(field)) {
+        if (state.IsEditingField(ticket.id, field.Id)) {
+            if (state.EditJustStarted) {
+                const std::string& label = !field.Name.empty() ? field.Name : field.Id;
+                const std::string richValue = ticket.GetFieldRichValue(field.Id);
+                OpenLongTextEditor(ticket.id, field, label, currentValue, richValue);
+                ImGui::OpenPopup(kLongTextModalPopupId);
             }
+            // Hand the lifecycle to the modal singleton; the cell falls through to the read-only preview below.
+            state.ClearEditing();
         }
+        // fall through to the display branch
+    } else if (state.IsEditingField(ticket.id, field.Id)) {
+        const bool editJustStarted = state.EditJustStarted;
         const bool isDuration = IsTimeDurationField(field.Id);
         bool submitted = false;
-        
+
         if (isDuration) {
             ImGui::SetNextItemWidth(-FLT_MIN);
             if (editJustStarted) {
                 ImGui::SetKeyboardFocusHere();
             }
-            EditCbUser cbUser{&state, field.Id.c_str()};
+            EditCbUser cbUser{&state};
             submitted = DrawDurationFieldWithSuggestions(
                 itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
                 ImGuiInputTextFlags_CallbackAlways,
@@ -319,7 +447,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
             if (editJustStarted) {
                 ImGui::SetKeyboardFocusHere();
             }
-            EditCbUser cbUser{&state, field.Id.c_str()};
+            EditCbUser cbUser{&state};
             submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
                                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
                                          InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
@@ -337,19 +465,12 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 
     const std::string valueForDisplay = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    bool hasNewlineInValue = false;
-    for (size_t i = 0; i < valueForDisplay.size(); ++i) {
-        if (valueForDisplay[i] == '\n' || valueForDisplay[i] == '\r') {
-            hasNewlineInValue = true;
-            break;
-        }
-    }
+    const bool hasNewlineInValue = std::any_of(valueForDisplay.begin(), valueForDisplay.end(),
+                                               [](char c) { return c == '\n' || c == '\r'; });
     std::string singleLine = valueForDisplay;
-    for (size_t i = 0; i < singleLine.size(); ++i) {
-        if (singleLine[i] == '\n' || singleLine[i] == '\r') {
-            singleLine.erase(i);
-            break;
-        }
+    auto nlIt = std::find_if(singleLine.begin(), singleLine.end(), [](char c) { return c == '\n' || c == '\r'; });
+    if (nlIt != singleLine.end()) {
+        singleLine.erase(nlIt, singleLine.end());
     }
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
@@ -543,14 +664,6 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
-    if (column.FieldId == "summary") {
-        static int s_summaryCellLogBudget;
-        if (s_summaryCellLogBudget < 50) {
-            ++s_summaryCellLogBudget;
-            AgentLogTicketField("A", "TicketFieldEditor:RenderFieldCell_summary", handledByLua ? 1 : 0,
-                                static_cast<int>(column.Plan), 0, 0);
-        }
-    }
     if (handledByLua) {
         return;
     }
@@ -614,12 +727,12 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     case TicketGridColumn::RenderPlan::SpecialTimeSpent: {
         std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
         std::string buttonId = "##TimeSpentBtn_" + ticket.id;
-        
+
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); // invisible background when normal
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-        
+
         if (ImGui::Button((buttonText + buttonId).c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
             s_ActiveWorklogState.IssueId = ticket.id;
             s_ActiveWorklogState.TimeSpent[0] = '\0';
@@ -628,9 +741,9 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
             std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
             s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
-            
+
             s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
-            
+
             s_ActiveWorklogState.WorkDescription[0] = '\0';
             s_ActiveWorklogState.ErrorMsg.clear();
             s_ActiveWorklogState.Initialized = true;
@@ -639,7 +752,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         }
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(3);
-        
+
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             if (currentValue.empty()) {
@@ -713,17 +826,17 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             ImGui::OpenPopup("TimeTrackingPopup");
             s_ActiveWorklogState.JustOpened = false;
         }
-        
+
         if (ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Time tracking: %s", ticket.id.c_str());
             ImGui::Separator();
             ImGui::Spacing();
-            
+
             // Logged & Remaining progress bar
             long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
             long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
             long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
-            
+
             long long displaySpentSec = spentSec + newSpentSec;
             long long displayRemSec = remSec;
             if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
@@ -731,41 +844,41 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
                 displayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
             }
-            
+
             long long totalSec = displaySpentSec + displayRemSec;
             float fraction = 0.0f;
             if (totalSec > 0) {
                 fraction = (float)displaySpentSec / (float)totalSec;
             }
-            
+
             std::string loggedLabel = FormatWorkDurationFromSeconds(displaySpentSec);
             if (loggedLabel.empty()) loggedLabel = "0m";
             loggedLabel += " logged";
-            
+
             std::string remainingLabel = FormatWorkDurationFromSeconds(displayRemSec);
             if (remainingLabel.empty()) remainingLabel = "0m";
             remainingLabel += " remaining";
-            
+
             ImGui::TextUnformatted(loggedLabel.c_str());
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(remainingLabel.c_str()).x);
             ImGui::TextUnformatted(remainingLabel.c_str());
-            
+
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.12f, 0.45f, 0.88f, 1.00f)); // Jira blue
             ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 14.0f), "");
             ImGui::PopStyleColor();
-            
+
             if (!s_ActiveWorklogState.OriginalEstimate.empty()) {
                 ImGui::TextDisabled("The original estimate for this work item was %s.", s_ActiveWorklogState.OriginalEstimate.c_str());
             }
-            
+
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            
+
             // Inputs
             ImGui::Text("Time spent *");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent))) {
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr, false)) {
                 if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
                     long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
                     long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
@@ -781,19 +894,19 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 }
             }
             ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
-            
+
             ImGui::Spacing();
             ImGui::Text("Time remaining");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining, sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr, &s_ActiveWorklogState.TimeRemainingManuallyEdited)) {
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining, sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr, &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
                 // value changed!
             }
-            
+
             ImGui::Spacing();
             ImGui::Text("Date started *");
             ImGui::SetNextItemWidth(-FLT_MIN);
             TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
-            
+
             ImGui::Spacing();
             ImGui::Text("Work description");
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
@@ -815,16 +928,16 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 ImGui::EndPopup();
             }
             ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription, sizeof(s_ActiveWorklogState.WorkDescription), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
-            
+
             if (!s_ActiveWorklogState.ErrorMsg.empty()) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", s_ActiveWorklogState.ErrorMsg.c_str());
             }
-            
+
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            
+
             // Buttons
             if (ImGui::Button("Save", ImVec2(80, 0))) {
                 s_ActiveWorklogState.ErrorMsg.clear();
@@ -858,7 +971,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 ImGui::CloseCurrentPopup();
                 s_ActiveWorklogState.Initialized = false;
             }
-            
+
             ImGui::EndPopup();
         } else {
             s_ActiveWorklogState.Initialized = false;
@@ -866,9 +979,114 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 }
 
+void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendingEdits) {
+    if (!s_ActiveLongTextState.Active) {
+        return;
+    }
 
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (s_ActiveLongTextState.JustOpened) {
+        const ImVec2 modalSize(viewport->Size.x * 0.6f, viewport->Size.y * 0.65f);
+        ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(
+            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
 
+    if (ImGui::BeginPopupModal(kLongTextModalPopupId, nullptr,
+                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(),
+                    s_ActiveLongTextState.IssueId.c_str());
 
+        // Format-fidelity banners. RawMode is the strongest signal — fall back to editing
+        // the source HTML directly so we don't destroy unrecognized markup. DroppedAdfNodeTypes
+        // is informational: the rendered Markdown is missing some original constructs but the
+        // user can still edit and save the rest cleanly.
+        if (s_ActiveLongTextState.RawMode) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+            ImGui::TextWrapped("Editing raw HTML — the source contains tags this build doesn't yet "
+                               "translate to Markdown. Save will store your edits verbatim.");
+            ImGui::PopStyleColor();
+        } else if (!s_ActiveLongTextState.DroppedAdfNodeTypes.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.4f, 1.0f));
+            std::string list;
+            for (size_t i = 0; i < s_ActiveLongTextState.DroppedAdfNodeTypes.size() && i < 5; ++i) {
+                if (!list.empty()) list += ", ";
+                list += s_ActiveLongTextState.DroppedAdfNodeTypes[i];
+            }
+            ImGui::TextWrapped("Note: this document contains constructs not in our Markdown subset (%s) — "
+                               "saving will keep what you edit but those nodes are not shown.",
+                               list.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::Separator();
+
+        // Reserve room for the footer (status line + button row).
+        const float footerH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
+                              ImGui::GetStyle().ItemSpacing.y;
+        const ImVec2 inputSize(-FLT_MIN, ImGui::GetContentRegionAvail().y - footerH);
+
+        if (s_ActiveLongTextState.JustOpened) {
+            ImGui::SetKeyboardFocusHere();
+            s_ActiveLongTextState.JustOpened = false;
+        }
+
+        ImGui::InputTextMultiline("##LongTextEditorBuf",
+                                  s_ActiveLongTextState.Buffer.data(),
+                                  s_ActiveLongTextState.Buffer.size(),
+                                  inputSize,
+                                  ImGuiInputTextFlags_AllowTabInput);
+
+        // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
+        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        const bool ctrlEnter = ctrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+
+        const char* footerHint = s_ActiveLongTextState.RawMode
+            ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
+            : "Ctrl+Enter to save · Esc to cancel · Markdown — **bold**, *em*, # heading, - list, ```code```";
+        ImGui::TextDisabled("%s", footerHint);
+
+        bool save = ctrlEnter;
+        bool cancel = escPressed;
+        if (ImGui::Button("Save", ImVec2(100, 0))) {
+            save = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            cancel = true;
+        }
+
+        if (save) {
+            const std::string newValue(s_ActiveLongTextState.Buffer.data());
+            // Diff against the seeded markdown (or the raw HTML in RawMode) so we don't queue a
+            // null edit that would still re-emit through the payload converter and reshape
+            // formatting that hasn't actually changed.
+            const std::string& seed = s_ActiveLongTextState.RawMode
+                                          ? s_ActiveLongTextState.OriginalRichValue
+                                          : s_ActiveLongTextState.OriginalMarkdown;
+            if (newValue != seed) {
+                PendingFieldEdit edit;
+                edit.IssueId = s_ActiveLongTextState.IssueId;
+                edit.Field = s_ActiveLongTextState.Field;
+                edit.Values = {newValue};
+                edit.Preformatted = s_ActiveLongTextState.RawMode;
+                pendingEdits.push_back(std::move(edit));
+            }
+            ImGui::CloseCurrentPopup();
+            CloseLongTextEditor();
+        } else if (cancel) {
+            ImGui::CloseCurrentPopup();
+            CloseLongTextEditor();
+        }
+
+        ImGui::EndPopup();
+    } else {
+        // Popup was dismissed without our intervention (shouldn't normally happen for a modal,
+        // but stay self-consistent if it does).
+        CloseLongTextEditor();
+    }
+}
 
 
 

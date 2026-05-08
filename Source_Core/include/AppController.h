@@ -139,7 +139,7 @@ class AppController {
     void InitLua();
     void InitLuaCore(sol::state& state);
     void InitLuaUi(sol::state& state);
-    
+
     std::string ResolveLuaScriptPath(const std::string& filename) const;
     /** Basenames of `*.lua` files in the configured scripts directory (non-recursive). */
     std::vector<std::string> ListLuaScriptFiles() const;
@@ -234,6 +234,9 @@ class AppController {
      */
     void SyncWithBackend(const TrackerConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
 
+    /** Process queued streaming ticket batches on the UI thread (frame-budgeted). */
+    void TickStreamingApply();
+
     /** Clears the live ticket-sync warning banner (e.g. before kicking off a background fetch). */
     void ClearLastTrackerTicketSyncWarning();
 
@@ -257,6 +260,9 @@ class AppController {
     /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
+    bool IsStreamingSyncActive() const {
+        return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() || isDeletingStale_;
+    }
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetTrackerFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
@@ -311,8 +317,8 @@ class AppController {
      */
     bool ConsumeFieldCatalogRefetchAfterLiveTicketSync();
     /**
-     * Main-thread: Dispatches any deferred UI notifications or results from background 
-     * tracker HTTP work (including from background workers). Call once per frame 
+     * Main-thread: Dispatches any deferred UI notifications or results from background
+     * tracker HTTP work (including from background workers). Call once per frame
      * early in `SmatchetUI::Draw`.
      */
     /** @return true if a deferred notify was applied this call (live tracker request succeeded). */
@@ -428,14 +434,14 @@ class AppController {
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
-     * 
+     *
      * For Jira, we handle special cases:
-     * `status`: never allow direct edit via field editmeta (Jira does not list status 
+     * `status`: never allow direct edit via field editmeta (Jira does not list status
      * like a normal settable field; updates use transitions).
-     * `priority`: if editmeta is loaded but omits `priority`, allow edit 
+     * `priority`: if editmeta is loaded but omits `priority`, allow edit
      * (Jira omits it inconsistently).
-     * 
-     * Returns true when editmeta is not loaded yet (optimistic) or for 
+     *
+     * Returns true when editmeta is not loaded yet (optimistic) or for
      * non-Jira backends (e.g. Plane). After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
      * @param fieldMeta optional catalog row for fieldId (avoids lookup; same as nullptr + catalog).
      */
@@ -633,6 +639,44 @@ class AppController {
     void RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job);
     std::vector<std::string> activeSetupScripts_;
 #endif
+
+  private:
+    struct StreamingSyncState {
+        uint64_t RequestId = 0;
+        std::atomic<bool> Cancelled{false};
+        std::atomic<bool> Superseded{false};
+        std::atomic<bool> Active{false};
+        std::atomic<bool> ActiveSessionRunning{false};
+        std::thread WorkerThread;
+
+        // Accumulators / results
+        std::atomic<size_t> TotalFetchedCount{0};
+        std::atomic<bool> FullSyncCompleted{false};
+        std::string FetchError;
+
+        // Cache processing queue
+        mutable std::mutex QueueMutex;
+        std::vector<std::vector<CachedTicket>> PendingBatches;
+
+        // State tracking for stale row deletion
+        std::unordered_set<std::string> KeepIds;
+        std::vector<std::string> BackgroundStaleIds;
+    };
+
+    void CancelAndJoinActiveStreamingSync();
+    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+
+    std::atomic<uint64_t> currentFetchRequestId_{0};
+    StreamingSyncState activeStreamingSync_;
+
+    bool hasPendingSyncRequest_ = false;
+    TrackerConfig pendingConfig_;
+    ViewsStore pendingViews_;
+
+    bool isDeletingStale_ = false;
+    std::vector<std::string> staleIdsToDelete_;
+    size_t totalStaleToDelete_ = 0;
+    size_t staleDeletedSoFar_ = 0;
 };
 
 #endif

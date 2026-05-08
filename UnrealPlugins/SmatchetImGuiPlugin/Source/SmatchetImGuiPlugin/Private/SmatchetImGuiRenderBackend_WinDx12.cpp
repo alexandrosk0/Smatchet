@@ -103,6 +103,9 @@ class FWinDx12RenderBackend final : public ISmatchetImGuiRenderBackend {
             return false;
         }
         if (SmatchetHost_IsUiVisible(Host) == 0) {
+            if (SmatchetHost_IsInitialized(Host) != 0) {
+                SmatchetHost_TickApplicationWork(Host);
+            }
             return false;
         }
 

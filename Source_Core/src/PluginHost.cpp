@@ -19,8 +19,8 @@ void PluginHost::Register(std::unique_ptr<IPlugin> plugin) {
 
 void PluginHost::OnEarlyInit(AppController& app) {
     for (size_t i = 0; i < plugins_.size(); ++i) {
-        auto& p = plugins_[i];
         try {
+            auto& p = plugins_[i];
             p->OnEarlyInit(app);
         } catch (const std::exception& ex) {
             LOG_ERROR("PluginHost::OnEarlyInit plugin[%zu] exception: %s", i, ex.what());
@@ -32,8 +32,8 @@ void PluginHost::OnEarlyInit(AppController& app) {
 
 void PluginHost::OnStart(AppController& app) {
     for (size_t i = 0; i < plugins_.size(); ++i) {
-        auto& p = plugins_[i];
         try {
+            auto& p = plugins_[i];
             p->OnStart(app);
         } catch (const std::exception& ex) {
             LOG_ERROR("PluginHost::OnStart plugin[%zu] exception: %s", i, ex.what());
@@ -48,8 +48,8 @@ void PluginHost::OnStart(AppController& app) {
 
 void PluginHost::OnDraw(AppController& app) {
     for (size_t i = 0; i < plugins_.size(); ++i) {
-        auto& p = plugins_[i];
         try {
+            auto& p = plugins_[i];
             p->OnDraw(app);
         } catch (const std::exception& ex) {
             LOG_ERROR("PluginHost::OnDraw plugin[%zu] exception: %s", i, ex.what());
@@ -61,8 +61,8 @@ void PluginHost::OnDraw(AppController& app) {
 
 void PluginHost::OnStop() {
     for (size_t i = 0; i < plugins_.size(); ++i) {
-        auto& p = plugins_[i];
         try {
+            auto& p = plugins_[i];
             p->OnStop();
         } catch (const std::exception& ex) {
             LOG_ERROR("PluginHost::OnStop plugin[%zu] exception: %s", i, ex.what());

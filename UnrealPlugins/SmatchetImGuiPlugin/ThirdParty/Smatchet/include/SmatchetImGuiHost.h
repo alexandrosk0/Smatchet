@@ -55,6 +55,10 @@ class SmatchetImGuiHost {
     void DrawUI();
     void RenderDrawData(SmatchetRendererBackend backend, void* nativeCommandList);
 
+    /** Progress offline queues + streamed issue apply without building an ImGui frame. Call when the embedded
+     *  host skips BeginFrame/DrawUI (e.g. Unreal overlay hidden) so tracker sync sessions still drain. */
+    void TickApplicationWork();
+
     void SetMousePosition(float x, float y);
     void SetMouseButton(int button, bool isDown);
     void AddMouseWheel(float wheelX, float wheelY);

@@ -18,10 +18,21 @@ constexpr int kMaxReplayAttempts = 5;
 struct CachedTicket {
     std::string id;
     std::unordered_map<std::string, std::string> fieldValues;
+    /// Original rich-content payload for fields that round-trip through ADF/HTML — keyed by the
+    /// same field id as `fieldValues`. Populated by `JiraIssueSearch` (ADF JSON-stringified) and
+    /// `PlaneClient` (description_html). Used by the long-text modal editor to seed Markdown
+    /// fidelity and avoid silent format loss when an unedited field is later re-saved. See
+    /// RICH_TEXT_EDITING_V2_PLAN.md.
+    std::unordered_map<std::string, std::string> fieldRichValues;
 
     std::string GetFieldValue(const std::string& key) const {
         const auto it = fieldValues.find(key);
         return (it != fieldValues.end()) ? it->second : std::string();
+    }
+
+    std::string GetFieldRichValue(const std::string& key) const {
+        const auto it = fieldRichValues.find(key);
+        return (it != fieldRichValues.end()) ? it->second : std::string();
     }
 };
 
@@ -87,6 +98,7 @@ class LocalCacheManager {
     bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
     void DeleteTicket(const std::string& ticketId);
     std::vector<CachedTicket> GetAllTickets();
+    std::vector<std::string> GetAllTicketIds();
 
     /** @return generated row id. */
     std::int64_t EnqueuePendingCreate(const std::string& payload);

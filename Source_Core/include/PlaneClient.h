@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 
 
 class PlaneClient : public ITrackerClient {
@@ -18,6 +19,12 @@ class PlaneClient : public ITrackerClient {
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
                                           std::string* outFetchError = nullptr) override;
+
+    TrackerIssueFetchSummary FetchIssuesStreamed(
+        const BatchCallback& onBatch,
+        const CancelCallback& shouldCancel,
+        const TrackerConfig* configOverride = nullptr,
+        const ViewsStore* viewsOverride = nullptr) override;
 
     bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
@@ -73,9 +80,10 @@ class PlaneClient : public ITrackerClient {
     std::vector<TrackerUser> cachedUsers_;
     std::vector<CachedLabel> cachedLabels_;
     std::string planeProjectId_;
-
     std::string planeProjectIdentifier_;
+
     std::unordered_map<std::string, std::string> keyToId_;
+    mutable std::recursive_mutex planeCacheMutex_;
 
     std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg) const;
 };

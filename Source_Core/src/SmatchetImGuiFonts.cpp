@@ -1,4 +1,5 @@
 #include "SmatchetImGuiFonts.h"
+#include "imgui_internal.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -71,7 +72,36 @@ bool FileExistsUtf8(const char* path) { return path && GetFileAttributesA(path) 
 
 } // namespace
 
-void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io) {
+#include <string>
+#include <mutex>
+#include <atomic>
+
+namespace {
+
+const char* GetFontFilePath(const std::string& fontName) {
+    if (fontName == "Segoe UI") return "C:\\Windows\\Fonts\\segoeui.ttf";
+    if (fontName == "Consolas") return "C:\\Windows\\Fonts\\consola.ttf";
+    if (fontName == "Arial") return "C:\\Windows\\Fonts\\arial.ttf";
+    if (fontName == "Courier New") return "C:\\Windows\\Fonts\\cour.ttf";
+    if (fontName == "Georgia") return "C:\\Windows\\Fonts\\georgia.ttf";
+    if (fontName == "Lucida Console") return "C:\\Windows\\Fonts\\lucon.ttf";
+    if (fontName == "Microsoft Sans Serif") return "C:\\Windows\\Fonts\\micross.ttf";
+    if (fontName == "Trebuchet MS") return "C:\\Windows\\Fonts\\trebuc.ttf";
+    if (fontName == "Verdana") return "C:\\Windows\\Fonts\\verdana.ttf";
+    return nullptr; // Proggy (Clean/Default) or unknown
+}
+
+// Thread-safe state for font hot-reloading
+std::mutex g_FontReloadMutex;
+std::string g_CurrentFontName = "Segoe UI";
+float g_CurrentFontSize = 16.0f;
+std::string g_PendingFontName;
+float g_PendingFontSize = 0.0f;
+std::atomic<bool> g_FontReloadRequested{false};
+
+} // namespace
+
+void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float fontSizePixels) {
     static ImVector<ImWchar> glyph_ranges;
     ImFontGlyphRangesBuilder builder;
     AddExtendedSymbolRanges(builder, io.Fonts);
@@ -81,40 +111,85 @@ void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io) {
     ImFontConfig main_cfg;
     main_cfg.GlyphRanges = glyph_ranges.Data;
 
+    // Reset dangling pointers on active context and ImGuiIO to prevent access violation crashes during Clear()
+    io.FontDefault = nullptr;
+    if (ImGui::GetCurrentContext()) {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        g.Font = nullptr;
+        g.DrawListSharedData.Font = nullptr;
+    }
+
     io.Fonts->Clear();
 
-    // Pixel size aligned with common ImGui default vector font (~16px).
-    constexpr float kFontPixels = 16.0f;
+    ImFont* newFont = nullptr;
 
 #if defined(_WIN32)
-    // Embedded ImGui fonts omit many symbol outlines; Segoe UI ships with Windows and covers ● • ∑ etc.
-    static const char kSegoeUiPath[] = "C:\\Windows\\Fonts\\segoeui.ttf";
-    if (FileExistsUtf8(kSegoeUiPath)) {
-        io.Fonts->AddFontFromFileTTF(kSegoeUiPath, kFontPixels, &main_cfg, glyph_ranges.Data);
+    const char* path = GetFontFilePath(fontName);
+    if (path && FileExistsUtf8(path)) {
+        newFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &main_cfg, glyph_ranges.Data);
+
+        // Merge Segoe UI symbols and emojis for premium character rendering
         ImFontConfig merge_cfg;
         merge_cfg.MergeMode = true;
         merge_cfg.GlyphRanges = glyph_ranges.Data;
         merge_cfg.PixelSnapH = true;
         static const char kSegoeUiSymbolPath[] = "C:\\Windows\\Fonts\\seguisym.ttf";
         if (FileExistsUtf8(kSegoeUiSymbolPath)) {
-            io.Fonts->AddFontFromFileTTF(kSegoeUiSymbolPath, kFontPixels, &merge_cfg, glyph_ranges.Data);
+            io.Fonts->AddFontFromFileTTF(kSegoeUiSymbolPath, fontSizePixels, &merge_cfg, glyph_ranges.Data);
         }
-        // Color emoji font; merged bitmaps render as monochrome without FreeType color loader — still beats U+FFFD.
         static const char kSegoeUiEmojiPath[] = "C:\\Windows\\Fonts\\seguiemj.ttf";
         if (FileExistsUtf8(kSegoeUiEmojiPath)) {
             ImFontConfig emoji_cfg;
             emoji_cfg.MergeMode = true;
             emoji_cfg.GlyphRanges = glyph_ranges.Data;
             emoji_cfg.PixelSnapH = true;
-            io.Fonts->AddFontFromFileTTF(kSegoeUiEmojiPath, kFontPixels, &emoji_cfg, glyph_ranges.Data);
+            io.Fonts->AddFontFromFileTTF(kSegoeUiEmojiPath, fontSizePixels, &emoji_cfg, glyph_ranges.Data);
         }
+
+        std::lock_guard<std::mutex> lock(g_FontReloadMutex);
+        g_CurrentFontName = fontName;
+        g_CurrentFontSize = fontSizePixels;
+        io.FontDefault = newFont;
         return;
     }
 #endif
 
-    io.Fonts->AddFontDefault(&main_cfg);
+    newFont = io.Fonts->AddFontDefault(&main_cfg);
+    std::lock_guard<std::mutex> lock(g_FontReloadMutex);
+    g_CurrentFontName = "Proggy (Clean/Default)";
+    g_CurrentFontSize = fontSizePixels;
+    io.FontDefault = newFont;
 }
 
+void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io) {
+    SmatchetApplyImGuiFont(io, "Segoe UI", 16.0f);
+}
+
+void SmatchetRequestFontReload(const std::string& fontName, float fontSizePixels) {
+    std::lock_guard<std::mutex> lock(g_FontReloadMutex);
+    g_PendingFontName = fontName;
+    g_PendingFontSize = fontSizePixels;
+    g_FontReloadRequested.store(true);
+}
+
+bool SmatchetCheckAndApplyFontReload() {
+    if (!g_FontReloadRequested.load()) {
+        return false;
+    }
+    g_FontReloadRequested.store(false);
+
+    std::string targetFontName;
+    float targetFontSize = 16.0f;
+    {
+        std::lock_guard<std::mutex> lock(g_FontReloadMutex);
+        targetFontName = g_PendingFontName;
+        targetFontSize = g_PendingFontSize;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    SmatchetApplyImGuiFont(io, targetFontName, targetFontSize);
+    return true;
+}
 
 
 

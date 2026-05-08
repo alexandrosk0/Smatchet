@@ -1,6 +1,7 @@
 #include "SmatchetGridUiSupport.h"
 
 #include "AppController.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 
@@ -38,7 +39,10 @@ void MaybeToastTrackerConnectivityBanner(AppController& app, UiDrawSession& d,
     }
     std::string body = banner.Message;
     if (banner.Kind == Level::Error) {
-        body += "\n\nGrid edits and quick comment actions stay disabled until Tracker is reachable.";
+        body += "\n\n";
+        body += SmatchetLocalization::T(
+            "toast.tracker_reachable_required",
+            "Grid edits and quick comment actions stay disabled until Tracker is reachable.");
         SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Error, 7000);
     } else {
         SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Warning, 5500);

@@ -10,6 +10,8 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <nlohmann/json.hpp>
 
@@ -587,13 +589,9 @@ bool TrackerGridFieldDisplay::TryRenderProgressJsonField(const std::string& curr
     SMATCHET_UI_PERF_SCOPE("TryRenderProgressJsonField");
 
     // Zero-overhead shortcut for empty cells (no hashing, no map lookups)
-    bool isEmpty = true;
-    for (char c : currentValue) {
-        if (!std::isspace(static_cast<unsigned char>(c))) {
-            isEmpty = false;
-            break;
-        }
-    }
+    const bool isEmpty = !std::any_of(currentValue.begin(), currentValue.end(), [](char c) {
+        return !std::isspace(static_cast<unsigned char>(c));
+    });
     if (isEmpty) {
         ImGui::ProgressBar(0.0f, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
         return true;

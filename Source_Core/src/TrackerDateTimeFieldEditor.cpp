@@ -2,6 +2,8 @@
 #include "CompactDateFormat.h"
 #include "ConfigManager.h"
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cctype>
@@ -165,7 +167,9 @@ bool ParseFriendlyTime(const std::string& s, int& outH, int& outM) {
     char ampm[8] = "";
     if (std::sscanf(s.c_str(), "%d:%d %7s", &h, &m, ampm) == 3) {
         std::string ampmStr = ampm;
-        for (auto& c : ampmStr) c = std::toupper(static_cast<unsigned char>(c));
+        std::transform(ampmStr.begin(), ampmStr.end(), ampmStr.begin(), [](unsigned char c) {
+            return std::toupper(c);
+        });
         if (ampmStr == "PM" && h < 12) h += 12;
         if (ampmStr == "AM" && h == 12) h = 0;
         if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
@@ -371,7 +375,7 @@ PickerAction DrawCalendarPicker(
                         (working.Year == viewYear && working.Month == viewMonth && working.Day == d);
                     if (selected) {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(31.0f/255.0f, 116.0f/255.0f, 236.0f/255.0f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(51.0f/255.0f, 136.0f/255.0f, 255.0f/255.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(51.0f/255.0f, 136.0f/255.0f, 1.0f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(21.0f/255.0f, 96.0f/255.0f, 216.0f/255.0f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                     }
@@ -484,23 +488,18 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
         if (display.empty()) {
             display = currentValue;
         }
-        for (size_t i = 0; i < display.size(); ++i) {
-            if (display[i] == '\n' || display[i] == '\r') {
-                display.erase(i);
-                break;
-            }
+        auto it = std::find_if(display.begin(), display.end(), [](char c) {
+            return c == '\n' || c == '\r';
+        });
+        if (it != display.end()) {
+            display.erase(it, display.end());
         }
         if (display.empty()) {
             display = "";
         }
-        const bool blankValue = [&] {
-            for (unsigned char ch : currentValue) {
-                if (std::isspace(ch) == 0) {
-                    return false;
-                }
-            }
-            return true;
-        }();
+        const bool blankValue = std::all_of(currentValue.begin(), currentValue.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        });
         if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
             // Empty due date (and similar) would otherwise require double-click like populated cells.
             if (blankValue || ImGui::IsMouseDoubleClicked(0)) {
@@ -623,9 +622,6 @@ bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDat
     
     // Dropdown Calendar Popup
     static ParsedJiraDateTime s_genWorking{};
-    static int s_genViewYear = 2000;
-    static int s_genViewMonth = 1;
-    static bool s_genForceTextMode = false;
     static bool s_initWorking = false;
     
     if (!ImGui::IsPopupOpen("calendar_dropdown")) {
@@ -634,6 +630,9 @@ bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDat
     
     ImGui::SetNextWindowSize(ImVec2(236.0f, 0.0f));
     if (ImGui::BeginPopup("calendar_dropdown")) {
+        static int s_genViewYear = 2000;
+        static int s_genViewMonth = 1;
+        static bool s_genForceTextMode = false;
         if (!s_initWorking) {
             s_genWorking = parsed;
             s_genViewYear = parsed.Year;

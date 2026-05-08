@@ -18,12 +18,9 @@ static bool JqlValueNeedsQuotes(const std::string& s) {
     if (s.empty()) {
         return true;
     }
-    for (unsigned char ch : s) {
-        if (!IsJqlIdChar(ch) || ch == '"' || ch == '\\') {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(s.begin(), s.end(), [](char ch) {
+        return !IsJqlIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\';
+    });
 }
 
 static std::string JqlQuotedValue(const std::string& s) {
@@ -87,15 +84,18 @@ static const TrackerField* FindTrackerFieldForJqlToken(const AppController& app,
         return nullptr;
     }
     const std::string key = ToLowerAsciiCopy(token);
-    for (const auto& f : app.GetAvailableFields()) {
-        if (AsciiEqualsIgnoreCaseToLowered(f.Id, key)) {
-            return &f;
-        }
+    const auto& fields = app.GetAvailableFields();
+    auto idIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
+        return AsciiEqualsIgnoreCaseToLowered(f.Id, key);
+    });
+    if (idIt != fields.end()) {
+        return &(*idIt);
     }
-    for (const auto& f : app.GetAvailableFields()) {
-        if (!f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key)) {
-            return &f;
-        }
+    auto nameIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
+        return !f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key);
+    });
+    if (nameIt != fields.end()) {
+        return &(*nameIt);
     }
     return nullptr;
 }
@@ -434,22 +434,17 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
 
     const std::vector<JqlToken> leftTokens = TokenizeJqlPrefix(buf, replaceStart);
     const JqlSuggestMode mode = DetermineJqlSuggestMode(leftTokens, prefix, app, &valueField);
-    static const char* kClausePrefixes[] = {"NOT"};
-    static const char* kOperators[] = {"=", "!=", "IN", "NOT IN", "IS",  "IS NOT", "~",      "!~",
-                                       ">", ">=", "<",  "<=",     "WAS", "WAS IN", "CHANGED"};
-    static const char* kValueFunctions[] = {"currentUser()", "membersOf()"};
-    static const char* kIsOperands[] = {"EMPTY", "NULL"};
-    static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
-    static const char* kSortDirections[] = {"ASC", "DESC"};
-    static const char* kOrderByTail[] = {"BY"};
 
     if (mode == JqlSuggestMode::Field || mode == JqlSuggestMode::OrderField) {
         if (mode == JqlSuggestMode::Field) {
+            static const char* kClausePrefixes[] = {"NOT"};
             AppendJqlTerms(prefix, kClausePrefixes,
                            static_cast<int>(sizeof(kClausePrefixes) / sizeof(kClausePrefixes[0])), out.Items, seen);
         }
         AppendFieldCatalogSuggestions(app, prefix, out.Items, seen);
     } else if (mode == JqlSuggestMode::Operator) {
+        static const char* kOperators[] = {"=", "!=", "IN", "NOT IN", "IS",  "IS NOT", "~",      "!~",
+                                           ">", ">=", "<",  "<=",     "WAS", "WAS IN", "CHANGED"};
         AppendJqlTerms(prefix, kOperators, static_cast<int>(sizeof(kOperators) / sizeof(kOperators[0])), out.Items,
                        seen);
     } else if (mode == JqlSuggestMode::Value) {
@@ -457,6 +452,7 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
             AppendValueSuggestions(*valueField, prefix, out.Items, seen);
         }
         if (valueField != nullptr && IsJqlUserField(*valueField)) {
+            static const char* kValueFunctions[] = {"currentUser()", "membersOf()"};
             AppendJqlTerms(prefix, kValueFunctions,
                            static_cast<int>(sizeof(kValueFunctions) / sizeof(kValueFunctions[0])), out.Items, seen);
         }
@@ -465,17 +461,21 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
             metaOut->UserSearchPrefix = prefix;
         }
     } else if (mode == JqlSuggestMode::IsOperand) {
+        static const char* kIsOperands[] = {"EMPTY", "NULL"};
         AppendJqlTerms(prefix, kIsOperands, static_cast<int>(sizeof(kIsOperands) / sizeof(kIsOperands[0])), out.Items,
                        seen);
     } else if (mode == JqlSuggestMode::Logical) {
         if (!prefix.empty()) {
+            static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
             AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items,
                            seen);
         }
     } else if (mode == JqlSuggestMode::OrderByKeyword) {
+        static const char* kOrderByTail[] = {"BY"};
         AppendJqlTerms(prefix, kOrderByTail, static_cast<int>(sizeof(kOrderByTail) / sizeof(kOrderByTail[0])),
                        out.Items, seen);
     } else if (mode == JqlSuggestMode::SortDirection) {
+        static const char* kSortDirections[] = {"ASC", "DESC"};
         AppendJqlTerms(prefix, kSortDirections, static_cast<int>(sizeof(kSortDirections) / sizeof(kSortDirections[0])),
                        out.Items, seen);
     }

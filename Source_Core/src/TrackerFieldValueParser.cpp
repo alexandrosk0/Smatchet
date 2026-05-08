@@ -1,4 +1,5 @@
 #include "TrackerFieldValueParser.h"
+#include "TrackerFieldValueUtils.h"
 
 #include "Logger.h"
 #include "StringUtil.h"
@@ -491,6 +492,31 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
     return result.str();
 }
 
+
+static std::string FormatChangelogTimeValue(const std::string& value) {
+    if (value.empty()) {
+        return value;
+    }
+    const bool allDigits = std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isdigit(ch);
+    });
+    if (allDigits) {
+        try {
+            long long seconds = std::stoll(value);
+            if (seconds == 0) {
+                return "0m";
+            }
+            std::string formatted = FormatWorkDurationFromSeconds(seconds);
+            if (!formatted.empty()) {
+                return formatted;
+            }
+        } catch (...) {
+            // Keep original string if there's a parsing/overflow error
+        }
+    }
+    return value;
+}
+
 std::string ParseChangelog(const nlohmann::json& histories) {
     const size_t kMaxChangelogEntries = 60;
     const size_t kMaxValueLength = 200;
@@ -579,6 +605,11 @@ std::string ParseChangelog(const nlohmann::json& histories) {
             std::string fromValue = safeValueString(changeItem, "fromString", "from");
             std::string toValue = safeValueString(changeItem, "toString", "to");
 
+            if (TrackerFieldValueUtils::IsTimeDurationField(fieldName)) {
+                fromValue = FormatChangelogTimeValue(fromValue);
+                toValue = FormatChangelogTimeValue(toValue);
+            }
+
             if (fromValue.size() > kMaxValueLength) {
                 fromValue.resize(kMaxValueLength);
                 fromValue += "...";
@@ -628,13 +659,9 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
     }
 
     // Support a plain number (seconds).
-    bool allDigits = true;
-    for (char ch : s) {
-        if (!std::isdigit(static_cast<unsigned char>(ch))) {
-            allDigits = false;
-            break;
-        }
-    }
+    const bool allDigits = std::all_of(s.begin(), s.end(), [](unsigned char ch) {
+        return std::isdigit(ch);
+    });
     if (allDigits) {
         try {
             return std::stoll(s);

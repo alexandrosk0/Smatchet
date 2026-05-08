@@ -9,6 +9,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 - **Perforce Blame Analysis**: Native P4 integration for fast file blame analysis directly within the UI, complete with syntax highlighting.
 - **Fast Local Caching**: Uses SQLite to cache field catalogs, user metadata, and recent issues locally for near-instant load times and offline capabilities.
 - **Engine-Agnostic UI**: Built on Dear ImGui. The core library (`Source_Core`) contains no direct graphics API dependencies.
+- **UI Localization**: Switch the app-owned Dear ImGui UI between built-in English and French, with optional local JSON overrides for teams that want custom wording.
 - **Dual Deployment**:
   - **Standalone App**: A native desktop application leveraging GLFW and OpenGL3.
   - **Unreal Engine Plugin**: Direct DX12 integration allowing Smatchet to run seamlessly inside the Unreal Engine editor.
@@ -20,6 +21,25 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 
 - [Lua Scripting Guide](LUA_GUIDE.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](MCP_GUIDE.md): How to use Smatchet as an MCP server for AI agents.
+
+## Localization
+
+Smatchet supports lightweight localization for app-owned UI text. The first built-in languages are English (`en-US`) and French (`fr-FR`); aliases `en` and `fr` are normalized to those full locale codes.
+
+Change the UI language from **Settings -> Preferences -> Appearance -> Language**. The selected language is saved as `ui_language` in `smatchet_config.json`, so it persists across restarts.
+
+Teams can override built-in strings without rebuilding by placing JSON files next to the executable/config base under `Locales/<locale>.json`, for example `Locales/fr-FR.json`:
+
+```json
+{
+    "locale": "fr-FR",
+    "strings": {
+        "common.save": "Enregistrer"
+    }
+}
+```
+
+Missing override keys fall back to the built-in strings, and missing translations fall back to English. Localization covers app-owned UI labels, buttons, menus, tooltips, and status text; user data and tracker-provided values such as issue fields, statuses, saved view names, file paths, and backend error details are shown as-is.
 
 ## Building Smatchet
 

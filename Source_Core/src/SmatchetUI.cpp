@@ -15,8 +15,12 @@
 #include "SmatchetMcpServerUi.h"
 #endif
 #include "SmatchetToast.h"
+#include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -61,10 +65,7 @@ static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
 }
 #endif
 
-static std::future<TrackerIssueFetchPack> StartInitialTicketFetchAsync(AppController& app, TrackerConfig cfg,
-                                                                    ViewsStore store) {
-    return std::async(std::launch::async, [&app, cfg, store]() { return app.FetchIssuesForActiveView(&cfg, &store); });
-}
+
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
                                                                         const TrackerConfig& fetchCfg) {
@@ -91,13 +92,19 @@ void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     if (!g_ui.cfgInitialized) {
         g_ui.cfg = ConfigManager::Load();
+        g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
+        SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
         g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
-        
+
+        if (!g_ui.cfg.SelectedFontName.empty() && g_ui.cfg.SelectedFontName != "Segoe UI") {
+            SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
+        }
+
         app.SetAiPromptHandler([](const std::string& message) {
             g_ui.aiPromptPending = true;
             g_ui.aiPromptMessage = message;
@@ -119,6 +126,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Drain the offline create queue opportunistically (rate-limited internally).
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
+    app.TickStreamingApply();
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath, const std::string& mimeType,
                                            const std::string& filename, const std::string& sourceUrl) -> bool {
@@ -142,8 +150,8 @@ void SmatchetUI::Draw(AppController& app) {
         });
         g_ui.attachmentPreviewCallbackRegistered = true;
     }
-    if (!g_openFilePathsHandlerInstalled) {
 #if defined(_WIN32)
+    if (!g_openFilePathsHandlerInstalled) {
         app.SetOpenFilePathsHandler([](bool allowMultiple, const std::string& initialDirectoryUtf8,
                                        std::function<void(std::vector<std::string>)> onComplete) {
             // GLFW: PlatformHandle is GLFWwindow*; PlatformHandleRaw is HWND (see imgui_impl_glfw).
@@ -165,9 +173,9 @@ void SmatchetUI::Draw(AppController& app) {
                 onComplete(std::move(paths));
             }
         });
-#endif
         g_openFilePathsHandlerInstalled = true;
     }
+#endif
     UiPerfMonitor::Instance().BeginFrame();
     SmatchetImageTextureCache::TickPendingDestroys();
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
@@ -367,46 +375,18 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
             d.initialTicketSyncStarted = true;
-            d.initialTicketSyncLoading = true;
-            d.initialTicketSyncFuture =
-                StartInitialTicketFetchAsync(app, d.cfg, ViewState.GetStore());
-        }
-        if (d.initialTicketSyncLoading && d.initialTicketSyncFuture.valid() &&
-            d.initialTicketSyncFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            try {
-                TrackerIssueFetchPack pack = d.initialTicketSyncFuture.get();
-                app.ApplyIssueFetchPack(std::move(pack));
-                app.RefreshLocalDataAndWarmIssueTypeMeta();
-            } catch (...) {
-                LOG_ERROR("SmatchetUI: initial async ticket fetch failed with exception");
-                app.RefreshLocalDataAndWarmIssueTypeMeta();
-            }
-            d.initialTicketSyncLoading = false;
+            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
             d.appliedInitialView = true;
         }
     }
 
-    if (d.connectivityRecoveryTicketResyncPending && !d.connectivityRecoveryTicketFetchLoading) {
-        if (d.appliedInitialView && !d.initialTicketSyncLoading) {
+    else if (d.connectivityRecoveryTicketResyncPending) {
+        if (d.appliedInitialView) {
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
             d.connectivityRecoveryTicketResyncPending = false;
-            d.connectivityRecoveryTicketFetchLoading = true;
-            d.connectivityRecoveryTicketFetchFuture =
-                StartInitialTicketFetchAsync(app, d.cfg, ViewState.GetStore());
+            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
         }
-    }
-    if (d.connectivityRecoveryTicketFetchLoading && d.connectivityRecoveryTicketFetchFuture.valid() &&
-        d.connectivityRecoveryTicketFetchFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-        try {
-            TrackerIssueFetchPack pack = d.connectivityRecoveryTicketFetchFuture.get();
-            app.ApplyIssueFetchPack(std::move(pack));
-            app.RefreshLocalDataAndWarmIssueTypeMeta();
-        } catch (...) {
-            LOG_ERROR("SmatchetUI: connectivity recovery async ticket fetch failed with exception");
-            app.RefreshLocalDataAndWarmIssueTypeMeta();
-        }
-        d.connectivityRecoveryTicketFetchLoading = false;
     }
 }
 
@@ -546,9 +526,6 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
 UiDrawSession::~UiDrawSession() {
     DrainAuditReloadFuture(*this);
 }
-
-
-
 
 
 

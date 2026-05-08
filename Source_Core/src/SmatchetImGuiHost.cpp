@@ -552,6 +552,11 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
 
+    if (SmatchetCheckAndApplyFontReload()) {
+        ImGui_ImplDX12_InvalidateDeviceObjects();
+        ImGui_ImplDX12_CreateDeviceObjects();
+    }
+
     ImGui_ImplDX12_NewFrame();
     ImGui::NewFrame();
 
@@ -612,10 +617,10 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
     ImGui::Render();
 
     ImDrawData* drawData = ImGui::GetDrawData();
-    static double LastDrawStatsLogSeconds = 0.0;
     {
         // Avoid spamming logs: at most once per 1s.
         // (Use std::chrono instead of UE time here; it's fine for diagnostics.)
+        static double LastDrawStatsLogSeconds = 0.0;
         using clock = std::chrono::steady_clock;
         const double nowSeconds =
             std::chrono::duration_cast<std::chrono::duration<double>>(clock::now().time_since_epoch()).count();
@@ -726,6 +731,15 @@ void SmatchetImGuiHost::AddInputCharacter(unsigned int character) {
     }
     ImGuiIO& io = ImGui::GetIO();
     io.AddInputCharacter(character);
+}
+
+void SmatchetImGuiHost::TickApplicationWork() {
+    if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        return;
+    }
+    ImplData->App.TickOfflineCreates();
+    ImplData->App.TickOfflineFieldEdits();
+    ImplData->App.TickStreamingApply();
 }
 
 const char* SmatchetImGuiHost::PeekLastInitErrorUtf8() const {
@@ -890,6 +904,13 @@ bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host) {
     if (!h)
         return false;
     return h->IsFrameActive();
+}
+
+void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host) {
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h)
+        return;
+    h->TickApplicationWork();
 }
 
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,

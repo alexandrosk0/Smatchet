@@ -55,6 +55,9 @@ bool SmatchetHost_IsUiVisible(SmatchetImGuiHostHandle host);
 bool SmatchetHost_IsInitialized(SmatchetImGuiHostHandle host);
 bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host);
 
+/** Drain offline replay + streamed ticket batches when not building an ImGui frame (overlay hidden). */
+void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host);
+
 // Frame
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,
                              float viewportHeight);
