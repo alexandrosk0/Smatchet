@@ -13,6 +13,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     try {
         db.exec("PRAGMA journal_mode=WAL");
         db.exec("PRAGMA synchronous=NORMAL");
+        db.setBusyTimeout(5000);
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager: failed to set WAL pragmas: %s", ex.what());
     }
@@ -172,6 +173,20 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
         return results;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::GetAllTickets failed err=%s", ex.what());
+        throw;
+    }
+}
+
+std::vector<std::string> LocalCacheManager::GetAllTicketIds() {
+    try {
+        std::vector<std::string> results;
+        SQLite::Statement query(db, "SELECT id FROM tickets");
+        while (query.executeStep()) {
+            results.push_back(query.getColumn(0).getText());
+        }
+        return results;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::GetAllTicketIds failed err=%s", ex.what());
         throw;
     }
 }

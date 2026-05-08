@@ -308,7 +308,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         };
 
-        ImGui::BeginChild("ViewFieldsList", ImVec2(0, 220), true);
+        float pickerHeight = d.cfg.ViewFieldPickerHeight;
+        if (pickerHeight < 60.0f) {
+            pickerHeight = 220.0f;
+        }
+
+        ImGui::BeginChild("ViewFieldsList", ImVec2(0, pickerHeight), true);
         if (availableFields.empty()) {
             ImGui::TextDisabled("No field catalog loaded yet.");
         } else if (visibleFields.empty()) {
@@ -362,6 +367,30 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         }
         ImGui::EndChild();
 
+        // Draggable splitter separator
+        ImGui::InvisibleButton("##FieldPickerSplitter", ImVec2(-FLT_MIN, 6.0f));
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        if (ImGui::IsItemActive()) {
+            pickerHeight += ImGui::GetIO().MouseDelta.y;
+            if (pickerHeight < 60.0f) pickerHeight = 60.0f;
+            if (pickerHeight > 600.0f) pickerHeight = 600.0f;
+            d.cfg.ViewFieldPickerHeight = pickerHeight;
+        }
+        if (ImGui::IsItemDeactivated()) {
+            ConfigManager::Save(d.cfg);
+        }
+
+        // Draw decorative thin horizontal bar for the splitter
+        {
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            pMin.y += 2.0f;
+            pMax.y -= 2.0f;
+            ImGui::GetWindowDrawList()->AddRectFilled(pMin, pMax, ImGui::GetColorU32(ImGuiCol_Separator));
+        }
+
         ImGui::Separator();
         ImGui::Text("Column Order");
         ImGui::SameLine();
@@ -382,12 +411,24 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         }
 
-        ImGui::BeginChild("ColumnOrderList", ImVec2(0, 120), true);
+        // Dynamic height for Column Order to fill the available space down to the buttons
+        float availY = ImGui::GetContentRegionAvail().y;
+        float buttonsHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+        float columnOrderHeight = availY - buttonsHeight;
+        if (columnOrderHeight < 60.0f) {
+            columnOrderHeight = 60.0f;
+        }
+
+        ImGui::BeginChild("ColumnOrderList", ImVec2(0, columnOrderHeight), true);
         for (int i = 0; i < static_cast<int>(d.editingColumnOrder.size()); ++i) {
             const std::string& key = d.editingColumnOrder[static_cast<size_t>(i)];
             const bool selected = (d.selectedColumnOrderIndex == i);
             if (ImGui::Selectable(key.c_str(), selected)) {
                 d.selectedColumnOrderIndex = i;
+            }
+            if (selected && d.scrollColumnOrderToIndex == i) {
+                ImGui::SetScrollHereY(0.5f);
+                d.scrollColumnOrderToIndex = -1;
             }
             if (ImGui::BeginPopupContextItem()) {
                 if (key != "id" && ImGui::MenuItem("Remove column from view")) {
@@ -421,6 +462,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             std::swap(d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex)],
                       d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex - 1)]);
             --d.selectedColumnOrderIndex;
+            d.scrollColumnOrderToIndex = d.selectedColumnOrderIndex;
         }
         ImGui::SameLine();
         if (ImGui::Button("Move Down") && d.selectedColumnOrderIndex >= 0 &&
@@ -428,6 +470,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             std::swap(d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex)],
                       d.editingColumnOrder[static_cast<size_t>(d.selectedColumnOrderIndex + 1)]);
             ++d.selectedColumnOrderIndex;
+            d.scrollColumnOrderToIndex = d.selectedColumnOrderIndex;
         }
         if (disableColumnMoveButtons) {
             ImGui::EndDisabled();

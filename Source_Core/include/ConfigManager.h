@@ -42,11 +42,7 @@ struct CommentTemplate {
 
     // Support nlohmann::json serialization
     friend void to_json(nlohmann::json& j, const CommentTemplate& t) {
-        j = nlohmann::json{
-            {"id", t.Id},
-            {"title", t.Title},
-            {"text", t.Text}
-        };
+        j = nlohmann::json{{"id", t.Id}, {"title", t.Title}, {"text", t.Text}};
     }
 
     friend void from_json(const nlohmann::json& j, CommentTemplate& t) {
@@ -58,18 +54,23 @@ struct CommentTemplate {
 
 inline std::vector<CommentTemplate> GetDefaultQuickCommentTemplates() {
     return {
-        {"need_repro", "Need repro details", "Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details"},
-        {"need_logs", "Need logs / diagnostics", "Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash context\n- Local repro notes"},
-        {"handoff", "Triage handoff summary", "Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:"}
-    };
+        {"need_repro", "Need repro details",
+         "Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- "
+         "Environment details"},
+        {"need_logs", "Need logs / diagnostics",
+         "Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash context\n- Local repro notes"},
+        {"handoff", "Triage handoff summary",
+         "Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:"}};
 }
 
 inline std::vector<CommentTemplate> GetDefaultBlameCommentTemplates() {
     return {
         {"need_repro", "Need repro details", "Need repro details for {key} (blame context: {path}:{line}, CL {cl})."},
-        {"need_logs", "Need logs / diagnostics", "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}."},
-        {"handoff", "Triage handoff summary", "Triage handoff for {key}:\n- Suggested owner: {user}\n- Suspect location: {function} ({path}:{line})\n- CL: {cl}"}
-    };
+        {"need_logs", "Need logs / diagnostics",
+         "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}."},
+        {"handoff", "Triage handoff summary",
+         "Triage handoff for {key}:\n- Suggested owner: {user}\n- Suspect location: {function} ({path}:{line})\n- CL: "
+         "{cl}"}};
 }
 
 struct TrackerConfig {
@@ -159,16 +160,19 @@ struct TrackerConfig {
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
     std::vector<std::string> WorkLogCommentTemplates = {
-        "Investigated and resolved the issue.",
-        "Tested and verified on local environment.",
-        "Refactored code and ran static analysis.",
-        "Discussed with team and updated implementation.",
-        "Wrote unit tests and verified all passing."
-    };
+        "Investigated and resolved the issue.", "Tested and verified on local environment.",
+        "Refactored code and ran static analysis.", "Discussed with team and updated implementation.",
+        "Wrote unit tests and verified all passing."};
 
     // Date formatting preferences
     std::string DateFormatOption = "compact";
     int DateCompactRelativeThresholdDays = 21;
+
+    // View Field Picker height
+    float ViewFieldPickerHeight = 220.0f;
+
+    // Font setting
+    std::string SelectedFontName = "Segoe UI";
 };
 
 struct ViewSortSpec {
@@ -286,8 +290,7 @@ inline nlohmann::json SerializeView(const ViewDefinition& view) {
     viewJson["sort_specs"] = nlohmann::json::array();
     for (const auto& spec : view.SortSpecs) {
         if (spec.Direction != 0) {
-            viewJson["sort_specs"].push_back(
-                nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
+            viewJson["sort_specs"].push_back(nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
         }
     }
     return viewJson;
@@ -404,15 +407,8 @@ class ConfigManager {
         bool McpAllowRemote;
 
         CliOverrides()
-            : HasDbPath(false)
-            , DbPath()
-            , HasBackendType(false)
-            , BackendType()
-            , HasMcpPort(false)
-            , McpPort(0)
-            , HasMcpAllowRemote(false)
-            , McpAllowRemote(false)
-        {}
+            : HasDbPath(false), DbPath(), HasBackendType(false), BackendType(), HasMcpPort(false), McpPort(0),
+              HasMcpAllowRemote(false), McpAllowRemote(false) {}
     };
 
     // Optional base directory for config/views (e.g. exe directory). If set, paths are baseDir + filename.
@@ -438,7 +434,7 @@ class ConfigManager {
             const std::wstring wPath = Utf8ToWide(path);
             if (!wPath.empty()) {
                 HANDLE h = CreateFileW(wPath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
                 if (h != INVALID_HANDLE_VALUE) {
                     LARGE_INTEGER li{};
                     if (GetFileSizeEx(h, &li) && li.QuadPart > 0 &&
@@ -448,9 +444,8 @@ class ConfigManager {
                         size_t off = 0;
                         while (off < n) {
                             const size_t room = n - off;
-                            const DWORD toRead = room > static_cast<size_t>(1u << 20)
-                                                       ? static_cast<DWORD>(1u << 20)
-                                                       : static_cast<DWORD>(room);
+                            const DWORD toRead = room > static_cast<size_t>(1u << 20) ? static_cast<DWORD>(1u << 20)
+                                                                                      : static_cast<DWORD>(room);
                             DWORD rd = 0;
                             if (!ReadFile(h, &raw[off], toRead, &rd, nullptr) || rd == 0) {
                                 raw.clear();
@@ -552,6 +547,8 @@ class ConfigManager {
         j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
         j["date_format_option"] = config.DateFormatOption;
         j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
+        j["view_field_picker_height"] = config.ViewFieldPickerHeight;
+        j["selected_font_name"] = config.SelectedFontName;
         j.erase("mcp_server_window_layout_valid");
         j.erase("mcp_server_window_x");
         j.erase("mcp_server_window_y");
@@ -753,7 +750,8 @@ class ConfigManager {
                     j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
                 cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
                 cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
-                cfg.LogTrackerHttpBodies = j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
+                cfg.LogTrackerHttpBodies =
+                    j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
                 cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
 #if defined(_WIN32)
                 cfg.AiApiKey = UnprotectSecretFromConfig(j.value("ai_api_key_enc", std::string{}));
@@ -778,26 +776,32 @@ class ConfigManager {
                     }
                 }
                 cfg.ShowMcpServerWindow = j.value("show_mcp_server_window", cfg.ShowMcpServerWindow);
-                cfg.McpServerInfoPanelHeightPx =
-                    static_cast<float>(j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
-                cfg.McpServerActivityPanelHeightPx = static_cast<float>(
-                    j.value("mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
+                cfg.McpServerInfoPanelHeightPx = static_cast<float>(
+                    j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
+                cfg.McpServerActivityPanelHeightPx = static_cast<float>(j.value(
+                    "mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
                 cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
                 cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
-                cfg.DateCompactRelativeThresholdDays = j.value("date_compact_relative_threshold_days", cfg.DateCompactRelativeThresholdDays);
-                if (cfg.DateCompactRelativeThresholdDays < 1) cfg.DateCompactRelativeThresholdDays = 1;
-                if (cfg.DateCompactRelativeThresholdDays > 365) cfg.DateCompactRelativeThresholdDays = 365;
+                cfg.DateCompactRelativeThresholdDays =
+                    j.value("date_compact_relative_threshold_days", cfg.DateCompactRelativeThresholdDays);
+                if (cfg.DateCompactRelativeThresholdDays < 1)
+                    cfg.DateCompactRelativeThresholdDays = 1;
+                if (cfg.DateCompactRelativeThresholdDays > 365)
+                    cfg.DateCompactRelativeThresholdDays = 365;
                 cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
                 cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);
                 cfg.ImportMaxConcurrent = j.value("import_max_concurrent", cfg.ImportMaxConcurrent);
                 cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
                 cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
+                cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
+                cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
                 if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
                     cfg.QuickCommentTemplates.clear();
                     for (const auto& item : j["quick_comment_templates"]) {
                         try {
                             cfg.QuickCommentTemplates.push_back(item.get<CommentTemplate>());
-                        } catch (...) {}
+                        } catch (...) {
+                        }
                     }
                 } else {
                     cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
@@ -808,7 +812,8 @@ class ConfigManager {
                     for (const auto& item : j["blame_comment_templates"]) {
                         try {
                             cfg.BlameCommentTemplates.push_back(item.get<CommentTemplate>());
-                        } catch (...) {}
+                        } catch (...) {
+                        }
                     }
                 } else {
                     cfg.BlameCommentTemplates = GetDefaultBlameCommentTemplates();
@@ -834,12 +839,9 @@ class ConfigManager {
                     }
                 } else {
                     cfg.WorkLogCommentTemplates = {
-                        "Investigated and resolved the issue.",
-                        "Tested and verified on local environment.",
-                        "Refactored code and ran static analysis.",
-                        "Discussed with team and updated implementation.",
-                        "Wrote unit tests and verified all passing."
-                    };
+                        "Investigated and resolved the issue.", "Tested and verified on local environment.",
+                        "Refactored code and ran static analysis.", "Discussed with team and updated implementation.",
+                        "Wrote unit tests and verified all passing."};
                 }
 
                 {
@@ -867,7 +869,8 @@ class ConfigManager {
                 }
                 {
                     cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
-                    if (j.contains("new_issue_inherit_field_ids_plane") && j["new_issue_inherit_field_ids_plane"].is_array()) {
+                    if (j.contains("new_issue_inherit_field_ids_plane") &&
+                        j["new_issue_inherit_field_ids_plane"].is_array()) {
                         cfg.NewIssueInheritFieldIdsPlane.clear();
                         for (const auto& item : j["new_issue_inherit_field_ids_plane"]) {
                             if (item.is_string()) {
@@ -907,7 +910,8 @@ class ConfigManager {
         if (const char* envMcpPort = std::getenv("SMATCHET_MCP_PORT")) {
             try {
                 cfg.McpPort = std::stoi(envMcpPort);
-            } catch (...) {}
+            } catch (...) {
+            }
         }
         if (const char* envMcpRemote = std::getenv("SMATCHET_MCP_ALLOW_REMOTE")) {
             std::string s(envMcpRemote);
@@ -1312,9 +1316,3 @@ class ConfigManager {
 };
 
 #endif
-
-
-
-
-
-

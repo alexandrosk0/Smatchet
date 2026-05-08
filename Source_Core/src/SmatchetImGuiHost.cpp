@@ -552,6 +552,11 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
 
+    if (SmatchetCheckAndApplyFontReload()) {
+        ImGui_ImplDX12_InvalidateDeviceObjects();
+        ImGui_ImplDX12_CreateDeviceObjects();
+    }
+
     ImGui_ImplDX12_NewFrame();
     ImGui::NewFrame();
 

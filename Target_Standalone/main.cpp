@@ -304,6 +304,11 @@ int main(int argc, char** argv) {
         // Poll and handle events (inputs, window resize, etc.)
         glfwPollEvents();
 
+        if (SmatchetCheckAndApplyFontReload()) {
+            ImGui_ImplOpenGL3_DestroyDeviceObjects();
+            ImGui_ImplOpenGL3_CreateDeviceObjects();
+        }
+
         // Start the ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();

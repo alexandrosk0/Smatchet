@@ -172,6 +172,8 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
         d.logBuffer.assign(1, '\0');
     }
     ImGui::SameLine();
+    ImGui::Checkbox("Auto-scroll", &d.logAutoScroll);
+    ImGui::SameLine();
     ImGui::TextDisabled("(application log)");
 
     ImGui::Separator();
@@ -216,12 +218,21 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     }
 
     ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::InputTextMultiline("##LogText", d.logBuffer.data(), d.logBuffer.size(), ImVec2(-FLT_MIN, -FLT_MIN),
+
+    float height = ImGui::GetTextLineHeightWithSpacing() * (std::count(d.logBuffer.begin(), d.logBuffer.end(), '\n') + 2);
+    if (height < ImGui::GetContentRegionAvail().y) {
+        height = ImGui::GetContentRegionAvail().y;
+    }
+
+    ImGui::InputTextMultiline("##LogText", d.logBuffer.data(), d.logBuffer.size(), ImVec2(-FLT_MIN, height),
                               ImGuiInputTextFlags_ReadOnly);
+
+    if (d.logAutoScroll && rebuildLogBuffer) {
+        ImGui::SetScrollHereY(1.0f);
+    }
     ImGui::EndChild();
     ImGui::End();
 }
-
 
 
 

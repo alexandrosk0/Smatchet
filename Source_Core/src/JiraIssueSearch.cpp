@@ -206,17 +206,28 @@ bool JiraAppendCachedTicketFromSearchIssue(
 
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                   const ViewsStore* viewsOverride, std::string* outFetchError) {
+    std::vector<CachedTicket> results;
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+    };
+    auto shouldCancel = []() { return false; };
+    TrackerIssueFetchSummary summary = FetchIssuesStreamed(onBatch, shouldCancel, configOverride, viewsOverride);
     if (outFullSyncCompleted) {
-        *outFullSyncCompleted = false;
+        *outFullSyncCompleted = summary.FullSyncCompleted;
     }
     if (outFetchError) {
-        outFetchError->clear();
+        *outFetchError = summary.FetchError;
     }
-    const auto setFetchErr = [outFetchError](const std::string& msg) {
-        if (outFetchError) {
-            *outFetchError = msg;
-        }
-    };
+    return results;
+}
+
+TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(
+    const BatchCallback& onBatch,
+    const CancelCallback& shouldCancel,
+    const TrackerConfig* configOverride,
+    const ViewsStore* viewsOverride) {
+
+    TrackerIssueFetchSummary summary;
 
     TrackerConfig cfgStorage;
     const TrackerConfig* cfgPtr = configOverride;
@@ -228,8 +239,8 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
 
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         LOG_WARN("JiraClient: missing API token or domain; skipping FetchIssues.");
-        setFetchErr("Missing Tracker domain or API token.");
-        return {};
+        summary.FetchError = "Missing Tracker domain or API token.";
+        return summary;
     }
 
     std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -265,7 +276,6 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
 
-    std::vector<CachedTicket> results;
     std::string nextPageToken;
     std::string lastResponseBody;
     const int kMaxPages = 50;
@@ -273,6 +283,11 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
     bool syncEndedCleanly = false;
 
     for (int page = 1; page <= kMaxPages; ++page) {
+        if (shouldCancel && shouldCancel()) {
+            syncEndedCleanly = false;
+            break;
+        }
+
         std::string pageUrl = baseSearchUrl;
         if (!nextPageToken.empty()) {
             pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
@@ -294,7 +309,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
                 if (!response.error.message.empty()) {
                     msg += std::string(" ") + response.error.message;
                 }
-                setFetchErr(std::move(msg));
+                summary.FetchError = std::move(msg);
             }
             break;
         }
@@ -306,13 +321,16 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
                 LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s", page,
                          TruncateForLog(response.text, 800).c_str());
                 syncEndedCleanly = false;
-                setFetchErr("Jira search response missing 'issues' array.");
+                summary.FetchError = "Jira search response missing 'issues' array.";
                 break;
             }
 
-            const size_t before = results.size();
+            std::vector<CachedTicket> pageTickets;
             for (const auto& issue : json["issues"]) {
-                if (!JiraAppendCachedTicketFromSearchIssue(issue, selectedFields, fetchIssueComments, results)) {
+                if (shouldCancel && shouldCancel()) {
+                    break;
+                }
+                if (!JiraAppendCachedTicketFromSearchIssue(issue, selectedFields, fetchIssueComments, pageTickets)) {
                     const std::string issueKey =
                         issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
                     LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s", page,
@@ -320,8 +338,19 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
                     syncEndedCleanly = false;
                 }
             }
-            const size_t added = results.size() - before;
-            LOG_INFO("JiraClient: fetched page %d with %zu issues (total=%zu).", page, added, results.size());
+
+            if (shouldCancel && shouldCancel()) {
+                syncEndedCleanly = false;
+                break;
+            }
+
+            size_t added = pageTickets.size();
+            summary.FetchedCount += added;
+            LOG_INFO("JiraClient: fetched page %d with %zu issues (total=%zu).", page, added, summary.FetchedCount);
+
+            if (onBatch && added > 0) {
+                onBatch(std::move(pageTickets));
+            }
 
             const bool isLast = json.value("isLast", true);
             std::string newToken = JsonGetStringIfString(json, "nextPageToken");
@@ -345,7 +374,7 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
             LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s", page, ex.what(),
                       TruncateForLog(lastResponseBody).c_str());
             syncEndedCleanly = false;
-            setFetchErr(std::string("JSON parse error: ") + ex.what());
+            summary.FetchError = std::string("JSON parse error: ") + ex.what();
             break;
         }
     }
@@ -354,11 +383,9 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
         LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);
     }
 
-    if (outFullSyncCompleted) {
-        *outFullSyncCompleted = syncEndedCleanly && fetchedPages > 0;
-    }
+    summary.FullSyncCompleted = syncEndedCleanly && fetchedPages > 0 && (!shouldCancel || !shouldCancel());
 
-    if (results.empty()) {
+    if (summary.FetchedCount == 0 && summary.FetchError.empty()) {
         // Confirm which account the API sees. This distinguishes authenticated-vs-anonymous 200 responses.
         std::string who = cfg.Email;
         bool verifiedIdentity = false;
@@ -373,9 +400,6 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
                 verifiedIdentity = true;
             } catch (const std::exception& ex) {
                 LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", ex.what(),
-                         TruncateForLog(myselfResp.text, 300).c_str());
-            } catch (...) {
-                LOG_WARN("JiraClient: failed to parse /myself response (unknown) body=%s",
                          TruncateForLog(myselfResp.text, 300).c_str());
             }
         }
@@ -392,8 +416,10 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
                      myselfResp.status_code);
         }
     }
-    return results;
+
+    return summary;
 }
+
 
 bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                     const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets,
@@ -502,7 +528,6 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
     }
     return true;
 }
-
 
 
 

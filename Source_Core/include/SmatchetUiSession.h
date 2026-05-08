@@ -218,6 +218,7 @@ struct UiDrawSession {
     std::future<AuditDisplayCachePayload> auditReloadFuture;
     std::vector<std::string> editingColumnOrder;
     int selectedColumnOrderIndex = -1;
+    int scrollColumnOrderToIndex = -1;
     std::string editingViewId;
     std::vector<std::string> lastSyncedColumnOrder;
 
@@ -257,6 +258,8 @@ struct UiDrawSession {
     bool cachedSortValid = false;
     bool viewSortDirty = false;
     bool forceApplySortSpecs = false;
+    std::chrono::steady_clock::time_point lastGridSortAt{};
+    bool logAutoScroll = true;
 
     int gridBottomHorizontalWheelSwallowsRemaining = 0;
     int gridTopHorizontalWheelSwallowsRemaining = 0;

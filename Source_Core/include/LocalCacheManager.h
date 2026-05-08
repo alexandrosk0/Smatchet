@@ -87,6 +87,7 @@ class LocalCacheManager {
     bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
     void DeleteTicket(const std::string& ticketId);
     std::vector<CachedTicket> GetAllTickets();
+    std::vector<std::string> GetAllTicketIds();
 
     /** @return generated row id. */
     std::int64_t EnqueuePendingCreate(const std::string& payload);

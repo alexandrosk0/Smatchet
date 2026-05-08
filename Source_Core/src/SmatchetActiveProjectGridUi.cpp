@@ -48,6 +48,10 @@ namespace {
 
 constexpr std::chrono::milliseconds kViewStateSaveDebounceLocal{300};
 
+static bool IsPersistableSortDirection(ImGuiSortDirection dir) {
+    return dir == ImGuiSortDirection_Ascending || dir == ImGuiSortDirection_Descending;
+}
+
 
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at
  * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). */
@@ -176,8 +180,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     std::uint64_t gridSortSig = 0;
     const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_Sortable |
-                                       ImGuiTableFlags_SortMulti | ImGuiTableFlags_NoSavedSettings;
-    
+                                       ImGuiTableFlags_SortMulti | ImGuiTableFlags_SortTristate |
+                                       ImGuiTableFlags_NoSavedSettings;
+
     ImGui::Separator();
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
@@ -199,10 +204,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
                 ImGui::TableSetColumnIndex(hci);
                 const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
-                
+
                 // TableHeader must use the Table's native ID stack
                 ImGui::TableHeader(hcol.Label.c_str());
-                
+
                 ImGui::PushID(hci);
                 const TrackerField* hdrMeta =
                     (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
@@ -210,37 +215,44 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 ImGui::PopID();
             }
 
-            // Apply persisted sort from view when ImGui has no sort yet, or when we just switched view.
-            if (activeViewForGrid && !activeViewForGrid->SortSpecs.empty()) {
+            // Apply persisted sort from view when ImGui has no sort yet, or when we just switched/edited view sort.
+            if (activeViewForGrid) {
                 ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-                if (specs && (specs->SpecsCount == 0 || gridSortEnvironmentChanged || d.forceApplySortSpecs)) {
+                const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
+                const bool shouldApplyPersistedSort =
+                    specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs ||
+                              (hasPersistedSort && specs->SpecsCount == 0));
+                if (shouldApplyPersistedSort) {
                     // Clear existing sort state from ImGui internally before re-applying our custom specs
                     if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
                         for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
                             ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
                         }
                     }
-                    for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ++i) {
-                        const ViewSortSpec& vs = activeViewForGrid->SortSpecs[i];
-                        if (vs.Direction == 0)
-                            continue;
-                        int colIndex = -1;
-                        for (size_t c = 0; c < columns.size(); ++c) {
-                            if (columns[c].Key == vs.ColumnKey) {
-                                colIndex = static_cast<int>(c);
-                                break;
+                    if (hasPersistedSort) {
+                        int appliedSortCount = 0;
+                        for (const ViewSortSpec& vs : activeViewForGrid->SortSpecs) {
+                            const ImGuiSortDirection direction = static_cast<ImGuiSortDirection>(vs.Direction);
+                            if (!IsPersistableSortDirection(direction))
+                                continue;
+                            int colIndex = -1;
+                            for (size_t c = 0; c < columns.size(); ++c) {
+                                if (columns[c].Key == vs.ColumnKey) {
+                                    colIndex = static_cast<int>(c);
+                                    break;
+                                }
                             }
-                        }
-                        if (colIndex >= 0) {
-                            ImGui::TableSetColumnSortDirection(colIndex, static_cast<ImGuiSortDirection>(vs.Direction),
-                                                               (i > 0));
+                            if (colIndex >= 0) {
+                                ImGui::TableSetColumnSortDirection(colIndex, direction, appliedSortCount > 0);
+                                ++appliedSortCount;
+                            }
                         }
                     }
                 }
             }
         }
 
-    bool sortedThisFrame = false;
+
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
         ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
@@ -251,20 +263,21 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             if (sortSpecs && sortSpecs->SpecsDirty) {
                 d.cachedSortValid = false;
                 sortSpecs->SpecsDirty = false;
-                
+
                 // Sync header clicks back to View definition
                 if (activeViewForGrid) {
                     std::vector<ViewSortSpec> newSpecs;
                     for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
                         const ImGuiTableColumnSortSpecs& sp = sortSpecs->Specs[s];
-                        if (sp.ColumnIndex >= 0 && sp.ColumnIndex < static_cast<int>(columns.size())) {
+                        if (sp.ColumnIndex >= 0 && sp.ColumnIndex < static_cast<int>(columns.size()) &&
+                            IsPersistableSortDirection(sp.SortDirection)) {
                             ViewSortSpec vs;
                             vs.ColumnKey = columns[sp.ColumnIndex].Key;
                             vs.Direction = static_cast<int>(sp.SortDirection);
                             newSpecs.push_back(vs);
                         }
                     }
-                    
+
                     // Only mark dirty if the sorting rules actually changed (prevent startup/view-switch false dirty)
                     bool changed = (newSpecs.size() != activeViewForGrid->SortSpecs.size());
                     if (!changed) {
@@ -276,7 +289,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             }
                         }
                     }
-                    
+
                     if (changed) {
                         activeViewForGrid->SortSpecs = std::move(newSpecs);
                         d.viewSortDirty = true;
@@ -292,11 +305,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.cachedSortValid = false;
             }
 
+            std::string fingerprint;
             if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
-                std::string fingerprint;
                 fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
                 for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
                     const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+                    if (!IsPersistableSortDirection(spec.SortDirection))
+                        continue;
                     fingerprint += std::to_string(spec.ColumnIndex);
                     fingerprint.push_back(':');
                     fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
@@ -304,12 +319,43 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
                     fingerprint.push_back('|');
                 }
+            }
 
-                if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
-                    d.cachedSortedIndices.size() != tickets.size()) {
-                    d.cachedSortedIndices.resize(tickets.size());
-                    for (size_t i = 0; i < tickets.size(); ++i)
-                        d.cachedSortedIndices[i] = i;
+            static thread_local char lastFilter[128]{};
+            bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
+            if (filterChanged) {
+                d.gridState.RectSel.ClearAll();
+            }
+
+            // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms) during streaming
+            bool needsProjectionRefresh = false;
+            if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
+                d.cachedSortedIndices.size() != tickets.size() ||
+                activeTicketsRevision != d.cachedSortTicketsRevision ||
+                catalogRevision != d.cachedSortCatalogRevision ||
+                filterChanged) {
+                needsProjectionRefresh = true;
+            }
+
+            bool okToRefreshProjection = true;
+            if (app.IsStreamingSyncActive() && needsProjectionRefresh) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - d.lastGridSortAt).count();
+                if (elapsedMs < 500) {
+                    okToRefreshProjection = false;
+                }
+            }
+
+            if (needsProjectionRefresh && okToRefreshProjection) {
+                d.lastGridSortAt = std::chrono::steady_clock::now();
+
+                // 1. Run Sort Spec / Order Indices
+                d.cachedSortedIndices.resize(tickets.size());
+                for (size_t i = 0; i < tickets.size(); ++i) {
+                    d.cachedSortedIndices[i] = i;
+                }
+
+                if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
                     const std::vector<CachedTicket>* ticketsPtr = &tickets;
                     const std::vector<TicketGridColumn>* columnsPtr = &columns;
                     const TrackerFieldCatalogIndex* catalogPtr = &catalogIndex;
@@ -319,6 +365,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                          const auto& cols = *columnsPtr;
                                          for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
                                              const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+                                             if (!IsPersistableSortDirection(spec.SortDirection))
+                                                 continue;
                                              const int colIndex = spec.ColumnIndex;
                                              if (colIndex < 0 || colIndex >= static_cast<int>(cols.size()))
                                                  continue;
@@ -343,62 +391,33 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                          }
                                          return ia < ib;
                                      });
-                    d.cachedSortFingerprint = std::move(fingerprint);
-                    d.cachedSortValid = true;
-                    d.cachedSortTicketsRevision = activeTicketsRevision;
-                    d.cachedSortCatalogRevision = catalogRevision;
-                    sortedThisFrame = true;
                 }
-            } else if (sortSpecs && sortSpecs->SpecsCount == 0) {
-                // No active sort: identity order. Without this, cachedSortValid stays false and the filter
-                // path rebuilds from the full ticket set every frame.
-                const std::string fingerprint;
-                if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
-                    d.cachedSortedIndices.size() != tickets.size() ||
-                    activeTicketsRevision != d.cachedSortTicketsRevision ||
-                    catalogRevision != d.cachedSortCatalogRevision) {
-                    d.cachedSortedIndices.resize(tickets.size());
-                    for (size_t i = 0; i < tickets.size(); ++i)
-                        d.cachedSortedIndices[i] = i;
-                    d.cachedSortFingerprint = fingerprint;
-                    d.cachedSortValid = true;
-                    d.cachedSortTicketsRevision = activeTicketsRevision;
-                    d.cachedSortCatalogRevision = catalogRevision;
-                    sortedThisFrame = true;
-                }
-            }
-        }
 
-        // Apply Filter
-        static thread_local char lastFilter[128]{};
-        static thread_local size_t lastTicketCount = 0;
-        bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
-        if (filterChanged) {
-            d.gridState.RectSel.ClearAll();
-        }
-        if (filterChanged || !d.cachedSortValid || tickets.size() != lastTicketCount || sortedThisFrame) {
-            d.filteredIndices.clear();
-            const std::vector<size_t>& baseIndices = d.cachedSortedIndices.empty() ? std::vector<size_t>() : d.cachedSortedIndices;
-            
-            auto checkMatch = [&](size_t idx) {
-                if (d.gridFilterBuf[0] == '\0') return true;
-                const auto& t = tickets[idx];
-                if (ContainsCaseInsensitive(t.id, d.gridFilterBuf)) return true;
-                if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf)) return true;
-                return false;
-            };
+                d.cachedSortFingerprint = fingerprint;
+                d.cachedSortValid = true;
+                d.cachedSortTicketsRevision = activeTicketsRevision;
+                d.cachedSortCatalogRevision = catalogRevision;
 
-            if (baseIndices.empty()) {
-                for (size_t i = 0; i < tickets.size(); ++i) {
-                    if (checkMatch(i)) d.filteredIndices.push_back(i);
+                // 2. Run Filter and rebuild d.filteredIndices
+                d.filteredIndices.clear();
+                auto checkMatch = [&](size_t idx) {
+                    if (idx >= tickets.size())
+                        return false;
+                    if (d.gridFilterBuf[0] == '\0') return true;
+                    const auto& t = tickets[idx];
+                    if (ContainsCaseInsensitive(t.id, d.gridFilterBuf)) return true;
+                    if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf)) return true;
+                    return false;
+                };
+
+                for (size_t idx : d.cachedSortedIndices) {
+                    if (checkMatch(idx)) {
+                        d.filteredIndices.push_back(idx);
+                    }
                 }
-            } else {
-                for (size_t idx : baseIndices) {
-                    if (checkMatch(idx)) d.filteredIndices.push_back(idx);
-                }
+
+                std::strncpy(lastFilter, d.gridFilterBuf, sizeof(lastFilter));
             }
-            std::strncpy(lastFilter, d.gridFilterBuf, sizeof(lastFilter));
-            lastTicketCount = tickets.size();
         }
 
         // Rectangular selection invalidation: anchor/extent are expressed in
@@ -508,6 +527,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
+            const size_t oldFilteredCount = d.filteredIndices.size();
+            d.filteredIndices.erase(std::remove_if(d.filteredIndices.begin(), d.filteredIndices.end(),
+                                                   [&](size_t idx) { return idx >= tickets.size(); }),
+                                    d.filteredIndices.end());
+            if (d.filteredIndices.size() != oldFilteredCount) {
+                d.gridState.RectSel.ClearAll();
+            }
             const std::vector<size_t>& indicesToUse = d.filteredIndices;
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(indicesToUse.size()));
@@ -515,6 +541,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
                     const size_t r = static_cast<size_t>(clippedRow);
                     const size_t ticketIndex = indicesToUse[r];
+                    if (ticketIndex >= tickets.size())
+                        continue;
                     const CachedTicket& ticket = tickets[ticketIndex];
                     bool isActiveIssue = (d.gridState.ActiveIssueId == ticket.id);
                     const bool idKeySelectableSelected = d.gridState.RectSel.RowSelected(clippedRow);
@@ -540,9 +568,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     const std::string statusRaw = ticket.GetFieldValue("status");
                     std::string statusLower = ToLowerAsciiCopy(statusRaw);
                     ImVec4 statusColor = ImVec4(0, 0, 0, 0);
-                    if (statusLower.find("done") != std::string::npos || statusLower.find("resolved") != std::string::npos) 
+                    if (statusLower.find("done") != std::string::npos || statusLower.find("resolved") != std::string::npos)
                         statusColor = SmatchetTheme::Colors::StatusDone;
-                    else if (statusLower.find("progress") != std::string::npos) 
+                    else if (statusLower.find("progress") != std::string::npos)
                         statusColor = SmatchetTheme::Colors::StatusInProgress;
                     else if (statusLower.find("todo") != std::string::npos || statusLower.find("open") != std::string::npos || statusLower.find("backlog") != std::string::npos)
                         statusColor = SmatchetTheme::Colors::StatusToDo;
@@ -737,7 +765,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
                             const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
                             if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
-                                currentSortSpecs->Specs[s].SortDirection != ImGuiSortDirection_None) {
+                                IsPersistableSortDirection(currentSortSpecs->Specs[s].SortDirection)) {
                                 ViewSortSpec vs;
                                 vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
                                 vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);

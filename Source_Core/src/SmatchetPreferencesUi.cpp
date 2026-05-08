@@ -5,6 +5,7 @@
 #include "IssueDraft.h"
 #include "SmatchetUiSession.h"
 #include "TrackerFieldValueUtils.h"
+#include "SmatchetImGuiFonts.h"
 
 #include "imgui.h"
 
@@ -253,6 +254,37 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         }
 #endif
         if (ImGui::BeginTabItem("Appearance")) {
+            ImGui::TextUnformatted("Application Typography");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            const char* fonts[] = {
+                "Segoe UI",
+                "Proggy (Clean/Default)",
+                "Consolas",
+                "Arial",
+                "Courier New",
+                "Georgia",
+                "Lucida Console",
+                "Microsoft Sans Serif",
+                "Trebuchet MS",
+                "Verdana"
+            };
+            int currentFontIdx = 0;
+            for (int i = 0; i < 10; ++i) {
+                if (d.cfg.SelectedFontName == fonts[i]) {
+                    currentFontIdx = i;
+                    break;
+                }
+            }
+            if (ImGui::Combo("Application Font", &currentFontIdx, fonts, 10)) {
+                d.cfg.SelectedFontName = fonts[currentFontIdx];
+                ConfigManager::Save(d.cfg);
+                SmatchetRequestFontReload(d.cfg.SelectedFontName, 16.0f);
+            }
+            ImGui::SetItemTooltip("Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");
+
+            ImGui::Spacing();
             ImGui::TextUnformatted("Grid and field text");
             ImGui::Separator();
             if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {

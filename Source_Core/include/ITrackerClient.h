@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,6 +11,12 @@ struct TrackerConfig;
 struct ViewsStore;
 struct IssueDraft;
 struct RequiredFieldSet;
+
+struct TrackerIssueFetchSummary {
+    size_t FetchedCount = 0;
+    bool FullSyncCompleted = false;
+    std::string FetchError;
+};
 
 enum class TrackerReachabilityProbeKind {
     AuthenticatedReachable,
@@ -49,6 +56,28 @@ class ITrackerClient {
                                                   const TrackerConfig* configOverride = nullptr,
                                                   const ViewsStore* viewsOverride = nullptr,
                                                   std::string* outFetchError = nullptr) = 0;
+
+    using BatchCallback = std::function<void(std::vector<CachedTicket>&&)>;
+    using CancelCallback = std::function<bool()>;
+
+    virtual TrackerIssueFetchSummary FetchIssuesStreamed(
+        const BatchCallback& onBatch,
+        const CancelCallback& shouldCancel,
+        const TrackerConfig* configOverride = nullptr,
+        const ViewsStore* viewsOverride = nullptr) {
+
+        TrackerIssueFetchSummary summary;
+        std::string fetchError;
+        bool fullSyncCompleted = false;
+        std::vector<CachedTicket> tickets = FetchIssues(&fullSyncCompleted, configOverride, viewsOverride, &fetchError);
+        summary.FetchedCount = tickets.size();
+        summary.FullSyncCompleted = fullSyncCompleted;
+        summary.FetchError = fetchError;
+        if (!tickets.empty() && onBatch && (!shouldCancel || !shouldCancel())) {
+            onBatch(std::move(tickets));
+        }
+        return summary;
+    }
 
     /**
      * Fetch a specific set of issues by their keys.
@@ -176,7 +205,6 @@ class ITrackerClient {
         return false;
     }
 };
-
 
 
 
