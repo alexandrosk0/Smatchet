@@ -419,7 +419,10 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                 const std::string& label = !field.Name.empty() ? field.Name : field.Id;
                 const std::string richValue = ticket.GetFieldRichValue(field.Id);
                 OpenLongTextEditor(ticket.id, field, label, currentValue, richValue);
-                ImGui::OpenPopup(kLongTextModalPopupId);
+                // Do NOT call ImGui::OpenPopup here — we are inside a table cell.
+                // ImGui requires OpenPopup and BeginPopupModal at the same window depth.
+                // RenderLongTextModal (called after EndTable) sees JustOpened=true and
+                // calls OpenPopup from the stable top-level location.
             }
             // Hand the lifecycle to the modal singleton; the cell falls through to the read-only preview below.
             state.ClearEditing();
@@ -986,6 +989,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (s_ActiveLongTextState.JustOpened) {
+        // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
+        // outside the table, so ImGui can correctly anchor the popup to this window.
+        ImGui::OpenPopup(kLongTextModalPopupId);
         const ImVec2 modalSize(viewport->Size.x * 0.6f, viewport->Size.y * 0.65f);
         ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
         ImGui::SetNextWindowPos(
