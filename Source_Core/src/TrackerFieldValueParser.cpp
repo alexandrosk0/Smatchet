@@ -1,4 +1,5 @@
 #include "TrackerFieldValueParser.h"
+#include "TrackerFieldValueUtils.h"
 
 #include "Logger.h"
 #include "StringUtil.h"
@@ -491,14 +492,6 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
     return result.str();
 }
 
-static bool IsChangelogTimeDurationField(const std::string& fieldId) {
-    return fieldId == "timeoriginalestimate" ||
-           fieldId == "timeestimate" ||
-           fieldId == "timespent" ||
-           fieldId == "aggregatetimeoriginalestimate" ||
-           fieldId == "aggregatetimeestimate" ||
-           fieldId == "aggregatetimespent";
-}
 
 static std::string FormatChangelogTimeValue(const std::string& value) {
     if (value.empty()) {
@@ -616,7 +609,7 @@ std::string ParseChangelog(const nlohmann::json& histories) {
             std::string fromValue = safeValueString(changeItem, "fromString", "from");
             std::string toValue = safeValueString(changeItem, "toString", "to");
 
-            if (IsChangelogTimeDurationField(fieldName)) {
+            if (TrackerFieldValueUtils::IsTimeDurationField(fieldName)) {
                 fromValue = FormatChangelogTimeValue(fromValue);
                 toValue = FormatChangelogTimeValue(toValue);
             }

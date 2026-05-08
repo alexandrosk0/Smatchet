@@ -24,6 +24,8 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
+#include "TrackerFieldValueUtils.h"
+
 
 namespace {
 
@@ -32,12 +34,11 @@ bool IsSprintField(const TrackerField& field) {
 }
 
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
-    return fieldId == "timeoriginalestimate" || fieldId == "timeestimate";
+    return TrackerFieldValueUtils::IsEditableTimetrackingEstimateFieldId(fieldId);
 }
 
 bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
-    return fieldId == "timespent" || fieldId == "aggregatetimeoriginalestimate" || fieldId == "aggregatetimeestimate" ||
-           fieldId == "aggregatetimespent";
+    return TrackerFieldValueUtils::IsNonEditableTimetrackingFieldId(fieldId);
 }
 
 bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {

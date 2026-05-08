@@ -113,15 +113,6 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     return 0;
 }
 
-bool IsTimeDurationField(const std::string& fieldId) {
-    return fieldId == "timeoriginalestimate" ||
-           fieldId == "timeestimate" ||
-           fieldId == "timespent" ||
-           fieldId == "aggregatetimeoriginalestimate" ||
-           fieldId == "aggregatetimeestimate" ||
-           fieldId == "aggregatetimespent";
-}
-
 struct DurationCallbackWrapperData {
     ImGuiInputTextCallback OriginalCallback;
     void* OriginalUserData;

@@ -51,27 +51,6 @@ std::vector<std::string> ResolveCurrentSelectionIds(const TrackerField& field, c
 
 const char* EmptySelectPreviewLabel(const TrackerField& field) { return field.IsUserType ? "Unassigned" : "<none>"; }
 
-std::string BuildSelectionPreview(const TrackerField& field, const std::vector<std::string>& selectedIds) {
-    if (selectedIds.empty()) {
-        return field.IsUserType ? std::string("Unassigned") : std::string("<none>");
-    }
-    std::string preview;
-    for (size_t i = 0; i < selectedIds.size(); ++i) {
-        if (i != 0) {
-            preview += ", ";
-        }
-        preview += ResolveOptionLabel(field, selectedIds[i]);
-    }
-    return preview;
-}
-
-std::string BuildCascadingPreview(const TrackerFieldOption& parent, const TrackerFieldOption* child) {
-    if (child == nullptr) {
-        return parent.Value;
-    }
-    return parent.Value + " > " + child->Value;
-}
-
 bool TryResolveCascadingSelection(const TrackerField& field, const std::string& currentValue, std::string& outParentId,
                                   std::string& outChildId) {
     outParentId.clear();
@@ -125,6 +104,24 @@ void SaveCommentTemplates(const std::vector<std::string>& list) {
     TrackerConfig cfg = ConfigManager::Load();
     cfg.WorkLogCommentTemplates = list;
     ConfigManager::Save(cfg);
+}
+
+bool IsTimeDurationField(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" ||
+           fieldId == "timeestimate" ||
+           fieldId == "timespent" ||
+           fieldId == "aggregatetimeoriginalestimate" ||
+           fieldId == "aggregatetimeestimate" ||
+           fieldId == "aggregatetimespent";
+}
+
+bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" || fieldId == "timeestimate";
+}
+
+bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
+    return fieldId == "timespent" || fieldId == "aggregatetimeoriginalestimate" || fieldId == "aggregatetimeestimate" ||
+           fieldId == "aggregatetimespent";
 }
 
 } // namespace TrackerFieldValueUtils
