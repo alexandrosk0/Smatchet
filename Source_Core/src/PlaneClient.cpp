@@ -1,4 +1,5 @@
 #include "PlaneClient.h"
+#include "MarkdownConvert.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -667,6 +668,12 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     ticket.fieldValues["created"] = JsonFieldToString(issue, "created_at");
                     ticket.fieldValues["updated"] = JsonFieldToString(issue, "updated_at");
                     ticket.fieldValues["description"] = JsonFieldToString(issue, "description_stripped");
+                    // Preserve the original HTML so the long-text modal editor can round-trip via
+                    // Markdown without destroying formatting on save. See RICH_TEXT_EDITING_V2_PLAN.md.
+                    const std::string descHtml = JsonFieldToString(issue, "description_html");
+                    if (!descHtml.empty()) {
+                        ticket.fieldRichValues["description"] = descHtml;
+                    }
 
                     // Issue Type
                     if (issue.contains("type_detail") && issue["type_detail"].is_object()) {
@@ -1150,7 +1157,21 @@ bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector
     if (field.Id == "summary") {
         outPayload["name"] = values.empty() ? "" : values[0];
     } else if (field.Id == "description") {
-        outPayload["description_html"] = values.empty() ? "" : values[0];
+        // Modal editor produces Markdown; convert to the HTML subset Plane accepts. Empty input
+        // round-trips to empty string. The modal's raw-mode save (kicks in for HTML the converter
+        // can't safely round-trip) ships verbatim — sniffed by "starts with `<` and contains
+        // a closing tag", which is essentially never true for real user-typed Markdown. See
+        // RICH_TEXT_EDITING_V2_PLAN.md.
+        const std::string& md = values.empty() ? std::string() : values[0];
+        if (md.empty()) {
+            outPayload["description_html"] = std::string();
+        } else {
+            size_t firstNonWs = 0;
+            while (firstNonWs < md.size() && std::isspace(static_cast<unsigned char>(md[firstNonWs]))) ++firstNonWs;
+            const bool looksLikeRawHtml = firstNonWs < md.size() && md[firstNonWs] == '<' &&
+                                           md.find("</") != std::string::npos;
+            outPayload["description_html"] = looksLikeRawHtml ? md : MarkdownConvert::MarkdownToHtml(md);
+        }
     } else if (field.Id == "priority") {
         outPayload["priority"] = values.empty() ? "medium" : values[0];
     } else if (field.Id == "status") {
@@ -1350,13 +1371,9 @@ bool PlaneClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<
     if (draft.FieldValues.count("description")) {
         const std::string& desc = draft.FieldValues.at("description");
         if (!desc.empty()) {
-            // Plane API v1 requires valid HTML for description_html.
-            // If it doesn't look like HTML, wrap it in a paragraph.
-            if (desc.find('<') == std::string::npos) {
-                outPayload["description_html"] = "<p>" + desc + "</p>";
-            } else {
-                outPayload["description_html"] = desc;
-            }
+            // New-issue draft also goes through the modal-style Markdown surface; convert to the
+            // HTML subset Plane accepts. See RICH_TEXT_EDITING_V2_PLAN.md.
+            outPayload["description_html"] = MarkdownConvert::MarkdownToHtml(desc);
         }
     }
 

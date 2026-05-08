@@ -23,6 +23,14 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "field_key TEXT NOT NULL, "
             "field_value TEXT, "
             "PRIMARY KEY(ticket_id, field_key))");
+    // Parallel table for original rich-content payloads (ADF JSON / HTML) preserved alongside
+    // stripped values so the long-text modal editor can round-trip without format loss. Empty
+    // for tickets fetched before this column existed; absence means "fall back to stripped".
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_field_rich_values ("
+            "ticket_id TEXT NOT NULL, "
+            "field_key TEXT NOT NULL, "
+            "field_value TEXT, "
+            "PRIMARY KEY(ticket_id, field_key))");
     db.exec("CREATE TABLE IF NOT EXISTS pending_creates ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "payload TEXT NOT NULL, "
@@ -91,6 +99,24 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
             fieldUpsert.clearBindings();
         }
 
+        // Mirror the rich-value table.
+        SQLite::Statement deleteRichFields(db, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
+        deleteRichFields.bind(1, ticket.id);
+        deleteRichFields.exec();
+
+        SQLite::Statement richUpsert(
+            db,
+            "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+        for (const auto& kv : ticket.fieldRichValues) {
+            if (kv.second.empty()) continue;
+            richUpsert.bind(1, ticket.id);
+            richUpsert.bind(2, kv.first);
+            richUpsert.bind(3, kv.second);
+            richUpsert.exec();
+            richUpsert.reset();
+            richUpsert.clearBindings();
+        }
+
         transaction.commit();
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::SaveTicket failed ticket=%s err=%s", ticket.id.c_str(), ex.what());
@@ -114,6 +140,14 @@ bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& 
             out.fieldValues[fieldKey] =
                 fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
         }
+        SQLite::Statement richQuery(
+            db, "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
+        richQuery.bind(1, ticketId);
+        while (richQuery.executeStep()) {
+            const std::string fieldKey = richQuery.getColumn(0).getText();
+            out.fieldRichValues[fieldKey] =
+                richQuery.getColumn(1).isNull() ? std::string() : std::string(richQuery.getColumn(1).getText());
+        }
         return true;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::TryGetTicket failed ticket=%s err=%s", ticketId.c_str(), ex.what());
@@ -127,6 +161,9 @@ void LocalCacheManager::DeleteTicket(const std::string& ticketId) {
         SQLite::Statement deleteFields(db, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
         deleteFields.bind(1, ticketId);
         deleteFields.exec();
+        SQLite::Statement deleteRichFields(db, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
+        deleteRichFields.bind(1, ticketId);
+        deleteRichFields.exec();
         SQLite::Statement deleteTicket(db, "DELETE FROM tickets WHERE id = ?");
         deleteTicket.bind(1, ticketId);
         deleteTicket.exec();
@@ -169,6 +206,17 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
         }
         if (orphanRows > 0) {
             LOG_WARN("LocalCacheManager::GetAllTickets ignored orphan field rows=%zu", orphanRows);
+        }
+
+        SQLite::Statement richQuery(db, "SELECT ticket_id, field_key, field_value FROM ticket_field_rich_values");
+        while (richQuery.executeStep()) {
+            const std::string ticketId = richQuery.getColumn(0).getText();
+            const auto it = indexById.find(ticketId);
+            if (it == indexById.end()) continue;
+            const std::string fieldKey = richQuery.getColumn(1).getText();
+            const std::string fieldValue =
+                richQuery.getColumn(2).isNull() ? std::string() : std::string(richQuery.getColumn(2).getText());
+            results[it->second].fieldRichValues[fieldKey] = fieldValue;
         }
         return results;
     } catch (const std::exception& ex) {

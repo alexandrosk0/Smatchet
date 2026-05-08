@@ -553,7 +553,6 @@ class ConfigManager {
         j["mcp_enabled"] = config.McpEnabled;
         j["mcp_port"] = config.McpPort;
         j["mcp_allow_remote"] = config.McpAllowRemote;
-        j["mcp_auth_token"] = config.McpAuthToken;
         j["mcp_allow_lua_execution"] = config.McpAllowLuaExecution;
         j["mcp_export_fields"] = config.McpExportFields;
         j["show_mcp_server_window"] = config.ShowMcpServerWindow;
@@ -604,10 +603,21 @@ class ConfigManager {
         j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
         j["ai_api_key_enc"] = ProtectSecretForConfig(config.AiApiKey);
         j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
+        const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
+        // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
+        if (config.McpAuthToken.empty() || !mcpAuthTokenEnc.empty()) {
+            j.erase("mcp_auth_token");
+        }
+        j["mcp_auth_token_enc"] = mcpAuthTokenEnc;
 #else
+        j.erase("token_enc");
+        j.erase("ai_api_key_enc");
+        j.erase("plane_api_key_enc");
+        j.erase("mcp_auth_token_enc");
         j["token"] = config.ApiToken;
         j["ai_api_key"] = config.AiApiKey;
         j["plane_api_key"] = config.PlaneApiKey;
+        j["mcp_auth_token"] = config.McpAuthToken;
 #endif
         WriteConfigJson(j);
     }
@@ -732,6 +742,9 @@ class ConfigManager {
         cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
         cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
         cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
+#if defined(_WIN32)
+        bool migrateLegacyPlaintextMcpAuthToken = false;
+#endif
 
         if (!j.empty()) {
             try {
@@ -739,7 +752,7 @@ class ConfigManager {
                 cfg.Domain = j.value("domain", std::string{});
                 cfg.Email = j.value("email", std::string{});
 #if defined(_WIN32)
-                cfg.ApiToken = UnprotectSecretFromConfig(j.value("token_enc", std::string{}));
+                cfg.ApiToken = UnprotectSecretFieldFromConfig("token_enc", j.value("token_enc", std::string{}));
                 if (cfg.ApiToken.empty()) {
                     cfg.ApiToken = j.value("token", std::string{});
                 }
@@ -753,7 +766,7 @@ class ConfigManager {
                 cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
 
 #if defined(_WIN32)
-                cfg.PlaneApiKey = UnprotectSecretFromConfig(j.value("plane_api_key_enc", std::string{}));
+                cfg.PlaneApiKey = UnprotectSecretFieldFromConfig("plane_api_key_enc", j.value("plane_api_key_enc", std::string{}));
                 if (cfg.PlaneApiKey.empty()) {
                     cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
                 }
@@ -771,7 +784,7 @@ class ConfigManager {
                     j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
                 cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
 #if defined(_WIN32)
-                cfg.AiApiKey = UnprotectSecretFromConfig(j.value("ai_api_key_enc", std::string{}));
+                cfg.AiApiKey = UnprotectSecretFieldFromConfig("ai_api_key_enc", j.value("ai_api_key_enc", std::string{}));
                 if (cfg.AiApiKey.empty()) {
                     cfg.AiApiKey = j.value("ai_api_key", std::string{});
                 }
@@ -783,7 +796,15 @@ class ConfigManager {
                 cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
                 cfg.McpPort = j.value("mcp_port", cfg.McpPort);
                 cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
+#if defined(_WIN32)
+                cfg.McpAuthToken = UnprotectSecretFieldFromConfig("mcp_auth_token_enc", j.value("mcp_auth_token_enc", std::string{}));
+                if (cfg.McpAuthToken.empty()) {
+                    cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
+                    migrateLegacyPlaintextMcpAuthToken = !cfg.McpAuthToken.empty();
+                }
+#else
                 cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
+#endif
                 cfg.McpAllowLuaExecution = j.value("mcp_allow_lua_execution", cfg.McpAllowLuaExecution);
                 if (j.contains("mcp_export_fields") && j["mcp_export_fields"].is_array()) {
                     for (const auto& item : j["mcp_export_fields"]) {
@@ -915,6 +936,14 @@ class ConfigManager {
                 LOG_ERROR("ConfigManager: Load() parse error (unknown)");
             }
         }
+
+#if defined(_WIN32)
+        // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
+        if (migrateLegacyPlaintextMcpAuthToken) {
+            LOG_INFO("ConfigManager: migrating legacy plaintext mcp_auth_token to protected storage.");
+            Save(cfg);
+        }
+#endif
 
         // Apply Option 1 overrides (Environment Variables)
         if (const char* envDbPath = std::getenv("SMATCHET_DB_PATH")) {
@@ -1216,7 +1245,7 @@ class ConfigManager {
         DATA_BLOB out{};
         constexpr DWORD kFlags = CRYPTPROTECT_UI_FORBIDDEN;
         if (!CryptProtectData(&in, L"SmatchetConfigSecret", nullptr, nullptr, nullptr, kFlags, &out)) {
-            LOG_WARN("ConfigManager: CryptProtectData failed; secret will not be persisted.");
+            LOG_WARN("ConfigManager: CryptProtectData failed; protected config secret value will not be persisted.");
             return std::string();
         }
         std::string encoded = BinaryToBase64(out.pbData, out.cbData);
@@ -1244,6 +1273,15 @@ class ConfigManager {
         LocalFree(out.pbData);
         return plain;
     }
+
+    static std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64) {
+        const std::string plainText = UnprotectSecretFromConfig(protectedBase64);
+        if (!protectedBase64.empty() && plainText.empty()) {
+            LOG_WARN("ConfigManager: failed to decrypt protected config secret '%s'.", fieldName);
+        }
+        return plainText;
+    }
+
 #else
     static std::string ProtectSecretForConfig(const std::string& plainText) { return plainText; }
     static std::string UnprotectSecretFromConfig(const std::string& protectedValue) { return protectedValue; }

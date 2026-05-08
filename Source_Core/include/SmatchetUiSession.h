@@ -52,6 +52,11 @@ struct PendingFieldEdit {
     std::string IssueId;
     TrackerField Field;
     std::vector<std::string> Values;
+    /// When true, `Values[0]` is already in the backend's target format (ADF JSON / HTML /
+    /// final string) and the payload layer must NOT run MarkdownConvert on it. Set by the
+    /// long-text modal editor's raw-mode path when it can't safely round-trip through Markdown.
+    /// See RICH_TEXT_EDITING_V2_PLAN.md.
+    bool Preformatted = false;
 };
 
 struct FieldEditCommitResult {

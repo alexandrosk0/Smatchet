@@ -185,6 +185,13 @@ bool JiraAppendCachedTicketFromSearchIssue(
                 } else {
                     ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
                 }
+                // Capture the original ADF document alongside the stripped text so the long-text
+                // modal editor can round-trip without format loss. Jira description / environment
+                // / any custom field returning an ADF "doc" object hits this path. See
+                // RICH_TEXT_EDITING_V2_PLAN.md.
+                if (rawValue.is_object() && rawValue.value("type", std::string()) == "doc") {
+                    ticket.fieldRichValues[fieldKey] = rawValue.dump();
+                }
             } else {
                 ticket.fieldValues[fieldKey] = std::string();
             }
