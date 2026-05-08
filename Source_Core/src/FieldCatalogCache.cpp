@@ -38,7 +38,7 @@ std::string NormalizeEndpointForCache(std::string value) {
     const size_t colon = host.find(':');
     if (colon != std::string::npos) {
         portSuffix = host.substr(colon);
-        host = host.substr(0, colon);
+        host.resize(colon);
     }
     std::transform(host.begin(), host.end(), host.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -65,9 +65,9 @@ nlohmann::json OptionToJson(const TrackerFieldOption& o) {
     j["payload_json"] = o.PayloadJson;
     j["disabled"] = o.Disabled;
     nlohmann::json ch = nlohmann::json::array();
-    for (const auto& c : o.Children) {
-        ch.push_back(OptionToJson(c));
-    }
+    std::transform(o.Children.begin(), o.Children.end(), std::back_inserter(ch), [](const auto& c) {
+        return OptionToJson(c);
+    });
     j["children"] = std::move(ch);
     return j;
 }
@@ -109,9 +109,9 @@ nlohmann::json FieldToJson(const TrackerField& f) {
     j["family"] = static_cast<int>(f.Family);
     j["allowed_values"] = f.AllowedValues;
     nlohmann::json opts = nlohmann::json::array();
-    for (const auto& o : f.AllowedValueOptions) {
-        opts.push_back(OptionToJson(o));
-    }
+    std::transform(f.AllowedValueOptions.begin(), f.AllowedValueOptions.end(), std::back_inserter(opts), [](const auto& o) {
+        return OptionToJson(o);
+    });
     j["allowed_value_options"] = std::move(opts);
     j["raw_field_definition_json"] = f.RawFieldDefinitionJson;
     return j;
@@ -163,9 +163,7 @@ nlohmann::json IssueTypeMetaToJson(const TrackerIssueTypeCreateMeta& m) {
     j["issue_type_name"] = m.IssueTypeName;
     j["is_subtask"] = m.IsSubtask;
     nlohmann::json req = nlohmann::json::array();
-    for (const auto& id : m.RequiredFieldIds) {
-        req.push_back(id);
-    }
+    std::copy(m.RequiredFieldIds.begin(), m.RequiredFieldIds.end(), std::back_inserter(req));
     j["required_field_ids"] = std::move(req);
     return j;
 }
@@ -194,19 +192,19 @@ nlohmann::json BuildEntryJson(const std::vector<TrackerField>& fields, const std
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta) {
     nlohmann::json entry = nlohmann::json::object();
     nlohmann::json jf = nlohmann::json::array();
-    for (const auto& f : fields) {
-        jf.push_back(FieldToJson(f));
-    }
+    std::transform(fields.begin(), fields.end(), std::back_inserter(jf), [](const auto& f) {
+        return FieldToJson(f);
+    });
     entry["fields"] = std::move(jf);
     nlohmann::json jc = nlohmann::json::array();
-    for (const auto& c : components) {
-        jc.push_back(nlohmann::json{{"id", c.Id}, {"name", c.Name}});
-    }
+    std::transform(components.begin(), components.end(), std::back_inserter(jc), [](const auto& c) {
+        return nlohmann::json{{"id", c.Id}, {"name", c.Name}};
+    });
     entry["components"] = std::move(jc);
     nlohmann::json jm = nlohmann::json::array();
-    for (const auto& m : issueTypeMeta) {
-        jm.push_back(IssueTypeMetaToJson(m));
-    }
+    std::transform(issueTypeMeta.begin(), issueTypeMeta.end(), std::back_inserter(jm), [](const auto& m) {
+        return IssueTypeMetaToJson(m);
+    });
     entry["issue_type_meta"] = std::move(jm);
     return entry;
 }

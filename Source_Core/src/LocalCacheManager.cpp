@@ -341,8 +341,8 @@ size_t LocalCacheManager::GetDeadPendingCreateCount() {
 }
 
 size_t LocalCacheManager::RunOneTimeLegacyDropPendingAtMaxAttempts() {
-    constexpr const char* kKey = "legacy_drop_pending_ge_max_attempts_v1";
     try {
+        constexpr const char* kKey = "legacy_drop_pending_ge_max_attempts_v1";
         SQLite::Transaction transaction(db);
         SQLite::Statement probe(db, "SELECT 1 FROM cache_meta WHERE key = ? LIMIT 1");
         probe.bind(1, kKey);

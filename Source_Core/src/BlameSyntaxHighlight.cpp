@@ -29,12 +29,7 @@ bool IsKeyword(const std::string& w) {
         "xor_eq",      "override",  "final",      "import",    "module",   "uint8_t",      "uint16_t",
         "uint32_t",    "uint64_t",  "int8_t",     "int16_t",   "int32_t",  "int64_t",      "size_t",
         "ssize_t",     "nullptr_t"};
-    for (const char* k : kws) {
-        if (w == k) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(std::begin(kws), std::end(kws), [&](const char* k) { return w == k; });
 }
 
 ImVec4 Rgba(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }

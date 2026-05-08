@@ -67,6 +67,14 @@ static void glfw_error_callback(int error, const char* description) {
     ::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
+// GLFW Key Callback wrapper to bridge Keypad Enter to standard Enter key
+static void SmatchetKeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_KP_ENTER) {
+        ImGui_ImplGlfw_KeyCallback(window, GLFW_KEY_ENTER, scancode, action, mods);
+    }
+    ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
+}
+
 #if defined(_WIN32)
 static void SmatchetApplyWindowIcon(GLFWwindow* window) {
     if (!window)
@@ -234,6 +242,7 @@ int main(int argc, char** argv) {
 
     // Setup Platform/Renderer bindings
     ImGui_ImplGlfw_InitForOpenGL(window, true);
+    glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
     ImGui_ImplOpenGL3_Init(glsl_version);
     SmatchetLogOpenGLInfo();
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
@@ -275,78 +284,87 @@ int main(int argc, char** argv) {
 
     const TrackerConfig cfg = ConfigManager::Load(cli);
 
-    AppController smatchetApp;
-    PluginHost pluginHost;
-    smatchetApp.SetRuntimePluginHost(&pluginHost);
+    int exitCode = 0;
+    try {
+        AppController smatchetApp;
+        PluginHost pluginHost;
+        smatchetApp.SetRuntimePluginHost(&pluginHost);
 #if defined(SMATCHET_WITH_MCP)
-    {
-        if (cfg.McpEnabled) {
-            const int mcpPort =
-                (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
-            pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
+        {
+            if (cfg.McpEnabled) {
+                const int mcpPort =
+                    (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
+                pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
+            }
         }
-    }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    pluginHost.Register(std::make_unique<LuaConsolePlugin>());
+        pluginHost.Register(std::make_unique<LuaConsolePlugin>());
 #endif
-    pluginHost.OnEarlyInit(smatchetApp);
+        pluginHost.OnEarlyInit(smatchetApp);
 
-    smatchetApp.Initialize(cfg.DbPath, cfg.TrackerType);
-    pluginHost.OnStart(smatchetApp);
+        smatchetApp.Initialize(cfg.DbPath, cfg.TrackerType);
+        pluginHost.OnStart(smatchetApp);
 
-    SmatchetUI mainWindow;
+        SmatchetUI mainWindow;
 
-    // 4. The Main Render Loop
-    ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+        // 4. The Main Render Loop
+        ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
 
-    while (!glfwWindowShouldClose(window)) {
-        // Poll and handle events (inputs, window resize, etc.)
-        glfwPollEvents();
+        while (!glfwWindowShouldClose(window)) {
+            // Poll and handle events (inputs, window resize, etc.)
+            glfwPollEvents();
 
-        if (SmatchetCheckAndApplyFontReload()) {
-            ImGui_ImplOpenGL3_DestroyDeviceObjects();
-            ImGui_ImplOpenGL3_CreateDeviceObjects();
-        }
+            if (SmatchetCheckAndApplyFontReload()) {
+                ImGui_ImplOpenGL3_DestroyDeviceObjects();
+                ImGui_ImplOpenGL3_CreateDeviceObjects();
+            }
 
-        // Start the ImGui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+            // Start the ImGui frame
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
 
-        // ====================================================================
-        // THE BRIDGE: Hand control over to your engine-agnostic UI layer
-        // ====================================================================
+            // ====================================================================
+            // THE BRIDGE: Hand control over to your engine-agnostic UI layer
+            // ====================================================================
 
-        // Setup a full-screen dockspace for a professional layout
-        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            // Setup a full-screen dockspace for a professional layout
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
-        // Draw the main application
-        SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
+            // Draw the main application
+            SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
 
-        // Rendering
-        ImGui::Render();
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w,
-                     clear_color.w);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            // Rendering
+            ImGui::Render();
+            int display_w, display_h;
+            glfwGetFramebufferSize(window, &display_w, &display_h);
+            glViewport(0, 0, display_w, display_h);
+            glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w,
+                         clear_color.w);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-        glfwSwapBuffers(window);
+            glfwSwapBuffers(window);
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
-        if (!g_MainWindowShownAfterFirstFrame) {
-            glfwShowWindow(window);
-            g_MainWindowShownAfterFirstFrame = true;
-        }
+            if (!g_MainWindowShownAfterFirstFrame) {
+                glfwShowWindow(window);
+                g_MainWindowShownAfterFirstFrame = true;
+            }
 #endif
-    }
+        }
 
-    smatchetApp.ClearAutomationLogSinks();
-    smatchetApp.SetRuntimePluginHost(nullptr);
-    pluginHost.OnStop();
+        smatchetApp.ClearAutomationLogSinks();
+        smatchetApp.SetRuntimePluginHost(nullptr);
+        pluginHost.OnStop();
+    } catch (const std::exception& ex) {
+        ::fprintf(stderr, "Exception caught in entry point: %s\n", ex.what());
+        exitCode = 1;
+    } catch (...) {
+        ::fprintf(stderr, "Unknown exception caught in entry point.\n");
+        exitCode = 1;
+    }
 
     // 5. Cleanup
     ImGui_ImplOpenGL3_Shutdown();
@@ -356,7 +374,7 @@ int main(int argc, char** argv) {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    return 0;
+    return exitCode;
 }
 
 

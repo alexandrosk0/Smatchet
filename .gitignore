@@ -52,3 +52,10 @@ smatchet_field_catalog_cache.json
 
 .vexp/
 .cursor/
+*.cppcheck
+*.sln
+*.vcxproj
+*.filters
+*.user
+/smatchet-cppcheck-build-dir
+cppcheck_*.txt

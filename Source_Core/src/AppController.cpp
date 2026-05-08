@@ -1098,11 +1098,11 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
             std::string ext = fname.substr(fname.size() - 4);
 
-            for (char& c : ext) {
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
 
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return static_cast<char>(std::tolower(c));
 
-            }
+            });
 
             if (ext != ".lua") {
 
@@ -2074,15 +2074,13 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
                     std::vector<std::string> localStaleIds;
 
-                    for (const auto& id : existingIds) {
+                    std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
 
-                        if (workerKeepIds.find(id) == workerKeepIds.end()) {
+                                 [&workerKeepIds](const std::string& id) {
 
-                            localStaleIds.push_back(id);
+                                     return workerKeepIds.find(id) == workerKeepIds.end();
 
-                        }
-
-                    }
+                                 });
 
                     std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
 

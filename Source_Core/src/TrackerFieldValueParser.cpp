@@ -497,13 +497,9 @@ static std::string FormatChangelogTimeValue(const std::string& value) {
     if (value.empty()) {
         return value;
     }
-    bool allDigits = true;
-    for (char ch : value) {
-        if (!std::isdigit(static_cast<unsigned char>(ch))) {
-            allDigits = false;
-            break;
-        }
-    }
+    const bool allDigits = std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isdigit(ch);
+    });
     if (allDigits) {
         try {
             long long seconds = std::stoll(value);
@@ -663,13 +659,9 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
     }
 
     // Support a plain number (seconds).
-    bool allDigits = true;
-    for (char ch : s) {
-        if (!std::isdigit(static_cast<unsigned char>(ch))) {
-            allDigits = false;
-            break;
-        }
-    }
+    const bool allDigits = std::all_of(s.begin(), s.end(), [](unsigned char ch) {
+        return std::isdigit(ch);
+    });
     if (allDigits) {
         try {
             return std::stoll(s);

@@ -225,9 +225,9 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
 }
 
 std::string ToUpperAscii(std::string s) {
-    for (auto& c : s) {
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    }
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
     return s;
 }
 
@@ -260,11 +260,9 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         if (!results.is_array()) {
             return;
         }
-        for (const auto& row : results) {
-            if (row.is_object()) {
-                outRows.push_back(row);
-            }
-        }
+        std::copy_if(results.begin(), results.end(), std::back_inserter(outRows), [](const auto& row) {
+            return row.is_object();
+        });
         bool more = false;
         if (j.is_object() && j.contains("next_page_results") && j["next_page_results"].is_boolean()) {
             more = j["next_page_results"].get<bool>();
@@ -456,7 +454,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     std::vector<CachedState> tempCachedStates;
                     auto results = (j.is_object() && j.contains("results")) ? j["results"] : j;
                     if (results.is_array()) {
-                        for (auto& s : results) {
+                        for (const auto& s : results) {
                             CachedState cs;
                             cs.Id = JsonFieldToString(s, "id");
                             cs.Name = JsonFieldToString(s, "name");
@@ -623,11 +621,11 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     }
 
                     if (assigneeName == assigneeId && !assigneeId.empty()) {
-                        for (const auto& u : localCachedUsers) {
-                            if (u.AccountId == assigneeId) {
-                                assigneeName = u.DisplayName;
-                                break;
-                            }
+                        auto uIt = std::find_if(localCachedUsers.begin(), localCachedUsers.end(), [&](const auto& u) {
+                            return u.AccountId == assigneeId;
+                        });
+                        if (uIt != localCachedUsers.end()) {
+                            assigneeName = uIt->DisplayName;
                         }
                     }
 
@@ -993,7 +991,6 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
             continue;
         }
         const std::string typeId = JsonFieldToString(tentry, "id");
-        const std::string typeName = JsonFieldToString(tentry, "name");
         if (typeId.empty()) {
             continue;
         }
@@ -1105,7 +1102,6 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
     }
 
     if (planeProjectId_.empty()) {
-        std::string dummyId, dummyIdent;
         ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
     }
     if (planeProjectId_.empty()) {
@@ -1164,13 +1160,10 @@ bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector
     } else if (field.Id == "labels") {
         std::vector<std::string> labelIds;
         for (const auto& val : values) {
-            std::string id = val;
-            for (const auto& l : cachedLabels_) {
-                if (l.Name == val) {
-                    id = l.Id;
-                    break;
-                }
-            }
+            auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
+                return l.Name == val;
+            });
+            std::string id = (lIt != cachedLabels_.end()) ? lIt->Id : val;
             labelIds.push_back(id);
         }
         outPayload["labels"] = labelIds;
@@ -1196,32 +1189,37 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
                                         const std::string& value) const {
     std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
     if (fieldId == "status") {
-        for (const auto& s : cachedStates_) {
-            if (s.Id == value) return s.Name;
-        }
+        auto sIt = std::find_if(cachedStates_.begin(), cachedStates_.end(), [&](const auto& s) {
+            return s.Id == value;
+        });
+        if (sIt != cachedStates_.end()) return sIt->Name;
     }
 
     if (!field) {
         return value;
     }
     if (field->Id == "sprint") {
-        for (const auto& c : cachedCycles_) {
-            if (c.Id == value) return c.Name;
-        }
+        auto cIt = std::find_if(cachedCycles_.begin(), cachedCycles_.end(), [&](const auto& c) {
+            return c.Id == value;
+        });
+        if (cIt != cachedCycles_.end()) return cIt->Name;
     }
     if (field->Id == "issuetype") {
-        for (const auto& opt : field->AllowedValueOptions) {
-            if (opt.Id == value) return opt.Value;
-        }
+        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
+            return opt.Id == value;
+        });
+        if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
     }
     if (field->Id == "assignee" || field->IsUserType) {
-        for (const auto& u : cachedUsers_) {
-            if (u.AccountId == value) return u.DisplayName;
-        }
+        auto uIt = std::find_if(cachedUsers_.begin(), cachedUsers_.end(), [&](const auto& u) {
+            return u.AccountId == value;
+        });
+        if (uIt != cachedUsers_.end()) return uIt->DisplayName;
         // Fallback to searching AllowedValueOptions if not in cachedUsers_
-        for (const auto& opt : field->AllowedValueOptions) {
-            if (opt.Id == value) return opt.Value;
-        }
+        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
+            return opt.Id == value;
+        });
+        if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
         LOG_DEBUG("PlaneClient: Failed to resolve user UUID '%s' for field '%s' (cache size: %zu)", value.c_str(), field->Id.c_str(), cachedUsers_.size());
     }
     if (field->Id == "labels") {
@@ -1231,34 +1229,33 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
             std::string resolved;
             for (size_t i = 0; i < parts.size(); ++i) {
                 if (i > 0) resolved += ", ";
-                bool found = false;
-                for (const auto& l : cachedLabels_) {
-                    if (l.Id == parts[i]) {
-                        resolved += l.Name;
-                        found = true;
-                        break;
+                auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
+                    return l.Id == parts[i];
+                });
+                if (lIt != cachedLabels_.end()) {
+                    resolved += lIt->Name;
+                } else {
+                    auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
+                        return opt.Id == parts[i];
+                    });
+                    if (optIt != field->AllowedValueOptions.end()) {
+                        resolved += optIt->Value;
+                    } else {
+                        resolved += parts[i];
                     }
                 }
-                if (!found) {
-                    // Check AllowedValueOptions too
-                    for (const auto& opt : field->AllowedValueOptions) {
-                        if (opt.Id == parts[i]) {
-                            resolved += opt.Value;
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                if (!found) resolved += parts[i];
             }
             return resolved;
         } else {
-            for (const auto& l : cachedLabels_) {
-                if (l.Id == value) return l.Name;
-            }
-            for (const auto& opt : field->AllowedValueOptions) {
-                if (opt.Id == value) return opt.Value;
-            }
+            auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
+                return l.Id == value;
+            });
+            if (lIt != cachedLabels_.end()) return lIt->Name;
+
+            auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
+                return opt.Id == value;
+            });
+            if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
         }
     }
 
@@ -1274,7 +1271,6 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         headers.insert({kv.first, kv.second});
     }
     if (planeProjectId_.empty()) {
-        std::string dummyId, dummyIdent;
         ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
     }
     if (planeProjectId_.empty()) {

@@ -229,9 +229,9 @@ bool RunProcessCapturePosix(const std::string& exe, const std::vector<std::strin
         std::vector<char*> argv;
         argv.reserve(args.size() + 2);
         argv.push_back(const_cast<char*>(exe.c_str()));
-        for (const auto& a : args) {
-            argv.push_back(const_cast<char*>(a.c_str()));
-        }
+        std::transform(args.begin(), args.end(), std::back_inserter(argv), [](const std::string& a) {
+            return const_cast<char*>(a.c_str());
+        });
         argv.push_back(nullptr);
         execvp(exe.c_str(), argv.data());
         _exit(127);
@@ -347,7 +347,7 @@ std::vector<std::string> SplitLines(const std::string& s) {
 void StripP4UserDomain(std::string& user) {
     const size_t at = user.find('@');
     if (at != std::string::npos) {
-        user = user.substr(0, at);
+        user.resize(at);
     }
 }
 
@@ -401,7 +401,7 @@ bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::str
     return false;
 }
 
-P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, std::string& stderrText) {
+P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText) {
     P4LineBlame b;
     b.Approximate = true;
     static const std::regex re(R"(Change\s+(\d+)\s+on\s+[^\s]+\s+by\s+(\S+))");
@@ -411,7 +411,7 @@ P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, st
         std::string who = m[2].str();
         const size_t at = who.find('@');
         if (at != std::string::npos) {
-            who = who.substr(0, at);
+            who.resize(at);
         }
         b.User = who;
         return b;
@@ -431,7 +431,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>
     using clock = std::chrono::steady_clock;
     const clock::time_point t0 = clock::now();
 #ifdef _WIN32
-    const std::string& exe = cfg.P4Executable.empty() ? std::string("p4") : cfg.P4Executable;
+    const std::string exe = cfg.P4Executable.empty() ? "p4" : cfg.P4Executable;
     std::wstring wexe = Utf8ToWide(exe);
     wchar_t found[MAX_PATH];
     wchar_t* fname = nullptr;
@@ -470,7 +470,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>
     }
     return true;
 #else
-    const std::string& exe = cfg.P4Executable.empty() ? std::string("p4") : cfg.P4Executable;
+    const std::string exe = cfg.P4Executable.empty() ? "p4" : cfg.P4Executable;
     LOG_INFO("P4: spawn exe=\"%s\" args: %s", exe.c_str(), JoinStrings(args, " ").c_str());
     if (!RunProcessCapturePosix(exe, args, outExitCode, outStdout, outStderr)) {
         LOG_ERROR("P4: posix spawn failed");

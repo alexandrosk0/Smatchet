@@ -13,7 +13,7 @@
 
 namespace {
 
-static void MergeAsyncUserSuggestionsIntoBuild(UiDrawSession& d, QuerySuggestBuild& b) {
+static void MergeAsyncUserSuggestionsIntoBuild(const UiDrawSession& d, QuerySuggestBuild& b) {
     std::unordered_set<std::string> seen;
     for (const auto& s : b.Items) {
         seen.insert(s.Insert);
@@ -33,13 +33,10 @@ static bool ValueNeedsQuotesForId(const std::string& s) {
     if (s.empty()) {
         return true;
     }
-    for (unsigned char ch : s) {
+    return std::any_of(s.begin(), s.end(), [](unsigned char ch) {
         const bool ok = std::isalnum(ch) != 0 || ch == '_' || ch == '.' || ch == '-';
-        if (!ok || ch == '"' || ch == '\\') {
-            return true;
-        }
-    }
-    return false;
+        return !ok || ch == '"' || ch == '\\';
+    });
 }
 
 static std::string QuotedJqlStyle(const std::string& s) {
@@ -260,14 +257,12 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, const ImVec2& fieldRectMin, con
         const bool rowPress = ImGui::Selectable(mergedItems[static_cast<size_t>(i)].Label.c_str(), sel, flags);
         const bool reclickSelected = sel && ImGui::IsItemClicked(0);
         if (rowPress || reclickSelected) {
-            if (i >= 0 && i < static_cast<int>(mergedItems.size())) {
-                d.jqlAcpReplaceStart = syncBuild.ReplaceStart;
-                d.jqlAcpReplaceEnd = syncBuild.ReplaceEnd;
-                d.jqlAcpReplaceText = mergedItems[static_cast<size_t>(i)].Insert;
-                d.jqlAcpApplyReplace = true;
-                d.jqlAcpListDismissed = false;
-                d.jqlAcpWantsJqlInputFocus = true;
-            }
+            d.jqlAcpReplaceStart = syncBuild.ReplaceStart;
+            d.jqlAcpReplaceEnd = syncBuild.ReplaceEnd;
+            d.jqlAcpReplaceText = mergedItems[static_cast<size_t>(i)].Insert;
+            d.jqlAcpApplyReplace = true;
+            d.jqlAcpListDismissed = false;
+            d.jqlAcpWantsJqlInputFocus = true;
         }
         if (sel) {
             ImGui::SetItemDefaultFocus();

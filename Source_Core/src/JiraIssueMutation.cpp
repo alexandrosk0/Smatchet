@@ -731,7 +731,10 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
         if (raw.empty()) continue;
 
         const TrackerField* field = nullptr;
-        for (const auto& f : catalog) { if (f.Id == fieldId) { field = &f; break; } }
+        auto fIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
+        if (fIt != catalog.end()) {
+            field = &(*fIt);
+        }
         
         TrackerField synthetic;
         if (!field) {
@@ -801,7 +804,10 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
         if (raw.empty()) continue;
 
         const TrackerField* field = nullptr;
-        for (const auto& f : catalog) { if (f.Id == fieldId) { field = &f; break; } }
+        auto fIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
+        if (fIt != catalog.end()) {
+            field = &(*fIt);
+        }
 
         TrackerField synthetic;
         if (!field) {

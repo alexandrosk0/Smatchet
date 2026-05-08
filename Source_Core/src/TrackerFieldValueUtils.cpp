@@ -74,12 +74,13 @@ bool TryResolveCascadingSelection(const TrackerField& field, const std::string& 
             outParentId = parent.Id.empty() ? parent.Value : parent.Id;
             return true;
         }
-        for (const auto& child : parent.Children) {
-            if (&child == option || child.Id == option->Id || child.Value == option->Value) {
-                outParentId = parent.Id.empty() ? parent.Value : parent.Id;
-                outChildId = child.Id.empty() ? child.Value : child.Id;
-                return true;
-            }
+        auto childIt = std::find_if(parent.Children.begin(), parent.Children.end(), [&](const auto& child) {
+            return &child == option || child.Id == option->Id || child.Value == option->Value;
+        });
+        if (childIt != parent.Children.end()) {
+            outParentId = parent.Id.empty() ? parent.Value : parent.Id;
+            outChildId = childIt->Id.empty() ? childIt->Value : childIt->Id;
+            return true;
         }
     }
     outParentId = option->Id.empty() ? option->Value : option->Id;

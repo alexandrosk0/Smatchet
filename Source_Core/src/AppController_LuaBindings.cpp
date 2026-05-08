@@ -151,9 +151,9 @@ std::string SanitizeLogText(const std::string& s) {
 }
 
 std::string AsciiLowerCopy(std::string s) {
-    for (auto& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return s;
 }
 
@@ -1104,8 +1104,6 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const T
             const std::string optId = ToLowerAsciiCopy(TrimCopyAsciiWhitespace(ResolveOptionId(*field, rawValue)));
             if (!optId.empty()) {
                 keys.push_back(optId);
-            }
-            if (!optId.empty()) {
                 keys.push_back(ToLowerAsciiCopy(TrimCopyAsciiWhitespace(ResolveOptionLabel(*field, optId))));
             }
         }
@@ -1460,11 +1458,11 @@ std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
 
 void AppController::ExecuteLuaTicketAction(const std::string& name, const std::string& issueId) {
     std::string callbackFuncName;
-    for (const auto& pair : luaTicketActions_) {
-        if (pair.first == name) {
-            callbackFuncName = pair.second;
-            break;
-        }
+    const auto it =
+        std::find_if(luaTicketActions_.begin(), luaTicketActions_.end(),
+                     [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
+    if (it != luaTicketActions_.end()) {
+        callbackFuncName = it->second;
     }
     if (callbackFuncName.empty()) {
         return;
@@ -1478,11 +1476,11 @@ void AppController::ExecuteLuaTicketAction(const std::string& name, const std::s
 
 void AppController::ExecuteLuaGlobalAction(const std::string& name) {
     std::string callbackFuncName;
-    for (auto& pair : luaGlobalActions_) {
-        if (pair.first == name) {
-            callbackFuncName = pair.second;
-            break;
-        }
+    const auto it =
+        std::find_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
+                     [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
+    if (it != luaGlobalActions_.end()) {
+        callbackFuncName = it->second;
     }
     if (callbackFuncName.empty()) {
         return;

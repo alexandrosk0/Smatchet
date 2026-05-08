@@ -141,13 +141,13 @@ void MaybeAutoselectCallstackTrackerField(AppController& app) {
     if (fields.empty()) {
         return;
     }
-    for (const auto& f : fields) {
-        if (ToLowerAsciiCopy(f.Name) == "callstack") {
-            g_blameCfg.CallstackTrackerFieldId = f.Id;
-            SyncCallstackTrackerFieldBufFromCfg();
-            ConfigManager::SaveBlameAnalysis(g_blameCfg);
-            break;
-        }
+    auto it = std::find_if(fields.begin(), fields.end(), [](const auto& f) {
+        return ToLowerAsciiCopy(f.Name) == "callstack";
+    });
+    if (it != fields.end()) {
+        g_blameCfg.CallstackTrackerFieldId = it->Id;
+        SyncCallstackTrackerFieldBufFromCfg();
+        ConfigManager::SaveBlameAnalysis(g_blameCfg);
     }
 }
 
@@ -234,8 +234,8 @@ void WorkerThreadMain(size_t n) {
     const std::string atCl = g_worker.AtChangelist;
     P4ChangelistDescribeCache* cache = g_worker.Cache.get();
     LOG_INFO("Blame worker: started rows=%zu atCl=\"%s\" p4_exe=\"%s\"", n, atCl.c_str(), cfg.P4Executable.c_str());
-    int failures = 0;
     try {
+        int failures = 0;
         for (size_t i = 0; i < n; ++i) {
             if (g_worker.Cancel.load()) {
                 LOG_INFO("Blame worker: cancelled at row %zu/%zu (failures=%d)", i, n, failures);
@@ -629,13 +629,9 @@ std::string BuildAiExport() {
 }
 
 std::string CsvEscape(const std::string& s) {
-    bool needsQuotes = false;
-    for (char c : s) {
-        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
-            needsQuotes = true;
-            break;
-        }
-    }
+    bool needsQuotes = std::any_of(s.begin(), s.end(), [](char c) {
+        return c == ',' || c == '"' || c == '\n' || c == '\r';
+    });
     if (!needsQuotes) {
         return s;
     }
@@ -711,12 +707,12 @@ std::string BuildBlameQuickCommentTemplate(const std::string& issueKey, const st
                                            const BlameRow& row, const std::vector<CommentTemplate>& templates) {
     std::string text;
     bool found = false;
-    for (const auto& t : templates) {
-        if (t.Id == templateId) {
-            text = t.Text;
-            found = true;
-            break;
-        }
+    auto it = std::find_if(templates.begin(), templates.end(), [&templateId](const auto& t) {
+        return t.Id == templateId;
+    });
+    if (it != templates.end()) {
+        text = it->Text;
+        found = true;
     }
     if (!found) {
         if (templateId == "need_repro") {
@@ -783,9 +779,6 @@ std::string ShortenPathForDisplay(const std::string& path, float maxWidthPx) {
     for (int use = n; use >= 2; --use) {
         for (int pre = 1; pre < use; ++pre) {
             const int suf = use - pre;
-            if (pre < 1 || suf < 1 || pre + suf > n) {
-                continue;
-            }
             std::string trial =
                 path.substr(0, static_cast<size_t>(pre)) + ell + path.substr(static_cast<size_t>(n - suf));
             if (ImGui::CalcTextSize(trial.c_str()).x <= maxWidthPx) {
@@ -855,13 +848,10 @@ void OpenTrackerUserProfileForP4User(AppController& app, const std::string& p4Us
         }
         return;
     }
-    const TrackerUser* best = &users[0];
-    for (const auto& u : users) {
-        if (!u.EmailAddress.empty()) {
-            best = &u;
-            break;
-        }
-    }
+    auto it = std::find_if(users.begin(), users.end(), [](const auto& u) {
+        return !u.EmailAddress.empty();
+    });
+    const TrackerUser* best = (it != users.end()) ? &(*it) : &users[0];
     g_profileName = best->DisplayName;
     g_profileEmail = best->EmailAddress;
     std::string gerr;
@@ -892,11 +882,11 @@ void PrepareAssignModal(AppController& app, const BlameRow& row, const std::stri
         g_assignAccountId = std::move(aid);
         g_assignHasJiraAccount = true;
         std::string dn = users[0].DisplayName;
-        for (const auto& u : users) {
-            if (u.AccountId == g_assignAccountId) {
-                dn = u.DisplayName;
-                break;
-            }
+        auto it = std::find_if(users.begin(), users.end(), [](const auto& u) {
+            return u.AccountId == g_assignAccountId;
+        });
+        if (it != users.end()) {
+            dn = it->DisplayName;
         }
         g_assignTitle = dn + " (" + pu + ")";
     } else {

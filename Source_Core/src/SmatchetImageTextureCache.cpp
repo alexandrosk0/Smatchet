@@ -79,7 +79,7 @@ static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int 
 }
 
 static void EvictOneUnlocked() {
-    while (g_lru.size() >= kMaxCacheEntries && !g_lru.empty()) {
+    while (g_lru.size() >= kMaxCacheEntries) {
         const std::string victim = g_lru.back();
         g_lru.pop_back();
         const auto it = g_map.find(victim);

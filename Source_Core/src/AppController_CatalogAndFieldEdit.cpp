@@ -306,11 +306,8 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
 
     std::vector<std::string> values;
     values.reserve(rawValues.size());
-    for (const auto& value : rawValues) {
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-    }
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
+                 [](const std::string& value) { return !value.empty(); });
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
     if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
@@ -625,11 +622,8 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
     std::vector<std::string> values;
     values.reserve(rawValues.size());
-    for (const auto& value : rawValues) {
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-    }
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
+                 [](const std::string& value) { return !value.empty(); });
 
     const std::shared_ptr<const std::vector<CachedTicket>> ticketsSnap = GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
@@ -665,11 +659,10 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         if (ticketIt != tickets.end()) {
             CachedTicket updatedTicket = *ticketIt;
             std::string displayValue = sprintId;
-            for (const auto& option : field.AllowedValueOptions) {
-                if (option.Id == sprintId) {
-                    displayValue = option.Value;
-                    break;
-                }
+            auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                                      [&](const auto& option) { return option.Id == sprintId; });
+            if (optIt != field.AllowedValueOptions.end()) {
+                displayValue = optIt->Value;
             }
             updatedTicket.fieldValues[field.Id] = displayValue;
             UpdateTicket(updatedTicket);
@@ -878,11 +871,8 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
     TrackerConfig cfg = ConfigManager::Load();
     std::vector<std::string> values;
     values.reserve(rawValues.size());
-    for (const auto& value : rawValues) {
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-    }
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
+                 [](const std::string& value) { return !value.empty(); });
 
     if (IsSprintField(field)) {
         if (values.empty()) {
@@ -894,11 +884,10 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
             return false;
         }
         std::string displayValue = sprintId;
-        for (const auto& option : field.AllowedValueOptions) {
-            if (option.Id == sprintId) {
-                displayValue = option.Value;
-                break;
-            }
+        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                                  [&](const auto& option) { return option.Id == sprintId; });
+        if (optIt != field.AllowedValueOptions.end()) {
+            displayValue = optIt->Value;
         }
         outResult.Ok = true;
         outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);

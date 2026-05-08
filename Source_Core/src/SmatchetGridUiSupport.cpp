@@ -39,7 +39,7 @@ std::string JoinCsvLocal(const std::vector<std::string>& values) {
 }
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-static void DrawLuaTicketActionMenuItems(AppController* app, UiDrawSession* ui, const std::string& issueKey) {
+static void DrawLuaTicketActionMenuItems(AppController* app, const UiDrawSession* ui, const std::string& issueKey) {
     if (!app || !ui || issueKey.empty()) {
         return;
     }
@@ -75,10 +75,11 @@ static std::string ResolveCommentTemplate(std::string text, const std::string& i
 
 static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId,
                                             const std::vector<CommentTemplate>& templates) {
-    for (const auto& t : templates) {
-        if (t.Id == templateId) {
-            return ResolveCommentTemplate(t.Text, issueKey);
-        }
+    auto it = std::find_if(templates.begin(), templates.end(), [&templateId](const auto& t) {
+        return t.Id == templateId;
+    });
+    if (it != templates.end()) {
+        return ResolveCommentTemplate(it->Text, issueKey);
     }
     if (templateId == "need_repro") {
         return ResolveCommentTemplate("Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details", issueKey);
@@ -215,13 +216,13 @@ void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerF
             ImGui::Separator();
             ImGui::TextUnformatted("AllowedValueOptions (scroll)");
             ImGui::BeginChild("hdr_allowed_opts", ImVec2(0, 100.0f), true);
-            const int show = (optCount < 200) ? optCount : 200;
+            const int show = (std::min)(optCount, 200);
             for (int i = 0; i < show; ++i) {
                 const TrackerFieldOption& o = meta->AllowedValueOptions[static_cast<size_t>(i)];
                 ImGui::BulletText("id=%s  value=%s", o.Id.c_str(), o.Value.c_str());
             }
-            if (optCount > show) {
-                ImGui::TextDisabled("... %d more", optCount - show);
+            if (optCount > 200) {
+                ImGui::TextDisabled("... %d more", optCount - 200);
             }
             ImGui::EndChild();
         }
@@ -231,12 +232,12 @@ void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerF
             ImGui::Separator();
             ImGui::TextUnformatted("AllowedValues (scroll)");
             ImGui::BeginChild("hdr_allowed_vals", ImVec2(0, 80.0f), true);
-            const int show = (valCount < 200) ? valCount : 200;
+            const int show = (std::min)(valCount, 200);
             for (int i = 0; i < show; ++i) {
                 ImGui::BulletText("%s", meta->AllowedValues[static_cast<size_t>(i)].c_str());
             }
-            if (valCount > show) {
-                ImGui::TextDisabled("... %d more", valCount - show);
+            if (valCount > 200) {
+                ImGui::TextDisabled("... %d more", valCount - 200);
             }
             ImGui::EndChild();
         }

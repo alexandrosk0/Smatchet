@@ -329,19 +329,12 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 
     const std::string valueForDisplay = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    bool hasNewlineInValue = false;
-    for (size_t i = 0; i < valueForDisplay.size(); ++i) {
-        if (valueForDisplay[i] == '\n' || valueForDisplay[i] == '\r') {
-            hasNewlineInValue = true;
-            break;
-        }
-    }
+    const bool hasNewlineInValue = std::any_of(valueForDisplay.begin(), valueForDisplay.end(),
+                                               [](char c) { return c == '\n' || c == '\r'; });
     std::string singleLine = valueForDisplay;
-    for (size_t i = 0; i < singleLine.size(); ++i) {
-        if (singleLine[i] == '\n' || singleLine[i] == '\r') {
-            singleLine.erase(i);
-            break;
-        }
+    auto nlIt = std::find_if(singleLine.begin(), singleLine.end(), [](char c) { return c == '\n' || c == '\r'; });
+    if (nlIt != singleLine.end()) {
+        singleLine.erase(nlIt, singleLine.end());
     }
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;

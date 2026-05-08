@@ -145,8 +145,8 @@ void SmatchetUI::Draw(AppController& app) {
         });
         g_ui.attachmentPreviewCallbackRegistered = true;
     }
-    if (!g_openFilePathsHandlerInstalled) {
 #if defined(_WIN32)
+    if (!g_openFilePathsHandlerInstalled) {
         app.SetOpenFilePathsHandler([](bool allowMultiple, const std::string& initialDirectoryUtf8,
                                        std::function<void(std::vector<std::string>)> onComplete) {
             // GLFW: PlatformHandle is GLFWwindow*; PlatformHandleRaw is HWND (see imgui_impl_glfw).
@@ -168,9 +168,9 @@ void SmatchetUI::Draw(AppController& app) {
                 onComplete(std::move(paths));
             }
         });
-#endif
         g_openFilePathsHandlerInstalled = true;
     }
+#endif
     UiPerfMonitor::Instance().BeginFrame();
     SmatchetImageTextureCache::TickPendingDestroys();
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");

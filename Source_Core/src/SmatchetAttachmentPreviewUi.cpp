@@ -92,8 +92,8 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
         return result;
     }
     if (bytes.size() >= 30 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
-        bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
-        if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'X' && bytes.size() >= 30) {
+         bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+        if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'X') {
             const std::uint32_t widthMinusOne = ReadU24LE(&bytes[24]);
             const std::uint32_t heightMinusOne = ReadU24LE(&bytes[27]);
             result.Ok = true;

@@ -54,7 +54,7 @@ std::string JoinDomainAndPath(std::string domain, const std::string& path) {
     if (path.empty()) {
         return domain;
     }
-    if (!path.empty() && path[0] == '/') {
+    if (path[0] == '/') {
         return domain + path;
     }
     return domain + "/" + path;
@@ -68,11 +68,9 @@ bool SlugIsKnown(const std::string& s) {
 
 std::string NormalizeSlugFromLabel(std::string label) {
     label = ToLowerAsciiCopy(TrimCopyAsciiWhitespace(label));
-    for (auto& c : label) {
-        if (c == ' ' || c == '-' || c == '_') {
-            c = ' ';
-        }
-    }
+    std::replace_if(label.begin(), label.end(), [](char c) {
+        return c == ' ' || c == '-' || c == '_';
+    }, ' ');
     // collapse spaces -> single space then replace with nothing for "aggregate" style? use first token only
     std::string compact;
     for (size_t i = 0; i < label.size(); ++i) {
@@ -86,11 +84,7 @@ std::string NormalizeSlugFromLabel(std::string label) {
     }
     // try original spaced lower e.g. "wont fix" not in list — try label as single token lower
     label = ToLowerAsciiCopy(TrimCopyAsciiWhitespace(label));
-    for (auto& c : label) {
-        if (c == ' ') {
-            c = '_';
-        }
-    }
+    std::replace(label.begin(), label.end(), ' ', '_');
     if (SlugIsKnown(label)) {
         return label;
     }
@@ -257,10 +251,10 @@ bool LoadPriorityIconWithFallbacks(const std::string& iconUrl, const std::string
         if (s.empty()) {
             return;
         }
-        for (const auto& existing : candidates) {
-            if (existing == s) {
-                return;
-            }
+        if (std::any_of(candidates.begin(), candidates.end(), [&](const auto& existing) {
+            return existing == s;
+        })) {
+            return;
         }
         candidates.push_back(s);
     };
@@ -383,8 +377,8 @@ bool TryDrawFieldValueIcon(AppController& app, const std::string& fieldId, const
         return false;
     }
 
-    std::string pathOrUrl;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    std::string pathOrUrl;
     // Icon maps replace the whole cell; never steal focus from editable SingleSelect / other editors.
     if (!allowCellEdits &&
         app.TryGetFieldIconMapTarget(fieldId, field, rawValue, pathOrUrl)) {

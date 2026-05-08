@@ -617,10 +617,10 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
     ImGui::Render();
 
     ImDrawData* drawData = ImGui::GetDrawData();
-    static double LastDrawStatsLogSeconds = 0.0;
     {
         // Avoid spamming logs: at most once per 1s.
         // (Use std::chrono instead of UE time here; it's fine for diagnostics.)
+        static double LastDrawStatsLogSeconds = 0.0;
         using clock = std::chrono::steady_clock;
         const double nowSeconds =
             std::chrono::duration_cast<std::chrono::duration<double>>(clock::now().time_since_epoch()).count();

@@ -613,11 +613,9 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 out += UnifiedOfflineRowClipboardLine(r);
             }
         } else if (!fallbackKey.empty()) {
-            for (const UnifiedOfflineRow& r : rows) {
-                if (r.key == fallbackKey) {
-                    out = UnifiedOfflineRowClipboardLine(r);
-                    break;
-                }
+            auto rIt = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.key == fallbackKey; });
+            if (rIt != rows.end()) {
+                out = UnifiedOfflineRowClipboardLine(*rIt);
             }
         }
         if (out.empty()) {
@@ -635,34 +633,33 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
         int disc = 0;
         int fail = 0;
         for (const std::string& key : selectedOfflineRowKeys) {
-            for (const auto& r : rows) {
-                if (r.key == key) {
-                    if (r.kind == UnifiedOfflineKind::PendingCreate) {
-                        if (app.DeletePendingCreates({r.dbId}).Deleted > 0) {
-                            ++disc;
-                        } else {
-                            ++fail;
-                        }
-                    } else if (r.kind == UnifiedOfflineKind::DeadCreate) {
-                        if (app.DeleteDeadPendingCreates({r.dbId}).Deleted > 0) {
-                            ++disc;
-                        } else {
-                            ++fail;
-                        }
-                    } else if (r.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                        if (app.DeletePendingFieldEdits({r.dbId}).Deleted > 0) {
-                            ++disc;
-                        } else {
-                            ++fail;
-                        }
-                    } else if (r.kind == UnifiedOfflineKind::DeadFieldEdit) {
-                        if (app.DeleteDeadPendingFieldEdits({r.dbId}).Deleted > 0) {
-                            ++disc;
-                        } else {
-                            ++fail;
-                        }
+            auto rIt = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.key == key; });
+            if (rIt != rows.end()) {
+                const auto& r = *rIt;
+                if (r.kind == UnifiedOfflineKind::PendingCreate) {
+                    if (app.DeletePendingCreates({r.dbId}).Deleted > 0) {
+                        ++disc;
+                    } else {
+                        ++fail;
                     }
-                    break;
+                } else if (r.kind == UnifiedOfflineKind::DeadCreate) {
+                    if (app.DeleteDeadPendingCreates({r.dbId}).Deleted > 0) {
+                        ++disc;
+                    } else {
+                        ++fail;
+                    }
+                } else if (r.kind == UnifiedOfflineKind::PendingFieldEdit) {
+                    if (app.DeletePendingFieldEdits({r.dbId}).Deleted > 0) {
+                        ++disc;
+                    } else {
+                        ++fail;
+                    }
+                } else if (r.kind == UnifiedOfflineKind::DeadFieldEdit) {
+                    if (app.DeleteDeadPendingFieldEdits({r.dbId}).Deleted > 0) {
+                        ++disc;
+                    } else {
+                        ++fail;
+                    }
                 }
             }
         }
@@ -765,11 +762,8 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                     hoveredOfflineKey = row.key;
                     std::vector<UnifiedOfflineRow> picks;
                     if (selectedOfflineRowKeys.count(row.key) > 0) {
-                        for (const auto& r : rows) {
-                            if (selectedOfflineRowKeys.count(r.key) > 0) {
-                                picks.push_back(r);
-                            }
-                        }
+                        std::copy_if(rows.begin(), rows.end(), std::back_inserter(picks),
+                                     [](const auto& r) { return selectedOfflineRowKeys.count(r.key) > 0; });
                     } else {
                         picks.push_back(row);
                     }

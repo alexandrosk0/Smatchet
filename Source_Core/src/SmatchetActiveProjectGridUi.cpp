@@ -63,7 +63,7 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     }
     ImGuiWindow* inner = table->InnerWindow;
     ImGuiWindow* outer = table->OuterWindow;
-    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiIO& io = ImGui::GetIO();
 
     if (!inner || std::abs(io.MouseWheel) <= 0.0f || std::abs(io.MouseWheelH) >= 0.0001f ||
         inner->ScrollMax.x <= 0.0f) {
@@ -235,11 +235,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             if (!IsPersistableSortDirection(direction))
                                 continue;
                             int colIndex = -1;
-                            for (size_t c = 0; c < columns.size(); ++c) {
-                                if (columns[c].Key == vs.ColumnKey) {
-                                    colIndex = static_cast<int>(c);
-                                    break;
-                                }
+                            auto colIt = std::find_if(columns.begin(), columns.end(),
+                                                      [&](const auto& col) { return col.Key == vs.ColumnKey; });
+                            if (colIt != columns.end()) {
+                                colIndex = static_cast<int>(std::distance(columns.begin(), colIt));
                             }
                             if (colIndex >= 0) {
                                 ImGui::TableSetColumnSortDirection(colIndex, direction, appliedSortCount > 0);

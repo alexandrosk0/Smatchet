@@ -12,8 +12,9 @@
 namespace IssueTableSerializer {
 
 std::string LowerAscii(std::string s) {
-    for (char& c : s)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return s;
 }
 
@@ -40,14 +41,17 @@ std::string ResolveColumnKey(const std::string& header, const std::vector<Tracke
         return "__existing_issue_key__";
     }
 
-    for (const auto& f : catalog) {
-        if (LowerAscii(f.Id) == low)
-            return f.Id;
-    }
-    for (const auto& f : catalog) {
-        if (LowerAscii(f.Name) == low)
-            return f.Id;
-    }
+    auto idIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
+        return LowerAscii(f.Id) == low;
+    });
+    if (idIt != catalog.end())
+        return idIt->Id;
+
+    auto nameIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
+        return LowerAscii(f.Name) == low;
+    });
+    if (nameIt != catalog.end())
+        return nameIt->Id;
     if (low == "project" || low == "projectkey" || low == "project key")
         return "project";
     if (low == "issuetype" || low == "issue type" || low == "type")
@@ -91,7 +95,7 @@ void ApplyKeyValueToDraft(IssueDraft& draft, const std::string& key, const std::
         // empty, or "[{...}, ...]" for existing Jira attachments). Those are NOT local
         // file paths - don't stage them as upload sources. Only accept plain pipe-
         // separated absolute paths.
-        if (!value.empty() && value.front() == '[') {
+        if (value.front() == '[') {
             return;
         }
         std::stringstream ss(value);
@@ -166,13 +170,9 @@ std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, ch
 }
 
 std::string EscapeCsvCell(const std::string& s, char delim) {
-    bool needsQuote = false;
-    for (char c : s) {
-        if (c == delim || c == '"' || c == '\n' || c == '\r') {
-            needsQuote = true;
-            break;
-        }
-    }
+    bool needsQuote = std::any_of(s.begin(), s.end(), [delim](char c) {
+        return c == delim || c == '"' || c == '\n' || c == '\r';
+    });
     if (!needsQuote)
         return s;
     std::string out;
@@ -201,18 +201,16 @@ ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vecto
     const auto& header = rows.front();
     std::vector<std::string> keys;
     keys.reserve(header.size());
-    for (const auto& h : header)
-        keys.push_back(ResolveColumnKey(h, catalog));
+    std::transform(header.begin(), header.end(), std::back_inserter(keys), [&](const auto& h) {
+        return ResolveColumnKey(h, catalog);
+    });
 
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
         // Skip fully empty lines (e.g. trailing blank).
-        bool anyNonEmpty = false;
-        for (const auto& c : row)
-            if (!Trim(c).empty()) {
-                anyNonEmpty = true;
-                break;
-            }
+        bool anyNonEmpty = std::any_of(row.begin(), row.end(), [](const auto& c) {
+            return !Trim(c).empty();
+        });
         if (!anyNonEmpty)
             continue;
 

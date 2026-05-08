@@ -40,9 +40,7 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             }
 
             const auto& pageComments = commentsJson["comments"];
-            for (const auto& c : pageComments) {
-                outComments.push_back(c);
-            }
+            std::copy(pageComments.begin(), pageComments.end(), std::back_inserter(outComments));
 
             const int total = commentsJson.value("total", static_cast<int>(outComments.size()));
             const int pageCount = static_cast<int>(pageComments.size());
@@ -69,11 +67,10 @@ void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::
     std::unordered_set<std::string> seenSelectedFields;
 
     const ViewDefinition* activeViewDef = nullptr;
-    for (const auto& view : viewStore.Views) {
-        if (view.Id == viewStore.ActiveViewId) {
-            activeViewDef = &view;
-            break;
-        }
+    auto vIt = std::find_if(viewStore.Views.begin(), viewStore.Views.end(),
+                            [&](const auto& view) { return view.Id == viewStore.ActiveViewId; });
+    if (vIt != viewStore.Views.end()) {
+        activeViewDef = &(*vIt);
     }
     if (!activeViewDef && !viewStore.Views.empty()) {
         activeViewDef = &viewStore.Views.front();
@@ -277,7 +274,6 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(
     };
 
     std::string nextPageToken;
-    std::string lastResponseBody;
     const int kMaxPages = 50;
     int fetchedPages = 0;
     bool syncEndedCleanly = false;
@@ -295,7 +291,7 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(
         LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
-        lastResponseBody = response.text;
+        const std::string lastResponseBody = response.text;
         if (response.status_code != 200) {
             LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.", page, response.status_code,
                       static_cast<int>(response.error.code));

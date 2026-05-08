@@ -321,9 +321,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         } else {
             // Basic Fields group: ID (always shown) + core Jira fields.
             {
-                const char* groupName = "Basic Fields";
                 const bool hasVisibleId = SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
                 if (!basicFields.empty() || hasVisibleId) {
+                    const char* groupName = "Basic Fields";
                     const std::size_t count = basicFields.size() + 1; // +1 for ID
                     const std::string label = std::string(groupName) + " (" + std::to_string(count) + ")";
                     if (ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {

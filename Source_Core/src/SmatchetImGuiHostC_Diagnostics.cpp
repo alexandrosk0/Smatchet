@@ -20,6 +20,7 @@ extern "C" {
 
 const char* SmatchetHost_GetBuildTag(void) {
 #if defined(_WIN32)
+    // cppcheck-suppress unknownMacro
     return "SmatchetImGuiHost " SMATCHET_HOST_BUILD_TAG_REV " InitInfo+Queue IMGUI_" IMGUI_VERSION " | built " __DATE__
            " " __TIME__;
 #else
