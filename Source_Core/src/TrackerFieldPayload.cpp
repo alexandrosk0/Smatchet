@@ -147,6 +147,12 @@ bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& se
     return TryBuildStructuredOptionPayload(*option, std::string(), outPayload);
 }
 
+bool IsDigitsOnly(const std::string& value) {
+    return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+    });
+}
+
 nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, const std::string& scalarValue) {
     if (field.IsUserType) {
         return nlohmann::json{{"accountId", scalarValue}};
@@ -157,7 +163,11 @@ nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, cons
     if (field.Family == TrackerFieldFamily::IssueType) {
         return nlohmann::json{{"id", scalarValue}};
     }
-    if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
+    if (field.Type == "component" || field.ItemsType == "component") {
+        const std::string trimmed = TrimCopy(scalarValue);
+        return IsDigitsOnly(trimmed) ? nlohmann::json{{"id", trimmed}} : nlohmann::json{{"name", trimmed}};
+    }
+    if (field.Type == "option" || !field.AllowedValueOptions.empty()) {
         return nlohmann::json{{"id", scalarValue}};
     }
     return scalarValue;
@@ -366,7 +376,12 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
                 }
             } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
                        !field.AllowedValueOptions.empty()) {
-                outValue.push_back(nlohmann::json{{"id", value}});
+                nlohmann::json optionPayload;
+                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
+                    outValue.push_back(std::move(optionPayload));
+                } else {
+                    outValue.push_back(FallbackPayloadForSelectableField(field, value));
+                }
             } else {
                 outValue.push_back(value);
             }
@@ -415,8 +430,7 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
             return true;
         }
         const std::string t = TrimCopy(scalarValue);
-        const bool digitsOnly =
-            !t.empty() && std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        const bool digitsOnly = IsDigitsOnly(t);
         outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
         return true;
     }
@@ -445,8 +459,7 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
             return true;
         }
         const std::string t = TrimCopy(scalarValue);
-        const bool digitsOnly =
-            !t.empty() && std::all_of(t.begin(), t.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        const bool digitsOnly = IsDigitsOnly(t);
         outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
         return true;
     }
@@ -546,7 +559,6 @@ std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, 
 }
 
 } // namespace TrackerFieldPayload
-
 
 
 

@@ -13,6 +13,179 @@
 #include <unordered_map>
 #include <vector>
 
+namespace {
+
+std::string ComponentJsonIdToString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<unsigned long long>());
+    }
+    return {};
+}
+
+const nlohmann::json* ResolveComponentJsonBean(const nlohmann::json& node) {
+    if (!node.is_object()) {
+        return nullptr;
+    }
+    const auto beanIt = node.find("componentBean");
+    if (beanIt != node.end() && beanIt->is_object()) {
+        return &(*beanIt);
+    }
+    return &node;
+}
+
+bool ExtractComponentOption(const nlohmann::json& node, TrackerComponent& outComponent,
+                            TrackerFieldOption& outOption) {
+    const nlohmann::json* component = ResolveComponentJsonBean(node);
+    if (component == nullptr) {
+        return false;
+    }
+
+    const auto idIt = component->find("id");
+    const auto nameIt = component->find("name");
+    if (idIt == component->end() || nameIt == component->end() || !nameIt->is_string()) {
+        return false;
+    }
+
+    const std::string id = ComponentJsonIdToString(*idIt);
+    const std::string name = nameIt->get<std::string>();
+    if (id.empty() || name.empty()) {
+        return false;
+    }
+
+    outComponent.Id = id;
+    outComponent.Name = name;
+
+    outOption.Id = id;
+    outOption.Value = name;
+    outOption.SecondaryValue = JsonGetStringIfString(*component, "description");
+    try {
+        nlohmann::json payload = nlohmann::json::object({{"id", id}, {"name", name}});
+        const auto selfIt = component->find("self");
+        if (selfIt != component->end() && selfIt->is_string()) {
+            payload["self"] = *selfIt;
+        }
+        const auto descIt = component->find("description");
+        if (descIt != component->end() && descIt->is_string()) {
+            payload["description"] = *descIt;
+        }
+        outOption.PayloadJson = payload.dump();
+    } catch (...) {
+        outOption.PayloadJson.clear();
+    }
+    return true;
+}
+
+void MergeComponentIntoCatalog(std::vector<TrackerField>& fields, std::vector<TrackerComponent>& components,
+                               const TrackerComponent& component, const TrackerFieldOption& option) {
+    auto componentIt = std::find_if(components.begin(), components.end(), [&](const TrackerComponent& existing) {
+        return existing.Id == component.Id;
+    });
+    if (componentIt == components.end()) {
+        components.push_back(component);
+    } else if (componentIt->Name.empty()) {
+        componentIt->Name = component.Name;
+    }
+
+    auto fieldIt = std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) {
+        return field.Id == "components";
+    });
+    if (fieldIt == fields.end()) {
+        return;
+    }
+
+    MergeTrackerFieldOption(fieldIt->AllowedValueOptions, option);
+    RefreshTrackerAllowedValuesFromOptions(*fieldIt);
+    fieldIt->Family = ClassifyTrackerFieldFamily(*fieldIt);
+}
+
+bool MergeProjectComponentsFromEndpoint(const TrackerConfig& cfg, const std::string& base, const cpr::Header& headers,
+                                        std::vector<TrackerField>& fields,
+                                        std::vector<TrackerComponent>& components) {
+    if (cfg.ProjectKey.empty()) {
+        return false;
+    }
+
+    bool mergedAny = false;
+    constexpr int kPageSize = 100;
+    constexpr int kMaxPages = 50;
+    for (int page = 0; page < kMaxPages; ++page) {
+        const int startAt = page * kPageSize;
+        const std::string url = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey) +
+                                "/component?startAt=" + std::to_string(startAt) +
+                                "&maxResults=" + std::to_string(kPageSize) + "&orderBy=name";
+        auto response = TrackerGetLogged("JiraClient", url, headers);
+        if (response.status_code != 200) {
+            LOG_WARN("JiraClient: project components enrichment failed. HTTP %d", response.status_code);
+            return mergedAny;
+        }
+
+        auto json = nlohmann::json::parse(response.text, nullptr, false);
+        if (json.is_discarded() || !json.is_object()) {
+            LOG_WARN("JiraClient: project components response parse failed.");
+            return mergedAny;
+        }
+
+        const auto valuesIt = json.find("values");
+        if (valuesIt == json.end() || !valuesIt->is_array()) {
+            LOG_WARN("JiraClient: project components response missing values array.");
+            return mergedAny;
+        }
+
+        for (const auto& node : *valuesIt) {
+            TrackerComponent component;
+            TrackerFieldOption option;
+            if (!ExtractComponentOption(node, component, option)) {
+                continue;
+            }
+            MergeComponentIntoCatalog(fields, components, component, option);
+            mergedAny = true;
+        }
+
+        const bool isLast = json.value("isLast", false);
+        if (isLast || valuesIt->empty()) {
+            break;
+        }
+    }
+    return mergedAny;
+}
+
+void SortComponentCatalog(std::vector<TrackerField>& fields, std::vector<TrackerComponent>& components) {
+    std::sort(components.begin(), components.end(), [](const TrackerComponent& a, const TrackerComponent& b) {
+        const std::string lowerA = ToLowerAsciiCopy(a.Name);
+        const std::string lowerB = ToLowerAsciiCopy(b.Name);
+        if (lowerA != lowerB) {
+            return lowerA < lowerB;
+        }
+        return a.Id < b.Id;
+    });
+
+    auto fieldIt = std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) {
+        return field.Id == "components";
+    });
+    if (fieldIt == fields.end()) {
+        return;
+    }
+    std::sort(fieldIt->AllowedValueOptions.begin(), fieldIt->AllowedValueOptions.end(),
+              [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
+                  const std::string lowerA = ToLowerAsciiCopy(a.Value);
+                  const std::string lowerB = ToLowerAsciiCopy(b.Value);
+                  if (lowerA != lowerB) {
+                      return lowerA < lowerB;
+                  }
+                  return a.Id < b.Id;
+              });
+    RefreshTrackerAllowedValuesFromOptions(*fieldIt);
+    fieldIt->Family = ClassifyTrackerFieldFamily(*fieldIt);
+}
+
+} // namespace
+
 bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                    std::string& outError) {
     outCatalog = TrackerFieldCatalogResult{};
@@ -292,6 +465,16 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
         LOG_WARN("JiraClient: createmeta enrichment failed. HTTP %d", metaResponse.status_code);
     }
 
+    // Createmeta only returns components that are available on create screens. The project component endpoint is the
+    // authoritative project catalog and keeps the grid editor useful even when createmeta is sparse.
+    try {
+        (void)MergeProjectComponentsFromEndpoint(cfg, base, headers, outFields, outComponents);
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: project components enrichment failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("JiraClient: project components enrichment failed (unknown exception).");
+    }
+
     // Issue type: createmeta often lists only one type (e.g. Epic). Prefer GET /project/{key}
     // issueTypes (full list + real ids for PUT). Fall back to createmeta names if needed.
     {
@@ -534,10 +717,9 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
     for (auto& field : outFields) {
         field.Family = ClassifyTrackerFieldFamily(field);
     }
+    SortComponentCatalog(outFields, outComponents);
     return true;
 }
-
-
 
 
 

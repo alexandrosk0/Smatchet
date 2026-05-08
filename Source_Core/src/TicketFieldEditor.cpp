@@ -13,6 +13,7 @@
 #include "MarkdownConvert.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
+#include "StringUtil.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -565,24 +566,65 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+        static std::string activeEditorKey;
+        static char searchBuf[128] = "";
+        const std::string editorKey = ticket.id + "::" + field.Id;
+        if (activeEditorKey != editorKey) {
+            activeEditorKey = editorKey;
+            searchBuf[0] = '\0';
+        }
+
         if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
         }
         ImGui::Separator();
 
+        const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), searchBuf, sizeof(searchBuf));
+        ImGui::Separator();
+
+        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(searchBuf));
+        bool drewAny = false;
         for (const auto& option : field.AllowedValueOptions) {
-            bool checked = (selectedSet.find(option.Id) != selectedSet.end());
-            const std::string optionWidget = option.Value + "##Opt_" + ticket.id + "_" + field.Id + "_" + option.Id;
+            const std::string optionId = option.Id.empty() ? option.Value : option.Id;
+            bool checked = (selectedSet.find(optionId) != selectedSet.end());
+            const bool matchesFilter =
+                filterLower.empty() ||
+                ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
+                ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
+                ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
+            if (!checked && !matchesFilter) {
+                continue;
+            }
+            drewAny = true;
+            const std::string optionWidget = option.Value + "##Opt_" + ticket.id + "_" + field.Id + "_" + optionId;
+            if (option.Disabled) {
+                ImGui::BeginDisabled();
+            }
             if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
                 if (checked) {
-                    selectedSet.insert(option.Id);
+                    selectedSet.insert(optionId);
                 } else {
-                    selectedSet.erase(option.Id);
+                    selectedSet.erase(optionId);
                 }
                 std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
                 std::sort(updated.begin(), updated.end());
                 QueueEdit(ticket.id, field, updated, pendingEdits);
             }
+            if (option.Disabled) {
+                ImGui::EndDisabled();
+            }
+            if (!option.SecondaryValue.empty() && ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(option.SecondaryValue.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        if (!drewAny) {
+            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
         }
         ImGui::EndCombo();
     }
@@ -1087,6 +1129,5 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         CloseLongTextEditor();
     }
 }
-
 
 
