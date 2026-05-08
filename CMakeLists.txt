@@ -169,6 +169,28 @@ FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httpl
 FetchContent_MakeAvailable(httplib)
 
 
+# md4c is the Markdown parser backing the rich-text editing pipeline (md ↔ ADF/HTML for Jira/Plane
+# description fields). We compile only `md4c.c` ourselves rather than using upstream's CMake project,
+# which also builds md4c-html and the md2html CLI we don't need. See RICH_TEXT_EDITING_V2_PLAN.md.
+message(STATUS "Fetching md4c (CommonMark/GFM parser)...")
+FetchContent_Declare(md4c
+    GIT_REPOSITORY https://github.com/mity/md4c.git
+    GIT_TAG release-0.5.2
+)
+FetchContent_GetProperties(md4c)
+if(NOT md4c_POPULATED)
+    FetchContent_Populate(md4c)
+endif()
+if(NOT TARGET md4c)
+    add_library(md4c STATIC "${md4c_SOURCE_DIR}/src/md4c.c")
+    target_include_directories(md4c PUBLIC "${md4c_SOURCE_DIR}/src")
+    set_target_properties(md4c PROPERTIES C_STANDARD 99)
+    if(MSVC)
+        target_compile_definitions(md4c PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+endif()
+
+
 message(STATUS "Fetching ghc::filesystem (C++14 Polyfill)...")
 FetchContent_Declare(ghc_filesystem
     GIT_REPOSITORY https://github.com/gulrak/filesystem.git
@@ -394,6 +416,7 @@ target_link_libraries(SmatchetCoreInterface INTERFACE
         SQLiteCpp
         cpr::cpr
         httplib::httplib
+        md4c
 )
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
