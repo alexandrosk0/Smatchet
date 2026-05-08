@@ -491,6 +491,43 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
     return result.str();
 }
 
+static bool IsChangelogTimeDurationField(const std::string& fieldId) {
+    return fieldId == "timeoriginalestimate" ||
+           fieldId == "timeestimate" ||
+           fieldId == "timespent" ||
+           fieldId == "aggregatetimeoriginalestimate" ||
+           fieldId == "aggregatetimeestimate" ||
+           fieldId == "aggregatetimespent";
+}
+
+static std::string FormatChangelogTimeValue(const std::string& value) {
+    if (value.empty()) {
+        return value;
+    }
+    bool allDigits = true;
+    for (char ch : value) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            allDigits = false;
+            break;
+        }
+    }
+    if (allDigits) {
+        try {
+            long long seconds = std::stoll(value);
+            if (seconds == 0) {
+                return "0m";
+            }
+            std::string formatted = FormatWorkDurationFromSeconds(seconds);
+            if (!formatted.empty()) {
+                return formatted;
+            }
+        } catch (...) {
+            // Keep original string if there's a parsing/overflow error
+        }
+    }
+    return value;
+}
+
 std::string ParseChangelog(const nlohmann::json& histories) {
     const size_t kMaxChangelogEntries = 60;
     const size_t kMaxValueLength = 200;
@@ -578,6 +615,11 @@ std::string ParseChangelog(const nlohmann::json& histories) {
 
             std::string fromValue = safeValueString(changeItem, "fromString", "from");
             std::string toValue = safeValueString(changeItem, "toString", "to");
+
+            if (IsChangelogTimeDurationField(fieldName)) {
+                fromValue = FormatChangelogTimeValue(fromValue);
+                toValue = FormatChangelogTimeValue(toValue);
+            }
 
             if (fromValue.size() > kMaxValueLength) {
                 fromValue.resize(kMaxValueLength);

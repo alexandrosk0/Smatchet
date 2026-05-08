@@ -84,27 +84,9 @@ struct ActiveWorklogDialogState {
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
 
-// #region agent log
 struct EditCbUser {
     SpreadsheetState* state;
-    const char* fieldId;
 };
-
-static void AgentLogTicketField(const char* hypothesisId, const char* location, int a, int b, int c, int d) {
-    FILE* f = std::fopen("c:/Dev/Smatchet/debug-e99704.log", "a");
-    if (!f) {
-        return;
-    }
-    const long long ts = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-    std::fprintf(f,
-                 "{\"sessionId\":\"e99704\",\"hypothesisId\":\"%s\",\"location\":\"%s\",\"message\":\"tick\",\"data\":{"
-                 "\"a\":%d,\"b\":%d,\"c\":%d,\"d\":%d},\"timestamp\":%lld}\n",
-                 hypothesisId, location, a, b, c, d, ts);
-    std::fclose(f);
-}
-// #endregion agent log
 
 /** Collapse ImGui's initial select-all when a grid text cell opens. `EventActivated` can arrive the frame after
  *  `EditJustStarted` is cleared; use `PendingGridInputTextDeselect` until we see activation or full-range selection. */
@@ -117,15 +99,6 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways) {
         return 0;
     }
-    const bool isSummary = u->fieldId && std::strcmp(u->fieldId, "summary") == 0;
-    if (isSummary && (data->EventActivated || st->EditJustStarted || st->PendingGridInputTextDeselect)) {
-        static int s_summaryCbLogBudget;
-        if (s_summaryCbLogBudget < 80) {
-            ++s_summaryCbLogBudget;
-            AgentLogTicketField("B", "TicketFieldEditor:InputText_cb_always", data->EventActivated ? 1 : 0,
-                                st->PendingGridInputTextDeselect ? 1 : 0, data->SelectionStart, data->SelectionEnd);
-        }
-    }
     if (!st->PendingGridInputTextDeselect) {
         return 0;
     }
@@ -137,12 +110,6 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     const int end = data->BufTextLen;
     data->SetSelection(end, end);
     st->PendingGridInputTextDeselect = false;
-    if (isSummary) {
-        AgentLogTicketField("C", "TicketFieldEditor:InputText_cb_after_set", data->CursorPos, data->SelectionStart,
-                            data->SelectionEnd, end);
-        AgentLogTicketField("F", "TicketFieldEditor:collapse_applied", data->EventActivated ? 1 : 0, fullRange ? 1 : 0,
-                            0, 0);
-    }
     return 0;
 }
 
@@ -333,13 +300,6 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
     if (state.IsEditingField(ticket.id, field.Id)) {
         const bool editJustStarted = state.EditJustStarted;
-        if (field.Id == "summary") {
-            static int s_enterEditLogBudget;
-            if (s_enterEditLogBudget < 30) {
-                ++s_enterEditLogBudget;
-                AgentLogTicketField("E", "TicketFieldEditor:enter_edit", editJustStarted ? 1 : 0, 0, 0, 0);
-            }
-        }
         const bool isDuration = IsTimeDurationField(field.Id);
         bool submitted = false;
 
@@ -348,7 +308,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
             if (editJustStarted) {
                 ImGui::SetKeyboardFocusHere();
             }
-            EditCbUser cbUser{&state, field.Id.c_str()};
+            EditCbUser cbUser{&state};
             submitted = DrawDurationFieldWithSuggestions(
                 itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
                 ImGuiInputTextFlags_CallbackAlways,
@@ -360,7 +320,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
             if (editJustStarted) {
                 ImGui::SetKeyboardFocusHere();
             }
-            EditCbUser cbUser{&state, field.Id.c_str()};
+            EditCbUser cbUser{&state};
             submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
                                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
                                          InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
@@ -584,14 +544,6 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
-    if (column.FieldId == "summary") {
-        static int s_summaryCellLogBudget;
-        if (s_summaryCellLogBudget < 50) {
-            ++s_summaryCellLogBudget;
-            AgentLogTicketField("A", "TicketFieldEditor:RenderFieldCell_summary", handledByLua ? 1 : 0,
-                                static_cast<int>(column.Plan), 0, 0);
-        }
-    }
     if (handledByLua) {
         return;
     }

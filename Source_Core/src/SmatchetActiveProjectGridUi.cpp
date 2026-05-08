@@ -120,6 +120,7 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     }
     ImGui::SetScrollX(inner, targetX);
 }
+
 } // namespace
 
 
@@ -205,29 +206,27 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TableSetColumnIndex(hci);
                 const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
 
-                // TableHeader must use the Table's native ID stack
+                // Match ImGui::TableHeadersRow(): TableHeader IDs must be unique even when labels repeat.
+                ImGui::PushID(hci);
                 ImGui::TableHeader(hcol.Label.c_str());
 
-                ImGui::PushID(hci);
                 const TrackerField* hdrMeta =
                     (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
                 DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
                 ImGui::PopID();
             }
 
-            // Apply persisted sort from view when ImGui has no sort yet, or when we just switched/edited view sort.
+            // Apply persisted sort from the view only when the grid context changes or the Sort By popup edits it.
             if (activeViewForGrid) {
                 ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
                 const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
                 const bool shouldApplyPersistedSort =
-                    specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs ||
-                              (hasPersistedSort && specs->SpecsCount == 0));
+                    specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
                 if (shouldApplyPersistedSort) {
-                    // Clear existing sort state from ImGui internally before re-applying our custom specs
-                    if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
-                        for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
-                            ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
-                        }
+                    // Re-applying whenever ImGui briefly reports zero specs can override a header click that is
+                    // cycling through tri-state sort directions.
+                    for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
+                        ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
                     }
                     if (hasPersistedSort) {
                         int appliedSortCount = 0;
@@ -339,9 +338,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
             bool okToRefreshProjection = true;
             if (app.IsStreamingSyncActive() && needsProjectionRefresh) {
+                // Debounce cheap reshuffles while tickets stream, but never delay a user-driven sort change:
+                // header/persist fingerprint differs from last applied projection → apply immediately (fixes header
+                // clicks feeling stuck while Sort By still worked due to slower interaction pacing).
+                const bool sortKeyChanged = (fingerprint != d.cachedSortFingerprint);
                 auto now = std::chrono::steady_clock::now();
                 auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - d.lastGridSortAt).count();
-                if (elapsedMs < 500) {
+                if (!sortKeyChanged && elapsedMs < 500) {
                     okToRefreshProjection = false;
                 }
             }
