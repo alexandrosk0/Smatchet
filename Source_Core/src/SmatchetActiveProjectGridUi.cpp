@@ -19,6 +19,8 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #include <ghc/filesystem.hpp>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -879,7 +881,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     MaybeToastGridBannerFromSession(d);
     ImGui::End();
 }
-
 
 
 

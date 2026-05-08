@@ -6,6 +6,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 #include "Logging/LogMacros.h"
 #include "Misc/Paths.h"
 #include "PixelFormat.h"
@@ -65,6 +66,23 @@ void SmatchetOpenUrlCallback(const char* UrlUtf8, void*) {
 void SmatchetAttachmentViewerCallback(const char* LocalPathUtf8, const char*, const char*, void*) {
     const FString Path(LocalPathUtf8 ? UTF8_TO_TCHAR(LocalPathUtf8) : TEXT(""));
     FPlatformProcess::LaunchFileInDefaultExternalApplication(*Path);
+}
+
+/** Streaming sync + offline replay normally run inside ImGui Draw; when the overlay is hidden, Unreal skips DrawUI entirely, so drain work here (throttled — many Slate windows can present per frame). */
+void TickSmatchetApplicationIfHostReadyAndUiHidden(SmatchetImGuiHostHandle InHost) {
+    if (!InHost || SmatchetHost_IsUiVisible(InHost) != 0) {
+        return;
+    }
+    if (SmatchetHost_IsInitialized(InHost) == 0) {
+        return;
+    }
+    static thread_local double s_lastSeconds = 0.0;
+    const double now = FPlatformTime::Seconds();
+    if ((now - s_lastSeconds) < (1.0 / 60.0)) {
+        return;
+    }
+    s_lastSeconds = now;
+    SmatchetHost_TickApplicationWork(InHost);
 }
 } // namespace
 
@@ -218,6 +236,7 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
             return false;
         }
         if (SmatchetHost_IsUiVisible(Host) == 0) {
+            TickSmatchetApplicationIfHostReadyAndUiHidden(Host);
             return false;
         }
 
@@ -250,6 +269,7 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
             return;
         }
         if (SmatchetHost_IsUiVisible(Host) == 0) {
+            TickSmatchetApplicationIfHostReadyAndUiHidden(Host);
             return;
         }
         // Unreal fires this hook for every Slate window it presents, including tooltips, menus,
@@ -277,6 +297,7 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
                     return;
                 }
                 if (SmatchetHost_IsUiVisible(Host) == 0) {
+                    TickSmatchetApplicationIfHostReadyAndUiHidden(Host);
                     return;
                 }
                 TryRenderToSlateBackBuffer(BackBufferCopy.GetReference(), &RHICmdList, bDrawSoftwareCursor);

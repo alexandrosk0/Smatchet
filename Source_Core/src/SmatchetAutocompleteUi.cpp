@@ -6,6 +6,8 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cstring>

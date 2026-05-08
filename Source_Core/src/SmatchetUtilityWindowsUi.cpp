@@ -11,6 +11,8 @@
 #include "TicketGridModel.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cfloat>

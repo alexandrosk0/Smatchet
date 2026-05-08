@@ -6,8 +6,11 @@
 #include "SmatchetUiSession.h"
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <chrono>
@@ -283,6 +286,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 SmatchetRequestFontReload(d.cfg.SelectedFontName, 16.0f);
             }
             ImGui::SetItemTooltip("Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");
+
+            const auto& languages = SmatchetLocalization::AvailableLanguages();
+            int currentLanguageIdx = 0;
+            for (int i = 0; i < static_cast<int>(languages.size()); ++i) {
+                if (d.cfg.UiLanguage == languages[static_cast<size_t>(i)].Code) {
+                    currentLanguageIdx = i;
+                    break;
+                }
+            }
+            const char* languageItems[] = {
+                SmatchetLocalization::T("language.en_us", "English"),
+                SmatchetLocalization::T("language.fr_native", u8"Français")
+            };
+            if (ImGui::Combo("Language", &currentLanguageIdx, languageItems, IM_ARRAYSIZE(languageItems))) {
+                if (currentLanguageIdx >= 0 && currentLanguageIdx < static_cast<int>(languages.size())) {
+                    d.cfg.UiLanguage = languages[static_cast<size_t>(currentLanguageIdx)].Code;
+                    ConfigManager::Save(d.cfg);
+                    SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
+                }
+            }
+            ImGui::SetItemTooltip("Select the UI language. App-owned UI text changes immediately; tracker data is shown as-is.");
 
             ImGui::Spacing();
             ImGui::TextUnformatted("Grid and field text");
@@ -901,7 +925,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 
 
 

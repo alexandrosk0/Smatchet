@@ -3,6 +3,8 @@
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #include <algorithm>
 #include <chrono>
 #include <cstddef>

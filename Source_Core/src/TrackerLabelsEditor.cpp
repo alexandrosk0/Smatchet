@@ -2,6 +2,8 @@
 #include "AppController.h"
 #include "StringUtil.h"
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <string>

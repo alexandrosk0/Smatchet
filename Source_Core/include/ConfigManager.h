@@ -173,6 +173,8 @@ struct TrackerConfig {
 
     // Font setting
     std::string SelectedFontName = "Segoe UI";
+    // UI localization preference (normalized to en-US or fr-FR).
+    std::string UiLanguage = "en-US";
 };
 
 struct ViewSortSpec {
@@ -502,6 +504,20 @@ class ConfigManager {
         }
     }
 
+    static std::string NormalizeUiLanguageCode(const std::string& code) {
+        std::string s;
+        s.reserve(code.size());
+        for (char c : code) {
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+        }
+        if (s == "fr" || s == "fr-fr" || s == "fr_fr") {
+            return "fr-FR";
+        }
+        return "en-US";
+    }
+
     static void WriteConfigJson(const nlohmann::json& j) {
         const std::string path = GetConfigPath();
         std::lock_guard<std::mutex> lock(GetIoMutexRef());
@@ -549,6 +565,7 @@ class ConfigManager {
         j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
         j["view_field_picker_height"] = config.ViewFieldPickerHeight;
         j["selected_font_name"] = config.SelectedFontName;
+        j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
         j.erase("mcp_server_window_layout_valid");
         j.erase("mcp_server_window_x");
         j.erase("mcp_server_window_y");
@@ -795,6 +812,7 @@ class ConfigManager {
                 cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
                 cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
                 cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
+                cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
                 if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
                     cfg.QuickCommentTemplates.clear();
                     for (const auto& item : j["quick_comment_templates"]) {

@@ -10,6 +10,8 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <nlohmann/json.hpp>
 

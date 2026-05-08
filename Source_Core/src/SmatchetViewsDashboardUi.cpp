@@ -9,6 +9,8 @@
 #include "TrackerFieldSchema.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <cctype>
@@ -29,8 +31,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         ImGui::SetNextWindowFocus();
     }
     ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
+    const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     const std::string viewsWinTitle =
-        std::string("Views - ") + ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+        SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
     ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
     if (bFocusViews) {
         ImGui::SetWindowFocus();
@@ -485,7 +488,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     ImGui::End();
 }
-
 
 
 

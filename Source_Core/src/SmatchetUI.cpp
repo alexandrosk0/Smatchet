@@ -16,8 +16,11 @@
 #endif
 #include "SmatchetToast.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -89,6 +92,8 @@ void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     if (!g_ui.cfgInitialized) {
         g_ui.cfg = ConfigManager::Load();
+        g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
+        SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
         g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
@@ -521,8 +526,6 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
 UiDrawSession::~UiDrawSession() {
     DrainAuditReloadFuture(*this);
 }
-
-
 
 
 

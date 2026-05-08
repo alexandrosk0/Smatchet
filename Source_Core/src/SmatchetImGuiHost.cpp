@@ -733,6 +733,15 @@ void SmatchetImGuiHost::AddInputCharacter(unsigned int character) {
     io.AddInputCharacter(character);
 }
 
+void SmatchetImGuiHost::TickApplicationWork() {
+    if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        return;
+    }
+    ImplData->App.TickOfflineCreates();
+    ImplData->App.TickOfflineFieldEdits();
+    ImplData->App.TickStreamingApply();
+}
+
 const char* SmatchetImGuiHost::PeekLastInitErrorUtf8() const {
     if (!ImplData || ImplData->LastInitError.empty()) {
         return "";
@@ -895,6 +904,13 @@ bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host) {
     if (!h)
         return false;
     return h->IsFrameActive();
+}
+
+void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host) {
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    if (!h)
+        return;
+    h->TickApplicationWork();
 }
 
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,

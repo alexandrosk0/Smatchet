@@ -8,6 +8,8 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN

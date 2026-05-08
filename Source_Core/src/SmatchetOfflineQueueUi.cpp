@@ -10,6 +10,8 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <chrono>
