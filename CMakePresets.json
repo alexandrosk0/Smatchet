@@ -26,8 +26,6 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-debug",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
@@ -42,8 +40,6 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-release",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
@@ -65,17 +61,89 @@
             }
         },
         {
+            "name": "ninja-clang-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Release (Clang)",
+            "description": "Release + compile_commands.json using clang/clang++ on PATH",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-clang-release",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-msvc-debug",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Debug (MSVC)",
+            "description": "Debug build with Ninja and cl.exe from a Visual Studio developer shell",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-msvc-debug",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-msvc-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Release (MSVC)",
+            "description": "Release build with Ninja and cl.exe from a Visual Studio developer shell",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-msvc-release",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "vs-debug",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Visual Studio Debug",
+            "description": "Debug build with the Visual Studio 2022 generator",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/vs-debug",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "vs-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Visual Studio Release",
+            "description": "Release build with the Visual Studio 2022 generator",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/vs-release",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
             "name": "ninja-unreal-dx12",
             "inherits": [
                 "_smatchet-native-features"
             ],
             "displayName": "Ninja Unreal DX12",
-            "description": "Debug DX12 artifacts packaged for Unreal plugin",
+            "description": "Debug DX12 packaging using the compiler on PATH; use vs-unreal-dx12-release for MSVC ABI",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-unreal-dx12",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
@@ -87,12 +155,10 @@
                 "_smatchet-native-features"
             ],
             "displayName": "Ninja Unreal DX12 Release",
-            "description": "Release DX12 artifacts packaged for Unreal plugin",
+            "description": "Release DX12 packaging using the compiler on PATH; use vs-unreal-dx12-release for MSVC ABI",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-unreal-dx12-release",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/Program Files/JetBrains/CLion 2025.3.3/bin/mingw/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
@@ -108,7 +174,6 @@
             "generator": "Visual Studio 17 2022",
             "binaryDir": "${sourceDir}/build/vs-unreal-dx12-release",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
@@ -126,6 +191,28 @@
         {
             "name": "ninja-clang-debug",
             "configurePreset": "ninja-clang-debug"
+        },
+        {
+            "name": "ninja-clang-release",
+            "configurePreset": "ninja-clang-release"
+        },
+        {
+            "name": "ninja-msvc-debug",
+            "configurePreset": "ninja-msvc-debug"
+        },
+        {
+            "name": "ninja-msvc-release",
+            "configurePreset": "ninja-msvc-release"
+        },
+        {
+            "name": "vs-debug",
+            "configurePreset": "vs-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "vs-release",
+            "configurePreset": "vs-release",
+            "configuration": "Release"
         },
         {
             "name": "ninja-unreal-dx12",

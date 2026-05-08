@@ -19,6 +19,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 
 ## Documentation
 
+- [Build Guide](BUILD.md): Supported CMake presets, prerequisites, local compiler paths, and wrapper scripts.
 - [Lua Scripting Guide](LUA_GUIDE.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](MCP_GUIDE.md): How to use Smatchet as an MCP server for AI agents.
 
@@ -62,49 +63,16 @@ Smatchet exposes several CMake options to customize the build:
 | `SMATCHET_WITH_AI` | `OFF` | Includes the AI assistance HTTP client. |
 | `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
 
-### Build Instructions (Standalone)
+### Quick Build
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/alexandrosk0/Smatchet.git
-cd Smatchet
-
-# 2. Configure the project
-cmake -B build -S . -DSMATCHET_WITH_LUA_AUTOMATION=ON -DSMATCHET_WITH_MCP=ON -DSMATCHET_WITH_AI=ON
-
-# 3. Build the standalone executable
-cmake --build build --config Release
-```
-
-Once compiled, the executable can be found in the `build/Target_Standalone` directory.
-
-### CMake Presets
-
-The project ships with `CMakePresets.json` providing ready-made configurations:
-
-| Preset | Description |
-| :--- | :--- |
-| `ninja-debug` | Debug build with Ninja |
-| `ninja-release` | Release build with Ninja |
-| `ninja-clang-debug` | Debug build with Clang (best for clang-tidy) |
-| `ninja-unreal-dx12` | Debug DX12 artifacts packaged for Unreal plugin |
-| `ninja-unreal-dx12-release` | Release DX12 artifacts for Unreal plugin |
-| `vs-unreal-dx12-release` | MSVC Release DX12 artifacts for Unreal plugin |
-
-```bash
-# Example: configure and build using a preset
-cmake --preset ninja-release
-cmake --build --preset ninja-release
+cmake --preset ninja-debug
+cmake --build --preset ninja-debug --target SmatchetStandalone
 ```
 
 ### Unreal Engine Plugin
 
 When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX12`) that automatically packages the DX12-compatible core library, ImGui, and public headers into the `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` layout for immediate consumption by the Unreal Build Tool.
-
-```bash
-cmake --preset ninja-unreal-dx12-release
-cmake --build --preset ninja-unreal-dx12-release
-```
 
 ## Architecture
 
