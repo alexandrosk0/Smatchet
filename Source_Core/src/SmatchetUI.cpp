@@ -380,7 +380,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
     }
 
-    if (d.connectivityRecoveryTicketResyncPending) {
+    else if (d.connectivityRecoveryTicketResyncPending) {
         if (d.appliedInitialView) {
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
