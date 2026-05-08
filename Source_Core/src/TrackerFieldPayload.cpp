@@ -1,11 +1,11 @@
 #include "TrackerFieldPayload.h"
 
 #include "CompactDateFormat.h"
+#include "MarkdownConvert.h"
 #include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 
 namespace {
 
@@ -236,25 +236,6 @@ bool LooksLikeIssueKey(const std::string& value) {
     return true;
 }
 
-nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
-    nlohmann::json content = nlohmann::json::array();
-    std::string line;
-    std::istringstream iss(plainText);
-    while (std::getline(iss, line)) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", line}}});
-        content.push_back(std::move(para));
-    }
-    if (content.empty()) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
-        content.push_back(std::move(para));
-    }
-    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
-}
-
 std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input) {
     std::vector<std::string> segments;
     std::string cur;
@@ -475,7 +456,11 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
     }
 
     if (FieldUsesAdfDocument(field)) {
-        outValue = AdfDocumentFromPlainText(scalarValue);
+        // The long-text modal editor produces Markdown for ADF fields (description, environment,
+        // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
+        // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
+        // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
+        outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
         return true;
     }
     if (field.Type == "date" || field.Type == "datetime") {
