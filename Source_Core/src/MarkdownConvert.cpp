@@ -508,13 +508,14 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     } else if (type == "emoji") {
         out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
     } else if (type == "inlineCard") {
-        // Jira smart link / Atlassian inline card. Render as a plain Markdown link using the URL
-        // as both the text and the destination. This loses the rendered card on save (becomes a
-        // regular hyperlink) but preserves the URL itself.
+        // Jira smart link / Atlassian inline card. Render as a bare URL — Markdown's permissive
+        // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
+        // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
+        // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
         if (node.contains("attrs") && node["attrs"].is_object()) {
             const std::string url = node["attrs"].value("url", std::string());
             if (!url.empty()) {
-                out << "[" << url << "](" << url << ")";
+                out << url;
             }
         }
     } else if (type == "mention") {
