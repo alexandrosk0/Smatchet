@@ -126,8 +126,18 @@ MergeResult ThreeWayMerge(const std::string& base, const std::string& mine, cons
     };
 
     while (mi < mHunks.size() || ti < tHunks.size()) {
+        // Discard hunks whose base range was already consumed by a previous hunk.
+        // These represent overlapping changes from different start positions — flag as conflict
+        // but don't try to apply them (the previously-applied hunk already replaced that region).
+        while (mi < mHunks.size() && mHunks[mi].baseEnd <= cursor) ++mi;
+        while (ti < tHunks.size() && tHunks[ti].baseEnd <= cursor) ++ti;
+        // If a hunk starts BEFORE cursor but ends after, the region partially overlaps — conflict.
+        if (mi < mHunks.size() && mHunks[mi].baseStart < cursor) { isClean = false; ++mi; continue; }
+        if (ti < tHunks.size() && tHunks[ti].baseStart < cursor) { isClean = false; ++ti; continue; }
+
         const bool mHas = mi < mHunks.size();
         const bool tHas = ti < tHunks.size();
+        if (!mHas && !tHas) break;
         int nextBase = bSize;
         if (mHas) nextBase = (std::min)(nextBase, mHunks[mi].baseStart);
         if (tHas) nextBase = (std::min)(nextBase, tHunks[ti].baseStart);

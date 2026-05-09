@@ -417,10 +417,17 @@ void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string&
                     nlohmann::json newPayload;
                     try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
                     catch (...) { newPayload = nlohmann::json::object(); }
+                    // Determine the actual payload key: may be "description" (Jira)
+                    // or "description_html" (Plane). Use the key already present in the payload.
+                    std::string payloadKey = row.FieldId;
+                    if (!newPayload.contains(payloadKey)) {
+                        const std::string altKey = row.FieldId + "_html";
+                        if (newPayload.contains(altKey)) payloadKey = altKey;
+                    }
                     if (richKind == "adf") {
-                        newPayload[row.FieldId] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
                     } else {
-                        newPayload[row.FieldId] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
                     }
                     Cache->ResolveFieldEditConflict(id, newPayload.dump());
                     return;
@@ -605,7 +612,41 @@ void AppController::TickOfflineFieldEdits() {
                 // Identify the field key and its current raw payload inside fieldsPayload.
                 // The queued payload is {fieldId: <adf-or-html>}; extract the inner value.
                 const std::string& fid = row.FieldId;
-                if (fieldsPayload.contains(fid)) {
+                // Bug-fix: Plane's BuildFieldPayload puts the description value under
+                // "description_html", not "description". Fall back to the _html key.
+                std::string payloadKey = fid;
+                if (!fieldsPayload.contains(fid)) {
+                    const std::string altKey = fid + "_html";
+                    if (fieldsPayload.contains(altKey)) payloadKey = altKey;
+                }
+                if (fieldsPayload.contains(payloadKey)) {
+                    // Detect format from OriginalRichValue (base) once — used for mine extraction
+                    // and for rebuilding the merged payload.
+                    size_t biDetect = 0;
+                    const std::string& brDetect = row.OriginalRichValue;
+                    while (biDetect < brDetect.size() &&
+                           (brDetect[biDetect]==' '||brDetect[biDetect]=='\t'||
+                            brDetect[biDetect]=='\n'||brDetect[biDetect]=='\r')) ++biDetect;
+                    const bool isAdf = biDetect < brDetect.size() && brDetect[biDetect] == '{';
+
+                    auto toMd = [](const std::string& rich) -> std::string {
+                        if (rich.empty()) return rich;
+                        size_t i = 0;
+                        while (i < rich.size() && (rich[i]==' '||rich[i]=='\t'||rich[i]=='\n'||rich[i]=='\r')) ++i;
+                        if (i < rich.size() && rich[i] == '{') {
+                            try {
+                                auto j = nlohmann::json::parse(rich);
+                                if (j.is_object() && j.value("type",std::string())=="doc")
+                                    return MarkdownConvert::AdfToMarkdown(j);
+                            } catch (...) {}
+                        }
+                        if (i < rich.size() && rich[i] == '<') {
+                            bool fell = false;
+                            return MarkdownConvert::HtmlSubsetToMarkdown(rich, &fell);
+                        }
+                        return rich;
+                    };
+
                     try {
                         // --- Fetch current server state ---
                         const TrackerConfig cfgForFetch = ConfigManager::Load();
@@ -621,49 +662,30 @@ void AppController::TickOfflineFieldEdits() {
                             const std::string theirsRich = fresh.GetFieldRichValue(fid);
 
                             if (!theirsRich.empty() && theirsRich != row.OriginalRichValue) {
-                                // Server content changed since we queued — attempt 3-way merge.
-                                // Classify format from the base value and convert all three to Markdown.
-                                auto toMd = [](const std::string& rich) -> std::string {
-                                    if (rich.empty()) return rich;
-                                    size_t i = 0;
-                                    while (i < rich.size() && (rich[i]==' '||rich[i]=='\t'||rich[i]=='\n'||rich[i]=='\r')) ++i;
-                                    if (i < rich.size() && rich[i] == '{') {
-                                        try {
-                                            auto j = nlohmann::json::parse(rich);
-                                            if (j.is_object() && j.value("type",std::string())=="doc")
-                                                return MarkdownConvert::AdfToMarkdown(j);
-                                        } catch (...) {}
-                                    }
-                                    if (i < rich.size() && rich[i] == '<') {
-                                        bool fell = false;
-                                        return MarkdownConvert::HtmlSubsetToMarkdown(rich, &fell);
-                                    }
-                                    return rich;
-                                };
-
                                 const std::string baseMd   = toMd(row.OriginalRichValue);
                                 const std::string theirsMd = toMd(theirsRich);
 
-                                // Mine: convert current queued payload back to Markdown.
+                                // Mine: extract from the queued payload and convert to Markdown.
+                                // ADF objects are walked directly; HTML strings are converted.
                                 std::string mineMd;
-                                const auto& myVal = fieldsPayload[fid];
-                                if (myVal.is_object() && myVal.value("type",std::string())=="doc")
+                                const auto& myVal = fieldsPayload[payloadKey];
+                                if (myVal.is_object() && myVal.value("type",std::string())=="doc") {
                                     mineMd = MarkdownConvert::AdfToMarkdown(myVal);
-                                else if (myVal.is_string())
-                                    mineMd = myVal.get<std::string>();
+                                } else if (myVal.is_string()) {
+                                    // Plane stores HTML — convert to Markdown for merge surface.
+                                    bool fell = false;
+                                    mineMd = MarkdownConvert::HtmlSubsetToMarkdown(
+                                        myVal.get<std::string>(), &fell);
+                                    if (fell) mineMd = toMd(myVal.get<std::string>());
+                                }
 
                                 const TextMerge::MergeResult merged = TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
                                 if (merged.IsClean) {
-                                    // Rebuild the payload from merged Markdown.
-                                    // Detect format from base: ADF or HTML.
-                                    size_t bi = 0;
-                                    const std::string& br = row.OriginalRichValue;
-                                    while (bi < br.size() && (br[bi]==' '||br[bi]=='\t'||br[bi]=='\n'||br[bi]=='\r')) ++bi;
-                                    const bool isAdf = bi < br.size() && br[bi] == '{';
+                                    // Rebuild payload under the correct key for this backend.
                                     if (isAdf) {
-                                        fieldsPayload[fid] = MarkdownConvert::MarkdownToAdf(merged.Text);
+                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(merged.Text);
                                     } else {
-                                        fieldsPayload[fid] = MarkdownConvert::MarkdownToHtml(merged.Text);
+                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(merged.Text);
                                     }
                                     LOG_INFO("TickOfflineFieldEdits: 3-way merge clean for issue=%s field=%s",
                                              row.IssueKey.c_str(), fid.c_str());
@@ -675,12 +697,11 @@ void AppController::TickOfflineFieldEdits() {
                                              "suspending replay pending user resolution",
                                              row.IssueKey.c_str(), fid.c_str());
                                     const nlohmann::json ctx = {
-                                        {"base",   baseMd},
-                                        {"mine",   mineMd},
-                                        {"theirs", theirsMd},
+                                        {"base",    baseMd},
+                                        {"mine",    mineMd},
+                                        {"theirs",  theirsMd},
                                         {"fieldId", fid},
-                                        {"richKind", (row.OriginalRichValue.size() > 0 &&
-                                                      row.OriginalRichValue.front() == '{') ? "adf" : "html"}
+                                        {"richKind", isAdf ? "adf" : "html"}
                                     };
                                     tryCacheMutation("mark_field_edit_conflict", row.Id,
                                         [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); });
