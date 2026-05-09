@@ -495,9 +495,13 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
             return;
         }
         for (const auto& w : openWrap) out << w;
-        if (!href.empty()) out << "[";
+        // Autolink shortcut: when the visible text equals the link target, emit a bare URL
+        // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
+        // on save, so round-trip semantics are preserved with a cleaner editor surface.
+        const bool autolink = !href.empty() && text == href;
+        if (!href.empty() && !autolink) out << "[";
         out << text;
-        if (!href.empty()) {
+        if (!href.empty() && !autolink) {
             out << "](" << href << ")";
         }
         for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it) {
