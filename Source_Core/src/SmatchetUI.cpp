@@ -89,9 +89,10 @@ static LayoutRect DefaultLayoutRectFor(const char* key, float defaultW, float de
         return LayoutRect{ImVec2(workPos.x, workPos.y + h - logH), ImVec2(w, logH)};
     }
     if (std::strcmp(key, "scripting") == 0 || std::strcmp(key, "mcp") == 0) {
-        const float sideW = ClampFloat(defaultW, 420.0f, (std::min)(720.0f, w * 0.46f));
+        const float utilityPanelW = ClampFloat(defaultW, 420.0f, (std::min)(720.0f, w * 0.46f));
         const float sideH = ClampFloat(defaultH, 420.0f, h * 0.88f);
-        return LayoutRect{ImVec2(workPos.x + w - sideW - 24.0f, workPos.y + 48.0f), ImVec2(sideW, sideH)};
+        return LayoutRect{ImVec2(workPos.x + w - utilityPanelW - 24.0f, workPos.y + 48.0f),
+                          ImVec2(utilityPanelW, sideH)};
     }
     return centered(defaultW, defaultH);
 }
@@ -161,7 +162,7 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
     });
 }
 
-void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
+void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
     const LayoutRect rect = DefaultLayoutRectFor(layoutKey, defaultW, defaultH);
     const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0)
@@ -174,7 +175,7 @@ void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, 
     }
 }
 
-void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH) {
+void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
     if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
         return;
     }
@@ -209,8 +210,6 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
 }
 
 void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
-    const bool keepPreferencesOpen = d.showPreferences;
-    d.showPreferences = keepPreferencesOpen;
     d.showViewsDashboard = true;
     d.requestViewsDashboardFocus = false;
     d.showPerformance = false;
@@ -548,17 +547,16 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
     }
 
     else if (d.connectivityRecoveryTicketResyncPending) {
-        if (d.appliedInitialView) {
-            // Avoid overlapping with an in-flight streaming ticket sync (e.g. initial load): a second
-            // SyncWithBackend defers via supersede and replays with a second "Syncing" toast.
-            if (app.IsStreamingSyncActive()) {
-                return;
-            }
-            ConfigManager::Save(d.cfg);
-            app.ClearLastTrackerTicketSyncWarning();
-            d.connectivityRecoveryTicketResyncPending = false;
-            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+        // In this branch `appliedInitialView` is already true (paired with the `if (!appliedInitialView)` above).
+        // Avoid overlapping with an in-flight streaming ticket sync (e.g. initial load): a second
+        // SyncWithBackend defers via supersede and replays with a second "Syncing" toast.
+        if (app.IsStreamingSyncActive()) {
+            return;
         }
+        ConfigManager::Save(d.cfg);
+        app.ClearLastTrackerTicketSyncWarning();
+        d.connectivityRecoveryTicketResyncPending = false;
+        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
     }
 }
 

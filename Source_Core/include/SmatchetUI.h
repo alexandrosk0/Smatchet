@@ -28,13 +28,13 @@ class SmatchetUI {
     void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     void drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d);
-    void drawAuditWindow(AppController& app, UiDrawSession& d);
-    void drawAIAssistantWindow(AppController& app, UiDrawSession& d);
-    void drawLogWindow(UiDrawSession& d);
-    void drawBulkImportWindow(AppController& app, UiDrawSession& d);
-    void drawBulkExportWindow(AppController& app, UiDrawSession& d);
-    void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
-                               bool requestFocus = false);
-    void repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH);
+    static void drawAuditWindow(AppController& app, UiDrawSession& d);
+    static void drawAIAssistantWindow(AppController& app, UiDrawSession& d);
+    static void drawLogWindow(UiDrawSession& d);
+    static void drawBulkImportWindow(AppController& app, UiDrawSession& d);
+    static void drawBulkExportWindow(AppController& app, UiDrawSession& d);
+    static void prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
+                                      bool requestFocus = false);
+    static void repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH);
     void resetWindowLayoutToDefault(UiDrawSession& d);
 };

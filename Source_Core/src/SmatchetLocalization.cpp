@@ -376,9 +376,7 @@ const std::unordered_map<std::string, const TranslationEntry*>& EntriesByEnglish
                 continue;
             }
             // First entry wins so common aliases like "Save" stay stable.
-            if (map.find(entry.English) == map.end()) {
-                map[entry.English] = &entry;
-            }
+            map.emplace(entry.English, &entry);
         }
     }
     return map;

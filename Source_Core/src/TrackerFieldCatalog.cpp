@@ -100,8 +100,6 @@ void MergeComponentIntoCatalog(std::vector<TrackerField>& fields, std::vector<Tr
     }
 
     MergeTrackerFieldOption(fieldIt->AllowedValueOptions, option);
-    RefreshTrackerAllowedValuesFromOptions(*fieldIt);
-    fieldIt->Family = ClassifyTrackerFieldFamily(*fieldIt);
 }
 
 bool MergeProjectComponentsFromEndpoint(const TrackerConfig& cfg, const std::string& base, const cpr::Header& headers,

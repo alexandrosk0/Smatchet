@@ -84,7 +84,7 @@ ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
                   (std::max)(vp->WorkPos.y, (std::min)(pos.y, maxY)));
 }
 
-void PrepareMcpWindowLayout(UiDrawSession& d) {
+void PrepareMcpWindowLayout(const UiDrawSession& d) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
@@ -101,7 +101,7 @@ void PrepareMcpWindowLayout(UiDrawSession& d) {
     ImGui::SetNextWindowSize(size, cond);
 }
 
-void RepairMcpWindowLayout(UiDrawSession& d) {
+void RepairMcpWindowLayout(const UiDrawSession& d) {
     if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
         return;
     }
@@ -128,7 +128,7 @@ void RepairMcpWindowLayout(UiDrawSession& d) {
 
 } // namespace
 
-void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDisk, UiDrawSession& d) {
+void SmatchetDrawMcpServerPanel(const AppController& app, const TrackerConfig& cfgOnDisk, UiDrawSession& d) {
     static std::vector<char> s_infoScratch;
     static std::vector<char> s_logScratch;
 
@@ -169,7 +169,7 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
     }
 
     info += "\nRuntime (this process)\n";
-    ::PluginHost* ph = app.RuntimePluginHost();
+    const ::PluginHost* ph = app.RuntimePluginHost();
     if (ph == nullptr) {
         info += "No runtime plugin host is registered. Saving MCP under Preferences → Integrations may require a full "
                 "app restart in this host.\n";
@@ -256,7 +256,7 @@ void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDi
     ImGui::TextDisabled("Edit MCP fields in Preferences → Integrations.");
 }
 
-void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
+void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
     if (!d.showMcpServerWindow) {
         return;
     }

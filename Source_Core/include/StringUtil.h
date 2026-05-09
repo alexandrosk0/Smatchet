@@ -65,18 +65,15 @@ inline bool EqualsCaseInsensitive(const std::string& a, const std::string& b) {
 /** Natural Jira issue key comparison: "PROJ-2" < "PROJ-10" (lexicographic prefix, then numeric suffix). */
 inline bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
     auto split = [](const std::string& s) -> std::pair<std::string, long long> {
-        std::string project;
-        long long num = 0;
         const size_t dash = s.rfind('-');
         if (dash != std::string::npos && dash + 1 < s.size()) {
-            project = s.substr(0, dash);
+            std::string project = s.substr(0, dash);
             const std::string tail = s.substr(dash + 1);
             if (!tail.empty()) {
                 char* end = nullptr;
                 const long long v = std::strtoll(tail.c_str(), &end, 10);
                 if (end == tail.c_str() + tail.size()) {
-                    num = v;
-                    return {project, num};
+                    return {std::move(project), v};
                 }
             }
         }

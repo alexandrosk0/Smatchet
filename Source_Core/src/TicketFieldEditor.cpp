@@ -1085,7 +1085,7 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
-void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderTextEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                       const std::string& currentValue,
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
@@ -1177,7 +1177,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
-void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
                               bool tooltipsEnabled) {
     const float cellAvail = ImGui::GetContentRegionAvail().x;
@@ -1212,8 +1212,6 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
         ImGui::EndCombo();
     }
 
-    ImVec2 overlayP0(0.0f, 0.0f);
-    ImVec2 overlayP1(0.0f, 0.0f);
     if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
         const float maxEdge = ImGui::GetFrameHeight();
         const float iw = static_cast<float>(overlayIcon.Width);
@@ -1222,8 +1220,8 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
         const float dw = iw * scale;
         const float dh = ih * scale;
         const float rowH = comboMax.y - comboMin.y;
-        overlayP0 = ImVec2(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
-        overlayP1 = ImVec2(overlayP0.x + dw, overlayP0.y + dh);
+        const ImVec2 overlayP0(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
+        const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
         ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
                                              ImVec2(1.0f, 1.0f));
     }
@@ -1240,7 +1238,7 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
     }
 }
 
-void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
@@ -1325,7 +1323,7 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     }
 }
 
-void RenderCascadingSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                                  const std::string& currentValue,
                                  std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::string parentId;

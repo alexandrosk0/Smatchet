@@ -85,7 +85,7 @@ class PlaneClient : public ITrackerClient {
     std::unordered_map<std::string, std::string> keyToId_;
     mutable std::recursive_mutex planeCacheMutex_;
 
-    std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg) const;
+    static std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg);
 };
 
 

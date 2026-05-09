@@ -184,7 +184,7 @@ class AppController {
      * Lua InitLua uses one functor struct per binding (see AppController_LuaBindings.cpp) so sol2/GCC never
      * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
      */
-    void LuaLogInfoBind(std::string msg);
+    void LuaLogInfoBind(const std::string& msg);
     std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId);
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
     void LuaRegisterFieldDisplayBind(const std::string& fieldId, sol::function fn);
@@ -213,6 +213,7 @@ class AppController {
         nlohmann::json parametersSchema;
         sol::protected_function callback;
     };
+    /** Thread-safe snapshot (e.g. MCP server thread vs Lua registration on the app thread). */
     std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
     std::string ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args, std::string& outError);
@@ -276,7 +277,7 @@ class AppController {
                                     const std::string& value) const;
 
     std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
-    std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) const;
+    static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
     const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
@@ -529,6 +530,7 @@ class AppController {
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
     std::vector<McpToolDefinition> luaMcpTools_;
+    mutable std::mutex luaMcpToolsMutex_;
     std::vector<std::pair<std::string, sol::protected_function>> luaWindows_;
     std::vector<std::pair<std::string, std::string>> luaTicketActions_;
     std::vector<std::pair<std::string, std::string>> luaGlobalActions_;

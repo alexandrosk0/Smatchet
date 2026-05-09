@@ -69,7 +69,7 @@ std::vector<std::string> SortAndUniqueLabels(std::vector<std::string> values) {
     return values;
 }
 
-std::vector<std::string> CollectLabelSuggestions(AppController& app, const CachedTicket& ticket,
+std::vector<std::string> CollectLabelSuggestions(const AppController& app, const CachedTicket& ticket,
                                                  const std::string& currentValue) {
     std::vector<std::string> labels;
     const auto appendLabels = [&labels](const std::string& rawLabels) {
@@ -115,7 +115,7 @@ namespace TrackerLabelsEditor {
 
 bool IsLabelsField(const std::string& fieldId) { return ToLowerAsciiCopy(fieldId) == "labels"; }
 
-void RenderLabelsFieldEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderLabelsFieldEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, const QueueLabelEditFn& queueEdit) {
     const auto queue = [&queueEdit, &ticket, &field](const std::vector<std::string>& values) {
         queueEdit(ticket.id, field, values);

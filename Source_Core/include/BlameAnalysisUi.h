@@ -15,7 +15,7 @@ class BlameAnalysisUi {
     void DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey);
 
     /** Persisted blame options (same fields as former Blame "Options…"); call from Preferences. */
-    void DrawBlamePreferencesTab(AppController& app);
+    void DrawBlamePreferencesTab(const AppController& app);
 
   private:
     void ensureSettingsBuffersLoaded();

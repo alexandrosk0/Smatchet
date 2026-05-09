@@ -36,13 +36,12 @@ class LuaConsolePlugin : public IPlugin {
     bool runInBackground_ = false;
 
     void EnsureLuaLanguageDef();
-    void RefreshScriptList(AppController& app, bool forceRescan = false);
-    bool LoadSelectedScriptIntoEditor(AppController& app, std::string& outErr);
-    bool SaveCurrentScript(AppController& app, std::string& outErr);
+    void RefreshScriptList(const AppController& app, bool forceRescan = false);
+    bool LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
+    bool SaveCurrentScript(const AppController& app, std::string& outErr);
     void ApplyErrorMarkersFromMessage(const std::string& errMsg);
     void ClearErrorMarkers();
     void DrawAutocompletePopup();
     static int TryParseLuaErrorLine(const std::string& err);
     static bool IsHooksFile(const std::string& rel);
-    static bool IsRunLuaFile(const std::string& rel);
 };

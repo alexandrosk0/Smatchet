@@ -29,8 +29,11 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     const bool bFocusViews = d.requestViewsDashboardFocus;
     prepareTopLevelWindow(d, "views", 760.0f, 560.0f, bFocusViews);
     const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-    const std::string viewsWinTitle =
+    // Stable ### id so dock/layout state and WindowTitleFromSource do not key off the full localized
+    // title (which changes with language and backend label).
+    std::string viewsWinTitle =
         SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
+    viewsWinTitle += "###SmatchetViewsDashboard";
     ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
     repairTopLevelWindow(d, "views", 300.0f, 260.0f);
     if (bFocusViews) {
@@ -38,7 +41,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         d.requestViewsDashboardFocus = false;
     }
 
-    ViewsStore& store = ViewState.GetStoreMutable();
+    const ViewsStore& store = ViewState.GetStoreMutable();
     ViewState.EnsureLoaded(d.cfg);
 
     {

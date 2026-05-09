@@ -621,15 +621,15 @@ bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDat
     ImGui::PopStyleVar();
     
     // Dropdown Calendar Popup
-    static ParsedJiraDateTime s_genWorking{};
     static bool s_initWorking = false;
-    
+
     if (!ImGui::IsPopupOpen("calendar_dropdown")) {
         s_initWorking = false;
     }
-    
+
     ImGui::SetNextWindowSize(ImVec2(236.0f, 0.0f));
     if (ImGui::BeginPopup("calendar_dropdown")) {
+        static ParsedJiraDateTime s_genWorking{};
         static int s_genViewYear = 2000;
         static int s_genViewMonth = 1;
         static bool s_genForceTextMode = false;

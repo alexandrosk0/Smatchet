@@ -14,7 +14,7 @@
 
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
                            const std::vector<CachedTicket>& tickets,
-                           std::vector<PendingFieldEdit>& pendingEdits,
+                           const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode) {
     {
         // Keep queued edits latest-per-cell (drop older queued item for same cell).

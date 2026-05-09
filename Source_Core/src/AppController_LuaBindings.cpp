@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
+#include <iterator>
 
 #include <nlohmann/json.hpp>
 
@@ -570,7 +571,7 @@ void AppController::InitLuaUi(sol::state& state) {
     state["ui"] = ui;
 }
 
-void AppController::LuaLogInfoBind(std::string msg) {
+void AppController::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
     if (!AutomationLogSinks.empty()) {
         for (const auto& sink : AutomationLogSinks) {
@@ -805,6 +806,7 @@ void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function cal
 
     def.callback = sol::protected_function(std::move(callback));
 
+    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
     luaMcpTools_.erase(std::remove_if(luaMcpTools_.begin(), luaMcpTools_.end(),
                                       [&](const McpToolDefinition& d) { return d.name == def.name; }),
                       luaMcpTools_.end());
@@ -1139,58 +1141,66 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const T
 
 
 std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() const {
+    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
     return luaMcpTools_;
 }
 
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError) {
-    for (auto& tool : luaMcpTools_) {
-        if (tool.name == name) {
-            LOG_TRACE("ExecuteLuaMcpTool: begin name=%s params_len=%zu", name.c_str(), paramsJson.size());
-            lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-                luaL_error(L, "Script execution timeout exceeded.");
-            }, LUA_MASKCOUNT, 100000);
-
-            nlohmann::json jParams;
-            try {
-                jParams = nlohmann::json::parse(paramsJson);
-            } catch (...) {
-                jParams = nlohmann::json::object();
-            }
-            try {
-                LOG_TRACE("ExecuteLuaMcpTool: params_json=%s", TruncateForTrace(jParams.dump()).c_str());
-            } catch (...) {
-                LOG_TRACE("ExecuteLuaMcpTool: params (dump failed)");
-            }
-
-            FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
-            sol::protected_function_result result = tool.callback(JsonToLua(lua, jParams));
-
-            lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-            if (!result.valid()) {
-                sol::error e = result;
-                outError = e.what();
-                LOG_TRACE("ExecuteLuaMcpTool: error name=%s err=%s", name.c_str(), TruncateForTrace(outError).c_str());
-                return "";
-            }
-            std::string ret;
-            if (result.return_count() > 0) {
-                sol::object obj = result[0];
-                if (obj.is<std::string>()) {
-                    ret = obj.as<std::string>();
-                } else {
-                    ret = LuaToJson(obj).dump();
-                }
-            } else {
-                ret = "{}";
-            }
-            LOG_TRACE("ExecuteLuaMcpTool: ok name=%s result_len=%zu", name.c_str(), ret.size());
-            return ret;
+    sol::protected_function callback;
+    {
+        std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
+        const auto it =
+            std::find_if(luaMcpTools_.begin(), luaMcpTools_.end(),
+                         [&](const McpToolDefinition& tool) { return tool.name == name; });
+        if (it == luaMcpTools_.end()) {
+            outError = "Tool not found";
+            LOG_TRACE("ExecuteLuaMcpTool: not_found name=%s", name.c_str());
+            return "";
         }
+        callback = it->callback;
     }
-    outError = "Tool not found";
-    LOG_TRACE("ExecuteLuaMcpTool: not_found name=%s", name.c_str());
-    return "";
+
+    LOG_TRACE("ExecuteLuaMcpTool: begin name=%s params_len=%zu", name.c_str(), paramsJson.size());
+    lua_sethook(lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
+        luaL_error(L, "Script execution timeout exceeded.");
+    }, LUA_MASKCOUNT, 100000);
+
+    nlohmann::json jParams;
+    try {
+        jParams = nlohmann::json::parse(paramsJson);
+    } catch (...) {
+        jParams = nlohmann::json::object();
+    }
+    try {
+        LOG_TRACE("ExecuteLuaMcpTool: params_json=%s", TruncateForTrace(jParams.dump()).c_str());
+    } catch (...) {
+        LOG_TRACE("ExecuteLuaMcpTool: params (dump failed)");
+    }
+
+    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+    sol::protected_function_result result = callback(JsonToLua(lua, jParams));
+
+    lua_sethook(lua.lua_state(), nullptr, 0, 0);
+
+    if (!result.valid()) {
+        sol::error e = result;
+        outError = e.what();
+        LOG_TRACE("ExecuteLuaMcpTool: error name=%s err=%s", name.c_str(), TruncateForTrace(outError).c_str());
+        return "";
+    }
+    std::string ret;
+    if (result.return_count() > 0) {
+        sol::object obj = result[0];
+        if (obj.is<std::string>()) {
+            ret = obj.as<std::string>();
+        } else {
+            ret = LuaToJson(obj).dump();
+        }
+    } else {
+        ret = "{}";
+    }
+    LOG_TRACE("ExecuteLuaMcpTool: ok name=%s result_len=%zu", name.c_str(), ret.size());
+    return ret;
 }
 
 
@@ -1415,9 +1425,9 @@ void AppController::DrawLuaWindows() {
 
 std::vector<std::string> AppController::GetLuaTicketActionNames() const {
     std::vector<std::string> names;
-    for (const auto& pair : luaTicketActions_) {
-        names.push_back(pair.first);
-    }
+    names.reserve(luaTicketActions_.size());
+    std::transform(luaTicketActions_.begin(), luaTicketActions_.end(), std::back_inserter(names),
+                   [](const auto& pair) { return pair.first; });
     return names;
 }
 
@@ -1449,9 +1459,9 @@ void AppController::SetAiPromptHandler(std::function<void(const std::string&)> h
 
 std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
     std::vector<std::string> names;
-    for (const auto& pair : luaGlobalActions_) {
-        names.push_back(pair.first);
-    }
+    names.reserve(luaGlobalActions_.size());
+    std::transform(luaGlobalActions_.begin(), luaGlobalActions_.end(), std::back_inserter(names),
+                   [](const auto& pair) { return pair.first; });
     return names;
 }
 

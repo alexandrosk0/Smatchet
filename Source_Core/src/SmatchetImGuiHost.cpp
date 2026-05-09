@@ -61,7 +61,7 @@ struct SmatchetImGuiHost::Impl {
     AppController App;
     PluginHost Plugins;
     SmatchetUI Ui;
-    std::string ImGuiIniPath;
+    std::string ImGuiIniPath; // cppcheck-suppress unusedStructMember -- WIN32 init path assigns io.IniFilename below
 
     // Serialize all ImGui API calls across threads (IO updates, NewFrame, Render, etc).
     std::mutex ImGuiMutex;
@@ -358,9 +358,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 
 #if !defined(_WIN32)
     outError = "SmatchetImGuiHost renderer backend is unavailable on this platform.";
-    if (ImplData) {
-        ImplData->LastInitError = outError;
-    }
+    ImplData->LastInitError = outError;
     LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
     return false;
 #else

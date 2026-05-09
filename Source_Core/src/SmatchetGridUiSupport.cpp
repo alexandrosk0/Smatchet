@@ -101,7 +101,7 @@ static std::string BuildTemplateCommentBody(const std::string& issueKey, const s
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue,
-                                  AppController* app, UiDrawSession* ui, bool readOnlyMode) {
+                                  AppController* app, const UiDrawSession* ui, bool readOnlyMode) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));

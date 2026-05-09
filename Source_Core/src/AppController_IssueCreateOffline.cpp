@@ -429,26 +429,27 @@ void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string&
         // We parse the existing payload first to keep the correct field key.
         try {
             auto existing = Cache->LoadPendingFieldEdits();
-            for (const auto& row : existing) {
-                if (row.Id == id) {
-                    nlohmann::json newPayload;
-                    try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
-                    catch (...) { newPayload = nlohmann::json::object(); }
-                    // Determine the actual payload key: may be "description" (Jira)
-                    // or "description_html" (Plane). Use the key already present in the payload.
-                    std::string payloadKey = row.FieldId;
-                    if (!newPayload.contains(payloadKey)) {
-                        const std::string altKey = row.FieldId + "_html";
-                        if (newPayload.contains(altKey)) payloadKey = altKey;
-                    }
-                    if (richKind == "adf") {
-                        newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
-                    } else {
-                        newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
-                    }
-                    Cache->ResolveFieldEditConflict(id, newPayload.dump());
-                    return;
+            const auto rowIt = std::find_if(existing.begin(), existing.end(),
+                                            [&](const auto& row) { return row.Id == id; });
+            if (rowIt != existing.end()) {
+                const auto& row = *rowIt;
+                nlohmann::json newPayload;
+                try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
+                catch (...) { newPayload = nlohmann::json::object(); }
+                // Determine the actual payload key: may be "description" (Jira)
+                // or "description_html" (Plane). Use the key already present in the payload.
+                std::string payloadKey = row.FieldId;
+                if (!newPayload.contains(payloadKey)) {
+                    const std::string altKey = row.FieldId + "_html";
+                    if (newPayload.contains(altKey)) payloadKey = altKey;
                 }
+                if (richKind == "adf") {
+                    newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+                } else {
+                    newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+                }
+                Cache->ResolveFieldEditConflict(id, newPayload.dump());
+                return;
             }
         } catch (...) {}
         Cache->ResolveFieldEditConflict(id, resolvedPayloadJson);

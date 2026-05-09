@@ -135,7 +135,7 @@ template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
 
 void SyncCallstackTrackerFieldBufFromCfg() { CopyToBuffer(g_callstackTrackerFieldBuf, g_blameCfg.CallstackTrackerFieldId); }
 
-void MaybeAutoselectCallstackTrackerField(AppController& app) {
+void MaybeAutoselectCallstackTrackerField(const AppController& app) {
     if (!g_blameCfg.CallstackTrackerFieldId.empty()) {
         return;
     }
@@ -153,7 +153,7 @@ void MaybeAutoselectCallstackTrackerField(AppController& app) {
     }
 }
 
-void TryFillCallstackFromJira(AppController& app, const std::string& issueKey) {
+void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey) {
     if (g_blameCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
         return;
     }
@@ -574,7 +574,7 @@ void PollDetails() {
     }
 }
 
-bool ResolveP4UserForAssign(AppController& app, const std::string& p4User, std::string& accountId, std::string& err) {
+bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User, std::string& accountId, std::string& err) {
     accountId.clear();
     err.clear();
     if (p4User.empty() || p4User == "-") {
@@ -830,7 +830,7 @@ void CloseBlameModal(bool* pOpen) {
     *pOpen = false;
 }
 
-void OpenTrackerUserProfileForP4User(AppController& app, const std::string& p4User) {
+void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User) {
     g_openProfileModal = true;
     g_profileErr.clear();
     g_profileName.clear();
@@ -863,7 +863,7 @@ void OpenTrackerUserProfileForP4User(AppController& app, const std::string& p4Us
     }
 }
 
-void PrepareAssignModal(AppController& app, const BlameRow& row, const std::string& p4UserCell) {
+void PrepareAssignModal(const AppController& app, const BlameRow& row, const std::string& p4UserCell) {
     g_assignRow = row;
     const std::string& pu = p4UserCell.empty() ? row.Blame.User : p4UserCell;
     g_assignAccountId.clear();
@@ -957,7 +957,7 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
     ImGui::EndTooltip();
 }
 
-void DrawBlamePersistedOptionsForm(AppController& app, const BlameUiThemeColors& theme) {
+void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeColors& theme) {
     ImGui::InputInt("Max frames", &g_maxFramesVal);
     if (g_maxFramesVal < 1) {
         g_maxFramesVal = 1;
@@ -1007,8 +1007,10 @@ void DrawBlamePersistedOptionsForm(AppController& app, const BlameUiThemeColors&
             for (const auto& f : app.GetAvailableFields()) {
                 const bool sel = (f.Id == g_blameCfg.CallstackTrackerFieldId);
                 const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
+                // Stable ## id: display string can duplicate or change when Jira renames fields; never key off it alone.
+                const std::string lblWithId = lbl + "##callstack_field_" + f.Id;
                 PushBlameLinkTextOnly(theme);
-                if (ImGui::Selectable(lbl.c_str(), sel)) {
+                if (ImGui::Selectable(lblWithId.c_str(), sel)) {
                     g_blameCfg.CallstackTrackerFieldId = f.Id;
                     SyncCallstackTrackerFieldBufFromCfg();
                 }
@@ -1144,7 +1146,7 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
     cfgLoaded_ = true;
 }
 
-void BlameAnalysisUi::DrawBlamePreferencesTab(AppController& app) {
+void BlameAnalysisUi::DrawBlamePreferencesTab(const AppController& app) {
     ensureSettingsBuffersLoaded();
     MaybeAutoselectCallstackTrackerField(app);
     ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Blame Analysis (stored in "
@@ -1593,8 +1595,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         }
 
         for (size_t ti = 0; ti < nrow; ++ti) {
-            char tabName[32];
-            std::snprintf(tabName, sizeof(tabName), "Entry %zu", ti + 1);
+            char tabName[80];
+            std::snprintf(tabName, sizeof(tabName), "Entry %zu##BlameEntry%zu", ti + 1, ti);
             ImGuiTabItemFlags tflags = ImGuiTabItemFlags_None;
             if (g_pendingSelectEntryIndex == static_cast<int>(ti)) {
                 tflags = ImGuiTabItemFlags_SetSelected;
@@ -1817,7 +1819,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             ImGui::BeginDisabled(readOnlyMode);
             {
                 const TrackerConfig jiraCfg = cfg;
+                int blameTplIndex = 0;
                 for (const auto& t : jiraCfg.BlameCommentTemplates) {
+                    if (!t.Id.empty()) {
+                        ImGui::PushID(t.Id.c_str());
+                    } else {
+                        ImGui::PushID(blameTplIndex);
+                    }
                     if (ImGui::Selectable(t.Title.c_str(), false)) {
                         std::string err;
                         std::string commentBody = BuildBlameQuickCommentTemplate(selectedJiraIssueKey, t.Id, g_assignRow, jiraCfg.BlameCommentTemplates);
@@ -1828,6 +1836,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
                         }
                     }
+                    ImGui::PopID();
+                    ++blameTplIndex;
                 }
             }
             ImGui::EndDisabled();

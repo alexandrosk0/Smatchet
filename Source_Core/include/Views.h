@@ -20,21 +20,16 @@ class Views {
     ViewsStore& GetStoreMutable() { return Slice_; }
 
     const ViewDefinition* GetActiveView() const {
-        for (const auto& view : Slice_.Views) {
-            if (view.Id == Slice_.ActiveViewId) {
-                return &view;
-            }
-        }
-        return nullptr;
+        const auto it =
+            std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                         [&](const ViewDefinition& view) { return view.Id == Slice_.ActiveViewId; });
+        return it != Slice_.Views.end() ? &*it : nullptr;
     }
 
     ViewDefinition* GetActiveViewMutable() {
-        for (auto& view : Slice_.Views) {
-            if (view.Id == Slice_.ActiveViewId) {
-                return &view;
-            }
-        }
-        return nullptr;
+        auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                               [&](const ViewDefinition& view) { return view.Id == Slice_.ActiveViewId; });
+        return it != Slice_.Views.end() ? &*it : nullptr;
     }
 
     bool Activate(const std::string& viewId) {

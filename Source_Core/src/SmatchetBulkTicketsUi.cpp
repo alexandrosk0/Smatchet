@@ -39,6 +39,8 @@ int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
         auto* buf = static_cast<std::vector<char>*>(data->UserData);
         buf->resize(static_cast<size_t>(data->BufTextLen) + 1);
+        // ImGui owns Buf only until the next edit; storage lives in UserData (bulkImportTextBuf).
+        // cppcheck-suppress autoVariables
         data->Buf = buf->data();
     }
     return 0;

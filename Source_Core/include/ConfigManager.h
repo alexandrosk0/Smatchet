@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <iterator>
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
@@ -599,20 +600,14 @@ class ConfigManager {
         j["last_export_directory"] = config.LastExportDirectory;
         {
             nlohmann::json inheritIds = nlohmann::json::array();
-            for (const auto& id : config.NewIssueInheritFieldIds) {
-                if (id != "summary") {
-                    inheritIds.push_back(id);
-                }
-            }
+            std::copy_if(config.NewIssueInheritFieldIds.begin(), config.NewIssueInheritFieldIds.end(),
+                         std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
             j["new_issue_inherit_field_ids"] = std::move(inheritIds);
         }
         {
             nlohmann::json inheritIds = nlohmann::json::array();
-            for (const auto& id : config.NewIssueInheritFieldIdsPlane) {
-                if (id != "summary") {
-                    inheritIds.push_back(id);
-                }
-            }
+            std::copy_if(config.NewIssueInheritFieldIdsPlane.begin(), config.NewIssueInheritFieldIdsPlane.end(),
+                         std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
             j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
         }
 #if defined(_WIN32)
@@ -751,6 +746,7 @@ class ConfigManager {
         const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
         if (canUseCache) {
             std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+            // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not model
             if (GetHasCachedConfigRef()) {
                 return GetCachedConfigRef();
             }
@@ -1061,7 +1057,7 @@ class ConfigManager {
         return
             "[Window][WindowOverViewport_11111111]\n"
             "Pos=0,22\n"
-            "Size=1280,698\n"
+            "Size=1920,987\n"
             "Collapsed=0\n"
             "\n"
             "[Window][Debug##Default]\n"
@@ -1069,36 +1065,102 @@ class ConfigManager {
             "Size=400,400\n"
             "Collapsed=0\n"
             "\n"
+            "[Window][Preferences]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,0\n"
+            "\n"
             "[Window][Smatchet - Active Project]\n"
             "Pos=0,22\n"
-            "Size=1030,338\n"
+            "Size=1611,535\n"
             "Collapsed=0\n"
-            "DockId=0x00000001,0\n"
+            "DockId=0x00000002,0\n"
             "\n"
-            "[Window][Preferences]\n"
-            "Pos=0,362\n"
-            "Size=1030,358\n"
+            "[Window][Views - Jira]\n"
+            "Pos=926,22\n"
+            "Size=354,698\n"
+            "Collapsed=0\n"
+            "DockId=0x00000008,0\n"
+            "\n"
+            "[Window][Performance]\n"
+            "Pos=0,427\n"
+            "Size=924,293\n"
+            "Collapsed=0\n"
+            "DockId=0x00000007,0\n"
+            "\n"
+            "[Window][SmatchetViewsDashboard]\n"
+            "Pos=1613,22\n"
+            "Size=307,535\n"
             "Collapsed=0\n"
             "DockId=0x00000004,0\n"
             "\n"
-            "[Window][Views - Jira]\n"
-            "Pos=1032,22\n"
-            "Size=248,698\n"
+            "[Window][Log]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
             "Collapsed=0\n"
-            "DockId=0x00000003,0\n"
+            "DockId=0x0000000A,1\n"
             "\n"
-            "[Window][Views - Plane]\n"
-            "Pos=1032,22\n"
-            "Size=248,698\n"
+            "[Window][Backend Audit]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
             "Collapsed=0\n"
-            "DockId=0x00000003,0\n"
+            "DockId=0x0000000A,2\n"
+            "\n"
+            "[Window][Scripting]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,3\n"
+            "\n"
+            "[Window][MCP Server]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,4\n"
+            "\n"
+            "[Window][Bulk import tickets]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,6\n"
+            "\n"
+            "[Window][Bulk export tickets]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,5\n"
+            "\n"
+            "[Table][0x518B645F,7]\n"
+            "Column 0  Weight=1.0000\n"
+            "Column 1  Weight=1.0000\n"
+            "Column 2  Weight=1.0000 Sort=0^\n"
+            "Column 3  Weight=1.0000\n"
+            "Column 4  Weight=1.0000\n"
+            "Column 5  Weight=1.0000\n"
+            "Column 6  Weight=1.0000\n"
+            "\n"
+            "[Table][0x4BC636F5,8]\n"
+            "RefScale=16\n"
+            "\n"
+            "[Table][0x70C366DB,5]\n"
+            "RefScale=16\n"
+            "Column 0  Width=48\n"
+            "Column 1  Width=180\n"
+            "Column 2  Weight=1.0000\n"
+            "Column 3  Width=120\n"
+            "Column 4  Width=220\n"
             "\n"
             "[Docking][Data]\n"
-            "DockSpace       ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1280,698 Split=X Selected=0x51577D15\n"
-            "  DockNode      ID=0x00000002 Parent=0x08BD597D SizeRef=1030,698 Split=Y\n"
-            "    DockNode    ID=0x00000001 Parent=0x00000002 SizeRef=1280,338 CentralNode=1 Selected=0x7EBEC904\n"
-            "    DockNode    ID=0x00000004 Parent=0x00000002 SizeRef=1280,358 Selected=0x6A4695A4\n"
-            "  DockNode      ID=0x00000003 Parent=0x08BD597D SizeRef=248,698 Selected=0x51577D15\n";
+            "DockSpace         ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1920,987 Split=Y Selected=0x51577D15\n"
+            "  DockNode        ID=0x00000009 Parent=0x08BD597D SizeRef=1920,535 Split=X\n"
+            "    DockNode      ID=0x00000001 Parent=0x00000009 SizeRef=1611,987 Split=X\n"
+            "      DockNode    ID=0x00000007 Parent=0x00000001 SizeRef=924,698 Split=X\n"
+            "        DockNode  ID=0x00000002 Parent=0x00000007 SizeRef=1028,698 CentralNode=1 Selected=0x7EBEC904\n"
+            "        DockNode  ID=0x00000003 Parent=0x00000007 SizeRef=250,698 Selected=0x51577D15\n"
+            "      DockNode    ID=0x00000008 Parent=0x00000001 SizeRef=354,698 Selected=0x51577D15\n"
+            "    DockNode      ID=0x00000004 Parent=0x00000009 SizeRef=307,987 Selected=0x74648FC6\n"
+            "  DockNode        ID=0x0000000A Parent=0x08BD597D SizeRef=1920,450 Selected=0x6A4695A4\n";
     }
 
     static bool WriteDefaultImGuiSettingsFile() {
@@ -1130,10 +1192,10 @@ class ConfigManager {
     /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */
     static std::string NormalizeViewsBackendKey(const std::string& trackerType) {
         std::string t;
-        t.reserve(trackerType.size());
-        for (char c : trackerType) {
-            t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-        }
+        t.resize(trackerType.size());
+        std::transform(trackerType.begin(), trackerType.end(), t.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
         if (t == "plane") {
             return "Plane";
         }
@@ -1185,9 +1247,8 @@ class ConfigManager {
         j["backends"] = nlohmann::json::object();
         std::vector<std::string> keys;
         keys.reserve(disk.Backends.size());
-        for (const auto& kv : disk.Backends) {
-            keys.push_back(kv.first);
-        }
+        std::transform(disk.Backends.begin(), disk.Backends.end(), std::back_inserter(keys),
+                       [](const auto& kv) { return kv.first; });
         std::sort(keys.begin(), keys.end());
         for (const auto& bk : keys) {
             const auto it = disk.Backends.find(bk);

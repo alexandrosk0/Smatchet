@@ -1638,9 +1638,13 @@ void AppController::TickStreamingApply() {
 
     std::vector<CachedTicket> batchToProcess;
 
+    std::vector<CachedTicket> processedThisFrame;
+
 
 
     while (true) {
+
+        batchToProcess.clear();
 
         {
 
@@ -1712,6 +1716,10 @@ void AppController::TickStreamingApply() {
 
         }
 
+        processedThisFrame.insert(processedThisFrame.end(), std::make_move_iterator(batchToProcess.begin()),
+
+                                  std::make_move_iterator(batchToProcess.end()));
+
         stateChanged = true;
 
 
@@ -1734,7 +1742,7 @@ void AppController::TickStreamingApply() {
 
             std::lock_guard<std::mutex> lock(activeTicketsMutex_);
 
-            for (const auto& t : batchToProcess) {
+            for (const auto& t : processedThisFrame) {
 
                 auto it = std::find_if(ActiveTickets.begin(), ActiveTickets.end(),
 

@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cpr/cpr.h>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -132,7 +133,7 @@ PlaneClient::PlaneClient() : planeProjectId_(""), planeProjectIdentifier_("") {}
 
 PlaneClient::~PlaneClient() {}
 
-std::unordered_map<std::string, std::string> PlaneClient::BuildPlaneHeaders(const TrackerConfig& cfg) const {
+std::unordered_map<std::string, std::string> PlaneClient::BuildPlaneHeaders(const TrackerConfig& cfg) {
     return {
         {"Accept", "application/json"},
         {"Content-Type", "application/json"},
@@ -1036,9 +1037,10 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
             customs.emplace(tf.Id, std::move(tf));
         }
     }
-    for (auto& kv : customs) {
-        fields.push_back(std::move(kv.second));
-    }
+    fields.reserve(fields.size() + customs.size());
+    std::transform(customs.begin(), customs.end(), std::back_inserter(fields), [](auto& kv) {
+        return std::move(kv.second);
+    });
 
 
     // Populate user fields with options for the dropdowns

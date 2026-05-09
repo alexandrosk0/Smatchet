@@ -9,6 +9,7 @@ extern "C" {
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <numeric>
 #include <sstream>
 #include <unordered_set>
 
@@ -74,8 +75,8 @@ struct AdfBuilder {
     bool debugLoggedMdTextHtml = false;
 #endif
 
-    AdfBuilder() {
-        doc = {{"type", "doc"}, {"version", 1}, {"content", json::array()}};
+    AdfBuilder()
+        : doc({{"type", "doc"}, {"version", 1}, {"content", json::array()}}) {
         contentStack.push_back(&doc["content"]);
     }
 
@@ -150,7 +151,7 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             pushChildContent = false;
             break;
         case MD_BLOCK_H: {
-            auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
+            const auto* d = static_cast<const MD_BLOCK_H_DETAIL*>(detail);
             const int level = d ? static_cast<int>(d->level) : 1;
             node = {{"type", "heading"},
                     {"attrs", {{"level", level}}},
@@ -435,7 +436,7 @@ int HtmlEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_LI: b.out << "<li>"; break;
         case MD_BLOCK_HR: b.out << "<hr/>"; break;
         case MD_BLOCK_H: {
-            auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
+            const auto* d = static_cast<const MD_BLOCK_H_DETAIL*>(detail);
             const int level = d ? static_cast<int>(d->level) : 1;
             b.out << "<h" << level << ">";
             break;
@@ -476,7 +477,7 @@ int HtmlLeaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_OL: b.out << "</ol>"; break;
         case MD_BLOCK_LI: b.out << "</li>"; break;
         case MD_BLOCK_H: {
-            auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
+            const auto* d = static_cast<const MD_BLOCK_H_DETAIL*>(detail);
             const int level = d ? static_cast<int>(d->level) : 1;
             b.out << "</h" << level << ">";
             break;
@@ -754,9 +755,7 @@ static std::string MarkdownCellPlainInner(const json& cell) {
         }
     }
     std::string s = o.str();
-    for (char& ch : s) {
-        if (ch == '\n' || ch == '\r') ch = ' ';
-    }
+    std::replace_if(s.begin(), s.end(), [](char ch) { return ch == '\n' || ch == '\r'; }, ' ');
     return s;
 }
 
@@ -777,8 +776,8 @@ static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
         if (!cells.empty()) rows.push_back(std::move(cells));
     }
     if (rows.empty()) return;
-    size_t ncol = 0;
-    for (const auto& r : rows) ncol = (std::max)(ncol, r.size());
+    const size_t ncol = std::accumulate(rows.begin(), rows.end(), size_t{},
+                                        [](size_t acc, const auto& r) { return (std::max)(acc, r.size()); });
     auto escPipe = [](std::string c) {
         for (size_t i = 0; i < c.size(); ++i) {
             if (c[i] == '|') {
@@ -1172,8 +1171,8 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
 
     auto appendPipeTable = [&](const std::vector<std::vector<std::string>>& rows) {
         if (rows.empty()) return;
-        size_t ncol = 0;
-        for (const auto& r : rows) ncol = (std::max)(ncol, r.size());
+        const size_t ncol = std::accumulate(rows.begin(), rows.end(), size_t{},
+                                            [](size_t acc, const auto& r) { return (std::max)(acc, r.size()); });
         auto escPipe = [](std::string c) {
             for (size_t i = 0; i < c.size(); ++i) {
                 if (c[i] == '|') {
@@ -1241,22 +1240,23 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
 
                 std::string poppedLinkHref;
                 bool poppedAny = false;
-                for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
-                    if (it->tag == t) {
-                        if (t == "a" && it->olCounter > 0) {
-                            static thread_local std::vector<std::string> sLinkHrefs;
-                            const size_t idx = static_cast<size_t>(it->olCounter) - 1;
-                            if (idx < sLinkHrefs.size()) {
-                                poppedLinkHref = sLinkHrefs[idx];
-                            }
-                            if (idx + 1 == sLinkHrefs.size()) sLinkHrefs.pop_back();
+                const auto itClose = std::find_if(stack.rbegin(), stack.rend(), [&](const Frame& fr) {
+                    return fr.tag == t;
+                });
+                if (itClose != stack.rend()) {
+                    auto it = itClose;
+                    if (t == "a" && it->olCounter > 0) {
+                        static thread_local std::vector<std::string> sLinkHrefs;
+                        const size_t idx = static_cast<size_t>(it->olCounter) - 1;
+                        if (idx < sLinkHrefs.size()) {
+                            poppedLinkHref = sLinkHrefs[idx];
                         }
-                        const size_t targetIdx = std::distance(it, stack.rend()) - 1;
-                        while (stack.size() > targetIdx + 1) stack.pop_back();
-                        stack.pop_back();
-                        poppedAny = true;
-                        break;
+                        if (idx + 1 == sLinkHrefs.size()) sLinkHrefs.pop_back();
                     }
+                    const size_t targetIdx = std::distance(it, stack.rend()) - 1;
+                    while (stack.size() > targetIdx + 1) stack.pop_back();
+                    stack.pop_back();
+                    poppedAny = true;
                 }
                 (void)poppedAny;
                 if (t == "p" || t == "div") {

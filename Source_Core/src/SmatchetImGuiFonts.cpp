@@ -94,6 +94,7 @@ const char* GetFontFilePath(const std::string& fontName) {
 // Style-variant TTF paths for each supported font family. Used by the Markdown
 // preview pane to render bold / italic / bold-italic runs without per-glyph
 // font tricks. Any null/missing variant falls back to regular at load time.
+// cppcheck-suppress unusedStructMember ; members read on Windows preview-font load path only
 struct FontVariantPaths {
     const char* bold;
     const char* italic;

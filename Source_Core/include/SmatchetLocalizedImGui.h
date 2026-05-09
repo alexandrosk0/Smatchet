@@ -125,7 +125,12 @@ inline bool CollapsingHeader(const char* label, bool* p_visible, ImGuiTreeNodeFl
     return ::ImGui::CollapsingHeader(SmatchetLocalization::LabelFromSource(label), p_visible, flags);
 }
 
-inline void SeparatorText(const char* label) { ::ImGui::SeparatorText(SmatchetLocalization::TranslateSource(label)); }
+inline void SeparatorText(const char* label) {
+    // Same ID rules as Button/Checkbox: LabelFromSource keeps ## / ### suffixes and appends a stable
+    // English-derived id when the label has no explicit suffix (TranslateSource alone would change IDs
+    // when the UI language changes).
+    ::ImGui::SeparatorText(SmatchetLocalization::LabelFromSource(label));
+}
 
 inline void TextUnformatted(const char* text, const char* text_end = nullptr) {
     if (text_end) {

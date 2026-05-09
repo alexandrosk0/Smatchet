@@ -8,6 +8,7 @@
 #define ImGui SmatchetLocalizedImGui
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -114,20 +115,14 @@ bool WriteFileAll(const std::string& path, const std::string& content, std::stri
 static std::vector<std::string> BuildAutocompleteCandidates(const std::vector<std::string>& scriptNames) {
     std::vector<std::string> out;
     const TextEditor::LanguageDefinition& def = TextEditor::LanguageDefinition::Lua();
-    for (const auto& kw : def.mKeywords) {
-        if (!kw.empty()) {
-            out.push_back(kw);
-        }
-    }
+    std::copy_if(def.mKeywords.begin(), def.mKeywords.end(), std::back_inserter(out),
+                  [](const std::string& kw) { return !kw.empty(); });
     static const char* kApi[] = {"smatchet", "tracker", "ui", "log_info", "create_issue", "process_ticket", "ticket",
                                  "register_global_action", "require", "pairs", "ipairs", "type", "tostring", "tonumber",
                                  "string", "table", "math", "os", "io", "error", "pcall", "xpcall"};
-    for (const char* s : kApi) {
-        out.emplace_back(s);
-    }
-    for (const auto& s : scriptNames) {
-        out.push_back(s);
-    }
+    std::transform(std::begin(kApi), std::end(kApi), std::back_inserter(out),
+                   [](const char* s) { return std::string(s); });
+    std::copy(scriptNames.begin(), scriptNames.end(), std::back_inserter(out));
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
@@ -149,10 +144,6 @@ static bool AsciiCaseInsensitivePrefix(const std::string& s, const std::string& 
 
 bool LuaConsolePlugin::IsHooksFile(const std::string& rel) {
     return rel == "SmatchetHooks.lua";
-}
-
-bool LuaConsolePlugin::IsRunLuaFile(const std::string& rel) {
-    return rel == kRunLua;
 }
 
 int LuaConsolePlugin::TryParseLuaErrorLine(const std::string& err) {
@@ -185,7 +176,7 @@ void LuaConsolePlugin::EnsureLuaLanguageDef() {
     luaLangReady_ = true;
 }
 
-void LuaConsolePlugin::RefreshScriptList(AppController& app, bool forceRescan) {
+void LuaConsolePlugin::RefreshScriptList(const AppController& app, bool forceRescan) {
     const double now = ImGui::GetTime();
     if (!forceRescan) {
         constexpr double kMinIntervalSec = 0.35;
@@ -210,7 +201,7 @@ void LuaConsolePlugin::RefreshScriptList(AppController& app, bool forceRescan) {
     }
 }
 
-bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(AppController& app, std::string& outErr) {
+bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr) {
     if (scriptList_.empty()) {
         outErr = "No script files.";
         return false;
@@ -233,7 +224,7 @@ bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(AppController& app, std::str
     return true;
 }
 
-bool LuaConsolePlugin::SaveCurrentScript(AppController& app, std::string& outErr) {
+bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& outErr) {
     if (scriptList_.empty()) {
         return false;
     }

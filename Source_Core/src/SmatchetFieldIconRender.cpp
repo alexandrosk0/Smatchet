@@ -326,7 +326,7 @@ bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float 
     return true;
 }
 
-bool TryGetInlineFieldIconTexture(AppController& app, const TrackerField& field, const std::string& rawValue,
+bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& field, const std::string& rawValue,
                                   SmatchetLoadedIconTexture& outIcon, std::string& outError) {
     outIcon = {};
     outError.clear();
@@ -356,7 +356,7 @@ bool TryGetInlineFieldIconTexture(AppController& app, const TrackerField& field,
     return LoadPriorityIconWithFallbacks(iconUrl, slug, outIcon, outError);
 }
 
-bool DrawInlineFieldIconIfAny(AppController& app, const TrackerField& field, const std::string& rawValue) {
+bool DrawInlineFieldIconIfAny(const AppController& app, const TrackerField& field, const std::string& rawValue) {
     SmatchetLoadedIconTexture icon;
     std::string err;
     if (!TryGetInlineFieldIconTexture(app, field, rawValue, icon, err)) {
@@ -367,7 +367,7 @@ bool DrawInlineFieldIconIfAny(AppController& app, const TrackerField& field, con
     return true;
 }
 
-bool TryDrawFieldValueIcon(AppController& app, const std::string& fieldId, const TrackerField* field,
+bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId, const TrackerField* field,
                            const std::string& rawValue, float availWidth, bool tooltipsEnabled, bool allowCellEdits) {
     (void)availWidth;
 #if !defined(SMATCHET_WITH_LUA_AUTOMATION)

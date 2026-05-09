@@ -162,7 +162,7 @@ struct AttachmentThumbnailSupport {
 
 static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
     AttachmentThumbnailSupport support;
-    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiIO& io = ImGui::GetIO();
     const char* backendName = io.BackendRendererName;
     const std::string rendererName = backendName != nullptr ? ToLowerAsciiCopy(backendName) : std::string();
 
