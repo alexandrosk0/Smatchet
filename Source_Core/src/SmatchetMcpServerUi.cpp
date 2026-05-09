@@ -73,6 +73,59 @@ void SaveMcpWindowLayoutDebounced(UiDrawSession& d) {
     ConfigManager::Save(d.cfg);
 }
 
+ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        return pos;
+    }
+    const float maxX = (std::max)(vp->WorkPos.x, vp->WorkPos.x + vp->WorkSize.x - size.x);
+    const float maxY = (std::max)(vp->WorkPos.y, vp->WorkPos.y + vp->WorkSize.y - size.y);
+    return ImVec2((std::max)(vp->WorkPos.x, (std::min)(pos.x, maxX)),
+                  (std::max)(vp->WorkPos.y, (std::min)(pos.y, maxY)));
+}
+
+void PrepareMcpWindowLayout(UiDrawSession& d) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
+        return;
+    }
+    const ImVec2 size((std::min)(520.0f, (std::max)(420.0f, vp->WorkSize.x * 0.34f)),
+                      (std::min)(640.0f, (std::max)(420.0f, vp->WorkSize.y * 0.70f)));
+    const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
+    const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0) ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    if (d.layoutForceDefaultsFrames > 0) {
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+    }
+    ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), cond);
+    ImGui::SetNextWindowSize(size, cond);
+}
+
+void RepairMcpWindowLayout(UiDrawSession& d) {
+    if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
+        return;
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        return;
+    }
+    ImVec2 size = ImGui::GetWindowSize();
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const bool bad = size.x < 360.0f || size.y < 320.0f || pos.x > vp->WorkPos.x + vp->WorkSize.x - 96.0f ||
+                     pos.y > vp->WorkPos.y + vp->WorkSize.y - 72.0f || pos.x + size.x < vp->WorkPos.x + 96.0f ||
+                     pos.y + size.y < vp->WorkPos.y + 72.0f || d.layoutForceDefaultsFrames > 0;
+    if (!bad) {
+        return;
+    }
+    size.x = (std::min)((std::max)(size.x, 420.0f), vp->WorkSize.x * 0.92f);
+    size.y = (std::min)((std::max)(size.y, 420.0f), vp->WorkSize.y * 0.88f);
+    ImGui::SetWindowPos(ClampMcpWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f,
+                                                 vp->WorkPos.y + 48.0f),
+                                         size),
+                        ImGuiCond_Always);
+    ImGui::SetWindowSize(size, ImGuiCond_Always);
+}
+
 } // namespace
 
 void SmatchetDrawMcpServerPanel(AppController& app, const TrackerConfig& cfgOnDisk, UiDrawSession& d) {
@@ -208,7 +261,7 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
+    PrepareMcpWindowLayout(d);
 
     const bool wantFocus = d.requestMcpServerFocus;
     if (wantFocus) {
@@ -225,6 +278,7 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
         ImGui::SetWindowFocus();
         d.requestMcpServerFocus = false;
     }
+    RepairMcpWindowLayout(d);
 
     SmatchetDrawMcpServerPanel(app, d.cfg, d);
 
@@ -234,7 +288,6 @@ void SmatchetDrawMcpServerWindow(AppController& app, UiDrawSession& d) {
 }
 
 #endif // SMATCHET_WITH_MCP
-
 
 
 

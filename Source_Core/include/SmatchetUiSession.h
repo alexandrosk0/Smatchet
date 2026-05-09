@@ -124,6 +124,7 @@ struct UiDrawSession {
     bool requestAuditTrailFocus = false;
     /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
     bool showLogWindow = true;
+    int layoutForceDefaultsFrames = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Windows → Scripting…. */
@@ -352,7 +353,6 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
-
 
 
 

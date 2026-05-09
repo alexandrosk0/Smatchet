@@ -15,6 +15,23 @@ void SmatchetRequestFontReload(const std::string& fontName, float fontSizePixels
 // Check if a font reload is pending and reload the font if so. Returns true if a reload happened.
 bool SmatchetCheckAndApplyFontReload();
 
+// Auxiliary fonts used by the Markdown preview pane to render inline marks
+// (bold / italic / bold-italic / inline-code / code-block) without per-glyph
+// font switching tricks. Each pointer is non-null after a successful font load —
+// when a style variant TTF is missing on the host (rare) the pointer falls back
+// to the regular font so callers can blindly PushFont without nullptr checks.
+struct SmatchetPreviewFonts {
+    ImFont* Regular = nullptr;
+    ImFont* Bold = nullptr;
+    ImFont* Italic = nullptr;
+    ImFont* BoldItalic = nullptr;
+    ImFont* Mono = nullptr;
+};
+
+// Reads the most recently built preview font set. Stable across frames; pointers
+// are invalidated after every SmatchetApplyImGuiFont call (i.e. font hot-reload).
+const SmatchetPreviewFonts& SmatchetGetPreviewFonts();
+
 
 
 

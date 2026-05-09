@@ -95,11 +95,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 480.0f), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, d.layoutForceDefaultsFrames > 0);
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
 
     if (!d.preferencesBuffersLoaded) {
         CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
@@ -933,7 +934,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 
 
 

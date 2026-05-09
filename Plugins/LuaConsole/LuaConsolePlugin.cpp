@@ -38,6 +38,54 @@ void SaveLuaLayoutDebounced(float scriptPaneHeightPx) {
     s_lastWrite = now;
 }
 
+ImVec2 ClampLuaWindowPos(const ImVec2& pos, const ImVec2& size) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        return pos;
+    }
+    const float maxX = (std::max)(vp->WorkPos.x, vp->WorkPos.x + vp->WorkSize.x - size.x);
+    const float maxY = (std::max)(vp->WorkPos.y, vp->WorkPos.y + vp->WorkSize.y - size.y);
+    return ImVec2((std::max)(vp->WorkPos.x, (std::min)(pos.x, maxX)),
+                  (std::max)(vp->WorkPos.y, (std::min)(pos.y, maxY)));
+}
+
+void PrepareLuaWindowLayout() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        ImGui::SetNextWindowSize(ImVec2(650.0f, 720.0f), ImGuiCond_FirstUseEver);
+        return;
+    }
+    const ImVec2 size((std::min)(700.0f, (std::max)(520.0f, vp->WorkSize.x * 0.42f)),
+                      (std::min)(780.0f, (std::max)(520.0f, vp->WorkSize.y * 0.82f)));
+    const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
+    ImGui::SetNextWindowPos(ClampLuaWindowPos(pos, size), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
+}
+
+void RepairLuaWindowLayout() {
+    if (ImGui::IsWindowDocked()) {
+        return;
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        return;
+    }
+    ImVec2 size = ImGui::GetWindowSize();
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const bool tooSmall = size.x < 420.0f || size.y < 360.0f;
+    const bool offscreen = pos.x > vp->WorkPos.x + vp->WorkSize.x - 96.0f ||
+                           pos.y > vp->WorkPos.y + vp->WorkSize.y - 72.0f ||
+                           pos.x + size.x < vp->WorkPos.x + 96.0f || pos.y + size.y < vp->WorkPos.y + 72.0f;
+    if (!tooSmall && !offscreen) {
+        return;
+    }
+    size.x = (std::min)((std::max)(size.x, 520.0f), vp->WorkSize.x * 0.92f);
+    size.y = (std::min)((std::max)(size.y, 520.0f), vp->WorkSize.y * 0.88f);
+    const ImVec2 fallback(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
+    ImGui::SetWindowPos(ClampLuaWindowPos(fallback, size), ImGuiCond_Always);
+    ImGui::SetWindowSize(size, ImGuiCond_Always);
+}
+
 void ReloadSmatchetHooksSetupScript(AppController& app) {
     app.RunLuaSetupScript("SmatchetHooks.lua");
 }
@@ -291,7 +339,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         ImGui::SetNextWindowFocus();
     }
 
-    ImGui::SetNextWindowSize(ImVec2(650, 720), ImGuiCond_FirstUseEver);
+    PrepareLuaWindowLayout();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 12));
 
     if (!ImGui::Begin("Scripting", &g_ui.showLuaAutomationWindow)) {
@@ -308,6 +356,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         ImGui::SetWindowFocus();
         g_ui.requestLuaAutomationFocus = false;
     }
+    RepairLuaWindowLayout();
 
     static int s_tabSel = 0;
     static bool s_pendingSelectScriptsTab = false;

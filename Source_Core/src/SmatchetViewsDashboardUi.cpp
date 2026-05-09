@@ -27,14 +27,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     // (drawn later). showViewsDashboard can stay true while the Views tab is hidden behind another;
     // Open Views / menu then appears to do nothing unless we explicitly focus this window.
     const bool bFocusViews = d.requestViewsDashboardFocus;
-    if (bFocusViews) {
-        ImGui::SetNextWindowFocus();
-    }
-    ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "views", 760.0f, 560.0f, bFocusViews);
     const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     const std::string viewsWinTitle =
         SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
     ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
+    repairTopLevelWindow(d, "views", 300.0f, 260.0f);
     if (bFocusViews) {
         ImGui::SetWindowFocus();
         d.requestViewsDashboardFocus = false;
@@ -488,8 +486,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     ImGui::End();
 }
-
-
 
 
 

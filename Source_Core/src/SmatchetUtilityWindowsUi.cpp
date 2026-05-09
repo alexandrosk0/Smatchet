@@ -178,10 +178,12 @@ void AppendLogEntryAsLines(std::vector<std::string>& out, const char* levelTag8,
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     Logger& logger = Logger::Instance();
+    prepareTopLevelWindow(d, "log", 900.0f, 320.0f);
     if (!ImGui::Begin("Log", &d.showLogWindow)) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "log", 360.0f, 220.0f);
 
     DrawLogWindowPreferences(d);
     ImGui::Separator();
@@ -290,7 +292,6 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     ImGui::EndChild();
     ImGui::End();
 }
-
 
 
 

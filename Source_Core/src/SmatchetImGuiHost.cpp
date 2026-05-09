@@ -406,6 +406,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     }
     ImGuiIO& io = ImGui::GetIO();
     ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
+    ConfigManager::EnsureDefaultImGuiSettingsFile();
     io.IniFilename = ImplData->ImGuiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -1001,7 +1002,6 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
-
 
 
 

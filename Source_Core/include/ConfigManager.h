@@ -104,8 +104,16 @@ struct TrackerConfig {
     int GridEndWheelSwallowsBeforeHorizontal = 15;
     // Restores Settings -> Preferences window visibility on launch.
     bool ShowPreferencesWindow = false;
+    // Restores Windows -> Open Views window visibility on launch.
+    bool ShowViewsDashboardWindow = true;
     // Restores Settings → Performance window visibility on launch.
     bool ShowPerformanceWindow = false;
+    // Restores Windows -> Show Log window visibility on launch.
+    bool ShowLogWindow = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    // Restores Windows -> Scripting window visibility on launch.
+    bool ShowLuaAutomationWindow = false;
+#endif
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
     // When true, ITrackerClient logs truncated HTTP response bodies at Trace.
@@ -550,7 +558,12 @@ class ConfigManager {
         j["read_only_mode"] = config.ReadOnlyMode;
         j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
         j["show_preferences_window"] = config.ShowPreferencesWindow;
+        j["show_views_dashboard_window"] = config.ShowViewsDashboardWindow;
         j["show_performance_window"] = config.ShowPerformanceWindow;
+        j["show_log_window"] = config.ShowLogWindow;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        j["show_lua_automation_window"] = config.ShowLuaAutomationWindow;
+#endif
         j["log_min_level"] = config.LogMinLevel;
         j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
         j["log_p4_io"] = config.LogP4Io;
@@ -787,7 +800,14 @@ class ConfigManager {
                 cfg.GridEndWheelSwallowsBeforeHorizontal =
                     j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
                 cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
+                cfg.ShowViewsDashboardWindow =
+                    j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
                 cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
+                cfg.ShowLogWindow = j.value("show_log_window", cfg.ShowLogWindow);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                cfg.ShowLuaAutomationWindow =
+                    j.value("show_lua_automation_window", cfg.ShowLuaAutomationWindow);
+#endif
                 cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
                 cfg.LogTrackerHttpBodies =
                     j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
@@ -948,6 +968,9 @@ class ConfigManager {
         if (!hasSetupConfig && !j.contains("read_only_mode")) {
             cfg.ReadOnlyMode = true;
         }
+        if (!hasSetupConfig && !j.contains("show_preferences_window")) {
+            cfg.ShowPreferencesWindow = true;
+        }
 
 #if defined(_WIN32)
         // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
@@ -1032,6 +1055,76 @@ class ConfigManager {
         if (base.empty())
             return "imgui.ini";
         return base + "imgui.ini";
+    }
+
+    static const char* GetDefaultImGuiDockLayoutIni() {
+        return
+            "[Window][WindowOverViewport_11111111]\n"
+            "Pos=0,22\n"
+            "Size=1280,698\n"
+            "Collapsed=0\n"
+            "\n"
+            "[Window][Debug##Default]\n"
+            "Pos=60,60\n"
+            "Size=400,400\n"
+            "Collapsed=0\n"
+            "\n"
+            "[Window][Smatchet - Active Project]\n"
+            "Pos=0,22\n"
+            "Size=1030,338\n"
+            "Collapsed=0\n"
+            "DockId=0x00000001,0\n"
+            "\n"
+            "[Window][Preferences]\n"
+            "Pos=0,362\n"
+            "Size=1030,358\n"
+            "Collapsed=0\n"
+            "DockId=0x00000004,0\n"
+            "\n"
+            "[Window][Views - Jira]\n"
+            "Pos=1032,22\n"
+            "Size=248,698\n"
+            "Collapsed=0\n"
+            "DockId=0x00000003,0\n"
+            "\n"
+            "[Window][Views - Plane]\n"
+            "Pos=1032,22\n"
+            "Size=248,698\n"
+            "Collapsed=0\n"
+            "DockId=0x00000003,0\n"
+            "\n"
+            "[Docking][Data]\n"
+            "DockSpace       ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1280,698 Split=X Selected=0x51577D15\n"
+            "  DockNode      ID=0x00000002 Parent=0x08BD597D SizeRef=1030,698 Split=Y\n"
+            "    DockNode    ID=0x00000001 Parent=0x00000002 SizeRef=1280,338 CentralNode=1 Selected=0x7EBEC904\n"
+            "    DockNode    ID=0x00000004 Parent=0x00000002 SizeRef=1280,358 Selected=0x6A4695A4\n"
+            "  DockNode      ID=0x00000003 Parent=0x08BD597D SizeRef=248,698 Selected=0x51577D15\n";
+    }
+
+    static bool WriteDefaultImGuiSettingsFile() {
+        const std::string path = GetImGuiSettingsPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        ScopedFileLock fileLock(path);
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            LOG_WARN("ConfigManager: could not write default ImGui layout '%s'.", path.c_str());
+            return false;
+        }
+        file << GetDefaultImGuiDockLayoutIni();
+        return file.good();
+    }
+
+    static void EnsureDefaultImGuiSettingsFile() {
+        const std::string path = GetImGuiSettingsPath();
+        {
+            std::lock_guard<std::mutex> lock(GetIoMutexRef());
+            ScopedFileLock fileLock(path);
+            std::ifstream file(path, std::ios::binary);
+            if (file.good()) {
+                return;
+            }
+        }
+        WriteDefaultImGuiSettingsFile();
     }
 
     /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */

@@ -127,7 +127,12 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
 
 
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
-    ImGui::Begin("Smatchet - Active Project");
+    prepareTopLevelWindow(d, "active", 900.0f, 620.0f);
+    if (!ImGui::Begin("Smatchet - Active Project", nullptr, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+    repairTopLevelWindow(d, "active", 420.0f, 300.0f);
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
     const bool readOnlyMode = d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
@@ -889,8 +894,4 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     MaybeToastGridBannerFromSession(d);
     ImGui::End();
 }
-
-
-
-
 

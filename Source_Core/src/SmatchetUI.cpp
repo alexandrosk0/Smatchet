@@ -30,6 +30,7 @@
 #endif
 #endif
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <future>
 #include <iterator>
@@ -47,33 +48,97 @@ static void ApplyLoggingSettingsFromConfig(const TrackerConfig& cfg) {
     Logger::Instance().SetLogP4Io(cfg.LogP4Io);
 }
 
-static void PersistPerformanceWindowPreference(UiDrawSession& d) {
-    if (d.cfg.ShowPerformanceWindow == d.showPerformance) {
-        return;
-    }
-    d.cfg.ShowPerformanceWindow = d.showPerformance;
-    ConfigManager::Save(d.cfg);
+struct LayoutRect {
+    ImVec2 Pos;
+    ImVec2 Size;
+};
+
+static float ClampFloat(float v, float lo, float hi) {
+    return (std::max)(lo, (std::min)(v, hi));
 }
 
-static void PersistPreferencesWindowOpenPreference(UiDrawSession& d) {
-    if (d.cfg.ShowPreferencesWindow == d.showPreferences) {
-        return;
+static LayoutRect DefaultLayoutRectFor(const char* key, float defaultW, float defaultH) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 workPos = vp ? vp->WorkPos : ImVec2(0.0f, 0.0f);
+    const ImVec2 workSize = vp ? vp->WorkSize : ImGui::GetIO().DisplaySize;
+    const float w = (std::max)(320.0f, workSize.x);
+    const float h = (std::max)(240.0f, workSize.y);
+
+    auto centered = [&](float rw, float rh) {
+        rw = ClampFloat(rw, 320.0f, w * 0.92f);
+        rh = ClampFloat(rh, 240.0f, h * 0.88f);
+        return LayoutRect{ImVec2(workPos.x + (w - rw) * 0.5f, workPos.y + (h - rh) * 0.5f), ImVec2(rw, rh)};
+    };
+
+    const float sideW = ClampFloat(w * 0.13f, 250.0f, 360.0f);
+    const float mainW = (std::max)(420.0f, w - sideW);
+    const float prefsH = g_ui.showPreferences ? ClampFloat(h * 0.36f, 300.0f, 470.0f) : 0.0f;
+    const float activeH = (std::max)(300.0f, h - prefsH);
+
+    if (std::strcmp(key, "active") == 0) {
+        return LayoutRect{workPos, ImVec2(mainW, activeH)};
     }
-    d.cfg.ShowPreferencesWindow = d.showPreferences;
-    ConfigManager::Save(d.cfg);
+    if (std::strcmp(key, "views") == 0) {
+        return LayoutRect{ImVec2(workPos.x + w - sideW, workPos.y), ImVec2(sideW, h)};
+    }
+    if (std::strcmp(key, "preferences") == 0) {
+        return LayoutRect{ImVec2(workPos.x, workPos.y + activeH), ImVec2(mainW, prefsH)};
+    }
+    if (std::strcmp(key, "log") == 0) {
+        const float logH = ClampFloat(h * 0.34f, 260.0f, 420.0f);
+        return LayoutRect{ImVec2(workPos.x, workPos.y + h - logH), ImVec2(w, logH)};
+    }
+    if (std::strcmp(key, "scripting") == 0 || std::strcmp(key, "mcp") == 0) {
+        const float sideW = ClampFloat(defaultW, 420.0f, (std::min)(720.0f, w * 0.46f));
+        const float sideH = ClampFloat(defaultH, 420.0f, h * 0.88f);
+        return LayoutRect{ImVec2(workPos.x + w - sideW - 24.0f, workPos.y + 48.0f), ImVec2(sideW, sideH)};
+    }
+    return centered(defaultW, defaultH);
 }
 
-#if defined(SMATCHET_WITH_MCP)
-static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
-    if (d.cfg.ShowMcpServerWindow == d.showMcpServerWindow) {
-        return;
+static bool WindowNeedsRepair(const ImVec2& pos, const ImVec2& size, float minW, float minH) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        return false;
     }
-    d.cfg.ShowMcpServerWindow = d.showMcpServerWindow;
-    ConfigManager::Save(d.cfg);
+    const ImVec2 workMin = vp->WorkPos;
+    const ImVec2 workMax(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
+    if (size.x < minW || size.y < minH) {
+        return true;
+    }
+    if (pos.x > workMax.x - 96.0f || pos.y > workMax.y - 72.0f) {
+        return true;
+    }
+    return pos.x + size.x < workMin.x + 96.0f || pos.y + size.y < workMin.y + 72.0f;
 }
+
+static bool IsSessionUtilityLayoutKey(const char* key) {
+    return std::strcmp(key, "audit") == 0 || std::strcmp(key, "bulk_import") == 0 ||
+           std::strcmp(key, "bulk_export") == 0 || std::strcmp(key, "attachment") == 0;
+}
+
+static void PersistWindowOpenPreferences(UiDrawSession& d) {
+    bool changed = false;
+    auto setBool = [&changed](bool& dst, bool src) {
+        if (dst != src) {
+            dst = src;
+            changed = true;
+        }
+    };
+    setBool(d.cfg.ShowPreferencesWindow, d.showPreferences);
+    setBool(d.cfg.ShowViewsDashboardWindow, d.showViewsDashboard);
+    setBool(d.cfg.ShowPerformanceWindow, d.showPerformance);
+    setBool(d.cfg.ShowLogWindow, d.showLogWindow);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    setBool(d.cfg.ShowLuaAutomationWindow, d.showLuaAutomationWindow);
 #endif
-
-
+#if defined(SMATCHET_WITH_MCP)
+    setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
+#endif
+    if (changed) {
+        ConfigManager::Save(d.cfg);
+    }
+}
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
                                                                         const TrackerConfig& fetchCfg) {
@@ -96,6 +161,79 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
     });
 }
 
+void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
+                                       bool requestFocus) {
+    const LayoutRect rect = DefaultLayoutRectFor(layoutKey, defaultW, defaultH);
+    const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0)
+                                ? ImGuiCond_Always
+                                : (IsSessionUtilityLayoutKey(layoutKey) ? ImGuiCond_Appearing : ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(rect.Pos, cond);
+    ImGui::SetNextWindowSize(rect.Size, cond);
+    if (requestFocus) {
+        ImGui::SetNextWindowFocus();
+    }
+}
+
+void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH) {
+    if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
+        return;
+    }
+    const ImVec2 pos = ImGui::GetWindowPos();
+    ImVec2 size = ImGui::GetWindowSize();
+    if (!WindowNeedsRepair(pos, size, minW, minH) && d.layoutForceDefaultsFrames <= 0) {
+        return;
+    }
+
+    const LayoutRect fallback = DefaultLayoutRectFor(layoutKey, minW, minH);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) {
+        ImGui::SetWindowPos(fallback.Pos, ImGuiCond_Always);
+        ImGui::SetWindowSize(fallback.Size, ImGuiCond_Always);
+        return;
+    }
+
+    size.x = ClampFloat((std::max)(size.x, minW), minW, (std::max)(minW, vp->WorkSize.x * 0.96f));
+    size.y = ClampFloat((std::max)(size.y, minH), minH, (std::max)(minH, vp->WorkSize.y * 0.94f));
+    ImVec2 nextPos = pos;
+    if (WindowNeedsRepair(pos, size, minW, minH) || d.layoutForceDefaultsFrames > 0) {
+        nextPos = fallback.Pos;
+        size = fallback.Size;
+    }
+
+    const ImVec2 workMin = vp->WorkPos;
+    const ImVec2 workMax(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
+    nextPos.x = ClampFloat(nextPos.x, workMin.x, (std::max)(workMin.x, workMax.x - size.x));
+    nextPos.y = ClampFloat(nextPos.y, workMin.y, (std::max)(workMin.y, workMax.y - size.y));
+    ImGui::SetWindowPos(nextPos, ImGuiCond_Always);
+    ImGui::SetWindowSize(size, ImGuiCond_Always);
+}
+
+void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
+    const bool keepPreferencesOpen = d.showPreferences;
+    d.showPreferences = keepPreferencesOpen;
+    d.showViewsDashboard = true;
+    d.requestViewsDashboardFocus = false;
+    d.showPerformance = false;
+    d.showBlameAnalysis = false;
+    d.showBulkImport = false;
+    d.showBulkExport = false;
+    d.showAuditTrail = false;
+    d.showLogWindow = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    d.showLuaAutomationWindow = false;
+    d.requestLuaAutomationFocus = false;
+    d.requestScriptingEditorTabFocus = false;
+#endif
+#if defined(SMATCHET_WITH_MCP)
+    d.showMcpServerWindow = false;
+    d.requestMcpServerFocus = false;
+#endif
+    d.layoutForceDefaultsFrames = 8;
+    ConfigManager::WriteDefaultImGuiSettingsFile();
+    ImGui::LoadIniSettingsFromDisk(ConfigManager::GetImGuiSettingsPath().c_str());
+    PersistWindowOpenPreferences(d);
+}
+
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     if (!g_ui.cfgInitialized) {
@@ -103,7 +241,12 @@ void SmatchetUI::Draw(AppController& app) {
         g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
         SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
         g_ui.showPreferences = g_ui.cfg.ShowPreferencesWindow;
+        g_ui.showViewsDashboard = g_ui.cfg.ShowViewsDashboardWindow;
         g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
+        g_ui.showLogWindow = g_ui.cfg.ShowLogWindow;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        g_ui.showLuaAutomationWindow = g_ui.cfg.ShowLuaAutomationWindow;
+#endif
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
@@ -254,8 +397,10 @@ void SmatchetUI::Draw(AppController& app) {
     }
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetPerfUi::DrawWindow");
+        if (g_ui.showPerformance) {
+            prepareTopLevelWindow(g_ui, "performance", 580.0f, 380.0f);
+        }
         g_perfUi.DrawWindow(&g_ui.showPerformance);
-        PersistPerformanceWindowPreference(g_ui);
     }
     blameAnalysisUi_.SetBlamePanelOpen(g_ui.showBlameAnalysis);
     blameAnalysisUi_.ServiceBackground();
@@ -265,7 +410,6 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
         drawPreferencesWindow(app, d);
-        PersistPreferencesWindowOpenPreference(d);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawViewsDashboardWindow");
@@ -313,7 +457,6 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetDrawMcpServerWindow");
         SmatchetDrawMcpServerWindow(app, d);
-        PersistMcpServerWindowOpenPreference(d);
     }
 #endif
     if (d.showLogWindow) {
@@ -327,6 +470,13 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
         ViewState.Save();
         g_ui.pendingViewStateSave = false;
+    }
+    PersistWindowOpenPreferences(g_ui);
+    if (g_ui.layoutForceDefaultsFrames > 0) {
+        --g_ui.layoutForceDefaultsFrames;
+        if (g_ui.layoutForceDefaultsFrames == 0) {
+            ImGui::SaveIniSettingsToDisk(ConfigManager::GetImGuiSettingsPath().c_str());
+        }
     }
 }
 
@@ -428,6 +578,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Open Views...")) {
                 d.showViewsDashboard = true;
                 d.requestViewsDashboardFocus = true;
+            }
+            if (ImGui::MenuItem("Reset Window Layout")) {
+                resetWindowLayoutToDefault(d);
             }
             if (ImGui::MenuItem("Blame Analysis...")) {
                 d.showBlameAnalysis = true;
@@ -548,5 +701,3 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
 UiDrawSession::~UiDrawSession() {
     DrainAuditReloadFuture(*this);
 }
-
-

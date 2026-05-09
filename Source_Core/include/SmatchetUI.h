@@ -33,10 +33,8 @@ class SmatchetUI {
     void drawLogWindow(UiDrawSession& d);
     void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     void drawBulkExportWindow(AppController& app, UiDrawSession& d);
+    void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
+                               bool requestFocus = false);
+    void repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH);
+    void resetWindowLayoutToDefault(UiDrawSession& d);
 };
-
-
-
-
-
-
