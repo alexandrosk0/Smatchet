@@ -83,13 +83,8 @@ std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& field
     if (buf.empty()) {
         buf.resize(std::max(minSize, seed.size() + 64), '\0');
         std::memcpy(buf.data(), seed.data(), std::min(buf.size() - 1, seed.size()));
-        if (fieldId == "description") {
-            for (size_t i = 0; i < buf.size() && buf[i] != '\0'; ++i) {
-                if (buf[i] == '\n' || buf[i] == '\r') {
-                    buf[i] = ' ';
-                }
-            }
-        }
+        // Previously description newlines were stripped to work around the single-line InputText.
+        // The description field now uses InputTextMultiline so newlines are preserved.
     }
     return buf;
 }
@@ -395,9 +390,24 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                 }
                 ImGui::EndCombo();
             }
+        } else if (fieldId == "description") {
+            // Description uses a multiline editor so users can write rich content using
+            // Markdown. The create-payload layer (TrackerFieldPayload / PlaneClient) converts
+            // Markdown → ADF or → HTML on submit. Buffer sized to match the grid modal.
+            constexpr size_t kDescBuf = 64 * 1024;
+            auto& buf = EnsureDraftEditBuf(d, fieldId, current, kDescBuf);
+            const float descHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
+            if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(),
+                                          ImVec2(-FLT_MIN, descHeight),
+                                          ImGuiInputTextFlags_AllowTabInput)) {
+                d.newIssueQueueFallbackVisible = false;
+                d.newIssueQueueFallbackError.clear();
+                d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+            }
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::TextDisabled("Markdown: **bold**, *em*, # heading, - list, ```code```");
         } else {
-            const size_t minBuf = (fieldId == "description") ? size_t(4096) : size_t(512);
-            auto& buf = EnsureDraftEditBuf(d, fieldId, current, minBuf);
+            auto& buf = EnsureDraftEditBuf(d, fieldId, current);
             if (ImGui::InputText("##input", buf.data(), buf.size())) {
                 d.newIssueQueueFallbackVisible = false;
                 d.newIssueQueueFallbackError.clear();
