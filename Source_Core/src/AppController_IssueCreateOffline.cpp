@@ -1,5 +1,9 @@
 #include "AppController.h"
 
+#include "MarkdownConvert.h"
+#include "TextMerge.h"
+#include "TrackerFieldPayload.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -329,7 +333,8 @@ AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds)
 }
 
 std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
-                                                  const std::string& fieldsPayloadJson, std::string& outError) {
+                                                  const std::string& fieldsPayloadJson, std::string& outError,
+                                                  const std::string& originalRichValue) {
     outError.clear();
     if (!Cache) {
         outError = "Cache is not initialized.";
@@ -340,7 +345,7 @@ std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, c
         return 0;
     }
     try {
-        const std::int64_t id = Cache->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson);
+        const std::int64_t id = Cache->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson, originalRichValue);
         LOG_INFO("AppController: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -384,6 +389,54 @@ std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() cons
     } catch (...) {
         LOG_ERROR("AppController::GetDeadPendingFieldEdits failed: unknown exception");
         return {};
+    }
+}
+
+void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
+                                             const std::string& richKind) {
+    if (!Cache) return;
+    try {
+        // Rebuild the final backend payload from the resolved Markdown.
+        std::string resolvedPayloadJson;
+        if (richKind == "adf") {
+            const nlohmann::json adfDoc = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+            // We don't know the field id here, but the existing payload key is preserved by
+            // wrapping as-is. The replay will use the stored payload JSON directly.
+            // To know the field id we'd need to thread it through; for now we store the ADF doc
+            // as the entire payload — the replay already has the field id in row.FieldId.
+            resolvedPayloadJson = nlohmann::json{{std::string("__resolved__"), adfDoc}}.dump();
+        } else {
+            resolvedPayloadJson = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+        }
+        // Simple approach: store the resolved payload back — the replay will use it directly.
+        // We parse the existing payload first to keep the correct field key.
+        try {
+            auto existing = Cache->LoadPendingFieldEdits();
+            for (const auto& row : existing) {
+                if (row.Id == id) {
+                    nlohmann::json newPayload;
+                    try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
+                    catch (...) { newPayload = nlohmann::json::object(); }
+                    // Determine the actual payload key: may be "description" (Jira)
+                    // or "description_html" (Plane). Use the key already present in the payload.
+                    std::string payloadKey = row.FieldId;
+                    if (!newPayload.contains(payloadKey)) {
+                        const std::string altKey = row.FieldId + "_html";
+                        if (newPayload.contains(altKey)) payloadKey = altKey;
+                    }
+                    if (richKind == "adf") {
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+                    } else {
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+                    }
+                    Cache->ResolveFieldEditConflict(id, newPayload.dump());
+                    return;
+                }
+            }
+        } catch (...) {}
+        Cache->ResolveFieldEditConflict(id, resolvedPayloadJson);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id), ex.what());
     }
 }
 
@@ -513,6 +566,10 @@ void AppController::TickOfflineFieldEdits() {
 
         const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
         for (const auto& row : pending) {
+            if (row.HasMergeConflict) {
+                // User must resolve the merge conflict via the offline queue UI before replay.
+                continue;
+            }
             if (row.Attempts >= kMaxReplayAttempts) {
                 char detailBuf[384];
                 std::snprintf(detailBuf, sizeof(detailBuf),
@@ -545,6 +602,130 @@ void AppController::TickOfflineFieldEdits() {
             }
 
             ranUpdate = true;
+
+            // 3-way merge: if the edit carries an original rich value (base), fetch the current
+            // server document (theirs) and attempt to merge before replaying. This prevents
+            // clobbering concurrent edits made while the device was offline.
+            // Applies only to ADF/HTML description-class fields (OriginalRichValue non-empty).
+            bool skipMergeConflict = false;
+            if (!row.OriginalRichValue.empty() && fieldsPayload.is_object()) {
+                // Identify the field key and its current raw payload inside fieldsPayload.
+                // The queued payload is {fieldId: <adf-or-html>}; extract the inner value.
+                const std::string& fid = row.FieldId;
+                // Bug-fix: Plane's BuildFieldPayload puts the description value under
+                // "description_html", not "description". Fall back to the _html key.
+                std::string payloadKey = fid;
+                if (!fieldsPayload.contains(fid)) {
+                    const std::string altKey = fid + "_html";
+                    if (fieldsPayload.contains(altKey)) payloadKey = altKey;
+                }
+                if (fieldsPayload.contains(payloadKey)) {
+                    // Detect format from OriginalRichValue (base) once — used for mine extraction
+                    // and for rebuilding the merged payload.
+                    size_t biDetect = 0;
+                    const std::string& brDetect = row.OriginalRichValue;
+                    while (biDetect < brDetect.size() &&
+                           (brDetect[biDetect]==' '||brDetect[biDetect]=='\t'||
+                            brDetect[biDetect]=='\n'||brDetect[biDetect]=='\r')) ++biDetect;
+                    const bool isAdf = biDetect < brDetect.size() && brDetect[biDetect] == '{';
+
+                    auto toMd = [](const std::string& rich) -> std::string {
+                        if (rich.empty()) return rich;
+                        size_t i = 0;
+                        while (i < rich.size() && (rich[i]==' '||rich[i]=='\t'||rich[i]=='\n'||rich[i]=='\r')) ++i;
+                        if (i < rich.size() && rich[i] == '{') {
+                            try {
+                                auto j = nlohmann::json::parse(rich);
+                                if (j.is_object() && j.value("type",std::string())=="doc")
+                                    return MarkdownConvert::AdfToMarkdown(j);
+                            } catch (...) {}
+                        }
+                        if (i < rich.size() && rich[i] == '<') {
+                            bool fell = false;
+                            return MarkdownConvert::HtmlSubsetToMarkdown(rich, &fell);
+                        }
+                        return rich;
+                    };
+
+                    try {
+                        // --- Fetch current server state ---
+                        const TrackerConfig cfgForFetch = ConfigManager::Load();
+                        const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
+                        std::vector<CachedTicket> freshTickets;
+                        std::string fetchErr;
+                        const std::vector<std::string> keysForFetch = {row.IssueKey};
+                        if (backend->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch,
+                                                         freshTickets, fetchErr) &&
+                            !freshTickets.empty()) {
+
+                            const CachedTicket& fresh = freshTickets.front();
+                            const std::string theirsRich = fresh.GetFieldRichValue(fid);
+
+                            if (!theirsRich.empty() && theirsRich != row.OriginalRichValue) {
+                                const std::string baseMd   = toMd(row.OriginalRichValue);
+                                const std::string theirsMd = toMd(theirsRich);
+
+                                // Mine: extract from the queued payload and convert to Markdown.
+                                // ADF objects are walked directly; HTML strings are converted.
+                                std::string mineMd;
+                                const auto& myVal = fieldsPayload[payloadKey];
+                                if (myVal.is_object() && myVal.value("type",std::string())=="doc") {
+                                    mineMd = MarkdownConvert::AdfToMarkdown(myVal);
+                                } else if (myVal.is_string()) {
+                                    // Plane stores HTML — convert to Markdown for merge surface.
+                                    bool fell = false;
+                                    mineMd = MarkdownConvert::HtmlSubsetToMarkdown(
+                                        myVal.get<std::string>(), &fell);
+                                    if (fell) mineMd = toMd(myVal.get<std::string>());
+                                }
+
+                                const TextMerge::MergeResult merged = TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
+                                if (merged.IsClean) {
+                                    // Rebuild payload under the correct key for this backend.
+                                    if (isAdf) {
+                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(merged.Text);
+                                    } else {
+                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(merged.Text);
+                                    }
+                                    LOG_INFO("TickOfflineFieldEdits: 3-way merge clean for issue=%s field=%s",
+                                             row.IssueKey.c_str(), fid.c_str());
+                                } else {
+                                    // True conflict — mark the record and skip the network update.
+                                    // The offline queue UI (SmatchetOfflineQueueUi) will show a
+                                    // "Resolve Conflict" button that opens the PR-F modal.
+                                    LOG_WARN("TickOfflineFieldEdits: 3-way merge conflict for issue=%s field=%s — "
+                                             "suspending replay pending user resolution",
+                                             row.IssueKey.c_str(), fid.c_str());
+                                    const nlohmann::json ctx = {
+                                        {"base",    baseMd},
+                                        {"mine",    mineMd},
+                                        {"theirs",  theirsMd},
+                                        {"fieldId", fid},
+                                        {"richKind", isAdf ? "adf" : "html"}
+                                    };
+                                    tryCacheMutation("mark_field_edit_conflict", row.Id,
+                                        [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); });
+                                    // Skip the UpdateIssueFields call; user must resolve first.
+                                    skipMergeConflict = true;
+                                }
+                            }
+                        }
+                    } catch (const std::exception& ex) {
+                        LOG_WARN("TickOfflineFieldEdits: 3-way merge fetch/merge failed issue=%s field=%s err=%s — "
+                                 "replaying original edit as-is",
+                                 row.IssueKey.c_str(), fid.c_str(), ex.what());
+                    } catch (...) {
+                        LOG_WARN("TickOfflineFieldEdits: 3-way merge failed (unknown) issue=%s field=%s — "
+                                 "replaying original edit as-is",
+                                 row.IssueKey.c_str(), fid.c_str());
+                    }
+                }
+            }
+
+            if (skipMergeConflict) {
+                ++failures; // Count as pending — will retry after user resolves.
+                continue;
+            }
             std::string err;
             if (!backend->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
                 if (IsTrackerTransportErrorText(err)) {

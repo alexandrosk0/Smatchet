@@ -57,6 +57,11 @@ struct PendingFieldEdit {
     /// long-text modal editor's raw-mode path when it can't safely round-trip through Markdown.
     /// See RICH_TEXT_EDITING_V2_PLAN.md.
     bool Preformatted = false;
+    /// Original rich payload (ADF JSON or HTML) at the time the user opened the editor.
+    /// Persisted alongside the offline queue entry so replay can perform a real 3-way merge:
+    ///   base = OriginalRichValue, mine = queued payload, theirs = current server content.
+    /// Empty for non-ADF/HTML fields and for edits made before this field was introduced.
+    std::string OriginalRichValue;
 };
 
 struct FieldEditCommitResult {
@@ -100,6 +105,13 @@ struct CellWriteFeedback {
 struct UiDrawSession {
     bool cfgInitialized = false;
     TrackerConfig cfg;
+
+    /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
+    bool showConflictResolveModal = false;
+    std::int64_t conflictResolveDbId = 0;  ///< DB id of the pending_field_edit with the conflict.
+    std::string conflictContextJson;        ///< JSON blob: {base,mine,theirs,richKind}
+    /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
+    std::vector<char> conflictResolveBuf;
 
     bool showPreferences = false;
     bool showViewsDashboard = true;

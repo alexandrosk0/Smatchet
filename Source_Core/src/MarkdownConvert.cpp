@@ -50,6 +50,25 @@ struct AdfBuilder {
 
 void AdfEmitText(AdfBuilder& b, const std::string& text) {
     if (text.empty()) return;
+    // Coalesce consecutive text emissions that share the same marks. md4c can emit several
+    // text events for what the user types as a single run (each whitespace boundary, soft
+    // breaks rendered as spaces, etc.); without coalescing the ADF ends up with one node
+    // per token, which is structurally noisy and confuses downstream renderers.
+    json* parent = b.topContent();
+    if (parent && !parent->empty()) {
+        json& prev = parent->back();
+        if (prev.is_object() && prev.value("type", std::string()) == "text") {
+            const bool prevHasMarks = prev.contains("marks");
+            const bool curHasMarks  = !b.markStack.empty();
+            const bool sameMarks =
+                (prevHasMarks == curHasMarks) &&
+                (!prevHasMarks || prev["marks"] == b.markStack);
+            if (sameMarks) {
+                prev["text"] = prev["text"].get<std::string>() + text;
+                return;
+            }
+        }
+    }
     json node = {{"type", "text"}, {"text", text}};
     if (!b.markStack.empty()) {
         node["marks"] = b.markStack;
@@ -157,6 +176,34 @@ int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
             --b.codeBlockDepth;
             if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
+        case MD_BLOCK_LI: {
+            // ADF requires listItem children to be block nodes (paragraph, etc.), not inline
+            // text nodes. Tight Markdown lists produce no MD_BLOCK_P, so text lands directly
+            // in listItem.content. Wrap any top-level text/hardBreak nodes in a paragraph
+            // before popping, making the ADF valid for Jira's API.
+            if (b.contentStack.size() > 1) {
+                json* listContent = b.contentStack.back();
+                if (listContent && !listContent->empty()) {
+                    bool hasDirectInline = false;
+                    for (const auto& child : *listContent) {
+                        if (child.is_object()) {
+                            const std::string ct = child.value("type", std::string());
+                            if (ct == "text" || ct == "hardBreak") {
+                                hasDirectInline = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hasDirectInline) {
+                        // Wrap all current children in a paragraph.
+                        nlohmann::json para = {{"type", "paragraph"}, {"content", *listContent}};
+                        *listContent = nlohmann::json::array({std::move(para)});
+                    }
+                }
+                b.contentStack.pop_back();
+            }
+            return 0;
+        }
         default:
             if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
@@ -222,7 +269,11 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
 
     std::string txt(text, size);
     if (type == MD_TEXT_SOFTBR) {
-        AdfEmitText(b, " ");
+        // Standard CommonMark renders soft breaks as spaces, but for a Jira description
+        // editor that's surprising: the user pressed Enter and expected a visual line break.
+        // Emit hardBreak so single-Enter behaves like a line break in the rendered ticket.
+        // Double-Enter still produces a paragraph break (md4c emits MD_BLOCK_P open/close).
+        b.topContent()->push_back({{"type", "hardBreak"}});
         return 0;
     }
 
@@ -405,7 +456,9 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
         return 0;
     }
     if (type == MD_TEXT_SOFTBR) {
-        b.out << '\n';
+        // See note in AdfTextCallback — emit a real line break so single-Enter behaves
+        // intuitively in the editor rather than collapsing to a space.
+        b.out << "<br/>";
         return 0;
     }
     const std::string txt(text, size);
@@ -467,9 +520,13 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
             return;
         }
         for (const auto& w : openWrap) out << w;
-        if (!href.empty()) out << "[";
+        // Autolink shortcut: when the visible text equals the link target, emit a bare URL
+        // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
+        // on save, so round-trip semantics are preserved with a cleaner editor surface.
+        const bool autolink = !href.empty() && text == href;
+        if (!href.empty() && !autolink) out << "[";
         out << text;
-        if (!href.empty()) {
+        if (!href.empty() && !autolink) {
             out << "](" << href << ")";
         }
         for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it) {
@@ -479,8 +536,26 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
         out << "  \n";
     } else if (type == "emoji") {
         out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+    } else if (type == "inlineCard") {
+        // Jira smart link / Atlassian inline card. Render as a bare URL — Markdown's permissive
+        // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
+        // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
+        // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
+        if (node.contains("attrs") && node["attrs"].is_object()) {
+            const std::string url = node["attrs"].value("url", std::string());
+            if (!url.empty()) {
+                out << url;
+            }
+        }
+    } else if (type == "mention") {
+        // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
+        if (node.contains("attrs") && node["attrs"].is_object()) {
+            std::string mtxt = node["attrs"].value("text", std::string());
+            if (mtxt.empty()) mtxt = std::string("@") + node["attrs"].value("id", std::string());
+            out << mtxt;
+        }
     }
-    // Other inline types are silently dropped — caller's `dropped` log captures them at the block walker level.
+    // Other inline types (mediaInline, etc.) are silently dropped.
 }
 
 void EmitInlineRun(const json& contentArr, std::ostringstream& out) {

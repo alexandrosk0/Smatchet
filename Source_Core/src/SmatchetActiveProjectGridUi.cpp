@@ -625,7 +625,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(),
-                                                         column.Label, ticket.id, &app, &d, readOnlyMode);
+                                                         column.Label, ticket.id, std::string(),
+                                                         &app, &d, readOnlyMode);
                             handleCellRectSel(clippedRow, colIndex, cellOriginForSel, cellWidthForSel, cellGroupMin,
                                               cellGroupMax, true, ticket.id, activeIssueWasThisRow);
                             continue;
@@ -681,6 +682,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
+                                                         ticket.GetFieldRichValue(column.FieldId),
                                                          nullptr, nullptr, readOnlyMode);
                         } else {
                             const bool allowEditsForCell =
@@ -702,6 +704,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
+                                                         ticket.GetFieldRichValue(column.FieldId),
                                                          nullptr, nullptr, readOnlyMode);
                         }
 

@@ -107,7 +107,8 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
                 if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
                     std::string qerr;
                     const std::int64_t qid =
-                        app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr);
+                        app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr,
+                                                  edit.OriginalRichValue);
                     if (qid <= 0) {
                         SmatchetToastManager::Instance().Push(
                             "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr,

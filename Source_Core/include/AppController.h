@@ -403,13 +403,18 @@ class AppController {
      * @param fieldsPayloadJson JSON object map (field id -> backend-specific value).
      */
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
-                                       const std::string& fieldsPayloadJson, std::string& outError);
+                                       const std::string& fieldsPayloadJson, std::string& outError,
+                                       const std::string& originalRichValue = std::string());
 
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
     void TickOfflineFieldEdits();
 
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
+    /// Replace the queued payload with a user-resolved version and clear the conflict flag.
+    /// The edit will be retried on the next TickOfflineFieldEdits pass.
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
+                                  const std::string& richKind);
 
     struct PendingFieldEditDeleteSummary {
         int Deleted = 0;

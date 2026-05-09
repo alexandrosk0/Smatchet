@@ -15,6 +15,10 @@
 #include "CompactDateFormat.h"
 #include "StringUtil.h"
 
+extern "C" {
+#include "md4c.h"
+}
+
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
@@ -122,6 +126,8 @@ struct ActiveLongTextEditorState {
     std::vector<char> Buffer;
     bool Active = false;
     bool JustOpened = false;
+    /// When true, the modal shows the rendered preview pane next to the editor (split view).
+    bool ShowPreview = false;
 };
 
 static ActiveLongTextEditorState s_ActiveLongTextState;
@@ -203,6 +209,176 @@ static void OpenLongTextEditor(const std::string& issueId, const TrackerField& f
 static void CloseLongTextEditor() {
     s_ActiveLongTextState = ActiveLongTextEditorState{};
 }
+
+// =====================================================================================
+// Markdown preview — walks a Markdown string with md4c and emits ImGui draw calls so the
+// modal can show the rendered output next to the editor. Block-level only; inline marks
+// (bold/em/code/links) collapse to their text content. v2 tradeoff: rendering inline
+// styles inside a paragraph requires per-glyph push/pop fonts which we don't have.
+// =====================================================================================
+namespace {
+
+struct PreviewState {
+    /// Current accumulated text run for the open block (paragraph / heading / list item).
+    std::string buffer;
+    /// Stack of list kinds: '-' for bullet, '1' for ordered.
+    std::vector<char> listStack;
+    /// Per-ordered-list counter so we render "1. " "2. " ...
+    std::vector<int> orderedCounters;
+    /// Indent level (each list nesting bumps this by one).
+    int listDepth = 0;
+    /// True while inside a fenced code block — append text directly with newlines preserved.
+    int codeDepth = 0;
+    /// True while the block is a heading; flushes with bigger text.
+    int headingLevel = 0;
+};
+
+static void PreviewFlushBlock(PreviewState& s) {
+    if (s.buffer.empty() && s.headingLevel == 0) return;
+    if (s.headingLevel > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
+        // ImGui doesn't have heading fonts; use TextWrapped with a separator below for h1/h2.
+        ImGui::TextWrapped("%s", s.buffer.c_str());
+        ImGui::PopStyleColor();
+        if (s.headingLevel <= 2) ImGui::Separator();
+    } else if (!s.buffer.empty()) {
+        ImGui::TextWrapped("%s", s.buffer.c_str());
+    }
+    s.buffer.clear();
+    s.headingLevel = 0;
+}
+
+static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    switch (type) {
+        case MD_BLOCK_DOC: break;
+        case MD_BLOCK_QUOTE:
+            PreviewFlushBlock(s);
+            ImGui::Indent(16.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 0.7f, 1.0f));
+            break;
+        case MD_BLOCK_UL:
+            PreviewFlushBlock(s);
+            s.listStack.push_back('-');
+            s.orderedCounters.push_back(0);
+            ++s.listDepth;
+            break;
+        case MD_BLOCK_OL: {
+            PreviewFlushBlock(s);
+            auto* d = static_cast<MD_BLOCK_OL_DETAIL*>(detail);
+            s.listStack.push_back('1');
+            s.orderedCounters.push_back(d ? static_cast<int>(d->start) - 1 : 0);
+            ++s.listDepth;
+            break;
+        }
+        case MD_BLOCK_LI:
+            PreviewFlushBlock(s);
+            for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Indent(16.0f);
+            if (!s.listStack.empty() && s.listStack.back() == '1') {
+                ++s.orderedCounters.back();
+                s.buffer = std::to_string(s.orderedCounters.back()) + ". ";
+            } else {
+                s.buffer = "\xE2\x80\xA2 "; // bullet
+            }
+            break;
+        case MD_BLOCK_HR:
+            PreviewFlushBlock(s);
+            ImGui::Separator();
+            break;
+        case MD_BLOCK_H: {
+            PreviewFlushBlock(s);
+            auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
+            s.headingLevel = d ? static_cast<int>(d->level) : 1;
+            break;
+        }
+        case MD_BLOCK_CODE:
+            PreviewFlushBlock(s);
+            ++s.codeDepth;
+            break;
+        case MD_BLOCK_P:
+            // Inside a list item the buffer is already primed with the marker; don't flush.
+            if (s.listDepth == 0) PreviewFlushBlock(s);
+            break;
+        default: break;
+    }
+    return 0;
+}
+
+static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    switch (type) {
+        case MD_BLOCK_DOC: PreviewFlushBlock(s); break;
+        case MD_BLOCK_QUOTE:
+            PreviewFlushBlock(s);
+            ImGui::PopStyleColor();
+            ImGui::Unindent(16.0f);
+            break;
+        case MD_BLOCK_UL:
+        case MD_BLOCK_OL:
+            PreviewFlushBlock(s);
+            if (!s.listStack.empty()) s.listStack.pop_back();
+            if (!s.orderedCounters.empty()) s.orderedCounters.pop_back();
+            if (s.listDepth > 0) --s.listDepth;
+            break;
+        case MD_BLOCK_LI:
+            PreviewFlushBlock(s);
+            for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Unindent(16.0f);
+            break;
+        case MD_BLOCK_CODE: {
+            // Render the accumulated code-block text in a child with monospace-like styling.
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+            const float h = ImGui::GetTextLineHeightWithSpacing() *
+                            static_cast<float>(1 + std::count(s.buffer.begin(), s.buffer.end(), '\n'));
+            ImGui::BeginChild("##mdpreview_code", ImVec2(-FLT_MIN, std::min(h + 12.0f, 240.0f)),
+                              true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
+            ImGui::TextUnformatted(s.buffer.c_str());
+            ImGui::PopStyleColor();
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            s.buffer.clear();
+            if (s.codeDepth > 0) --s.codeDepth;
+            break;
+        }
+        case MD_BLOCK_H:
+        case MD_BLOCK_P:
+            PreviewFlushBlock(s);
+            break;
+        default: break;
+    }
+    return 0;
+}
+
+static int PreviewEnterSpan(MD_SPANTYPE /*type*/, void* /*detail*/, void* /*ud*/) { return 0; }
+static int PreviewLeaveSpan(MD_SPANTYPE /*type*/, void* /*detail*/, void* /*ud*/) { return 0; }
+
+static int PreviewText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    if (type == MD_TEXT_NULLCHAR || type == MD_TEXT_HTML) return 0;
+    if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+        s.buffer += '\n';
+        return 0;
+    }
+    s.buffer.append(text, size);
+    return 0;
+}
+
+static void RenderMarkdownPreview(const std::string& md) {
+    PreviewState state;
+    MD_PARSER parser{};
+    parser.abi_version = 0;
+    parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
+                   MD_FLAG_PERMISSIVEAUTOLINKS;
+    parser.enter_block = PreviewEnterBlock;
+    parser.leave_block = PreviewLeaveBlock;
+    parser.enter_span  = PreviewEnterSpan;
+    parser.leave_span  = PreviewLeaveSpan;
+    parser.text        = PreviewText;
+    md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &state);
+    PreviewFlushBlock(state);
+}
+
+} // namespace
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -420,7 +596,10 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                 const std::string& label = !field.Name.empty() ? field.Name : field.Id;
                 const std::string richValue = ticket.GetFieldRichValue(field.Id);
                 OpenLongTextEditor(ticket.id, field, label, currentValue, richValue);
-                ImGui::OpenPopup(kLongTextModalPopupId);
+                // Do NOT call ImGui::OpenPopup here — we are inside a table cell.
+                // ImGui requires OpenPopup and BeginPopupModal at the same window depth.
+                // RenderLongTextModal (called after EndTable) sees JustOpened=true and
+                // calls OpenPopup from the stable top-level location.
             }
             // Hand the lifecycle to the modal singleton; the cell falls through to the read-only preview below.
             state.ClearEditing();
@@ -1028,6 +1207,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (s_ActiveLongTextState.JustOpened) {
+        // OpenPopup must be called at the same window-depth as BeginPopupModal. Both live here,
+        // outside the table, so ImGui can correctly anchor the popup to this window.
+        ImGui::OpenPopup(kLongTextModalPopupId);
         const ImVec2 modalSize(viewport->Size.x * 0.6f, viewport->Size.y * 0.65f);
         ImGui::SetNextWindowSize(modalSize, ImGuiCond_Always);
         ImGui::SetNextWindowPos(
@@ -1073,11 +1255,31 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             s_ActiveLongTextState.JustOpened = false;
         }
 
-        ImGui::InputTextMultiline("##LongTextEditorBuf",
-                                  s_ActiveLongTextState.Buffer.data(),
-                                  s_ActiveLongTextState.Buffer.size(),
-                                  inputSize,
-                                  ImGuiInputTextFlags_AllowTabInput);
+        // Split view when preview is on: editor on the left, rendered Markdown on the right.
+        // Preview is disabled in raw-HTML mode (the buffer is HTML, not Markdown — md4c would
+        // produce nonsense).
+        const bool previewOn = s_ActiveLongTextState.ShowPreview && !s_ActiveLongTextState.RawMode;
+        if (previewOn) {
+            const float halfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            ImGui::InputTextMultiline("##LongTextEditorBuf",
+                                      s_ActiveLongTextState.Buffer.data(),
+                                      s_ActiveLongTextState.Buffer.size(),
+                                      ImVec2(halfWidth, inputSize.y),
+                                      ImGuiInputTextFlags_AllowTabInput);
+            ImGui::SameLine();
+            ImGui::BeginChild("##LongTextPreview",
+                              ImVec2(halfWidth, inputSize.y),
+                              true, ImGuiWindowFlags_HorizontalScrollbar);
+            const std::string md(s_ActiveLongTextState.Buffer.data());
+            RenderMarkdownPreview(md);
+            ImGui::EndChild();
+        } else {
+            ImGui::InputTextMultiline("##LongTextEditorBuf",
+                                      s_ActiveLongTextState.Buffer.data(),
+                                      s_ActiveLongTextState.Buffer.size(),
+                                      inputSize,
+                                      ImGuiInputTextFlags_AllowTabInput);
+        }
 
         // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
         const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
@@ -1098,6 +1300,14 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         if (ImGui::Button("Cancel", ImVec2(100, 0))) {
             cancel = true;
         }
+        // Preview toggle — disabled while editing raw HTML (no Markdown to render).
+        ImGui::SameLine();
+        if (s_ActiveLongTextState.RawMode) ImGui::BeginDisabled();
+        const char* previewBtnLabel = s_ActiveLongTextState.ShowPreview ? "Hide preview" : "Preview";
+        if (ImGui::Button(previewBtnLabel, ImVec2(120, 0))) {
+            s_ActiveLongTextState.ShowPreview = !s_ActiveLongTextState.ShowPreview;
+        }
+        if (s_ActiveLongTextState.RawMode) ImGui::EndDisabled();
 
         if (save) {
             const std::string newValue(s_ActiveLongTextState.Buffer.data());
@@ -1113,6 +1323,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 edit.Field = s_ActiveLongTextState.Field;
                 edit.Values = {newValue};
                 edit.Preformatted = s_ActiveLongTextState.RawMode;
+                edit.OriginalRichValue = s_ActiveLongTextState.OriginalRichValue;
                 pendingEdits.push_back(std::move(edit));
             }
             ImGui::CloseCurrentPopup();

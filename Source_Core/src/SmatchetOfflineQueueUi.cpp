@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "MarkdownConvert.h"
 #include "TrackerHttpUtils.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
@@ -279,6 +280,8 @@ struct UnifiedOfflineRow {
     std::int64_t createdEpoch = 0;
     std::int64_t archivedEpoch = 0;
     std::string payload;
+    bool hasMergeConflict = false;
+    std::string conflictContextJson;
 };
 
 static std::string MakeUnifiedOfflineRowKey(UnifiedOfflineKind kind, std::int64_t dbId) {
@@ -348,6 +351,11 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         u.createdEpoch = row.CreatedAtEpochSec;
         u.archivedEpoch = 0;
         u.payload = row.FieldsPayloadJson;
+        u.hasMergeConflict = row.HasMergeConflict;
+        u.conflictContextJson = row.ConflictContextJson;
+        if (row.HasMergeConflict) {
+            u.state = "Conflict";
+        }
         rows.push_back(std::move(u));
     }
     for (const DeadPendingFieldEdit& row : deadEdits) {
@@ -746,7 +754,13 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 ImGui::TextUnformatted("Dead create");
                 ImGui::PopStyleColor();
             } else if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                ImGui::TextDisabled("Queued edit");
+                if (row.hasMergeConflict) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
+                    ImGui::TextUnformatted("Conflict — edit suspended");
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::TextDisabled("Queued edit");
+                }
             } else if (row.kind == UnifiedOfflineKind::DeadFieldEdit) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
                 ImGui::TextUnformatted("Dead edit");
@@ -803,6 +817,16 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                                 }
                             }
                         }
+                    }
+
+                    // Conflict resolution — only for a single pending field edit with a conflict.
+                    const bool singleConflict = (picks.size() == 1 &&
+                                                  picks[0].kind == UnifiedOfflineKind::PendingFieldEdit &&
+                                                  picks[0].hasMergeConflict);
+                    if (singleConflict && ImGui::MenuItem("Resolve merge conflict...")) {
+                        d.conflictResolveDbId = picks[0].dbId;
+                        d.conflictContextJson = picks[0].conflictContextJson;
+                        d.showConflictResolveModal = true;
                     }
 
                     if (ImGui::MenuItem("Discard record(s) from DB")) {
@@ -957,5 +981,117 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     }
 
     ImGui::PopID();
+
+    // -------------------------------------------------------------------------
+    // Merge-conflict resolution modal (PR-F)
+    // -------------------------------------------------------------------------
+    if (d.showConflictResolveModal) {
+
+        // Open + size the popup once per trigger.
+        ImGui::OpenPopup("ResolveMergeConflict");
+        d.showConflictResolveModal = false;
+
+        // Seed the resolved buffer from the conflict context on open.
+        {
+            std::string mineMd, theirsMd;
+            try {
+                auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
+                if (ctx.is_object()) {
+                    mineMd   = ctx.value("mine",    std::string());
+                    theirsMd = ctx.value("theirs",  std::string());
+                }
+            } catch (...) {}
+            const std::string seed = "<<<<<<< mine\n" + mineMd + "\n=======\n" + theirsMd + "\n>>>>>>> theirs";
+            d.conflictResolveBuf.assign(64 * 1024, '\0');
+            const size_t n = (std::min)(seed.size(), static_cast<size_t>(64 * 1024 - 1));
+            std::memcpy(d.conflictResolveBuf.data(), seed.data(), n);
+        }
+    }
+
+    if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
+                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        // Parse context to show per-side panes.
+        std::string mineMd, theirsMd, richKind;
+        try {
+            auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
+            if (ctx.is_object()) {
+                mineMd   = ctx.value("mine",    std::string());
+                theirsMd = ctx.value("theirs",  std::string());
+                richKind = ctx.value("richKind", std::string("adf"));
+            }
+        } catch (...) {}
+
+        const ImVec2 vp = ImGui::GetMainViewport()->Size;
+        const float halfW = vp.x * 0.28f;
+        const float paneH = vp.y * 0.22f;
+        const float resolvedH = vp.y * 0.22f;
+
+        ImGui::TextDisabled("Offline edit conflict — both you and the server changed this field concurrently.");
+        ImGui::Spacing();
+
+        ImGui::BeginGroup();
+        ImGui::Text("Your edit (mine)");
+        ImGui::InputTextMultiline("##CRMine",
+            const_cast<char*>(mineMd.c_str()), mineMd.size() + 1,
+            ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::Text("Server version (theirs)");
+        ImGui::InputTextMultiline("##CRTheirs",
+            const_cast<char*>(theirsMd.c_str()), theirsMd.size() + 1,
+            ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndGroup();
+
+        ImGui::Spacing();
+        ImGui::Text("Resolved (edit to remove conflict markers):");
+        if (d.conflictResolveBuf.empty()) {
+            d.conflictResolveBuf.assign(64 * 1024, '\0');
+        }
+        ImGui::InputTextMultiline("##CRResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size(),
+                                  ImVec2(-FLT_MIN, resolvedH), ImGuiInputTextFlags_AllowTabInput);
+
+        const bool hasConflictMarkers = std::string(d.conflictResolveBuf.data()).find("<<<<<<<") != std::string::npos;
+        if (hasConflictMarkers) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
+            ImGui::TextUnformatted("Resolve all <<<<<<< markers before saving.");
+            ImGui::PopStyleColor();
+        }
+        ImGui::Spacing();
+
+        auto doResolve = [&](const std::string& resolvedMd) {
+            app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, richKind);
+            d.conflictResolveBuf.clear();
+            d.conflictContextJson.clear();
+            d.conflictResolveDbId = 0;
+            ImGui::CloseCurrentPopup();
+            ArmOfflineQueuePanelStatus(d, "Conflict resolved — edit re-queued for replay.");
+        };
+
+        if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
+            doResolve(mineMd);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
+            doResolve(theirsMd);
+        }
+        ImGui::SameLine();
+        const bool saveEnabled = !hasConflictMarkers;
+        if (!saveEnabled) ImGui::BeginDisabled();
+        if (ImGui::Button("Save resolved", ImVec2(130, 0))) {
+            doResolve(std::string(d.conflictResolveBuf.data()));
+        }
+        if (!saveEnabled) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            d.conflictResolveBuf.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
+        d.conflictResolveBuf.clear();
+    }
+
     return true;
 }
