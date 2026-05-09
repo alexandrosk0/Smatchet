@@ -50,6 +50,25 @@ struct AdfBuilder {
 
 void AdfEmitText(AdfBuilder& b, const std::string& text) {
     if (text.empty()) return;
+    // Coalesce consecutive text emissions that share the same marks. md4c can emit several
+    // text events for what the user types as a single run (each whitespace boundary, soft
+    // breaks rendered as spaces, etc.); without coalescing the ADF ends up with one node
+    // per token, which is structurally noisy and confuses downstream renderers.
+    json* parent = b.topContent();
+    if (parent && !parent->empty()) {
+        json& prev = parent->back();
+        if (prev.is_object() && prev.value("type", std::string()) == "text") {
+            const bool prevHasMarks = prev.contains("marks");
+            const bool curHasMarks  = !b.markStack.empty();
+            const bool sameMarks =
+                (prevHasMarks == curHasMarks) &&
+                (!prevHasMarks || prev["marks"] == b.markStack);
+            if (sameMarks) {
+                prev["text"] = prev["text"].get<std::string>() + text;
+                return;
+            }
+        }
+    }
     json node = {{"type", "text"}, {"text", text}};
     if (!b.markStack.empty()) {
         node["marks"] = b.markStack;
@@ -250,7 +269,11 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
 
     std::string txt(text, size);
     if (type == MD_TEXT_SOFTBR) {
-        AdfEmitText(b, " ");
+        // Standard CommonMark renders soft breaks as spaces, but for a Jira description
+        // editor that's surprising: the user pressed Enter and expected a visual line break.
+        // Emit hardBreak so single-Enter behaves like a line break in the rendered ticket.
+        // Double-Enter still produces a paragraph break (md4c emits MD_BLOCK_P open/close).
+        b.topContent()->push_back({{"type", "hardBreak"}});
         return 0;
     }
 
@@ -433,7 +456,9 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
         return 0;
     }
     if (type == MD_TEXT_SOFTBR) {
-        b.out << '\n';
+        // See note in AdfTextCallback — emit a real line break so single-Enter behaves
+        // intuitively in the editor rather than collapsing to a space.
+        b.out << "<br/>";
         return 0;
     }
     const std::string txt(text, size);
