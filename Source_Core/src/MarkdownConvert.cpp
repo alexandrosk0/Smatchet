@@ -157,6 +157,34 @@ int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
             --b.codeBlockDepth;
             if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
+        case MD_BLOCK_LI: {
+            // ADF requires listItem children to be block nodes (paragraph, etc.), not inline
+            // text nodes. Tight Markdown lists produce no MD_BLOCK_P, so text lands directly
+            // in listItem.content. Wrap any top-level text/hardBreak nodes in a paragraph
+            // before popping, making the ADF valid for Jira's API.
+            if (b.contentStack.size() > 1) {
+                json* listContent = b.contentStack.back();
+                if (listContent && !listContent->empty()) {
+                    bool hasDirectInline = false;
+                    for (const auto& child : *listContent) {
+                        if (child.is_object()) {
+                            const std::string ct = child.value("type", std::string());
+                            if (ct == "text" || ct == "hardBreak") {
+                                hasDirectInline = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hasDirectInline) {
+                        // Wrap all current children in a paragraph.
+                        nlohmann::json para = {{"type", "paragraph"}, {"content", *listContent}};
+                        *listContent = nlohmann::json::array({std::move(para)});
+                    }
+                }
+                b.contentStack.pop_back();
+            }
+            return 0;
+        }
         default:
             if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
