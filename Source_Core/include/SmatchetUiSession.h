@@ -57,6 +57,11 @@ struct PendingFieldEdit {
     /// long-text modal editor's raw-mode path when it can't safely round-trip through Markdown.
     /// See RICH_TEXT_EDITING_V2_PLAN.md.
     bool Preformatted = false;
+    /// Original rich payload (ADF JSON or HTML) at the time the user opened the editor.
+    /// Persisted alongside the offline queue entry so replay can perform a real 3-way merge:
+    ///   base = OriginalRichValue, mine = queued payload, theirs = current server content.
+    /// Empty for non-ADF/HTML fields and for edits made before this field was introduced.
+    std::string OriginalRichValue;
 };
 
 struct FieldEditCommitResult {

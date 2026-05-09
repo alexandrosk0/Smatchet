@@ -1077,6 +1077,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 edit.Field = s_ActiveLongTextState.Field;
                 edit.Values = {newValue};
                 edit.Preformatted = s_ActiveLongTextState.RawMode;
+                edit.OriginalRichValue = s_ActiveLongTextState.OriginalRichValue;
                 pendingEdits.push_back(std::move(edit));
             }
             ImGui::CloseCurrentPopup();

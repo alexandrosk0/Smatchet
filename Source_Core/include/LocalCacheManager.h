@@ -59,6 +59,11 @@ struct PendingFieldEditRecord {
     std::string IssueKey;
     std::string FieldId;
     std::string FieldsPayloadJson;
+    /// Original rich-content payload (ADF JSON or HTML) at edit-open time. Used by
+    /// `TickOfflineFieldEdits` to perform a 3-way merge with the current server content
+    /// before replaying (base=this, mine=FieldsPayloadJson, theirs=server). Empty for
+    /// non-ADF fields and edits queued before this field was introduced.
+    std::string OriginalRichValue;
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
@@ -122,7 +127,8 @@ class LocalCacheManager {
     void DeleteDeadPendingCreate(std::int64_t deadId);
 
     std::int64_t EnqueuePendingFieldEdit(const std::string& issueKey, const std::string& fieldId,
-                                         const std::string& fieldsPayloadJson);
+                                         const std::string& fieldsPayloadJson,
+                                         const std::string& originalRichValue = std::string());
     std::vector<PendingFieldEditRecord> LoadPendingFieldEdits();
     void UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError);
     void DeletePendingFieldEdit(std::int64_t id);

@@ -403,7 +403,8 @@ class AppController {
      * @param fieldsPayloadJson JSON object map (field id -> backend-specific value).
      */
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
-                                       const std::string& fieldsPayloadJson, std::string& outError);
+                                       const std::string& fieldsPayloadJson, std::string& outError,
+                                       const std::string& originalRichValue = std::string());
 
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
     void TickOfflineFieldEdits();
