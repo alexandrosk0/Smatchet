@@ -64,6 +64,12 @@ struct PendingFieldEditRecord {
     /// before replaying (base=this, mine=FieldsPayloadJson, theirs=server). Empty for
     /// non-ADF fields and edits queued before this field was introduced.
     std::string OriginalRichValue;
+    /// True when the offline-replay 3-way merge produced a conflict. The record stays
+    /// in the queue and is not retried until the user resolves via the conflict UI.
+    bool HasMergeConflict = false;
+    /// JSON blob: {base, mine, theirs, richKind} populated when HasMergeConflict is true.
+    /// Used by the conflict-resolution modal to show both sides. See RICH_TEXT_EDITING_V2_PLAN.md.
+    std::string ConflictContextJson;
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
@@ -132,6 +138,10 @@ class LocalCacheManager {
     std::vector<PendingFieldEditRecord> LoadPendingFieldEdits();
     void UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError);
     void DeletePendingFieldEdit(std::int64_t id);
+    /// Mark a pending field edit as having a 3-way merge conflict; stores the context JSON for the UI.
+    void MarkFieldEditConflict(std::int64_t id, const std::string& contextJson);
+    /// Clear the conflict flag and replace the payload with the user-resolved version.
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson);
     void ArchivePendingFieldEdit(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
     std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits();
     void DeleteDeadPendingFieldEdit(std::int64_t deadId);

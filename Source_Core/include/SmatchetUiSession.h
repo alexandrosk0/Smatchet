@@ -106,6 +106,13 @@ struct UiDrawSession {
     bool cfgInitialized = false;
     TrackerConfig cfg;
 
+    /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
+    bool showConflictResolveModal = false;
+    std::int64_t conflictResolveDbId = 0;  ///< DB id of the pending_field_edit with the conflict.
+    std::string conflictContextJson;        ///< JSON blob: {base,mine,theirs,richKind}
+    /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
+    std::vector<char> conflictResolveBuf;
+
     bool showPreferences = false;
     bool showViewsDashboard = true;
     bool requestViewsDashboardFocus = false;

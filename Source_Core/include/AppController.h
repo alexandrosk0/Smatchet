@@ -411,6 +411,10 @@ class AppController {
 
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
+    /// Replace the queued payload with a user-resolved version and clear the conflict flag.
+    /// The edit will be retried on the next TickOfflineFieldEdits pass.
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
+                                  const std::string& richKind);
 
     struct PendingFieldEditDeleteSummary {
         int Deleted = 0;

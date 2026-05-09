@@ -63,6 +63,10 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     // Migration: add original_rich_value to existing databases (ignore if column already exists).
     try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_rich_value TEXT"); }
     catch (...) {}
+    try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_merge_conflict INTEGER NOT NULL DEFAULT 0"); }
+    catch (...) {}
+    try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN conflict_context_json TEXT"); }
+    catch (...) {}
     db.exec("CREATE TABLE IF NOT EXISTS pending_field_edits_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
@@ -500,7 +504,9 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
         std::vector<PendingFieldEditRecord> results;
         SQLite::Statement query(db,
                                 "SELECT id, issue_key, field_id, fields_payload_json, "
-                                "COALESCE(original_rich_value, ''), attempts, last_error, created_at "
+                                "COALESCE(original_rich_value, ''), "
+                                "COALESCE(has_merge_conflict, 0), COALESCE(conflict_context_json, ''), "
+                                "attempts, last_error, created_at "
                                 "FROM pending_field_edits ORDER BY id ASC");
         while (query.executeStep()) {
             PendingFieldEditRecord row;
@@ -511,9 +517,12 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
                 query.getColumn(3).isNull() ? std::string() : std::string(query.getColumn(3).getText());
             row.OriginalRichValue =
                 query.getColumn(4).isNull() ? std::string() : std::string(query.getColumn(4).getText());
-            row.Attempts = query.getColumn(5).getInt();
-            row.LastError = query.getColumn(6).isNull() ? std::string() : std::string(query.getColumn(6).getText());
-            row.CreatedAtEpochSec = query.getColumn(7).getInt64();
+            row.HasMergeConflict = query.getColumn(5).getInt() != 0;
+            row.ConflictContextJson =
+                query.getColumn(6).isNull() ? std::string() : std::string(query.getColumn(6).getText());
+            row.Attempts = query.getColumn(7).getInt();
+            row.LastError = query.getColumn(8).isNull() ? std::string() : std::string(query.getColumn(8).getText());
+            row.CreatedAtEpochSec = query.getColumn(9).getInt64();
             results.push_back(std::move(row));
         }
         return results;
@@ -533,6 +542,35 @@ void LocalCacheManager::UpdatePendingFieldEdit(std::int64_t id, int attempts, co
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::UpdatePendingFieldEdit failed id=%lld err=%s", static_cast<long long>(id),
                   ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string& contextJson) {
+    try {
+        SQLite::Statement upd(db,
+            "UPDATE pending_field_edits SET has_merge_conflict = 1, conflict_context_json = ? WHERE id = ?");
+        upd.bind(1, contextJson);
+        upd.bind(2, id);
+        upd.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::MarkFieldEditConflict failed id=%lld err=%s",
+                  static_cast<long long>(id), ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) {
+    try {
+        SQLite::Statement upd(db,
+            "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
+            "fields_payload_json = ? WHERE id = ?");
+        upd.bind(1, resolvedPayloadJson);
+        upd.bind(2, id);
+        upd.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::ResolveFieldEditConflict failed id=%lld err=%s",
+                  static_cast<long long>(id), ex.what());
         throw;
     }
 }

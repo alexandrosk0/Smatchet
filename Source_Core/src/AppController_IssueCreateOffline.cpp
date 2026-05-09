@@ -392,6 +392,47 @@ std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() cons
     }
 }
 
+void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
+                                             const std::string& richKind) {
+    if (!Cache) return;
+    try {
+        // Rebuild the final backend payload from the resolved Markdown.
+        std::string resolvedPayloadJson;
+        if (richKind == "adf") {
+            const nlohmann::json adfDoc = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+            // We don't know the field id here, but the existing payload key is preserved by
+            // wrapping as-is. The replay will use the stored payload JSON directly.
+            // To know the field id we'd need to thread it through; for now we store the ADF doc
+            // as the entire payload — the replay already has the field id in row.FieldId.
+            resolvedPayloadJson = nlohmann::json{{std::string("__resolved__"), adfDoc}}.dump();
+        } else {
+            resolvedPayloadJson = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+        }
+        // Simple approach: store the resolved payload back — the replay will use it directly.
+        // We parse the existing payload first to keep the correct field key.
+        try {
+            auto existing = Cache->LoadPendingFieldEdits();
+            for (const auto& row : existing) {
+                if (row.Id == id) {
+                    nlohmann::json newPayload;
+                    try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
+                    catch (...) { newPayload = nlohmann::json::object(); }
+                    if (richKind == "adf") {
+                        newPayload[row.FieldId] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+                    } else {
+                        newPayload[row.FieldId] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+                    }
+                    Cache->ResolveFieldEditConflict(id, newPayload.dump());
+                    return;
+                }
+            }
+        } catch (...) {}
+        Cache->ResolveFieldEditConflict(id, resolvedPayloadJson);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id), ex.what());
+    }
+}
+
 AppController::PendingFieldEditDeleteSummary
 AppController::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
     PendingFieldEditDeleteSummary summary;
@@ -518,6 +559,10 @@ void AppController::TickOfflineFieldEdits() {
 
         const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
         for (const auto& row : pending) {
+            if (row.HasMergeConflict) {
+                // User must resolve the merge conflict via the offline queue UI before replay.
+                continue;
+            }
             if (row.Attempts >= kMaxReplayAttempts) {
                 char detailBuf[384];
                 std::snprintf(detailBuf, sizeof(detailBuf),
@@ -555,6 +600,7 @@ void AppController::TickOfflineFieldEdits() {
             // server document (theirs) and attempt to merge before replaying. This prevents
             // clobbering concurrent edits made while the device was offline.
             // Applies only to ADF/HTML description-class fields (OriginalRichValue non-empty).
+            bool skipMergeConflict = false;
             if (!row.OriginalRichValue.empty() && fieldsPayload.is_object()) {
                 // Identify the field key and its current raw payload inside fieldsPayload.
                 // The queued payload is {fieldId: <adf-or-html>}; extract the inner value.
@@ -622,19 +668,24 @@ void AppController::TickOfflineFieldEdits() {
                                     LOG_INFO("TickOfflineFieldEdits: 3-way merge clean for issue=%s field=%s",
                                              row.IssueKey.c_str(), fid.c_str());
                                 } else {
-                                    // Conflict — store conflict-marker text so the user can resolve.
-                                    // PR-F will add a proper conflict-resolution UI on top of this.
+                                    // True conflict — mark the record and skip the network update.
+                                    // The offline queue UI (SmatchetOfflineQueueUi) will show a
+                                    // "Resolve Conflict" button that opens the PR-F modal.
                                     LOG_WARN("TickOfflineFieldEdits: 3-way merge conflict for issue=%s field=%s — "
-                                             "shipping with conflict markers; use PR-F UI to resolve",
+                                             "suspending replay pending user resolution",
                                              row.IssueKey.c_str(), fid.c_str());
-                                    size_t bi2 = 0;
-                                    const std::string& br2 = row.OriginalRichValue;
-                                    while (bi2 < br2.size() && (br2[bi2]==' '||br2[bi2]=='\t'||br2[bi2]=='\n'||br2[bi2]=='\r')) ++bi2;
-                                    const bool isAdf2 = bi2 < br2.size() && br2[bi2] == '{';
-                                    if (isAdf2)
-                                        fieldsPayload[fid] = MarkdownConvert::MarkdownToAdf(merged.Text);
-                                    else
-                                        fieldsPayload[fid] = MarkdownConvert::MarkdownToHtml(merged.Text);
+                                    const nlohmann::json ctx = {
+                                        {"base",   baseMd},
+                                        {"mine",   mineMd},
+                                        {"theirs", theirsMd},
+                                        {"fieldId", fid},
+                                        {"richKind", (row.OriginalRichValue.size() > 0 &&
+                                                      row.OriginalRichValue.front() == '{') ? "adf" : "html"}
+                                    };
+                                    tryCacheMutation("mark_field_edit_conflict", row.Id,
+                                        [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); });
+                                    // Skip the UpdateIssueFields call; user must resolve first.
+                                    skipMergeConflict = true;
                                 }
                             }
                         }
@@ -650,6 +701,10 @@ void AppController::TickOfflineFieldEdits() {
                 }
             }
 
+            if (skipMergeConflict) {
+                ++failures; // Count as pending — will retry after user resolves.
+                continue;
+            }
             std::string err;
             if (!backend->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
                 if (IsTrackerTransportErrorText(err)) {
