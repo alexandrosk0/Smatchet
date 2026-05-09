@@ -61,6 +61,7 @@ struct SmatchetImGuiHost::Impl {
     AppController App;
     PluginHost Plugins;
     SmatchetUI Ui;
+    std::string ImGuiIniPath;
 
     // Serialize all ImGui API calls across threads (IO updates, NewFrame, Render, etc).
     std::mutex ImGuiMutex;
@@ -77,6 +78,18 @@ struct SmatchetImGuiHost::Impl {
 };
 
 #if defined(_WIN32)
+namespace {
+
+std::string SmatchetDirectoryFromFilePath(const std::string& path) {
+    const std::string::size_type last = path.find_last_of("\\/");
+    if (last == std::string::npos) {
+        return std::string();
+    }
+    return path.substr(0, last + 1);
+}
+
+} // namespace
+
 // Shader-visible SRV heap allocator state used by the ImGui DX12 backend when creating dynamic
 // ImTextureData textures (attachment thumbnails, etc.). Slot 0 stays reserved for the legacy font
 // atlas path; additional slots are allocated/freed with a tiny free-list.
@@ -351,6 +364,13 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
     return false;
 #else
+    if (ConfigManager::GetFilesBaseDirectory().empty()) {
+        const std::string baseFromDbPath = SmatchetDirectoryFromFilePath(options.DbPath);
+        if (!baseFromDbPath.empty()) {
+            ConfigManager::SetBaseDirectoryForFiles(baseFromDbPath);
+        }
+    }
+
     if (options.Renderer.Backend != SmatchetRendererBackend::Dx12) {
         outError = "Only DX12 backend is implemented in this runtime build.";
         ImplData->LastInitError = outError;
@@ -385,6 +405,8 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         ImplData->ImGuiCtx = ImGui::GetCurrentContext();
     }
     ImGuiIO& io = ImGui::GetIO();
+    ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
+    io.IniFilename = ImplData->ImGuiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
@@ -979,8 +1001,6 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
-
-
 
 
 

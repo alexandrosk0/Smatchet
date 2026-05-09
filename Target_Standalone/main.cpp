@@ -232,7 +232,8 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    (void)io;
+    static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
+    io.IniFilename = s_imguiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
 
@@ -376,7 +377,6 @@ int main(int argc, char** argv) {
 
     return exitCode;
 }
-
 
 
 

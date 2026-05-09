@@ -603,6 +603,12 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
 bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues, std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitFieldEdit blocked by read-only mode issue=%s field=%s", issueId.c_str(),
+                 field.Id.c_str());
+        return false;
+    }
     if (!Backend || !Cache) {
         outError = "Backend or cache is not initialized.";
         LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
@@ -859,6 +865,12 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
     outResult = FieldEditResult{};
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu",
               FieldEditAuditSource::Current(), issueId.c_str(), field.Id.c_str(), rawValues.size());
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outResult.Error = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitFieldEditNetworkOnly blocked by read-only mode issue=%s field=%s",
+                 issueId.c_str(), field.Id.c_str());
+        return false;
+    }
     if (issueId.empty()) {
         outResult.Error = "Issue id is empty.";
         return false;
@@ -991,6 +1003,10 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
     outResult = FieldEditResult{};
     outFieldsPayloadJson.clear();
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        return false;
+    }
     nlohmann::json fieldsPayload;
     std::unordered_map<std::string, std::string> displayValues;
     if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
@@ -1104,6 +1120,11 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
 bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                              std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::AddIssueCommentPlain blocked by read-only mode issue=%s", issueKey.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1123,6 +1144,11 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
                                    const std::string& workDescription, const std::string& startedDate,
                                    std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitWorklog blocked by read-only mode issue=%s", issueId.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1144,6 +1170,11 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
                                                     const std::string& date, const bool approximated,
                                                     const std::string& codeSnippet, std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::AddIssueCommentBlameContext blocked by read-only mode issue=%s", issueKey.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1178,7 +1209,6 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
     }
     return ok;
 }
-
 
 
 

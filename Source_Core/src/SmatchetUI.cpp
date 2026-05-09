@@ -55,6 +55,14 @@ static void PersistPerformanceWindowPreference(UiDrawSession& d) {
     ConfigManager::Save(d.cfg);
 }
 
+static void PersistPreferencesWindowOpenPreference(UiDrawSession& d) {
+    if (d.cfg.ShowPreferencesWindow == d.showPreferences) {
+        return;
+    }
+    d.cfg.ShowPreferencesWindow = d.showPreferences;
+    ConfigManager::Save(d.cfg);
+}
+
 #if defined(SMATCHET_WITH_MCP)
 static void PersistMcpServerWindowOpenPreference(UiDrawSession& d) {
     if (d.cfg.ShowMcpServerWindow == d.showMcpServerWindow) {
@@ -94,6 +102,7 @@ void SmatchetUI::Draw(AppController& app) {
         g_ui.cfg = ConfigManager::Load();
         g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
         SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
+        g_ui.showPreferences = g_ui.cfg.ShowPreferencesWindow;
         g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
@@ -208,7 +217,11 @@ void SmatchetUI::Draw(AppController& app) {
     };
     if (app.ConsumeTrackerConnectivityRecovery()) {
         g_ui.triggerCatalogRefetch = true;
-        g_ui.connectivityRecoveryTicketResyncPending = true;
+        // A live ticket sync already refreshes the grid; queueing resync here while streaming runs
+        // caused a second "Syncing" toast after the first session finished.
+        if (!app.IsStreamingSyncActive()) {
+            g_ui.connectivityRecoveryTicketResyncPending = true;
+        }
         clearStaleQueuedOfflineGridBanner();
     }
     if (app.ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny()) {
@@ -252,6 +265,7 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
         drawPreferencesWindow(app, d);
+        PersistPreferencesWindowOpenPreference(d);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawViewsDashboardWindow");
@@ -385,6 +399,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 
     else if (d.connectivityRecoveryTicketResyncPending) {
         if (d.appliedInitialView) {
+            // Avoid overlapping with an in-flight streaming ticket sync (e.g. initial load): a second
+            // SyncWithBackend defers via supersede and replays with a second "Syncing" toast.
+            if (app.IsStreamingSyncActive()) {
+                return;
+            }
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
             d.connectivityRecoveryTicketResyncPending = false;
@@ -529,6 +548,5 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
 UiDrawSession::~UiDrawSession() {
     DrainAuditReloadFuture(*this);
 }
-
 
 

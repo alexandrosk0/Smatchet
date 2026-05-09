@@ -116,6 +116,13 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();
 
+    if (ConfigManager::Load().ReadOnlyMode) {
+        IssueCreateResult err;
+        err.Error = "Read-only mode is enabled in Preferences.";
+        promise->set_value(std::move(err));
+        return future;
+    }
+
     if (!Backend) {
         IssueCreateResult err;
         err.Error = "Tracker backend is not initialized.";
@@ -158,6 +165,10 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
 }
 
 std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
+    if (ConfigManager::Load().ReadOnlyMode) {
+        LOG_WARN("AppController::QueueCreateOffline blocked by read-only mode.");
+        return 0;
+    }
     if (!Cache) {
         LOG_WARN("AppController::QueueCreateOffline skipped: cache not initialized.");
         return 0;
@@ -336,6 +347,12 @@ std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, c
                                                   const std::string& fieldsPayloadJson, std::string& outError,
                                                   const std::string& originalRichValue) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::QueueFieldEditOffline blocked by read-only mode issue=%s field=%s", issueKey.c_str(),
+                 fieldId.c_str());
+        return 0;
+    }
     if (!Cache) {
         outError = "Cache is not initialized.";
         return 0;
@@ -497,6 +514,9 @@ AppController::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& dead
 }
 
 void AppController::TickOfflineFieldEdits() {
+    if (ConfigManager::Load().ReadOnlyMode) {
+        return;
+    }
     if (!Cache || !Backend) {
         return;
     }
@@ -798,6 +818,9 @@ void AppController::TickOfflineFieldEdits() {
 }
 
 void AppController::TickOfflineCreates() {
+    if (ConfigManager::Load().ReadOnlyMode) {
+        return;
+    }
     if (!Cache || !Backend) {
         return;
     }
@@ -984,7 +1007,6 @@ void AppController::TickOfflineCreates() {
         }
     });
 }
-
 
 
 

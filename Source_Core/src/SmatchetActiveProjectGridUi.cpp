@@ -130,7 +130,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     ImGui::Begin("Smatchet - Active Project");
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
-    const bool readOnlyMode = (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+    const bool readOnlyMode = d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
@@ -889,7 +889,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     MaybeToastGridBannerFromSession(d);
     ImGui::End();
 }
-
 
 
 

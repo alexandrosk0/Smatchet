@@ -241,6 +241,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
 #else
     const float mcpW = 0.0f;
 #endif
+    const char* readOnlyLabel = "READ ONLY";
+    const bool showReadOnlyChip = d.cfg.ReadOnlyMode;
+    const float readOnlyW = showReadOnlyChip ? ImGui::CalcTextSize(readOnlyLabel).x : 0.0f;
 
     const float btnW = ImGui::CalcTextSize("+ New Issue").x + ImGui::GetStyle().FramePadding.x * 2.0f;
     const float between = ImGui::GetStyle().ItemSpacing.x * 2.5f;
@@ -250,6 +253,14 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
 
     if (showTrackerChip) {
         totalRightW += trW;
+        hasAnyRightElem = true;
+    }
+
+    if (showReadOnlyChip) {
+        if (hasAnyRightElem) {
+            totalRightW += between;
+        }
+        totalRightW += readOnlyW;
         hasAnyRightElem = true;
     }
 
@@ -282,8 +293,17 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
             }
         }
 
+        if (showReadOnlyChip) {
+            if (showTrackerChip) {
+                ImGui::SameLine(0.0f, between);
+            }
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.22f, 1.0f), "%s", readOnlyLabel);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Read-only mode is enabled in Preferences. Tracker-changing actions are disabled.");
+            }
+        }
 #if defined(SMATCHET_WITH_MCP)
-        if (showTrackerChip && haveMcpUi) {
+        if ((showTrackerChip || showReadOnlyChip) && haveMcpUi) {
             ImGui::SameLine(0.0f, between);
         }
         if (d.cfg.McpEnabled) {

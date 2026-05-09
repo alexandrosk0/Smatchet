@@ -1743,9 +1743,17 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     if (ImGui::BeginPopupModal("blame_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
-        const bool readOnlyMode = (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+        const TrackerConfig cfg = ConfigManager::Load();
+        const bool readOnlyMode = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
         ImGui::TextUnformatted(g_assignTitle.c_str());
         ImGui::Separator();
+        if (cfg.ReadOnlyMode) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.82f, 0.22f, 1.0f));
+            ImGui::TextWrapped("Read-only mode is enabled in Preferences.");
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("Assign and comment actions stay disabled until read-only mode is turned off.");
+            ImGui::Separator();
+        }
         if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
             ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
@@ -1808,7 +1816,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             ImGui::TextDisabled("Quick comment templates");
             ImGui::BeginDisabled(readOnlyMode);
             {
-                const TrackerConfig jiraCfg = ConfigManager::Load();
+                const TrackerConfig jiraCfg = cfg;
                 for (const auto& t : jiraCfg.BlameCommentTemplates) {
                     if (ImGui::Selectable(t.Title.c_str(), false)) {
                         std::string err;
@@ -1913,7 +1921,6 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     ImGui::End();
 }
-
 
 
 

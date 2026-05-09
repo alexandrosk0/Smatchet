@@ -134,6 +134,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             ImGui::Spacing();
 
+            if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip(
+                "Disables tracker-changing actions such as field edits, issue creation, comments, worklogs, and offline "
+                "write replay. Enabled by default on first launch before setup.");
+            ImGui::Spacing();
+
             const char* items[] = { "Jira", "Plane" };
             int currentItem = (std::string(d.trackerTypeBuf) == "Plane") ? 1 : 0;
             if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
@@ -925,7 +933,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 
 
 

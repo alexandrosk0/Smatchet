@@ -21,11 +21,13 @@ extern "C" {
 }
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <cstdio>
 #include <cstring>
@@ -127,8 +129,18 @@ struct ActiveLongTextEditorState {
     std::vector<char> Buffer;
     bool Active = false;
     bool JustOpened = false;
-    /// When true, the modal shows the rendered preview pane next to the editor (split view).
-    bool ShowPreview = false;
+    /// Three-way preview mode. EditOnly hides the rendered pane; Split shows editor + preview
+    /// with a draggable splitter; PreviewOnly hides the editor (read-only render).
+    /// Ctrl+P cycles Edit -> Split -> Preview -> Edit.
+    enum class PreviewModeT { EditOnly, Split, PreviewOnly };
+    PreviewModeT PreviewMode = PreviewModeT::EditOnly;
+    /// Editor's fraction of the horizontal pane area in Split mode. Clamped to [0.15, 0.85]
+    /// while dragging the splitter so neither pane collapses.
+    float SplitterRatio = 0.5f;
+    /// Last frame's scroll positions for editor / preview child windows. Used to detect which
+    /// pane the user scrolled this frame and mirror the ratio to the other in Split mode.
+    float LastEditorScrollY = 0.0f;
+    float LastPreviewScrollY = 0.0f;
 };
 
 static ActiveLongTextEditorState s_ActiveLongTextState;
@@ -1326,40 +1338,126 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             s_ActiveLongTextState.JustOpened = false;
         }
 
-        // Split view when preview is on: editor on the left, rendered Markdown on the right.
+        // Modifier state — declared up here so the Ctrl+P preview-mode shortcut sees it
+        // before we render the panes. Ctrl+Enter / Esc are checked again below for save/cancel.
+        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+
         // Preview is disabled in raw-HTML mode (the buffer is HTML, not Markdown — md4c would
-        // produce nonsense).
-        const bool previewOn = s_ActiveLongTextState.ShowPreview && !s_ActiveLongTextState.RawMode;
-        if (previewOn) {
-            const float halfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        // produce nonsense), so we force EditOnly there regardless of the user's last choice.
+        using PreviewModeT = ActiveLongTextEditorState::PreviewModeT;
+        const PreviewModeT effectiveMode = s_ActiveLongTextState.RawMode
+            ? PreviewModeT::EditOnly
+            : s_ActiveLongTextState.PreviewMode;
+
+        // Ctrl+P cycles Edit -> Split -> Preview -> Edit. Captured here (not in the footer)
+        // so it works with focus inside the textarea.
+        if (!s_ActiveLongTextState.RawMode && ctrlDown && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
+            switch (s_ActiveLongTextState.PreviewMode) {
+                case PreviewModeT::EditOnly:    s_ActiveLongTextState.PreviewMode = PreviewModeT::Split; break;
+                case PreviewModeT::Split:       s_ActiveLongTextState.PreviewMode = PreviewModeT::PreviewOnly; break;
+                case PreviewModeT::PreviewOnly: s_ActiveLongTextState.PreviewMode = PreviewModeT::EditOnly; break;
+            }
+        }
+
+        // Pane layout for Split mode: [editor] [splitter] [preview]. The splitter is a 6px
+        // invisible button whose drag delta updates SplitterRatio. Clamped so neither pane
+        // collapses below 15% of the available width.
+        const float splitterW = 6.0f;
+        const float totalW = ImGui::GetContentRegionAvail().x;
+        const float panesW = (effectiveMode == PreviewModeT::Split)
+                                 ? (totalW - splitterW)
+                                 : totalW;
+        const float editorW = (effectiveMode == PreviewModeT::Split)
+                                  ? panesW * s_ActiveLongTextState.SplitterRatio
+                                  : panesW;
+        const float previewW = panesW - editorW;
+
+        const ImGuiID editorId = ImGui::GetID("##LongTextEditorBuf");
+
+        if (effectiveMode != PreviewModeT::PreviewOnly) {
             ImGui::InputTextMultiline("##LongTextEditorBuf",
                                       s_ActiveLongTextState.Buffer.data(),
                                       s_ActiveLongTextState.Buffer.size(),
-                                      ImVec2(halfWidth, inputSize.y),
-                                      ImGuiInputTextFlags_AllowTabInput);
-            ImGui::SameLine();
-            ImGui::BeginChild("##LongTextPreview",
-                              ImVec2(halfWidth, inputSize.y),
-                              true, ImGuiWindowFlags_HorizontalScrollbar);
-            const std::string md(s_ActiveLongTextState.Buffer.data());
-            RenderMarkdownPreview(md);
-            ImGui::EndChild();
-        } else {
-            ImGui::InputTextMultiline("##LongTextEditorBuf",
-                                      s_ActiveLongTextState.Buffer.data(),
-                                      s_ActiveLongTextState.Buffer.size(),
-                                      inputSize,
+                                      ImVec2(editorW, inputSize.y),
                                       ImGuiInputTextFlags_AllowTabInput);
         }
 
+        if (effectiveMode == PreviewModeT::Split) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::InvisibleButton("##LongTextSplitter", ImVec2(splitterW, inputSize.y));
+            const bool splitterHover = ImGui::IsItemHovered();
+            const bool splitterActive = ImGui::IsItemActive();
+            if (splitterHover || splitterActive) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            }
+            if (splitterActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                const float dx = ImGui::GetIO().MouseDelta.x;
+                if (panesW > 0.0f) {
+                    float r = s_ActiveLongTextState.SplitterRatio + dx / panesW;
+                    if (r < 0.15f) r = 0.15f;
+                    if (r > 0.85f) r = 0.85f;
+                    s_ActiveLongTextState.SplitterRatio = r;
+                }
+            }
+            // Visual hint for the splitter — a faint vertical bar, brighter on hover/drag.
+            const ImVec2 sMin = ImGui::GetItemRectMin();
+            const ImVec2 sMax = ImGui::GetItemRectMax();
+            const ImU32 col = ImGui::GetColorU32(splitterActive ? ImGuiCol_SeparatorActive
+                                                  : splitterHover ? ImGuiCol_SeparatorHovered
+                                                                  : ImGuiCol_Separator);
+            ImGui::GetWindowDrawList()->AddRectFilled(sMin, sMax, col);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+
+        if (effectiveMode != PreviewModeT::EditOnly) {
+            ImGui::BeginChild("##LongTextPreview",
+                              ImVec2(previewW, inputSize.y),
+                              true, ImGuiWindowFlags_HorizontalScrollbar);
+            // Capture the preview window pointer while it's the current window — child names
+            // are munged by BeginChild, so FindWindowByName won't match the literal id we passed.
+            ::ImGuiWindow* previewWin = ::ImGui::GetCurrentWindow();
+            const std::string md(s_ActiveLongTextState.Buffer.data());
+            RenderMarkdownPreview(md);
+            const float previewScroll = ImGui::GetScrollY();
+            const float previewScrollMax = ImGui::GetScrollMaxY();
+            ImGui::EndChild();
+
+            // Scroll-sync: in Split mode, mirror whichever pane's scroll changed this frame
+            // onto the other. Editor scroll comes from the InputTextMultiline child (looked
+            // up by id). Editor wins ties (typing-driven scroll is the common case).
+            if (effectiveMode == PreviewModeT::Split) {
+                ::ImGuiWindow* editorWin = ::ImGui::FindWindowByID(editorId);
+                const float editorScroll = editorWin ? editorWin->Scroll.y : 0.0f;
+                const float editorScrollMax = editorWin ? editorWin->ScrollMax.y : 0.0f;
+
+                const bool editorChanged =
+                    std::fabs(editorScroll - s_ActiveLongTextState.LastEditorScrollY) > 0.5f;
+                const bool previewChanged =
+                    std::fabs(previewScroll - s_ActiveLongTextState.LastPreviewScrollY) > 0.5f;
+
+                if (editorChanged && previewWin && editorScrollMax > 0.0f && previewScrollMax > 0.0f) {
+                    const float r = editorScroll / editorScrollMax;
+                    previewWin->Scroll.y = r * previewScrollMax;
+                } else if (previewChanged && editorWin && editorScrollMax > 0.0f && previewScrollMax > 0.0f) {
+                    const float r = previewScroll / previewScrollMax;
+                    editorWin->Scroll.y = r * editorScrollMax;
+                }
+
+                s_ActiveLongTextState.LastEditorScrollY = editorWin ? editorWin->Scroll.y : 0.0f;
+                s_ActiveLongTextState.LastPreviewScrollY = previewWin ? previewWin->Scroll.y : previewScroll;
+            } else {
+                s_ActiveLongTextState.LastPreviewScrollY = previewScroll;
+            }
+        }
+
         // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
-        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        // (ctrlDown declared above for the Ctrl+P shortcut.)
         const bool ctrlEnter = ctrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
         const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
         const char* footerHint = s_ActiveLongTextState.RawMode
             ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
-            : "Ctrl+Enter to save · Esc to cancel · Markdown — **bold**, *em*, # heading, - list, ```code```";
+            : "Ctrl+Enter to save · Esc to cancel · Ctrl+P preview mode · Markdown — **bold**, *em*, # heading, - list, ```code```";
         ImGui::TextDisabled("%s", footerHint);
 
         bool save = ctrlEnter;
@@ -1371,12 +1469,30 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         if (ImGui::Button("Cancel", ImVec2(100, 0))) {
             cancel = true;
         }
-        // Preview toggle — disabled while editing raw HTML (no Markdown to render).
+        // Three-way segmented control: Edit / Split / Preview. Disabled in RawMode (Markdown
+        // rendering is meaningless when the buffer is HTML). Ctrl+P cycles modes — see the
+        // shortcut handler above the panes.
         ImGui::SameLine();
         if (s_ActiveLongTextState.RawMode) ImGui::BeginDisabled();
-        const char* previewBtnLabel = s_ActiveLongTextState.ShowPreview ? "Hide preview" : "Preview";
-        if (ImGui::Button(previewBtnLabel, ImVec2(120, 0))) {
-            s_ActiveLongTextState.ShowPreview = !s_ActiveLongTextState.ShowPreview;
+        auto segBtn = [](const char* label, ActiveLongTextEditorState::PreviewModeT mode) {
+            const bool active = s_ActiveLongTextState.PreviewMode == mode;
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            if (ImGui::Button(label, ImVec2(80, 0))) {
+                s_ActiveLongTextState.PreviewMode = mode;
+            }
+            if (active) {
+                ImGui::PopStyleColor();
+            }
+        };
+        segBtn("Edit", ActiveLongTextEditorState::PreviewModeT::EditOnly);
+        ImGui::SameLine(0.0f, 2.0f);
+        segBtn("Split", ActiveLongTextEditorState::PreviewModeT::Split);
+        ImGui::SameLine(0.0f, 2.0f);
+        segBtn("Preview", ActiveLongTextEditorState::PreviewModeT::PreviewOnly);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Ctrl+P to cycle Edit / Split / Preview");
         }
         if (s_ActiveLongTextState.RawMode) ImGui::EndDisabled();
 

@@ -97,9 +97,13 @@ struct TrackerConfig {
     // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
     // Exposed in UI as Settings -> Preferences -> Appearance.
     bool EnableFieldOverflowTooltips = true;
+    // When true, tracker-changing actions are disabled. Defaults on only for first launch with no setup config.
+    bool ReadOnlyMode = false;
     // Wheel ticks at top/bottom before vertical wheel reroutes to horizontal grid scroll.
     // Exposed in UI as Settings -> Preferences -> Appearance.
     int GridEndWheelSwallowsBeforeHorizontal = 15;
+    // Restores Settings -> Preferences window visibility on launch.
+    bool ShowPreferencesWindow = false;
     // Restores Settings → Performance window visibility on launch.
     bool ShowPerformanceWindow = false;
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
@@ -543,7 +547,9 @@ class ConfigManager {
         j["plane_project_id"] = config.PlaneProjectId;
         j["jql"] = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
+        j["read_only_mode"] = config.ReadOnlyMode;
         j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
+        j["show_preferences_window"] = config.ShowPreferencesWindow;
         j["show_performance_window"] = config.ShowPerformanceWindow;
         j["log_min_level"] = config.LogMinLevel;
         j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
@@ -738,6 +744,7 @@ class ConfigManager {
         }
 
         nlohmann::json j = LoadMergedConfigJson();
+        const bool hasSetupConfig = !LoadJsonFile(GetConfigPath()).empty();
         TrackerConfig cfg;
         cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
         cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
@@ -776,8 +783,10 @@ class ConfigManager {
 
                 cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
                 cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+                cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
                 cfg.GridEndWheelSwallowsBeforeHorizontal =
                     j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
+                cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
                 cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
                 cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
                 cfg.LogTrackerHttpBodies =
@@ -936,6 +945,9 @@ class ConfigManager {
                 LOG_ERROR("ConfigManager: Load() parse error (unknown)");
             }
         }
+        if (!hasSetupConfig && !j.contains("read_only_mode")) {
+            cfg.ReadOnlyMode = true;
+        }
 
 #if defined(_WIN32)
         // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
@@ -1013,6 +1025,13 @@ class ConfigManager {
         if (base.empty())
             return "smatchet_views.json";
         return base + "smatchet_views.json";
+    }
+
+    static std::string GetImGuiSettingsPath() {
+        const std::string& base = GetBaseDirectoryRef();
+        if (base.empty())
+            return "imgui.ini";
+        return base + "imgui.ini";
     }
 
     /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */
