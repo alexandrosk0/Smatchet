@@ -507,8 +507,25 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
         out << "  \n";
     } else if (type == "emoji") {
         out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+    } else if (type == "inlineCard") {
+        // Jira smart link / Atlassian inline card. Render as a plain Markdown link using the URL
+        // as both the text and the destination. This loses the rendered card on save (becomes a
+        // regular hyperlink) but preserves the URL itself.
+        if (node.contains("attrs") && node["attrs"].is_object()) {
+            const std::string url = node["attrs"].value("url", std::string());
+            if (!url.empty()) {
+                out << "[" << url << "](" << url << ")";
+            }
+        }
+    } else if (type == "mention") {
+        // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
+        if (node.contains("attrs") && node["attrs"].is_object()) {
+            std::string mtxt = node["attrs"].value("text", std::string());
+            if (mtxt.empty()) mtxt = std::string("@") + node["attrs"].value("id", std::string());
+            out << mtxt;
+        }
     }
-    // Other inline types are silently dropped — caller's `dropped` log captures them at the block walker level.
+    // Other inline types (mediaInline, etc.) are silently dropped.
 }
 
 void EmitInlineRun(const json& contentArr, std::ostringstream& out) {
