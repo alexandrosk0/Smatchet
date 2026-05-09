@@ -1870,10 +1870,6 @@ void AppController::SyncWithBackend(const TrackerConfig* configOverride, const V
 
     LOG_INFO("AppController::SyncWithBackend started (asynchronous streaming refresh).");
 
-    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
-
-
-
     TrackerConfig cfgCopy;
 
     if (configOverride) {
@@ -1924,8 +1920,6 @@ void AppController::SyncWithBackend(const TrackerConfig* configOverride, const V
 
     }
 
-
-
     StartStreamingSync(cfgCopy, viewsCopy);
 
 }
@@ -1940,7 +1934,7 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
     }
 
-
+    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
 
     // Swapping Backend type safely before starting worker
 

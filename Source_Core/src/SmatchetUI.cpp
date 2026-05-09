@@ -375,6 +375,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
             d.initialTicketSyncStarted = true;
+            // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
+            // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
+            d.connectivityRecoveryTicketResyncPending = false;
             app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
             d.appliedInitialView = true;
         }
