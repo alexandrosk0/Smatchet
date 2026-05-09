@@ -100,8 +100,8 @@ static std::string BuildTemplateCommentBody(const std::string& issueKey, const s
  */
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
-                                  const std::string& rawValue, AppController* app, UiDrawSession* ui,
-                                  bool readOnlyMode) {
+                                  const std::string& rawValue, const std::string& richValue,
+                                  AppController* app, UiDrawSession* ui, bool readOnlyMode) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -142,6 +142,15 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
     if (ImGui::BeginPopup("cell_copy_quick")) {
         if (ImGui::MenuItem("Copy")) {
             ImGui::SetClipboardText(rawValue.c_str());
+        }
+        // "Copy raw" — copies the unprocessed backend value. For ADF (Jira description /
+        // environment / custom doc fields) and HTML (Plane description) the rich payload is
+        // captured separately in CachedTicket.fieldRichValues and surfaced here. For all other
+        // fields the cached display value already IS the raw backend value, so we fall back to
+        // rawValue and the menu item still works as expected.
+        const std::string& rawForCopy = !richValue.empty() ? richValue : rawValue;
+        if (ImGui::MenuItem("Copy raw")) {
+            ImGui::SetClipboardText(rawForCopy.c_str());
         }
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         DrawLuaTicketActionMenuItems(app, ui, issueKey);
