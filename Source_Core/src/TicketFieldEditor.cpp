@@ -11,6 +11,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldPayload.h"
 #include "MarkdownConvert.h"
+#include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 #include "StringUtil.h"
@@ -231,6 +232,14 @@ struct PreviewState {
     int codeDepth = 0;
     /// True while the block is a heading; flushes with bigger text.
     int headingLevel = 0;
+    /// Skip table subtrees — full grid layout is not implemented in the preview yet.
+    bool dropTable = false;
+    int tableDepth = 0;
+    int imgSpanDepth = 0;
+    std::string imgAltAccum;
+#ifndef NDEBUG
+    bool debugLoggedMdTextHtml = false;
+#endif
 };
 
 static void PreviewFlushBlock(PreviewState& s) {
@@ -250,6 +259,10 @@ static void PreviewFlushBlock(PreviewState& s) {
 
 static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
+    if (s.dropTable) {
+        if (type == MD_BLOCK_TABLE) ++s.tableDepth;
+        return 0;
+    }
     switch (type) {
         case MD_BLOCK_DOC: break;
         case MD_BLOCK_QUOTE:
@@ -271,16 +284,26 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
             ++s.listDepth;
             break;
         }
-        case MD_BLOCK_LI:
+        case MD_BLOCK_LI: {
             PreviewFlushBlock(s);
             for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Indent(16.0f);
+            auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
+            const bool task = lid && lid->is_task;
+            const bool done = task && (lid->task_mark == 'x' || lid->task_mark == 'X');
             if (!s.listStack.empty() && s.listStack.back() == '1') {
                 ++s.orderedCounters.back();
-                s.buffer = std::to_string(s.orderedCounters.back()) + ". ";
+                s.buffer = std::to_string(s.orderedCounters.back());
+                s.buffer += task ? (done ? ". [x] " : ". [ ] ") : ". ";
             } else {
-                s.buffer = "\xE2\x80\xA2 "; // bullet
+                s.buffer = task ? (done ? "- [x] " : "- [ ] ")
+                                : std::string("\xE2\x80\xA2 "); // bullet
             }
             break;
+        }
+        case MD_BLOCK_TABLE:
+            s.dropTable = true;
+            s.tableDepth = 1;
+            return 0;
         case MD_BLOCK_HR:
             PreviewFlushBlock(s);
             ImGui::Separator();
@@ -306,6 +329,14 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
 
 static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
+    if (type == MD_BLOCK_TABLE) {
+        if (--s.tableDepth <= 0) {
+            s.tableDepth = 0;
+            s.dropTable = false;
+        }
+        return 0;
+    }
+    if (s.dropTable) return 0;
     switch (type) {
         case MD_BLOCK_DOC: PreviewFlushBlock(s); break;
         case MD_BLOCK_QUOTE:
@@ -349,12 +380,53 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
     return 0;
 }
 
-static int PreviewEnterSpan(MD_SPANTYPE /*type*/, void* /*detail*/, void* /*ud*/) { return 0; }
-static int PreviewLeaveSpan(MD_SPANTYPE /*type*/, void* /*detail*/, void* /*ud*/) { return 0; }
+static int PreviewEnterSpan(MD_SPANTYPE type, void* detail, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    if (s.dropTable) return 0;
+    if (type == MD_SPAN_IMG) {
+        ++s.imgSpanDepth;
+        s.imgAltAccum.clear();
+        (void)detail;
+    }
+    return 0;
+}
+
+static int PreviewLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    if (s.dropTable) return 0;
+    if (type == MD_SPAN_IMG) {
+        if (s.imgSpanDepth > 0) --s.imgSpanDepth;
+        s.buffer += s.imgAltAccum.empty() ? "[image]" : s.imgAltAccum;
+        s.imgAltAccum.clear();
+    }
+    return 0;
+}
 
 static int PreviewText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
-    if (type == MD_TEXT_NULLCHAR || type == MD_TEXT_HTML) return 0;
+    if (s.dropTable) return 0;
+    if (type == MD_TEXT_NULLCHAR) return 0;
+    if (type == MD_TEXT_HTML) {
+#ifndef NDEBUG
+        if (!s.debugLoggedMdTextHtml) {
+            s.debugLoggedMdTextHtml = true;
+            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (preview, first chunk size=%u)",
+                      static_cast<unsigned>(size));
+        }
+#endif
+        return 0;
+    }
+    if (s.imgSpanDepth > 0) {
+        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
+            s.imgAltAccum.append(text, size);
+            return 0;
+        }
+        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+            s.imgAltAccum += ' ';
+            return 0;
+        }
+        return 0;
+    }
     if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
         s.buffer += '\n';
         return 0;
@@ -367,8 +439,7 @@ static void RenderMarkdownPreview(const std::string& md) {
     PreviewState state;
     MD_PARSER parser{};
     parser.abi_version = 0;
-    parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
-                   MD_FLAG_PERMISSIVEAUTOLINKS;
+    parser.flags = MarkdownConvert::Md4cParserFlags();
     parser.enter_block = PreviewEnterBlock;
     parser.leave_block = PreviewLeaveBlock;
     parser.enter_span  = PreviewEnterSpan;

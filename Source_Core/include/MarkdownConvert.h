@@ -11,16 +11,22 @@
 /// for the broader v2 design and the supported subset of constructs.
 namespace MarkdownConvert {
 
+/// Bitmask passed to md4c (`MD_FLAG_*`). Single source of truth for the rich-text pipeline
+/// and the Markdown preview (keeps parser behavior aligned).
+unsigned Md4cParserFlags() noexcept;
+
 /// Parse Markdown into Atlassian Document Format JSON.
 /// Top-level shape: `{type:"doc", version:1, content:[...]}`.
 ///
-/// Supported block types: paragraph, heading (1-6), bulletList, orderedList, listItem,
-/// codeBlock (with optional language), blockquote, rule (horizontal rule), hardBreak.
-/// Supported inline marks: strong, em, code, link, strike.
+/// **Markdown → ADF:** paragraph, heading (1-6), bulletList, orderedList, listItem (incl.
+/// task checkbox prefix in text), codeBlock, blockquote, rule, hardBreak, table
+/// (tableRow / tableHeader / tableCell), inline images as `mediaInline` (external URL).
 ///
-/// NOT supported (silently dropped): tables, images, mentions, smart links, panels, raw HTML.
-/// The modal editor surfaces an "unrepresentable content" warning when these are detected
-/// in the inverse direction.
+/// **ADF → Markdown:** mirrors the above; also emits mentions, `inlineCard` (as URL text),
+/// `media` / `mediaInline` / `mediaSingle`, and tables as pipe Markdown. Nodes with no
+/// Markdown equivalent are listed in `outDroppedNodeTypes` when using `AdfToMarkdown`.
+///
+/// Raw HTML in Markdown is not parsed as HTML (md4c `NOHTML`); it becomes plain text.
 nlohmann::json MarkdownToAdf(const std::string& md);
 
 /// Walk an ADF document and emit Markdown for the supported subset (mirror of MarkdownToAdf).
@@ -28,9 +34,11 @@ nlohmann::json MarkdownToAdf(const std::string& md);
 /// because it isn't representable in our Markdown subset (caller can show a "raw mode" banner).
 std::string AdfToMarkdown(const nlohmann::json& adf, std::vector<std::string>* outDroppedNodeTypes = nullptr);
 
-/// Parse Markdown into HTML covering the subset Plane's `description_html` accepts:
-/// `<p>`, `<h1>`-`<h6>`, `<strong>`, `<em>`, `<code>`, `<pre><code>`, `<ul>`, `<ol>`, `<li>`,
-/// `<a>`, `<br>`, `<hr>`, `<blockquote>`, `<s>`. Output is XHTML-style (self-closed void tags).
+/// Parse Markdown into HTML covering the subset Plane's `description_html` is expected to
+/// tolerate (verify against live sanitizer): `<p>`, `<h1>`-`<h6>`, `<strong>`, `<em>`,
+/// `<code>`, `<pre><code>`, `<ul>`, `<ol>`, `<li>`, `<a>`, `<br>`, `<hr>`, `<blockquote>`,
+/// `<s>`, `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`, `<img>`. Output is
+/// XHTML-style (self-closed void tags where applicable).
 std::string MarkdownToHtml(const std::string& md);
 
 /// Best-effort HTML-subset to Markdown conversion. Targets the tag set Plane emits in

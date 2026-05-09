@@ -2,8 +2,25 @@
 #include "Logger.h"
 
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <stdexcept>
+
+namespace {
+
+/// True if `table` has column `col` (identifier names only — must be fixed literals at call sites).
+bool SqliteTableHasColumn(SQLite::Database& db, const char* table, const char* col) {
+    const std::string sql = std::string("PRAGMA table_info(") + table + ")";
+    SQLite::Statement q(db, sql);
+    while (q.executeStep()) {
+        if (std::strcmp(q.getColumn(1).getText(), col) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     : db(dbPath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
@@ -46,6 +63,11 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "created_at INTEGER NOT NULL, "
             "archived_at INTEGER NOT NULL, "
             "terminal_reason TEXT NOT NULL)");
+    // Legacy DBs may predate `archived_at`; CREATE IF NOT EXISTS leaves an old table unchanged.
+    // Use PRAGMA table_info so we never issue a duplicate ADD COLUMN (SQLiteCpp throws on duplicate).
+    if (!SqliteTableHasColumn(db, "pending_creates_dead", "archived_at")) {
+        db.exec("ALTER TABLE pending_creates_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
+    }
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_creates_dead_archived_at "
             "ON pending_creates_dead(archived_at DESC)");
     db.exec("CREATE TABLE IF NOT EXISTS cache_meta ("
@@ -60,13 +82,15 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "attempts INTEGER NOT NULL DEFAULT 0, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL)");
-    // Migration: add original_rich_value to existing databases (ignore if column already exists).
-    try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_rich_value TEXT"); }
-    catch (...) {}
-    try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_merge_conflict INTEGER NOT NULL DEFAULT 0"); }
-    catch (...) {}
-    try { db.exec("ALTER TABLE pending_field_edits ADD COLUMN conflict_context_json TEXT"); }
-    catch (...) {}
+    if (!SqliteTableHasColumn(db, "pending_field_edits", "original_rich_value")) {
+        db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_rich_value TEXT");
+    }
+    if (!SqliteTableHasColumn(db, "pending_field_edits", "has_merge_conflict")) {
+        db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_merge_conflict INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!SqliteTableHasColumn(db, "pending_field_edits", "conflict_context_json")) {
+        db.exec("ALTER TABLE pending_field_edits ADD COLUMN conflict_context_json TEXT");
+    }
     db.exec("CREATE TABLE IF NOT EXISTS pending_field_edits_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
@@ -79,8 +103,12 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "created_at INTEGER NOT NULL, "
             "archived_at INTEGER NOT NULL, "
             "terminal_reason TEXT NOT NULL)");
-    try { db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_rich_value TEXT"); }
-    catch (...) {}
+    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "original_rich_value")) {
+        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_rich_value TEXT");
+    }
+    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "archived_at")) {
+        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
+    }
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_field_edits_dead_archived_at "
             "ON pending_field_edits_dead(archived_at DESC)");
     LOG_INFO("LocalCacheManager: schema ready");

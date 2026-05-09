@@ -1,5 +1,7 @@
 #include "MarkdownConvert.h"
 
+#include "Logger.h"
+
 extern "C" {
 #include "md4c.h"
 }
@@ -14,14 +16,42 @@ using nlohmann::json;
 
 namespace MarkdownConvert {
 
+unsigned Md4cParserFlags() noexcept {
+    return MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
+           MD_FLAG_PERMISSIVEAUTOLINKS | MD_FLAG_NOHTML | MD_FLAG_NOINDENTEDCODEBLOCKS;
+}
+
 namespace {
 
-constexpr unsigned kMd4cFlags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
-                                MD_FLAG_PERMISSIVEAUTOLINKS;
+extern "C" void Md4cDebugLogShim(const char* msg, void* /*userdata*/) {
+    if (msg && msg[0] != '\0') {
+        LOG_DEBUG("md4c: %s", msg);
+    }
+}
 
 std::string MdAttrToString(const MD_ATTRIBUTE& attr) {
     if (attr.text == nullptr || attr.size == 0) return std::string();
     return std::string(attr.text, attr.size);
+}
+
+/// If `arr` has top-level text/hardBreak nodes, wrap the whole list in a single paragraph (Jira
+/// expects block children in list items and table cells).
+void AdfWrapTopLevelInlineInParagraph(json* arr) {
+    if (!arr || !arr->is_array() || arr->empty()) return;
+    bool hasDirectInline = false;
+    for (const auto& child : *arr) {
+        if (child.is_object()) {
+            const std::string ct = child.value("type", std::string());
+            if (ct == "text" || ct == "hardBreak") {
+                hasDirectInline = true;
+                break;
+            }
+        }
+    }
+    if (hasDirectInline) {
+        json para = {{"type", "paragraph"}, {"content", *arr}};
+        *arr = json::array({std::move(para)});
+    }
 }
 
 // ============================================================================
@@ -36,9 +66,13 @@ struct AdfBuilder {
     /// Inline marks currently active for emitted text nodes (innermost first).
     std::vector<json> markStack;
     int codeBlockDepth = 0;
-    /// Set while traversing a table; subtree silently dropped (tables not in ADF subset).
-    bool dropTable = false;
-    int tableDepth = 0;
+    int imgSpanDepth = 0;
+    std::string imgAltAccum;
+    std::vector<std::string> imgSrcStack;
+#ifndef NDEBUG
+    /// At most one LOG_DEBUG per md_parse if md4c emits MD_TEXT_HTML despite NOHTML.
+    bool debugLoggedMdTextHtml = false;
+#endif
 
     AdfBuilder() {
         doc = {{"type", "doc"}, {"version", 1}, {"content", json::array()}};
@@ -78,10 +112,6 @@ void AdfEmitText(AdfBuilder& b, const std::string& text) {
 
 int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (b.dropTable) {
-        if (type == MD_BLOCK_TABLE) ++b.tableDepth;
-        return 0;
-    }
 
     json node;
     bool pushChildContent = true;
@@ -102,9 +132,19 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             }
             break;
         }
-        case MD_BLOCK_LI:
+        case MD_BLOCK_LI: {
             node = {{"type", "listItem"}, {"content", json::array()}};
-            break;
+            auto* parent = b.topContent();
+            parent->push_back(std::move(node));
+            b.contentStack.push_back(&parent->back()["content"]);
+            auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
+            if (lid && lid->is_task) {
+                const char tm = lid->task_mark;
+                const bool done = (tm == 'x' || tm == 'X');
+                AdfEmitText(b, done ? std::string("[x] ") : std::string("[ ] "));
+            }
+            return 0;
+        }
         case MD_BLOCK_HR:
             node = {{"type", "rule"}};
             pushChildContent = false;
@@ -130,16 +170,42 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_P:
             node = {{"type", "paragraph"}, {"content", json::array()}};
             break;
-        case MD_BLOCK_TABLE:
-            b.dropTable = true;
-            ++b.tableDepth;
+        case MD_BLOCK_TABLE: {
+            node = {{"type", "table"},
+                    {"attrs", {{"layout", "default"}, {"isNumberColumnEnabled", false}}},
+                    {"content", json::array()}};
+            auto* parent = b.topContent();
+            parent->push_back(std::move(node));
+            b.contentStack.push_back(&parent->back()["content"]);
             return 0;
-        case MD_BLOCK_HTML:
+        }
         case MD_BLOCK_THEAD:
         case MD_BLOCK_TBODY:
-        case MD_BLOCK_TR:
-        case MD_BLOCK_TH:
-        case MD_BLOCK_TD:
+            return 0;
+        case MD_BLOCK_TR: {
+            json row = {{"type", "tableRow"}, {"content", json::array()}};
+            auto* parent = b.topContent();
+            parent->push_back(std::move(row));
+            b.contentStack.push_back(&parent->back()["content"]);
+            return 0;
+        }
+        case MD_BLOCK_TH: {
+            json cell = {{"type", "tableHeader"}, {"content", json::array()}};
+            auto* parent = b.topContent();
+            parent->push_back(std::move(cell));
+            b.contentStack.push_back(&parent->back()["content"]);
+            return 0;
+        }
+        case MD_BLOCK_TD: {
+            json cell = {{"type", "tableCell"}, {"content", json::array()}};
+            auto* parent = b.topContent();
+            parent->push_back(std::move(cell));
+            b.contentStack.push_back(&parent->back()["content"]);
+            return 0;
+        }
+        case MD_BLOCK_HTML:
+            return 0;
+        default:
             return 0;
     }
 
@@ -153,14 +219,6 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
 
 int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (type == MD_BLOCK_TABLE) {
-        if (--b.tableDepth <= 0) {
-            b.tableDepth = 0;
-            b.dropTable = false;
-        }
-        return 0;
-    }
-    if (b.dropTable) return 0;
 
     switch (type) {
         case MD_BLOCK_DOC:
@@ -168,38 +226,27 @@ int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
         case MD_BLOCK_HTML:
         case MD_BLOCK_THEAD:
         case MD_BLOCK_TBODY:
-        case MD_BLOCK_TR:
+            return 0;
         case MD_BLOCK_TH:
         case MD_BLOCK_TD:
+            if (b.contentStack.size() > 1) {
+                AdfWrapTopLevelInlineInParagraph(b.contentStack.back());
+                b.contentStack.pop_back();
+            }
+            return 0;
+        case MD_BLOCK_TR:
+            if (b.contentStack.size() > 1) b.contentStack.pop_back();
+            return 0;
+        case MD_BLOCK_TABLE:
+            if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
         case MD_BLOCK_CODE:
             --b.codeBlockDepth;
             if (b.contentStack.size() > 1) b.contentStack.pop_back();
             return 0;
         case MD_BLOCK_LI: {
-            // ADF requires listItem children to be block nodes (paragraph, etc.), not inline
-            // text nodes. Tight Markdown lists produce no MD_BLOCK_P, so text lands directly
-            // in listItem.content. Wrap any top-level text/hardBreak nodes in a paragraph
-            // before popping, making the ADF valid for Jira's API.
             if (b.contentStack.size() > 1) {
-                json* listContent = b.contentStack.back();
-                if (listContent && !listContent->empty()) {
-                    bool hasDirectInline = false;
-                    for (const auto& child : *listContent) {
-                        if (child.is_object()) {
-                            const std::string ct = child.value("type", std::string());
-                            if (ct == "text" || ct == "hardBreak") {
-                                hasDirectInline = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (hasDirectInline) {
-                        // Wrap all current children in a paragraph.
-                        nlohmann::json para = {{"type", "paragraph"}, {"content", *listContent}};
-                        *listContent = nlohmann::json::array({std::move(para)});
-                    }
-                }
+                AdfWrapTopLevelInlineInParagraph(b.contentStack.back());
                 b.contentStack.pop_back();
             }
             return 0;
@@ -212,7 +259,6 @@ int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
 
 int AdfEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (b.dropTable) return 0;
     switch (type) {
         case MD_SPAN_EM:
             b.markStack.push_back({{"type", "em"}});
@@ -232,8 +278,14 @@ int AdfEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             b.markStack.push_back({{"type", "link"}, {"attrs", {{"href", href}}}});
             break;
         }
+        case MD_SPAN_IMG: {
+            auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
+            b.imgSrcStack.push_back(d ? MdAttrToString(d->src) : std::string());
+            ++b.imgSpanDepth;
+            b.imgAltAccum.clear();
+            break;
+        }
         default:
-            // MD_SPAN_IMG / LATEXMATH / WIKILINK / U: not in subset.
             break;
     }
     return 0;
@@ -241,7 +293,6 @@ int AdfEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
 int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (b.dropTable) return 0;
     switch (type) {
         case MD_SPAN_EM:
         case MD_SPAN_STRONG:
@@ -250,6 +301,21 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
         case MD_SPAN_A:
             if (!b.markStack.empty()) b.markStack.pop_back();
             break;
+        case MD_SPAN_IMG: {
+            if (!b.imgSrcStack.empty()) {
+                std::string src = std::move(b.imgSrcStack.back());
+                b.imgSrcStack.pop_back();
+                json attrs = {{"type", "external"}, {"url", std::move(src)}};
+                if (!b.imgAltAccum.empty()) {
+                    attrs["alt"] = b.imgAltAccum;
+                }
+                b.topContent()->push_back(
+                    json{{"type", "mediaInline"}, {"attrs", std::move(attrs)}});
+                b.imgAltAccum.clear();
+            }
+            if (b.imgSpanDepth > 0) --b.imgSpanDepth;
+            break;
+        }
         default:
             break;
     }
@@ -258,16 +324,37 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
 
 int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
-    if (b.dropTable) return 0;
     if (type == MD_TEXT_NULLCHAR) return 0;
-    if (type == MD_TEXT_HTML) return 0;
+    // With MD_FLAG_NOHTML, md4c should not emit raw HTML here; ignore defensively (ABI / dialect).
+    if (type == MD_TEXT_HTML) {
+#ifndef NDEBUG
+        if (!b.debugLoggedMdTextHtml) {
+            b.debugLoggedMdTextHtml = true;
+            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (ADF path, first chunk size=%u)",
+                      static_cast<unsigned>(size));
+        }
+#endif
+        return 0;
+    }
+
+    std::string txt(text, size);
+    if (b.imgSpanDepth > 0 && b.codeBlockDepth == 0) {
+        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
+            b.imgAltAccum += txt;
+            return 0;
+        }
+        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+            b.imgAltAccum += ' ';
+            return 0;
+        }
+        return 0;
+    }
 
     if (type == MD_TEXT_BR) {
         b.topContent()->push_back({{"type", "hardBreak"}});
         return 0;
     }
 
-    std::string txt(text, size);
     if (type == MD_TEXT_SOFTBR) {
         // Standard CommonMark renders soft breaks as spaces, but for a Jira description
         // editor that's surprising: the user pressed Enter and expected a visual line break.
@@ -300,8 +387,12 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
 struct HtmlBuilder {
     std::ostringstream out;
     int codeBlockDepth = 0;
-    bool dropTable = false;
-    int tableDepth = 0;
+    int imgSpanDepth = 0;
+    std::string imgAltBuf;
+    std::vector<std::string> imgSrcStack;
+#ifndef NDEBUG
+    bool debugLoggedMdTextHtml = false;
+#endif
 };
 
 void HtmlEscape(std::ostringstream& out, const std::string& text) {
@@ -331,10 +422,6 @@ void HtmlEscapeAttr(std::ostringstream& out, const std::string& text) {
 
 int HtmlEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (b.dropTable) {
-        if (type == MD_BLOCK_TABLE) ++b.tableDepth;
-        return 0;
-    }
     switch (type) {
         case MD_BLOCK_DOC: break;
         case MD_BLOCK_QUOTE: b.out << "<blockquote>"; break;
@@ -367,26 +454,19 @@ int HtmlEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             break;
         }
         case MD_BLOCK_P: b.out << "<p>"; break;
-        case MD_BLOCK_TABLE:
-            b.dropTable = true;
-            ++b.tableDepth;
-            break;
-        default:
-            break;
+        case MD_BLOCK_TABLE: b.out << "<table>"; break;
+        case MD_BLOCK_THEAD: b.out << "<thead>"; break;
+        case MD_BLOCK_TBODY: b.out << "<tbody>"; break;
+        case MD_BLOCK_TR: b.out << "<tr>"; break;
+        case MD_BLOCK_TH: b.out << "<th>"; break;
+        case MD_BLOCK_TD: b.out << "<td>"; break;
+        default: break;
     }
     return 0;
 }
 
 int HtmlLeaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (type == MD_BLOCK_TABLE) {
-        if (--b.tableDepth <= 0) {
-            b.tableDepth = 0;
-            b.dropTable = false;
-        }
-        return 0;
-    }
-    if (b.dropTable) return 0;
     switch (type) {
         case MD_BLOCK_DOC:
         case MD_BLOCK_HR:
@@ -406,6 +486,12 @@ int HtmlLeaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             b.out << "</code></pre>";
             break;
         case MD_BLOCK_P: b.out << "</p>"; break;
+        case MD_BLOCK_TABLE: b.out << "</table>"; break;
+        case MD_BLOCK_THEAD: b.out << "</thead>"; break;
+        case MD_BLOCK_TBODY: b.out << "</tbody>"; break;
+        case MD_BLOCK_TR: b.out << "</tr>"; break;
+        case MD_BLOCK_TH: b.out << "</th>"; break;
+        case MD_BLOCK_TD: b.out << "</td>"; break;
         default: break;
     }
     return 0;
@@ -413,7 +499,6 @@ int HtmlLeaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
 
 int HtmlEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (b.dropTable) return 0;
     switch (type) {
         case MD_SPAN_EM: b.out << "<em>"; break;
         case MD_SPAN_STRONG: b.out << "<strong>"; break;
@@ -427,6 +512,13 @@ int HtmlEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             b.out << "\">";
             break;
         }
+        case MD_SPAN_IMG: {
+            auto* d = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
+            b.imgSrcStack.push_back(d ? MdAttrToString(d->src) : std::string());
+            ++b.imgSpanDepth;
+            b.imgAltBuf.clear();
+            break;
+        }
         default: break;
     }
     return 0;
@@ -434,13 +526,26 @@ int HtmlEnterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
 int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (b.dropTable) return 0;
     switch (type) {
         case MD_SPAN_EM: b.out << "</em>"; break;
         case MD_SPAN_STRONG: b.out << "</strong>"; break;
         case MD_SPAN_DEL: b.out << "</s>"; break;
         case MD_SPAN_CODE: b.out << "</code>"; break;
         case MD_SPAN_A: b.out << "</a>"; break;
+        case MD_SPAN_IMG: {
+            if (!b.imgSrcStack.empty()) {
+                const std::string src = std::move(b.imgSrcStack.back());
+                b.imgSrcStack.pop_back();
+                b.out << "<img src=\"";
+                HtmlEscapeAttr(b.out, src);
+                b.out << "\" alt=\"";
+                HtmlEscapeAttr(b.out, b.imgAltBuf);
+                b.out << "\"/>";
+                b.imgAltBuf.clear();
+            }
+            if (b.imgSpanDepth > 0) --b.imgSpanDepth;
+            break;
+        }
         default: break;
     }
     return 0;
@@ -448,9 +553,29 @@ int HtmlLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
 
 int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     auto& b = *static_cast<HtmlBuilder*>(userdata);
-    if (b.dropTable) return 0;
     if (type == MD_TEXT_NULLCHAR) return 0;
-    if (type == MD_TEXT_HTML) return 0;
+    if (type == MD_TEXT_HTML) {
+#ifndef NDEBUG
+        if (!b.debugLoggedMdTextHtml) {
+            b.debugLoggedMdTextHtml = true;
+            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (HTML path, first chunk size=%u)",
+                      static_cast<unsigned>(size));
+        }
+#endif
+        return 0;
+    }
+    const std::string txt(text, size);
+    if (b.imgSpanDepth > 0 && b.codeBlockDepth == 0) {
+        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
+            b.imgAltBuf += txt;
+            return 0;
+        }
+        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
+            b.imgAltBuf += ' ';
+            return 0;
+        }
+        return 0;
+    }
     if (type == MD_TEXT_BR) {
         b.out << "<br/>";
         return 0;
@@ -461,7 +586,6 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
         b.out << "<br/>";
         return 0;
     }
-    const std::string txt(text, size);
     if (type == MD_TEXT_ENTITY) {
         // md4c verified the entity reference; passthrough.
         b.out << txt;
@@ -554,8 +678,63 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
             if (mtxt.empty()) mtxt = std::string("@") + node["attrs"].value("id", std::string());
             out << mtxt;
         }
+    } else if (type == "mediaInline" || type == "media") {
+        const json attrs = node.value("attrs", json::object());
+        std::string url = attrs.value("url", std::string());
+        if (url.empty()) {
+            const std::string id = attrs.value("id", std::string());
+            if (!id.empty()) url = "attachment:" + id;
+        }
+        std::string alt = attrs.value("alt", std::string());
+        std::string escAlt;
+        escAlt.reserve(alt.size() + 4);
+        for (char ch : alt) {
+            if (ch == ']' || ch == '\\') escAlt += '\\';
+            escAlt += ch;
+        }
+        out << "![" << escAlt << "](" << url << ")";
     }
-    // Other inline types (mediaInline, etc.) are silently dropped.
+}
+
+static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
+    if (!paraContent.is_array() || paraContent.empty()) return false;
+    if (paraContent[0].value("type", std::string()) != "text") return false;
+    const std::string& t = paraContent[0].at("text").get_ref<const std::string&>();
+    if (t.size() >= 4 && t.compare(0, 4, "[ ] ") == 0) {
+        *doneOut = false;
+        return true;
+    }
+    if (t.size() >= 4 && t.compare(0, 4, "[x] ") == 0) {
+        *doneOut = true;
+        return true;
+    }
+    if (t.size() >= 4 && t.compare(0, 4, "[X] ") == 0) {
+        *doneOut = true;
+        return true;
+    }
+    return false;
+}
+
+static void EmitParagraphInlineSkipTaskPrefix(const json& paraContent, std::ostringstream& out) {
+    if (!paraContent.is_array()) return;
+    constexpr size_t kSkip = 4;
+    bool firstText = true;
+    for (const auto& c : paraContent) {
+        if (firstText && c.is_object() && c.value("type", std::string()) == "text") {
+            const std::string t = c.value("text", std::string());
+            if (t.size() > kSkip) {
+                json c2 = c;
+                c2["text"] = t.substr(kSkip);
+                EmitInlineText(c2, out);
+            } else if (t.size() < kSkip) {
+                EmitInlineText(c, out);
+            }
+            firstText = false;
+            continue;
+        }
+        EmitInlineText(c, out);
+        if (c.is_object() && c.value("type", std::string()) == "text") firstText = false;
+    }
 }
 
 void EmitInlineRun(const json& contentArr, std::ostringstream& out) {
@@ -563,6 +742,70 @@ void EmitInlineRun(const json& contentArr, std::ostringstream& out) {
     for (const auto& child : contentArr) {
         EmitInlineText(child, out);
     }
+}
+
+static std::string MarkdownCellPlainInner(const json& cell) {
+    std::ostringstream o;
+    if (cell.contains("content") && cell["content"].is_array()) {
+        for (const auto& blk : cell["content"]) {
+            if (blk.value("type", std::string()) == "paragraph") {
+                EmitInlineRun(blk.value("content", json::array()), o);
+            }
+        }
+    }
+    std::string s = o.str();
+    for (char& ch : s) {
+        if (ch == '\n' || ch == '\r') ch = ' ';
+    }
+    return s;
+}
+
+static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
+    if (!table.contains("content") || !table["content"].is_array()) return;
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& row : table["content"]) {
+        if (row.value("type", std::string()) != "tableRow") continue;
+        std::vector<std::string> cells;
+        if (row.contains("content") && row["content"].is_array()) {
+            for (const auto& cell : row["content"]) {
+                const std::string ct = cell.value("type", std::string());
+                if (ct == "tableHeader" || ct == "tableCell") {
+                    cells.push_back(MarkdownCellPlainInner(cell));
+                }
+            }
+        }
+        if (!cells.empty()) rows.push_back(std::move(cells));
+    }
+    if (rows.empty()) return;
+    size_t ncol = 0;
+    for (const auto& r : rows) ncol = (std::max)(ncol, r.size());
+    auto escPipe = [](std::string c) {
+        for (size_t i = 0; i < c.size(); ++i) {
+            if (c[i] == '|') {
+                c.insert(i, "\\");
+                ++i;
+            }
+        }
+        return c;
+    };
+    AppendIndent(s.out, s.listIndent);
+    bool firstRow = true;
+    for (const auto& r : rows) {
+        s.out << '|';
+        for (size_t i = 0; i < ncol; ++i) {
+            s.out << ' ';
+            if (i < r.size()) s.out << escPipe(r[i]);
+            s.out << " |";
+        }
+        s.out << '\n';
+        if (firstRow) {
+            s.out << '|';
+            for (size_t i = 0; i < ncol; ++i) s.out << " --- |";
+            s.out << '\n';
+            firstRow = false;
+        }
+    }
+    s.out << '\n';
 }
 
 void EmitAdfBlock(const json& node, AdfWalkState& s);
@@ -615,11 +858,28 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
     } else if (type == "listItem") {
         AppendIndent(s.out, s.listIndent);
         const char marker = s.listMarkerStack.empty() ? '-' : s.listMarkerStack.back();
+        bool taskItem = false;
+        bool taskDone = false;
+        if (node.contains("content") && node["content"].is_array() && !node["content"].empty()) {
+            const auto& fc = node["content"][0];
+            if (fc.is_object() && fc.value("type", std::string()) == "paragraph") {
+                taskItem = MatchStoredTaskPrefix(fc.value("content", json::array()), &taskDone);
+            }
+        }
         if (marker == '1') {
             ++s.orderedCounters.back();
-            s.out << s.orderedCounters.back() << ". ";
+            s.out << s.orderedCounters.back();
+            if (taskItem) {
+                s.out << (taskDone ? ". [x] " : ". [ ] ");
+            } else {
+                s.out << ". ";
+            }
         } else {
-            s.out << "- ";
+            if (taskItem) {
+                s.out << (taskDone ? "- [x] " : "- [ ] ");
+            } else {
+                s.out << "- ";
+            }
         }
         // Render listItem children inline-style: the first paragraph stays on the marker line,
         // subsequent blocks indent.
@@ -630,7 +890,11 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
             for (const auto& c : children) {
                 const std::string ct = c.is_object() ? c.value("type", std::string()) : std::string();
                 if (first && ct == "paragraph") {
-                    EmitInlineRun(c.value("content", json::array()), s.out);
+                    if (taskItem) {
+                        EmitParagraphInlineSkipTaskPrefix(c.value("content", json::array()), s.out);
+                    } else {
+                        EmitInlineRun(c.value("content", json::array()), s.out);
+                    }
                     s.out << "\n";
                     first = false;
                 } else {
@@ -647,6 +911,18 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
         } else {
             s.out << "\n";
         }
+    } else if (type == "mediaSingle") {
+        AppendIndent(s.out, s.listIndent);
+        if (node.contains("content") && node["content"].is_array()) {
+            for (const auto& ch : node["content"]) {
+                if (ch.value("type", std::string()) == "media") {
+                    EmitInlineText(ch, s.out);
+                }
+            }
+        }
+        s.out << "\n\n";
+    } else if (type == "table") {
+        EmitMarkdownTable(node, s);
     } else if (type == "codeBlock") {
         std::string lang;
         if (node.contains("attrs") && node["attrs"].is_object()) {
@@ -696,7 +972,8 @@ const std::unordered_set<std::string>& HtmlAllowedTags() {
         "ul", "ol", "li",
         "a",
         "blockquote",
-        "div", "span"  // soft-allowed: stripped to plain text wrapping
+        "div", "span",  // soft-allowed: stripped to plain text wrapping
+        "table", "thead", "tbody", "tr", "th", "td", "img",
     };
     return tags;
 }
@@ -751,6 +1028,8 @@ struct HtmlTagToken {
     bool isClose = false;      // true for </tag>
     bool isSelfClosed = false; // true for <tag/>
     std::string href;          // populated for <a> opens
+    std::string src;           // <img>
+    std::string alt;           // <img>
 };
 
 bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bool& outFell) {
@@ -827,6 +1106,12 @@ bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bo
         if (attrName == "href" && outTok.name == "a") {
             outTok.href = DecodeHtmlEntities(attrValue);
         }
+        if (attrName == "src" && outTok.name == "img") {
+            outTok.src = DecodeHtmlEntities(attrValue);
+        }
+        if (attrName == "alt" && outTok.name == "img") {
+            outTok.alt = DecodeHtmlEntities(attrValue);
+        }
         // Other attributes outside our allowlist tip the fallback when the tag itself is allowlisted
         // but the attribute changes meaning (e.g. `class` on <code> is fine; `onclick` on anything
         // else is suspicious). Conservative default: don't trip on unknown attrs to keep Plane's
@@ -842,18 +1127,28 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
     bool fellBack = false;
     const auto& allowed = HtmlAllowedTags();
 
-    /// Accumulator for paragraph-mode text; flushed on block boundaries.
     std::string buffer;
+    std::vector<std::string*> outPtrStack;
+    outPtrStack.push_back(&buffer);
+    auto tail = [&]() -> std::string& { return *outPtrStack.back(); };
+
     auto flushBuffer = [&](bool addBlankLine) {
-        if (!buffer.empty()) {
-            out << buffer;
-            buffer.clear();
+        std::string& tref = *outPtrStack.back();
+        if (outPtrStack.size() == 1) {
+            if (!tref.empty()) {
+                out << tref;
+                tref.clear();
+            }
+            if (addBlankLine) out << "\n\n";
+        } else {
+            if (addBlankLine) tref += "\n\n";
         }
-        if (addBlankLine) out << "\n\n";
     };
 
-    /// Tracks open-tag context (innermost first). Used so inline marks unwrap in the right order
-    /// and so `<li>` knows whether it belongs to an `<ol>` or `<ul>`.
+    std::vector<std::vector<std::string>> tableRows;
+    int tableNest = 0;
+    std::string cellAcc;
+
     struct Frame {
         std::string tag;
         int olCounter = 0; // for <ol> only
@@ -875,13 +1170,45 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
         return "";
     };
 
+    auto appendPipeTable = [&](const std::vector<std::vector<std::string>>& rows) {
+        if (rows.empty()) return;
+        size_t ncol = 0;
+        for (const auto& r : rows) ncol = (std::max)(ncol, r.size());
+        auto escPipe = [](std::string c) {
+            for (size_t i = 0; i < c.size(); ++i) {
+                if (c[i] == '|') {
+                    c.insert(i, "\\");
+                    ++i;
+                }
+            }
+            return c;
+        };
+        bool firstRow = true;
+        for (const auto& r : rows) {
+            out << '|';
+            for (size_t i = 0; i < ncol; ++i) {
+                out << ' ';
+                if (i < r.size()) out << escPipe(r[i]);
+                out << " |";
+            }
+            out << '\n';
+            if (firstRow) {
+                out << '|';
+                for (size_t i = 0; i < ncol; ++i) out << " --- |";
+                out << '\n';
+                firstRow = false;
+            }
+        }
+        out << '\n';
+    };
+
     size_t pos = 0;
     while (pos < html.size()) {
         if (html[pos] == '<') {
             HtmlTagToken tok;
             const size_t before = pos;
             if (!ParseHtmlTag(html, pos, tok, fellBack)) {
-                buffer += html[before];
+                tail() += html[before];
                 pos = before + 1;
                 continue;
             }
@@ -894,9 +1221,24 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             }
 
             const std::string& t = tok.name;
-            const bool isVoid = (t == "br" || t == "hr");
+            const bool isVoid = (t == "br" || t == "hr" || t == "img");
             if (tok.isClose) {
-                // Pop matching frame; capture link href before popping for </a>.
+                if (t == "td" || t == "th") {
+                    if (outPtrStack.size() > 1 && outPtrStack.back() == &cellAcc) {
+                        std::string finished = std::move(cellAcc);
+                        cellAcc.clear();
+                        outPtrStack.pop_back();
+                        if (!tableRows.empty()) {
+                            tableRows.back().push_back(std::move(finished));
+                        }
+                    }
+                }
+                if (t == "table") {
+                    appendPipeTable(tableRows);
+                    tableRows.clear();
+                    if (tableNest > 0) --tableNest;
+                }
+
                 std::string poppedLinkHref;
                 bool poppedAny = false;
                 for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
@@ -907,7 +1249,6 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
                             if (idx < sLinkHrefs.size()) {
                                 poppedLinkHref = sLinkHrefs[idx];
                             }
-                            // Trim the popped href slot if it was the last one (LIFO usage).
                             if (idx + 1 == sLinkHrefs.size()) sLinkHrefs.pop_back();
                         }
                         const size_t targetIdx = std::distance(it, stack.rend()) - 1;
@@ -919,31 +1260,65 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
                 }
                 (void)poppedAny;
                 if (t == "p" || t == "div") {
-                    buffer += "\n\n";
+                    tail() += "\n\n";
                 } else if (t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6") {
-                    buffer += "\n\n";
+                    tail() += "\n\n";
                 } else if (t == "li") {
-                    buffer += "\n";
+                    tail() += "\n";
                 } else if (t == "ul" || t == "ol") {
                     flushBuffer(true);
                 } else if (t == "blockquote") {
-                    buffer += "\n\n";
+                    tail() += "\n\n";
                 } else if (t == "pre") {
-                    buffer += "\n```\n\n";
+                    tail() += "\n```\n\n";
                 } else if (isInlineMark(t)) {
-                    buffer += inlineOpenMd(t);
+                    tail() += inlineOpenMd(t);
                 } else if (t == "a") {
-                    buffer += "](";
-                    buffer += poppedLinkHref;
-                    buffer += ")";
+                    tail() += "](";
+                    tail() += poppedLinkHref;
+                    tail() += ")";
                 }
                 continue;
             }
 
-            // Opening / void tag.
             if (isVoid) {
-                if (t == "br") buffer += "  \n";
-                else if (t == "hr") buffer += "\n---\n\n";
+                if (t == "br") tail() += "  \n";
+                else if (t == "hr") tail() += "\n---\n\n";
+                else if (t == "img") {
+                    std::string escAlt;
+                    for (char ch : tok.alt) {
+                        if (ch == ']' || ch == '\\') escAlt += '\\';
+                        escAlt += ch;
+                    }
+                    tail() += "![" + escAlt + "](" + tok.src + ")";
+                }
+                continue;
+            }
+
+            if (t == "table") {
+                if (tableNest > 0) {
+                    fellBack = true;
+                    continue;
+                }
+                ++tableNest;
+                flushBuffer(true);
+                tableRows.clear();
+                stack.push_back({"table", 0, 0});
+                continue;
+            }
+            if (t == "thead" || t == "tbody") {
+                stack.push_back({t, 0, 0});
+                continue;
+            }
+            if (t == "tr") {
+                tableRows.emplace_back();
+                stack.push_back({"tr", 0, 0});
+                continue;
+            }
+            if (t == "td" || t == "th") {
+                cellAcc.clear();
+                outPtrStack.push_back(&cellAcc);
+                stack.push_back({t, 0, 0});
                 continue;
             }
 
@@ -954,69 +1329,61 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             if (t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6") {
                 stack.push_back({t, 0, 0});
                 const int level = t[1] - '0';
-                for (int i = 0; i < level; ++i) buffer += '#';
-                buffer += ' ';
+                for (int i = 0; i < level; ++i) tail() += '#';
+                tail() += ' ';
                 continue;
             }
             if (t == "ul" || t == "ol") {
                 Frame f{t, 0, 0};
                 if (!stack.empty()) f.listIndent = stack.back().listIndent + 2;
                 stack.push_back(f);
-                buffer += "\n";
+                tail() += "\n";
                 continue;
             }
             if (t == "li") {
                 Frame f{"li", 0, 0};
                 if (!stack.empty()) f.listIndent = stack.back().listIndent;
                 stack.push_back(f);
-                for (int i = 0; i < f.listIndent; ++i) buffer += ' ';
-                // Find enclosing ol/ul for marker.
+                for (int i = 0; i < f.listIndent; ++i) tail() += ' ';
                 bool ordered = false;
                 for (auto it = stack.rbegin() + 1; it != stack.rend(); ++it) {
                     if (it->tag == "ol") {
                         ++it->olCounter;
-                        buffer += std::to_string(it->olCounter) + ". ";
+                        tail() += std::to_string(it->olCounter) + ". ";
                         ordered = true;
                         break;
                     }
                     if (it->tag == "ul") {
-                        buffer += "- ";
+                        tail() += "- ";
                         break;
                     }
                 }
-                if (!ordered && stack.size() == 1) buffer += "- ";
+                if (!ordered && stack.size() == 1) tail() += "- ";
                 continue;
             }
             if (t == "blockquote") {
                 stack.push_back({t, 0, 0});
-                buffer += "> ";
+                tail() += "> ";
                 continue;
             }
             if (t == "pre") {
                 stack.push_back({t, 0, 0});
-                buffer += "\n```\n";
+                tail() += "\n```\n";
                 continue;
             }
             if (isInlineMark(t)) {
                 stack.push_back({t, 0, 0});
-                buffer += inlineOpenMd(t);
+                tail() += inlineOpenMd(t);
                 continue;
             }
             if (t == "a") {
                 stack.push_back({"a", 0, 0});
-                // Stash href in a parallel side-channel by appending a sentinel — simplest
-                // approach: emit "[" now, record href, append "](href)" on close.
-                buffer += "[";
-                // The close handler can't easily recover the href; defer by inlining now via
-                // a trailing append handled at close. To keep state minimal, repurpose the
-                // Frame's olCounter as a slot index into a side vector of hrefs.
-                // Implementation: store on a static parallel stack.
+                tail() += "[";
                 static thread_local std::vector<std::string> sLinkHrefs;
                 sLinkHrefs.push_back(tok.href);
-                stack.back().olCounter = static_cast<int>(sLinkHrefs.size()); // 1-based marker
+                stack.back().olCounter = static_cast<int>(sLinkHrefs.size());
                 continue;
             }
-            // span: just push to track close, emit nothing.
             if (t == "span") {
                 stack.push_back({t, 0, 0});
                 continue;
@@ -1024,12 +1391,20 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             continue;
         }
 
-        // Plain text run — read until next '<'.
         const size_t lt = html.find('<', pos);
         const size_t end = (lt == std::string::npos) ? html.size() : lt;
         const std::string raw = html.substr(pos, end - pos);
-        buffer += DecodeHtmlEntities(raw);
+        tail() += DecodeHtmlEntities(raw);
         pos = end;
+    }
+
+    // Malformed HTML (e.g. unclosed <td>) can leave a nested text sink active — merge back and
+    // flag fallback so callers can prefer raw-mode.
+    while (outPtrStack.size() > 1) {
+        fellBack = true;
+        std::string orphan = std::move(*outPtrStack.back());
+        outPtrStack.pop_back();
+        tail() += orphan;
     }
 
     flushBuffer(false);
@@ -1062,13 +1437,13 @@ nlohmann::json MarkdownToAdf(const std::string& md) {
 
     MD_PARSER parser{};
     parser.abi_version = 0;
-    parser.flags = kMd4cFlags;
+    parser.flags = Md4cParserFlags();
     parser.enter_block = AdfEnterBlock;
     parser.leave_block = AdfLeaveBlock;
     parser.enter_span = AdfEnterSpan;
     parser.leave_span = AdfLeaveSpan;
     parser.text = AdfTextCallback;
-    parser.debug_log = nullptr;
+    parser.debug_log = Md4cDebugLogShim;
     parser.syntax = nullptr;
 
     md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &builder);
@@ -1095,13 +1470,13 @@ std::string MarkdownToHtml(const std::string& md) {
 
     MD_PARSER parser{};
     parser.abi_version = 0;
-    parser.flags = kMd4cFlags;
+    parser.flags = Md4cParserFlags();
     parser.enter_block = HtmlEnterBlock;
     parser.leave_block = HtmlLeaveBlock;
     parser.enter_span = HtmlEnterSpan;
     parser.leave_span = HtmlLeaveSpan;
     parser.text = HtmlTextCallback;
-    parser.debug_log = nullptr;
+    parser.debug_log = Md4cDebugLogShim;
     parser.syntax = nullptr;
 
     md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &builder);

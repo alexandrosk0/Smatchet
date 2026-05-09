@@ -125,6 +125,10 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
         auto transitionsResp = TrackerGetLogged("JiraClient", transitionsUrl, headers);
         if (transitionsResp.status_code != 200) {
             outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
+            if (!transitionsResp.text.empty()) {
+                outError += " — ";
+                outError += TruncateForLog(transitionsResp.text, 1200);
+            }
             LOG_ERROR("JiraClient: %s", outError.c_str());
             BackendAuditTrail::AppendResult(
                 "issue_transition", "jira_client", issueId, auditOp, false, outError,
@@ -312,6 +316,10 @@ bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::strin
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add comment failed: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"comment_text", plainText}});
@@ -450,6 +458,10 @@ bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std
 
     if (response.status_code != 201 && response.status_code != 200) {
         outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
+        if (!response.text.empty()) {
+            outError += " — ";
+            outError += TruncateForLog(response.text, 1200);
+        }
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
