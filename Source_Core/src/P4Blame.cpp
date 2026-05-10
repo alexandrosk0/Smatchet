@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <sstream>
 #include <regex>
 
@@ -635,6 +636,87 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, cons
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+/** Advance (y,m,d) by one day in UTC (exclusive end date for Perforce `//...@start,end` ranges). */
+static bool SmatchetAddOneUtcCalendarDay(int y, int m, int d, int& oy, int& om, int& od) {
+    std::tm t{};
+    t.tm_year = y - 1900;
+    t.tm_mon = m - 1;
+    t.tm_mday = d;
+    t.tm_hour = 0;
+    t.tm_min = 0;
+    t.tm_sec = 0;
+    t.tm_isdst = 0;
+#if defined(_WIN32)
+    const time_t sec0 = _mkgmtime(&t);
+#else
+    const time_t sec0 = timegm(&t);
+#endif
+    if (sec0 == static_cast<time_t>(-1)) {
+        return false;
+    }
+    const time_t sec1 = sec0 + 86400;
+    std::tm out{};
+#if defined(_WIN32)
+    if (gmtime_s(&out, &sec1) != 0) {
+        return false;
+    }
+#else
+    if (gmtime_r(&sec1, &out) == nullptr) {
+        return false;
+    }
+#endif
+    oy = out.tm_year + 1900;
+    om = out.tm_mon + 1;
+    od = out.tm_mday;
+    return true;
+}
+
+bool P4FirstSubmittedChangelistOnCalendarDay(const BlameAnalysisConfig& cfg, int year, int month, int day,
+                                            std::string& outChangelist, std::string& outError) {
+    outChangelist.clear();
+    outError.clear();
+    if (year < 1970 || year > 3000 || month < 1 || month > 12 || day < 1 || day > 31) {
+        outError = "invalid calendar date";
+        return false;
+    }
+    int ey = 0;
+    int em = 0;
+    int ed = 0;
+    if (!SmatchetAddOneUtcCalendarDay(year, month, day, ey, em, ed)) {
+        outError = "date range arithmetic failed";
+        return false;
+    }
+    char start[32];
+    char endEx[32];
+    std::snprintf(start, sizeof(start), "%04d/%02d/%02d", year, month, day);
+    std::snprintf(endEx, sizeof(endEx), "%04d/%02d/%02d", ey, em, ed);
+    const std::string filespec = std::string("//...@") + start + "," + endEx;
+    const std::vector<std::string> args = {"changes", "-r", "-m", "1", "-s", "submitted", filespec};
+
+    int code = 0;
+    std::string out;
+    std::string err;
+    if (!P4RunCommand(cfg, args, code, out, err)) {
+        outError = "failed to run p4";
+        return false;
+    }
+    if (code != 0) {
+        outError = FormatP4CommandError("p4 changes failed", code, err);
+        return false;
+    }
+    if (out.find_first_not_of(" \t\r\n") == std::string::npos) {
+        outError = "no submitted changelists on that calendar day (or no visibility to //...@)";
+        return false;
+    }
+    const P4LineBlame parsed = ParseLatestChangeFromChangesOutput(out, err);
+    if (parsed.Changelist.empty()) {
+        outError = parsed.Error.empty() ? "could not parse p4 changes output" : parsed.Error;
+        return false;
+    }
+    outChangelist = parsed.Changelist;
+    return true;
 }
 
 P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries) : maxEntries_(maxEntries > 0 ? maxEntries : 16) {}

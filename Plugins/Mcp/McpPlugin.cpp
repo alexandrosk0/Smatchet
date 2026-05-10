@@ -334,6 +334,9 @@ void McpPlugin::OnStart(AppController& app) {
     if (!impl_->routes_installed) {
         impl_->routes_installed = true;
         auto authorize = [this](const httplib::Request& req, httplib::Response& res) -> bool {
+            if (impl_->app != nullptr) {
+                impl_->app->NotifyMcpClientHttpActivity();
+            }
             if (impl_->auth_token.empty()) {
                 if (!IsLoopbackAddress(req.remote_addr)) {
                     res.status = 403;

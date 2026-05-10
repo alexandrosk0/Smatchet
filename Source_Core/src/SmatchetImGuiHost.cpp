@@ -457,7 +457,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
-    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripting window opens from Windows menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
+    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripts & Actions window opens from Automation menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
 #else
     LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded.");
 #endif
@@ -1000,6 +1000,5 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
-
 
 

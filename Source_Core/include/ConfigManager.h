@@ -105,14 +105,14 @@ struct TrackerConfig {
     int GridEndWheelSwallowsBeforeHorizontal = 15;
     // Restores Settings -> Preferences window visibility on launch.
     bool ShowPreferencesWindow = false;
-    // Restores Windows -> Open Views window visibility on launch.
+    // Restores Workspace -> Views & Queries window visibility on launch.
     bool ShowViewsDashboardWindow = true;
-    // Restores Settings → Performance window visibility on launch.
+    // Restores Inspect -> Performance Monitor window visibility on launch.
     bool ShowPerformanceWindow = false;
-    // Restores Windows -> Show Log window visibility on launch.
+    // Restores Inspect -> Runtime Log window visibility on launch.
     bool ShowLogWindow = false;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    // Restores Windows -> Scripting window visibility on launch.
+    // Restores Automation -> Scripts & Actions window visibility on launch.
     bool ShowLuaAutomationWindow = false;
 #endif
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
@@ -127,6 +127,8 @@ struct TrackerConfig {
     std::string AiModel = "gpt-4o-mini";
     // OpenAI-compatible API base URL (for example: https://api.openai.com).
     std::string AiBaseUrl = "https://api.openai.com";
+    // Restores Automation -> Project Assistant window visibility on launch.
+    bool ShowAiAssistantWindow = false;
     // When true, MCP plugin HTTP server is started.
     bool McpEnabled = false;
     // MCP plugin listen port.
@@ -140,7 +142,7 @@ struct TrackerConfig {
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
-    /** Windows → MCP Server… window open on launch (like ShowPerformanceWindow). */
+    /** Automation -> Agent Bridge (MCP)... window open on launch (like ShowPerformanceWindow). */
     bool ShowMcpServerWindow = false;
     /** Height of the copyable status/endpoints block; 0 = use default (line height × 18). */
     float McpServerInfoPanelHeightPx = 0.f;
@@ -407,6 +409,10 @@ struct BlameAnalysisConfig {
     BlameUiThemeColors UiColors{};
     /** Jira field id (e.g. customfield_10001) whose value populates the blame callstack text. */
     std::string CallstackTrackerFieldId;
+    /** Jira field id whose value (decimal CL) pre-fills "Before changelist" when blame opens on an issue. */
+    std::string LastFoundClTrackerFieldId;
+    /** Jira field id (date) pre-filling the "or day" picker when blame opens on an issue; empty if unset or blank. */
+    std::string LastOccurrencesTrackerFieldId;
 };
 
 class ConfigManager {
@@ -570,6 +576,7 @@ class ConfigManager {
         j["log_p4_io"] = config.LogP4Io;
         j["ai_model"] = config.AiModel;
         j["ai_base_url"] = config.AiBaseUrl;
+        j["show_ai_assistant_window"] = config.ShowAiAssistantWindow;
         j["mcp_enabled"] = config.McpEnabled;
         j["mcp_port"] = config.McpPort;
         j["mcp_allow_remote"] = config.McpAllowRemote;
@@ -651,6 +658,8 @@ class ConfigManager {
         b.DefaultMaxFrames = ba.value("default_max_frames", b.DefaultMaxFrames);
         b.ChangelistCacheMaxEntries = ba.value("cl_cache_max", b.ChangelistCacheMaxEntries);
         b.CallstackTrackerFieldId = ba.value("callstack_jira_field_id", std::string());
+        b.LastFoundClTrackerFieldId = ba.value("last_found_cl_jira_field_id", std::string());
+        b.LastOccurrencesTrackerFieldId = ba.value("last_occurrences_jira_field_id", std::string());
         if (ba.contains("default_ignore_keywords") && ba["default_ignore_keywords"].is_array()) {
             for (const auto& item : ba["default_ignore_keywords"]) {
                 if (item.is_string()) {
@@ -713,6 +722,8 @@ class ConfigManager {
         ba["default_max_frames"] = b.DefaultMaxFrames;
         ba["cl_cache_max"] = b.ChangelistCacheMaxEntries;
         ba["callstack_jira_field_id"] = b.CallstackTrackerFieldId;
+        ba["last_found_cl_jira_field_id"] = b.LastFoundClTrackerFieldId;
+        ba["last_occurrences_jira_field_id"] = b.LastOccurrencesTrackerFieldId;
         ba["default_ignore_keywords"] = nlohmann::json::array();
         for (const auto& kw : b.DefaultIgnoreKeywords) {
             ba["default_ignore_keywords"].push_back(kw);
@@ -818,6 +829,7 @@ class ConfigManager {
 #endif
                 cfg.AiModel = j.value("ai_model", cfg.AiModel);
                 cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
+                cfg.ShowAiAssistantWindow = j.value("show_ai_assistant_window", cfg.ShowAiAssistantWindow);
                 cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
                 cfg.McpPort = j.value("mcp_port", cfg.McpPort);
                 cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);

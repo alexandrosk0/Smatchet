@@ -51,6 +51,14 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
 std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, const std::string& depotOrPath,
                                             const std::string& atChangelist, std::string& outError);
 
+/**
+ * Oldest submitted changelist whose submit time falls on [year/month/day, next day),
+ * via `p4 changes -r -m 1 -s submitted //...@yyyy/mm/dd,yyyy/mm/dd`. Uses the server's
+ * calendar interpretation for the date range (same as other Perforce date rev specs).
+ */
+bool P4FirstSubmittedChangelistOnCalendarDay(const BlameAnalysisConfig& cfg, int year, int month, int day,
+                                             std::string& outChangelist, std::string& outError);
+
 /** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
 class P4ChangelistDescribeCache {
   public:

@@ -30,10 +30,19 @@ void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
         auto result = AiController::ChatCompletion(d.aiPromptMessage, app.GetAiContext(), d.cfg.AiApiKey, d.cfg.AiModel, d.cfg.AiBaseUrl);
         d.aiResponse = result.Response;
         d.aiIsThinking = false;
-        ImGui::SetWindowFocus("AI Assistant");
+        d.showAiAssistantWindow = true;
+        d.requestAiAssistantFocus = true;
     }
 
-    ImGui::Begin("AI Assistant");
+    if (!d.showAiAssistantWindow) {
+        return;
+    }
+
+    ImGui::Begin("AI Assistant", &d.showAiAssistantWindow);
+    if (d.requestAiAssistantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestAiAssistantFocus = false;
+    }
     if (d.gridState.ActiveIssueId.empty()) {
         ImGui::TextDisabled("Select a ticket to see AI insights.");
     } else {
@@ -292,7 +301,6 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     ImGui::EndChild();
     ImGui::End();
 }
-
 
 
 

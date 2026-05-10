@@ -7,6 +7,7 @@
 #include "SmatchetAttachmentPreviewUi.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
+#include "TicketGridModel.h"
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
 #include "SmatchetUiSession.h"
@@ -35,8 +36,8 @@
 #include <future>
 #include <iterator>
 #include <mutex>
-#include <vector>
 #include <string>
+#include <vector>
 
 UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
@@ -133,6 +134,9 @@ static void PersistWindowOpenPreferences(UiDrawSession& d) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     setBool(d.cfg.ShowLuaAutomationWindow, d.showLuaAutomationWindow);
 #endif
+#if defined(SMATCHET_WITH_AI)
+    setBool(d.cfg.ShowAiAssistantWindow, d.showAiAssistantWindow);
+#endif
 #if defined(SMATCHET_WITH_MCP)
     setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
 #endif
@@ -211,6 +215,7 @@ void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layout
 
 void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     d.showViewsDashboard = true;
+    d.requestActiveProjectFocus = false;
     d.requestViewsDashboardFocus = false;
     d.showPerformance = false;
     d.showBlameAnalysis = false;
@@ -222,6 +227,10 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     d.showLuaAutomationWindow = false;
     d.requestLuaAutomationFocus = false;
     d.requestScriptingEditorTabFocus = false;
+#endif
+#if defined(SMATCHET_WITH_AI)
+    d.showAiAssistantWindow = false;
+    d.requestAiAssistantFocus = false;
 #endif
 #if defined(SMATCHET_WITH_MCP)
     d.showMcpServerWindow = false;
@@ -246,6 +255,9 @@ void SmatchetUI::Draw(AppController& app) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         g_ui.showLuaAutomationWindow = g_ui.cfg.ShowLuaAutomationWindow;
 #endif
+#if defined(SMATCHET_WITH_AI)
+        g_ui.showAiAssistantWindow = g_ui.cfg.ShowAiAssistantWindow;
+#endif
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
@@ -259,6 +271,10 @@ void SmatchetUI::Draw(AppController& app) {
         app.SetAiPromptHandler([](const std::string& message) {
             g_ui.aiPromptPending = true;
             g_ui.aiPromptMessage = message;
+#if defined(SMATCHET_WITH_AI)
+            g_ui.showAiAssistantWindow = true;
+            g_ui.requestAiAssistantFocus = true;
+#endif
         });
     }
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
@@ -449,7 +465,9 @@ void SmatchetUI::Draw(AppController& app) {
 #if defined(SMATCHET_WITH_AI)
     {
         SMATCHET_UI_PERF_SCOPE("drawAIAssistantWindow");
-        drawAIAssistantWindow(app, d);
+        if (g_ui.showAiAssistantWindow) {
+            drawAIAssistantWindow(app, d);
+        }
     }
 #endif
 #if defined(SMATCHET_WITH_MCP)
@@ -561,55 +579,104 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 }
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
-    (void)app;
     if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("Settings")) {
-            if (ImGui::MenuItem("Preferences...")) {
-                d.showPreferences = true;
+        auto ticketsSnap = app.GetActiveTicketsSnapshot();
+        const std::vector<CachedTicket> emptyTickets;
+        const auto& tickets = ticketsSnap ? *ticketsSnap : emptyTickets;
+        TrackerFieldCatalogIndex catalogIndex(app.GetAvailableFields());
+        ViewDefinition* activeView = ViewState.GetActiveViewMutable();
+        const std::vector<TicketGridColumn> columns =
+            activeView ? TicketGridColumnsBuilder::Build(*activeView, catalogIndex) : std::vector<TicketGridColumn>();
+        const bool hasSelection = d.gridState.RectSel.HasAnySelection();
+        const bool hasTickets = !tickets.empty();
+
+        if (ImGui::BeginMenu("Workspace")) {
+            if (ImGui::MenuItem("Grid")) {
+                d.requestActiveProjectFocus = true;
             }
-            if (ImGui::MenuItem("Performance...")) {
+            if (ImGui::MenuItem("Views & Queries...")) {
+                d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
+            }
+            if (ImGui::MenuItem("Reset Workspace Layout")) {
+                resetWindowLayoutToDefault(d);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Selection")) {
+            if (ImGui::MenuItem("Select All", nullptr, false, hasTickets)) {
+                auto& sel = d.gridState.RectSel;
+                sel.ClearAll();
+                const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
+                for (size_t row = 0; row < rowCount; ++row) {
+                    sel.Rows.insert(static_cast<int>(row));
+                }
+                if (rowCount > 0) {
+                    sel.PrimaryRow = 0;
+                    sel.SortSignature =
+                        ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
+                    const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
+                    if (firstTicketIndex < tickets.size()) {
+                        d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
+                    }
+                }
+            }
+            if (ImGui::MenuItem("Clear Selection", nullptr, false, hasSelection)) {
+                d.gridState.RectSel.ClearAll();
+            }
+            if (ImGui::MenuItem("Copy Selection", nullptr, false, hasSelection && !columns.empty())) {
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Issues")) {
+            if (ImGui::MenuItem("Import Issues...")) {
+                d.showBulkImport = true;
+            }
+            if (ImGui::MenuItem("Export Issues...")) {
+                d.showBulkExport = true;
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Automation")) {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            if (ImGui::MenuItem("Scripts & Actions...", nullptr, &d.showLuaAutomationWindow) && d.showLuaAutomationWindow) {
+                d.requestLuaAutomationFocus = true;
+                d.requestScriptingEditorTabFocus = true;
+            }
+#endif
+#if defined(SMATCHET_WITH_AI)
+            if (ImGui::MenuItem("Project Assistant...", nullptr, &d.showAiAssistantWindow) && d.showAiAssistantWindow) {
+                d.requestAiAssistantFocus = true;
+            }
+#endif
+#if defined(SMATCHET_WITH_MCP)
+            if (ImGui::MenuItem("Agent Bridge (MCP)...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
+                d.requestMcpServerFocus = true;
+            }
+#endif
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Inspect")) {
+            if (ImGui::MenuItem("Source Blame...")) {
+                d.showBlameAnalysis = true;
+            }
+            if (ImGui::MenuItem("Sync Audit...")) {
+                d.showAuditTrail = true;
+                d.requestAuditTrailFocus = true;
+            }
+            ImGui::MenuItem("Runtime Log", nullptr, &d.showLogWindow);
+            if (ImGui::MenuItem("Performance Monitor...")) {
                 d.showPerformance = true;
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Windows")) {
-            if (ImGui::MenuItem("Open Views...")) {
-                d.showViewsDashboard = true;
-                d.requestViewsDashboardFocus = true;
+        if (ImGui::BeginMenu("Settings")) {
+            if (ImGui::MenuItem("Preferences...")) {
+                d.showPreferences = true;
             }
-            if (ImGui::MenuItem("Reset Window Layout")) {
-                resetWindowLayoutToDefault(d);
-            }
-            if (ImGui::MenuItem("Blame Analysis...")) {
-                d.showBlameAnalysis = true;
-            }
-            ImGui::Separator();
-            ImGui::MenuItem("Show Log", nullptr, &d.showLogWindow);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Backend audit...")) {
-                d.showAuditTrail = true;
-                d.requestAuditTrailFocus = true;
-            }
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            ImGui::Separator();
-            if (ImGui::MenuItem("Scripting...", nullptr, &d.showLuaAutomationWindow) && d.showLuaAutomationWindow) {
-                d.requestLuaAutomationFocus = true;
-                d.requestScriptingEditorTabFocus = true;
-            }
-#if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
-                d.requestMcpServerFocus = true;
-            }
-#endif
-#endif
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Bulk")) {
-            if (ImGui::MenuItem("Bulk import...")) {
-                d.showBulkImport = true;
-            }
-            if (ImGui::MenuItem("Bulk export...")) {
-                d.showBulkExport = true;
+            if (ImGui::MenuItem("Read-only Mode", nullptr, &d.cfg.ReadOnlyMode)) {
+                ConfigManager::Save(d.cfg);
             }
             ImGui::EndMenu();
         }
@@ -618,16 +685,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             static bool s_loggedLuaMenuAbsent = false;
             if (!s_loggedLuaMenuAbsent) {
                 s_loggedLuaMenuAbsent = true;
-                LOG_WARN("SmatchetUI: Lua automation disabled in this binary (no Scripting window).");
+                LOG_WARN("SmatchetUI: Lua automation disabled in this binary (no Scripts & Actions window).");
             }
-        }
-#endif
-#if defined(SMATCHET_WITH_MCP) && !defined(SMATCHET_WITH_LUA_AUTOMATION)
-        if (ImGui::BeginMenu("MCP")) {
-            if (ImGui::MenuItem("MCP Server...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
-                d.requestMcpServerFocus = true;
-            }
-            ImGui::EndMenu();
         }
 #endif
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL

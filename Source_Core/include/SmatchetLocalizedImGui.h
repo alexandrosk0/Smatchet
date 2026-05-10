@@ -117,6 +117,17 @@ inline bool Selectable(const char* label, bool* p_selected, ImGuiSelectableFlags
     return ::ImGui::Selectable(SmatchetLocalization::LabelFromSource(label), p_selected, flags, size);
 }
 
+/** Per-frame / data labels (paths, CLs, usernames, etc.): do not run through LabelFromSource/TranslateSource. */
+inline bool SelectableRaw(const char* label, bool selected = false, ImGuiSelectableFlags flags = 0,
+                          const ImVec2& size = ImVec2(0, 0)) {
+    return ::ImGui::Selectable(label, selected, flags, size);
+}
+
+inline bool SelectableRaw(const char* label, bool* p_selected, ImGuiSelectableFlags flags = 0,
+                          const ImVec2& size = ImVec2(0, 0)) {
+    return ::ImGui::Selectable(label, p_selected, flags, size);
+}
+
 inline bool CollapsingHeader(const char* label, ImGuiTreeNodeFlags flags = 0) {
     return ::ImGui::CollapsingHeader(SmatchetLocalization::LabelFromSource(label), flags);
 }

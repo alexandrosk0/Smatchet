@@ -115,6 +115,7 @@ struct UiDrawSession {
 
     bool showPreferences = false;
     bool showViewsDashboard = true;
+    bool requestActiveProjectFocus = false;
     bool requestViewsDashboardFocus = false;
     bool showPerformance = false;
     bool showBlameAnalysis = false;
@@ -127,15 +128,20 @@ struct UiDrawSession {
     int layoutForceDefaultsFrames = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    /** Scripting window; dock tab close clears this; reopen from Windows → Scripting…. */
+    /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
     bool showLuaAutomationWindow = true;
     bool requestLuaAutomationFocus = false;
     /** When true, the next draw selects the Scripts editor tab (not Tools & Actions). */
     bool requestScriptingEditorTabFocus = false;
 #endif
 
+#if defined(SMATCHET_WITH_AI)
+    bool showAiAssistantWindow = false;
+    bool requestAiAssistantFocus = false;
+#endif
+
 #if defined(SMATCHET_WITH_MCP)
-    /** MCP status / endpoints / activity; reopen from Windows (or MCP menu when Lua automation is off). */
+    /** MCP status / endpoints / activity; reopen from Automation -> Agent Bridge (MCP).... */
     bool showMcpServerWindow = false;
     bool requestMcpServerFocus = false;
 #endif
@@ -252,6 +258,15 @@ struct UiDrawSession {
     /** Green "TRACKER OK" chip: hide after `trackerOkChipHideAt` while banner clear and reachable. */
     bool trackerOkChipHideTimerArmed = false;
     std::chrono::steady_clock::time_point trackerOkChipHideAt{};
+#if defined(SMATCHET_WITH_MCP)
+    /** Grid header "MCP LIVE" chip: anchor for initial visibility window after enable. */
+    std::chrono::steady_clock::time_point mcpLiveHeaderAnchorAt{};
+    bool mcpLiveHeaderLastCfgEnabled = false;
+    /** Previous-frame MCP header chip drawn (enabled or disabled) so hide always runs a fade. */
+    bool mcpHeaderLastFrameChipShown = false;
+    bool mcpHeaderFadeoutActive = false;
+    std::chrono::steady_clock::time_point mcpHeaderFadeoutStartAt{};
+#endif
     /** 0 none, 1 error, 2 success — mirrors single-slot gridEdit banner before it became toast-only. */
     int lastToastedGridBannerKind = 0;
     std::string lastToastedGridBannerMessage;
@@ -353,8 +368,6 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
-
-
 
 
 

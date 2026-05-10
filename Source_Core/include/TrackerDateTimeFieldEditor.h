@@ -18,7 +18,8 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
                                SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit,
                                const std::string& dateFormatOption = {}, int thresholdDays = 0);
 
-bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime);
+bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime,
+                             float totalWidth = 340.0f);
 
 } // namespace TrackerDateTimeFieldEditor
 

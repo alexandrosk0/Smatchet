@@ -573,7 +573,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     ImGui::PopID();
 }
 
-bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime) {
+bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime, float totalWidth) {
     ImGui::PushID(label);
     
     // Parse underlying ISO-8601 string to a ParsedJiraDateTime
@@ -595,7 +595,9 @@ bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDat
     
     bool valueChanged = false;
     
-    const float totalWidth = 340.0f;
+    if (totalWidth < 120.0f) {
+        totalWidth = 120.0f;
+    }
     const float colWidth = isDateTime ? ((totalWidth - 8.0f) * 0.5f) : totalWidth;
     
     // Column 1: Date Input Field with Calendar Icon

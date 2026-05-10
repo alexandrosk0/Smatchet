@@ -1,13 +1,18 @@
 #include "BlameAnalysisUi.h"
 
 #include "AppController.h"
+#include "LocalCacheManager.h"
 #include "BlameSyntaxHighlight.h"
 #include "CallstackParser.h"
+#include "CompactDateFormat.h"
 #include "ConfigManager.h"
 #include "JiraClient.h"
 #include "Logger.h"
 #include "P4Blame.h"
+#include "SpreadsheetState.h"
 #include "StringUtil.h"
+#include "TrackerDateTimeFieldEditor.h"
+#include "TrackerFieldSchema.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
@@ -68,6 +73,7 @@ static P4ChangelistDescribeCache g_tooltipClCache(512);
 static char g_callstackBuf[65536]{};
 static std::vector<char> g_ignoreBuf(4096, '\0');
 static char g_atClBuf[64]{};
+static std::string g_beforeDateIso;
 static int g_maxFramesVal = 64;
 static char g_remapFrom[512]{};
 static char g_remapTo[512]{};
@@ -121,7 +127,13 @@ static bool g_assignHasJiraAccount = false;
 static BlameRow g_assignRow;
 
 static char g_callstackTrackerFieldBuf[260]{};
+static char g_lastFoundClFieldBuf[260]{};
+static char g_lastOccurrencesFieldBuf[260]{};
 static std::string s_lastCallstackIssueKey;
+
+/** Opened via grid "Open Source Blame…" with callstack; auto-process + compact UI until raw view. */
+static bool g_blameStreamlinedFromGrid = false;
+static bool g_blamePendingAutoProcess = false;
 
 template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
     static_assert(N > 0, "CopyToBuffer requires a non-empty char array");
@@ -134,6 +146,22 @@ template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
 }
 
 void SyncCallstackTrackerFieldBufFromCfg() { CopyToBuffer(g_callstackTrackerFieldBuf, g_blameCfg.CallstackTrackerFieldId); }
+
+void SyncJiraBlameAuxFieldBufsFromCfg() {
+    CopyToBuffer(g_lastFoundClFieldBuf, g_blameCfg.LastFoundClTrackerFieldId);
+    CopyToBuffer(g_lastOccurrencesFieldBuf, g_blameCfg.LastOccurrencesTrackerFieldId);
+}
+
+static bool s_blameCfgDiskHydrated = false;
+static void HydrateBlameCfgDiskOnce() {
+    if (s_blameCfgDiskHydrated) {
+        return;
+    }
+    g_blameCfg = ConfigManager::LoadBlameAnalysis();
+    SyncCallstackTrackerFieldBufFromCfg();
+    SyncJiraBlameAuxFieldBufsFromCfg();
+    s_blameCfgDiskHydrated = true;
+}
 
 void MaybeAutoselectCallstackTrackerField(const AppController& app) {
     if (!g_blameCfg.CallstackTrackerFieldId.empty()) {
@@ -150,6 +178,105 @@ void MaybeAutoselectCallstackTrackerField(const AppController& app) {
         g_blameCfg.CallstackTrackerFieldId = it->Id;
         SyncCallstackTrackerFieldBufFromCfg();
         ConfigManager::SaveBlameAnalysis(g_blameCfg);
+    }
+}
+
+void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
+    if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
+        return;
+    }
+    const auto& fields = app.GetAvailableFields();
+    if (fields.empty()) {
+        return;
+    }
+    const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
+        const std::string n = ToLowerAsciiCopy(f.Name);
+        return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl";
+    });
+    if (it != fields.end()) {
+        g_blameCfg.LastFoundClTrackerFieldId = it->Id;
+        SyncJiraBlameAuxFieldBufsFromCfg();
+        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+    }
+}
+
+void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
+    if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+        return;
+    }
+    const auto& fields = app.GetAvailableFields();
+    if (fields.empty()) {
+        return;
+    }
+    const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
+        const std::string n = ToLowerAsciiCopy(f.Name);
+        return n == "last occurrences" || n == "last occurances" || n == "last occurences" || n == "last_occurrences";
+    });
+    if (it != fields.end()) {
+        g_blameCfg.LastOccurrencesTrackerFieldId = it->Id;
+        SyncJiraBlameAuxFieldBufsFromCfg();
+        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+    }
+}
+
+static std::string SanitizeChangelistDigitsFromField(const std::string& raw) {
+    const std::string v = TrimCopy(raw);
+    if (v.empty()) {
+        return std::string();
+    }
+    size_t end = v.size();
+    const size_t nl = v.find_first_of("\r\n");
+    if (nl != std::string::npos) {
+        end = nl;
+    }
+    std::string digits;
+    for (size_t i = 0; i < end; ++i) {
+        const char c = v[i];
+        if (c >= '0' && c <= '9') {
+            digits += c;
+        } else if (!digits.empty()) {
+            break;
+        }
+    }
+    return digits;
+}
+
+static std::string NormalizeJiraDateForBeforePicker(const std::string& raw) {
+    const std::string v = TrimCopy(raw);
+    if (v.empty()) {
+        return std::string();
+    }
+    ParsedJiraDateTime p;
+    if (TryParseJiraDateTime(v, p)) {
+        return FormatJiraDateOrDateTimeForApi(true, p);
+    }
+    return std::string();
+}
+
+void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std::string& issueKey) {
+    if (issueKey.empty()) {
+        g_beforeDateIso.clear();
+        return;
+    }
+    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    for (const auto& t : *ticketsSnap) {
+        if (t.id != issueKey) {
+            continue;
+        }
+        if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
+            const std::string cl = SanitizeChangelistDigitsFromField(t.GetFieldValue(g_blameCfg.LastFoundClTrackerFieldId));
+            CopyToBuffer(g_atClBuf, cl);
+        }
+        if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+            g_beforeDateIso = NormalizeJiraDateForBeforePicker(t.GetFieldValue(g_blameCfg.LastOccurrencesTrackerFieldId));
+        } else {
+            g_beforeDateIso.clear();
+        }
+        return;
+    }
+    g_beforeDateIso.clear();
+    if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
+        g_atClBuf[0] = '\0';
     }
 }
 
@@ -313,6 +440,55 @@ void StartWorker(std::vector<BlameRow> rows, BlameAnalysisConfig cfg, std::strin
     }
     g_worker.Running = true;
     g_worker.Thread = std::thread(WorkerThreadMain, n);
+}
+
+/** Same logic as the Process button (parse `g_callstackBuf`, start worker). Caller ensures worker idle. */
+static void RunBlameProcessFromBuffers() {
+    g_lastUiStatus.clear();
+    g_blameCfg.P4Executable = g_p4Exe;
+    g_blameCfg.P4VcExecutable = g_p4vcExe;
+    g_blameCfg.TimelapseCommandTemplate = g_timeTpl;
+    g_blameCfg.ChangeCommandTemplate = g_changeTpl;
+    g_blameCfg.AiChatUrl = g_aiUrl;
+    g_blameCfg.CallstackTrackerFieldId.assign(g_callstackTrackerFieldBuf);
+    g_blameCfg.LastFoundClTrackerFieldId.assign(g_lastFoundClFieldBuf);
+    g_blameCfg.LastOccurrencesTrackerFieldId.assign(g_lastOccurrencesFieldBuf);
+    g_blameCfg.PathRemaps.clear();
+    if (g_remapFrom[0] != '\0') {
+        g_blameCfg.PathRemaps.push_back({g_remapFrom, g_remapTo});
+    }
+    LogBlameP4PathsIfChanged("process");
+    std::vector<std::string> keywords = SplitIgnoreKeywords(std::string(g_ignoreBuf.data()));
+    if (keywords.empty()) {
+        keywords = g_blameCfg.DefaultIgnoreKeywords;
+    }
+    std::vector<ParsedCallstackFrame> parsed = ParseCallstackText(std::string(g_callstackBuf));
+    std::vector<BlameRow> rows;
+    for (auto& p : parsed) {
+        if (FrameMatchesIgnoreKeywords(p, keywords)) {
+            continue;
+        }
+        BlameRow br;
+        br.Parsed = std::move(p);
+        br.PathForP4 = ApplyPathRemaps(br.Parsed.FilePath, g_blameCfg.PathRemaps);
+        rows.push_back(std::move(br));
+        if (static_cast<int>(rows.size()) >= g_maxFramesVal) {
+            break;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_displayMutex);
+        g_displayRows.clear();
+        g_detailFuts.clear();
+        g_detailPhase.clear();
+        g_detailData.clear();
+        g_detailScrolled.clear();
+    }
+    if (rows.empty()) {
+        g_lastUiStatus = "No stack frames parsed (check format and ignore list).";
+    } else {
+        StartWorker(std::move(rows), g_blameCfg, std::string(g_atClBuf));
+    }
 }
 
 #ifdef _WIN32
@@ -824,9 +1000,14 @@ void CloseBlameModal(bool* pOpen) {
     }
     g_clHoverFut = std::shared_future<P4ChangelistDetails>();
     std::memset(g_callstackBuf, 0, sizeof(g_callstackBuf));
+    g_beforeDateIso.clear();
+    g_atClBuf[0] = '\0';
     g_lastUiStatus.clear();
     g_pendingSelectEntryIndex = -1;
     s_lastCallstackIssueKey.clear();
+    g_blameStreamlinedFromGrid = false;
+    g_blamePendingAutoProcess = false;
+    g_showRaw = false;
     *pOpen = false;
 }
 
@@ -903,6 +1084,22 @@ std::string BuildCallstackRowTsv(const BlameRow& row, size_t displayIndex) {
     return o.str();
 }
 
+static std::string SanitizeTsvCell(std::string s) {
+    for (char& c : s) {
+        if (c == '\t' || c == '\r' || c == '\n') {
+            c = ' ';
+        }
+    }
+    return s;
+}
+
+static std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln) {
+    std::ostringstream o;
+    o << ln.SourceLine << '\t' << SanitizeTsvCell(ln.Changelist) << '\t' << SanitizeTsvCell(ln.User) << '\t'
+      << SanitizeTsvCell(ln.Date) << '\t' << SanitizeTsvCell(ln.Code);
+    return o.str();
+}
+
 void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, const BlameUiThemeColors& theme) {
     if (cl.empty()) {
         return;
@@ -915,14 +1112,14 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
                        }).share();
     }
     ImGui::BeginTooltip();
-    ImGui::TextDisabled("Click to open this changelist in p4vc.");
+    ImGui::TextDisabled("Left-click this changelist cell to open it in p4vc.");
     ImGui::Separator();
     const float wrapX = ImGui::GetCursorPosX() + 600.f;
     ImGui::PushTextWrapPos(wrapX);
     if (!g_clHoverFut.valid()) {
-        ImGui::TextUnformatted("Loading CL info…");
+        ImGui::TextUnformatted("Loading CL info...");
     } else if (g_clHoverFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-        ImGui::TextUnformatted("Loading CL info…");
+        ImGui::TextUnformatted("Loading CL info...");
     } else {
         try {
             const P4ChangelistDetails d = g_clHoverFut.get();
@@ -947,10 +1144,10 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
             }
         } catch (const std::exception& ex) {
             LOG_WARN("Blame tooltip: changelist detail future exception: %s", ex.what());
-            ImGui::TextUnformatted("Loading CL info…");
+            ImGui::TextUnformatted("Loading CL info...");
         } catch (...) {
             LOG_WARN("Blame tooltip: changelist detail future unknown exception");
-            ImGui::TextUnformatted("Loading CL info…");
+            ImGui::TextUnformatted("Loading CL info...");
         }
     }
     ImGui::PopTextWrapPos();
@@ -975,8 +1172,9 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
     ImGui::InputText("AI chat URL (optional)", g_aiUrl, sizeof(g_aiUrl));
     ImGui::Separator();
     ImGui::TextUnformatted("Callstack from Jira");
-    ImGui::TextDisabled("When set, the callstack text is filled from this field on the selected issue when you open "
-                        "Blame Analysis or change the selection.");
+    ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when you "
+                        "open Blame Analysis, when the selected issue changes, or when you open Blame Analysis for an "
+                        "issue from the grid.");
     {
         std::string comboPreview = "(none)";
         if (!g_blameCfg.CallstackTrackerFieldId.empty()) {
@@ -992,7 +1190,9 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
         PopBlameLinkButtonColors();
         if (!TrackerFieldComboOpen) {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("Choose which Jira field fills the callstack when you open Blame Analysis.");
+                ImGui::SetTooltip(
+                    "Choose which Jira field supplies callstack text for the selected issue whenever Blame Analysis "
+                    "is shown or the selection changes (including opening blame from the grid).");
             }
         } else {
             PushBlameLinkTextOnly(theme);
@@ -1010,13 +1210,15 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
                 // Stable ## id: display string can duplicate or change when Jira renames fields; never key off it alone.
                 const std::string lblWithId = lbl + "##callstack_field_" + f.Id;
                 PushBlameLinkTextOnly(theme);
-                if (ImGui::Selectable(lblWithId.c_str(), sel)) {
+                if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
                     g_blameCfg.CallstackTrackerFieldId = f.Id;
                     SyncCallstackTrackerFieldBufFromCfg();
                 }
                 PopBlameLinkTextOnly();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("Use this Jira field as the callstack source for the selected issue.");
+                    ImGui::SetTooltip(
+                        "Use this Jira field as the callstack source for whichever issue is selected while Blame "
+                        "Analysis is open.");
                 }
             }
             ImGui::EndCombo();
@@ -1024,6 +1226,94 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
     }
     ImGui::InputText("Callstack field id (optional)", g_callstackTrackerFieldBuf, sizeof(g_callstackTrackerFieldBuf));
     ImGui::TextDisabled("Override or set manually (e.g. customfield_10000). Saved with Save settings.");
+    ImGui::Separator();
+    ImGui::TextUnformatted("Before changelist (Jira)");
+    ImGui::TextDisabled("When set, opening Blame on an issue fills \"Before changelist\" from this field (digits "
+                        "only). Autoselect matches a field named \"Last Found CL\".");
+    {
+        std::string comboPreview = "(none)";
+        if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
+            const TrackerField* mf = app.FindFieldById(g_blameCfg.LastFoundClTrackerFieldId);
+            if (mf && !mf->Name.empty()) {
+                comboPreview = mf->Name + " (" + mf->Id + ")";
+            } else {
+                comboPreview = g_blameCfg.LastFoundClTrackerFieldId;
+            }
+        }
+        PushBlameLinkButtonColors(theme);
+        const bool clComboOpen = ImGui::BeginCombo("Jira field##lastfoundcl", comboPreview.c_str());
+        PopBlameLinkButtonColors();
+        if (!clComboOpen) {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("Jira field whose value pre-fills Before changelist when blame opens on an issue.");
+            }
+        } else {
+            PushBlameLinkTextOnly(theme);
+            if (ImGui::Selectable("(none)", g_blameCfg.LastFoundClTrackerFieldId.empty())) {
+                g_blameCfg.LastFoundClTrackerFieldId.clear();
+                SyncJiraBlameAuxFieldBufsFromCfg();
+            }
+            PopBlameLinkTextOnly();
+            for (const auto& f : app.GetAvailableFields()) {
+                const bool sel = (f.Id == g_blameCfg.LastFoundClTrackerFieldId);
+                const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
+                const std::string lblWithId = lbl + "##lastfoundcl_field_" + f.Id;
+                PushBlameLinkTextOnly(theme);
+                if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
+                    g_blameCfg.LastFoundClTrackerFieldId = f.Id;
+                    SyncJiraBlameAuxFieldBufsFromCfg();
+                }
+                PopBlameLinkTextOnly();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::InputText("Last Found CL field id (optional)", g_lastFoundClFieldBuf, sizeof(g_lastFoundClFieldBuf));
+    ImGui::TextUnformatted("Last occurrences date (Jira)");
+    ImGui::TextDisabled("When set, opening Blame on an issue pre-fills the \"or day\" date from this field (ISO or "
+                        "parseable date). Otherwise the date stays empty. Autoselect matches \"Last Occurrences\" or "
+                        "\"Last Occurances\".");
+    {
+        std::string comboPreview = "(none)";
+        if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+            const TrackerField* mf = app.FindFieldById(g_blameCfg.LastOccurrencesTrackerFieldId);
+            if (mf && !mf->Name.empty()) {
+                comboPreview = mf->Name + " (" + mf->Id + ")";
+            } else {
+                comboPreview = g_blameCfg.LastOccurrencesTrackerFieldId;
+            }
+        }
+        PushBlameLinkButtonColors(theme);
+        const bool occComboOpen = ImGui::BeginCombo("Jira field##lastoccurrences", comboPreview.c_str());
+        PopBlameLinkButtonColors();
+        if (!occComboOpen) {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("Jira date field used to seed the Before-changelist day picker when blame opens.");
+            }
+        } else {
+            PushBlameLinkTextOnly(theme);
+            if (ImGui::Selectable("(none)", g_blameCfg.LastOccurrencesTrackerFieldId.empty())) {
+                g_blameCfg.LastOccurrencesTrackerFieldId.clear();
+                SyncJiraBlameAuxFieldBufsFromCfg();
+            }
+            PopBlameLinkTextOnly();
+            for (const auto& f : app.GetAvailableFields()) {
+                const bool sel = (f.Id == g_blameCfg.LastOccurrencesTrackerFieldId);
+                const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
+                const std::string lblWithId = lbl + "##lastocc_field_" + f.Id;
+                PushBlameLinkTextOnly(theme);
+                if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
+                    g_blameCfg.LastOccurrencesTrackerFieldId = f.Id;
+                    SyncJiraBlameAuxFieldBufsFromCfg();
+                }
+                PopBlameLinkTextOnly();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::InputText("Last occurrences field id (optional)", g_lastOccurrencesFieldBuf,
+                     sizeof(g_lastOccurrencesFieldBuf));
+    ImGui::TextDisabled("Saved with Save settings.");
     ImGui::InputText("Path remap from", g_remapFrom, sizeof(g_remapFrom));
     ImGui::InputText("Path remap to", g_remapTo, sizeof(g_remapTo));
     PushBlameLinkButtonColors(theme);
@@ -1035,6 +1325,8 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
         g_blameCfg.AiChatUrl = g_aiUrl;
         g_blameCfg.DefaultMaxFrames = g_maxFramesVal;
         g_blameCfg.CallstackTrackerFieldId.assign(g_callstackTrackerFieldBuf);
+        g_blameCfg.LastFoundClTrackerFieldId.assign(g_lastFoundClFieldBuf);
+        g_blameCfg.LastOccurrencesTrackerFieldId.assign(g_lastOccurrencesFieldBuf);
         g_blameCfg.PathRemaps.clear();
         if (g_remapFrom[0] != '\0') {
             g_blameCfg.PathRemaps.push_back({g_remapFrom, g_remapTo});
@@ -1042,6 +1334,7 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
         g_blameCfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(g_ignoreBuf.data()));
         ConfigManager::SaveBlameAnalysis(g_blameCfg);
         SyncCallstackTrackerFieldBufFromCfg();
+        SyncJiraBlameAuxFieldBufsFromCfg();
         LogBlameP4PathsIfChanged("save_settings");
         g_lastUiStatus = "Blame settings saved.";
     }
@@ -1083,6 +1376,7 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             CopyToBuffer(g_remapTo, g_blameCfg.PathRemaps[0].ToPrefix);
         }
         SyncCallstackTrackerFieldBufFromCfg();
+        SyncJiraBlameAuxFieldBufsFromCfg();
         LogBlameP4PathsIfChanged("reload_settings");
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -1109,7 +1403,7 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
     if (cfgLoaded_) {
         return;
     }
-    g_blameCfg = ConfigManager::LoadBlameAnalysis();
+    HydrateBlameCfgDiskOnce();
     g_maxFramesVal = g_blameCfg.DefaultMaxFrames;
     CopyToBuffer(g_p4Exe, g_blameCfg.P4Executable);
     CopyToBuffer(g_p4vcExe, g_blameCfg.P4VcExecutable);
@@ -1142,6 +1436,7 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
         CopyToBuffer(g_remapTo, g_blameCfg.PathRemaps[0].ToPrefix);
     }
     SyncCallstackTrackerFieldBufFromCfg();
+    SyncJiraBlameAuxFieldBufsFromCfg();
     LogBlameP4PathsIfChanged("initial_load");
     cfgLoaded_ = true;
 }
@@ -1149,6 +1444,8 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
 void BlameAnalysisUi::DrawBlamePreferencesTab(const AppController& app) {
     ensureSettingsBuffersLoaded();
     MaybeAutoselectCallstackTrackerField(app);
+    MaybeAutoselectLastFoundClTrackerField(app);
+    MaybeAutoselectLastOccurrencesTrackerField(app);
     ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Blame Analysis (stored in "
                        "smatchet_config.json).");
     ImGui::Spacing();
@@ -1168,12 +1465,20 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     ensureSettingsBuffersLoaded();
 
     MaybeAutoselectCallstackTrackerField(app);
+    MaybeAutoselectLastFoundClTrackerField(app);
+    MaybeAutoselectLastOccurrencesTrackerField(app);
 
     const bool justOpened = !blameOpenPrev_;
     blameOpenPrev_ = true;
     if (justOpened || selectedJiraIssueKey != s_lastCallstackIssueKey) {
         s_lastCallstackIssueKey = selectedJiraIssueKey;
         TryFillCallstackFromJira(app, selectedJiraIssueKey);
+        TryFillBeforeChangelistAndDateFromJira(app, selectedJiraIssueKey);
+    }
+
+    if (g_blamePendingAutoProcess && !g_worker.Running.load()) {
+        RunBlameProcessFromBuffers();
+        g_blamePendingAutoProcess = false;
     }
 
     const BlameUiThemeColors& theme = g_blameCfg.UiColors;
@@ -1295,131 +1600,181 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     if (ImGui::BeginTabBar("blame_main_tabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Callstack")) {
+            const bool streamlinedHide = g_blameStreamlinedFromGrid && !g_showRaw;
+
             ImGui::Text("Callstack Frames: %zu", nrow);
-            ImGui::SameLine();
-            PushBlameLinkButtonColors(theme);
-            if (g_showRaw) {
-                if (ImGui::Button("Show Table")) {
-                    g_showRaw = false;
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("Switch back to the callstack table view.");
-                }
-            } else {
-                if (ImGui::Button("Show Raw Text")) {
-                    g_showRaw = true;
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("Show the raw pasted callstack text in a scrollable field.");
-                }
-            }
-            PopBlameLinkButtonColors();
-            if (!g_showRaw && nrow > 0) {
-                ImGui::TextDisabled("Click row to copy, double-click in the # to jump to entry");
-            }
-
-            ImGui::Spacing();
-            ImGui::TextDisabled(
-                "Max frames, ignore list, P4 tools, and Jira callstack source: Settings → Preferences → Blame "
-                "Analysis.");
-            ImGui::InputText("At changelist (optional)", g_atClBuf, sizeof(g_atClBuf));
-
-            PushBlameLinkButtonColors(theme);
-            if (ImGui::Button("Process") && !busy) {
-                g_lastUiStatus.clear();
-                g_blameCfg.P4Executable = g_p4Exe;
-                g_blameCfg.P4VcExecutable = g_p4vcExe;
-                g_blameCfg.TimelapseCommandTemplate = g_timeTpl;
-                g_blameCfg.ChangeCommandTemplate = g_changeTpl;
-                g_blameCfg.AiChatUrl = g_aiUrl;
-                g_blameCfg.CallstackTrackerFieldId.assign(g_callstackTrackerFieldBuf);
-                g_blameCfg.PathRemaps.clear();
-                if (g_remapFrom[0] != '\0') {
-                    g_blameCfg.PathRemaps.push_back({g_remapFrom, g_remapTo});
-                }
-                LogBlameP4PathsIfChanged("process");
-                std::vector<std::string> keywords = SplitIgnoreKeywords(std::string(g_ignoreBuf.data()));
-                if (keywords.empty()) {
-                    keywords = g_blameCfg.DefaultIgnoreKeywords;
-                }
-                std::vector<ParsedCallstackFrame> parsed = ParseCallstackText(std::string(g_callstackBuf));
-                std::vector<BlameRow> rows;
-                for (auto& p : parsed) {
-                    if (FrameMatchesIgnoreKeywords(p, keywords)) {
-                        continue;
+            {
+                const ImGuiStyle& stBtn = ImGui::GetStyle();
+                const float padH = stBtn.FramePadding.x * 2.f;
+                const float callstackViewBtnW =
+                    (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
+                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
+                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
+                if (!streamlinedHide) {
+                    ImGui::SameLine();
+                    PushBlameLinkButtonColors(theme);
+                    if (g_showRaw) {
+                        if (ImGui::Button("Show Table", ImVec2(callstackViewBtnW, 0.f))) {
+                            g_showRaw = false;
+                        }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                            ImGui::SetTooltip(
+                                "Return to the callstack table. The multiline field above the table becomes "
+                                "editable again (when this tab shows it).");
+                        }
+                    } else {
+                        if (ImGui::Button("Show Raw Text", ImVec2(callstackViewBtnW, 0.f))) {
+                            g_showRaw = true;
+                        }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                            ImGui::SetTooltip(
+                                "Show the callstack text in a wide, horizontally scrollable box (read-only in this "
+                                "view). Use Show Table to edit the buffer in the smaller field.");
+                        }
                     }
-                    BlameRow br;
-                    br.Parsed = std::move(p);
-                    br.PathForP4 = ApplyPathRemaps(br.Parsed.FilePath, g_blameCfg.PathRemaps);
-                    rows.push_back(std::move(br));
-                    if (static_cast<int>(rows.size()) >= g_maxFramesVal) {
-                        break;
-                    }
-                }
-                {
-                    std::lock_guard<std::mutex> lk(g_displayMutex);
-                    g_displayRows.clear();
-                    g_detailFuts.clear();
-                    g_detailPhase.clear();
-                    g_detailData.clear();
-                    g_detailScrolled.clear();
-                }
-                if (rows.empty()) {
-                    g_lastUiStatus = "No stack frames parsed (check format and ignore list).";
+                    PopBlameLinkButtonColors();
                 } else {
-                    StartWorker(std::move(rows), g_blameCfg, std::string(g_atClBuf));
+                    ImGui::SameLine();
+                    PushBlameLinkButtonColors(theme);
+                    if (ImGui::Button("Show raw callstack…", ImVec2(callstackViewBtnW, 0.f))) {
+                        g_showRaw = true;
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        ImGui::SetTooltip(
+                            "Reveal the callstack text, raw/table toggle, before changelist, and Process controls "
+                            "(compact layout is used when blame is opened from the grid until you click this).");
+                    }
+                    PopBlameLinkButtonColors();
                 }
             }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !busy) {
-                ImGui::SetTooltip(
-                    "Parse the callstack and fetch Perforce blame for each frame (uses fields from Preferences → "
-                    "Blame Analysis and the callstack text above).");
+
+            if (!g_showRaw && nrow > 0) {
+                ImGui::TextDisabled(
+                    "Table: left-click the # column to open that frame in an Entry tab; right-click # for a menu "
+                    "(Copy as TSV).");
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel") && busy) {
-                g_worker.Cancel = true;
+
+            if (!streamlinedHide) {
+                ImGui::Spacing();
+                ImGui::TextDisabled(
+                    "Max frames, ignore list, P4 tools, and Jira callstack source: Settings → Preferences → Blame "
+                    "Analysis.");
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Before changelist");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip(
+                        "Optional: run annotate and blame as of this Perforce changelist (each path is passed as "
+                        "`depot/path@CL`).\n\n"
+                        "Digits only; leave empty for the current head on each path.\n\n"
+                        "The date control on the right resolves a calendar day to the first submitted changelist on "
+                        "that day (using `p4 changes -r -m 1 -s submitted` on a server-wide `//...@start,end` range) "
+                        "and copies the result into this field.");
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100.f);
+                ImGui::InputText("##before_cl_optional", g_atClBuf, sizeof(g_atClBuf));
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("Perforce changelist number only (decimal digits).");
+                }
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("or day");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip(
+                        "Pick a calendar day, then confirm in the calendar popup. The first submitted changelist "
+                        "on that day (server date window) is written into the field on the left.");
+                }
+                ImGui::SameLine();
+                if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##blame_before_day", g_beforeDateIso, false,
+                                                                         228.f)) {
+                    ParsedJiraDateTime parsed;
+                    if (TryParseJiraDateTime(g_beforeDateIso, parsed)) {
+                        std::string cl;
+                        std::string err;
+                        if (P4FirstSubmittedChangelistOnCalendarDay(g_blameCfg, parsed.Year, parsed.Month, parsed.Day,
+                                                                    cl, err)) {
+                            std::snprintf(g_atClBuf, sizeof(g_atClBuf), "%s", cl.c_str());
+                            g_lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
+                        } else {
+                            g_lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
+                        }
+                    } else {
+                        g_lastUiStatus = "Invalid date from picker.";
+                    }
+                }
+
+                PushBlameLinkButtonColors(theme);
+                if (ImGui::Button("Process") && !busy) {
+                    RunBlameProcessFromBuffers();
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !busy) {
+                    ImGui::SetTooltip(
+                        "Parse the callstack buffer and fetch Perforce blame for each frame (options under "
+                        "Preferences → Blame Analysis). If you opened blame from the grid with a callstack field, "
+                        "this usually runs once automatically after the buffer fills.");
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel") && busy) {
+                    g_worker.Cancel = true;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && busy) {
+                    ImGui::SetTooltip("Stop the in-progress blame worker.");
+                }
+                PopBlameLinkButtonColors();
+            } else if (busy) {
+                PushBlameLinkButtonColors(theme);
+                if (ImGui::Button("Cancel") && busy) {
+                    g_worker.Cancel = true;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("Stop the in-progress blame worker.");
+                }
+                PopBlameLinkButtonColors();
             }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && busy) {
-                ImGui::SetTooltip("Stop the in-progress blame worker.");
-            }
-            PopBlameLinkButtonColors();
 
             float rawFieldW = -1.f;
             float rawMaxLineW = 0.f;
-            if (g_showRaw) {
-                for (const char* p = g_callstackBuf; *p != '\0';) {
-                    const char* nl = std::strchr(p, '\n');
-                    const char* end = nl ? nl : p + std::strlen(p);
-                    const ImVec2 sz = ImGui::CalcTextSize(p, end);
-                    rawMaxLineW = std::max(rawMaxLineW, sz.x);
-                    if (!nl) {
-                        break;
+            if (!streamlinedHide) {
+                if (g_showRaw) {
+                    for (const char* p = g_callstackBuf; *p != '\0';) {
+                        const char* nl = std::strchr(p, '\n');
+                        const char* end = nl ? nl : p + std::strlen(p);
+                        const ImVec2 sz = ImGui::CalcTextSize(p, end);
+                        rawMaxLineW = std::max(rawMaxLineW, sz.x);
+                        if (!nl) {
+                            break;
+                        }
+                        p = nl + 1;
                     }
-                    p = nl + 1;
+                    const float cap = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x * 2.f;
+                    rawFieldW = std::min(std::max(rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f, 120.f), cap);
                 }
-                const float cap = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x * 2.f;
-                rawFieldW = std::min(std::max(rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f, 120.f), cap);
-            }
 
-            if (g_showRaw) {
-                ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
-                                  ImGuiWindowFlags_HorizontalScrollbar);
-                const ImVec2 inner = ImGui::GetContentRegionAvail();
-                const float inputW = std::max(inner.x, rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f + 8.f);
-                ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
-                                          ImVec2(inputW, inner.y), ImGuiInputTextFlags_ReadOnly);
-                ImGui::EndChild();
-            } else {
-                ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
-                                          ImVec2(-1.f, 120.f), 0);
+                if (g_showRaw) {
+                    ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
+                                      ImGuiWindowFlags_HorizontalScrollbar);
+                    const ImVec2 inner = ImGui::GetContentRegionAvail();
+                    const float inputW = std::max(inner.x, rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f + 8.f);
+                    ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
+                                              ImVec2(inputW, inner.y), ImGuiInputTextFlags_ReadOnly);
+                    ImGui::EndChild();
+                } else {
+                    ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
+                                              ImVec2(-1.f, 120.f), 0);
+                }
             }
 
             if (!g_showRaw && nrow > 0) {
+                // Keep Process / callstack editor above a dedicated scroll region. A tall in-table
+                // ScrollY made the whole tab body exceed the viewport so the window scroll bar hid
+                // the controls at the top (Process looked "missing").
+                const float tblScrollH = std::max(ImGui::GetContentRegionAvail().y - 4.f, 80.f);
+                ImGui::BeginChild("##blame_callstack_tbl_scroll", ImVec2(0.f, tblScrollH), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_None);
                 const float locColW = 250.f;
                 if (ImGui::BeginTable("blame_tbl", 6,
-                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                          ImGuiTableFlags_ScrollY,
-                                      ImVec2(0, ImGui::GetContentRegionAvail().y - 8.f))) {
+                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable,
+                                      ImVec2(-1.f, 0.f))) {
                     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.f, 0);
                     ImGui::TableSetupColumn("Function", ImGuiTableColumnFlags_WidthStretch, 0.f, 1);
                     ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthFixed, locColW, 2);
@@ -1439,21 +1794,27 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                         char idxBuf[16];
                         std::snprintf(idxBuf, sizeof(idxBuf), "%u", static_cast<unsigned>(i + 1));
                         PushBlameLinkTextOnly(theme);
-                        ImGui::Selectable(idxBuf, false,
-                                          ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap |
-                                              ImGuiSelectableFlags_AllowDoubleClick,
-                                          ImVec2(0.f, rowH));
+                        ImGui::SelectableRaw(idxBuf, false,
+                                              ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
+                                              ImVec2(0.f, rowH));
                         PopBlameLinkTextOnly();
-                        if (ImGui::IsItemClicked()) {
-                            ImGui::SetClipboardText(BuildCallstackRowTsv(row, i).c_str());
-                        }
-                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                            ImGui::SetTooltip("Click: copy this row as tab-separated values.\n"
-                                              "Double-click: open the Entry tab for this frame.");
-                        }
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                             g_pendingSelectEntryIndex = static_cast<int>(i);
                             EnsureDetailLoading(i, g_blameCfg, std::string(g_atClBuf));
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                            ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+                            ImGui::OpenPopup("blame_cs_row_copy");
+                        }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                            ImGui::SetTooltip("Left-click: open the Entry tab for this frame and load its annotation.\n"
+                                              "Right-click: menu with Copy (this row as TSV).");
+                        }
+                        if (ImGui::BeginPopup("blame_cs_row_copy")) {
+                            if (ImGui::MenuItem("Copy")) {
+                                ImGui::SetClipboardText(BuildCallstackRowTsv(row, i).c_str());
+                            }
+                            ImGui::EndPopup();
                         }
 
                         ImGui::TableSetColumnIndex(1);
@@ -1463,8 +1824,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             const float colAvail = ImGui::GetContentRegionAvail().x;
                             const float lineH = ImGui::GetTextLineHeight();
                             PushBlameLinkTextOnly(theme);
-                            if (ImGui::Selectable(fn, false, ImGuiSelectableFlags_AllowOverlap,
-                                                  ImVec2(colAvail, lineH))) {
+                            if (ImGui::SelectableRaw(fn, false, ImGuiSelectableFlags_AllowOverlap,
+                                                   ImVec2(colAvail, lineH))) {
                                 /* click handled below */
                             }
                             PopBlameLinkTextOnly();
@@ -1472,7 +1833,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                 ImGui::SetClipboardText(fn);
                             }
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                ImGui::SetTooltip("Click to copy the function name to the clipboard.\n\n%s", fn);
+                                ImGui::SetTooltip("Left-click: copy the function name to the clipboard.\n\n%s", fn);
                             }
                         }
 
@@ -1485,13 +1846,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                 ShortenPathForDisplay(row.PathForP4, std::max(32.f, locCellW - 40.f));
                             const std::string shortLoc = shortPath + ":" + std::to_string(row.Parsed.LineNumber);
                             PushBlameLinkTextOnly(theme);
-                            if (ImGui::Selectable(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
+                            if (ImGui::SelectableRaw(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
                                 LaunchP4VcLike(g_blameCfg, g_timeTpl, g_changeTpl, true, row.PathForP4,
                                                row.Parsed.LineNumber, row.Blame.Changelist);
                             }
                             PopBlameLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                ImGui::SetTooltip("Click to open p4vc timelapse for this file and line.\n\n%s",
+                                ImGui::SetTooltip("Left-click: open p4vc timelapse for this file and line.\n\n%s",
                                                   fullLoc.c_str());
                             }
                         }
@@ -1509,7 +1870,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             } else {
                                 PushBlameLinkTextOnly(theme);
                             }
-                            ImGui::Selectable(userDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw(userDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
                             if (pending || row.Blame.User.empty() || row.Blame.User == "-") {
                                 ImGui::PopStyleColor();
                             } else {
@@ -1520,7 +1881,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                     ImGui::SetTooltip("Waiting for blame results for this row.");
                                 } else if (userActionable) {
                                     ImGui::SetTooltip("Left-click: look up this Perforce user in Jira.\n"
-                                                      "Right-click: assign flow / context menu.\n%s",
+                                                      "Right-click: open the assign dialog for this row.\n%s",
                                                       row.Blame.Approximate
                                                           ? "\nApproximate blame (line may not match exact CL)."
                                                           : "");
@@ -1549,7 +1910,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             } else {
                                 PushBlameLinkTextOnly(theme);
                             }
-                            ImGui::Selectable(clDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw(clDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
                             if (pending || row.Blame.Changelist.empty()) {
                                 ImGui::PopStyleColor();
                             } else {
@@ -1589,6 +1950,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     }
                     ImGui::EndTable();
                 }
+                ImGui::EndChild();
             }
 
             ImGui::EndTabItem();
@@ -1615,7 +1977,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     phase = g_detailPhase[ti];
                 }
                 if (phase == 1) {
-                    ImGui::TextUnformatted("Loading annotated file…");
+                    ImGui::TextUnformatted("Loading annotated file...");
                 } else if (ti < g_detailData.size() && !g_detailData[ti].Error.empty()) {
                     ImGui::TextColored(ThCol(theme.StatusError), "%s", g_detailData[ti].Error.c_str());
                 } else if (ti < g_detailData.size() &&
@@ -1633,8 +1995,23 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     const int targetLine = row.Parsed.LineNumber;
                     const std::vector<P4AnnotatedLine>& lines = g_detailData[ti].Lines;
                     const ImU32 hlU32 = ImGui::ColorConvertFloat4ToU32(ThCol(theme.FindHighlight));
-                    for (const auto& ln : lines) {
-                        ImGui::PushID(ln.SourceLine);
+                    const float annRowHitH = ImGui::GetTextLineHeightWithSpacing();
+                    auto annRowOpenCopyMenu = []() {
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                            ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+                            ImGui::OpenPopup("blame_ann_row_copy");
+                        }
+                    };
+                    auto annRowHoverTip = []() {
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                            ImGui::SetTooltip(
+                                "Right-click any cell in this row for a menu: Copy (full line as TSV). Assign... "
+                                "appears only when the Perforce user can be used for assign (not '-' or '...').");
+                        }
+                    };
+                    for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+                        const P4AnnotatedLine& ln = lines[lineIdx];
+                        ImGui::PushID(static_cast<int>(lineIdx));
                         ImGui::TableNextRow();
                         const bool hl = (ln.SourceLine == targetLine);
                         if (hl) {
@@ -1642,29 +2019,50 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                         }
 
                         ImGui::TableSetColumnIndex(0);
-                        if (hl) {
-                            ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.StatusWarning));
-                            ImGui::TextUnformatted(">>>");
-                            ImGui::PopStyleColor();
-                        } else {
-                            ImGui::TextUnformatted(" ");
+                        {
+                            const float markW = ImGui::GetContentRegionAvail().x;
+                            if (hl) {
+                                ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.StatusWarning));
+                            }
+                            PushBlameLinkTextOnly(theme);
+                            ImGui::SelectableRaw(hl ? ">>>" : " ", false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2((std::max)(markW, 1.f), annRowHitH));
+                            PopBlameLinkTextOnly();
+                            if (hl) {
+                                ImGui::PopStyleColor();
+                            }
+                            annRowOpenCopyMenu();
+                            annRowHoverTip();
                         }
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%d", ln.SourceLine);
+                        {
+                            char lineBuf[32];
+                            std::snprintf(lineBuf, sizeof(lineBuf), "%d", ln.SourceLine);
+                            const float lineColW = ImGui::GetContentRegionAvail().x;
+                            PushBlameLinkTextOnly(theme);
+                            ImGui::SelectableRaw(lineBuf, false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2((std::max)(lineColW, 1.f), annRowHitH));
+                            PopBlameLinkTextOnly();
+                            annRowOpenCopyMenu();
+                            annRowHoverTip();
+                        }
 
                         ImGui::TableSetColumnIndex(2);
                         ImGui::SetNextItemAllowOverlap();
+                        const float clCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.Changelist.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::Selectable("-", false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2(clCellW, annRowHitH));
                             ImGui::PopStyleColor();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                ImGui::SetTooltip("No changelist on this line.");
+                                ImGui::SetTooltip("No changelist on this line. Right-click for row menu (Copy).");
                             }
                         } else {
                             PushBlameLinkTextOnly(theme);
-                            if (ImGui::Selectable(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
+                            if (ImGui::SelectableRaw(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
+                                                     ImVec2(clCellW, annRowHitH))) {
                                 LaunchP4VcLike(g_blameCfg, g_timeTpl, g_changeTpl, false, row.PathForP4, ln.SourceLine,
                                                ln.Changelist);
                             }
@@ -1673,15 +2071,18 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                 DrawClTooltipAsync(ln.Changelist, g_blameCfg, theme);
                             }
                         }
+                        annRowOpenCopyMenu();
 
                         ImGui::TableSetColumnIndex(3);
                         ImGui::SetNextItemAllowOverlap();
+                        const float userCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.User.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::Selectable("-", false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2(userCellW, annRowHitH));
                             ImGui::PopStyleColor();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                std::string tip = "No Perforce user on this line.";
+                                std::string tip = "No Perforce user on this line. Right-click for row menu (Copy).";
                                 if (hl && row.Blame.Approximate) {
                                     tip += "\n\nApproximate row: unable to find exact CL and user.";
                                 }
@@ -1689,43 +2090,72 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             }
                         } else {
                             PushBlameLinkTextOnly(theme);
-                            ImGui::Selectable(ln.User.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw(ln.User.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2(userCellW, annRowHitH));
                             PopBlameLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 std::string tip = "Left-click: look up this Perforce user in Jira.\n"
-                                                  "Right-click: assign flow / context menu.";
+                                                  "Right-click: row menu - Copy (full line as TSV); Assign... when the "
+                                                  "user is eligible (not '-' or '...').";
                                 if (hl && row.Blame.Approximate) {
                                     tip += "\n\nApproximate row: unable to find exact CL and user.";
                                 }
                                 ImGui::SetTooltip("%s", tip.c_str());
                             }
-                            if (ImGui::IsItemClicked()) {
+                            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                                 OpenTrackerUserProfileForP4User(app, ln.User);
                             }
                         }
-                        if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
-                            BlameRow br = row;
-                            br.Blame.User = ln.User;
-                            br.Blame.Changelist = ln.Changelist;
-                            br.Parsed.LineNumber = ln.SourceLine;
-                            br.Blame.LineSnippet = ln.Code;
-                            br.Blame.Date = ln.Date;
-                            br.Blame.Approximate = false;
-                            PrepareAssignModal(app, br, ln.User);
-                            ImGui::OpenPopup("blame_assign");
-                        }
+                        annRowOpenCopyMenu();
 
                         ImGui::TableSetColumnIndex(4);
+                        const float dateCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.Date.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::TextUnformatted("-");
+                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2(dateCellW, annRowHitH));
                             ImGui::PopStyleColor();
                         } else {
-                            ImGui::TextUnformatted(NormalizeDateDisplay(ln.Date).c_str());
+                            const std::string dd = NormalizeDateDisplay(ln.Date);
+                            ImGui::SelectableRaw(dd.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
+                                                  ImVec2(dateCellW, annRowHitH));
                         }
+                        annRowOpenCopyMenu();
+                        annRowHoverTip();
 
                         ImGui::TableSetColumnIndex(5);
-                        BlameDrawColoredCppLine(ln.Code.c_str(), theme);
+                        {
+                            const float codeColW = ImGui::GetContentRegionAvail().x;
+                            const ImVec2 codeCell0 = ImGui::GetCursorScreenPos();
+                            BlameDrawColoredCppLine(ln.Code.c_str(), theme);
+                            ImGui::SetCursorScreenPos(codeCell0);
+                            ImGui::SelectableRaw("##ann_code_rmb", false, ImGuiSelectableFlags_AllowOverlap,
+                                                 ImVec2((std::max)(codeColW, 1.f), annRowHitH));
+                            annRowOpenCopyMenu();
+                            annRowHoverTip();
+                        }
+
+                        if (ImGui::BeginPopup("blame_ann_row_copy")) {
+                            if (ImGui::MenuItem("Copy")) {
+                                ImGui::SetClipboardText(BuildAnnotatedRowTsv(ln).c_str());
+                            }
+                            const bool canAssign = !ln.User.empty() && ln.User != "-" && ln.User != "...";
+                            if (canAssign) {
+                                if (ImGui::MenuItem("Assign...")) {
+                                    BlameRow br = row;
+                                    br.Blame.User = ln.User;
+                                    br.Blame.Changelist = ln.Changelist;
+                                    br.Parsed.LineNumber = ln.SourceLine;
+                                    br.Blame.LineSnippet = ln.Code;
+                                    br.Blame.Date = ln.Date;
+                                    br.Blame.Approximate = false;
+                                    PrepareAssignModal(app, br, ln.User);
+                                    ImGui::CloseCurrentPopup();
+                                    ImGui::OpenPopup("blame_assign");
+                                }
+                            }
+                            ImGui::EndPopup();
+                        }
 
                         if (hl && ti < g_detailScrolled.size() && !g_detailScrolled[ti]) {
                             ImGui::SetScrollHereY(0.5f);
@@ -1795,8 +2225,10 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             ImGui::EndDisabled();
             PopBlameLinkTextOnly();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("Set the issue assignee to the Jira user matched from this blame line.\n"
-                                  "Requires a matching Jira account; otherwise an error is shown.");
+                ImGui::SetTooltip(
+                    "Set the Jira assignee on the selected issue to the Jira user matched from the Perforce user on "
+                    "the blame row you used (callstack table or Entry tab row menu).\n"
+                    "Requires a matching Jira account; otherwise an error is shown.");
             }
             ImGui::BeginDisabled(readOnlyMode);
             if (ImGui::Selectable("Add blame context comment", false)) {
@@ -1826,7 +2258,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     } else {
                         ImGui::PushID(blameTplIndex);
                     }
-                    if (ImGui::Selectable(t.Title.c_str(), false)) {
+                    if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
                         std::string err;
                         std::string commentBody = BuildBlameQuickCommentTemplate(selectedJiraIssueKey, t.Id, g_assignRow, jiraCfg.BlameCommentTemplates);
                         if (app.AddIssueCommentPlain(selectedJiraIssueKey, commentBody, err)) {
@@ -1932,7 +2364,34 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     ImGui::End();
 }
 
+bool BlameRowHasNonEmptyCallstackField(const AppController& app, const CachedTicket& ticket) {
+    HydrateBlameCfgDiskOnce();
+    std::string fid = g_blameCfg.CallstackTrackerFieldId;
+    if (fid.empty()) {
+        const auto& fields = app.GetAvailableFields();
+        const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
+            return ToLowerAsciiCopy(f.Name) == "callstack";
+        });
+        if (it == fields.end()) {
+            return false;
+        }
+        fid = it->Id;
+    }
+    return !ticket.GetFieldValue(fid).empty();
+}
 
-
-
+void OpenBlameAnalysisForGridIssue(AppController& app, bool& showBlameAnalysis, SpreadsheetState& gridState,
+                                   const std::string& issueKey) {
+    if (issueKey.empty()) {
+        return;
+    }
+    HydrateBlameCfgDiskOnce();
+    MaybeAutoselectCallstackTrackerField(app);
+    MaybeAutoselectLastFoundClTrackerField(app);
+    MaybeAutoselectLastOccurrencesTrackerField(app);
+    gridState.SetActiveIssue(issueKey);
+    g_blameStreamlinedFromGrid = true;
+    g_blamePendingAutoProcess = true;
+    showBlameAnalysis = true;
+}
 

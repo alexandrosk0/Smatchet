@@ -17,6 +17,25 @@
 #include <string>
 #include <vector>
 
+namespace {
+constexpr std::chrono::seconds kHeaderChipFadeOutDuration(5);
+
+#if defined(SMATCHET_WITH_MCP)
+/** After "TRACKER OK" auto-hides (~10s), keep MCP LIVE visible this much longer at launch. */
+constexpr auto kMcpHeaderExtraAfterTrackerOkHidden = std::chrono::seconds(10);
+/** When tracker is not in OK auto-hide mode, still show MCP LIVE this long from enable anchor. */
+constexpr auto kMcpHeaderInitialVisibleFallback = std::chrono::seconds(20);
+constexpr auto kMcpHeaderIdleHideAfter = std::chrono::milliseconds(2500);
+constexpr auto kMcpHeaderFlickerRecent = std::chrono::milliseconds(350);
+#endif
+
+ImVec4 LerpTowardBackground(const ImVec4& fg, const ImVec4& bg, float fade01) {
+    const float t = std::min(1.0f, std::max(0.0f, fade01));
+    return ImVec4(fg.x + (bg.x - fg.x) * t, fg.y + (bg.y - fg.y) * t, fg.z + (bg.z - fg.z) * t,
+                   fg.w + (bg.w - fg.w) * t);
+}
+} // namespace
+
 void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                            ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns,
@@ -205,40 +224,117 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
         (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::None) &&
         (app.GetLastTrackerConnectivityState() == AppController::TrackerConnectivityState::AuthenticatedReachable);
     const auto nowChip = std::chrono::steady_clock::now();
+    const ImVec4 headerBgCol = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+
     bool showTrackerChip = true;
+    float trackerChipFade01 = 0.0f;
     if (connectivityGoodOk) {
         if (!d.trackerOkChipHideTimerArmed) {
             d.trackerOkChipHideTimerArmed = true;
             d.trackerOkChipHideAt = nowChip + std::chrono::seconds(10);
         }
-        if (nowChip >= d.trackerOkChipHideAt) {
+        if (nowChip < d.trackerOkChipHideAt) {
+            showTrackerChip = true;
+            trackerChipFade01 = 0.0f;
+        } else if (nowChip < d.trackerOkChipHideAt + kHeaderChipFadeOutDuration) {
+            showTrackerChip = true;
+            trackerChipFade01 =
+                std::chrono::duration<float>(nowChip - d.trackerOkChipHideAt).count()
+                / std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
+        } else {
             showTrackerChip = false;
+            trackerChipFade01 = 1.0f;
         }
     } else {
         d.trackerOkChipHideTimerArmed = false;
+        showTrackerChip = true;
+        trackerChipFade01 = 0.0f;
     }
-
-#if defined(SMATCHET_WITH_MCP)
-    const bool haveMcpUi = true;
-#else
-    const bool haveMcpUi = false;
-#endif
 
     const float trW = showTrackerChip ? ImGui::CalcTextSize(trLabel).x : 0.0f;
 
 #if defined(SMATCHET_WITH_MCP)
-    std::string mcpLabelStr;
-    if (d.cfg.McpEnabled) {
-        if (d.cfg.McpAllowRemote) {
-            mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort) + " (LAN)";
-        } else {
-            mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort);
+    const auto nowMcp = nowChip;
+    if (d.cfg.McpEnabled != d.mcpLiveHeaderLastCfgEnabled) {
+        d.mcpLiveHeaderLastCfgEnabled = d.cfg.McpEnabled;
+        if (d.cfg.McpEnabled) {
+            d.mcpLiveHeaderAnchorAt = nowMcp;
         }
-    } else {
-        mcpLabelStr = "● MCP DISABLED";
+        d.mcpHeaderFadeoutActive = false;
+        d.mcpHeaderLastFrameChipShown = false;
     }
-    const float mcpW = ImGui::CalcTextSize(mcpLabelStr.c_str()).x;
+    const bool mcpChipWasDrawnLastFrame = d.mcpHeaderLastFrameChipShown;
+
+    std::string mcpLabelStr;
+    bool showMcpHeaderChip = false;
+    float mcpChipFade01 = 0.0f;
+    bool mcpLogicalVisibleEnabled = false;
+
+    if (!d.cfg.McpEnabled) {
+        showMcpHeaderChip = true;
+        mcpChipFade01 = 0.0f;
+        mcpLabelStr = "● MCP DISABLED";
+    } else {
+        std::chrono::steady_clock::time_point lastMcp{};
+        const bool haveLastMcp = app.TryGetMcpLastClientHttpActivity(&lastMcp);
+        bool withinInitial = false;
+        if (connectivityGoodOk) {
+            // Stay at least until online tracker chip hides, then longer (see kMcpHeaderExtraAfterTrackerOkHidden).
+            withinInitial = nowMcp < (d.trackerOkChipHideAt + kMcpHeaderExtraAfterTrackerOkHidden);
+        } else {
+            withinInitial = (nowMcp - d.mcpLiveHeaderAnchorAt) < kMcpHeaderInitialVisibleFallback;
+        }
+        bool withinIdleWindow = false;
+        if (haveLastMcp) {
+            withinIdleWindow = (nowMcp - lastMcp) < kMcpHeaderIdleHideAfter;
+        }
+        mcpLogicalVisibleEnabled = withinInitial || withinIdleWindow;
+
+        if (mcpLogicalVisibleEnabled) {
+            d.mcpHeaderFadeoutActive = false;
+            showMcpHeaderChip = true;
+            mcpChipFade01 = 0.0f;
+        } else {
+            if (mcpChipWasDrawnLastFrame && !d.mcpHeaderFadeoutActive) {
+                d.mcpHeaderFadeoutActive = true;
+                d.mcpHeaderFadeoutStartAt = nowMcp;
+            }
+            if (d.mcpHeaderFadeoutActive) {
+                const float fadeSec =
+                    std::chrono::duration<float>(nowMcp - d.mcpHeaderFadeoutStartAt).count();
+                const float fadeDur =
+                    std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
+                if (fadeSec < fadeDur) {
+                    showMcpHeaderChip = true;
+                    mcpChipFade01 = fadeSec / fadeDur;
+                } else {
+                    showMcpHeaderChip = false;
+                    d.mcpHeaderFadeoutActive = false;
+                    mcpChipFade01 = 1.0f;
+                }
+            } else {
+                showMcpHeaderChip = false;
+            }
+        }
+
+        if (showMcpHeaderChip) {
+            if (d.cfg.McpAllowRemote) {
+                mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort) + " (LAN)";
+            } else {
+                mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort);
+            }
+        }
+    }
+
+    if (!d.cfg.McpEnabled) {
+        d.mcpHeaderFadeoutActive = false;
+    }
+
+    d.mcpHeaderLastFrameChipShown = showMcpHeaderChip;
+
+    const float mcpW = showMcpHeaderChip ? ImGui::CalcTextSize(mcpLabelStr.c_str()).x : 0.0f;
 #else
+    const bool showMcpHeaderChip = false;
     const float mcpW = 0.0f;
 #endif
     const char* readOnlyLabel = "READ ONLY";
@@ -264,7 +360,7 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
         hasAnyRightElem = true;
     }
 
-    if (haveMcpUi) {
+    if (showMcpHeaderChip) {
         if (hasAnyRightElem) {
             totalRightW += between;
         }
@@ -287,7 +383,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
         }
 
         if (showTrackerChip) {
-            ImGui::TextColored(trColor, "%s", trLabel);
+            const ImVec4 trDraw = LerpTowardBackground(trColor, headerBgCol, trackerChipFade01);
+            ImGui::TextColored(trDraw, "%s", trLabel);
             if (!trTip.empty() && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", trTip.c_str());
             }
@@ -303,32 +400,37 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
             }
         }
 #if defined(SMATCHET_WITH_MCP)
-        if ((showTrackerChip || showReadOnlyChip) && haveMcpUi) {
+        if ((showTrackerChip || showReadOnlyChip) && showMcpHeaderChip) {
             ImGui::SameLine(0.0f, between);
         }
-        if (d.cfg.McpEnabled) {
-            if (d.cfg.McpAllowRemote) {
-                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d (LAN)", d.cfg.McpPort);
+        if (showMcpHeaderChip) {
+            ImVec4 mcpBase = trColor;
+            if (!d.cfg.McpEnabled) {
+                mcpBase = ImVec4(1.0f, 0.8f, 0.25f, 1.0f);
             } else {
-                ImGui::TextColored(ImVec4(0, 1, 0, 1), "● MCP LIVE: %d", d.cfg.McpPort);
+                std::chrono::steady_clock::time_point lastMcpDraw{};
+                if (app.TryGetMcpLastClientHttpActivity(&lastMcpDraw) && (nowChip - lastMcpDraw) < kMcpHeaderFlickerRecent) {
+                    const int phase = static_cast<int>(ImGui::GetTime() / 0.12) & 1;
+                    mcpBase = phase != 0 ? trColor : ImVec4(1.0f, 0.82f, 0.22f, 1.0f);
+                }
             }
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f), "● MCP DISABLED");
-        }
-        if (ImGui::IsItemHovered()) {
-            if (d.cfg.McpEnabled) {
-                ImGui::SetTooltip("MCP on port %d. %s Auth: %s.", d.cfg.McpPort,
-                                  d.cfg.McpAllowRemote ? "Bound on all interfaces." : "Localhost only.",
-                                  d.cfg.McpAuthToken.empty() ? "loopback only (no token)."
-                                                             : "X-Smatchet-Token required.");
-            } else {
-                ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+            const ImVec4 mcpDraw = LerpTowardBackground(mcpBase, headerBgCol, mcpChipFade01);
+            ImGui::TextColored(mcpDraw, "%s", mcpLabelStr.c_str());
+            if (ImGui::IsItemHovered()) {
+                if (d.cfg.McpEnabled) {
+                    ImGui::SetTooltip("MCP on port %d. %s Auth: %s.", d.cfg.McpPort,
+                                      d.cfg.McpAllowRemote ? "Bound on all interfaces." : "Localhost only.",
+                                      d.cfg.McpAuthToken.empty() ? "loopback only (no token)."
+                                                                 : "X-Smatchet-Token required.");
+                } else {
+                    ImGui::SetTooltip("MCP server is disabled. Enable it under Settings → Preferences → Integrations.");
+                }
             }
         }
 #endif
 
         if (!readOnlyMode) {
-            if (showTrackerChip || haveMcpUi) {
+            if (showTrackerChip || showReadOnlyChip || showMcpHeaderChip) {
                 ImGui::SameLine(0.0f, between);
             }
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.48f, 0.88f, 1.0f));

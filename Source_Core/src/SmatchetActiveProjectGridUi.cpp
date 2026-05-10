@@ -127,12 +127,17 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
 
 
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
-    prepareTopLevelWindow(d, "active", 900.0f, 620.0f);
+    const bool wantFocus = d.requestActiveProjectFocus;
+    prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
     if (!ImGui::Begin("Smatchet - Active Project", nullptr, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
     repairTopLevelWindow(d, "active", 420.0f, 300.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestActiveProjectFocus = false;
+    }
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
     const bool readOnlyMode = d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
@@ -631,7 +636,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(),
                                                          column.Label, ticket.id, std::string(),
-                                                         &app, &d, readOnlyMode);
+                                                         &app, &d, readOnlyMode, &ticket);
                             handleCellRectSel(clippedRow, colIndex, cellOriginForSel, cellWidthForSel, cellGroupMin,
                                               cellGroupMax, true, ticket.id, activeIssueWasThisRow);
                             continue;
@@ -688,7 +693,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
                                                          ticket.GetFieldRichValue(column.FieldId),
-                                                         nullptr, nullptr, readOnlyMode);
+                                                         &app, &d, readOnlyMode, &ticket);
                         } else {
                             const bool allowEditsForCell =
                                 !readOnlyMode && column.NeedsAllowEditsCheck &&
@@ -710,7 +715,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
                                                          ticket.GetFieldRichValue(column.FieldId),
-                                                         nullptr, nullptr, readOnlyMode);
+                                                         &app, &d, readOnlyMode, &ticket);
                         }
 
                         if (showBadge) {
@@ -894,4 +899,3 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     MaybeToastGridBannerFromSession(d);
     ImGui::End();
 }
-

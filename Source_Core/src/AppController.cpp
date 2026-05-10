@@ -632,6 +632,32 @@ std::vector<std::string> AppController::CopyMcpActivityLog() const {
 
 }
 
+void AppController::NotifyMcpClientHttpActivity() {
+
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+
+    mcpLastClientHttpActivityNs_.store(static_cast<std::uint64_t>(ns), std::memory_order_release);
+
+}
+
+bool AppController::TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const {
+
+    const std::uint64_t raw = mcpLastClientHttpActivityNs_.load(std::memory_order_acquire);
+
+    if (raw == 0 || out == nullptr) {
+
+        return false;
+
+    }
+
+    *out = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(static_cast<std::chrono::nanoseconds::rep>(raw)));
+
+    return true;
+
+}
+
 #endif
 
 

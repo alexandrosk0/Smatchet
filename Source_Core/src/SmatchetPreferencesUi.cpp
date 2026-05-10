@@ -261,7 +261,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 "MCP settings save when changed. With a running app host, the MCP server starts or stops immediately; "
                 "otherwise restart the app once.");
             ImGui::Spacing();
-            ImGui::TextDisabled("Runtime status, endpoints, and action log: Windows → MCP Server… (separate window).");
+            ImGui::TextDisabled(
+                "Runtime status, endpoints, and action log: Automation -> Agent Bridge (MCP)... (separate window).");
             ImGui::EndTabItem();
         }
 #endif
@@ -848,8 +849,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Separator();
     ImGui::TextWrapped(
         "Save & Sync writes the Tracker tab (and optional Assistant / Integrations tabs when enabled in this build) to "
-        "disk and refreshes the tracker connection. MCP runtime status: Windows → MCP Server…. "
-        "Appearance options save immediately when changed. Log level and verbose logging: Windows → Log. The Blame "
+        "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
+        "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The Blame "
         "Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
@@ -934,6 +935,5 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 
 

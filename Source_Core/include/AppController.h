@@ -12,6 +12,7 @@
 #endif
 
 // 3. THE REST OF YOUR INCLUDES
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -90,6 +91,10 @@ class AppController {
     /** Bounded ring buffer of MCP-related actions (thread-safe). */
     void AppendMcpActivity(const std::string& line);
     std::vector<std::string> CopyMcpActivityLog() const;
+    /** MCP HTTP server: any routed request after auth gate (worker threads). */
+    void NotifyMcpClientHttpActivity();
+    /** @return false if no client request has been recorded yet this process. */
+    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const;
 #endif
 
     /**
@@ -622,6 +627,8 @@ class AppController {
     static constexpr size_t kMcpActivityLogMax = 100;
     mutable std::mutex mcpActivityMutex_;
     std::deque<std::string> mcpActivityLog_;
+    /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
+    std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
