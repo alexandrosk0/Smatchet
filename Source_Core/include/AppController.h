@@ -79,6 +79,17 @@ class AppController {
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
+    /** Path passed to `Initialize` (may be relative to the process working directory). */
+    const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
+    /** Absolute path for display; falls back to the raw path if resolution fails. */
+    std::string GetResolvedLocalCacheDbPath() const;
+    /**
+     * UI thread: closes SQLite, deletes the cache file (and WAL sidecars), opens a new empty database,
+     * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
+     * to refill from the tracker.
+     */
+    bool RecreateLocalCacheDatabase(std::string& outError);
+
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink);
     /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
@@ -702,6 +713,8 @@ class AppController {
     bool hasPendingSyncRequest_ = false;
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
+
+    std::string localCacheDbPath_;
 
     bool isDeletingStale_ = false;
     std::vector<std::string> staleIdsToDelete_;

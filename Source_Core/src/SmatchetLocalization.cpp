@@ -116,6 +116,31 @@ const TranslationEntry kEntries[] = {
     {"prefs.tab.appearance", "Appearance", u8"Apparence"},
     {"prefs.tab.fields_inputs", "Fields Inputs", u8"Saisie des champs"},
     {"prefs.tab.blame_analysis", "Blame Analysis", u8"Analyse de blame"},
+    {"prefs.tab.local_data", "Local data", u8"Données locales"},
+    {"prefs.local_data.help",
+     "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
+     "Recreating it clears that data only; tracker credentials and views are not removed. A full "
+     "issue refresh runs afterward.",
+     u8"Les tickets en cache, les files de création hors ligne et les modifications de champs en "
+     u8"attente sont stockés dans un fichier SQLite local. Le recréer efface uniquement ces données "
+     u8"— pas les identifiants du suivi ni les vues. Une actualisation complète des tickets suit."},
+    {"prefs.local_data.file_label", "Cache file:", u8"Fichier de cache :"},
+    {"prefs.local_data.recreate", "Recreate database...", u8"Recréer la base..."},
+    {"prefs.local_data.recreate_tooltip",
+     "Permanently delete the local cache file and start with an empty database.",
+     u8"Supprime définitivement le fichier de cache local et repart d'une base vide."},
+    {"prefs.local_data.confirm_title", "Delete local database?", u8"Supprimer la base locale ?"},
+    {"prefs.local_data.confirm_body",
+     "This removes cached issues and any queued offline writes stored on this machine. It does not "
+     "delete anything on the tracker. Continue?",
+     u8"Cela supprime les tickets mis en cache et les écritures hors ligne en file sur cet ordinateur. "
+     u8"Rien n'est supprimé sur le suivi. Continuer ?"},
+    {"prefs.local_data.confirm_go", "Delete and recreate", u8"Supprimer et recréer"},
+    {"toast.local_db_recreated", "Local database recreated; refreshing issues.",
+     u8"Base locale recréée ; actualisation des tickets."},
+    {"toast.local_db_error_title", "Local database", u8"Base locale"},
+    {"toast.local_db_recreate_failed_detail", "Could not recreate the local database.",
+     u8"Impossible de recréer la base locale."},
     {"prefs.backend_selection", "Backend Selection", u8"Sélection du backend"},
     {"prefs.read_only_mode", "Read-only mode", u8"Mode lecture seule"},
     {"prefs.tracker_backend", "Tracker Backend", u8"Backend de suivi"},

@@ -114,6 +114,33 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 
 #endif
 
+bool RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, std::string& outError) {
+    namespace fs = ghc::filesystem;
+    std::error_code ec;
+    fs::path p(dbPathUtf8);
+    if (!p.is_absolute()) {
+        p = fs::absolute(p, ec);
+        if (ec) {
+            outError = "Could not resolve database path: " + ec.message();
+            return false;
+        }
+    }
+    const std::string stem = p.string();
+    const fs::path paths[3] = {p, fs::path(stem + "-wal"), fs::path(stem + "-shm")};
+    for (const auto& f : paths) {
+        ec.clear();
+        if (!fs::exists(f, ec)) {
+            continue;
+        }
+        fs::remove(f, ec);
+        if (ec) {
+            outError = "Could not remove " + f.string() + ": " + ec.message();
+            return false;
+        }
+    }
+    return true;
+}
+
 std::string TrimAppUpdateText(std::string text) {
     while (!text.empty() &&
            (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
@@ -1095,6 +1122,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
 
+    localCacheDbPath_ = dbPath;
+
     Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(dbPath));
 
     try {
@@ -1588,6 +1617,88 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
 }
 
 
+
+std::string AppController::GetResolvedLocalCacheDbPath() const {
+    if (localCacheDbPath_.empty()) {
+        return {};
+    }
+    namespace fs = ghc::filesystem;
+    std::error_code ec;
+    fs::path p(localCacheDbPath_);
+    if (!p.is_absolute()) {
+        p = fs::absolute(p, ec);
+        if (ec) {
+            return localCacheDbPath_;
+        }
+    }
+    return p.string();
+}
+
+bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
+    outError.clear();
+    if (localCacheDbPath_.empty()) {
+        outError = "Local cache database path is not set.";
+        return false;
+    }
+    if (shuttingDown_.load()) {
+        outError = "Application is shutting down.";
+        return false;
+    }
+
+    hasPendingSyncRequest_ = false;
+    CancelAndJoinActiveStreamingSync();
+    JoinBackgroundTasks();
+
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.PendingBatches.clear();
+        activeStreamingSync_.BackgroundStaleIds.clear();
+    }
+    staleIdsToDelete_.clear();
+    isDeletingStale_ = false;
+    totalStaleToDelete_ = 0;
+    staleDeletedSoFar_ = 0;
+    activeStreamingSync_.FullSyncCompleted = false;
+    activeStreamingSync_.TotalFetchedCount = 0;
+    activeStreamingSync_.FetchError.clear();
+    activeStreamingSync_.KeepIds.clear();
+    activeStreamingSync_.Cancelled = false;
+    activeStreamingSync_.Superseded = false;
+
+    Cache.reset();
+
+    std::string removeErr;
+    if (!RemoveLocalCacheDbFiles(localCacheDbPath_, removeErr)) {
+        try {
+            Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_));
+        } catch (const std::exception& ex) {
+            outError = removeErr + " Failed to reopen database: " + ex.what();
+            return false;
+        }
+        outError = removeErr;
+        return false;
+    }
+
+    try {
+        Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_));
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to open new database: ") + ex.what();
+        return false;
+    }
+
+    try {
+        (void)Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: unknown exception");
+    }
+
+    ClearLastTrackerTicketSyncWarning();
+    legacyPendingStartupBanner_.clear();
+    RefreshLocalData();
+    return true;
+}
 
 void AppController::ClearLastTrackerTicketSyncWarning() { LastTrackerTicketSyncWarning.clear(); }
 

@@ -7,6 +7,7 @@
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetToast.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -248,6 +249,57 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::EndTabItem();
         }
 #endif
+        if (ImGui::BeginTabItem("Local data")) {
+            ImGui::TextWrapped(
+                "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
+                "Recreating it clears that data only; tracker credentials and views are not removed. A full "
+                "issue refresh runs afterward.");
+            ImGui::Spacing();
+            const std::string resolved = app.GetResolvedLocalCacheDbPath();
+            if (!resolved.empty()) {
+                ImGui::TextDisabled("Cache file:");
+                ImGui::SameLine();
+                ::ImGui::TextWrapped("%s", resolved.c_str());
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Recreate database...")) {
+                ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
+            }
+            ImGui::SetItemTooltip(
+                "Permanently delete the local cache file and start with an empty database.");
+
+            if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped(
+                    "This removes cached issues and any queued offline writes stored on this machine. It does not "
+                    "delete anything on the tracker. Continue?");
+                ImGui::Separator();
+                if (ImGui::Button("Cancel")) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Delete and recreate")) {
+                    std::string err;
+                    if (app.RecreateLocalCacheDatabase(err)) {
+                        SmatchetToastManager::Instance().Push(
+                            std::string(SmatchetLocalization::T("toast.success", "Success")),
+                            std::string(SmatchetLocalization::T("toast.local_db_recreated",
+                                                               "Local database recreated; refreshing issues.")),
+                            ToastType::Success, 4000);
+                        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                        ImGui::CloseCurrentPopup();
+                    } else {
+                        const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
+                                                                       "Could not recreate the local database.");
+                        SmatchetToastManager::Instance().Push(
+                            std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
+                            err.empty() ? std::string(detail) : err, ToastType::Error, 6000);
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Appearance")) {
             ImGui::TextUnformatted("Application Typography");
             ImGui::Separator();
