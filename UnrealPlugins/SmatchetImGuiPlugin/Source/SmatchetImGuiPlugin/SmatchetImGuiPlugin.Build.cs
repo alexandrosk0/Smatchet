@@ -136,7 +136,7 @@ public class SmatchetImGuiPlugin : ModuleRules
                     : "Found MinGW archive(s)";
                 throw new BuildException(
                     $"SmatchetImGuiPlugin: {reason} for '{targetName}' under '{LibDir}', but Win64 Unreal must link MSVC-produced .lib files only. " +
-                    "Repackage with scripts\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
+                    "Repackage with scripts\\dev\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
             }
 
             if (File.Exists(msvcLibNoPrefix))
@@ -180,7 +180,7 @@ public class SmatchetImGuiPlugin : ModuleRules
                     : "Found MinGW archive(s)";
                 throw new BuildException(
                     $"SmatchetImGuiPlugin: {reason} for optional '{targetName}' under '{LibDir}', but Win64 Unreal must link MSVC-produced .lib files only. " +
-                    "Repackage with scripts\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
+                    "Repackage with scripts\\dev\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
             }
 
             if (File.Exists(msvcLibNoPrefix))
@@ -285,7 +285,7 @@ public class SmatchetImGuiPlugin : ModuleRules
             // UBT promotes lines starting with "warning:" into the build output and surface list.
             System.Console.WriteLine(
                 "warning: SmatchetImGuiPlugin: packaged native lib '{0}' is older than Source_Core by {1:c}. " +
-                "Unreal will load a stale Smatchet host. Run 'scripts\\package_unreal_plugin_msvc.ps1' " +
+                "Unreal will load a stale Smatchet host. Run 'scripts\\dev\\package_unreal_plugin_msvc.ps1' " +
                 "to refresh ThirdParty libs, then rebuild the plugin.",
                 Path.GetFileName(packagedLib),
                 lag);

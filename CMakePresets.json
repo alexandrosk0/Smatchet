@@ -12,8 +12,7 @@
             "description": "Shared SMATCHET_WITH_* defaults for presets that use the host PATH for compilers (legacy non-MSYS2 flow).",
             "cacheVariables": {
                 "SMATCHET_WITH_LUA_AUTOMATION": "ON",
-                "SMATCHET_WITH_MCP": "ON",
-                "SMATCHET_WITH_AI": "OFF"
+                "SMATCHET_WITH_MCP": "ON"
             }
         },
         {
@@ -29,7 +28,6 @@
             "cacheVariables": {
                 "SMATCHET_WITH_LUA_AUTOMATION": "ON",
                 "SMATCHET_WITH_MCP": "ON",
-                "SMATCHET_WITH_AI": "OFF",
                 "CMAKE_C_COMPILER": "gcc.exe",
                 "CMAKE_CXX_COMPILER": "g++.exe",
                 "CMAKE_AR": "ar.exe",

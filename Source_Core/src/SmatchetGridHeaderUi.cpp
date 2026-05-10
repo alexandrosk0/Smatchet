@@ -257,77 +257,72 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
     const auto nowMcp = nowChip;
     if (d.cfg.McpEnabled != d.mcpLiveHeaderLastCfgEnabled) {
         d.mcpLiveHeaderLastCfgEnabled = d.cfg.McpEnabled;
-        if (d.cfg.McpEnabled) {
-            d.mcpLiveHeaderAnchorAt = nowMcp;
-        }
+        d.mcpLiveHeaderAnchorAt = nowMcp;
+        d.mcpLiveHeaderAnchorArmed = true;
         d.mcpHeaderFadeoutActive = false;
         d.mcpHeaderLastFrameChipShown = false;
+    } else if (!d.mcpLiveHeaderAnchorArmed) {
+        d.mcpLiveHeaderAnchorAt = nowMcp;
+        d.mcpLiveHeaderAnchorArmed = true;
     }
     const bool mcpChipWasDrawnLastFrame = d.mcpHeaderLastFrameChipShown;
+
+    std::chrono::steady_clock::time_point lastMcp{};
+    const bool haveLastMcp =
+        d.cfg.McpEnabled && app.TryGetMcpLastClientHttpActivity(&lastMcp);
+
+    bool withinInitial = false;
+    if (connectivityGoodOk) {
+        // Stay at least until online tracker chip hides, then longer (see kMcpHeaderExtraAfterTrackerOkHidden).
+        withinInitial = nowMcp < (d.trackerOkChipHideAt + kMcpHeaderExtraAfterTrackerOkHidden);
+    } else {
+        withinInitial = (nowMcp - d.mcpLiveHeaderAnchorAt) < kMcpHeaderInitialVisibleFallback;
+    }
+    bool withinIdleWindow = false;
+    if (haveLastMcp) {
+        withinIdleWindow = (nowMcp - lastMcp) < kMcpHeaderIdleHideAfter;
+    }
+    const bool mcpLogicalVisibleEnabled = withinInitial || withinIdleWindow;
 
     std::string mcpLabelStr;
     bool showMcpHeaderChip = false;
     float mcpChipFade01 = 0.0f;
-    bool mcpLogicalVisibleEnabled = false;
 
-    if (!d.cfg.McpEnabled) {
+    if (mcpLogicalVisibleEnabled) {
+        d.mcpHeaderFadeoutActive = false;
         showMcpHeaderChip = true;
         mcpChipFade01 = 0.0f;
-        mcpLabelStr = "● MCP DISABLED";
     } else {
-        std::chrono::steady_clock::time_point lastMcp{};
-        const bool haveLastMcp = app.TryGetMcpLastClientHttpActivity(&lastMcp);
-        bool withinInitial = false;
-        if (connectivityGoodOk) {
-            // Stay at least until online tracker chip hides, then longer (see kMcpHeaderExtraAfterTrackerOkHidden).
-            withinInitial = nowMcp < (d.trackerOkChipHideAt + kMcpHeaderExtraAfterTrackerOkHidden);
-        } else {
-            withinInitial = (nowMcp - d.mcpLiveHeaderAnchorAt) < kMcpHeaderInitialVisibleFallback;
+        if (mcpChipWasDrawnLastFrame && !d.mcpHeaderFadeoutActive) {
+            d.mcpHeaderFadeoutActive = true;
+            d.mcpHeaderFadeoutStartAt = nowMcp;
         }
-        bool withinIdleWindow = false;
-        if (haveLastMcp) {
-            withinIdleWindow = (nowMcp - lastMcp) < kMcpHeaderIdleHideAfter;
-        }
-        mcpLogicalVisibleEnabled = withinInitial || withinIdleWindow;
-
-        if (mcpLogicalVisibleEnabled) {
-            d.mcpHeaderFadeoutActive = false;
-            showMcpHeaderChip = true;
-            mcpChipFade01 = 0.0f;
-        } else {
-            if (mcpChipWasDrawnLastFrame && !d.mcpHeaderFadeoutActive) {
-                d.mcpHeaderFadeoutActive = true;
-                d.mcpHeaderFadeoutStartAt = nowMcp;
-            }
-            if (d.mcpHeaderFadeoutActive) {
-                const float fadeSec =
-                    std::chrono::duration<float>(nowMcp - d.mcpHeaderFadeoutStartAt).count();
-                const float fadeDur =
-                    std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
-                if (fadeSec < fadeDur) {
-                    showMcpHeaderChip = true;
-                    mcpChipFade01 = fadeSec / fadeDur;
-                } else {
-                    showMcpHeaderChip = false;
-                    d.mcpHeaderFadeoutActive = false;
-                    mcpChipFade01 = 1.0f;
-                }
+        if (d.mcpHeaderFadeoutActive) {
+            const float fadeSec =
+                std::chrono::duration<float>(nowMcp - d.mcpHeaderFadeoutStartAt).count();
+            const float fadeDur =
+                std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
+            if (fadeSec < fadeDur) {
+                showMcpHeaderChip = true;
+                mcpChipFade01 = fadeSec / fadeDur;
             } else {
                 showMcpHeaderChip = false;
+                d.mcpHeaderFadeoutActive = false;
+                mcpChipFade01 = 1.0f;
             }
-        }
-
-        if (showMcpHeaderChip) {
-            if (d.cfg.McpAllowRemote) {
-                mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort) + " (LAN)";
-            } else {
-                mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort);
-            }
+        } else {
+            showMcpHeaderChip = false;
         }
     }
 
-    if (!d.cfg.McpEnabled) {
-        d.mcpHeaderFadeoutActive = false;
+    if (showMcpHeaderChip) {
+        if (!d.cfg.McpEnabled) {
+            mcpLabelStr = "● MCP DISABLED";
+        } else if (d.cfg.McpAllowRemote) {
+            mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort) + " (LAN)";
+        } else {
+            mcpLabelStr = "● MCP LIVE: " + std::to_string(d.cfg.McpPort);
+        }
     }
 
     d.mcpHeaderLastFrameChipShown = showMcpHeaderChip;

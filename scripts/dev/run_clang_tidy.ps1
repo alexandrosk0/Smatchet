@@ -7,10 +7,10 @@
     - Configured build: cmake --preset ninja-debug-msys2 (default)
 
     Examples:
-      .\scripts\run_clang_tidy.ps1
-      .\scripts\run_clang_tidy.ps1 -BuildDir build/ninja-debug-msys2
-      .\scripts\run_clang_tidy.ps1 -Checks "-*,clang-analyzer-deadcode.*"
-      .\scripts\run_clang_tidy.ps1 -Fix
+      .\scripts\dev\run_clang_tidy.ps1
+      .\scripts\dev\run_clang_tidy.ps1 -BuildDir build/ninja-debug-msys2
+      .\scripts\dev\run_clang_tidy.ps1 -Checks "-*,clang-analyzer-deadcode.*"
+      .\scripts\dev\run_clang_tidy.ps1 -Fix
 #>
 param(
     [string]$BuildDir = "",
@@ -23,7 +23,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not $BuildDir) {
     $BuildDir = Join-Path $repoRoot "build/ninja-debug-msys2"

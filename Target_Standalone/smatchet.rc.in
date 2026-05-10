@@ -1,10 +1,38 @@
-// Windows resource script template for embedding the application icon.
-//
-// CMake will generate a real `.rc` file from this template at configure time.
-//
-// The placeholder `@SMATCHET_ICO_PATH@` is replaced by the absolute .ico path.
-//
-// IMPORTANT: We use the numeric ID directly (32512 == IDI_APPLICATION) instead
-// of relying on `IDI_APPLICATION` being defined in the RC compiler environment.
+// Windows resource script template for embedding the application icon and
+// version metadata. Keep this close to the canonical Microsoft VERSIONINFO
+// example so the Win32 version APIs can parse it reliably.
+#include <winver.h>
+
 32512 ICON "@SMATCHET_ICO_PATH@"
 
+1 VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS__WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName", "Smatchet\0"
+            VALUE "FileDescription", "Smatchet Standalone\0"
+            VALUE "FileVersion", "@PROJECT_VERSION@\0"
+            VALUE "InternalName", "SmatchetStandalone\0"
+            VALUE "OriginalFilename", "SmatchetStandalone.exe\0"
+            VALUE "ProductName", "Smatchet\0"
+            VALUE "ProductVersion", "@PROJECT_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1252
+    END
+END

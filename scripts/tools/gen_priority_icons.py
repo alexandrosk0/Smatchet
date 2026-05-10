@@ -105,9 +105,9 @@ def icon_pixels(base: tuple[int, int, int], glyph: str) -> list[tuple[int, int, 
 
 
 def main() -> None:
-    # parents[2] = repo root when this file is at <repo>/Scripts/tools/...
+    # parents[2] = repo root when this file is at <repo>/scripts/tools/...
     repo = Path(__file__).resolve().parents[2]
-    root = repo / "Scripts" / "art" / "priority"
+    root = repo / "scripts" / "art" / "priority"
     icons = {
         "blocker": ((120, 0, 0), "stop"),
         "critical": ((200, 30, 30), "stop"),

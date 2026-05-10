@@ -29,7 +29,6 @@ class SmatchetUI {
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     void drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d);
     static void drawAuditWindow(AppController& app, UiDrawSession& d);
-    static void drawAIAssistantWindow(AppController& app, UiDrawSession& d);
     static void drawLogWindow(UiDrawSession& d);
     static void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     static void drawBulkExportWindow(AppController& app, UiDrawSession& d);

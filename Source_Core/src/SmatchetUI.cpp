@@ -49,6 +49,121 @@ static void ApplyLoggingSettingsFromConfig(const TrackerConfig& cfg) {
     Logger::Instance().SetLogP4Io(cfg.LogP4Io);
 }
 
+static std::future<AppUpdateInfo> StartAppUpdateCheckAsync(AppController& app, const TrackerConfig& cfg) {
+    const bool includePrerelease = cfg.UpdateIncludePrerelease;
+    return std::async(std::launch::async, [&app, includePrerelease]() { return app.CheckForAppUpdate(includePrerelease); });
+}
+
+static void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual) {
+    if (d.appUpdateCheckInFlight) {
+        return;
+    }
+    d.appUpdateActionStatus.clear();
+    d.appUpdateCheckManual = manual;
+    d.appUpdateCheckInFlight = true;
+    d.appUpdateFuture = StartAppUpdateCheckAsync(app, d.cfg);
+}
+
+static void DrainAppUpdateCheck(UiDrawSession& d) {
+    if (!d.appUpdateCheckInFlight || !d.appUpdateFuture.valid()) {
+        return;
+    }
+    if (d.appUpdateFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+
+    d.appUpdateCheckInFlight = false;
+    try {
+        d.appUpdateInfo = d.appUpdateFuture.get();
+    } catch (const std::exception& ex) {
+        d.appUpdateInfo = {};
+        d.appUpdateInfo.Error = std::string("Update check failed: ") + ex.what();
+    } catch (...) {
+        d.appUpdateInfo = {};
+        d.appUpdateInfo.Error = "Update check failed with an unknown error.";
+    }
+
+    if (!d.appUpdateInfo.Error.empty()) {
+        if (d.appUpdateCheckManual) {
+            SmatchetToastManager::Instance().Push("Updates", d.appUpdateInfo.Error, ToastType::Error, 5000);
+        }
+        return;
+    }
+    if (!d.appUpdateInfo.UpdateAvailable) {
+        if (d.appUpdateCheckManual) {
+            SmatchetToastManager::Instance().Push("Updates", "You are already on the latest release.", ToastType::Success,
+                                                  3500);
+        }
+        return;
+    }
+    if (!d.appUpdateCheckManual && !d.cfg.UpdateSkipVersion.empty() &&
+        d.cfg.UpdateSkipVersion == d.appUpdateInfo.LatestVersion) {
+        return;
+    }
+
+    d.appUpdateModalOpen = true;
+    ImGui::OpenPopup("Update Available");
+    if (d.appUpdateCheckManual) {
+        SmatchetToastManager::Instance().Push("Updates", "New version found.", ToastType::Info, 2500);
+    }
+}
+
+static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
+    if (d.appUpdateModalOpen) {
+        ImGui::OpenPopup("Update Available");
+    }
+    if (!ImGui::BeginPopupModal("Update Available", &d.appUpdateModalOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    ImGui::Text("Current version: %s", d.appUpdateInfo.CurrentVersion.c_str());
+    ImGui::Text("Latest version:  %s", d.appUpdateInfo.LatestVersion.c_str());
+    if (!d.appUpdateInfo.ReleaseTag.empty()) {
+        ImGui::TextDisabled("Release tag: %s", d.appUpdateInfo.ReleaseTag.c_str());
+    }
+    if (!d.appUpdateInfo.ReleaseUrl.empty() && ImGui::SmallButton("Open Release Page")) {
+        app.OpenUrl(d.appUpdateInfo.ReleaseUrl);
+    }
+
+    ImGui::Spacing();
+    ImGui::TextWrapped("A newer Smatchet standalone release is available on GitHub.");
+    if (!d.appUpdateInfo.ReleaseNotes.empty()) {
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Release notes");
+        ImGui::BeginChild("UpdateReleaseNotes", ImVec2(620.0f, 220.0f), ImGuiChildFlags_Borders);
+        ImGui::TextWrapped("%s", d.appUpdateInfo.ReleaseNotes.c_str());
+        ImGui::EndChild();
+    }
+    if (!d.appUpdateActionStatus.empty()) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", d.appUpdateActionStatus.c_str());
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
+        std::string err;
+        if (app.DownloadAndLaunchInstallerUpdate(d.appUpdateInfo.InstallerAsset.DownloadUrl,
+                                                 d.appUpdateInfo.InstallerAsset.Name, err)) {
+            d.appUpdateActionStatus = "Installer launched. Smatchet will close so the update can proceed.";
+        } else {
+            d.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
+        d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
+        ConfigManager::Save(d.cfg);
+        d.appUpdateModalOpen = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Later", ImVec2(90.0f, 0.0f))) {
+        d.appUpdateModalOpen = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 struct LayoutRect {
     ImVec2 Pos;
     ImVec2 Size;
@@ -133,9 +248,6 @@ static void PersistWindowOpenPreferences(UiDrawSession& d) {
     setBool(d.cfg.ShowLogWindow, d.showLogWindow);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     setBool(d.cfg.ShowLuaAutomationWindow, d.showLuaAutomationWindow);
-#endif
-#if defined(SMATCHET_WITH_AI)
-    setBool(d.cfg.ShowAiAssistantWindow, d.showAiAssistantWindow);
 #endif
 #if defined(SMATCHET_WITH_MCP)
     setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
@@ -228,10 +340,6 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     d.requestLuaAutomationFocus = false;
     d.requestScriptingEditorTabFocus = false;
 #endif
-#if defined(SMATCHET_WITH_AI)
-    d.showAiAssistantWindow = false;
-    d.requestAiAssistantFocus = false;
-#endif
 #if defined(SMATCHET_WITH_MCP)
     d.showMcpServerWindow = false;
     d.requestMcpServerFocus = false;
@@ -255,9 +363,6 @@ void SmatchetUI::Draw(AppController& app) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         g_ui.showLuaAutomationWindow = g_ui.cfg.ShowLuaAutomationWindow;
 #endif
-#if defined(SMATCHET_WITH_AI)
-        g_ui.showAiAssistantWindow = g_ui.cfg.ShowAiAssistantWindow;
-#endif
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
@@ -267,19 +372,14 @@ void SmatchetUI::Draw(AppController& app) {
         if (!g_ui.cfg.SelectedFontName.empty() && g_ui.cfg.SelectedFontName != "Segoe UI") {
             SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
         }
-
-        app.SetAiPromptHandler([](const std::string& message) {
-            g_ui.aiPromptPending = true;
-            g_ui.aiPromptMessage = message;
-#if defined(SMATCHET_WITH_AI)
-            g_ui.showAiAssistantWindow = true;
-            g_ui.requestAiAssistantFocus = true;
-#endif
-        });
     }
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
+    }
+    if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted) {
+        d.appUpdateStartupCheckStarted = true;
+        StartAppUpdateCheck(d, app, false);
     }
     if (d.deadLetterPanelStatusHasClearDeadline && std::chrono::steady_clock::now() >= d.deadLetterPanelStatusClearAt) {
         d.deadLetterPanelStatus.clear();
@@ -396,6 +496,7 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
+    DrainAppUpdateCheck(d);
     if (!d.offlineLegacyStartupBannerText.empty()) {
         SMATCHET_UI_PERF_SCOPE("drawLegacyStartupBanner");
         ImGui::Separator();
@@ -450,6 +551,7 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
         SmatchetToastManager::Instance().Render();
     }
+    DrawAppUpdateModal(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
         drawAuditWindow(app, d);
@@ -462,14 +564,6 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("TrackerGridFieldDisplay::DrawVotesListWindow");
         TrackerGridFieldDisplay::DrawVotesListWindow(g_ui.trackerGridAsync);
     }
-#if defined(SMATCHET_WITH_AI)
-    {
-        SMATCHET_UI_PERF_SCOPE("drawAIAssistantWindow");
-        if (g_ui.showAiAssistantWindow) {
-            drawAIAssistantWindow(app, d);
-        }
-    }
-#endif
 #if defined(SMATCHET_WITH_MCP)
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetDrawMcpServerWindow");
@@ -640,19 +734,20 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         }
         if (ImGui::BeginMenu("Automation")) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            if (ImGui::MenuItem("Scripts & Actions...", nullptr, &d.showLuaAutomationWindow) && d.showLuaAutomationWindow) {
-                d.requestLuaAutomationFocus = true;
-                d.requestScriptingEditorTabFocus = true;
-            }
-#endif
-#if defined(SMATCHET_WITH_AI)
-            if (ImGui::MenuItem("Project Assistant...", nullptr, &d.showAiAssistantWindow) && d.showAiAssistantWindow) {
-                d.requestAiAssistantFocus = true;
+            if (ImGui::MenuItem("Scripts & Actions...", nullptr, false, true)) {
+                d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
+                if (d.showLuaAutomationWindow) {
+                    d.requestLuaAutomationFocus = true;
+                    d.requestScriptingEditorTabFocus = true;
+                }
             }
 #endif
 #if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("Agent Bridge (MCP)...", nullptr, &d.showMcpServerWindow) && d.showMcpServerWindow) {
-                d.requestMcpServerFocus = true;
+            if (ImGui::MenuItem("Agent Bridge (MCP)...", nullptr, false, true)) {
+                d.showMcpServerWindow = !d.showMcpServerWindow;
+                if (d.showMcpServerWindow) {
+                    d.requestMcpServerFocus = true;
+                }
             }
 #endif
             ImGui::EndMenu();
@@ -665,7 +760,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.showAuditTrail = true;
                 d.requestAuditTrailFocus = true;
             }
-            ImGui::MenuItem("Runtime Log", nullptr, &d.showLogWindow);
+            if (ImGui::MenuItem("Runtime Log", nullptr, false, true)) {
+                d.showLogWindow = !d.showLogWindow;
+            }
             if (ImGui::MenuItem("Performance Monitor...")) {
                 d.showPerformance = true;
             }
@@ -675,7 +772,11 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Preferences...")) {
                 d.showPreferences = true;
             }
-            if (ImGui::MenuItem("Read-only Mode", nullptr, &d.cfg.ReadOnlyMode)) {
+            if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
+                StartAppUpdateCheck(d, app, true);
+            }
+            if (ImGui::MenuItem("Read-only Mode", nullptr, false, true)) {
+                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
                 ConfigManager::Save(d.cfg);
             }
             ImGui::EndMenu();

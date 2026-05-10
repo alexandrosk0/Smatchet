@@ -296,11 +296,6 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
                 ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.trackerUploadBytes).c_str());
                 ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.trackerDownloadBytes).c_str());
                 ImGui::Separator();
-                ImGui::TextUnformatted("OpenAI API");
-                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.openAiRequests));
-                ImGui::BulletText("Uploaded: %s", FormatNetworkBytes(snap.openAiUploadBytes).c_str());
-                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.openAiDownloadBytes).c_str());
-                ImGui::Separator();
                 if (ImGui::Button("Reset counters")) {
                     NetworkUsageTracker::Instance().Reset();
                 }

@@ -135,11 +135,6 @@ struct UiDrawSession {
     bool requestScriptingEditorTabFocus = false;
 #endif
 
-#if defined(SMATCHET_WITH_AI)
-    bool showAiAssistantWindow = false;
-    bool requestAiAssistantFocus = false;
-#endif
-
 #if defined(SMATCHET_WITH_MCP)
     /** MCP status / endpoints / activity; reopen from Automation -> Agent Bridge (MCP).... */
     bool showMcpServerWindow = false;
@@ -178,10 +173,6 @@ struct UiDrawSession {
     char planeApiKeyBuf[512]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
-    char aiApiKeyBuf[512]{};
-
-    char aiModelBuf[128]{};
-    char aiBaseUrlBuf[256]{};
     bool mcpEnabled = false;
     int mcpPort = SmatchetDefaults::Mcp::kDefaultPort;
     bool mcpAllowRemote = false;
@@ -261,6 +252,7 @@ struct UiDrawSession {
 #if defined(SMATCHET_WITH_MCP)
     /** Grid header "MCP LIVE" chip: anchor for initial visibility window after enable. */
     std::chrono::steady_clock::time_point mcpLiveHeaderAnchorAt{};
+    bool mcpLiveHeaderAnchorArmed = false;
     bool mcpLiveHeaderLastCfgEnabled = false;
     /** Previous-frame MCP header chip drawn (enabled or disabled) so hide always runs a fade. */
     bool mcpHeaderLastFrameChipShown = false;
@@ -297,10 +289,13 @@ struct UiDrawSession {
     int gridBottomHorizontalWheelSwallowsRemaining = 0;
     int gridTopHorizontalWheelSwallowsRemaining = 0;
 
-    std::string aiResponse;
-    bool aiIsThinking = false;
-    bool aiPromptPending = false;
-    std::string aiPromptMessage;
+    bool appUpdateStartupCheckStarted = false;
+    bool appUpdateCheckInFlight = false;
+    bool appUpdateCheckManual = false;
+    bool appUpdateModalOpen = false;
+    std::future<AppUpdateInfo> appUpdateFuture;
+    AppUpdateInfo appUpdateInfo;
+    std::string appUpdateActionStatus;
 
     /** One visual row per string (embedded newlines in messages are split). */
     std::vector<std::string> logViewLines;
@@ -368,7 +363,6 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
-
 
 
 

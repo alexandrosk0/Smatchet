@@ -17,7 +17,13 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
     unset(_NINJA_FROM_PATH CACHE)
 endif()
 
-project(SmatchetApp VERSION 1.0 LANGUAGES C CXX)
+project(SmatchetApp VERSION 0.6.7 LANGUAGES C CXX)
+set(SMATCHET_GITHUB_RELEASE_REPO "alexandrosk0/Smatchet" CACHE STRING
+    "GitHub owner/repo used by the standalone updater")
+add_compile_definitions(
+    SMATCHET_APP_VERSION="${PROJECT_VERSION}"
+    SMATCHET_GITHUB_RELEASE_REPO="${SMATCHET_GITHUB_RELEASE_REPO}"
+)
 
 # ==============================================================================
 # Iteration-speed knobs — all auto-detected and gracefully degrade. A fresh
@@ -144,7 +150,6 @@ option(SMATCHET_WARNINGS_AS_ERRORS
 
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
-option(SMATCHET_WITH_AI "Build with AI assistance client (OpenAI-compatible HTTP)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -464,13 +469,8 @@ endif()
 unset(_smatchet_blame_syntax_idx)
 unset(_SMATCHET_BLAME_SYNTAX)
 
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController_stub.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
-if(NOT SMATCHET_WITH_AI)
-    list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiController_stub.cpp")
-endif()
 if(SMATCHET_WITH_LUA_AUTOMATION)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
 else()
@@ -510,9 +510,6 @@ endif()
 if(SMATCHET_WITH_MCP)
     add_library(SmatchetCoreMcpShim INTERFACE)
     target_compile_definitions(SmatchetCoreMcpShim INTERFACE SMATCHET_WITH_MCP=1)
-endif()
-if(SMATCHET_WITH_AI)
-    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_AI=1)
 endif()
 
 function(smatchet_configure_core_impl_target _target)
@@ -1049,5 +1046,3 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
         set_property(TARGET SmatchetImGuiHost_DX12 PROPERTY JOB_POOL_LINK smatchet_link_pool)
     endif()
 endif()
-
-

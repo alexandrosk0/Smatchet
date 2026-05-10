@@ -78,7 +78,6 @@ const TranslationEntry kEntries[] = {
     {"menu.export_issues", "Export Issues...", u8"Exporter des tickets..."},
     {"menu.automation", "Automation", u8"Automatisation"},
     {"menu.scripts_actions", "Scripts & Actions...", u8"Scripts et actions..."},
-    {"menu.project_assistant", "Project Assistant...", u8"Assistant projet..."},
     {"menu.agent_bridge_mcp", "Agent Bridge (MCP)...", u8"Passerelle agent (MCP)..."},
     {"menu.inspect", "Inspect", u8"Inspection"},
     {"menu.source_blame", "Source Blame...", u8"Blame source..."},
@@ -107,14 +106,12 @@ const TranslationEntry kEntries[] = {
     {"window.bulk_export", "Bulk export tickets", u8"Exporter des tickets en lot"},
     {"window.backend_audit", "Backend Audit", u8"Audit du backend"},
     {"window.attachment_preview", "Attachment Preview", u8"Aperçu des pièces jointes"},
-    {"window.ai_assistant", "AI Assistant", u8"Assistant IA"},
     {"window.log", "Log", u8"Journal"},
     {"window.watchers", "Watchers", u8"Observateurs"},
     {"window.votes", "Votes", u8"Votes"},
     {"window.mcp_server", "MCP Server", u8"Serveur MCP"},
 
     {"prefs.tab.tracker", "Tracker", u8"Suivi"},
-    {"prefs.tab.assistant", "Assistant", u8"Assistant"},
     {"prefs.tab.integrations", "Integrations", u8"Intégrations"},
     {"prefs.tab.appearance", "Appearance", u8"Apparence"},
     {"prefs.tab.fields_inputs", "Fields Inputs", u8"Saisie des champs"},
@@ -139,8 +136,6 @@ const TranslationEntry kEntries[] = {
     {"prefs.views_note", "Query/JQL and column fields are configured in the Views dashboard.",
      u8"La requête/JQL et les colonnes se configurent dans le tableau de bord des vues."},
     {"prefs.open_views_dashboard", "Open Views Dashboard", u8"Ouvrir le tableau des vues"},
-    {"prefs.ai_api_note", "OpenAI-compatible API used by the AI assistant panel.",
-     u8"API compatible OpenAI utilisée par le panneau Assistant IA."},
     {"prefs.model", "Model", u8"Modèle"},
     {"prefs.base_url", "Base URL", u8"URL de base"},
     {"prefs.mcp_header", "MCP (Model Context Protocol)", u8"MCP (Model Context Protocol)"},
@@ -263,6 +258,9 @@ const TranslationEntry kEntries[] = {
     {"log.p4_stdout", "Log Perforce p4 stdout (truncated, Trace level)",
      u8"Journaliser stdout de Perforce p4 (tronqué, niveau Trace)"},
     {"log.clear", "Clear Log", u8"Effacer le journal"},
+    {"log.copy_log", "Copy log", u8"Copier le journal"},
+    {"log.copy_log_tip", "Copy the full application log to the clipboard.",
+     u8"Copier l'intégralité du journal de l'application dans le presse-papiers."},
     {"log.auto_scroll", "Auto-scroll", u8"Défilement automatique"},
     {"log.application_log", "(application log)", u8"(journal de l'application)"},
 
@@ -450,7 +448,7 @@ void LoadOverridesLocked(const std::string& language) {
     OverridesRef().clear();
     MissingKeysRef().clear();
 
-    const std::string path = ConfigManager::GetFilesBaseDirectory() + "Locales/" + language + ".json";
+    const std::string path = ConfigManager::GetRuntimeAssetDirectory() + "Locales/" + language + ".json";
     const nlohmann::json root = ConfigManager::LoadJsonFile(path);
     if (!root.is_object()) {
         return;

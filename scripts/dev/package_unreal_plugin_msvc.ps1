@@ -11,11 +11,11 @@
     configure step unless -ForceConfigure.
 
     Examples:
-      .\scripts\package_unreal_plugin_msvc.ps1
-      .\scripts\package_unreal_plugin_msvc.ps1 -ProjectRoot "D:\MyGame"
-      .\scripts\package_unreal_plugin_msvc.ps1 -PackageOnly
-      .\scripts\package_unreal_plugin_msvc.ps1 -ConfigurePreset vs-unreal-msvc -BuildDir build/vs-unreal-msvc
-      .\scripts\package_unreal_plugin_msvc.ps1 -ForceConfigure
+      .\scripts\dev\package_unreal_plugin_msvc.ps1
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -ProjectRoot "D:\MyGame"
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -PackageOnly
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -ConfigurePreset vs-unreal-msvc -BuildDir build/vs-unreal-msvc
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -ForceConfigure
 #>
 param(
     [string]$ProjectRoot = "C:\Users\alexk\Documents\Unreal Projects\TestProject",
@@ -30,7 +30,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $pluginName = "SmatchetImGuiPlugin"
 $sourcePluginDir = Join-Path $repoRoot "UnrealPlugins\$pluginName"
 $fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"
@@ -106,7 +106,6 @@ if (-not $skipCMakePreset) {
             -G $expectedGenerator -A x64 `
             "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
             "-DSMATCHET_WITH_MCP=ON" `
-            "-DSMATCHET_WITH_AI=OFF" `
             "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
             "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
         if ($LASTEXITCODE -ne 0) {
@@ -155,4 +154,4 @@ Write-Host "==> Copying plugin to: $destPluginDir"
 Copy-Item -Path $sourcePluginDir -Destination $destPluginDir -Recurse -Force
 
 Write-Host "==> Done."
-Write-Host "    Next: rebuild the plugin/editor (e.g. scripts\rebuild_testproject_plugin.ps1 or Build.bat)."
+Write-Host "    Next: rebuild the plugin/editor (e.g. scripts\dev\rebuild_testproject_plugin.ps1 or Build.bat)."

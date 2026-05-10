@@ -22,6 +22,8 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 - [Build Guide](BUILD.md): Supported CMake presets, prerequisites, local compiler paths, and wrapper scripts.
 - [Lua Scripting Guide](LUA_GUIDE.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](MCP_GUIDE.md): How to use Smatchet as an MCP server for AI agents.
+- [Windows Signing Guide](scripts/publish/SIGNING.md): How to sign the standalone app and installer during release packaging.
+- [Installer Smoke Test Guide](scripts/publish/INSTALLER_SMOKE_TEST.md): Repeatable release validation for installer, portable ZIP, Unreal plugin ZIP, and Fab bundle.
 
 ## Localization
 
@@ -126,7 +128,6 @@ Smatchet exposes several CMake options to customize the build:
 | :--- | :--- | :--- |
 | `SMATCHET_WITH_LUA_AUTOMATION` | `ON` | Builds with the Lua console plugin and `sol2` bindings for field automation. |
 | `SMATCHET_WITH_MCP` | `ON` | Builds the Model Context Protocol (MCP) server plugin. |
-| `SMATCHET_WITH_AI` | `OFF` | Includes the AI assistance HTTP client. |
 | `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
 
 ### Unreal Engine Plugin
@@ -140,7 +141,7 @@ When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX
 * **`Plugins/`**: Optional plugin modules (Lua Console, MCP server).
 * **`UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.
 * **`ThirdParty/`**: Holds custom fixes or scripts for external dependencies.
-* **`scripts/`**: Default Lua scripts (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`). Edit them in-app via **Automation -> Scripts & Actions...** (standalone copies this tree next to the exe as `Scripts/`).
+* **`scripts/`**: Runtime Lua/art assets plus tooling subfolders. `scripts/` root contains the shipped Lua runtime files (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`) and bundled art copied next to the standalone exe as `Scripts/`. Use `scripts/dev/` for local build/dev helpers and `scripts/publish/` for release, signing, installer, and smoke-test tooling.
 * **`cmake/`**: Additional CMake helper modules.
 
 ## License

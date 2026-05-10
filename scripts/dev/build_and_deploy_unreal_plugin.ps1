@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $pluginName = "SmatchetImGuiPlugin"
 $sourcePluginDir = Join-Path $repoRoot "UnrealPlugins\$pluginName"
 $fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"
@@ -77,7 +77,6 @@ if (-not $skipCMakePreset) {
             -G $expectedGenerator -A x64 `
             "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
             "-DSMATCHET_WITH_MCP=ON" `
-            "-DSMATCHET_WITH_AI=OFF" `
             "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
             "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
         if ($LASTEXITCODE -ne 0) {

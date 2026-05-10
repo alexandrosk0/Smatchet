@@ -53,16 +53,6 @@ You can construct completely custom dialogs and floating windows directly from L
 | `ui.register_ticket_action(name, callback_func_name)` | Registers a row context-menu action. `name` is the menu label; registering again with the same `name` replaces the callback. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will be executed on a background thread when triggered. `my_callback(ticket)` receives the row's `Ticket`. See §3. |
 | `ui.register_global_action(name, callback_func_name)` | Registers a quick action shown on the **Tools & Actions** tab in the **Scripts & Actions** window. Same replace-by-`name` semantics. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will run on a background thread. See §3. |
 
-### `ai` Module
-
-Hooks into the built-in Smatchet AI Assistant.
-
-| Function | Description |
-| :--- | :--- |
-| `ai.add_context(text)` | Appends text to the AI's session context memory. |
-| `ai.prompt(message)` | Programmatically triggers the AI Assistant to process a message, using the current context. |
-| `ai.clear_context()` | Clears the accumulated session context. |
-
 ### `mcp` Module
 
 Smatchet acts as a Model Context Protocol (MCP) server. You can use Lua to define custom tools that connected AI agents can discover and execute.
@@ -188,7 +178,7 @@ Register these from the same setup script you use for field display (typically `
 
 **Global actions** — Open **Automation -> Scripts & Actions...** and use the **Tools & Actions** tab (or run the same callbacks from your own Lua). Runs with no selected row; use `smatchet.get_active_tickets()` for bulk work. Reopen the window from **Automation -> Scripts & Actions...** if you closed it.
 
-Callbacks share the same instruction budget as other one-shot Lua work (see §4). There is no dedicated `ai` Lua module for prompts or context; use `log_info`, MCP tools, or automation flows separately.
+Callbacks share the same instruction budget as other one-shot Lua work (see section 4). There is no dedicated `ai` Lua module for prompts or context; use `log_info`, MCP tools, or automation flows separately.
 
 **Example — ticket row (log description snippet):**
 
@@ -262,24 +252,6 @@ mcp.register_tool({
     
     return '{"status": "success", "message": "Ticket assigned successfully."}'
 end)
-```
-
-### AI-Driven Context & Prompts
-
-You can use Lua to feed relevant context to the AI or trigger specific summaries.
-
-```lua
--- Register an action to summarize a ticket
-function summarize_ticket_context(ticket)
-    ai.clear_context()
-    ai.add_context("The user wants a technical summary of this ticket.")
-    ai.add_context("Ticket ID: " .. ticket.id)
-    ai.add_context("Current Description: " .. (ticket:get_field("description") or "N/A"))
-    
-    ai.prompt("Summarize this ticket in 2 concise sentences for a developer.")
-end
-
-ui.register_ticket_action("AI: Summarize Context", "summarize_ticket_context")
 ```
 
 ### Custom ImGui Windows

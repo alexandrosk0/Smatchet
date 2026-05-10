@@ -50,6 +50,23 @@ struct TrackerIssueFetchPack {
     std::string FetchError;
 };
 
+struct AppUpdateAsset {
+    std::string Name;
+    std::string DownloadUrl;
+};
+
+struct AppUpdateInfo {
+    bool Ok = false;
+    bool UpdateAvailable = false;
+    std::string CurrentVersion;
+    std::string LatestVersion;
+    std::string ReleaseTag;
+    std::string ReleaseUrl;
+    std::string ReleaseNotes;
+    std::string Error;
+    AppUpdateAsset InstallerAsset;
+};
+
 class AppController {
   public:
     ~AppController();
@@ -82,6 +99,8 @@ class AppController {
      */
     void SetCloseEmbeddedUiHandler(std::function<void()> handler);
     void CloseEmbeddedUi();
+    void SetRequestAppQuitHandler(std::function<void()> handler);
+    void RequestAppQuit() const;
 
     /** Standalone / embedded host: set so Preferences can start or stop MCP without app restart. */
     void SetRuntimePluginHost(PluginHost* host);
@@ -140,6 +159,11 @@ class AppController {
     void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError = nullptr);
+    std::string GetAppVersion() const;
+    std::string GetGitHubReleaseRepo() const;
+    AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
+    bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
+                                          std::string& outError) const;
 
     void InitLua();
     void InitLuaCore(sol::state& state);
@@ -151,7 +175,7 @@ class AppController {
 
     /**
      * Resolve a URL or local path for field icons / Lua `imgui.image`.
-     * Allows http(s) URLs; local files must lie under the Lua scripts directory or `GetFilesBaseDirectory()`.
+     * Allows http(s) URLs; local files must lie under the Lua scripts directory or the runtime asset directory.
      */
     std::string ResolveFieldIconAssetPath(const std::string& pathOrUrl) const;
 
@@ -167,11 +191,6 @@ class AppController {
     /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
     std::vector<std::string> GetLuaTicketActionNames() const;
     void ExecuteLuaTicketAction(const std::string& name, const std::string& issueId);
-    void AddAiContext(const std::string& text);
-    const std::vector<std::string>& GetAiContext() const;
-    void ClearAiContext();
-    void PromptAi(const std::string& message);
-    void SetAiPromptHandler(std::function<void(const std::string&)> handler);
     std::vector<std::string> GetLuaGlobalActionNames() const;
     void ExecuteLuaGlobalAction(const std::string& name);
     /**
@@ -204,8 +223,6 @@ class AppController {
     void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
     void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
-    void LuaAiAddContextBind(const std::string& text);
-    void LuaAiPromptBind(const std::string& message);
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
     std::vector<CachedTicket> LuaGetActiveTicketsBind();
     /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
@@ -523,12 +540,11 @@ class AppController {
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
+    std::function<void()> RequestAppQuitHandler;
     AttachmentViewerHandler AttachmentViewerHandlerCallback;
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
-    std::vector<std::string> aiContext_;
-    std::function<void(const std::string&)> aiPromptHandler_;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
@@ -694,9 +710,6 @@ class AppController {
 };
 
 #endif
-
-
-
 
 
 

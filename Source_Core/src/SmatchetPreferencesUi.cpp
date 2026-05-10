@@ -114,11 +114,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.planeApiKeyBuf, d.cfg.PlaneApiKey);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
-#if defined(SMATCHET_WITH_AI)
-        CopyStringToBuffer(d.aiApiKeyBuf, d.cfg.AiApiKey);
-        CopyStringToBuffer(d.aiModelBuf, d.cfg.AiModel);
-        CopyStringToBuffer(d.aiBaseUrlBuf, d.cfg.AiBaseUrl);
-#endif
 #if defined(SMATCHET_WITH_MCP)
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
@@ -187,19 +182,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             ImGui::EndTabItem();
         }
-#if defined(SMATCHET_WITH_AI)
-        if (ImGui::BeginTabItem("Assistant")) {
-            ImGui::TextUnformatted("OpenAI-compatible API used by the AI assistant panel.");
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::InputText("API Key", d.aiApiKeyBuf, sizeof(d.aiApiKeyBuf), ImGuiInputTextFlags_Password);
-            ImGui::InputText("Model", d.aiModelBuf, sizeof(d.aiModelBuf));
-            ImGui::SetItemTooltip("Example: gpt-4o-mini");
-            ImGui::InputText("Base URL", d.aiBaseUrlBuf, sizeof(d.aiBaseUrlBuf));
-            ImGui::SetItemTooltip("Example: https://api.openai.com");
-            ImGui::EndTabItem();
-        }
-#endif
 #if defined(SMATCHET_WITH_MCP)
         if (ImGui::BeginTabItem("Integrations")) {
             ImGui::TextUnformatted("MCP (Model Context Protocol)");
@@ -379,6 +361,38 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) to short absolute (e.g. May 07 '26).");
             }
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Updates");
+            ImGui::Separator();
+            if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
+                ConfigManager::Save(d.cfg);
+            }
+            if (ImGui::Checkbox("Include prerelease builds", &d.cfg.UpdateIncludePrerelease)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip("When enabled, startup and manual checks can target prerelease GitHub releases too.");
+            if (ImGui::Button("Check for Updates Now")) {
+                d.appUpdateStartupCheckStarted = true;
+                d.appUpdateActionStatus.clear();
+                d.appUpdateCheckManual = true;
+                d.appUpdateCheckInFlight = true;
+                d.appUpdateFuture = std::async(std::launch::async, [&app, cfg = d.cfg]() {
+                    return app.CheckForAppUpdate(cfg.UpdateIncludePrerelease);
+                });
+            }
+            if (d.appUpdateCheckInFlight) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(checking...)");
+            }
+            if (!d.cfg.UpdateSkipVersion.empty()) {
+                ImGui::TextDisabled("Skipped version: %s", d.cfg.UpdateSkipVersion.c_str());
+                if (ImGui::SmallButton("Clear skipped version")) {
+                    d.cfg.UpdateSkipVersion.clear();
+                    ConfigManager::Save(d.cfg);
+                }
+            }
+            ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 
             ImGui::EndTabItem();
         }
@@ -848,7 +862,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextWrapped(
-        "Save & Sync writes the Tracker tab (and optional Assistant / Integrations tabs when enabled in this build) to "
+        "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
         "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
         "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The Blame "
         "Analysis tab has its own Save "
@@ -890,11 +904,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
         }
-#if defined(SMATCHET_WITH_AI)
-        d.cfg.AiApiKey = d.aiApiKeyBuf;
-        d.cfg.AiModel = d.aiModelBuf;
-        d.cfg.AiBaseUrl = d.aiBaseUrlBuf;
-#endif
 #if defined(SMATCHET_WITH_MCP)
         d.cfg.McpEnabled = d.mcpEnabled;
         d.cfg.McpPort = d.mcpPort;
@@ -935,5 +944,4 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 

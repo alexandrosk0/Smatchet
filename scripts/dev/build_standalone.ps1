@@ -5,11 +5,11 @@
     of reconfigure on every Play). First run or -ForceConfigure runs full configure.
 
     Examples:
-      .\scripts\build_standalone.ps1
-      .\scripts\build_standalone.ps1 -Preset ninja-iter-msys2
-      .\scripts\build_standalone.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
-      .\scripts\build_standalone.ps1 -ForceConfigure
-      .\scripts\build_standalone.ps1 -Preset ninja-publish-msys2 -CleanFirst
+      .\scripts\dev\build_standalone.ps1
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-iter-msys2
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
+      .\scripts\dev\build_standalone.ps1 -ForceConfigure
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-publish-msys2 -CleanFirst
 #>
 param(
     [string]$Preset = "ninja-debug-msys2",
@@ -135,8 +135,8 @@ function Use-Msys2Ucrt64Environment {
     throw "Unable to locate an MSYS2 UCRT64 toolchain. Set MSYS2_ROOT or MSYSTEM_PREFIX, or launch from a shell where UCRT64 gcc.exe is already on PATH."
 }
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot "SmatchetCMakeCommon.ps1")
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot "..\common\SmatchetCMakeCommon.ps1")
 
 Assert-Command -Name "cmake" -InstallHint "Install CMake 3.24+ or run from a shell where CMake is available."
 

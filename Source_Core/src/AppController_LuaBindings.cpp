@@ -434,18 +434,6 @@ void LuaUiRegisterGlobalActionGlue(const std::string& name, const std::string& c
     gApp->LuaUiRegisterGlobalActionBind(name, cb);
 }
 
-void LuaAiAddContextGlue(const std::string& text) {
-    gApp->LuaAiAddContextBind(text);
-}
-
-void LuaAiPromptGlue(const std::string& message) {
-    gApp->LuaAiPromptBind(message);
-}
-
-void LuaAiClearContextGlue() {
-    gApp->ClearAiContext();
-}
-
 void LuaMcpRegisterToolGlue(sol::table toolDef, sol::function callback) {
     gApp->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
 }
@@ -532,12 +520,6 @@ void AppController::InitLuaCore(sol::state& state) {
 
     state.set_function("log_info", &smatchet_lua_init_detail::LuaLogInfoGlue);
     state.set_function("decode_json", &smatchet_lua_init_detail::LuaDecodeJsonGlue);
-
-    sol::table ai = state.create_table();
-    ai.set_function("add_context", &smatchet_lua_init_detail::LuaAiAddContextGlue);
-    ai.set_function("prompt", &smatchet_lua_init_detail::LuaAiPromptGlue);
-    ai.set_function("clear_context", &smatchet_lua_init_detail::LuaAiClearContextGlue);
-    state["ai"] = ai;
 
     sol::table mcp = state.create_table();
     mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
@@ -774,14 +756,6 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
     if (!callbackFuncName.empty()) {
         luaGlobalActions_.push_back({name, callbackFuncName});
     }
-}
-
-void AppController::LuaAiAddContextBind(const std::string& text) {
-    AddAiContext(text);
-}
-
-void AppController::LuaAiPromptBind(const std::string& message) {
-    PromptAi(message);
 }
 
 void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) {
@@ -1431,31 +1405,6 @@ std::vector<std::string> AppController::GetLuaTicketActionNames() const {
     return names;
 }
 
-
-void AppController::AddAiContext(const std::string& text) {
-    aiContext_.push_back(text);
-    if (aiContext_.size() > 100) {
-        aiContext_.erase(aiContext_.begin());
-    }
-}
-
-const std::vector<std::string>& AppController::GetAiContext() const {
-    return aiContext_;
-}
-
-void AppController::ClearAiContext() {
-    aiContext_.clear();
-}
-
-void AppController::PromptAi(const std::string& message) {
-    if (aiPromptHandler_) {
-        aiPromptHandler_(message);
-    }
-}
-
-void AppController::SetAiPromptHandler(std::function<void(const std::string&)> handler) {
-    aiPromptHandler_ = std::move(handler);
-}
 
 std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
     std::vector<std::string> names;

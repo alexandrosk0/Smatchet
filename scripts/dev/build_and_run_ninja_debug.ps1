@@ -3,8 +3,8 @@
     Thin shim over build_and_run.ps1 -Preset ninja-debug-msys2.
 
     Examples:
-      .\scripts\build_and_run_ninja_debug.ps1
-      .\scripts\build_and_run_ninja_debug.ps1 -StandaloneArgs '--config','C:\tmp\config.json'
+      .\scripts\dev\build_and_run_ninja_debug.ps1
+      .\scripts\dev\build_and_run_ninja_debug.ps1 -StandaloneArgs '--config','C:\tmp\config.json'
 #>
 param(
     [Parameter(ValueFromRemainingArguments = $true)]

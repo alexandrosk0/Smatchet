@@ -34,7 +34,7 @@ def main() -> int:
     p.add_argument("--no-run", action="store_true", help="Only write filtered DB, skip cppcheck")
     args = p.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     src_db = root / args.compile_db if not args.compile_db.is_absolute() else args.compile_db
     out_db = root / args.out_db if not args.out_db.is_absolute() else args.out_db
     cache_dir = root / args.cache_dir if not args.cache_dir.is_absolute() else args.cache_dir

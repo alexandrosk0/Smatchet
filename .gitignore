@@ -1,3 +1,6 @@
+# FetchContent clones / Lua tarball (shared across build dirs; see FETCHCONTENT_BASE_DIR in CMakeLists)
+.fetchcontent-src/
+
 # Build output / cache
 build/
 build_*/
@@ -24,7 +27,8 @@ compile_commands.json
 
 # IDEs
 .vs/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 cmake-build-*/
 out/
@@ -61,3 +65,11 @@ smatchet_field_catalog_cache.json
 *.user
 /smatchet-cppcheck-build-dir
 cppcheck_*.txt
+/.fetchcontent-msvc
+BUILD_ITERATION_PLAN.md
+.claude/CLAUDE.md
+.vscode/settings.json
+backlog/CPPCHECK_PLAN.md
+backlog/RICH_TEXT_EDITING_V3_PLAN.md
+.claude/CLAUDE.md
+.claude/CLAUDE.md

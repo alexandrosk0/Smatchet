@@ -72,10 +72,10 @@ cmake --build --preset ninja-publish-msys2
 Wrapper shortcuts are still available:
 
 ```powershell
-.\scripts\build_and_run.ps1
-.\scripts\build_and_run.ps1 -Preset ninja-iter-msys2
-.\scripts\build_and_run.ps1 -BuildOnly
-.\scripts\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
+.\scripts\dev\build_and_run.ps1
+.\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msys2
+.\scripts\dev\build_and_run.ps1 -BuildOnly
+.\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
 ## Local Overrides

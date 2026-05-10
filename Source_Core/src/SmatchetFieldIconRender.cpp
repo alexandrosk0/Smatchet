@@ -96,7 +96,7 @@ std::string TryBundledPriorityPngPath(const std::string& slug) {
     if (slug.empty() || !SlugIsKnown(slug)) {
         return std::string();
     }
-    const std::string base = ConfigManager::GetFilesBaseDirectory();
+    const std::string base = ConfigManager::GetRuntimeAssetDirectory();
     if (base.empty()) {
         return std::string();
     }
@@ -157,7 +157,7 @@ bool ParsePriorityJson(const std::string& raw, std::string& outIconUrl, std::str
 
 bool EnsureFieldIconsCacheDir(std::string& outDir, std::string& outError) {
     outError.clear();
-    const std::string base = ConfigManager::GetFilesBaseDirectory();
+    const std::string base = ConfigManager::GetUserDataDirectory();
     if (base.empty()) {
         outError = "Files base directory is empty.";
         return false;
@@ -421,7 +421,6 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 }
 
 } // namespace SmatchetFieldIconRender
-
 
 
 

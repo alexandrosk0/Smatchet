@@ -1,14 +1,9 @@
 #include "SmatchetUI.h"
 
-#if defined(SMATCHET_WITH_AI)
-#include "AiController.h"
-#endif
-#include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
-#include "SmatchetFieldRender.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
-#include "TicketGridModel.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -19,104 +14,6 @@
 #include <cstdint>
 #include <limits>
 #include <string>
-
-#if defined(SMATCHET_WITH_AI)
-void SmatchetUI::drawAIAssistantWindow(AppController& app, UiDrawSession& d) {
-    if (d.aiPromptPending && !d.aiIsThinking) {
-        d.aiIsThinking = true;
-        d.aiPromptPending = false;
-        // In a real app, this should be async to avoid UI freeze.
-        // For this implementation, we follow the pattern in AnalyzeTicket button.
-        auto result = AiController::ChatCompletion(d.aiPromptMessage, app.GetAiContext(), d.cfg.AiApiKey, d.cfg.AiModel, d.cfg.AiBaseUrl);
-        d.aiResponse = result.Response;
-        d.aiIsThinking = false;
-        d.showAiAssistantWindow = true;
-        d.requestAiAssistantFocus = true;
-    }
-
-    if (!d.showAiAssistantWindow) {
-        return;
-    }
-
-    ImGui::Begin("AI Assistant", &d.showAiAssistantWindow);
-    if (d.requestAiAssistantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestAiAssistantFocus = false;
-    }
-    if (d.gridState.ActiveIssueId.empty()) {
-        ImGui::TextDisabled("Select a ticket to see AI insights.");
-    } else {
-        const auto ticketsSnapAi = app.GetActiveTicketsSnapshot();
-        const auto& tickets = *ticketsSnapAi;
-        auto it = std::find_if(tickets.begin(), tickets.end(),
-                               [&](const CachedTicket& t) { return t.id == d.gridState.ActiveIssueId; });
-
-        if (it != tickets.end()) {
-            const std::string summary = it->GetFieldValue("summary");
-            ImGui::Text("Analyzing: %s", it->id.c_str());
-            ImGui::Separator();
-            ImGui::TextWrapped("%s", summary.empty() ? "<no summary field selected>" : summary.c_str());
-            if (!it->fieldValues.empty()) {
-                ImGui::Spacing();
-                ImGui::Text("Selected Fields");
-                ImGui::Separator();
-                TrackerFieldCatalogIndex aiCatalog(app.GetAvailableFields());
-                for (const auto& kv : it->fieldValues) {
-                    const TrackerField* f = aiCatalog.Find(kv.first);
-                    const std::string display = DisplayValueForTrackerDateField(kv.first, f, kv.second);
-                    const std::string* tip = IsTrackerDateOrDateTimeField(kv.first, f) ? &kv.second : nullptr;
-                    const std::string label = kv.first + ": ";
-                    ImGui::TextUnformatted(label.c_str());
-                    ImGui::SameLine();
-                    const float valueAvail = ImGui::GetContentRegionAvail().x;
-                    RenderClippedFieldText(display, valueAvail, d.cfg.EnableFieldOverflowTooltips, false, tip);
-                }
-            }
-            ImGui::Spacing();
-            ImGui::TextDisabled("Model: %s", d.cfg.AiModel.empty() ? "(unset)" : d.cfg.AiModel.c_str());
-            ImGui::TextDisabled("Endpoint: %s", d.cfg.AiBaseUrl.empty() ? "(unset)" : d.cfg.AiBaseUrl.c_str());
-            if (d.cfg.AiApiKey.empty()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                                   "Set AI API Key under Settings -> Preferences -> Assistant to enable generation.");
-            }
-
-            if (ImGui::Button("Generate Action Plan") && !d.aiIsThinking) {
-                d.aiIsThinking = true;
-                auto result =
-                    AiController::AnalyzeTicket(it->id, summary, d.cfg.AiApiKey, d.cfg.AiModel, d.cfg.AiBaseUrl);
-                d.aiResponse = result.Response;
-                d.aiIsThinking = false;
-            }
-            
-            const auto& context = app.GetAiContext();
-            if (!context.empty()) {
-                ImGui::Separator();
-                ImGui::TextDisabled("Session Context (%zu items)", context.size());
-                if (ImGui::Button("Clear Context")) {
-                    app.ClearAiContext();
-                }
-                ImGui::BeginChild("aiContextScroll", ImVec2(0, 100), true);
-                for (const auto& ctx : context) {
-                    ImGui::BulletText("%s", ctx.c_str());
-                }
-                ImGui::EndChild();
-            }
-
-            if (d.aiIsThinking)
-                ImGui::Text("AI is thinking...");
-
-            if (!d.aiResponse.empty()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.9f, 0.7f, 1.0f));
-                ImGui::TextWrapped("%s", d.aiResponse.c_str());
-                ImGui::PopStyleColor();
-            }
-        }
-    }
-    ImGui::End();
-}
-#else
-void SmatchetUI::drawAIAssistantWindow(AppController&, UiDrawSession&) {}
-#endif
 
 namespace {
 
@@ -183,6 +80,35 @@ void AppendLogEntryAsLines(std::vector<std::string>& out, const char* levelTag8,
     }
 }
 
+void FillLogViewLinesFromEntries(const std::vector<LogEntry>& entries, std::vector<std::string>& out) {
+    out.clear();
+    out.reserve(entries.size() * 2);
+    for (const auto& e : entries) {
+        const char* levelLabel;
+        switch (e.level) {
+        case LogLevel::Trace:
+            levelLabel = "[TRACE] ";
+            break;
+        case LogLevel::Debug:
+            levelLabel = "[DEBUG] ";
+            break;
+        case LogLevel::Info:
+            levelLabel = "[INFO ] ";
+            break;
+        case LogLevel::Warn:
+            levelLabel = "[WARN ] ";
+            break;
+        case LogLevel::Error:
+            levelLabel = "[ERROR] ";
+            break;
+        default:
+            levelLabel = "";
+            break;
+        }
+        AppendLogEntryAsLines(out, levelLabel, e.message);
+    }
+}
+
 } // namespace
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
@@ -205,6 +131,32 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
         d.logTailReleasedByUser = false;
     }
     ImGui::SameLine();
+    if (ImGui::Button(SmatchetLocalization::Label("log.copy_log", "Copy log", "LogWinCopy"))) {
+        std::vector<std::string> clipLines;
+        FillLogViewLinesFromEntries(logger.GetEntriesSnapshot(), clipLines);
+        std::string clip;
+        size_t n = 0;
+        for (const auto& s : clipLines) {
+            n += s.size() + 1;
+        }
+        if (!clipLines.empty() && n > 0) {
+            --n;
+        }
+        clip.reserve(n);
+        for (size_t i = 0; i < clipLines.size(); ++i) {
+            if (i > 0) {
+                clip.push_back('\n');
+            }
+            clip.append(clipLines[i]);
+        }
+        ImGui::SetClipboardText(clip.c_str());
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s",
+                          SmatchetLocalization::T("log.copy_log_tip",
+                                                  "Copy the full application log to the clipboard."));
+    }
+    ImGui::SameLine();
     if (ImGui::Checkbox("Auto-scroll", &d.logAutoScroll) && d.logAutoScroll) {
         d.logTailReleasedByUser = false;
     }
@@ -216,34 +168,7 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     const std::uint64_t revision = logger.GetRevision();
     const bool rebuildLog = d.logViewLines.empty() || revision != d.lastSeenLogRevision;
     if (rebuildLog) {
-        const auto entries = logger.GetEntriesSnapshot();
-        d.logViewLines.clear();
-        d.logViewLines.reserve(entries.size() * 2);
-
-        for (const auto& e : entries) {
-            const char* levelLabel;
-            switch (e.level) {
-            case LogLevel::Trace:
-                levelLabel = "[TRACE] ";
-                break;
-            case LogLevel::Debug:
-                levelLabel = "[DEBUG] ";
-                break;
-            case LogLevel::Info:
-                levelLabel = "[INFO ] ";
-                break;
-            case LogLevel::Warn:
-                levelLabel = "[WARN ] ";
-                break;
-            case LogLevel::Error:
-                levelLabel = "[ERROR] ";
-                break;
-            default:
-                levelLabel = "";
-                break;
-            }
-            AppendLogEntryAsLines(d.logViewLines, levelLabel, e.message);
-        }
+        FillLogViewLinesFromEntries(logger.GetEntriesSnapshot(), d.logViewLines);
 
         d.lastSeenLogRevision = revision;
 
