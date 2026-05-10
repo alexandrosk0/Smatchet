@@ -10,14 +10,17 @@
       .\scripts\release_github.ps1 -Tag v1.2.3
       .\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Draft -NotesFile .\RELEASE_NOTES.md
       .\scripts\release_github.ps1 -Tag v1.2.3 -Publish -Clobber
+      .\scripts\release_github.ps1 -Tag v1.2.3 -ForceConfigure
+
+    Skips cmake --preset when the preset build dir already has CMakeCache.txt (unless -ForceConfigure).
 #>
 param(
     [string]$Tag = "",
     [string]$ReleaseName = "",
     [string]$Notes = "",
     [string]$NotesFile = "",
-    [string]$StandalonePreset = "ninja-release",
-    [string]$UnrealBuildPreset = "vs-unreal-dx12-release",
+    [string]$StandalonePreset = "ninja-publish-msys2",
+    [string]$UnrealBuildPreset = "ninja-publish-msys2",
     [string]$OutDir = "",
     [switch]$SkipBuild,
     [switch]$SkipStandalone,
@@ -27,7 +30,8 @@ param(
     [switch]$Draft,
     [switch]$Prerelease,
     [switch]$Publish,
-    [switch]$Clobber
+    [switch]$Clobber,
+    [switch]$ForceConfigure
 )
 
 $ErrorActionPreference = "Stop"
@@ -160,11 +164,80 @@ function Assert-CleanGitTree {
     }
 }
 
+function Use-Msys2Ucrt64Environment {
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+
+    $prefix = $env:MSYSTEM_PREFIX
+    if (-not [string]::IsNullOrWhiteSpace($prefix)) {
+        $prefix = $prefix.TrimEnd('\', '/')
+        $gccFromPrefix = Join-Path ($prefix -replace '/', '\') "bin\gcc.exe"
+        if (Test-Path -LiteralPath $gccFromPrefix -PathType Leaf) {
+            $root = Split-Path -Parent (Split-Path -Parent $gccFromPrefix)
+            $env:MSYS2_ROOT = $root
+            $env:MSYSTEM_PREFIX = ($prefix -replace '\\', '/')
+            $env:Path = "$($env:MSYSTEM_PREFIX -replace '/', '\')\bin;$root\usr\bin;$env:Path"
+            $env:MSYSTEM = "UCRT64"
+            $env:CHERE_INVOKING = "1"
+            return
+        }
+    }
+
+    $gccCommand = Get-Command "gcc.exe" -ErrorAction SilentlyContinue
+    if ($gccCommand -and $gccCommand.Source -match '^(.*)[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$') {
+        $root = [System.IO.Path]::GetFullPath($Matches[1])
+        $env:MSYS2_ROOT = $root
+        $env:MSYSTEM_PREFIX = (($root.TrimEnd('\', '/')) + "/ucrt64") -replace '\\', '/'
+        $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
+        $env:MSYSTEM = "UCRT64"
+        $env:CHERE_INVOKING = "1"
+        return
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:MSYS2_ROOT)) {
+        $candidateRoots.Add($env:MSYS2_ROOT.TrimEnd('\', '/'))
+    }
+
+    $registryKeys = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($registryKey in $registryKeys) {
+        $entries = Get-ItemProperty $registryKey -ErrorAction SilentlyContinue |
+            Where-Object {
+                $displayNameProp = $_.PSObject.Properties["DisplayName"]
+                $installLocationProp = $_.PSObject.Properties["InstallLocation"]
+                $displayName = if ($displayNameProp) { $displayNameProp.Value } else { $null }
+                $installLocation = if ($installLocationProp) { $installLocationProp.Value } else { $null }
+                $displayName -eq "MSYS2" -and -not [string]::IsNullOrWhiteSpace($installLocation)
+            }
+        foreach ($entry in $entries) {
+            $candidateRoots.Add($entry.InstallLocation.TrimEnd('\', '/'))
+        }
+    }
+
+    foreach ($root in ($candidateRoots | Select-Object -Unique)) {
+        $gccFromRoot = Join-Path $root "ucrt64\bin\gcc.exe"
+        if (Test-Path -LiteralPath $gccFromRoot -PathType Leaf) {
+            $env:MSYS2_ROOT = $root
+            $env:MSYSTEM_PREFIX = (($root) + "/ucrt64") -replace '\\', '/'
+            $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
+            $env:MSYSTEM = "UCRT64"
+            $env:CHERE_INVOKING = "1"
+            return
+        }
+    }
+
+    throw "Unable to locate an MSYS2 UCRT64 toolchain. Set MSYS2_ROOT or MSYSTEM_PREFIX, or launch from a shell where UCRT64 gcc.exe is already on PATH."
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $presetFile = Join-Path $repoRoot "CMakePresets.json"
 $pluginRoot = Join-Path $repoRoot "UnrealPlugins/SmatchetImGuiPlugin"
 $licensePath = Join-Path $repoRoot "LICENSE"
 $readmePath = Join-Path $repoRoot "README.md"
+
+Use-Msys2Ucrt64Environment
 
 if (-not (Test-Path -LiteralPath $presetFile -PathType Leaf)) {
     throw "Missing CMakePresets.json at repo root: $presetFile"
@@ -239,18 +312,24 @@ if (-not $SkipBuild) {
     Write-Stage "Configuring and building standalone ($StandalonePreset)"
     Push-Location $repoRoot
     try {
-        Invoke-Checked -FilePath $cmakeExe -Arguments @("--preset", $StandalonePreset)
+        $standaloneCache = Join-Path $standaloneBuildDir "CMakeCache.txt"
+        if (-not ((Test-Path -LiteralPath $standaloneCache) -and -not $ForceConfigure)) {
+            Invoke-Checked -FilePath $cmakeExe -Arguments @("--preset", $StandalonePreset)
+        }
         Invoke-Checked -FilePath $cmakeExe -Arguments @("--build", "--preset", $StandalonePreset)
     }
     finally {
         Pop-Location
     }
 
-    if (-not $SkipUnreal) {
+    if (-not $SkipUnreal -and $UnrealBuildPreset -ne $StandalonePreset) {
         Write-Stage "Configuring and building Unreal package target ($UnrealBuildPreset)"
         Push-Location $repoRoot
         try {
-            Invoke-Checked -FilePath $cmakeExe -Arguments @("--preset", $UnrealBuildPreset)
+            $unrealCache = Join-Path $unrealBuildDir "CMakeCache.txt"
+            if (-not ((Test-Path -LiteralPath $unrealCache) -and -not $ForceConfigure)) {
+                Invoke-Checked -FilePath $cmakeExe -Arguments @("--preset", $UnrealBuildPreset)
+            }
             Invoke-Checked -FilePath $cmakeExe -Arguments @("--build", "--preset", $UnrealBuildPreset)
         }
         finally {

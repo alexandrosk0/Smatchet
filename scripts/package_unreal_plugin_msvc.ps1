@@ -1,41 +1,30 @@
 <#.
-    Build Smatchet native Win64 DX12 artifacts with MSVC (ABI-compatible with Unreal Editor),
-    run SmatchetPackageUnrealLibs_DX12 (copies .lib/.h into repo:
-    UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet/...),
+    Build Smatchet native Win64 DX12 artifacts for Unreal packaging with the
+    Visual Studio 2022 generator, then optionally deploy the full plugin tree
+    to an Unreal project's Plugins folder.
 
-    then optionally deploy the full plugin tree to an Unreal project's Plugins folder.
+    This helper intentionally uses an MSVC/link.exe-compatible build because
+    Unreal Build Tool links the packaged Win64 third-party libraries with MSVC.
+    MinGW/MSYS2 archives are not ABI-compatible here, even if renamed to .lib.
 
-    Why MSVC: MinGW-built .lib/.a is not safe to link into UnrealEditor-SmatchetImGuiPlugin.dll.
-    Use this after changing Source_Core (e.g. SmatchetImGuiHost / diagnostics C API).
-
-    Standalone vs Unreal — same native feature flags:
-    Lua / MCP / AI are CMake options (SMATCHET_WITH_LUA_AUTOMATION, SMATCHET_WITH_MCP, SMATCHET_WITH_AI)
-    baked into SmatchetCore_DX12 / SmatchetImGuiHost_DX12. Unreal's UBT does not toggle them; the
-    packaged .lib files carry whatever you configured in THIS build directory's CMakeCache.
-    Use the same SMATCHET_WITH_* values here as for your SmatchetStandalone build (ideally one MSVC
-    tree: configure once, build SmatchetStandalone for local tests and SmatchetPackageUnrealLibs_DX12
-    for the plugin). If you use two build directories (e.g. MinGW standalone + MSVC Unreal), pass
-    the same -D SMATCHET_WITH_* flags to both configures. After changing options, reconfigure or wipe
-    the build dir so the cache is not stale. Compare SMATCHET_WITH_* entries in CMakeCache.txt
-    across trees if something looks mismatched.
-
-    Prerequisites:
-    - CMake 3.24+ on PATH
-    - Visual Studio 2022 with "Desktop development with C++" (CMake uses VS generator)
+    When CMakeCache.txt already exists for the build directory, skips the
+    configure step unless -ForceConfigure.
 
     Examples:
       .\scripts\package_unreal_plugin_msvc.ps1
       .\scripts\package_unreal_plugin_msvc.ps1 -ProjectRoot "D:\MyGame"
       .\scripts\package_unreal_plugin_msvc.ps1 -PackageOnly
-      .\scripts\package_unreal_plugin_msvc.ps1 -Configuration Debug
+      .\scripts\package_unreal_plugin_msvc.ps1 -ConfigurePreset vs-unreal-msvc -BuildDir build/vs-unreal-msvc
+      .\scripts\package_unreal_plugin_msvc.ps1 -ForceConfigure
 #>
 param(
     [string]$ProjectRoot = "C:\Users\alexk\Documents\Unreal Projects\TestProject",
     [ValidateSet("Release", "Debug")]
-    [string]$Configuration = "Release",
+    [string]$Configuration = "Debug",
     [switch]$PackageOnly,
-    [string]$ConfigurePreset = "vs-unreal-dx12-release",
-    [string]$BuildDir = ""
+    [string]$ConfigurePreset = "vs-unreal-msvc",
+    [string]$BuildDir = "",
+    [switch]$ForceConfigure
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,34 +33,84 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pluginName = "SmatchetImGuiPlugin"
 $sourcePluginDir = Join-Path $repoRoot "UnrealPlugins\$pluginName"
+$fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"
+
+function Reset-CMakeBuildDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathToReset
+    )
+
+    $resolvedRepoRoot = [System.IO.Path]::GetFullPath($repoRoot)
+    $resolvedBuildDir = [System.IO.Path]::GetFullPath($PathToReset)
+    if (-not $resolvedBuildDir.StartsWith($resolvedRepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove build directory outside the repo root: $resolvedBuildDir"
+    }
+
+    if (Test-Path -LiteralPath $resolvedBuildDir -PathType Container) {
+        Write-Host "==> Removing stale CMake build directory: $resolvedBuildDir"
+        Remove-Item -LiteralPath $resolvedBuildDir -Recurse -Force
+    }
+}
 
 if (-not (Test-Path -Path $sourcePluginDir -PathType Container)) {
     throw "Source plugin directory not found: $sourcePluginDir"
 }
 
-if ([string]::IsNullOrWhiteSpace($BuildDir)) {
-    $BuildDir = Join-Path $repoRoot "build/vs-unreal-dx12-release"
-} elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
-    $BuildDir = Join-Path $repoRoot $BuildDir
+if ($ConfigurePreset -ne "vs-unreal-msvc") {
+    throw "Configure preset '$ConfigurePreset' is not valid for Win64 Unreal packaging. Unreal Build Tool links with MSVC/link.exe, so use the MSVC-compatible script default 'vs-unreal-msvc'."
 }
+
+if ([string]::IsNullOrWhiteSpace($BuildDir)) {
+    $BuildDir = Join-Path $repoRoot "build\vs-unreal-msvc"
+} elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
+    $BuildDir = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
+} else {
+    $BuildDir = [System.IO.Path]::GetFullPath($BuildDir)
+}
+$presetBinaryDir = $BuildDir
 
 Write-Host "==> Repo root: $repoRoot"
 Write-Host "==> CMake configure preset: $ConfigurePreset"
 Write-Host "==> CMake build directory: $BuildDir"
-Write-Host "==> MSVC configuration: $Configuration (packages to ThirdParty lib/Win64/$(if ($Configuration -eq 'Debug') { 'Debug' } else { 'Development' }))"
+Write-Host "==> FetchContent base dir: $fetchContentBaseDir"
+Write-Host "==> Requested configuration hint: $Configuration"
 
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-    throw "cmake not found on PATH. Install CMake or use a Visual Studio / x64 Native Tools prompt where cmake is available."
+    throw "cmake not found on PATH. Install CMake or use a shell where the Visual Studio CMake generator is available."
 }
 
-if (-not (Test-Path -Path $BuildDir -PathType Container) -or -not (Test-Path -Path (Join-Path $BuildDir "CMakeCache.txt") -PathType Leaf)) {
-    Write-Host "==> Configuring (first time or missing CMakeCache)..."
-    # cmake --preset reads CMakePresets.json from the current directory; must run from repo root.
+$cmakeCacheInPresetDir = Join-Path $presetBinaryDir "CMakeCache.txt"
+$expectedGenerator = "Visual Studio 17 2022"
+$generatorMismatch = $false
+if (Test-Path -LiteralPath $cmakeCacheInPresetDir -PathType Leaf) {
+    $generatorLine = Select-String -Path $cmakeCacheInPresetDir -Pattern '^CMAKE_GENERATOR:INTERNAL=' -SimpleMatch:$false |
+        Select-Object -First 1
+    if ($generatorLine) {
+        $cachedGenerator = ($generatorLine.Line -replace '^CMAKE_GENERATOR:INTERNAL=', '').Trim()
+        if ($cachedGenerator -ne $expectedGenerator) {
+            $generatorMismatch = $true
+            Write-Host "==> Existing cache uses generator '$cachedGenerator'; expected '$expectedGenerator'."
+        }
+    }
+}
+if ($ForceConfigure -or $generatorMismatch) {
+    Reset-CMakeBuildDirectory -PathToReset $presetBinaryDir
+}
+$skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch)
+if (-not $skipCMakePreset) {
+    Write-Host "==> Configuring CMake (Visual Studio 17 2022, x64)..."
     Push-Location $repoRoot
     try {
-        & cmake --preset $ConfigurePreset
+        & cmake -S $repoRoot -B $presetBinaryDir `
+            -G $expectedGenerator -A x64 `
+            "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
+            "-DSMATCHET_WITH_MCP=ON" `
+            "-DSMATCHET_WITH_AI=OFF" `
+            "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
+            "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
         if ($LASTEXITCODE -ne 0) {
-            throw "cmake --preset $ConfigurePreset failed with exit code $LASTEXITCODE"
+            throw "cmake configure failed with exit code $LASTEXITCODE"
         }
     } finally {
         Pop-Location
@@ -79,9 +118,14 @@ if (-not (Test-Path -Path $BuildDir -PathType Container) -or -not (Test-Path -Pa
 }
 
 Write-Host "==> Building packaging target SmatchetPackageUnrealLibs_DX12..."
-& cmake --build $BuildDir --config $Configuration --target SmatchetPackageUnrealLibs_DX12
-if ($LASTEXITCODE -ne 0) {
-    throw "cmake build failed with exit code $LASTEXITCODE"
+Push-Location $repoRoot
+try {
+    & cmake --build $presetBinaryDir --config $Configuration --target SmatchetPackageUnrealLibs_DX12
+    if ($LASTEXITCODE -ne 0) {
+        throw "cmake build failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
 }
 
 Write-Host "==> Packaged into: $(Join-Path $sourcePluginDir 'ThirdParty\Smatchet')"

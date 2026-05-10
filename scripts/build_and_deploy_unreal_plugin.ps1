@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = "C:\Users\alexk\Documents\Unreal Projects\TestProject",
     [string]$BuildDir = "",
-    [switch]$Release
+    [switch]$Release,
+    [switch]$ForceConfigure
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,39 +11,92 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pluginName = "SmatchetImGuiPlugin"
 $sourcePluginDir = Join-Path $repoRoot "UnrealPlugins\$pluginName"
+$fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"
+
+function Reset-CMakeBuildDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathToReset
+    )
+
+    $resolvedRepoRoot = [System.IO.Path]::GetFullPath($repoRoot)
+    $resolvedBuildDir = [System.IO.Path]::GetFullPath($PathToReset)
+    if (-not $resolvedBuildDir.StartsWith($resolvedRepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove build directory outside the repo root: $resolvedBuildDir"
+    }
+
+    if (Test-Path -LiteralPath $resolvedBuildDir -PathType Container) {
+        Write-Host "==> Removing stale CMake build directory: $resolvedBuildDir"
+        Remove-Item -LiteralPath $resolvedBuildDir -Recurse -Force
+    }
+}
 
 if (-not (Test-Path -Path $sourcePluginDir -PathType Container)) {
     throw "Source plugin directory not found: $sourcePluginDir"
 }
 
+$cmakeConfig = if ($Release) { "Release" } else { "Debug" }
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
-    $BuildDir = if ($Release) { "build/ninja-unreal-dx12-release" } else { "build/ninja-unreal-dx12" }
-}
-
-$buildDirAbs = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
-    $BuildDir
+    $buildDirAbs = Join-Path $repoRoot "build\vs-unreal-msvc"
+} elseif ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    $buildDirAbs = [System.IO.Path]::GetFullPath($BuildDir)
 } else {
-    Join-Path $repoRoot $BuildDir
+    $buildDirAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 }
-
-$preset = if ($Release) { "ninja-unreal-dx12-release" } else { "ninja-unreal-dx12" }
+$presetBinaryDir = [System.IO.Path]::GetFullPath($buildDirAbs)
 
 Write-Host "==> Repo root: $repoRoot"
-Write-Host "==> Build dir: $buildDirAbs"
-Write-Host "==> Configure preset: $preset"
+Write-Host "==> Build dir (reference): $buildDirAbs"
+Write-Host "==> Configure generator: Visual Studio 17 2022 (x64)"
+Write-Host "==> FetchContent base dir: $fetchContentBaseDir"
+Write-Host "==> CMake configuration: $cmakeConfig"
 
-if (-not (Test-Path -Path $buildDirAbs -PathType Container)) {
-    Write-Host "==> Build directory missing, running: cmake --preset $preset"
-    & cmake --preset $preset
-    if ($LASTEXITCODE -ne 0) {
-        throw "cmake configure failed with exit code $LASTEXITCODE"
+$cmakeCacheInPresetDir = Join-Path $presetBinaryDir "CMakeCache.txt"
+$expectedGenerator = "Visual Studio 17 2022"
+$generatorMismatch = $false
+if (Test-Path -LiteralPath $cmakeCacheInPresetDir -PathType Leaf) {
+    $generatorLine = Select-String -Path $cmakeCacheInPresetDir -Pattern '^CMAKE_GENERATOR:INTERNAL=' -SimpleMatch:$false |
+        Select-Object -First 1
+    if ($generatorLine) {
+        $cachedGenerator = ($generatorLine.Line -replace '^CMAKE_GENERATOR:INTERNAL=', '').Trim()
+        if ($cachedGenerator -ne $expectedGenerator) {
+            $generatorMismatch = $true
+            Write-Host "==> Existing cache uses generator '$cachedGenerator'; expected '$expectedGenerator'."
+        }
+    }
+}
+if ($ForceConfigure -or $generatorMismatch) {
+    Reset-CMakeBuildDirectory -PathToReset $presetBinaryDir
+}
+$skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch)
+if (-not $skipCMakePreset) {
+    Write-Host "==> Configuring CMake (Visual Studio 17 2022, x64)..."
+    Push-Location $repoRoot
+    try {
+        & cmake -S $repoRoot -B $presetBinaryDir `
+            -G $expectedGenerator -A x64 `
+            "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
+            "-DSMATCHET_WITH_MCP=ON" `
+            "-DSMATCHET_WITH_AI=OFF" `
+            "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
+            "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
+        if ($LASTEXITCODE -ne 0) {
+            throw "cmake configure failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        Pop-Location
     }
 }
 
 Write-Host "==> Building Unreal plugin package target..."
-& cmake --build $buildDirAbs --target SmatchetPackageUnrealLibs_DX12
-if ($LASTEXITCODE -ne 0) {
-    throw "cmake build failed with exit code $LASTEXITCODE"
+Push-Location $repoRoot
+try {
+    & cmake --build $presetBinaryDir --config $cmakeConfig --target SmatchetPackageUnrealLibs_DX12
+    if ($LASTEXITCODE -ne 0) {
+        throw "cmake build failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
 }
 
 $projectPluginsDir = Join-Path $ProjectRoot "Plugins"

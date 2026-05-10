@@ -19,6 +19,105 @@ endif()
 
 project(SmatchetApp VERSION 1.0 LANGUAGES C CXX)
 
+# ==============================================================================
+# Iteration-speed knobs — all auto-detected and gracefully degrade. A fresh
+# clone with `cmake --preset ninja-publish-msys2 && cmake --build --preset ninja-publish-msys2`
+# still works whether or not ccache / lld are installed.
+# See BUILD_ITERATION_PLAN.md for the rationale and benchmarks.
+# ==============================================================================
+
+# ccache (and sccache) — drop-in compiler-output cache. Saves 3-10× on warm
+# rebuilds. VS generator support exists but is finicky on Windows; gate to the
+# Ninja / Makefile generators where it's robust. Set SMATCHET_NO_CCACHE=1 in
+# the env to opt out.
+#
+# Two ccache settings are tuned automatically for this project:
+#   * sloppiness — relax the timestamp checks that otherwise force misses on
+#     PCH-using builds and on freshly-cloned trees (mtimes differ from build to
+#     build).
+#   * basedir — rewrite absolute paths to project-relative so cache hits move
+#     across build directories and worktrees. Without this, every fresh build
+#     dir starts from a cold cache.
+if(CMAKE_GENERATOR MATCHES "Ninja|Makefile" AND NOT DEFINED ENV{SMATCHET_NO_CCACHE})
+    find_program(SMATCHET_CCACHE_PROGRAM NAMES ccache sccache)
+    if(SMATCHET_CCACHE_PROGRAM)
+        # Wrap ccache via `cmake -E env` so the env vars propagate at build time
+        # (set(ENV{...}) only affects the configure process; ninja won't see it).
+        # The launcher list is invoked as a chain:
+        #   cmake -E env CCACHE_SLOPPINESS=... CCACHE_BASEDIR=... ccache <compiler> <args>
+        # which is the canonical recipe for portable ccache+CMake on Windows.
+        set(_smatchet_ccache_launcher
+            "${CMAKE_COMMAND}"
+            "-E" "env"
+            "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
+            "CCACHE_BASEDIR=${CMAKE_SOURCE_DIR}"
+            "${SMATCHET_CCACHE_PROGRAM}")
+        set(CMAKE_C_COMPILER_LAUNCHER   "${_smatchet_ccache_launcher}" CACHE STRING "Compile-cache launcher (C)"   FORCE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${_smatchet_ccache_launcher}" CACHE STRING "Compile-cache launcher (C++)" FORCE)
+        message(STATUS "Compile cache: ${SMATCHET_CCACHE_PROGRAM}")
+        message(STATUS "  CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime")
+        message(STATUS "  CCACHE_BASEDIR=${CMAKE_SOURCE_DIR}")
+    endif()
+endif()
+
+# lld — much faster than BFD ld for static-link-heavy targets, multi-threaded
+# by default. Detected by looking for `ld.lld` in the same directory as the
+# active compiler — i.e. a MinGW toolchain that bundles lld. We don't try
+# to use a standalone LLVM `ld.lld` together with a separately-installed
+# MinGW GCC: that combo has a known interaction where collect2 invokes lld
+# without forwarding MinGW's MSVC-import-lib search semantics, and link
+# fails with `unable to find library -lgdi32` even when the lib clearly
+# exists. The fix on Windows is to install a MinGW that bundles lld:
+#   * MSYS2:    pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
+#   * winlibs:  download a UCRT 13+ build from https://winlibs.com/ — they
+#               ship `ld.lld.exe` next to `g++.exe` already.
+# Then ensure that MinGW's `bin/` is the active toolchain (the CMake compiler
+# detected). On a fresh clone with neither setup, BFD ld is used and the
+# build still works — just slower.
+# Set `SMATCHET_NO_LLD=1` in the env to opt out unconditionally.
+# Skipped under MSVC (link.exe is the right tool there).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC AND NOT DEFINED ENV{SMATCHET_NO_LLD})
+    get_filename_component(_smatchet_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(SMATCHET_LLD_PROGRAM
+        NAMES ld.lld
+        HINTS "${_smatchet_compiler_dir}"
+        NO_DEFAULT_PATH
+        NO_CACHE
+        DOC "ld.lld bundled with the active toolchain")
+    if(SMATCHET_LLD_PROGRAM)
+        add_link_options(-fuse-ld=lld)
+        message(STATUS "Linker: ld.lld at ${SMATCHET_LLD_PROGRAM} (multi-threaded by default)")
+    else()
+        message(STATUS "Linker: BFD ld (install MinGW lld next to g++ for faster, multi-threaded linking)")
+    endif()
+endif()
+
+# Job pool: cap concurrent links so simultaneous static links of large targets
+# don't thrash RAM (each materializes ~200 MB of static-archive symbols).
+# Compiles still run at full -j. Ninja-only.
+if(CMAKE_GENERATOR MATCHES "Ninja")
+    set_property(GLOBAL PROPERTY JOB_POOLS smatchet_link_pool=2)
+endif()
+
+# Precompiled header (Standalone target only). The four heaviest headers
+# (imgui.h, nlohmann/json.hpp, windows.h, common <string>/<vector>/...) cost
+# ~30-60% of compile time across the 56 TUs that include them. Defaults ON;
+# `-DSMATCHET_USE_PCH=OFF` to opt out (e.g. when bisecting compile errors).
+option(SMATCHET_USE_PCH
+    "Use a precompiled header on SmatchetStandalone (faster compile; off when bisecting)"
+    ON)
+
+# Link-time optimization for SmatchetStandalone. Slows configure+build
+# substantially (LTO has to defer codegen to link), but produces a smaller,
+# faster binary — worth it for shipping artifacts, not worth it for daily
+# iteration. Default OFF; the `ninja-publish-msys2` preset turns it on.
+option(SMATCHET_ENABLE_LTO
+    "Enable link-time optimisation (LTO/IPO) on eligible targets"
+    OFF)
+option(SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME
+    "Link MinGW standalone runtime fully static for one-file Windows publish artifacts"
+    OFF)
+
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Force static libraries" FORCE)
 set(CPR_FORCE_USE_SYSTEM_CURL OFF CACHE BOOL "Use internal cURL" FORCE)
 
@@ -86,85 +185,56 @@ endfunction()
 # ==============================================================================
 # 1. FETCH ALL DEPENDENCIES (Zero manual downloads required)
 # ==============================================================================
-include(FetchContent)
+# Must be set before include(FetchContent): otherwise clones default to
+# ${CMAKE_BINARY_DIR}/_deps
+# and wiping build/ forces a full re-clone on the next configure.
+if(NOT DEFINED FETCHCONTENT_BASE_DIR)
+    set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fetchcontent-src" CACHE PATH
+        "Shared FetchContent source trees (survives build/ clean; avoids repeat git clone)")
+endif()
 
-message(STATUS "Fetching nlohmann/json...")
+# Re-configure should not hit the network to "update" already-populated deps (first clone still uses git).
+if(NOT DEFINED FETCHCONTENT_UPDATES_DISCONNECTED)
+    set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
+        "Skip FetchContent update step when content is already populated (faster IDE re-configure)")
+endif()
+
+include(FetchContent)
+include(cmake/SmatchetThirdParty.cmake)
+
+option(SMATCHET_FETCHCONTENT_VERBOSE "Log each third-party dependency during configure" OFF)
+function(smatchet_fetch_status _msg)
+    if(SMATCHET_FETCHCONTENT_VERBOSE)
+        message(STATUS "${_msg}")
+    endif()
+endfunction()
+
+if(NOT SMATCHET_FETCHCONTENT_VERBOSE)
+    message(STATUS "FetchContent: sources under ${FETCHCONTENT_BASE_DIR} (SMATCHET_FETCHCONTENT_VERBOSE=ON for per-dependency log)")
+endif()
+
+smatchet_fetch_status("Fetching nlohmann/json...")
 FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
 FetchContent_MakeAvailable(json)
 
-message(STATUS "Fetching cpr (C++ Requests)...")
-# Bundled libcurl CMake probes ioctlsocket(FIONBIO) with int*; GCC 14 rejects int* vs u_long* →
-# HAVE_IOCTLSOCKET_FIONBIO unset → nonblock.c #errors. Winsock API uses u_long; safe to force on MinGW.
-if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    set(HAVE_IOCTLSOCKET_FIONBIO 1 CACHE INTERNAL "curl: ioctlsocket FIONBIO (MinGW GCC14+ probe fix)" FORCE)
-endif()
+smatchet_fetch_status("Fetching cpr (C++ Requests)...")
+smatchet_prepare_cpr()
 FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG 1.9.2)
 FetchContent_MakeAvailable(cpr)
-# MSVC C4244: Body(File) used int for tellg() (streamoff). Patch vendored header after fetch.
-set(_cpr_body_h "${cpr_SOURCE_DIR}/include/cpr/body.h")
-if(EXISTS "${_cpr_body_h}")
-    file(READ "${_cpr_body_h}" _cpr_body_h_contents)
-    set(_cpr_body_h_patched "${_cpr_body_h_contents}")
-    string(REPLACE "int length = is.tellg();"
-                   "const std::streamoff length = is.tellg();"
-                   _cpr_body_h_patched
-                   "${_cpr_body_h_patched}")
-    string(REPLACE "buffer.resize(length);"
-                   "buffer.resize(static_cast<size_t>(length));"
-                   _cpr_body_h_patched
-                   "${_cpr_body_h_patched}")
-    string(REPLACE "is.read(&buffer[0], length);"
-                   "is.read(buffer.data(), static_cast<std::streamsize>(length));"
-                   _cpr_body_h_patched
-                   "${_cpr_body_h_patched}")
-    if(NOT _cpr_body_h_patched STREQUAL _cpr_body_h_contents)
-        file(WRITE "${_cpr_body_h}" "${_cpr_body_h_patched}")
-        message(STATUS "Patched cpr include/cpr/body.h (streamoff / resize / read).")
-    endif()
-endif()
+smatchet_patch_cpr_after_fetch("${cpr_SOURCE_DIR}")
 
-message(STATUS "Fetching SQLiteCpp...")
-set(SQLITECPP_RUN_CPPLINT OFF CACHE BOOL "Disable linting" FORCE)
-set(SQLITECPP_RUN_CPPCHECK OFF CACHE BOOL "Disable cppcheck" FORCE)
+smatchet_fetch_status("Fetching SQLiteCpp...")
+smatchet_prepare_sqlitecpp()
 FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG 3.3.1)
-# Fetch + patch to avoid CMake deprecation warnings about < 3.10 compatibility.
 FetchContent_GetProperties(sqlitecpp)
 if(NOT sqlitecpp_POPULATED)
     FetchContent_Populate(sqlitecpp)
 endif()
-
-set(_sqlitecpp_cmakelists "${sqlitecpp_SOURCE_DIR}/CMakeLists.txt")
-if(EXISTS "${_sqlitecpp_cmakelists}")
-    file(READ "${_sqlitecpp_cmakelists}" _sqlitecpp_cmakelists_contents)
-    string(REPLACE "cmake_minimum_required(VERSION 3.5)"
-                   "cmake_minimum_required(VERSION 3.10)"
-                   _sqlitecpp_patched_contents
-                   "${_sqlitecpp_cmakelists_contents}")
-    if(NOT _sqlitecpp_patched_contents STREQUAL _sqlitecpp_cmakelists_contents)
-        file(WRITE "${_sqlitecpp_cmakelists}" "${_sqlitecpp_patched_contents}")
-    endif()
-endif()
-
-# MinGW/GCC: fixed-width integer typedefs no longer leak from libstdc++ transitive includes; SQLiteCpp 3.3.1
-# uses int32_t/int64_t/... without <cstdint> in Statement.h (Column.h, Database.h include it indirectly).
-set(_sqlitecpp_statement_h "${sqlitecpp_SOURCE_DIR}/include/SQLiteCpp/Statement.h")
-if(EXISTS "${_sqlitecpp_statement_h}")
-    file(READ "${_sqlitecpp_statement_h}" _sqlitecpp_statement_h_contents)
-    if(NOT _sqlitecpp_statement_h_contents MATCHES "#include <cstdint>")
-        string(REPLACE "#include <memory>"
-                       "#include <memory>\n#include <cstdint>"
-                       _sqlitecpp_statement_h_patched
-                       "${_sqlitecpp_statement_h_contents}")
-        if(NOT _sqlitecpp_statement_h_patched STREQUAL _sqlitecpp_statement_h_contents)
-            file(WRITE "${_sqlitecpp_statement_h}" "${_sqlitecpp_statement_h_patched}")
-            message(STATUS "Patched SQLiteCpp include/SQLiteCpp/Statement.h (<cstdint> for MinGW/GCC).")
-        endif()
-    endif()
-endif()
-
+smatchet_patch_sqlitecpp_after_populate("${sqlitecpp_SOURCE_DIR}")
 add_subdirectory("${sqlitecpp_SOURCE_DIR}" "${sqlitecpp_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
-message(STATUS "Fetching cpp-httplib...")
+smatchet_fetch_status("Fetching cpp-httplib...")
+smatchet_prepare_httplib()
 FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.14.1)
 FetchContent_MakeAvailable(httplib)
 
@@ -172,7 +242,7 @@ FetchContent_MakeAvailable(httplib)
 # md4c is the Markdown parser backing the rich-text editing pipeline (md ↔ ADF/HTML for Jira/Plane
 # description fields). We compile only `md4c.c` ourselves rather than using upstream's CMake project,
 # which also builds md4c-html and the md2html CLI we don't need. See RICH_TEXT_EDITING_V2_PLAN.md.
-message(STATUS "Fetching md4c (CommonMark/GFM parser)...")
+smatchet_fetch_status("Fetching md4c (CommonMark/GFM parser)...")
 FetchContent_Declare(md4c
     GIT_REPOSITORY https://github.com/mity/md4c.git
     GIT_TAG release-0.5.2
@@ -191,7 +261,7 @@ if(NOT TARGET md4c)
 endif()
 
 
-message(STATUS "Fetching ghc::filesystem (C++14 Polyfill)...")
+smatchet_fetch_status("Fetching ghc::filesystem (C++14 Polyfill)...")
 FetchContent_Declare(ghc_filesystem
     GIT_REPOSITORY https://github.com/gulrak/filesystem.git
     GIT_TAG v1.5.14
@@ -220,7 +290,7 @@ endif()
 
 add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
-message(STATUS "Fetching GLFW...")
+smatchet_fetch_status("Fetching GLFW...")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -231,12 +301,15 @@ FetchContent_MakeAvailable(glfw)
 # LUA & SOL2 (C++14 COMPATIBLE) — optional (SMATCHET_WITH_LUA_AUTOMATION)
 # ==============================================================================
 if(SMATCHET_WITH_LUA_AUTOMATION)
-    set(LUA_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/lua-src")
+    set(LUA_SRC_DIR "${FETCHCONTENT_BASE_DIR}/lua-src")
     if(NOT EXISTS "${LUA_SRC_DIR}")
-        message(STATUS "Downloading Lua 5.3.6 source...")
-        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz)
-        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf ${CMAKE_BINARY_DIR}/lua-5.3.6.tar.gz WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/_deps)
-        file(RENAME ${CMAKE_BINARY_DIR}/_deps/lua-5.3.6 ${LUA_SRC_DIR})
+        smatchet_fetch_status("Downloading Lua 5.3.6 source...")
+        file(MAKE_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
+        set(_lua_tar "${FETCHCONTENT_BASE_DIR}/lua-5.3.6.tar.gz")
+        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}")
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${_lua_tar}" WORKING_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
+        file(RENAME "${FETCHCONTENT_BASE_DIR}/lua-5.3.6" "${LUA_SRC_DIR}")
+        unset(_lua_tar)
     endif()
 
     file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
@@ -336,7 +409,7 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
 endif()
 
 # Compile Dear ImGui (with GLFW and OpenGL3 backends)
-message(STATUS "Fetching Dear ImGui...")
+smatchet_fetch_status("Fetching Dear ImGui...")
 FetchContent_Declare(imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
         # Pinned to a specific commit on the docking branch (reproducible builds / supply chain).
@@ -344,7 +417,10 @@ FetchContent_Declare(imgui
         GIT_TAG 329c5a6b3be75ebf54506d3ae94b836ffcf19fa0
 )
 
-FetchContent_Populate(imgui)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_Populate(imgui)
+endif()
 file(GLOB IMGUI_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
 list(APPEND IMGUI_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp" "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
 add_library(ImGuiLib STATIC ${IMGUI_SOURCES})
@@ -358,10 +434,12 @@ target_include_directories(ImGuiLib PUBLIC
 target_compile_definitions(ImGuiLib PUBLIC IMGUI_USE_WCHAR32=1)
 
 # Dear ImGui variant for Unreal/DX12 embedding (no GLFW/OpenGL dependency).
+# EXCLUDE_FROM_ALL — only used by the (also-excluded) DX12 targets, so a
+# default `cmake --build` for SmatchetStandalone shouldn't compile it.
 if(WIN32)
     file(GLOB IMGUI_DX12_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
     list(APPEND IMGUI_DX12_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp")
-    add_library(ImGuiLib_DX12 STATIC ${IMGUI_DX12_SOURCES})
+    add_library(ImGuiLib_DX12 STATIC EXCLUDE_FROM_ALL ${IMGUI_DX12_SOURCES})
     target_include_directories(ImGuiLib_DX12 PUBLIC
             ${imgui_SOURCE_DIR}
             ${imgui_SOURCE_DIR}/backends
@@ -491,7 +569,13 @@ function(smatchet_configure_dx12_core_impl_target _target)
 endfunction()
 
 if(WIN32)
-    add_library(SmatchetCore_DX12 STATIC ${CORE_SOURCES})
+    # EXCLUDE_FROM_ALL: the DX12 lib is consumed by the Unreal plugin only.
+    # Excluding it from the default ALL target halves incremental compile time
+    # for SmatchetStandalone iteration (each Source_Core/src/*.cpp would otherwise
+    # be built twice — once into libSmatchetCore_DX12.a, once into the exe).
+    # The Unreal-packaging build presets explicitly target
+    # `SmatchetPackageUnrealLibs_DX12` so they're unaffected.
+    add_library(SmatchetCore_DX12 STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})
     smatchet_configure_dx12_core_impl_target(SmatchetCore_DX12)
     smatchet_apply_strict_warnings(SmatchetCore_DX12)
 endif()
@@ -508,6 +592,15 @@ endif()
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
     set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+    # LuaConsolePlugin.cpp instantiates sol2 templates and trips the same COFF
+    # relocation overflow as AppController_LuaBindings.cpp under BFD ld. Skip
+    # the flag when lld is the active linker — lld uses 64-bit relocations by
+    # default and rejects -mcmodel=large objects (unsupported reloc type 0xe).
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT SMATCHET_LLD_PROGRAM)
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/LuaConsolePlugin.cpp"
+            PROPERTIES COMPILE_OPTIONS "-mcmodel=large")
+    endif()
     add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
     target_include_directories(SmatchetPlugin_LuaConsole PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
@@ -526,14 +619,16 @@ endif()
 
 if(WIN32)
     if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
-        add_library(SmatchetPlugin_Mcp_DX12 STATIC Plugins/Mcp/McpPlugin.cpp)
+        # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
+        add_library(SmatchetPlugin_Mcp_DX12 STATIC EXCLUDE_FROM_ALL Plugins/Mcp/McpPlugin.cpp)
         target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
         target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12 SmatchetCoreMcpShim)
         smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
-        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+        # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
+        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC EXCLUDE_FROM_ALL Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
         target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC
                 "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit")
@@ -549,7 +644,8 @@ if(WIN32)
         endif()
     endif()
 
-    add_library(SmatchetImGuiHost_DX12 STATIC
+    # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
+    add_library(SmatchetImGuiHost_DX12 STATIC EXCLUDE_FROM_ALL
             Source_Core/src/SmatchetImGuiHost.cpp
             Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp
     )
@@ -575,9 +671,10 @@ if(WIN32)
     # Package DX12 libs + public host header directly into Unreal plugin ThirdParty layout.
     set(_SMATCHET_UNREAL_INCLUDE_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/include")
     set(_SMATCHET_UNREAL_LIB_DIR "${SMATCHET_UNREAL_THIRDPARTY_DIR}/lib/Win64/$<IF:$<CONFIG:Debug>,Debug,Development>")
-    set(_SMATCHET_PKG_DEP SmatchetImGuiHost_DX12 SmatchetCore_DX12 ImGuiLib_DX12)
+    set(_SMATCHET_PKG_DEP SmatchetImGuiHost_DX12 SmatchetCore_DX12 ImGuiLib_DX12 md4c)
     set(_SMATCHET_PKG_CMDS
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHost.h"
@@ -615,12 +712,49 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:libcurl>"
                 "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:libcurl>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:md4c>"
+                "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:md4c>"
     )
+    if(MSVC)
+        list(APPEND _SMATCHET_PKG_CMDS
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:SmatchetImGuiHost_DX12>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/SmatchetImGuiHost_DX12.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:SmatchetCore_DX12>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/SmatchetCore_DX12.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:ImGuiLib_DX12>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/ImGuiLib_DX12.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:cpr>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/cpr.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:SQLiteCpp>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/SQLiteCpp.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:sqlite3>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/sqlite3.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:libcurl>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/libcurl.lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:md4c>"
+                    "${_SMATCHET_UNREAL_LIB_DIR}/md4c.lib")
+    endif()
     if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         list(APPEND _SMATCHET_PKG_CMDS
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
-                    "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_Mcp_DX12>")
+                    "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:SmatchetPlugin_Mcp_DX12>"
+        )
+        if(MSVC)
+            list(APPEND _SMATCHET_PKG_CMDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:SmatchetPlugin_Mcp_DX12>"
+                        "${_SMATCHET_UNREAL_LIB_DIR}/SmatchetPlugin_Mcp_DX12.lib")
+        endif()
         list(APPEND _SMATCHET_PKG_DEP SmatchetPlugin_Mcp_DX12)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
@@ -631,6 +765,15 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "$<TARGET_FILE:Smatchet_Lua_Internal>"
                     "${_SMATCHET_UNREAL_LIB_DIR}/$<TARGET_FILE_NAME:Smatchet_Lua_Internal>")
+        if(MSVC)
+            list(APPEND _SMATCHET_PKG_CMDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:SmatchetPlugin_LuaConsole_DX12>"
+                        "${_SMATCHET_UNREAL_LIB_DIR}/SmatchetPlugin_LuaConsole_DX12.lib"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:Smatchet_Lua_Internal>"
+                        "${_SMATCHET_UNREAL_LIB_DIR}/Smatchet_Lua_Internal.lib")
+        endif()
         list(APPEND _SMATCHET_PKG_DEP SmatchetPlugin_LuaConsole_DX12 Smatchet_Lua_Internal)
     endif()
     add_custom_target(SmatchetPackageUnrealLibs_DX12
@@ -685,20 +828,103 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     else()
         set(SMATCHET_LUA_SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Scripts")
     endif()
-    add_custom_command(TARGET SmatchetStandalone POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${SMATCHET_LUA_SCRIPTS_SRC}" "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
-            COMMENT "Copy Scripts (Lua + bundled art) next to SmatchetStandalone"
-            VERBATIM)
+
+    # Single-config generators (Ninja, Make): create a junction (Windows) or
+    # symlink (POSIX) at configure-time so edits to Scripts/ propagate live
+    # without re-running the build. Multi-config generators (Visual Studio,
+    # Xcode) keep the per-build copy because the runtime dir is per-config and
+    # not knowable at configure time. Falls back to copy if linking fails
+    # (FAT filesystem, lacking privileges, etc.).
+    set(_SMATCHET_SCRIPTS_DST "${CMAKE_BINARY_DIR}/Scripts")
+    set(_smatchet_scripts_linked FALSE)
+    if(NOT CMAKE_CONFIGURATION_TYPES AND EXISTS "${SMATCHET_LUA_SCRIPTS_SRC}")
+        if(NOT EXISTS "${_SMATCHET_SCRIPTS_DST}")
+            if(WIN32)
+                # mklink /J — directory junction; does NOT require admin rights.
+                # mklink is a cmd built-in (not a separate exe), and it expects
+                # native Windows backslashes; CMake paths are forward-slash by
+                # default so we convert before invoking.
+                file(TO_NATIVE_PATH "${_SMATCHET_SCRIPTS_DST}" _smatchet_dst_native)
+                file(TO_NATIVE_PATH "${SMATCHET_LUA_SCRIPTS_SRC}" _smatchet_src_native)
+                execute_process(
+                    COMMAND cmd /c mklink /J "${_smatchet_dst_native}" "${_smatchet_src_native}"
+                    RESULT_VARIABLE _smatchet_mklink_rc
+                    OUTPUT_QUIET ERROR_QUIET)
+                if(_smatchet_mklink_rc EQUAL 0)
+                    set(_smatchet_scripts_linked TRUE)
+                endif()
+            else()
+                execute_process(
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink
+                            "${SMATCHET_LUA_SCRIPTS_SRC}" "${_SMATCHET_SCRIPTS_DST}"
+                    RESULT_VARIABLE _smatchet_mklink_rc
+                    OUTPUT_QUIET ERROR_QUIET)
+                if(_smatchet_mklink_rc EQUAL 0)
+                    set(_smatchet_scripts_linked TRUE)
+                endif()
+            endif()
+            if(_smatchet_scripts_linked)
+                message(STATUS "Scripts: linked ${_SMATCHET_SCRIPTS_DST} -> ${SMATCHET_LUA_SCRIPTS_SRC}")
+            else()
+                message(STATUS "Scripts: link failed (rc=${_smatchet_mklink_rc}); falling back to per-build copy")
+            endif()
+        else()
+            # Already there from a prior configure (junction or copy). Trust it;
+            # users can rm -rf the build dir to re-link.
+            set(_smatchet_scripts_linked TRUE)
+        endif()
+    endif()
+    if(NOT _smatchet_scripts_linked)
+        add_custom_command(TARGET SmatchetStandalone POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${SMATCHET_LUA_SCRIPTS_SRC}"
+                        "$<TARGET_FILE_DIR:SmatchetStandalone>/Scripts"
+                COMMENT "Copy Scripts (Lua + bundled art) next to SmatchetStandalone"
+                VERBATIM)
+    endif()
 endif()
 
-# Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket in Debug
+# Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket.
+# -mcmodel=large makes GCC emit 64-bit absolute (R_X86_64_32S) relocations so
+# BFD ld can reach symbols past the 2 GB boundary that short-range relocations
+# cannot. lld already uses 64-bit relocations for all COFF/PE targets by
+# default and does NOT support R_X86_64_32S (type 0xe) — using -mcmodel=large
+# with lld causes "unsupported relocation type 0xe" link errors. So we apply
+# the flag ONLY when BFD ld is the active linker (SMATCHET_LLD_PROGRAM unset).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    if(SMATCHET_WITH_LUA_AUTOMATION)
-        target_compile_options(SmatchetStandalone PRIVATE -mcmodel=large)
+    if(SMATCHET_WITH_LUA_AUTOMATION AND NOT SMATCHET_LLD_PROGRAM)
+        # COMPILE_OPTIONS adds the flag; SKIP_PRECOMPILE_HEADERS opts the TU
+        # out of the Standalone PCH because PCHs are model-locked — a PCH
+        # built with -mcmodel=small cannot be consumed by a -mcmodel=large TU
+        # (and vice-versa). Without the skip, GCC emits a noisy
+        # "[-Winvalid-pch]" warning and silently falls back to non-PCH for
+        # this TU. The skip makes the fallback explicit and quiets the build.
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp"
+            PROPERTIES
+                COMPILE_OPTIONS "-mcmodel=large"
+                SKIP_PRECOMPILE_HEADERS ON)
         target_link_options(SmatchetStandalone PRIVATE -mcmodel=large)
     endif()
-    # MinGW ld can overflow COFF debug relocations in this translation unit.
-    target_compile_options(SmatchetStandalone PRIVATE -g0)
+    # COFF debug-section relocation overflow (more than 64K relocations in one
+    # section) can hit MinGW Debug builds when sol2 expands a lot of templates
+    # in a single TU. Two ways to lift the limit without losing debug info:
+    #   * `-Wa,-mbig-obj` — switch the assembler to the big-obj format (linker-
+    #     side limit, no source change). Cheap and Just Works on any GCC ≥ 5.
+    #   * `-gsplit-dwarf` — split debug info into a sidecar `.dwo` file.
+    # Use `-Wa,-mbig-obj` as the default; falls through to `-g0` only on the
+    # off chance the assembler doesn't support it. RelWithDebInfo and Debug
+    # both keep their `-g`, so the iteration presets remain debuggable.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-Wa,-mbig-obj" SMATCHET_HAS_MBIG_OBJ)
+    if(SMATCHET_HAS_MBIG_OBJ)
+        target_compile_options(SmatchetStandalone PRIVATE -Wa,-mbig-obj)
+    else()
+        # Last-ditch: drop debug info to avoid the overflow. Only Debug is
+        # affected; RelWithDebInfo still uses its build-type defaults because
+        # it lives in the build-type flags, not target_compile_options.
+        target_compile_options(SmatchetStandalone PRIVATE "$<$<CONFIG:Debug>:-g0>")
+    endif()
 endif()
 
 if(SMATCHET_WITH_MCP)
@@ -713,19 +939,34 @@ if(WIN32)
     # MinGW release exe otherwise depends on libgcc/libstdc++ DLLs; wrong DLL on PATH → 0xC0000139
     # (entry point not found) before main — no logs, "release doesn't run".
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        target_link_options(SmatchetStandalone PRIVATE -static-libgcc -static-libstdc++)
-        # Still links libwinpthread-1.dll; copy toolchain DLL next to exe so PATH doesn't load a wrong build.
-        get_filename_component(_SMATCHET_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
-        set(_SMATCHET_WINPTHREAD_DLL "${_SMATCHET_MINGW_BIN}/libwinpthread-1.dll")
-        if(EXISTS "${_SMATCHET_WINPTHREAD_DLL}")
-            add_custom_command(
-                TARGET SmatchetStandalone
-                POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_SMATCHET_WINPTHREAD_DLL}"
-                        "$<TARGET_FILE_DIR:SmatchetStandalone>/"
-                COMMENT "Copy MinGW libwinpthread-1.dll next to SmatchetStandalone"
-                VERBATIM)
+        if(SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME)
+            target_link_options(SmatchetStandalone PRIVATE -static -static-libgcc -static-libstdc++)
+        else()
+            target_link_options(SmatchetStandalone PRIVATE -static-libgcc -static-libstdc++)
+            # Still links a handful of MinGW/MSYS2 runtime DLLs; copy them next to
+            # the exe so command-prompt launches and debugger runs do not depend on
+            # PATH pointing at the same toolchain build.
+            get_filename_component(_SMATCHET_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set(_SMATCHET_STANDALONE_RUNTIME_DLLS
+                "${_SMATCHET_MINGW_BIN}/libwinpthread-1.dll")
+            foreach(_smatchet_runtime_dll IN LISTS _SMATCHET_STANDALONE_RUNTIME_DLLS)
+                if(EXISTS "${_smatchet_runtime_dll}")
+                    get_filename_component(_smatchet_runtime_dll_name "${_smatchet_runtime_dll}" NAME)
+                    # Configure-time copy covers the common "configure, then run"
+                    # flow even before the target is rebuilt.
+                    file(COPY "${_smatchet_runtime_dll}" DESTINATION "${CMAKE_BINARY_DIR}/")
+                    # Post-build copy keeps the runtime DLL set fresh whenever the
+                    # standalone target is rebuilt.
+                    add_custom_command(
+                        TARGET SmatchetStandalone
+                        POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${_smatchet_runtime_dll}"
+                                "$<TARGET_FILE_DIR:SmatchetStandalone>/"
+                        COMMENT "Copy ${_smatchet_runtime_dll_name} next to SmatchetStandalone"
+                        VERBATIM)
+                endif()
+            endforeach()
         endif()
     endif()
 elseif(APPLE)
@@ -733,3 +974,80 @@ elseif(APPLE)
     find_library(OPENGL_LIBRARY OpenGL)
     target_link_libraries(SmatchetStandalone PRIVATE ${COCOA_LIBRARY} ${OPENGL_LIBRARY})
 endif()
+
+# LTO/IPO for distribution builds.
+# Only the publish preset sets SMATCHET_ENABLE_LTO=ON; iteration presets leave
+# it OFF because LTO forces a full relink of every TU on every build.
+#
+# Compatibility matrix:
+#   GCC  + BFD ld  → full LTO via liblto_plugin. Supported. Slow link, best code.
+#   GCC  + lld     → NOT supported. GCC emits GIMPLE IR; lld reads LLVM IR.
+#                    We gate explicitly on NOT SMATCHET_LLD_PROGRAM so the
+#                    message is clear rather than a cryptic link error.
+#   Clang + lld    → ThinLTO (-flto=thin). Fast parallel link, near-full quality.
+#                    Not yet wired (no clang preset); add when needed.
+if(SMATCHET_ENABLE_LTO)
+    if(SMATCHET_LLD_PROGRAM AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        message(STATUS "LTO: disabled — GCC + lld are incompatible (GCC emits GIMPLE IR, lld reads LLVM IR). Build with BFD ld or switch to Clang + lld.")
+    else()
+        include(CheckIPOSupported)
+        check_ipo_supported(RESULT _smatchet_ipo_ok OUTPUT _smatchet_ipo_err)
+        if(_smatchet_ipo_ok)
+            if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+                # Use parallel LTRANS jobs so `lto-wrapper` doesn't serialize
+                # the final link across translation units.
+                add_compile_options(-flto=auto)
+                add_link_options(-flto=auto)
+            endif()
+            message(STATUS "LTO: enabled (IPO supported by ${CMAKE_CXX_COMPILER_ID} + active linker)")
+            set(SMATCHET_IPO_ENABLED TRUE)
+        else()
+            message(STATUS "LTO: disabled (not supported: ${_smatchet_ipo_err})")
+        endif()
+    endif()
+endif()
+
+# Precompiled header — see SMATCHET_USE_PCH option above. Applied only to the
+# Standalone target so the DX12 lib (different ImGui backend, different defs)
+# stays unaffected. Header lives at Source_Core/include/SmatchetPch.h and
+# pulls in the four heaviest things in the compile graph (imgui.h, json,
+# windows.h, common STL containers).
+if(SMATCHET_USE_PCH)
+    target_precompile_headers(SmatchetStandalone PRIVATE
+        "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetPch.h>")
+endif()
+
+if(SMATCHET_IPO_ENABLED)
+    set_target_properties(SmatchetStandalone PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    if(TARGET SmatchetCore_DX12)
+        set_target_properties(SmatchetCore_DX12 PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+    if(TARGET SmatchetImGuiHost_DX12)
+        set_target_properties(SmatchetImGuiHost_DX12 PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+endif()
+
+# Strip the symbol table from Release builds. No debug info is emitted under
+# Release anyway (CMAKE_<LANG>_FLAGS_RELEASE = "-O3 -DNDEBUG"), so this just
+# removes the linker's symbol table — a few MB of disk space saved with no
+# information loss for end users. Skipped under MSVC (link.exe doesn't accept
+# `-Wl,-s`; the equivalent there is `/DEBUG:NONE` which is already the default
+# for Release).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(SmatchetStandalone PRIVATE
+        "$<$<CONFIG:Release>:-Wl,-s>")
+endif()
+
+# Cap concurrent links so simultaneous static-link of large targets doesn't
+# thrash RAM on machines with limited memory. Compiles still run at full -j.
+if(CMAKE_GENERATOR MATCHES "Ninja")
+    set_property(TARGET SmatchetStandalone PROPERTY JOB_POOL_LINK smatchet_link_pool)
+    if(TARGET SmatchetCore_DX12)
+        set_property(TARGET SmatchetCore_DX12 PROPERTY JOB_POOL_LINK smatchet_link_pool)
+    endif()
+    if(TARGET SmatchetImGuiHost_DX12)
+        set_property(TARGET SmatchetImGuiHost_DX12 PROPERTY JOB_POOL_LINK smatchet_link_pool)
+    endif()
+endif()
+
+

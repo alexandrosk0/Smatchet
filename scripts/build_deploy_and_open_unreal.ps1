@@ -4,11 +4,32 @@ param(
     [string]$UnrealBuildBat = "",
     [string]$UnrealPlatform = "Win64",
     [string]$UnrealConfiguration = "Development",
-    [switch]$Release
+    [switch]$Release,
+    [switch]$ForceConfigure
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+function Resolve-PackageConfiguration {
+    param(
+        [string]$TargetConfiguration,
+        [switch]$ForceRelease
+    )
+
+    if ($ForceRelease) {
+        return "Release"
+    }
+
+    if ($TargetConfiguration -eq "Debug") {
+        return "Debug"
+    }
+
+    # UBT uses the plugin's Development lib folder for Development, DebugGame,
+    # Shipping, and other non-Debug Win64 targets. Our CMake packaging target
+    # maps every non-Debug config to that Development folder.
+    return "Release"
+}
 
 function Resolve-UnrealBuildBat {
     param(
@@ -48,35 +69,31 @@ if (-not (Test-Path -Path $ProjectFile -PathType Leaf)) {
 
 $projectRoot = Split-Path -Parent $ProjectFile
 $packageScript = Join-Path $PSScriptRoot "package_unreal_plugin_msvc.ps1"
-$deployScript = Join-Path $PSScriptRoot "build_and_deploy_unreal_plugin.ps1"
-if (-not (Test-Path -Path $deployScript -PathType Leaf)) {
-    throw "Deploy script not found: $deployScript"
+if (-not (Test-Path -Path $packageScript -PathType Leaf)) {
+    throw "Package/deploy script not found: $packageScript"
 }
 
-$deployArgs = @{
+$packageArgs = @{
     ProjectRoot = $projectRoot
+    PackageOnly = $false
 }
 
 if (-not [string]::IsNullOrWhiteSpace($BuildDir)) {
-    $deployArgs.BuildDir = $BuildDir
+    $packageArgs.BuildDir = $BuildDir
 }
 
-if ($Release) {
-    $deployArgs.Release = $true
+$packageArgs.Configuration = Resolve-PackageConfiguration -TargetConfiguration $UnrealConfiguration -ForceRelease:$Release
+$packageArgs.ConfigurePreset = "vs-unreal-msvc"
+
+if ($ForceConfigure) {
+    $packageArgs.ForceConfigure = $true
 }
 
-Write-Host "=====> Running package script..."
-& $packageScript
-
+Write-Host "=====> Packaging and deploying Unreal plugin..."
+Write-Host "=====> Native package configuration: $($packageArgs.Configuration) (for Unreal $UnrealConfiguration)"
+& $packageScript @packageArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "Package script failed with exit code $LASTEXITCODE"
-}
-	
-Write-Host "=====> Running deploy script..."
-& $deployScript @deployArgs
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Deployment script failed with exit code $LASTEXITCODE"
+    throw "Package/deploy script failed with exit code $LASTEXITCODE"
 }
 
 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectFile)

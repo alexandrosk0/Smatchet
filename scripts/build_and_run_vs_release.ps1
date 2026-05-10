@@ -1,7 +1,6 @@
 <#.
-    Configure, build, and run SmatchetStandalone using the vs-release preset
-    (Visual Studio 2022 generator).
-    Thin shim over build_and_run.ps1 -Preset vs-release.
+    Configure, build, and run SmatchetStandalone using the ninja-publish-msys2 preset.
+    Thin shim over build_and_run.ps1 -Preset ninja-publish-msys2.
 
     Examples:
       .\scripts\build_and_run_vs_release.ps1
@@ -16,4 +15,4 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $buildAndRun = Join-Path $PSScriptRoot "build_and_run.ps1"
-& $buildAndRun -Preset "vs-release" -StandaloneArgs $StandaloneArgs
+& $buildAndRun -Preset "ninja-publish-msys2" -StandaloneArgs $StandaloneArgs

@@ -1,14 +1,21 @@
 <#.
     Configure and build the standalone executable.
 
+    When CMakeCache.txt already exists for the preset binaryDir, skips cmake --preset (saves ~seconds
+    of reconfigure on every Play). First run or -ForceConfigure runs full configure.
+
     Examples:
       .\scripts\build_standalone.ps1
-      .\scripts\build_standalone.ps1 -Preset ninja-msvc-debug
-      .\scripts\build_standalone.ps1 -Preset vs-debug
+      .\scripts\build_standalone.ps1 -Preset ninja-iter-msys2
+      .\scripts\build_standalone.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
+      .\scripts\build_standalone.ps1 -ForceConfigure
+      .\scripts\build_standalone.ps1 -Preset ninja-publish-msys2 -CleanFirst
 #>
 param(
-    [string]$Preset = "ninja-debug",
-    [string]$Target = "SmatchetStandalone"
+    [string]$Preset = "ninja-debug-msys2",
+    [string]$Target = "SmatchetStandalone",
+    [switch]$ForceConfigure,
+    [switch]$CleanFirst
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,39 +68,107 @@ function Test-VisualStudioBuildToolsAvailable {
     return $false
 }
 
+function Use-Msys2Ucrt64Environment {
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+
+    $prefix = $env:MSYSTEM_PREFIX
+    if (-not [string]::IsNullOrWhiteSpace($prefix)) {
+        $prefix = $prefix.TrimEnd('\', '/')
+        $gccFromPrefix = Join-Path ($prefix -replace '/', '\') "bin\gcc.exe"
+        if (Test-Path -LiteralPath $gccFromPrefix -PathType Leaf) {
+            $root = Split-Path -Parent (Split-Path -Parent $gccFromPrefix)
+            $env:MSYS2_ROOT = $root
+            $env:MSYSTEM_PREFIX = ($prefix -replace '\\', '/')
+            $env:Path = "$($env:MSYSTEM_PREFIX -replace '/', '\')\bin;$root\usr\bin;$env:Path"
+            $env:MSYSTEM = "UCRT64"
+            $env:CHERE_INVOKING = "1"
+            return
+        }
+    }
+
+    $gccCommand = Get-Command "gcc.exe" -ErrorAction SilentlyContinue
+    if ($gccCommand -and $gccCommand.Source -match '^(.*)[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$') {
+        $root = [System.IO.Path]::GetFullPath($Matches[1])
+        $env:MSYS2_ROOT = $root
+        $env:MSYSTEM_PREFIX = (($root.TrimEnd('\', '/')) + "/ucrt64") -replace '\\', '/'
+        $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
+        $env:MSYSTEM = "UCRT64"
+        $env:CHERE_INVOKING = "1"
+        return
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:MSYS2_ROOT)) {
+        $candidateRoots.Add($env:MSYS2_ROOT.TrimEnd('\', '/'))
+    }
+
+    $registryKeys = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($registryKey in $registryKeys) {
+        $entries = Get-ItemProperty $registryKey -ErrorAction SilentlyContinue |
+            Where-Object {
+                $displayNameProp = $_.PSObject.Properties["DisplayName"]
+                $installLocationProp = $_.PSObject.Properties["InstallLocation"]
+                $displayName = if ($displayNameProp) { $displayNameProp.Value } else { $null }
+                $installLocation = if ($installLocationProp) { $installLocationProp.Value } else { $null }
+                $displayName -eq "MSYS2" -and -not [string]::IsNullOrWhiteSpace($installLocation)
+            }
+        foreach ($entry in $entries) {
+            $candidateRoots.Add($entry.InstallLocation.TrimEnd('\', '/'))
+        }
+    }
+
+    foreach ($root in ($candidateRoots | Select-Object -Unique)) {
+        $gccFromRoot = Join-Path $root "ucrt64\bin\gcc.exe"
+        if (Test-Path -LiteralPath $gccFromRoot -PathType Leaf) {
+            $env:MSYS2_ROOT = $root
+            $env:MSYSTEM_PREFIX = (($root) + "/ucrt64") -replace '\\', '/'
+            $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
+            $env:MSYSTEM = "UCRT64"
+            $env:CHERE_INVOKING = "1"
+            return
+        }
+    }
+
+    throw "Unable to locate an MSYS2 UCRT64 toolchain. Set MSYS2_ROOT or MSYSTEM_PREFIX, or launch from a shell where UCRT64 gcc.exe is already on PATH."
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "SmatchetCMakeCommon.ps1")
 
 Assert-Command -Name "cmake" -InstallHint "Install CMake 3.24+ or run from a shell where CMake is available."
 
 if ($Preset -like "ninja*") {
-    Assert-Command -Name "ninja" -InstallHint "Install Ninja or choose a Visual Studio preset such as vs-debug."
+    Assert-Command -Name "ninja" -InstallHint "Install Ninja or launch from an MSYS2 UCRT64 shell where Ninja is available."
 }
 
-if ($Preset -like "ninja-msvc*") {
-    Assert-Command -Name "cl" -InstallHint "Run this from a Visual Studio Developer PowerShell or Developer Command Prompt."
-}
-
-if ($Preset -like "ninja-clang*") {
-    Assert-Command -Name "clang" -InstallHint "Install LLVM/Clang and ensure clang/clang++ are on PATH, or choose a different preset."
-    Assert-Command -Name "clang++" -InstallHint "Install LLVM/Clang and ensure clang/clang++ are on PATH, or choose a different preset."
-}
-
-if ($Preset -like "vs-*") {
-    if (-not (Test-VisualStudioBuildToolsAvailable)) {
-        throw "Visual Studio MSBuild tools not found. Install Visual Studio 2022 with Desktop development with C++, or run from a Visual Studio Developer PowerShell."
-    }
+if ($Preset -like "*-msys2") {
+    Use-Msys2Ucrt64Environment
 }
 
 Push-Location $repoRoot
 try {
-    & cmake --preset $Preset
-    if ($LASTEXITCODE -ne 0) {
-        throw "cmake --preset $Preset failed with exit code $LASTEXITCODE"
+    $binaryDir = Get-SmatchetConfigurePresetBinaryDir -Root $repoRoot -PresetName $Preset
+    $cmakeCache = Join-Path $binaryDir "CMakeCache.txt"
+    $cmakeCacheOnDisk = Test-Path -LiteralPath $cmakeCache
+    $skipCMakePreset = $cmakeCacheOnDisk -and (-not $ForceConfigure)
+
+    if (-not $skipCMakePreset) {
+        & cmake --preset $Preset
+        if ($LASTEXITCODE -ne 0) {
+            throw "cmake --preset $Preset failed with exit code $LASTEXITCODE"
+        }
     }
 
-    & cmake --build --preset $Preset --target $Target
+    $buildArgs = @("--build", "--preset", $Preset, "--target", $Target)
+    if ($CleanFirst) {
+        $buildArgs += "--clean-first"
+    }
+    & cmake @buildArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "cmake --build --preset $Preset --target $Target failed with exit code $LASTEXITCODE"
+        throw "cmake --build failed with exit code $LASTEXITCODE"
     }
 }
 finally {
