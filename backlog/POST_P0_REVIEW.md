@@ -6,7 +6,42 @@
 >
 > Status legend matches `CODE_REVIEW.md` §7:
 > - ⏳ **OPEN** — not yet fixed.
-> - ✅ **DONE** — fixed in a later commit (reserved for when this file gets updated).
+> - 🟡 **PARTIAL** — first step shipped; follow-up tracked inline.
+> - ✅ **DONE** — landed on `develop`; behavioural validation may still be pending.
+
+---
+
+## Current status (as of 2026-05-11, after PRs #9 / #10 / #11 merged)
+
+| Severity | Total | Done | Partial | Open |
+|----------|-------|------|---------|------|
+| **P0** | 5 | 5 ✅ | 0 | **0** |
+| **P1** | 17 | 11 ✅ | 0 | 6 |
+| **P2** | 12 | 1 🟡 | 0 | 11 |
+
+**P0 list is empty — no known bug introduced by the P0 sweep can still fault at runtime.**
+
+Open work (in priority order):
+
+- **P1 #9** — MCP SSE heartbeat blocks process shutdown for up to 1s per client.
+- **P1 #10** — `CellIdScope` ID collision when `column.FieldId` is empty.
+- **P1 #12** — `PlaneClient::CreateIssue` `cfg` snapshot inconsistency.
+- **P1 #15** — Recursive `Save(cfg)` in legacy-MCP migration → disk/cache divergence for one Load.
+- **P1 #18** — `GridFrameContext` cache key misses in-place view edits (stale columns until catalog rev bump).
+- **P1 #19** — `__smatchet_app` lifetime in background `bgState`. Mostly handled by `BeginShutdown` ordering shipped in PR #10; could be flipped to DONE after a docs-only commit clarifying the contract.
+- **P1 #20** — `AuditWriter` silent on disk failure. Partially addressed in PR #10 (added rate-limited LOG_ERROR); the queue-with-cap-or-fallback-path follow-up is still open.
+- **P1 #22** — `SmatchetImGuiHost::UpdateRendererColorFormat` torn-down backend on init failure.
+- **10 P2** — items 23, 25-34. Polish, dead surfaces, UTF-8 path handling, UX nits, MarkdownConvert edge cases.
+
+### PR landings that produced this state
+
+| PR | Title | Items closed |
+|----|-------|--------------|
+| [#9](https://github.com/alexandrosk0/Smatchet/pull/9) | `fix(logger): harden async file-sink lifecycle` | 1, 2, 6, 7, 8 (P0/P1) + 24 (P2 partial) |
+| [#10](https://github.com/alexandrosk0/Smatchet/pull/10) | `fix(stability): close 7 shutdown / contention crash paths` | 3, 4, 5 (P0) + 11, 16, 17, 21 (P1) |
+| [#11](https://github.com/alexandrosk0/Smatchet/pull/11) | `refactor(config): finish the split — drop json.hpp from public header` | 13, 14 (P1) |
+
+Final build verification on develop tip (`93f561b`): `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → **149/149 both targets clean**.
 
 ---
 
