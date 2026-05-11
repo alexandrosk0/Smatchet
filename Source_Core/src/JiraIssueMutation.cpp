@@ -185,8 +185,14 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
                 }
 
                 if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
-                    (!targetStatusName.empty() && iequals(toStatusName, targetStatusName)) ||
-                    (!targetStatusName.empty() && iequals(transitionName, targetStatusName))) {
+                    (!targetStatusName.empty() && iequals(toStatusName, targetStatusName))) {
+                    transitionId = thisTransitionId;
+                    break;
+                }
+                if (!targetStatusName.empty() && iequals(transitionName, targetStatusName)) {
+                    LOG_WARN("JiraClient: transition name fallback triggered: transition '%s' matched target "
+                             "status name '%s' but status name is '%s' — workflow may have diverged.",
+                             transitionName.c_str(), targetStatusName.c_str(), toStatusName.c_str());
                     transitionId = thisTransitionId;
                     break;
                 }
@@ -668,6 +674,9 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg, true);
     const std::string url = base + "/rest/agile/1.0/sprint/" + UrlEncode(sprintId) + "/issue";
+    // Jira Agile API accepts either issue key or issue numeric ID in the `issues` array.
+    // We pass the key (e.g. "PROJ-123"); if the board's Jira version requires a numeric ID,
+    // resolve first via GET /rest/api/3/issue/{key}?fields=id and swap before this call.
     const nlohmann::json body = nlohmann::json{{"issues", nlohmann::json::array({issueKey})}};
     const std::string bodyStr = body.dump();
     auto response = TrackerPostLogged("JiraClient", url, headers, bodyStr);

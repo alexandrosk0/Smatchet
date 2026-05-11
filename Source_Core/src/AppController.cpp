@@ -168,7 +168,7 @@ SemanticVersion ParseSemanticVersion(const std::string& raw) {
     }
     const size_t dash = s.find('-');
     if (dash != std::string::npos) {
-        s = s.substr(0, dash);
+        s.resize(dash);
     }
 
     std::array<int, 3> parts{{0, 0, 0}};
@@ -535,7 +535,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
 
         }
 
-        for (auto& t : tickets) {
+        for (const auto& t : tickets) {
 
             Cache->SaveTicket(t);
 
@@ -616,11 +616,14 @@ void AppController::JoinBackgroundTasks() {
         }
 
         if (worker.get_id() == selfId) {
-
-            worker.detach();
-
+            // A background worker called JoinBackgroundTasks — cannot self-join.
+            // Re-queue so ~AppController can join it from the main thread.
+            // Detaching was the previous behaviour but let detached threads outlive
+            // the controller and race against g_TrackerIssueFetchMutex teardown.
+            LOG_WARN("AppController::JoinBackgroundTasks: self-join detected; re-queuing thread for main-thread join.");
+            std::lock_guard<std::mutex> requeue_lock(backgroundWorkersMutex_);
+            backgroundWorkers_.push_back(std::move(worker));
             continue;
-
         }
 
         worker.join();
@@ -1082,7 +1085,7 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 
     cpr::Header headers{{"Accept", "application/octet-stream"}, {"User-Agent", "SmatchetUpdater/" + GetAppVersion()}};
     cpr::Redirect redirect(true, true);
-    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+    cpr::WriteCallback writeCb{[&](const std::string& data, intptr_t) -> bool {
         ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
         return ofs.good();
     }};
@@ -1124,7 +1127,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     localCacheDbPath_ = dbPath;
 
-    Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(dbPath));
+    Cache = std::make_unique<LocalCacheManager>(dbPath);
 
     try {
 
@@ -1170,21 +1173,19 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 
 
-    std::string trackerLower = activeTracker;
-
-    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+    const std::string trackerLower = ToLowerAsciiCopy(activeTracker);
 
 
 
     if (trackerLower == "plane") {
 
-        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        Backend = std::make_unique<PlaneClient>();
 
         LOG_INFO("AppController: Plane backend initialized.");
 
     } else {
 
-        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        Backend = std::make_unique<JiraClient>();
 
         LOG_INFO("AppController: Jira backend initialized.");
 
@@ -1675,7 +1676,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     std::string removeErr;
     if (!RemoveLocalCacheDbFiles(localCacheDbPath_, removeErr)) {
         try {
-            Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_));
+            Cache = std::make_unique<LocalCacheManager>(localCacheDbPath_);
         } catch (const std::exception& ex) {
             outError = removeErr + " Failed to reopen database: " + ex.what();
             return false;
@@ -1743,7 +1744,7 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 
     LastTrackerTicketSyncWarning.clear();
 
-    std::vector<CachedTicket>& freshTickets = pack.Tickets;
+    const std::vector<CachedTicket>& freshTickets = pack.Tickets;
 
     const std::string& fetchError = pack.FetchError;
 
@@ -2367,9 +2368,7 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
 
 
-    std::string trackerLower = newTracker;
-
-    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+    const std::string trackerLower = ToLowerAsciiCopy(newTracker);
 
 
 
@@ -2383,13 +2382,13 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
     if (trackerLower == "plane" && !isCurrentlyPlane) {
 
-        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        Backend = std::make_unique<PlaneClient>();
 
         LOG_INFO("AppController: Switched backend to Plane.");
 
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
 
-        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        Backend = std::make_unique<JiraClient>();
 
         LOG_INFO("AppController: Switched backend to Jira.");
 

@@ -560,7 +560,6 @@ void AppController::TickOfflineFieldEdits() {
     }
 
     LaunchBackgroundTask([this, pending, cache, backend]() {
-        const TrackerConfig cfg = ConfigManager::Load();
         int successes = 0;
         int failures = 0;
         int archived = 0;

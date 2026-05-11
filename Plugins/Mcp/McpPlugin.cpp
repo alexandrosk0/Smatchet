@@ -200,6 +200,20 @@ static void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::jso
     }
 }
 
+/// Single canonical `run_lua` tool-list entry — eliminates the REST / JSON-RPC duplication (§5.1).
+nlohmann::json BuildRunLuaToolEntry() {
+    return {{"name", "run_lua"},
+            {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},
+            {"inputSchema",
+             {{"type", "object"},
+              {"properties",
+               {{"mode", {{"type", "string"}, {"enum", {"snippet", "script"}}}},
+                {"code", {{"type", "string"}}},
+                {"script", {{"type", "string"}}},
+                {"args", {{"type", "object"}}}}},
+              {"required", {"mode"}}}}};
+}
+
 /** Summarize `run_lua` arguments (mode, code/script size or basename, allowlisted nested `args`). */
 std::string BuildRunLuaSummary(const nlohmann::json& arguments) {
     if (!arguments.is_object()) {
@@ -305,6 +319,16 @@ bool McpPlugin::LuaExecutionEnabledMatches(const bool enabled) const {
         return true;
     }
     return impl_->allow_lua_execution == enabled;
+}
+
+bool McpPlugin::NeedsRestart(const TrackerConfig& cfg) const {
+    const McpServerStatus st = GetStatus();
+    const int expectedPort =
+        (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
+    const std::string expectedBind =
+        cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
+    return st.ListenPort != expectedPort || st.BindHost != expectedBind ||
+           !AuthTokenMatches(cfg.McpAuthToken) || !LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution);
 }
 
 void McpPlugin::OnStart(AppController& app) {
@@ -511,16 +535,7 @@ void McpPlugin::OnStart(AppController& app) {
             const auto tools = impl_->app->GetLuaMcpTools();
             nlohmann::json j = nlohmann::json::array();
             if (impl_->allow_lua_execution) {
-                j.push_back({{"name", "run_lua"},
-                             {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},
-                             {"inputSchema",
-                              {{"type", "object"},
-                               {"properties",
-                                {{"mode", {{"type", "string"}, {"enum", {"snippet", "script"}}}},
-                                 {"code", {{"type", "string"}}},
-                                 {"script", {{"type", "string"}}},
-                                 {"args", {{"type", "object"}}}}},
-                               {"required", {"mode"}}}}});
+                j.push_back(BuildRunLuaToolEntry());
             }
             std::transform(tools.begin(), tools.end(), std::back_inserter(j), [](const auto& t) {
                 return nlohmann::json{{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
@@ -686,16 +701,7 @@ void McpPlugin::OnStart(AppController& app) {
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                     if (impl_->allow_lua_execution) {
-                        toolList.push_back({{"name", "run_lua"},
-                                            {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},
-                                            {"inputSchema",
-                                             {{"type", "object"},
-                                              {"properties",
-                                               {{"mode", {{"type", "string"}, {"enum", {"snippet", "script"}}}},
-                                                {"code", {{"type", "string"}}},
-                                                {"script", {{"type", "string"}}},
-                                                {"args", {{"type", "object"}}}}},
-                                              {"required", {"mode"}}}}});
+                        toolList.push_back(BuildRunLuaToolEntry());
                     }
                     const auto tools = impl_->app->GetLuaMcpTools();
                     std::transform(tools.begin(), tools.end(), std::back_inserter(toolList), [](const auto& t) {

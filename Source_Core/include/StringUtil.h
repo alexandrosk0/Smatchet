@@ -113,6 +113,15 @@ inline std::string SanitizeForSpreadsheet(const std::string& s) {
     return out;
 }
 
+/// Strip a leading UTF-8 BOM (EF BB BF) if present. Some HTTP servers prepend it to JSON bodies.
+inline std::string StripUtf8BomCopy(std::string s) {
+    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEFu &&
+        static_cast<unsigned char>(s[1]) == 0xBBu && static_cast<unsigned char>(s[2]) == 0xBFu) {
+        s.erase(0, 3);
+    }
+    return s;
+}
+
 
 
 

@@ -1,11 +1,14 @@
 #include "AppController.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cctype>
 #include <fstream>
+#include <functional>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "AttachmentMimeUtils.h"
@@ -245,7 +248,14 @@ std::string SanitizeFilename(const std::string& name) {
 }
 
 std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension) {
+    // Mix time + thread-id + monotonic counter so concurrent downloads from different threads
+    // cannot collide even when time resolution is coarser than the download rate.
+    static std::atomic<std::uint64_t> s_counter{0};
     const auto now = std::chrono::system_clock::now().time_since_epoch().count();
+    const std::size_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+    const std::uint64_t unique =
+        static_cast<std::uint64_t>(now) ^ (static_cast<std::uint64_t>(tid) << 16) ^
+        s_counter.fetch_add(1, std::memory_order_relaxed);
     const std::string safe = SanitizeFilename(filename);
     std::string base = safe;
 
@@ -260,9 +270,9 @@ std::string MakeUniqueTempFilePath(const std::string& filename, const std::strin
 
     // Ensure tempDir ends with a path separator.
     if (tempDir.back() != '/' && tempDir.back() != '\\') {
-        return tempDir + "/" + std::to_string(now) + "_" + base;
+        return tempDir + "/" + std::to_string(unique) + "_" + base;
     }
-    return tempDir + std::to_string(now) + "_" + base;
+    return tempDir + std::to_string(unique) + "_" + base;
 }
 } // namespace
 

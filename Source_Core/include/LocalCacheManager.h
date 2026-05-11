@@ -1,9 +1,11 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
-#include <vector>
+#include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 /** Max replay attempts for offline `pending_creates` before archive or drop. */
 namespace OfflineCreateQueue {
@@ -109,6 +111,9 @@ class LocalCacheManager {
     bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
     void DeleteTicket(const std::string& ticketId);
     std::vector<CachedTicket> GetAllTickets();
+    /** Streaming overload — calls `fn` once per fully-populated ticket instead of materialising the
+     *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). */
+    void ForEachTicket(const std::function<void(CachedTicket&&)>& fn);
     std::vector<std::string> GetAllTicketIds();
 
     /** @return generated row id. */
@@ -148,6 +153,19 @@ class LocalCacheManager {
 
   private:
     SQLite::Database db;
+
+    // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
+    // Lazily initialised on first use; reset+clearBindings before each bind cycle.
+    SQLite::Statement& stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql);
+
+    std::unique_ptr<SQLite::Statement> stmt_save_upsert_ticket_;
+    std::unique_ptr<SQLite::Statement> stmt_save_delete_fields_;
+    std::unique_ptr<SQLite::Statement> stmt_save_insert_field_;
+    std::unique_ptr<SQLite::Statement> stmt_save_delete_rich_;
+    std::unique_ptr<SQLite::Statement> stmt_save_insert_rich_;
+    std::unique_ptr<SQLite::Statement> stmt_get_exists_;
+    std::unique_ptr<SQLite::Statement> stmt_get_fields_;
+    std::unique_ptr<SQLite::Statement> stmt_get_rich_;
 };
 
 

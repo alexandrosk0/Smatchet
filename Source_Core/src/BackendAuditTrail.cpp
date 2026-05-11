@@ -7,15 +7,18 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <condition_variable>
 #include <ctime>
 #include <deque>
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 namespace BackendAuditTrail {
 namespace {
 
+// Kept for ReadRecentEvents which still needs a mutex to synchronise with file reads.
 std::mutex& AuditMutex() {
     static std::mutex m;
     return m;
@@ -150,6 +153,68 @@ std::string GetAuditFilePath() {
     return base + "smatchet_backend_audit.jsonl";
 }
 
+// ---------------------------------------------------------------------------
+// Async file writer — decouples AppendEvent from disk I/O so tracker mutations
+// are not stalled by slow storage (§4.4). Bounded queue drops oldest on overflow.
+// Placed after GetAuditFilePath so the thread lambda can call it without a forward decl.
+// ---------------------------------------------------------------------------
+static constexpr std::size_t kWriterQueueMax = 512;
+
+struct AuditWriter {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::string> queue;
+    std::atomic<bool> running{true};
+    std::thread thread;
+
+    AuditWriter() {
+        thread = std::thread([this] {
+            std::string path;
+            while (true) {
+                std::string line;
+                {
+                    std::unique_lock<std::mutex> lk(mutex);
+                    cv.wait(lk, [this] { return !queue.empty() || !running.load(); });
+                    if (queue.empty() && !running.load()) break;
+                    if (queue.empty()) continue;
+                    line = std::move(queue.front());
+                    queue.pop_front();
+                }
+                try {
+                    if (path.empty()) path = GetAuditFilePath();
+                    std::ofstream file(path, std::ios::app | std::ios::binary);
+                    if (file.is_open()) {
+                        file << line << '\n';
+                    }
+                } catch (...) {}
+            }
+        });
+    }
+
+    ~AuditWriter() {
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            running = false;
+        }
+        cv.notify_one();
+        if (thread.joinable()) thread.join();
+    }
+
+    void Post(std::string line) {
+        std::lock_guard<std::mutex> lk(mutex);
+        if (queue.size() >= kWriterQueueMax) {
+            queue.pop_front(); // drop oldest; audit must never block callers
+        }
+        queue.push_back(std::move(line));
+        cv.notify_one();
+    }
+};
+
+AuditWriter& Writer() {
+    static AuditWriter w;
+    return w;
+}
+
 std::string MakeOperationId(const std::string& prefix) {
     static std::atomic<unsigned long long> counter{0};
     std::ostringstream os;
@@ -222,13 +287,8 @@ void AppendEvent(const AuditEvent& event) {
             j["error"] = RedactText("error", event.Error);
         }
         j["data"] = RedactJson(event.Data);
-
-        std::lock_guard<std::mutex> lock(AuditMutex());
-        std::ofstream file(GetAuditFilePath(), std::ios::app | std::ios::binary);
-        if (!file.is_open()) {
-            return;
-        }
-        file << j.dump() << '\n';
+        // Post serialised line to the async writer; returns immediately without touching disk.
+        Writer().Post(j.dump());
     } catch (...) {
         // Audit must never block or fail backend mutations.
     }

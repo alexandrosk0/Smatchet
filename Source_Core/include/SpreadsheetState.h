@@ -109,6 +109,12 @@ struct SpreadsheetState {
         return EditingId == id && EditingFieldId == fieldId;
     }
 
+    /** Per-instance state for the multi-select combo search box.
+     *  Previously block-scope statics in RenderMultiSelectEditor — shared across all combos,
+     *  which aliased the buffer when two different editors were open in the same frame (§3.4). */
+    std::string MultiSelectActiveKey;
+    char MultiSelectSearchBuf[128] = {};
+
   private:
     void CopyToEditBuffer(const std::string& val) {
         std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", val.c_str());

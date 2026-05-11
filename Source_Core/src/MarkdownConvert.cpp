@@ -1135,6 +1135,11 @@ const std::unordered_set<std::string>& HtmlAllowedTags() {
 }
 
 std::string DecodeHtmlEntities(const std::string& s) {
+    // Static map built once; O(1) lookup replaces O(entity-list-len) linear scan (§2.2).
+    static const std::unordered_map<std::string, char> kNamedEntities = {
+        {"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'},
+        {"apos", '\''}, {"#39", '\''}, {"nbsp", ' '},
+    };
     std::string out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size();) {
@@ -1142,33 +1147,9 @@ std::string DecodeHtmlEntities(const std::string& s) {
             const size_t end = s.find(';', i);
             if (end != std::string::npos && end - i <= 8) {
                 const std::string ent = s.substr(i + 1, end - i - 1);
-                if (ent == "amp") {
-                    out += '&';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "lt") {
-                    out += '<';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "gt") {
-                    out += '>';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "quot") {
-                    out += '"';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "apos" || ent == "#39") {
-                    out += '\'';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "nbsp") {
-                    out += ' ';
+                const auto it = kNamedEntities.find(ent);
+                if (it != kNamedEntities.end()) {
+                    out += it->second;
                     i = end + 1;
                     continue;
                 }
@@ -1349,6 +1330,10 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
         int listIndent = 0;
     };
     std::vector<Frame> stack;
+    // Href stack for <a> tags. Previously static thread_local — mid-parse exceptions left stale
+    // state that corrupted the next call. Now a plain local: reset on every call, shared across
+    // the open- and close-tag handlers below (they index into it via Frame::olCounter).
+    std::vector<std::string> linkHrefs;
 
     auto isInlineMark = [](const std::string& t) {
         return t == "strong" || t == "b" || t == "em" || t == "i" || t == "s" || t == "del" || t == "u" || t == "code";
@@ -1449,13 +1434,12 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
                 if (itClose != stack.rend()) {
                     auto it = itClose;
                     if (t == "a" && it->olCounter > 0) {
-                        static thread_local std::vector<std::string> sLinkHrefs;
                         const size_t idx = static_cast<size_t>(it->olCounter) - 1;
-                        if (idx < sLinkHrefs.size()) {
-                            poppedLinkHref = sLinkHrefs[idx];
+                        if (idx < linkHrefs.size()) {
+                            poppedLinkHref = linkHrefs[idx];
                         }
-                        if (idx + 1 == sLinkHrefs.size())
-                            sLinkHrefs.pop_back();
+                        if (idx + 1 == linkHrefs.size())
+                            linkHrefs.pop_back();
                     }
                     const size_t targetIdx = std::distance(it, stack.rend()) - 1;
                     while (stack.size() > targetIdx + 1)
@@ -1592,9 +1576,8 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             if (t == "a") {
                 stack.push_back({"a", 0, 0});
                 tail() += "[";
-                static thread_local std::vector<std::string> sLinkHrefs;
-                sLinkHrefs.push_back(tok.href);
-                stack.back().olCounter = static_cast<int>(sLinkHrefs.size());
+                linkHrefs.push_back(tok.href);
+                stack.back().olCounter = static_cast<int>(linkHrefs.size());
                 continue;
             }
             if (t == "span") {

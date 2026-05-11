@@ -17,13 +17,6 @@
 #include <unordered_set>
 
 namespace {
-std::string StripUtf8BomCopy(std::string s) {
-    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEFu && static_cast<unsigned char>(s[1]) == 0xBBu &&
-        static_cast<unsigned char>(s[2]) == 0xBFu) {
-        s.erase(0, 3);
-    }
-    return s;
-}
 
 void TrimAsciiWs(std::string& s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
@@ -1112,8 +1105,12 @@ bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::st
 
 std::string PlaneClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     // User wants: https://app.plane.so/<workspace-slug>/browse/<issue-key>/
+    // NormalizePlaneWebBase trims trailing '/' from webBase; guard against a slug that starts with
+    // '/' to prevent a double-slash like https://app.plane.so//workspace/browse/PROJ-1/.
     const std::string webBase = NormalizePlaneWebBase(cfg.PlaneUrl);
-    return webBase + "/" + cfg.PlaneWorkspaceSlug + "/browse/" + issueKey + "/";
+    const std::string& slug = cfg.PlaneWorkspaceSlug;
+    const std::string sep = (!slug.empty() && slug[0] == '/') ? "" : "/";
+    return webBase + sep + slug + "/browse/" + issueKey + "/";
 }
 
 bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) {
