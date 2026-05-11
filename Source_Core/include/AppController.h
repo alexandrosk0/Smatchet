@@ -73,6 +73,7 @@ struct AppUpdateInfo {
 class ITrackerBackendFactory;
 class OfflineQueueService;
 class TicketSyncService;
+class LuaAutomationHost;
 
 class AppController {
     /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
@@ -85,6 +86,11 @@ class AppController {
     /// `PushOfflineReplayTimersDuringTransportOutage`) during the extraction transition.
     /// See CODE_REVIEW.md §1.7 / §7 item 11 — Phase 2 will replace this with interface bundles.
     friend class TicketSyncService;
+    /// `LuaAutomationHost` is being extracted to own the sol2 state, all Lua bindings, the
+    /// automation worker thread, and the per-host log sinks. See CODE_REVIEW.md §1.7 / §7
+    /// item 14 — Phase 2 will replace this with a `TrackerActions` interface so the host
+    /// stops needing AppController-private access.
+    friend class LuaAutomationHost;
 
   public:
     ~AppController();
@@ -577,6 +583,11 @@ class AppController {
     /// `CancelAndJoinActiveStreamingSync`, etc.) are thin delegators that forward here. See
     /// CODE_REVIEW.md §1.7 / §7 item 11.
     std::unique_ptr<TicketSyncService> ticketSync_;
+    /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
+    /// extraction only routes log-sink methods through it; later phases migrate the Lua
+    /// state and worker thread. Constructed eagerly in `Initialize` to keep the
+    /// `Add*LogSink` calls from `OnEarlyInit` working.
+    std::unique_ptr<LuaAutomationHost> luaHost_;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
@@ -589,7 +600,7 @@ class AppController {
     std::string LastTrackerFieldCatalogWarning;
     std::string LastTrackerTicketSyncWarning;
     bool fieldCatalogEverLoaded_ = false;
-    std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
+    // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
     std::function<void()> RequestAppQuitHandler;

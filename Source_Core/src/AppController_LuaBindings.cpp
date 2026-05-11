@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "LuaAutomationHost.h"
 
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
@@ -591,8 +592,8 @@ void AppController::InitLuaUi(sol::state& state) {
 
 void AppController::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
-    if (!AutomationLogSinks.empty()) {
-        for (const auto& sink : AutomationLogSinks) {
+    if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
+        for (const auto& sink : luaHost_->SnapshotLogSinks()) {
             sink(clean);
         }
     } else {
@@ -1029,8 +1030,8 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
 void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string msg = std::string(prefix) + detail;
-        if (!AutomationLogSinks.empty()) {
-            for (const auto& sink : AutomationLogSinks) {
+        if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
+            for (const auto& sink : luaHost_->SnapshotLogSinks()) {
                 sink(msg);
             }
         } else {
@@ -1118,8 +1119,8 @@ bool AppController::TryLuaFieldDisplay(const std::string& fieldId, const CachedT
     if (!pfr.valid()) {
         sol::error err = pfr;
         const std::string msg = std::string("[LUA field display] ") + err.what();
-        if (!AutomationLogSinks.empty()) {
-            for (const auto& sink : AutomationLogSinks) {
+        if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
+            for (const auto& sink : luaHost_->SnapshotLogSinks()) {
                 sink(msg);
             }
         } else {
