@@ -3,6 +3,7 @@
 #include "SmatchetUiSession.h"
 
 #include "AppController.h"
+#include "BlameAnalysisUi.h"
 #include "ConfigManager.h"
 #include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
@@ -92,6 +93,20 @@ static std::string BuildTemplateCommentBody(const std::string& issueKey, const s
     return ResolveCommentTemplate("Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:", issueKey);
 }
 
+static void DrawBlameFromCallstackMenuIfAny(AppController* app, UiDrawSession* ui, const CachedTicket* row,
+                                            const std::string& issueKey) {
+    if (!app || !ui || !row || issueKey.empty()) {
+        return;
+    }
+    if (!BlameRowHasNonEmptyCallstackField(*app, *row)) {
+        return;
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Open Source Blame...")) {
+        OpenBlameAnalysisForGridIssue(*app, ui->showBlameAnalysis, ui->gridState, issueKey);
+    }
+}
+
 } // namespace
 
 /**
@@ -101,7 +116,8 @@ static std::string BuildTemplateCommentBody(const std::string& issueKey, const s
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue,
-                                  AppController* app, UiDrawSession* ui, bool readOnlyMode) {
+                                  AppController* app, UiDrawSession* ui, bool readOnlyMode,
+                                  const CachedTicket* rowForBlameMenu) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -134,6 +150,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (ImGui::MenuItem("Copy value")) {
             ImGui::SetClipboardText(rawValue.c_str());
         }
+        DrawBlameFromCallstackMenuIfAny(app, ui, rowForBlameMenu, issueKey);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         DrawLuaTicketActionMenuItems(app, ui, issueKey);
 #endif
@@ -152,6 +169,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (ImGui::MenuItem("Copy raw")) {
             ImGui::SetClipboardText(rawForCopy.c_str());
         }
+        DrawBlameFromCallstackMenuIfAny(app, ui, rowForBlameMenu, issueKey);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         DrawLuaTicketActionMenuItems(app, ui, issueKey);
 #endif

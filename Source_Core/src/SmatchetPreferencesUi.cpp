@@ -7,6 +7,7 @@
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetToast.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -95,11 +96,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 480.0f), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, d.layoutForceDefaultsFrames > 0);
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
 
     if (!d.preferencesBuffersLoaded) {
         CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
@@ -113,11 +115,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.planeApiKeyBuf, d.cfg.PlaneApiKey);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
-#if defined(SMATCHET_WITH_AI)
-        CopyStringToBuffer(d.aiApiKeyBuf, d.cfg.AiApiKey);
-        CopyStringToBuffer(d.aiModelBuf, d.cfg.AiModel);
-        CopyStringToBuffer(d.aiBaseUrlBuf, d.cfg.AiBaseUrl);
-#endif
 #if defined(SMATCHET_WITH_MCP)
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
@@ -132,6 +129,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         if (ImGui::BeginTabItem("Tracker")) {
             ImGui::TextUnformatted("Backend Selection");
             ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip(
+                "Disables tracker-changing actions such as field edits, issue creation, comments, worklogs, and offline "
+                "write replay. Enabled by default on first launch before setup.");
             ImGui::Spacing();
 
             const char* items[] = { "Jira", "Plane" };
@@ -178,19 +183,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             ImGui::EndTabItem();
         }
-#if defined(SMATCHET_WITH_AI)
-        if (ImGui::BeginTabItem("Assistant")) {
-            ImGui::TextUnformatted("OpenAI-compatible API used by the AI assistant panel.");
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::InputText("API Key", d.aiApiKeyBuf, sizeof(d.aiApiKeyBuf), ImGuiInputTextFlags_Password);
-            ImGui::InputText("Model", d.aiModelBuf, sizeof(d.aiModelBuf));
-            ImGui::SetItemTooltip("Example: gpt-4o-mini");
-            ImGui::InputText("Base URL", d.aiBaseUrlBuf, sizeof(d.aiBaseUrlBuf));
-            ImGui::SetItemTooltip("Example: https://api.openai.com");
-            ImGui::EndTabItem();
-        }
-#endif
 #if defined(SMATCHET_WITH_MCP)
         if (ImGui::BeginTabItem("Integrations")) {
             ImGui::TextUnformatted("MCP (Model Context Protocol)");
@@ -252,10 +244,62 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 "MCP settings save when changed. With a running app host, the MCP server starts or stops immediately; "
                 "otherwise restart the app once.");
             ImGui::Spacing();
-            ImGui::TextDisabled("Runtime status, endpoints, and action log: Windows → MCP Server… (separate window).");
+            ImGui::TextDisabled(
+                "Runtime status, endpoints, and action log: Automation -> Agent Bridge (MCP)... (separate window).");
             ImGui::EndTabItem();
         }
 #endif
+        if (ImGui::BeginTabItem("Local data")) {
+            ImGui::TextWrapped(
+                "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
+                "Recreating it clears that data only; tracker credentials and views are not removed. A full "
+                "issue refresh runs afterward.");
+            ImGui::Spacing();
+            const std::string resolved = app.GetResolvedLocalCacheDbPath();
+            if (!resolved.empty()) {
+                ImGui::TextDisabled("Cache file:");
+                ImGui::SameLine();
+                ::ImGui::TextWrapped("%s", resolved.c_str());
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Recreate database...")) {
+                ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
+            }
+            ImGui::SetItemTooltip(
+                "Permanently delete the local cache file and start with an empty database.");
+
+            if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped(
+                    "This removes cached issues and any queued offline writes stored on this machine. It does not "
+                    "delete anything on the tracker. Continue?");
+                ImGui::Separator();
+                if (ImGui::Button("Cancel")) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Delete and recreate")) {
+                    std::string err;
+                    if (app.RecreateLocalCacheDatabase(err)) {
+                        SmatchetToastManager::Instance().Push(
+                            std::string(SmatchetLocalization::T("toast.success", "Success")),
+                            std::string(SmatchetLocalization::T("toast.local_db_recreated",
+                                                               "Local database recreated; refreshing issues.")),
+                            ToastType::Success, 4000);
+                        app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                        ImGui::CloseCurrentPopup();
+                    } else {
+                        const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
+                                                                       "Could not recreate the local database.");
+                        SmatchetToastManager::Instance().Push(
+                            std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
+                            err.empty() ? std::string(detail) : err, ToastType::Error, 6000);
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Appearance")) {
             ImGui::TextUnformatted("Application Typography");
             ImGui::Separator();
@@ -369,6 +413,38 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) to short absolute (e.g. May 07 '26).");
             }
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Updates");
+            ImGui::Separator();
+            if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
+                ConfigManager::Save(d.cfg);
+            }
+            if (ImGui::Checkbox("Include prerelease builds", &d.cfg.UpdateIncludePrerelease)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip("When enabled, startup and manual checks can target prerelease GitHub releases too.");
+            if (ImGui::Button("Check for Updates Now")) {
+                d.appUpdateStartupCheckStarted = true;
+                d.appUpdateActionStatus.clear();
+                d.appUpdateCheckManual = true;
+                d.appUpdateCheckInFlight = true;
+                d.appUpdateFuture = std::async(std::launch::async, [&app, cfg = d.cfg]() {
+                    return app.CheckForAppUpdate(cfg.UpdateIncludePrerelease);
+                });
+            }
+            if (d.appUpdateCheckInFlight) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(checking...)");
+            }
+            if (!d.cfg.UpdateSkipVersion.empty()) {
+                ImGui::TextDisabled("Skipped version: %s", d.cfg.UpdateSkipVersion.c_str());
+                if (ImGui::SmallButton("Clear skipped version")) {
+                    d.cfg.UpdateSkipVersion.clear();
+                    ConfigManager::Save(d.cfg);
+                }
+            }
+            ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 
             ImGui::EndTabItem();
         }
@@ -838,9 +914,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextWrapped(
-        "Save & Sync writes the Tracker tab (and optional Assistant / Integrations tabs when enabled in this build) to "
-        "disk and refreshes the tracker connection. MCP runtime status: Windows → MCP Server…. "
-        "Appearance options save immediately when changed. Log level and verbose logging: Windows → Log. The Blame "
+        "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
+        "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
+        "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The Blame "
         "Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
@@ -880,11 +956,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
         }
-#if defined(SMATCHET_WITH_AI)
-        d.cfg.AiApiKey = d.aiApiKeyBuf;
-        d.cfg.AiModel = d.aiModelBuf;
-        d.cfg.AiBaseUrl = d.aiBaseUrlBuf;
-#endif
 #if defined(SMATCHET_WITH_MCP)
         d.cfg.McpEnabled = d.mcpEnabled;
         d.cfg.McpPort = d.mcpPort;
@@ -925,8 +996,4 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
-
-
-
 

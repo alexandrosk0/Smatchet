@@ -9,6 +9,7 @@
 #include <string>
 #endif
 
+#include <algorithm>
 #include <exception>
 
 void PluginHost::Register(std::unique_ptr<IPlugin> plugin) {
@@ -89,13 +90,10 @@ McpServerStatus PluginHost::GetMcpServerStatus() const {
 }
 
 void PluginHost::SyncMcpPluginWithConfig(AppController& app, const TrackerConfig& cfg) {
-    size_t mcpIndex = plugins_.size();
-    for (size_t i = 0; i < plugins_.size(); ++i) {
-        if (plugins_[i] && std::strcmp(plugins_[i]->Id(), "mcp") == 0) {
-            mcpIndex = i;
-            break;
-        }
-    }
+    const auto mcpIt = std::find_if(plugins_.begin(), plugins_.end(), [](const std::unique_ptr<IPlugin>& p) {
+        return p && std::strcmp(p->Id(), "mcp") == 0;
+    });
+    const size_t mcpIndex = mcpIt != plugins_.end() ? static_cast<size_t>(mcpIt - plugins_.begin()) : plugins_.size();
     bool hasMcp = mcpIndex < plugins_.size();
     const int port = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
     const std::string expectedBind =
@@ -104,7 +102,7 @@ void PluginHost::SyncMcpPluginWithConfig(AppController& app, const TrackerConfig
     if (cfg.McpEnabled) {
         bool needFresh = !hasMcp;
         if (hasMcp) {
-            if (auto* mcp = dynamic_cast<McpPlugin*>(plugins_[mcpIndex].get())) {
+            if (const auto* mcp = dynamic_cast<const McpPlugin*>(plugins_[mcpIndex].get())) {
                 const McpServerStatus st = mcp->GetStatus();
                 if (st.ListenPort != port || st.BindHost != expectedBind || !mcp->AuthTokenMatches(cfg.McpAuthToken) ||
                     !mcp->LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution)) {

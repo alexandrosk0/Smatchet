@@ -3,8 +3,8 @@
     Thin shim over build_and_run.ps1 -Preset ninja-release.
 
     Examples:
-      .\scripts\build_and_run_ninja_release.ps1
-      .\scripts\build_and_run_ninja_release.ps1 -StandaloneArgs '--config','C:\tmp\config.json'
+      .\scripts\dev\build_and_run_ninja_release.ps1
+      .\scripts\dev\build_and_run_ninja_release.ps1 -StandaloneArgs '--config','C:\tmp\config.json'
 #>
 param(
     [Parameter(ValueFromRemainingArguments = $true)]

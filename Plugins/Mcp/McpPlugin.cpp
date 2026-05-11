@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <iterator>
 
 namespace {
 std::string Base64Encode(const std::string& in) {
@@ -70,7 +71,7 @@ std::string NormalizeDomain(const std::string& rawDomain) {
     }
     const size_t slashPos = value.find('/');
     if (slashPos != std::string::npos) {
-        value = value.substr(0, slashPos);
+        value.resize(slashPos);
     }
     const size_t atPos = value.rfind('@');
     if (atPos != std::string::npos) {
@@ -78,7 +79,7 @@ std::string NormalizeDomain(const std::string& rawDomain) {
     }
     const size_t colonPos = value.find(':');
     if (colonPos != std::string::npos) {
-        value = value.substr(0, colonPos);
+        value.resize(colonPos);
     }
     return ToLowerAscii(value);
 }
@@ -272,7 +273,10 @@ struct McpPlugin::Impl {
 
 McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
 
-McpPlugin::~McpPlugin() { OnStop(); }
+McpPlugin::~McpPlugin() {
+    // cppcheck-suppress virtualCallInConstructor
+    OnStop();
+}
 
 McpServerStatus McpPlugin::GetStatus() const {
     McpServerStatus s;
@@ -330,6 +334,9 @@ void McpPlugin::OnStart(AppController& app) {
     if (!impl_->routes_installed) {
         impl_->routes_installed = true;
         auto authorize = [this](const httplib::Request& req, httplib::Response& res) -> bool {
+            if (impl_->app != nullptr) {
+                impl_->app->NotifyMcpClientHttpActivity();
+            }
             if (impl_->auth_token.empty()) {
                 if (!IsLoopbackAddress(req.remote_addr)) {
                     res.status = 403;
@@ -501,7 +508,7 @@ void McpPlugin::OnStart(AppController& app) {
                 return;
             LOG_TRACE("MCP: GET /mcp/tools/list remote=%s", req.remote_addr.c_str());
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            auto tools = impl_->app->GetLuaMcpTools();
+            const auto tools = impl_->app->GetLuaMcpTools();
             nlohmann::json j = nlohmann::json::array();
             if (impl_->allow_lua_execution) {
                 j.push_back({{"name", "run_lua"},
@@ -515,9 +522,9 @@ void McpPlugin::OnStart(AppController& app) {
                                  {"args", {{"type", "object"}}}}},
                                {"required", {"mode"}}}}});
             }
-            for (const auto& t : tools) {
-                j.push_back({{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}});
-            }
+            std::transform(tools.begin(), tools.end(), std::back_inserter(j), [](const auto& t) {
+                return nlohmann::json{{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
+            });
             res.set_content(nlohmann::json{{"tools", j}}.dump(), "application/json");
 #else
             res.set_content(R"({"tools":[]})", "application/json");
@@ -613,14 +620,18 @@ void McpPlugin::OnStart(AppController& app) {
                 "text/event-stream",
                 [event](size_t offset, httplib::DataSink& sink) {
                     if (offset == 0) {
-                        sink.write(event.data(), event.size());
-                        return true;
+                        // Initial endpoint event. `sink.write` returns false on client disconnect.
+                        return sink.write(event.data(), event.size());
                     }
-                    // Keep-alive heartbeat
-                    std::this_thread::sleep_for(std::chrono::seconds(15));
+                    // Heartbeat every 1s. cpp-httplib's DataSink in this version has no
+                    // is_writable(), so disconnect detection happens via the write() return
+                    // value — sending a heartbeat each second frees the httplib worker thread
+                    // within ~1s of a client going away (was up to 15s with a single long sleep).
+                    // SSE comment lines (`: text`) are ignored by clients per the SSE spec, and
+                    // ~12 bytes/sec of overhead per connected client is trivial.
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
                     constexpr char kSseHeartbeat[] = ": heartbeat\n\n";
-                    sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
-                    return true;
+                    return sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
                 },
                 nullptr);
         });
@@ -686,11 +697,11 @@ void McpPlugin::OnStart(AppController& app) {
                                                 {"args", {{"type", "object"}}}}},
                                               {"required", {"mode"}}}}});
                     }
-                    auto tools = impl_->app->GetLuaMcpTools();
-                    for (const auto& t : tools) {
-                        toolList.push_back(
-                            {{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}});
-                    }
+                    const auto tools = impl_->app->GetLuaMcpTools();
+                    std::transform(tools.begin(), tools.end(), std::back_inserter(toolList), [](const auto& t) {
+                        return nlohmann::json{
+                            {"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
+                    });
 #endif
                     jres["result"] = {{"tools", toolList}};
                     AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC tools/list ok remote=") +
@@ -746,9 +757,8 @@ void McpPlugin::OnStart(AppController& app) {
                     } else if (name == "list_active_tickets") {
                         const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
                         nlohmann::json ticketIds = nlohmann::json::array();
-                        for (const auto& t : *ticketsPtr) {
-                            ticketIds.push_back(t.id);
-                        }
+                        std::transform(ticketsPtr->begin(), ticketsPtr->end(), std::back_inserter(ticketIds),
+                                       [](const auto& t) { return t.id; });
                         jres["result"] = {
                             {"content", {{{"type", "text"}, {"text", "Active Tickets: " + ticketIds.dump()}}}}};
                         AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call list_active_tickets ok remote=" +
@@ -759,15 +769,13 @@ void McpPlugin::OnStart(AppController& app) {
                         const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
                         nlohmann::json matches = nlohmann::json::array();
                         for (const auto& t : *ticketsPtr) {
-                            if (t.id.find(query) != std::string::npos) {
+                            const bool hit =
+                                (t.id.find(query) != std::string::npos) ||
+                                std::any_of(t.fieldValues.begin(), t.fieldValues.end(), [&](const auto& kv) {
+                                    return kv.second.find(query) != std::string::npos;
+                                });
+                            if (hit) {
                                 matches.push_back(t.id);
-                                continue;
-                            }
-                            for (const auto& kv : t.fieldValues) {
-                                if (kv.second.find(query) != std::string::npos) {
-                                    matches.push_back(t.id);
-                                    break;
-                                }
                             }
                         }
                         jres["result"] = {

@@ -13,6 +13,7 @@ class McpPlugin : public IPlugin {
 
     const char* Id() const override { return "mcp"; }
     void OnStart(AppController& app) override;
+    // cppcheck-suppress virtualCallInConstructor // invoked from ~McpPlugin for non-dynamic teardown
     void OnStop() override;
 
     McpServerStatus GetStatus() const;

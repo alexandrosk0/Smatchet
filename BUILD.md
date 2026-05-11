@@ -1,146 +1,92 @@
 # Build
 
-Smatchet uses CMake presets. The default presets are portable: they let CMake
-discover the compiler from the current shell instead of assuming one developer
-machine's IDE install path.
+Smatchet uses a small shared CMake preset surface centered on MSYS2 UCRT64.
+All supported shared presets live in `CMakePresets.json` so Cursor and CMake
+Tools see the same options.
 
 ## Prerequisites
 
 - CMake 3.24 or newer
-- A C++ compiler supported by CMake
-- Ninja for `ninja-*` presets
-- Visual Studio 2022 for `vs-*` presets
+- Git
+- MSYS2 UCRT64
+- Ninja available in the shell you use for builds
 
-## Portable Ninja
-
-Use this from a shell where your compiler and Ninja are on `PATH`.
+Install the recommended toolchain:
 
 ```powershell
-cmake --preset ninja-debug
-cmake --build --preset ninja-debug --target SmatchetStandalone
+winget install MSYS2.MSYS2
 ```
 
-Or use the wrapper:
+Then, in an MSYS2 terminal:
+
+```bash
+pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
+```
+
+## Supported Presets
+
+- `ninja-iter-msys2`: fast standalone iteration (`RelWithDebInfo`)
+- `ninja-debug-msys2`: full standalone debug (`Debug`)
+- `ninja-iter-unreal-msys2`: fast Unreal plugin iteration (`RelWithDebInfo`)
+- `ninja-debug-unreal-msys2`: full Unreal-specific debug (`Debug`)
+- `ninja-publish-msys2`: LTO publish build for standalone plus Unreal packaging (`Release`)
+- `ninja-release`: supported legacy standalone release preset using `gcc`/`g++` from the current `PATH`
+
+## Common Workflows
+
+Standalone iteration:
 
 ```powershell
-.\scripts\build_and_run.ps1
-.\scripts\build_and_run.ps1 -Preset ninja-release
-.\scripts\build_and_run.ps1 -BuildOnly                  # configure + build, do not launch
-.\scripts\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'   # launch a previously-built exe
+cmake --preset ninja-iter-msys2
+cmake --build --preset ninja-iter-msys2
 ```
 
-`build_and_run.ps1` is a thin shim over `build_standalone.ps1` and
-`run_standalone.ps1`; call those directly when you want just one stage in
-a pipeline.
-
-Per-preset shorthands are also available for muscle memory and IDE run
-configurations:
+Standalone debug:
 
 ```powershell
-.\scripts\build_and_run_ninja_debug.ps1
-.\scripts\build_and_run_ninja_release.ps1
-.\scripts\build_and_run_vs_debug.ps1
-.\scripts\build_and_run_vs_release.ps1
+cmake --preset ninja-debug-msys2
+cmake --build --preset ninja-debug-msys2
 ```
 
-Each is a one-line shim around `build_and_run.ps1 -Preset <name>`.
-
-## Clang
-
-Use these from a shell where `clang`, `clang++`, and Ninja are on `PATH`.
+Unreal plugin iteration:
 
 ```powershell
-cmake --preset ninja-clang-debug
-cmake --build --preset ninja-clang-debug --target SmatchetStandalone
+cmake --preset ninja-iter-unreal-msys2
+cmake --build --preset ninja-iter-unreal-msys2
 ```
+
+Unreal plugin debug:
 
 ```powershell
-cmake --preset ninja-clang-release
-cmake --build --preset ninja-clang-release --target SmatchetStandalone
+cmake --preset ninja-debug-unreal-msys2
+cmake --build --preset ninja-debug-unreal-msys2
 ```
 
-## MSVC
-
-From a Visual Studio Developer PowerShell or Developer Command Prompt:
+Publish with LTO:
 
 ```powershell
-cmake --preset ninja-msvc-debug
-cmake --build --preset ninja-msvc-debug --target SmatchetStandalone
+cmake --preset ninja-publish-msys2
+cmake --build --preset ninja-publish-msys2
 ```
+
+Wrapper shortcuts are still available:
 
 ```powershell
-cmake --preset ninja-msvc-release
-cmake --build --preset ninja-msvc-release --target SmatchetStandalone
+.\scripts\dev\build_and_run.ps1
+.\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msys2
+.\scripts\dev\build_and_run.ps1 -BuildOnly
+.\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
-The Visual Studio generator is also available:
+## Local Overrides
 
-```powershell
-cmake --preset vs-debug
-cmake --build --preset vs-debug --target SmatchetStandalone
-```
-
-```powershell
-cmake --preset vs-release
-cmake --build --preset vs-release --target SmatchetStandalone
-```
-
-## Local Compiler Paths
-
-Do not add machine-specific compiler paths to `CMakePresets.json`. If you need
-to pin a local CLion MinGW or custom toolchain path, put it in
-`CMakeUserPresets.json`, which is intentionally local to your checkout:
-
-```json
-{
-  "version": 3,
-  "configurePresets": [
-    {
-      "name": "ninja-debug-local-mingw",
-      "inherits": "ninja-debug",
-      "binaryDir": "${sourceDir}/build/ninja-debug-local-mingw",
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "C:/Path/To/Your/MinGW/bin/gcc.exe",
-        "CMAKE_CXX_COMPILER": "C:/Path/To/Your/MinGW/bin/g++.exe"
-      }
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "ninja-debug-local-mingw",
-      "configurePreset": "ninja-debug-local-mingw"
-    }
-  ]
-}
-```
-
-A configure preset on its own only enables `cmake --preset <name>`. Without
-a matching `buildPresets` entry, `cmake --build --preset <name>` (and any
-wrapper that calls it, such as `build_and_run.ps1 -Preset <name>`) will fail
-with `No such build preset`.
+If you need local-only presets, create `CMakeUserPresets.json` in your checkout.
+Shared presets should stay in `CMakePresets.json`; local machine-specific tweaks
+belong in the user preset file.
 
 ## Unreal Packaging
 
-The Ninja Unreal presets package with whatever compiler is active on `PATH`.
-Use them only from the intended compiler shell, and treat the output as tied to
-that toolchain. For Unreal Build Tool consumption, prefer the Visual Studio
-preset below so the packaged libraries are MSVC ABI-compatible.
-
-Toolchain-from-`PATH` Ninja packaging:
-
-```powershell
-cmake --preset ninja-unreal-dx12
-cmake --build --preset ninja-unreal-dx12
-```
-
-```powershell
-cmake --preset ninja-unreal-dx12-release
-cmake --build --preset ninja-unreal-dx12-release
-```
-
-MSVC ABI-compatible release packaging:
-
-```powershell
-cmake --preset vs-unreal-dx12-release
-cmake --build --preset vs-unreal-dx12-release
-```
+`SmatchetPackageUnrealLibs_DX12` packages the DX12-compatible core library,
+ImGui, and public headers into
+`UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` for Unreal Build Tool
+consumption.

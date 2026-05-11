@@ -39,6 +39,8 @@ int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
         auto* buf = static_cast<std::vector<char>*>(data->UserData);
         buf->resize(static_cast<size_t>(data->BufTextLen) + 1);
+        // ImGui owns Buf only until the next edit; storage lives in UserData (bulkImportTextBuf).
+        // cppcheck-suppress autoVariables
         data->Buf = buf->data();
     }
     return 0;
@@ -124,11 +126,12 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     }
     d.bulkImportWasOpen = true;
 
-    ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f);
     if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
 
     if (d.bulkImportTextBuf.empty())
         d.bulkImportTextBuf.assign(1, '\0');
@@ -414,11 +417,12 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkExport)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f);
     if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "bulk_export", 420.0f, 320.0f);
 
     ImGui::TextUnformatted("Destination path (for Save):");
     ImGui::SameLine();
@@ -504,7 +508,6 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
 
 
 

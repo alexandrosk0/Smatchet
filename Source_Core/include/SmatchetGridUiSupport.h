@@ -16,8 +16,8 @@ class Views;
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue,
-                                  AppController* app, UiDrawSession* ui,
-                                  bool readOnlyMode);
+                                  AppController* app, UiDrawSession* ui, bool readOnlyMode,
+                                  const CachedTicket* rowForBlameMenu);
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta);
 
@@ -60,10 +60,10 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
 
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
                            const std::vector<CachedTicket>& tickets,
-                           std::vector<PendingFieldEdit>& pendingEdits,
+                           const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode);
 
-void MaybeToastTrackerConnectivityBanner(AppController& app, UiDrawSession& d,
+void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);
 
 void MaybeToastGridBannerFromSession(UiDrawSession& d);

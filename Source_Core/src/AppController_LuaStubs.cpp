@@ -14,28 +14,6 @@ std::vector<std::string> AppController::GetLuaTicketActionNames() const {
 
 void AppController::ExecuteLuaTicketAction(const std::string& /*name*/, const std::string& /*issueId*/) {}
 
-void AppController::AddAiContext(const std::string& text) {
-    aiContext_.push_back(text);
-}
-
-const std::vector<std::string>& AppController::GetAiContext() const {
-    return aiContext_;
-}
-
-void AppController::ClearAiContext() {
-    aiContext_.clear();
-}
-
-void AppController::PromptAi(const std::string& message) {
-    if (aiPromptHandler_) {
-        aiPromptHandler_(message);
-    }
-}
-
-void AppController::SetAiPromptHandler(std::function<void(const std::string&)> handler) {
-    aiPromptHandler_ = std::move(handler);
-}
-
 std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
     return {};
 }

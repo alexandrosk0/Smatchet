@@ -124,6 +124,6 @@ If you are building a custom integration or debugging, the following endpoints a
 
 ## 7. Troubleshooting
 
-- **Server won't start**: Ensure the port (default `42360`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Windows** → **MCP Server…**) for error messages.
+- **Server won't start**: Ensure the port (default `42360`) isn't being used by another application (like a local web server or another dev tool). Check the **MCP Activity Log** in Smatchet (**Automation** -> **Agent Bridge (MCP)...**) for error messages.
 - **Connection Refused**: Check your firewall settings. If the client is on the same machine, ensure it's trying to connect to `127.0.0.1` and not your external IP (unless LAN access is enabled).
-- **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have used **Save and Reload Hooks** in **Windows → Scripting…** (`SmatchetHooks.lua`).
+- **Tools not appearing**: Ensure your `SmatchetHooks.lua` script is saved and you have used **Save and Reload Hooks** in **Automation -> Scripts & Actions...** (`SmatchetHooks.lua`).

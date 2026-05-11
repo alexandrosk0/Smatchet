@@ -91,6 +91,56 @@ const char* GetFontFilePath(const std::string& fontName) {
     return nullptr; // Proggy (Clean/Default) or unknown
 }
 
+// Style-variant TTF paths for each supported font family. Used by the Markdown
+// preview pane to render bold / italic / bold-italic runs without per-glyph
+// font tricks. Any null/missing variant falls back to regular at load time.
+// cppcheck-suppress unusedStructMember ; members read on Windows preview-font load path only
+struct FontVariantPaths {
+    const char* bold;
+    const char* italic;
+    const char* boldItalic;
+};
+
+FontVariantPaths GetFontVariantPaths(const std::string& fontName) {
+    if (fontName == "Segoe UI") {
+        return {"C:\\Windows\\Fonts\\segoeuib.ttf",
+                "C:\\Windows\\Fonts\\segoeuii.ttf",
+                "C:\\Windows\\Fonts\\segoeuiz.ttf"};
+    }
+    if (fontName == "Arial") {
+        return {"C:\\Windows\\Fonts\\arialbd.ttf",
+                "C:\\Windows\\Fonts\\ariali.ttf",
+                "C:\\Windows\\Fonts\\arialbi.ttf"};
+    }
+    if (fontName == "Consolas") {
+        return {"C:\\Windows\\Fonts\\consolab.ttf",
+                "C:\\Windows\\Fonts\\consolai.ttf",
+                "C:\\Windows\\Fonts\\consolaz.ttf"};
+    }
+    if (fontName == "Courier New") {
+        return {"C:\\Windows\\Fonts\\courbd.ttf",
+                "C:\\Windows\\Fonts\\couri.ttf",
+                "C:\\Windows\\Fonts\\courbi.ttf"};
+    }
+    if (fontName == "Georgia") {
+        return {"C:\\Windows\\Fonts\\georgiab.ttf",
+                "C:\\Windows\\Fonts\\georgiai.ttf",
+                "C:\\Windows\\Fonts\\georgiaz.ttf"};
+    }
+    if (fontName == "Trebuchet MS") {
+        return {"C:\\Windows\\Fonts\\trebucbd.ttf",
+                "C:\\Windows\\Fonts\\trebucit.ttf",
+                "C:\\Windows\\Fonts\\trebucbi.ttf"};
+    }
+    if (fontName == "Verdana") {
+        return {"C:\\Windows\\Fonts\\verdanab.ttf",
+                "C:\\Windows\\Fonts\\verdanai.ttf",
+                "C:\\Windows\\Fonts\\verdanaz.ttf"};
+    }
+    // Lucida Console, Microsoft Sans Serif, default — no separate variants on disk.
+    return {nullptr, nullptr, nullptr};
+}
+
 // Thread-safe state for font hot-reloading
 std::mutex g_FontReloadMutex;
 std::string g_CurrentFontName = "Segoe UI";
@@ -98,6 +148,11 @@ float g_CurrentFontSize = 16.0f;
 std::string g_PendingFontName;
 float g_PendingFontSize = 0.0f;
 std::atomic<bool> g_FontReloadRequested{false};
+
+// Set by SmatchetApplyImGuiFont after the atlas rebuild. Pointers remain valid
+// until the next SmatchetApplyImGuiFont call clears the atlas. Consumers go
+// through SmatchetGetPreviewFonts() rather than reading this directly.
+SmatchetPreviewFonts g_PreviewFonts;
 
 } // namespace
 
@@ -120,6 +175,7 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
     }
 
     io.Fonts->Clear();
+    g_PreviewFonts = SmatchetPreviewFonts{};
 
     ImFont* newFont = nullptr;
 
@@ -146,6 +202,42 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
             io.Fonts->AddFontFromFileTTF(kSegoeUiEmojiPath, fontSizePixels, &emoji_cfg, glyph_ranges.Data);
         }
 
+        // Markdown preview style variants. Each variant is a separate ImFont (no
+        // MergeMode) so the renderer can PushFont/PopFont per inline run. Symbol
+        // and emoji merging is intentionally skipped on variants — the atlas would
+        // ~5x in size; bold / italic text containing emoji is rare enough to live
+        // with the missing-glyph fallback for now.
+        const FontVariantPaths variants = GetFontVariantPaths(fontName);
+        ImFontConfig variant_cfg;
+        variant_cfg.GlyphRanges = glyph_ranges.Data;
+        ImFont* boldFont = nullptr;
+        ImFont* italicFont = nullptr;
+        ImFont* boldItalicFont = nullptr;
+        if (variants.bold && FileExistsUtf8(variants.bold)) {
+            boldFont = io.Fonts->AddFontFromFileTTF(variants.bold, fontSizePixels, &variant_cfg, glyph_ranges.Data);
+        }
+        if (variants.italic && FileExistsUtf8(variants.italic)) {
+            italicFont = io.Fonts->AddFontFromFileTTF(variants.italic, fontSizePixels, &variant_cfg, glyph_ranges.Data);
+        }
+        if (variants.boldItalic && FileExistsUtf8(variants.boldItalic)) {
+            boldItalicFont = io.Fonts->AddFontFromFileTTF(variants.boldItalic, fontSizePixels, &variant_cfg, glyph_ranges.Data);
+        }
+
+        // Monospace pin: Consolas always, regardless of body font choice. This is
+        // what users expect for inline `code` and ```code blocks``` in the preview.
+        ImFont* monoFont = nullptr;
+        static const char kConsolasPath[] = "C:\\Windows\\Fonts\\consola.ttf";
+        if (FileExistsUtf8(kConsolasPath)) {
+            monoFont = io.Fonts->AddFontFromFileTTF(kConsolasPath, fontSizePixels, &variant_cfg, glyph_ranges.Data);
+        }
+
+        g_PreviewFonts.Regular    = newFont;
+        g_PreviewFonts.Bold       = boldFont       ? boldFont       : newFont;
+        g_PreviewFonts.Italic     = italicFont     ? italicFont     : newFont;
+        g_PreviewFonts.BoldItalic = boldItalicFont ? boldItalicFont
+                                                   : (boldFont ? boldFont : newFont);
+        g_PreviewFonts.Mono       = monoFont       ? monoFont       : newFont;
+
         std::lock_guard<std::mutex> lock(g_FontReloadMutex);
         g_CurrentFontName = fontName;
         g_CurrentFontSize = fontSizePixels;
@@ -155,10 +247,19 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
 #endif
 
     newFont = io.Fonts->AddFontDefault(&main_cfg);
+    g_PreviewFonts.Regular    = newFont;
+    g_PreviewFonts.Bold       = newFont;
+    g_PreviewFonts.Italic     = newFont;
+    g_PreviewFonts.BoldItalic = newFont;
+    g_PreviewFonts.Mono       = newFont;
     std::lock_guard<std::mutex> lock(g_FontReloadMutex);
     g_CurrentFontName = "Proggy (Clean/Default)";
     g_CurrentFontSize = fontSizePixels;
     io.FontDefault = newFont;
+}
+
+const SmatchetPreviewFonts& SmatchetGetPreviewFonts() {
+    return g_PreviewFonts;
 }
 
 void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io) {

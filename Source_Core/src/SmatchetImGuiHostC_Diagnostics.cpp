@@ -29,7 +29,7 @@ const char* SmatchetHost_GetBuildTag(void) {
 }
 
 const char* SmatchetHost_GetLastInitError(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    const auto* h = reinterpret_cast<const SmatchetImGuiHost*>(host);
     if (!h) {
         return "";
     }
@@ -37,7 +37,7 @@ const char* SmatchetHost_GetLastInitError(SmatchetImGuiHostHandle host) {
 }
 
 void SmatchetHost_FormatCachedRendererSummary(SmatchetImGuiHostHandle host, char* buf, int bufSize) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    const auto* h = reinterpret_cast<const SmatchetImGuiHost*>(host);
     if (!h || !buf || bufSize <= 0) {
         if (buf && bufSize > 0) {
             buf[0] = '\0';

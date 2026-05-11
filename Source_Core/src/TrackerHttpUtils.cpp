@@ -118,7 +118,7 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     cpr::Response response = cpr::Get(cpr::Url{url}, headers, params, redirect,
                                       cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                       cpr::Timeout{kTrackerOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
+    NetworkUsageTracker::Instance().Record(NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);
     return response;
@@ -129,7 +129,7 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     cpr::Redirect redirect(true, true);
     cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectTimeoutMs},
                                       cpr::Timeout{overallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
+    NetworkUsageTracker::Instance().Record(NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);
     return response;
@@ -141,7 +141,7 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
     cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                        cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                        cpr::Timeout{kTrackerOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    NetworkUsageTracker::Instance().Record(static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "POST", url, response);
     return response;
 }
@@ -152,7 +152,7 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
     cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                       cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                       cpr::Timeout{kTrackerOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    NetworkUsageTracker::Instance().Record(static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "PUT", url, response);
     return response;
 }
@@ -247,7 +247,7 @@ cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url,
     cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                         cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                         cpr::Timeout{kTrackerOverallTimeoutMs});
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
+    NetworkUsageTracker::Instance().Record(static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "PATCH", url, response);
     return response;
 }

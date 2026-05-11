@@ -61,6 +61,7 @@ struct SmatchetImGuiHost::Impl {
     AppController App;
     PluginHost Plugins;
     SmatchetUI Ui;
+    std::string ImGuiIniPath; // cppcheck-suppress unusedStructMember -- WIN32 init path assigns io.IniFilename below
 
     // Serialize all ImGui API calls across threads (IO updates, NewFrame, Render, etc).
     std::mutex ImGuiMutex;
@@ -77,6 +78,18 @@ struct SmatchetImGuiHost::Impl {
 };
 
 #if defined(_WIN32)
+namespace {
+
+std::string SmatchetDirectoryFromFilePath(const std::string& path) {
+    const std::string::size_type last = path.find_last_of("\\/");
+    if (last == std::string::npos) {
+        return std::string();
+    }
+    return path.substr(0, last + 1);
+}
+
+} // namespace
+
 // Shader-visible SRV heap allocator state used by the ImGui DX12 backend when creating dynamic
 // ImTextureData textures (attachment thumbnails, etc.). Slot 0 stays reserved for the legacy font
 // atlas path; additional slots are allocated/freed with a tiny free-list.
@@ -345,12 +358,17 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 
 #if !defined(_WIN32)
     outError = "SmatchetImGuiHost renderer backend is unavailable on this platform.";
-    if (ImplData) {
-        ImplData->LastInitError = outError;
-    }
+    ImplData->LastInitError = outError;
     LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
     return false;
 #else
+    if (ConfigManager::GetFilesBaseDirectory().empty()) {
+        const std::string baseFromDbPath = SmatchetDirectoryFromFilePath(options.DbPath);
+        if (!baseFromDbPath.empty()) {
+            ConfigManager::SetBaseDirectoryForFiles(baseFromDbPath);
+        }
+    }
+
     if (options.Renderer.Backend != SmatchetRendererBackend::Dx12) {
         outError = "Only DX12 backend is implemented in this runtime build.";
         ImplData->LastInitError = outError;
@@ -385,6 +403,9 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         ImplData->ImGuiCtx = ImGui::GetCurrentContext();
     }
     ImGuiIO& io = ImGui::GetIO();
+    ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
+    ConfigManager::EnsureDefaultImGuiSettingsFile();
+    io.IniFilename = ImplData->ImGuiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
@@ -436,7 +457,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
-    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripting window opens from Windows menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
+    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripts & Actions window opens from Automation menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
 #else
     LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded.");
 #endif
@@ -979,9 +1000,5 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
-
-
-
-
 
 

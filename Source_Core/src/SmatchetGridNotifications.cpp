@@ -12,7 +12,7 @@ namespace {
 constexpr auto kTrackerWarningToastStartupGrace = std::chrono::seconds(3);
 }
 
-void MaybeToastTrackerConnectivityBanner(AppController& app, UiDrawSession& d,
+void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner) {
     using Level = TrackerConnectivityBannerForUi::Level;
     if (banner.Kind == Level::None) {

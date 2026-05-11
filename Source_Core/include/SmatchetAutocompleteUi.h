@@ -38,5 +38,5 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, const ImVec2& fieldRectMin, con
                                const QuerySuggestBuild& syncBuild, const std::vector<QuerySuggestion>& mergedItems);
 
 /** Debounced Jira user search on main thread; mutates d.jqlAcpAsyncUserItems / errors. */
-void TrackerQueryAcp_TickDebouncedUserSearch(AppController& app, UiDrawSession& d, const QuerySuggestMeta& meta,
+void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSession& d, const QuerySuggestMeta& meta,
                                              const QuerySuggestBuild& syncBuild);

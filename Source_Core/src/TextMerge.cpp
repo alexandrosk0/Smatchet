@@ -1,6 +1,7 @@
 #include "TextMerge.h"
 
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 #include <vector>
 
@@ -150,25 +151,25 @@ MergeResult ThreeWayMerge(const std::string& base, const std::string& mine, cons
         if (mh && th) {
             if (mh->baseEnd == th->baseEnd && mh->changed == th->changed) {
                 // Identical change on both sides — apply once.
-                for (const auto& l : mh->changed) out.push_back(l);
+                std::copy(mh->changed.begin(), mh->changed.end(), std::back_inserter(out));
                 cursor = mh->baseEnd;
             } else {
                 // True conflict — emit markers.
                 isClean = false;
                 out.push_back("<<<<<<< mine");
-                for (const auto& l : mh->changed) out.push_back(l);
+                std::copy(mh->changed.begin(), mh->changed.end(), std::back_inserter(out));
                 out.push_back("=======");
-                for (const auto& l : th->changed) out.push_back(l);
+                std::copy(th->changed.begin(), th->changed.end(), std::back_inserter(out));
                 out.push_back(">>>>>>> theirs");
                 cursor = (std::max)(mh->baseEnd, th->baseEnd);
             }
             ++mi; ++ti;
         } else if (mh) {
-            for (const auto& l : mh->changed) out.push_back(l);
+            std::copy(mh->changed.begin(), mh->changed.end(), std::back_inserter(out));
             cursor = mh->baseEnd;
             ++mi;
         } else if (th) {
-            for (const auto& l : th->changed) out.push_back(l);
+            std::copy(th->changed.begin(), th->changed.end(), std::back_inserter(out));
             cursor = th->baseEnd;
             ++ti;
         }

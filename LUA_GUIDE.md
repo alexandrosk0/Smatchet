@@ -11,7 +11,7 @@ Scripts are executed in a secure, sandboxed environment. File I/O and OS-level o
 Lua scripts are loaded from the `Scripts/` directory relative to the Smatchet executable (or current working directory). The two primary entry points are:
 
 - **`Automation.lua`**: Evaluated when running bulk ticket automation.
-- **`SmatchetHooks.lua`**: Edit it in **Windows → Scripting…** (pick `SmatchetHooks.lua`, then **Save and Reload Hooks**). Not loaded automatically at process startup. Use it to register custom grid render hooks, ticket context-menu actions, global quick actions (see **Tools & Actions** tab), custom ImGui windows, MCP tools, and related UI hooks.
+- **`SmatchetHooks.lua`**: Edit it in **Automation -> Scripts & Actions...** (pick `SmatchetHooks.lua`, then **Save and Reload Hooks**). Not loaded automatically at process startup. Use it to register custom grid render hooks, ticket context-menu actions, global quick actions (see **Tools & Actions** tab), custom ImGui windows, MCP tools, and related UI hooks.
 - **`RunLua.lua`**: Scratch script for **Save and Run** (same Lua globals as hooks); lives next to the other `*.lua` files under `Scripts/`.
 
 ---
@@ -51,17 +51,7 @@ You can construct completely custom dialogs and floating windows directly from L
 | :--- | :--- |
 | `ui.register_window(name, fn)` | Registers a custom floating ImGui window titled `name`. Smatchet will call `fn()` every frame while the window is open. Use the `imgui` module inside `fn` to draw the contents. |
 | `ui.register_ticket_action(name, callback_func_name)` | Registers a row context-menu action. `name` is the menu label; registering again with the same `name` replaces the callback. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will be executed on a background thread when triggered. `my_callback(ticket)` receives the row's `Ticket`. See §3. |
-| `ui.register_global_action(name, callback_func_name)` | Registers a quick action shown on the **Tools & Actions** tab in the **Scripting** window. Same replace-by-`name` semantics. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will run on a background thread. See §3. |
-
-### `ai` Module
-
-Hooks into the built-in Smatchet AI Assistant.
-
-| Function | Description |
-| :--- | :--- |
-| `ai.add_context(text)` | Appends text to the AI's session context memory. |
-| `ai.prompt(message)` | Programmatically triggers the AI Assistant to process a message, using the current context. |
-| `ai.clear_context()` | Clears the accumulated session context. |
+| `ui.register_global_action(name, callback_func_name)` | Registers a quick action shown on the **Tools & Actions** tab in the **Scripts & Actions** window. Same replace-by-`name` semantics. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will run on a background thread. See §3. |
 
 ### `mcp` Module
 
@@ -119,7 +109,7 @@ Legacy shape for examples that use `tracker.get_type()` / `tracker.create_issue(
 
 ### Automation Scripts (`Automation.lua`)
 
-You can edit `Automation.lua` inside Smatchet from **Windows → Scripting…** (file picker → `Automation.lua`) using the built-in code editor.
+You can edit `Automation.lua` inside Smatchet from **Automation -> Scripts & Actions...** (file picker -> `Automation.lua`) using the built-in code editor.
 When you click **Save and Run on Selection**, Smatchet compiles the **currently selected** `.lua` file and invokes `process_ticket(ticket)` **only for the tickets you have currently selected** in the active project grid (e.g., via Shift+Click or Ctrl+Click). Only scripts that define `process_ticket` are useful here (by convention `Automation.lua`).
 
 You must define the `process_ticket` function in your script:
@@ -182,13 +172,13 @@ register_field_display_by_name("Progress", render_progress_bar)
 
 ### Context menu and menu bar actions (`SmatchetHooks.lua`)
 
-Register these from the same setup script you use for field display (typically `SmatchetHooks.lua`). After editing, pick **SmatchetHooks.lua** in the Scripting window and use **Save and Reload Hooks** so registrations apply.
+Register these from the same setup script you use for field display (typically `SmatchetHooks.lua`). After editing, pick **SmatchetHooks.lua** in the Scripts & Actions window and use **Save and Reload Hooks** so registrations apply.
 
 **Ticket actions** — Right-click **any cell** on a ticket row: **Copy** and **Lua Actions** apply to that issue. **Quick comment templates** still appear only when you right-click the **issue key** column. **Shift+right-click** opens the raw-value popup; Lua ticket actions are listed there as well.
 
-**Global actions** — Open **Windows → Scripting…** and use the **Tools & Actions** tab (or run the same callbacks from your own Lua). Runs with no selected row; use `smatchet.get_active_tickets()` for bulk work. Reopen the window from **Windows → Scripting…** if you closed it.
+**Global actions** — Open **Automation -> Scripts & Actions...** and use the **Tools & Actions** tab (or run the same callbacks from your own Lua). Runs with no selected row; use `smatchet.get_active_tickets()` for bulk work. Reopen the window from **Automation -> Scripts & Actions...** if you closed it.
 
-Callbacks share the same instruction budget as other one-shot Lua work (see §4). There is no dedicated `ai` Lua module for prompts or context; use `log_info`, MCP tools, or automation flows separately.
+Callbacks share the same instruction budget as other one-shot Lua work (see section 4). There is no dedicated `ai` Lua module for prompts or context; use `log_info`, MCP tools, or automation flows separately.
 
 **Example — ticket row (log description snippet):**
 
@@ -264,24 +254,6 @@ mcp.register_tool({
 end)
 ```
 
-### AI-Driven Context & Prompts
-
-You can use Lua to feed relevant context to the AI or trigger specific summaries.
-
-```lua
--- Register an action to summarize a ticket
-function summarize_ticket_context(ticket)
-    ai.clear_context()
-    ai.add_context("The user wants a technical summary of this ticket.")
-    ai.add_context("Ticket ID: " .. ticket.id)
-    ai.add_context("Current Description: " .. (ticket:get_field("description") or "N/A"))
-    
-    ai.prompt("Summarize this ticket in 2 concise sentences for a developer.")
-end
-
-ui.register_ticket_action("AI: Summarize Context", "summarize_ticket_context")
-```
-
 ### Custom ImGui Windows
 
 You can create standalone floating windows to build internal tools or visualize data.
@@ -317,6 +289,6 @@ To ensure application stability, Smatchet enforces the following rules on all Lu
 1. **Sandboxing**: The standard `os`, `io`, `package`, `require`, `dofile`, and `load` libraries are removed from the execution environment. You cannot read/write files or execute arbitrary shell commands.
 2. **Instruction Limit**: Smatchet uses Lua debug hooks to prevent runaway scripts.
     - Initial setup scripts (`SmatchetHooks.lua`) are limited to **100,000 instructions**.
-    - Ticket context-menu actions, global quick actions (**Scripting** → **Tools & Actions**), MCP tool callbacks, and automation window Lua windows use **100,000 instructions** per invocation (same hook as setup-style runs).
+    - Ticket context-menu actions, global quick actions (**Scripts & Actions** -> **Tools & Actions**), MCP tool callbacks, and automation window Lua windows use **100,000 instructions** per invocation (same hook as setup-style runs).
     - Ticket processing (`process_ticket`) and UI rendering handlers are limited to **10,000 instructions**.
     If a script exceeds this limit (e.g., via `while true do end`), it will be immediately aborted and an error will be printed to the Lua Console.

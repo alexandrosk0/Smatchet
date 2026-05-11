@@ -2,14 +2,14 @@
     Run a previously built SmatchetStandalone executable.
 
     Examples:
-      .\scripts\run_standalone.ps1
-      .\scripts\run_standalone.ps1 -Preset vs-debug
-      .\scripts\run_standalone.ps1 -BuildDir build/vs-debug -Configuration Debug
-      .\scripts\run_standalone.ps1 -Target MyStandaloneTarget -ExeName MyCustomExe.exe
-      .\scripts\run_standalone.ps1 -StandaloneArgs '--config','C:\tmp\smatchet_config.json'
+      .\scripts\dev\run_standalone.ps1
+      .\scripts\dev\run_standalone.ps1 -Preset ninja-debug-msys2
+      .\scripts\dev\run_standalone.ps1 -BuildDir build/ninja-debug-msys2
+      .\scripts\dev\run_standalone.ps1 -Target MyStandaloneTarget -ExeName MyCustomExe.exe
+      .\scripts\dev\run_standalone.ps1 -StandaloneArgs '--config','C:\tmp\smatchet_config.json'
 #>
 param(
-    [string]$Preset = "ninja-debug",
+    [string]$Preset = "ninja-debug-msys2",
     [string]$Target = "SmatchetStandalone",
     [string]$ExeName = "",
     [string]$BuildDir = "",
@@ -21,7 +21,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 function Read-PresetFiles {
     $files = @(

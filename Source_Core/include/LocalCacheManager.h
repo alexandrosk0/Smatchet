@@ -102,7 +102,7 @@ struct DeadPendingCreate {
 
 class LocalCacheManager {
   public:
-    LocalCacheManager(const std::string& dbPath);
+    explicit LocalCacheManager(const std::string& dbPath);
 
     void SaveTicket(const CachedTicket& ticket);
     /** @return false if `ticketId` is not present in `tickets`. */

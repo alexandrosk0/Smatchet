@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <iterator>
 #include <unordered_set>
 
 namespace {
@@ -411,11 +412,9 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
         columns.push_back(it->second);
         usedKeys.insert(key);
     }
-    for (const auto& col : allColumns) {
-        if (usedKeys.find(col.Key) == usedKeys.end()) {
-            columns.push_back(col);
-        }
-    }
+    std::copy_if(allColumns.begin(), allColumns.end(), std::back_inserter(columns), [&](const TicketGridColumn& col) {
+        return usedKeys.find(col.Key) == usedKeys.end();
+    });
 
     return columns;
 }

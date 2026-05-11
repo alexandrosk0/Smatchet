@@ -15,17 +15,31 @@
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 #include "StringUtil.h"
+#include "SmatchetImGuiFonts.h"
 
 extern "C" {
 #include "md4c.h"
 }
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <cstdio>
 #include <cstring>
@@ -127,8 +141,27 @@ struct ActiveLongTextEditorState {
     std::vector<char> Buffer;
     bool Active = false;
     bool JustOpened = false;
-    /// When true, the modal shows the rendered preview pane next to the editor (split view).
-    bool ShowPreview = false;
+    /// Three-way preview mode. EditOnly hides the rendered pane; Split shows editor + preview
+    /// with a draggable splitter; PreviewOnly hides the editor (read-only render).
+    /// Ctrl+P cycles Edit -> Split -> Preview -> Edit.
+    enum class PreviewModeT { EditOnly, Split, PreviewOnly };
+    PreviewModeT PreviewMode = PreviewModeT::EditOnly;
+    /// Editor's fraction of the horizontal pane area in Split mode. Clamped to [0.15, 0.85]
+    /// while dragging the splitter so neither pane collapses.
+    float SplitterRatio = 0.5f;
+    /// Last frame's scroll positions for editor / preview child windows. Used to detect which
+    /// pane the user scrolled this frame and mirror the ratio to the other in Split mode.
+    float LastEditorScrollY = 0.0f;
+    float LastPreviewScrollY = 0.0f;
+    /// PR-5 round-trip preview cache. The preview pane renders the result of
+    /// Markdown -> ADF/HTML -> Markdown so any conversion loss surfaces before
+    /// save. Recomputed lazily when the buffer changes (direct string compare;
+    /// 64 KB buffers compare in tens of microseconds — fine inline).
+    std::string LastRoundTripInput;
+    std::string LastRoundTripOutput;
+    /// True when the last round-trip dropped ADF nodes (Adf path) or tripped the
+    /// HtmlSubsetToMarkdown fallback (Html path) — drives the "(lossy)" caption.
+    bool LastRoundTripLossy = false;
 };
 
 static ActiveLongTextEditorState s_ActiveLongTextState;
@@ -219,9 +252,43 @@ static void CloseLongTextEditor() {
 // =====================================================================================
 namespace {
 
+// Inline mark bits — combined per-run via OR. Bold + Italic together select the
+// BoldItalic font; Code overrides body font with Mono. Link/Strike are visual
+// overlays drawn after the text.
+constexpr uint8_t MARK_BOLD   = 1 << 0;
+constexpr uint8_t MARK_ITALIC = 1 << 1;
+constexpr uint8_t MARK_CODE   = 1 << 2;
+constexpr uint8_t MARK_STRIKE = 1 << 3;
+constexpr uint8_t MARK_LINK   = 1 << 4;
+
+struct StyledRun {
+    std::string text;
+    uint8_t marks = 0;
+    std::string href;
+};
+
+struct TableCellData {
+    std::vector<StyledRun> runs;
+};
+
+struct TableRowData {
+    std::vector<TableCellData> cells;
+    bool isHeader = false;
+};
+
 struct PreviewState {
-    /// Current accumulated text run for the open block (paragraph / heading / list item).
-    std::string buffer;
+    /// Inline runs accumulated for the current block. Flushed by PreviewFlushBlock.
+    std::vector<StyledRun> runs;
+    /// When non-null, run-text appends are redirected here instead of `runs` —
+    /// used to capture inline content per table cell.
+    std::vector<StyledRun>* activeRuns = nullptr;
+    /// Active mark bits, set/cleared as md4c reports span enter/leave.
+    uint8_t currentMarks = 0;
+    /// Active link href while currentMarks has MARK_LINK.
+    std::string currentHref;
+    /// Verbatim accumulator for fenced / indented code blocks (separate from `runs`
+    /// so newlines and whitespace inside code render byte-for-byte).
+    std::string codeBuffer;
     /// Stack of list kinds: '-' for bullet, '1' for ordered.
     std::vector<char> listStack;
     /// Per-ordered-list counter so we render "1. " "2. " ...
@@ -232,9 +299,15 @@ struct PreviewState {
     int codeDepth = 0;
     /// True while the block is a heading; flushes with bigger text.
     int headingLevel = 0;
-    /// Skip table subtrees — full grid layout is not implemented in the preview yet.
-    bool dropTable = false;
+    /// Table accumulation. tableDepth>0 means we're inside a table block; nested
+    /// tables aren't standard so we render only the outermost. Cell contents flow
+    /// into `tableCellRuns` while activeRuns points at it.
     int tableDepth = 0;
+    bool tableInHeader = false;
+    int tableColCount = 0;
+    int tableNextId = 0;
+    std::vector<TableRowData> tableRows;
+    std::vector<StyledRun> tableCellRuns;
     int imgSpanDepth = 0;
     std::string imgAltAccum;
 #ifndef NDEBUG
@@ -242,24 +315,240 @@ struct PreviewState {
 #endif
 };
 
-static void PreviewFlushBlock(PreviewState& s) {
-    if (s.buffer.empty() && s.headingLevel == 0) return;
-    if (s.headingLevel > 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
-        // ImGui doesn't have heading fonts; use TextWrapped with a separator below for h1/h2.
-        ImGui::TextWrapped("%s", s.buffer.c_str());
-        ImGui::PopStyleColor();
-        if (s.headingLevel <= 2) ImGui::Separator();
-    } else if (!s.buffer.empty()) {
-        ImGui::TextWrapped("%s", s.buffer.c_str());
+/// Append `text` of length `size` as either an extension of the trailing run
+/// (when style matches) or a fresh styled run. Coalescing keeps `runs` short.
+/// Routes to `activeRuns` when set (table-cell capture) else `runs`.
+static void PreviewAppendRunBytes(PreviewState& s, const char* text, size_t size) {
+    if (size == 0) return;
+    std::vector<StyledRun>& target = s.activeRuns ? *s.activeRuns : s.runs;
+    if (!target.empty() && target.back().marks == s.currentMarks &&
+        target.back().href == s.currentHref) {
+        target.back().text.append(text, size);
+        return;
     }
-    s.buffer.clear();
+    StyledRun r;
+    r.text.assign(text, size);
+    r.marks = s.currentMarks;
+    r.href = s.currentHref;
+    target.push_back(std::move(r));
+}
+
+static void PreviewAppendRunString(PreviewState& s, const std::string& text) {
+    PreviewAppendRunBytes(s, text.data(), text.size());
+}
+
+/// Map mark bits to an ImFont. CODE wins over bold/italic combos because the
+/// monospace font already has its own visual weight and inline `code` spans
+/// rarely care about being bold/italic.
+static ImFont* PreviewPickFont(uint8_t marks) {
+    const SmatchetPreviewFonts& f = SmatchetGetPreviewFonts();
+    if (marks & MARK_CODE) return f.Mono ? f.Mono : f.Regular;
+    const bool bold = (marks & MARK_BOLD) != 0;
+    const bool italic = (marks & MARK_ITALIC) != 0;
+    if (bold && italic) return f.BoldItalic ? f.BoldItalic : (f.Bold ? f.Bold : f.Regular);
+    if (bold)           return f.Bold ? f.Bold : f.Regular;
+    if (italic)         return f.Italic ? f.Italic : f.Regular;
+    return f.Regular;
+}
+
+/// Walks `runs` word by word and emits ImGui text segments with manual word
+/// wrap against `wrapWidth`. Whitespace between words is collapsed to a single
+/// space (matches HTML/Markdown rendering rules); '\n' inside a run forces a
+/// hard line break. Links are rendered with an underline overlay and clickable
+/// hit-rect; strike-through is a half-height line over the word.
+static void PreviewRenderRuns(const std::vector<StyledRun>& runs) {
+    if (runs.empty()) return;
+
+    struct InlineWord {
+        std::string text;          // empty when forceBreak=true
+        uint8_t marks = 0;
+        std::string href;
+        bool forceBreak = false;
+    };
+    std::vector<InlineWord> words;
+    words.reserve(runs.size() * 4);
+    for (const StyledRun& run : runs) {
+        size_t i = 0;
+        const std::string& t = run.text;
+        while (i < t.size()) {
+            unsigned char c = static_cast<unsigned char>(t[i]);
+            if (c == '\n') {
+                InlineWord w;
+                w.forceBreak = true;
+                words.push_back(std::move(w));
+                ++i;
+            } else if (c == ' ' || c == '\t' || c == '\r') {
+                ++i; // collapse runs of whitespace into a single inter-word gap
+            } else {
+                size_t j = i;
+                while (j < t.size()) {
+                    unsigned char d = static_cast<unsigned char>(t[j]);
+                    if (d == ' ' || d == '\t' || d == '\n' || d == '\r') break;
+                    ++j;
+                }
+                InlineWord w;
+                w.text.assign(t.data() + i, j - i);
+                w.marks = run.marks;
+                w.href = run.href;
+                words.push_back(std::move(w));
+                i = j;
+            }
+        }
+    }
+
+    const float wrapWidth = ImGui::GetContentRegionAvail().x;
+    // Space width with the regular font — close enough for inter-word spacing
+    // regardless of which variant the surrounding word uses.
+    ImGui::PushFont(PreviewPickFont(0));
+    const float spaceW = ImGui::CalcTextSize(" ").x;
+    ImGui::PopFont();
+
+    bool firstOnLine = true;
+    float curX = 0.0f;
+    bool prevWasCode = false;
+    // Inline-code background tint — sits behind the text, drawn first so glyphs
+    // overlay it. Same shade for adjacent code words and the inter-word space
+    // between them, so consecutive `inline code` words read as one continuous bar.
+    const ImU32 codeBgCol = IM_COL32(48, 48, 60, 200);
+    const float codeBgRound = 3.0f;
+    const float codeBgPadX = 2.0f;
+
+    for (size_t wi = 0; wi < words.size(); ++wi) {
+        const InlineWord& w = words[wi];
+        if (w.forceBreak) {
+            if (firstOnLine) {
+                // Empty line — emit a zero-width text so cursor advances vertically.
+                ImGui::TextUnformatted("");
+            }
+            firstOnLine = true;
+            curX = 0.0f;
+            prevWasCode = false;
+            continue;
+        }
+
+        ImFont* font = PreviewPickFont(w.marks);
+        ImGui::PushFont(font);
+        const float wordW = ImGui::CalcTextSize(w.text.c_str(),
+                                                w.text.c_str() + w.text.size()).x;
+        ImGui::PopFont();
+
+        // Wrap if adding this word (with leading space if needed) would overflow.
+        const float leadingW = firstOnLine ? 0.0f : spaceW;
+        if (!firstOnLine && curX + leadingW + wordW > wrapWidth) {
+            firstOnLine = true;
+            curX = 0.0f;
+            prevWasCode = false;
+        }
+
+        const bool isCode = (w.marks & MARK_CODE) != 0;
+
+        if (!firstOnLine) {
+            ImGui::SameLine(0.0f, 0.0f);
+            // When both the previous and current word are inline-code, the gap
+            // between them is part of the same `code` span — paint the bg under
+            // the space too so the highlighting reads as continuous.
+            if (prevWasCode && isCode) {
+                const ImVec2 spacePos = ImGui::GetCursorScreenPos();
+                const float lineH = ImGui::GetTextLineHeight();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(ImVec2(spacePos.x, spacePos.y),
+                                  ImVec2(spacePos.x + spaceW, spacePos.y + lineH),
+                                  codeBgCol, 0.0f);
+            }
+            ImGui::TextUnformatted(" ");
+            ImGui::SameLine(0.0f, 0.0f);
+            curX += spaceW;
+        }
+
+        ImGui::PushFont(font);
+        const bool isLink = (w.marks & MARK_LINK) != 0;
+        if (isLink) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
+        }
+        const ImVec2 wordPos = ImGui::GetCursorScreenPos();
+        const float lineH = ImGui::GetTextLineHeight();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        // Inline-code background — drawn before the text so glyphs render on top.
+        // Padding extends slightly left/right of the word; rounding only on outer
+        // corners (left rounded if no preceding code word, right if no following).
+        if (isCode) {
+            const bool nextIsCode = (wi + 1 < words.size())
+                                        && !words[wi + 1].forceBreak
+                                        && (words[wi + 1].marks & MARK_CODE) != 0;
+            const float rl = prevWasCode ? 0.0f : codeBgRound;
+            const float rr = nextIsCode  ? 0.0f : codeBgRound;
+            const ImVec2 r0(wordPos.x - (prevWasCode ? 0.0f : codeBgPadX), wordPos.y);
+            const ImVec2 r1(wordPos.x + wordW + (nextIsCode ? 0.0f : codeBgPadX),
+                            wordPos.y + lineH);
+            const ImDrawFlags flags = (rl > 0.0f ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersNone)
+                                    | (rr > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
+            dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
+        }
+        ImGui::TextUnformatted(w.text.c_str(), w.text.c_str() + w.text.size());
+        if (isLink) {
+            const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+            dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
+                        ImVec2(wordPos.x + wordW, wordPos.y + lineH - 1.0f), col);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (!w.href.empty()) ImGui::SetTooltip("%s", w.href.c_str());
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
+#if defined(_WIN32)
+                    ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+                }
+            }
+        }
+        if (w.marks & MARK_STRIKE) {
+            const float midY = wordPos.y + lineH * 0.5f;
+            dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY),
+                        ImGui::GetColorU32(ImGuiCol_Text));
+        }
+        ImGui::PopFont();
+
+        curX += wordW;
+        firstOnLine = false;
+        prevWasCode = isCode;
+    }
+}
+
+static void PreviewFlushBlock(PreviewState& s) {
+    if (s.runs.empty() && s.headingLevel == 0) return;
+    if (s.headingLevel > 0) {
+        // Heading sizing: scale the bitmap font for h1–h3 since we don't bake
+        // separate atlas sizes (Phase 4 budget). Bitmap rescale is mildly blurry
+        // at non-1.0 ratios but cheap; users perceive size differentiation.
+        // Tint only h1/h2 in cyan — at h3+ the size + bold weight already make
+        // the heading stand out, so the color is doing redundant work.
+        float scale = 1.0f;
+        if (s.headingLevel == 1) scale = 1.6f;
+        else if (s.headingLevel == 2) scale = 1.35f;
+        else if (s.headingLevel == 3) scale = 1.15f;
+
+        // Force bold on every run inside the heading. Inline em/code/links keep
+        // their italic/mono/underline overlays via the other mark bits.
+        for (StyledRun& r : s.runs) r.marks |= MARK_BOLD;
+
+        const bool tinted = (s.headingLevel <= 2);
+        if (scale != 1.0f) ImGui::SetWindowFontScale(scale);
+        if (tinted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
+        PreviewRenderRuns(s.runs);
+        if (tinted) ImGui::PopStyleColor();
+        if (scale != 1.0f) ImGui::SetWindowFontScale(1.0f);
+        if (s.headingLevel <= 2) ImGui::Separator();
+    } else if (!s.runs.empty()) {
+        PreviewRenderRuns(s.runs);
+    }
+    s.runs.clear();
     s.headingLevel = 0;
 }
 
 static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
-    if (s.dropTable) {
+    // Inside a nested table (rare, non-standard) we ignore everything until the
+    // outer table closes — only the outermost table is rendered.
+    if (s.tableDepth > 1) {
         if (type == MD_BLOCK_TABLE) ++s.tableDepth;
         return 0;
     }
@@ -290,20 +579,75 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
             auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
             const bool task = lid && lid->is_task;
             const bool done = task && (lid->task_mark == 'x' || lid->task_mark == 'X');
+            // The marker is unstyled, so push it through the regular-mark code path.
+            // Task markers use Unicode ☑ / ☐ (U+2611 / U+2610) which are already in
+            // the atlas via the Geometric Shapes / Misc Symbols ranges loaded by
+            // SmatchetImGuiFonts; falls back gracefully if a glyph is missing.
+            std::string marker;
             if (!s.listStack.empty() && s.listStack.back() == '1') {
                 ++s.orderedCounters.back();
-                s.buffer = std::to_string(s.orderedCounters.back());
-                s.buffer += task ? (done ? ". [x] " : ". [ ] ") : ". ";
+                marker = std::to_string(s.orderedCounters.back());
+                if (task) {
+                    marker += done ? ". \xE2\x98\x91 " : ". \xE2\x98\x90 ";
+                } else {
+                    marker += ". ";
+                }
             } else {
-                s.buffer = task ? (done ? "- [x] " : "- [ ] ")
-                                : std::string("\xE2\x80\xA2 "); // bullet
+                if (task) {
+                    marker = done ? "\xE2\x98\x91 " : "\xE2\x98\x90 ";
+                } else {
+                    marker = "\xE2\x80\xA2 "; // U+2022 bullet
+                }
+            }
+            const uint8_t savedMarks = s.currentMarks;
+            const std::string savedHref = s.currentHref;
+            s.currentMarks = 0;
+            s.currentHref.clear();
+            PreviewAppendRunString(s, marker);
+            s.currentMarks = savedMarks;
+            s.currentHref = savedHref;
+            break;
+        }
+        case MD_BLOCK_TABLE: {
+            // Flush any pending paragraph above the table, then begin collecting
+            // cell runs. Render happens on MD_BLOCK_TABLE leave.
+            PreviewFlushBlock(s);
+            if (s.tableDepth > 0) {
+                ++s.tableDepth;
+                break; // nested table — skipped
+            }
+            ++s.tableDepth;
+            auto* d = static_cast<MD_BLOCK_TABLE_DETAIL*>(detail);
+            s.tableColCount = d ? static_cast<int>(d->col_count) : 0;
+            s.tableInHeader = false;
+            s.tableRows.clear();
+            s.tableCellRuns.clear();
+            break;
+        }
+        case MD_BLOCK_THEAD:
+            if (s.tableDepth == 1) s.tableInHeader = true;
+            break;
+        case MD_BLOCK_TBODY:
+            if (s.tableDepth == 1) s.tableInHeader = false;
+            break;
+        case MD_BLOCK_TR: {
+            if (s.tableDepth == 1) {
+                TableRowData row;
+                row.isHeader = s.tableInHeader;
+                s.tableRows.push_back(std::move(row));
             }
             break;
         }
-        case MD_BLOCK_TABLE:
-            s.dropTable = true;
-            s.tableDepth = 1;
-            return 0;
+        case MD_BLOCK_TH:
+        case MD_BLOCK_TD:
+            if (s.tableDepth == 1) {
+                s.tableCellRuns.clear();
+                s.activeRuns = &s.tableCellRuns;
+                if (type == MD_BLOCK_TH && !s.tableRows.empty()) {
+                    s.tableRows.back().isHeader = true;
+                }
+            }
+            break;
         case MD_BLOCK_HR:
             PreviewFlushBlock(s);
             ImGui::Separator();
@@ -330,13 +674,60 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
 static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
     if (type == MD_BLOCK_TABLE) {
-        if (--s.tableDepth <= 0) {
-            s.tableDepth = 0;
-            s.dropTable = false;
+        if (s.tableDepth > 1) {
+            --s.tableDepth;
+            return 0; // closing a nested skipped table
+        }
+        // Render the collected table.
+        if (!s.tableRows.empty() && s.tableColCount > 0) {
+            ImGui::PushID(s.tableNextId++);
+            const ImGuiTableFlags flags = ImGuiTableFlags_Borders
+                                        | ImGuiTableFlags_RowBg
+                                        | ImGuiTableFlags_SizingStretchProp
+                                        | ImGuiTableFlags_Resizable;
+            if (ImGui::BeginTable("##mdpreview_tbl", s.tableColCount, flags)) {
+                for (TableRowData& row : s.tableRows) {
+                    ImGui::TableNextRow();
+                    const size_t cellMax = (std::min)(row.cells.size(),
+                                                      static_cast<size_t>(s.tableColCount));
+                    for (size_t ci = 0; ci < cellMax; ++ci) {
+                        ImGui::TableNextColumn();
+                        TableCellData& cell = row.cells[ci];
+                        if (row.isHeader) {
+                            for (StyledRun& r : cell.runs) r.marks |= MARK_BOLD;
+                        }
+                        PreviewRenderRuns(cell.runs);
+                    }
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopID();
+        }
+        s.tableRows.clear();
+        s.tableCellRuns.clear();
+        s.tableInHeader = false;
+        s.tableColCount = 0;
+        s.tableDepth = 0;
+        s.activeRuns = nullptr;
+        return 0;
+    }
+    // While inside a nested skipped table, ignore everything.
+    if (s.tableDepth > 1) return 0;
+    if (type == MD_BLOCK_TH || type == MD_BLOCK_TD) {
+        if (s.tableDepth == 1) {
+            if (!s.tableRows.empty()) {
+                TableCellData cell;
+                cell.runs = std::move(s.tableCellRuns);
+                s.tableRows.back().cells.push_back(std::move(cell));
+            }
+            s.tableCellRuns.clear();
+            s.activeRuns = nullptr;
         }
         return 0;
     }
-    if (s.dropTable) return 0;
+    if (type == MD_BLOCK_TR || type == MD_BLOCK_THEAD || type == MD_BLOCK_TBODY) {
+        return 0;
+    }
     switch (type) {
         case MD_BLOCK_DOC: PreviewFlushBlock(s); break;
         case MD_BLOCK_QUOTE:
@@ -356,18 +747,21 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
             for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Unindent(16.0f);
             break;
         case MD_BLOCK_CODE: {
-            // Render the accumulated code-block text in a child with monospace-like styling.
+            // Render the accumulated code-block text in a child with monospace styling.
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
             const float h = ImGui::GetTextLineHeightWithSpacing() *
-                            static_cast<float>(1 + std::count(s.buffer.begin(), s.buffer.end(), '\n'));
+                            static_cast<float>(1 + std::count(s.codeBuffer.begin(), s.codeBuffer.end(), '\n'));
             ImGui::BeginChild("##mdpreview_code", ImVec2(-FLT_MIN, std::min(h + 12.0f, 240.0f)),
                               true, ImGuiWindowFlags_HorizontalScrollbar);
+            const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
+            if (fonts.Mono) ImGui::PushFont(fonts.Mono);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-            ImGui::TextUnformatted(s.buffer.c_str());
+            ImGui::TextUnformatted(s.codeBuffer.c_str());
             ImGui::PopStyleColor();
+            if (fonts.Mono) ImGui::PopFont();
             ImGui::EndChild();
             ImGui::PopStyleColor();
-            s.buffer.clear();
+            s.codeBuffer.clear();
             if (s.codeDepth > 0) --s.codeDepth;
             break;
         }
@@ -382,29 +776,56 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
 
 static int PreviewEnterSpan(MD_SPANTYPE type, void* detail, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
-    if (s.dropTable) return 0;
-    if (type == MD_SPAN_IMG) {
-        ++s.imgSpanDepth;
-        s.imgAltAccum.clear();
-        (void)detail;
+    if (s.tableDepth > 1) return 0;
+    switch (type) {
+        case MD_SPAN_STRONG: s.currentMarks |= MARK_BOLD; break;
+        case MD_SPAN_EM:     s.currentMarks |= MARK_ITALIC; break;
+        case MD_SPAN_CODE:   s.currentMarks |= MARK_CODE; break;
+        case MD_SPAN_DEL:    s.currentMarks |= MARK_STRIKE; break;
+        case MD_SPAN_A: {
+            s.currentMarks |= MARK_LINK;
+            auto* d = static_cast<MD_SPAN_A_DETAIL*>(detail);
+            if (d && d->href.text && d->href.size > 0) {
+                s.currentHref.assign(d->href.text, d->href.size);
+            } else {
+                s.currentHref.clear();
+            }
+            break;
+        }
+        case MD_SPAN_IMG:
+            ++s.imgSpanDepth;
+            s.imgAltAccum.clear();
+            break;
+        default: break;
     }
     return 0;
 }
 
 static int PreviewLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
-    if (s.dropTable) return 0;
-    if (type == MD_SPAN_IMG) {
-        if (s.imgSpanDepth > 0) --s.imgSpanDepth;
-        s.buffer += s.imgAltAccum.empty() ? "[image]" : s.imgAltAccum;
-        s.imgAltAccum.clear();
+    if (s.tableDepth > 1) return 0;
+    switch (type) {
+        case MD_SPAN_STRONG: s.currentMarks &= ~MARK_BOLD; break;
+        case MD_SPAN_EM:     s.currentMarks &= ~MARK_ITALIC; break;
+        case MD_SPAN_CODE:   s.currentMarks &= ~MARK_CODE; break;
+        case MD_SPAN_DEL:    s.currentMarks &= ~MARK_STRIKE; break;
+        case MD_SPAN_A:
+            s.currentMarks &= ~MARK_LINK;
+            s.currentHref.clear();
+            break;
+        case MD_SPAN_IMG:
+            if (s.imgSpanDepth > 0) --s.imgSpanDepth;
+            PreviewAppendRunString(s, s.imgAltAccum.empty() ? std::string("[image]") : s.imgAltAccum);
+            s.imgAltAccum.clear();
+            break;
+        default: break;
     }
     return 0;
 }
 
 static int PreviewText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
-    if (s.dropTable) return 0;
+    if (s.tableDepth > 1) return 0;
     if (type == MD_TEXT_NULLCHAR) return 0;
     if (type == MD_TEXT_HTML) {
 #ifndef NDEBUG
@@ -427,11 +848,24 @@ static int PreviewText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void
         }
         return 0;
     }
-    if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
-        s.buffer += '\n';
+    // Code blocks bypass the styled-run pipeline so whitespace and newlines stay
+    // verbatim. Inline `code` spans (handled via MARK_CODE on currentMarks) still
+    // go through the run path so they wrap with surrounding text.
+    if (s.codeDepth > 0 && (s.currentMarks & MARK_CODE) == 0) {
+        s.codeBuffer.append(text, size);
         return 0;
     }
-    s.buffer.append(text, size);
+    if (type == MD_TEXT_BR) {
+        // Hard break — mid-paragraph forced wrap.
+        PreviewAppendRunBytes(s, "\n", 1);
+        return 0;
+    }
+    if (type == MD_TEXT_SOFTBR) {
+        // Soft break — collapse to a space; matches HTML rendering.
+        PreviewAppendRunBytes(s, " ", 1);
+        return 0;
+    }
+    PreviewAppendRunBytes(s, text, size);
     return 0;
 }
 
@@ -651,11 +1085,12 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
-void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderTextEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                       const std::string& currentValue,
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
-    const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
+    // Widget-cell unique ID is provided by the CellIdScope pushed in RenderFieldCell
+    // (ticket.id + field.Id on the ImGui ID stack). Literal short labels below stay collision-free.
 
     // ADF / long-text fields (Jira description/environment, Plane description, custom textarea/wiki-renderer
     // fields) are too constrained by the inline 512-byte single-line InputText. Route them through the modal
@@ -688,7 +1123,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
             }
             EditCbUser cbUser{&state};
             submitted = DrawDurationFieldWithSuggestions(
-                itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+                "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer),
                 ImGuiInputTextFlags_CallbackAlways,
                 InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser),
                 nullptr, editJustStarted
@@ -699,7 +1134,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                 ImGui::SetKeyboardFocusHere();
             }
             EditCbUser cbUser{&state};
-            submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+            submitted = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
                                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
                                          InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
         }
@@ -725,7 +1160,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
-    if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+    if (ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
         if (ImGui::IsMouseDoubleClicked(0)) {
             state.StartEditingField(ticket.id, field.Id, currentValue);
         }
@@ -743,7 +1178,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
-void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
                               bool tooltipsEnabled) {
     const float cellAvail = ImGui::GetContentRegionAvail().x;
@@ -755,12 +1190,12 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
 
     const std::string currentId = ResolveOptionId(field, currentValue);
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     const char* previewCStr =
         haveOverlayIcon ? " " : (preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str());
     ImGui::SetNextItemWidth(cellAvail);
-    const bool comboOpened = ImGui::BeginCombo(comboId.c_str(), previewCStr, ImGuiComboFlags_NoArrowButton);
+    const bool comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
@@ -778,8 +1213,6 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
         ImGui::EndCombo();
     }
 
-    ImVec2 overlayP0(0.0f, 0.0f);
-    ImVec2 overlayP1(0.0f, 0.0f);
     if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
         const float maxEdge = ImGui::GetFrameHeight();
         const float iw = static_cast<float>(overlayIcon.Width);
@@ -788,8 +1221,8 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
         const float dw = iw * scale;
         const float dh = ih * scale;
         const float rowH = comboMax.y - comboMin.y;
-        overlayP0 = ImVec2(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
-        overlayP1 = ImVec2(overlayP0.x + dw, overlayP0.y + dh);
+        const ImVec2 overlayP0(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
+        const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
         ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
                                              ImVec2(1.0f, 1.0f));
     }
@@ -806,16 +1239,16 @@ void RenderSingleSelectEditor(AppController& app, const CachedTicket& ticket, co
     }
 }
 
-void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const std::string comboId = "##MultiSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+    if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         static std::string activeEditorKey;
         static char searchBuf[128] = "";
         const std::string editorKey = ticket.id + "::" + field.Id;
@@ -848,11 +1281,13 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
                 continue;
             }
             drewAny = true;
-            const std::string optionWidget = option.Value + "##Opt_" + ticket.id + "_" + field.Id + "_" + optionId;
+            // Per-option PushID disambiguates checkboxes whose visible labels could collide
+            // (e.g. duplicate option.Value across customfields); pop matches at the end of body.
+            ImGui::PushID(optionId.c_str());
             if (option.Disabled) {
                 ImGui::BeginDisabled();
             }
-            if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
+            if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
                 if (checked) {
                     selectedSet.insert(optionId);
                 } else {
@@ -872,6 +1307,7 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
+            ImGui::PopID();
         }
         if (!drewAny) {
             ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
@@ -891,7 +1327,7 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     }
 }
 
-void RenderCascadingSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                                  const std::string& currentValue,
                                  std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::string parentId;
@@ -899,10 +1335,10 @@ void RenderCascadingSelectEditor(AppController& app, const CachedTicket& ticket,
     TryResolveCascadingSelection(field, currentValue, parentId, childId);
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
 
-    const std::string comboId = "##CascadeSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+    if (ImGui::BeginCombo("##cascadeselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         if (ImGui::Selectable("<clear>", parentId.empty() && childId.empty())) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
         }
@@ -948,6 +1384,26 @@ void RenderCascadingSelectEditor(AppController& app, const CachedTicket& ticket,
 
 } // namespace
 
+namespace {
+/// RAII helper that pushes ticket.id + field-id onto the ImGui ID stack at cell entry, popping on
+/// scope exit. Every widget inside RenderFieldCell (and the editors it dispatches to) inherits a
+/// cell-unique ID without each call site re-allocating a "##TextCell_<ticket>_<field>" string.
+/// Saves an estimated 4-6 std::string allocations per cell per frame across ~200 visible rows ×
+/// ~30 columns.
+struct CellIdScope {
+    CellIdScope(const char* ticketId, const char* fieldId) {
+        ImGui::PushID(ticketId);
+        ImGui::PushID(fieldId);
+    }
+    ~CellIdScope() {
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+    CellIdScope(const CellIdScope&) = delete;
+    CellIdScope& operator=(const CellIdScope&) = delete;
+};
+} // namespace
+
 void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                         const TrackerField* field, const std::string& currentValue, float availWidth,
                                         bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
@@ -955,6 +1411,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         TrackerGridFieldAsyncState& trackerGridAsync,
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
+    CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str());
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
     if (handledByLua) {
         return;
@@ -1018,14 +1475,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         break;
     case TicketGridColumn::RenderPlan::SpecialTimeSpent: {
         std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
-        std::string buttonId = "##TimeSpentBtn_" + ticket.id;
+        // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); // invisible background when normal
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
 
-        if (ImGui::Button((buttonText + buttonId).c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
+        if (ImGui::Button(buttonText.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
             s_ActiveWorklogState.IssueId = ticket.id;
             s_ActiveWorklogState.TimeSpent[0] = '\0';
             s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
@@ -1326,40 +1783,170 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             s_ActiveLongTextState.JustOpened = false;
         }
 
-        // Split view when preview is on: editor on the left, rendered Markdown on the right.
+        // Modifier state — declared up here so the Ctrl+P preview-mode shortcut sees it
+        // before we render the panes. Ctrl+Enter / Esc are checked again below for save/cancel.
+        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+
         // Preview is disabled in raw-HTML mode (the buffer is HTML, not Markdown — md4c would
-        // produce nonsense).
-        const bool previewOn = s_ActiveLongTextState.ShowPreview && !s_ActiveLongTextState.RawMode;
-        if (previewOn) {
-            const float halfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        // produce nonsense), so we force EditOnly there regardless of the user's last choice.
+        using PreviewModeT = ActiveLongTextEditorState::PreviewModeT;
+        const PreviewModeT effectiveMode = s_ActiveLongTextState.RawMode
+            ? PreviewModeT::EditOnly
+            : s_ActiveLongTextState.PreviewMode;
+
+        // Ctrl+P cycles Edit -> Split -> Preview -> Edit. Captured here (not in the footer)
+        // so it works with focus inside the textarea.
+        if (!s_ActiveLongTextState.RawMode && ctrlDown && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
+            switch (s_ActiveLongTextState.PreviewMode) {
+                case PreviewModeT::EditOnly:    s_ActiveLongTextState.PreviewMode = PreviewModeT::Split; break;
+                case PreviewModeT::Split:       s_ActiveLongTextState.PreviewMode = PreviewModeT::PreviewOnly; break;
+                case PreviewModeT::PreviewOnly: s_ActiveLongTextState.PreviewMode = PreviewModeT::EditOnly; break;
+            }
+        }
+
+        // Pane layout for Split mode: [editor] [splitter] [preview]. The splitter is a 6px
+        // invisible button whose drag delta updates SplitterRatio. Clamped so neither pane
+        // collapses below 15% of the available width.
+        // Width semantics: in EditOnly / PreviewOnly the visible pane gets -FLT_MIN so ImGui
+        // fills the popup the same way the original single-pane code did. Only Split needs
+        // explicit pixel widths so the splitter sits between two real columns.
+        const float splitterW = 6.0f;
+        const float totalW = ImGui::GetContentRegionAvail().x;
+        const float panesW = (effectiveMode == PreviewModeT::Split)
+                                 ? (totalW - splitterW)
+                                 : totalW;
+        const float splitEditorW = panesW * s_ActiveLongTextState.SplitterRatio;
+        const float splitPreviewW = panesW - splitEditorW;
+        const float editorW = (effectiveMode == PreviewModeT::Split) ? splitEditorW : -FLT_MIN;
+        const float previewW = (effectiveMode == PreviewModeT::Split) ? splitPreviewW : -FLT_MIN;
+
+        const ImGuiID editorId = ImGui::GetID("##LongTextEditorBuf");
+
+        if (effectiveMode != PreviewModeT::PreviewOnly) {
             ImGui::InputTextMultiline("##LongTextEditorBuf",
                                       s_ActiveLongTextState.Buffer.data(),
                                       s_ActiveLongTextState.Buffer.size(),
-                                      ImVec2(halfWidth, inputSize.y),
-                                      ImGuiInputTextFlags_AllowTabInput);
-            ImGui::SameLine();
-            ImGui::BeginChild("##LongTextPreview",
-                              ImVec2(halfWidth, inputSize.y),
-                              true, ImGuiWindowFlags_HorizontalScrollbar);
-            const std::string md(s_ActiveLongTextState.Buffer.data());
-            RenderMarkdownPreview(md);
-            ImGui::EndChild();
-        } else {
-            ImGui::InputTextMultiline("##LongTextEditorBuf",
-                                      s_ActiveLongTextState.Buffer.data(),
-                                      s_ActiveLongTextState.Buffer.size(),
-                                      inputSize,
+                                      ImVec2(editorW, inputSize.y),
                                       ImGuiInputTextFlags_AllowTabInput);
         }
 
+        if (effectiveMode == PreviewModeT::Split) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::InvisibleButton("##LongTextSplitter", ImVec2(splitterW, inputSize.y));
+            const bool splitterHover = ImGui::IsItemHovered();
+            const bool splitterActive = ImGui::IsItemActive();
+            if (splitterHover || splitterActive) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            }
+            if (splitterActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                const float dx = ImGui::GetIO().MouseDelta.x;
+                if (panesW > 0.0f) {
+                    float r = s_ActiveLongTextState.SplitterRatio + dx / panesW;
+                    if (r < 0.15f) r = 0.15f;
+                    if (r > 0.85f) r = 0.85f;
+                    s_ActiveLongTextState.SplitterRatio = r;
+                }
+            }
+            // Visual hint for the splitter — a faint vertical bar, brighter on hover/drag.
+            const ImVec2 sMin = ImGui::GetItemRectMin();
+            const ImVec2 sMax = ImGui::GetItemRectMax();
+            const ImU32 col = ImGui::GetColorU32(splitterActive ? ImGuiCol_SeparatorActive
+                                                  : splitterHover ? ImGuiCol_SeparatorHovered
+                                                                  : ImGuiCol_Separator);
+            ImGui::GetWindowDrawList()->AddRectFilled(sMin, sMax, col);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+
+        if (effectiveMode != PreviewModeT::EditOnly) {
+            ImGui::BeginChild("##LongTextPreview",
+                              ImVec2(previewW, inputSize.y),
+                              true, ImGuiWindowFlags_HorizontalScrollbar);
+            // Capture the preview window pointer while it's the current window — child names
+            // are munged by BeginChild, so FindWindowByName won't match the literal id we passed.
+            ::ImGuiWindow* previewWin = ::ImGui::GetCurrentWindow();
+            const std::string md(s_ActiveLongTextState.Buffer.data());
+
+            // PR-5: round-trip the buffer through the same converter that runs on
+            // save (Markdown -> ADF / HTML -> Markdown), then render the result.
+            // Any conversion loss surfaces here before the user clicks Save. The
+            // result is cached against the input so we only re-convert on edits.
+            if (md != s_ActiveLongTextState.LastRoundTripInput) {
+                std::string rendered;
+                bool lossy = false;
+                try {
+                    if (s_ActiveLongTextState.RichKind == LongTextRichKind::Html) {
+                        const std::string html = MarkdownConvert::MarkdownToHtml(md);
+                        bool fellBack = false;
+                        rendered = MarkdownConvert::HtmlSubsetToMarkdown(html, &fellBack);
+                        lossy = fellBack;
+                    } else {
+                        // Default to ADF for None / Adf — covers Jira description and
+                        // generic ADF fields. New issues without a stored rich value
+                        // (RichKind::None) still go through ADF since that is what
+                        // the save path emits.
+                        const nlohmann::json adf = MarkdownConvert::MarkdownToAdf(md);
+                        std::vector<std::string> dropped;
+                        rendered = MarkdownConvert::AdfToMarkdown(adf, &dropped);
+                        lossy = !dropped.empty();
+                    }
+                } catch (...) {
+                    // Converter blew up on the in-progress edit (very rare; usually
+                    // mid-token). Fall back to the raw buffer so the preview keeps
+                    // updating; not lossy because we did not transform anything.
+                    rendered = md;
+                    lossy = false;
+                }
+                s_ActiveLongTextState.LastRoundTripInput = md;
+                s_ActiveLongTextState.LastRoundTripOutput = std::move(rendered);
+                s_ActiveLongTextState.LastRoundTripLossy = lossy;
+            }
+            if (s_ActiveLongTextState.LastRoundTripLossy) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                ImGui::TextUnformatted("(lossy round-trip — some constructs will be dropped on save)");
+                ImGui::PopStyleColor();
+                ImGui::Separator();
+            }
+            RenderMarkdownPreview(s_ActiveLongTextState.LastRoundTripOutput);
+            const float previewScroll = ImGui::GetScrollY();
+            const float previewScrollMax = ImGui::GetScrollMaxY();
+            ImGui::EndChild();
+
+            // Scroll-sync: in Split mode, mirror whichever pane's scroll changed this frame
+            // onto the other. Editor scroll comes from the InputTextMultiline child (looked
+            // up by id). Editor wins ties (typing-driven scroll is the common case).
+            if (effectiveMode == PreviewModeT::Split) {
+                ::ImGuiWindow* editorWin = ::ImGui::FindWindowByID(editorId);
+                const float editorScroll = editorWin ? editorWin->Scroll.y : 0.0f;
+                const float editorScrollMax = editorWin ? editorWin->ScrollMax.y : 0.0f;
+
+                const bool editorChanged =
+                    std::fabs(editorScroll - s_ActiveLongTextState.LastEditorScrollY) > 0.5f;
+                const bool previewChanged =
+                    std::fabs(previewScroll - s_ActiveLongTextState.LastPreviewScrollY) > 0.5f;
+
+                if (editorChanged && previewWin && editorScrollMax > 0.0f && previewScrollMax > 0.0f) {
+                    const float r = editorScroll / editorScrollMax;
+                    previewWin->Scroll.y = r * previewScrollMax;
+                } else if (previewChanged && editorWin && editorScrollMax > 0.0f && previewScrollMax > 0.0f) {
+                    const float r = previewScroll / previewScrollMax;
+                    editorWin->Scroll.y = r * editorScrollMax;
+                }
+
+                s_ActiveLongTextState.LastEditorScrollY = editorWin ? editorWin->Scroll.y : 0.0f;
+                s_ActiveLongTextState.LastPreviewScrollY = previewWin ? previewWin->Scroll.y : previewScroll;
+            } else {
+                s_ActiveLongTextState.LastPreviewScrollY = previewScroll;
+            }
+        }
+
         // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
-        const bool ctrlDown = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        // (ctrlDown declared above for the Ctrl+P shortcut.)
         const bool ctrlEnter = ctrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
         const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
         const char* footerHint = s_ActiveLongTextState.RawMode
             ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
-            : "Ctrl+Enter to save · Esc to cancel · Markdown — **bold**, *em*, # heading, - list, ```code```";
+            : "Ctrl+Enter to save · Esc to cancel · Ctrl+P preview mode · Markdown — **bold**, *em*, # heading, - list, ```code```";
         ImGui::TextDisabled("%s", footerHint);
 
         bool save = ctrlEnter;
@@ -1371,12 +1958,30 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         if (ImGui::Button("Cancel", ImVec2(100, 0))) {
             cancel = true;
         }
-        // Preview toggle — disabled while editing raw HTML (no Markdown to render).
+        // Three-way segmented control: Edit / Split / Preview. Disabled in RawMode (Markdown
+        // rendering is meaningless when the buffer is HTML). Ctrl+P cycles modes — see the
+        // shortcut handler above the panes.
         ImGui::SameLine();
         if (s_ActiveLongTextState.RawMode) ImGui::BeginDisabled();
-        const char* previewBtnLabel = s_ActiveLongTextState.ShowPreview ? "Hide preview" : "Preview";
-        if (ImGui::Button(previewBtnLabel, ImVec2(120, 0))) {
-            s_ActiveLongTextState.ShowPreview = !s_ActiveLongTextState.ShowPreview;
+        auto segBtn = [](const char* label, ActiveLongTextEditorState::PreviewModeT mode) {
+            const bool active = s_ActiveLongTextState.PreviewMode == mode;
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            if (ImGui::Button(label, ImVec2(80, 0))) {
+                s_ActiveLongTextState.PreviewMode = mode;
+            }
+            if (active) {
+                ImGui::PopStyleColor();
+            }
+        };
+        segBtn("Edit", ActiveLongTextEditorState::PreviewModeT::EditOnly);
+        ImGui::SameLine(0.0f, 2.0f);
+        segBtn("Split", ActiveLongTextEditorState::PreviewModeT::Split);
+        ImGui::SameLine(0.0f, 2.0f);
+        segBtn("Preview", ActiveLongTextEditorState::PreviewModeT::PreviewOnly);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Ctrl+P to cycle Edit / Split / Preview");
         }
         if (s_ActiveLongTextState.RawMode) ImGui::EndDisabled();
 

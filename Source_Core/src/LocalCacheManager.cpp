@@ -9,7 +9,7 @@
 namespace {
 
 /// True if `table` has column `col` (identifier names only — must be fixed literals at call sites).
-bool SqliteTableHasColumn(SQLite::Database& db, const char* table, const char* col) {
+bool SqliteTableHasColumn(const SQLite::Database& db, const char* table, const char* col) {
     const std::string sql = std::string("PRAGMA table_info(") + table + ")";
     SQLite::Statement q(db, sql);
     while (q.executeStep()) {

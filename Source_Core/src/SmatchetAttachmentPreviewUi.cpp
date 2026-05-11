@@ -162,7 +162,7 @@ struct AttachmentThumbnailSupport {
 
 static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
     AttachmentThumbnailSupport support;
-    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiIO& io = ImGui::GetIO();
     const char* backendName = io.BackendRendererName;
     const std::string rendererName = backendName != nullptr ? ToLowerAsciiCopy(backendName) : std::string();
 
@@ -607,8 +607,9 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
 
     QueuePriorityAttachmentPreviewRequests(app, d.attachmentWindowEntries, d.attachmentWindowSelectedIndex, 2);
 
-    ImGui::SetNextWindowSize(ImVec2(1040, 560), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "attachment", 1040.0f, 560.0f);
     if (ImGui::Begin("Attachment Preview", &d.attachmentPreviewWindowOpen)) {
+        repairTopLevelWindow(d, "attachment", 520.0f, 320.0f);
         ImGui::Text("Attachments: %d", static_cast<int>(d.attachmentWindowEntries.size()));
         if (!thumbnailSupport.CanRenderBitmapThumbnails) {
             ImGui::SameLine();
@@ -763,7 +764,6 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
         d.attachmentWindowSelectedIndex = 0;
     }
 }
-
 
 
 

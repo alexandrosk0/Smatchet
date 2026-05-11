@@ -65,6 +65,26 @@ const TranslationEntry kEntries[] = {
      u8"Les modifications de grille et les commentaires rapides restent désactivés tant que le suivi n'est pas joignable."},
 
     {"menu.settings", "Settings", u8"Paramètres"},
+    {"menu.workspace", "Workspace", u8"Espace de travail"},
+    {"menu.grid", "Grid", u8"Grille"},
+    {"menu.views_queries", "Views & Queries...", u8"Vues et requêtes..."},
+    {"menu.reset_workspace_layout", "Reset Workspace Layout", u8"Réinitialiser la disposition"},
+    {"menu.selection", "Selection", u8"Sélection"},
+    {"menu.select_all", "Select All", u8"Tout sélectionner"},
+    {"menu.clear_selection", "Clear Selection", u8"Effacer la sélection"},
+    {"menu.copy_selection", "Copy Selection", u8"Copier la sélection"},
+    {"menu.issues", "Issues", u8"Tickets"},
+    {"menu.import_issues", "Import Issues...", u8"Importer des tickets..."},
+    {"menu.export_issues", "Export Issues...", u8"Exporter des tickets..."},
+    {"menu.automation", "Automation", u8"Automatisation"},
+    {"menu.scripts_actions", "Scripts & Actions...", u8"Scripts et actions..."},
+    {"menu.agent_bridge_mcp", "Agent Bridge (MCP)...", u8"Passerelle agent (MCP)..."},
+    {"menu.inspect", "Inspect", u8"Inspection"},
+    {"menu.source_blame", "Source Blame...", u8"Blame source..."},
+    {"menu.sync_audit", "Sync Audit...", u8"Audit de synchronisation..."},
+    {"menu.runtime_log", "Runtime Log", u8"Journal d'exécution"},
+    {"menu.performance_monitor", "Performance Monitor...", u8"Moniteur de performances..."},
+    {"menu.read_only_mode", "Read-only Mode", u8"Mode lecture seule"},
     {"menu.preferences", "Preferences...", u8"Préférences..."},
     {"menu.performance", "Performance...", u8"Performances..."},
     {"menu.windows", "Windows", u8"Fenêtres"},
@@ -86,19 +106,43 @@ const TranslationEntry kEntries[] = {
     {"window.bulk_export", "Bulk export tickets", u8"Exporter des tickets en lot"},
     {"window.backend_audit", "Backend Audit", u8"Audit du backend"},
     {"window.attachment_preview", "Attachment Preview", u8"Aperçu des pièces jointes"},
-    {"window.ai_assistant", "AI Assistant", u8"Assistant IA"},
     {"window.log", "Log", u8"Journal"},
     {"window.watchers", "Watchers", u8"Observateurs"},
     {"window.votes", "Votes", u8"Votes"},
     {"window.mcp_server", "MCP Server", u8"Serveur MCP"},
 
     {"prefs.tab.tracker", "Tracker", u8"Suivi"},
-    {"prefs.tab.assistant", "Assistant", u8"Assistant"},
     {"prefs.tab.integrations", "Integrations", u8"Intégrations"},
     {"prefs.tab.appearance", "Appearance", u8"Apparence"},
     {"prefs.tab.fields_inputs", "Fields Inputs", u8"Saisie des champs"},
     {"prefs.tab.blame_analysis", "Blame Analysis", u8"Analyse de blame"},
+    {"prefs.tab.local_data", "Local data", u8"Données locales"},
+    {"prefs.local_data.help",
+     "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
+     "Recreating it clears that data only; tracker credentials and views are not removed. A full "
+     "issue refresh runs afterward.",
+     u8"Les tickets en cache, les files de création hors ligne et les modifications de champs en "
+     u8"attente sont stockés dans un fichier SQLite local. Le recréer efface uniquement ces données "
+     u8"— pas les identifiants du suivi ni les vues. Une actualisation complète des tickets suit."},
+    {"prefs.local_data.file_label", "Cache file:", u8"Fichier de cache :"},
+    {"prefs.local_data.recreate", "Recreate database...", u8"Recréer la base..."},
+    {"prefs.local_data.recreate_tooltip",
+     "Permanently delete the local cache file and start with an empty database.",
+     u8"Supprime définitivement le fichier de cache local et repart d'une base vide."},
+    {"prefs.local_data.confirm_title", "Delete local database?", u8"Supprimer la base locale ?"},
+    {"prefs.local_data.confirm_body",
+     "This removes cached issues and any queued offline writes stored on this machine. It does not "
+     "delete anything on the tracker. Continue?",
+     u8"Cela supprime les tickets mis en cache et les écritures hors ligne en file sur cet ordinateur. "
+     u8"Rien n'est supprimé sur le suivi. Continuer ?"},
+    {"prefs.local_data.confirm_go", "Delete and recreate", u8"Supprimer et recréer"},
+    {"toast.local_db_recreated", "Local database recreated; refreshing issues.",
+     u8"Base locale recréée ; actualisation des tickets."},
+    {"toast.local_db_error_title", "Local database", u8"Base locale"},
+    {"toast.local_db_recreate_failed_detail", "Could not recreate the local database.",
+     u8"Impossible de recréer la base locale."},
     {"prefs.backend_selection", "Backend Selection", u8"Sélection du backend"},
+    {"prefs.read_only_mode", "Read-only mode", u8"Mode lecture seule"},
     {"prefs.tracker_backend", "Tracker Backend", u8"Backend de suivi"},
     {"prefs.jira_config", "Jira Configuration (Atlassian Cloud)", u8"Configuration Jira (Atlassian Cloud)"},
     {"prefs.plane_config", "Plane Configuration (plane.so)", u8"Configuration Plane (plane.so)"},
@@ -117,8 +161,6 @@ const TranslationEntry kEntries[] = {
     {"prefs.views_note", "Query/JQL and column fields are configured in the Views dashboard.",
      u8"La requête/JQL et les colonnes se configurent dans le tableau de bord des vues."},
     {"prefs.open_views_dashboard", "Open Views Dashboard", u8"Ouvrir le tableau des vues"},
-    {"prefs.ai_api_note", "OpenAI-compatible API used by the AI assistant panel.",
-     u8"API compatible OpenAI utilisée par le panneau Assistant IA."},
     {"prefs.model", "Model", u8"Modèle"},
     {"prefs.base_url", "Base URL", u8"URL de base"},
     {"prefs.mcp_header", "MCP (Model Context Protocol)", u8"MCP (Model Context Protocol)"},
@@ -241,6 +283,9 @@ const TranslationEntry kEntries[] = {
     {"log.p4_stdout", "Log Perforce p4 stdout (truncated, Trace level)",
      u8"Journaliser stdout de Perforce p4 (tronqué, niveau Trace)"},
     {"log.clear", "Clear Log", u8"Effacer le journal"},
+    {"log.copy_log", "Copy log", u8"Copier le journal"},
+    {"log.copy_log_tip", "Copy the full application log to the clipboard.",
+     u8"Copier l'intégralité du journal de l'application dans le presse-papiers."},
     {"log.auto_scroll", "Auto-scroll", u8"Défilement automatique"},
     {"log.application_log", "(application log)", u8"(journal de l'application)"},
 
@@ -328,7 +373,7 @@ const TranslationEntry kEntries[] = {
     {"blame.callstack", "Callstack", u8"Pile d'appels"},
     {"blame.show_table", "Show Table", u8"Afficher le tableau"},
     {"blame.show_raw", "Show Raw Text", u8"Afficher le texte brut"},
-    {"blame.at_changelist", "At changelist (optional)", u8"À la changelist (facultatif)"},
+    {"blame.at_changelist", "Before changelist (optional)", u8"Avant la changelist (facultatif)"},
     {"blame.process", "Process", u8"Traiter"},
     {"blame.assign_user", "Assign issue to user", u8"Assigner le ticket à l'utilisateur"},
     {"blame.add_context_comment", "Add blame context comment", u8"Ajouter un commentaire de contexte blame"},
@@ -376,9 +421,7 @@ const std::unordered_map<std::string, const TranslationEntry*>& EntriesByEnglish
                 continue;
             }
             // First entry wins so common aliases like "Save" stay stable.
-            if (map.find(entry.English) == map.end()) {
-                map[entry.English] = &entry;
-            }
+            map.emplace(entry.English, &entry);
         }
     }
     return map;
@@ -430,7 +473,7 @@ void LoadOverridesLocked(const std::string& language) {
     OverridesRef().clear();
     MissingKeysRef().clear();
 
-    const std::string path = ConfigManager::GetFilesBaseDirectory() + "Locales/" + language + ".json";
+    const std::string path = ConfigManager::GetRuntimeAssetDirectory() + "Locales/" + language + ".json";
     const nlohmann::json root = ConfigManager::LoadJsonFile(path);
     if (!root.is_object()) {
         return;

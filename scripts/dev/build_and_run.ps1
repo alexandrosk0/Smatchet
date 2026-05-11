@@ -2,17 +2,17 @@
     Configure, build, and run a Smatchet target.
 
     Examples:
-      .\scripts\build_and_run.ps1
-      .\scripts\build_and_run.ps1 -Preset ninja-release
-      .\scripts\build_and_run.ps1 -Preset vs-debug
-      .\scripts\build_and_run.ps1 -BuildOnly
-      .\scripts\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','C:\tmp\config.json'
+      .\scripts\dev\build_and_run.ps1
+      .\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msys2
+      .\scripts\dev\build_and_run.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
+      .\scripts\dev\build_and_run.ps1 -BuildOnly
+      .\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','C:\tmp\config.json'
 
     For just-build or just-run workflows, you can also call
     build_standalone.ps1 / run_standalone.ps1 directly.
 #>
 param(
-    [string]$Preset = "ninja-debug",
+    [string]$Preset = "ninja-debug-msys2",
     [string]$Target = "SmatchetStandalone",
     [switch]$BuildOnly,
     [switch]$RunOnly,

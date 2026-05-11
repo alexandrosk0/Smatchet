@@ -43,6 +43,9 @@ struct TrackerField {
     std::string ItemsType;
     bool IsUserType = false;
     bool IsCustom = false;
+    /// Plane: per-property `is_required` from the schema. Jira surfaces required-ness
+    /// per-issue-type via `TrackerIssueTypeCreateMeta::RequiredFieldIds` instead.
+    bool IsRequired = false;
     TrackerFieldFamily Family = TrackerFieldFamily::Unknown;
     std::vector<std::string> AllowedValues;
     std::vector<TrackerFieldOption> AllowedValueOptions;

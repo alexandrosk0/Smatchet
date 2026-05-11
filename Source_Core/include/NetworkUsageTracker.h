@@ -8,25 +8,20 @@ namespace cpr {
 class Response;
 }
 
-enum class HttpTrafficKind { Tracker, OpenAi };
-
 struct NetworkUsageSnapshot {
     std::uint64_t trackerRequests = 0;
     std::uint64_t trackerUploadBytes = 0;
     std::uint64_t trackerDownloadBytes = 0;
-    std::uint64_t openAiRequests = 0;
-    std::uint64_t openAiUploadBytes = 0;
-    std::uint64_t openAiDownloadBytes = 0;
 };
 
-/// Thread-safe counters for outbound HTTP from Smatchet (Jira API, OpenAI).
+/// Thread-safe counters for outbound HTTP from Smatchet (tracker API).
 class NetworkUsageTracker {
   public:
     static constexpr std::uint64_t kEstimatedGetUploadBytes = 512;
 
     static NetworkUsageTracker& Instance();
 
-    void Record(HttpTrafficKind kind, std::uint64_t uploadBodyBytes, const cpr::Response& r);
+    void Record(std::uint64_t uploadBodyBytes, const cpr::Response& r);
 
     NetworkUsageSnapshot GetSnapshot() const;
 
@@ -38,9 +33,6 @@ class NetworkUsageTracker {
     std::atomic<std::uint64_t> trackerRequests_{0};
     std::atomic<std::uint64_t> trackerUploadBytes_{0};
     std::atomic<std::uint64_t> trackerDownloadBytes_{0};
-    std::atomic<std::uint64_t> openAiRequests_{0};
-    std::atomic<std::uint64_t> openAiUploadBytes_{0};
-    std::atomic<std::uint64_t> openAiDownloadBytes_{0};
 };
 
 #endif

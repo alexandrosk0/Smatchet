@@ -603,7 +603,7 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
         } catch (...) {
             approxBytes = 0;
         }
-        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, approxBytes, response);
+        NetworkUsageTracker::Instance().Record(approxBytes, response);
         LogTrackerHttpResult("JiraClient", "POST", url, response);
 
         if (response.status_code != 200 && response.status_code != 201) {

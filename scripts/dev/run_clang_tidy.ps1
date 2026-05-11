@@ -4,16 +4,13 @@
 
     Prerequisites:
     - LLVM clang-tidy on PATH (same major version as clang++ used for the build is ideal)
-    - Configured build: cmake --preset ninja-debug (default) or ninja-clang-debug
-
-    If clang-tidy fails or warns oddly with a MinGW (GCC) compile database, configure with
-    cmake --preset ninja-clang-debug and pass -BuildDir build/ninja-clang-debug.
+    - Configured build: cmake --preset ninja-debug-msys2 (default)
 
     Examples:
-      .\scripts\run_clang_tidy.ps1
-      .\scripts\run_clang_tidy.ps1 -BuildDir build/ninja-clang-debug
-      .\scripts\run_clang_tidy.ps1 -Checks "-*,clang-analyzer-deadcode.*"
-      .\scripts\run_clang_tidy.ps1 -Fix
+      .\scripts\dev\run_clang_tidy.ps1
+      .\scripts\dev\run_clang_tidy.ps1 -BuildDir build/ninja-debug-msys2
+      .\scripts\dev\run_clang_tidy.ps1 -Checks "-*,clang-analyzer-deadcode.*"
+      .\scripts\dev\run_clang_tidy.ps1 -Fix
 #>
 param(
     [string]$BuildDir = "",
@@ -26,10 +23,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not $BuildDir) {
-    $BuildDir = Join-Path $repoRoot "build/ninja-debug"
+    $BuildDir = Join-Path $repoRoot "build/ninja-debug-msys2"
 }
 elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
     $BuildDir = Join-Path $repoRoot $BuildDir
@@ -37,7 +34,7 @@ elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
 
 $db = Join-Path $BuildDir "compile_commands.json"
 if (-not (Test-Path -LiteralPath $db -PathType Leaf)) {
-    throw "Missing compile_commands.json at '$db'. From repo root run: cmake --preset ninja-debug"
+    throw "Missing compile_commands.json at '$db'. From repo root run: cmake --preset ninja-debug-msys2"
 }
 
 $null = Get-Command $ClangTidy -ErrorAction Stop

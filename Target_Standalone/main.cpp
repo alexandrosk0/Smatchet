@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <ghc/filesystem.hpp>
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
 static bool g_MainWindowShownAfterFirstFrame = false;
@@ -150,6 +151,58 @@ static void SmatchetLogOpenGLInfo() {
     ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)");
 }
 
+static std::string SmatchetNormalizeDirectory(std::string path) {
+    if (path.empty()) {
+        return path;
+    }
+    for (char& c : path) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    if (path.back() != '/') {
+        path.push_back('/');
+    }
+    return path;
+}
+
+static void SmatchetEnsureDirectoryExists(const std::string& path) {
+    namespace fs = ghc::filesystem;
+    if (path.empty()) {
+        return;
+    }
+    std::error_code ec;
+    fs::create_directories(fs::path(path), ec);
+}
+
+static std::string SmatchetGetStandaloneUserDataDirectory() {
+#if defined(_WIN32)
+    char buf[MAX_PATH] = {};
+    DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return SmatchetNormalizeDirectory(std::string(buf) + "\\Smatchet");
+    }
+    n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return SmatchetNormalizeDirectory(std::string(buf) + "\\Smatchet");
+    }
+    return std::string();
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME")) {
+        return SmatchetNormalizeDirectory(std::string(home) + "/Library/Application Support/Smatchet");
+    }
+    return std::string();
+#else
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
+        return SmatchetNormalizeDirectory(std::string(xdg) + "/Smatchet");
+    }
+    if (const char* home = std::getenv("HOME")) {
+        return SmatchetNormalizeDirectory(std::string(home) + "/.config/Smatchet");
+    }
+    return std::string();
+#endif
+}
+
 int main(int argc, char** argv) {
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
@@ -188,7 +241,7 @@ int main(int argc, char** argv) {
 
     glfwSwapInterval(1); // Enable vsync
 
-    // Set config/views/Lua scripts base path to exe directory (after window/context so startup is stable).
+    // Separate shipped runtime assets (next to the exe) from writable user data.
 #if defined(_WIN32)
     {
         char buf[MAX_PATH];
@@ -196,8 +249,14 @@ int main(int argc, char** argv) {
             std::string exePath(buf);
             std::string::size_type last = exePath.find_last_of("\\/");
             if (last != std::string::npos) {
-                std::string exeDir = exePath.substr(0, last + 1);
-                ConfigManager::SetBaseDirectoryForFiles(exeDir);
+                std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                ConfigManager::SetRuntimeAssetDirectory(exeDir);
+                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
+                if (userDataDir.empty()) {
+                    userDataDir = exeDir;
+                }
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
     }
@@ -210,7 +269,14 @@ int main(int argc, char** argv) {
             std::string exePath(buf);
             const std::string::size_type last = exePath.find_last_of('/');
             if (last != std::string::npos) {
-                ConfigManager::SetBaseDirectoryForFiles(exePath.substr(0, last + 1));
+                const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                ConfigManager::SetRuntimeAssetDirectory(exeDir);
+                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
+                if (userDataDir.empty()) {
+                    userDataDir = exeDir;
+                }
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
     }
@@ -222,7 +288,14 @@ int main(int argc, char** argv) {
             std::string exePath(buf.data());
             const std::string::size_type last = exePath.find_last_of('/');
             if (last != std::string::npos) {
-                ConfigManager::SetBaseDirectoryForFiles(exePath.substr(0, last + 1));
+                const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                ConfigManager::SetRuntimeAssetDirectory(exeDir);
+                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
+                if (userDataDir.empty()) {
+                    userDataDir = exeDir;
+                }
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
     }
@@ -232,7 +305,9 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    (void)io;
+    static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
+    ConfigManager::EnsureDefaultImGuiSettingsFile();
+    io.IniFilename = s_imguiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
 
@@ -289,6 +364,11 @@ int main(int argc, char** argv) {
         AppController smatchetApp;
         PluginHost pluginHost;
         smatchetApp.SetRuntimePluginHost(&pluginHost);
+        smatchetApp.SetRequestAppQuitHandler([window]() {
+            if (window) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+        });
 #if defined(SMATCHET_WITH_MCP)
         {
             if (cfg.McpEnabled) {
@@ -376,9 +456,5 @@ int main(int argc, char** argv) {
 
     return exitCode;
 }
-
-
-
-
 
 

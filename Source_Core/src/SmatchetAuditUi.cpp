@@ -203,11 +203,12 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
         d.auditTrailWindowWasOpen = false;
         return;
     }
-    if (d.requestAuditTrailFocus) {
+    const bool wantFocus = d.requestAuditTrailFocus;
+    if (wantFocus) {
         ImGui::SetNextWindowFocus();
         d.requestAuditTrailFocus = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(920.0f, 520.0f), ImGuiCond_FirstUseEver);
+    prepareTopLevelWindow(d, "audit", 920.0f, 520.0f, wantFocus);
     if (!d.auditTrailWindowWasOpen) {
         d.auditTrailWindowWasOpen = true;
         d.auditLastFilePoll = {};
@@ -224,6 +225,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
         ImGui::End();
         return;
     }
+    repairTopLevelWindow(d, "audit", 420.0f, 300.0f);
     ImGui::Text("Audit file: %s", BackendAuditTrail::GetAuditFilePath().c_str());
     ImGui::SameLine();
     const bool userRefresh = ImGui::Button("Refresh");
@@ -376,8 +378,6 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
                         "1000+ events.");
     ImGui::End();
 }
-
-
 
 
 

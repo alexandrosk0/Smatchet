@@ -63,7 +63,7 @@ static std::string InsertTokenForUserAccountId(const std::string& accountId) {
 }
 
 static void RunSuggestBuild(TrackerQuerySuggestKind kind, const char* buf, int bufLen, int cursor, int selStart,
-                            int selEnd, AppController& app, QuerySuggestBuild& out, QuerySuggestMeta* meta) {
+                            int selEnd, const AppController& app, QuerySuggestBuild& out, QuerySuggestMeta* meta) {
     if (kind == TrackerQuerySuggestKind::JiraJql) {
         BuildJqlSuggestions(buf, bufLen, cursor, selStart, selEnd, app, out, meta);
     } else {
@@ -125,32 +125,32 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
                             data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
             if (d != nullptr) {
                 MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
-            }
-            if (d != nullptr) {
                 d->jqlAcpLastCursor = data->CursorPos;
                 d->jqlAcpLastSelectionStart = data->SelectionStart;
                 d->jqlAcpLastSelectionEnd = data->SelectionEnd;
                 d->jqlAcpListDismissed = false;
             }
             const int n = static_cast<int>(ud->suggestBuild->Items.size());
-            if (d != nullptr && n > 0) {
-                if (data->EventKey == ImGuiKey_DownArrow) {
-                    if (d->jqlAcpListSelected < 0) {
-                        d->jqlAcpListSelected = 0;
-                    } else {
-                        d->jqlAcpListSelected = (std::min)(n - 1, d->jqlAcpListSelected + 1);
-                    }
-                    d->jqlAcpScrollToSelected = true;
-                } else if (data->EventKey == ImGuiKey_UpArrow) {
-                    if (d->jqlAcpListSelected >= 0) {
-                        d->jqlAcpListSelected = (std::max)(0, d->jqlAcpListSelected - 1);
+            if (d != nullptr) {
+                if (n > 0) {
+                    if (data->EventKey == ImGuiKey_DownArrow) {
+                        if (d->jqlAcpListSelected < 0) {
+                            d->jqlAcpListSelected = 0;
+                        } else {
+                            d->jqlAcpListSelected = (std::min)(n - 1, d->jqlAcpListSelected + 1);
+                        }
                         d->jqlAcpScrollToSelected = true;
+                    } else if (data->EventKey == ImGuiKey_UpArrow) {
+                        if (d->jqlAcpListSelected >= 0) {
+                            d->jqlAcpListSelected = (std::max)(0, d->jqlAcpListSelected - 1);
+                            d->jqlAcpScrollToSelected = true;
+                        }
+                    } else if (d->jqlAcpListSelected >= 0) {
+                        d->jqlAcpListSelected = (std::min)(d->jqlAcpListSelected, n - 1);
                     }
-                } else if (d->jqlAcpListSelected >= 0) {
-                    d->jqlAcpListSelected = (std::min)(d->jqlAcpListSelected, n - 1);
+                } else {
+                    d->jqlAcpListSelected = -1;
                 }
-            } else if (d != nullptr) {
-                d->jqlAcpListSelected = -1;
             }
         }
         return 0;
@@ -292,7 +292,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, const ImVec2& fieldRectMin, con
     ImGui::PopStyleVar();
 }
 
-void TrackerQueryAcp_TickDebouncedUserSearch(AppController& app, UiDrawSession& d, const QuerySuggestMeta& meta,
+void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSession& d, const QuerySuggestMeta& meta,
                                              const QuerySuggestBuild& syncBuild) {
     (void)syncBuild;
     if (d.cfg.TrackerType == "Plane" || !meta.UserValueToken) {

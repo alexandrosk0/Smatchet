@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <iterator>
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
@@ -30,6 +31,7 @@
 #include <wincrypt.h>
 #else
 #include <cerrno>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -97,23 +99,29 @@ struct TrackerConfig {
     // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
     // Exposed in UI as Settings -> Preferences -> Appearance.
     bool EnableFieldOverflowTooltips = true;
+    // When true, tracker-changing actions are disabled. Defaults on only for first launch with no setup config.
+    bool ReadOnlyMode = false;
     // Wheel ticks at top/bottom before vertical wheel reroutes to horizontal grid scroll.
     // Exposed in UI as Settings -> Preferences -> Appearance.
     int GridEndWheelSwallowsBeforeHorizontal = 15;
-    // Restores Settings → Performance window visibility on launch.
+    // Restores Settings -> Preferences window visibility on launch.
+    bool ShowPreferencesWindow = false;
+    // Restores Workspace -> Views & Queries window visibility on launch.
+    bool ShowViewsDashboardWindow = true;
+    // Restores Inspect -> Performance Monitor window visibility on launch.
     bool ShowPerformanceWindow = false;
+    // Restores Inspect -> Runtime Log window visibility on launch.
+    bool ShowLogWindow = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    // Restores Automation -> Scripts & Actions window visibility on launch.
+    bool ShowLuaAutomationWindow = false;
+#endif
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
     // When true, ITrackerClient logs truncated HTTP response bodies at Trace.
     bool LogTrackerHttpBodies = false;
     // When true, P4Blame logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
     bool LogP4Io = false;
-    // OpenAI-compatible API key used by the AI Assistant panel.
-    std::string AiApiKey;
-    // OpenAI-compatible model id (for example: gpt-4o-mini).
-    std::string AiModel = "gpt-4o-mini";
-    // OpenAI-compatible API base URL (for example: https://api.openai.com).
-    std::string AiBaseUrl = "https://api.openai.com";
     // When true, MCP plugin HTTP server is started.
     bool McpEnabled = false;
     // MCP plugin listen port.
@@ -127,7 +135,7 @@ struct TrackerConfig {
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
-    /** Windows → MCP Server… window open on launch (like ShowPerformanceWindow). */
+    /** Automation -> Agent Bridge (MCP)... window open on launch (like ShowPerformanceWindow). */
     bool ShowMcpServerWindow = false;
     /** Height of the copyable status/endpoints block; 0 = use default (line height × 18). */
     float McpServerInfoPanelHeightPx = 0.f;
@@ -175,6 +183,11 @@ struct TrackerConfig {
     std::string SelectedFontName = "Segoe UI";
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
+    // Standalone updater preferences.
+    bool UpdateCheckEnabled = true;
+    bool UpdateIncludePrerelease = false;
+    std::string UpdateSkipVersion;
+    std::string UpdateGithubRepo = "alexandrosk0/Smatchet";
 };
 
 struct ViewSortSpec {
@@ -394,6 +407,10 @@ struct BlameAnalysisConfig {
     BlameUiThemeColors UiColors{};
     /** Jira field id (e.g. customfield_10001) whose value populates the blame callstack text. */
     std::string CallstackTrackerFieldId;
+    /** Jira field id whose value (decimal CL) pre-fills "Before changelist" when blame opens on an issue. */
+    std::string LastFoundClTrackerFieldId;
+    /** Jira field id (date) pre-filling the "or day" picker when blame opens on an issue; empty if unset or blank. */
+    std::string LastOccurrencesTrackerFieldId;
 };
 
 class ConfigManager {
@@ -413,20 +430,51 @@ class ConfigManager {
               HasMcpAllowRemote(false), McpAllowRemote(false) {}
     };
 
-    // Optional base directory for config/views (e.g. exe directory). If set, paths are baseDir + filename.
-    static void SetBaseDirectoryForFiles(const std::string& baseDir) { GetBaseDirectoryRef() = baseDir; }
+    // Legacy compatibility entrypoint: use the same base for both runtime assets and writable files.
+    static void SetBaseDirectoryForFiles(const std::string& baseDir) {
+        const std::string normalized = NormalizeDirectoryPath(baseDir);
+        GetRuntimeAssetDirectoryRef() = normalized;
+        GetUserDataDirectoryRef() = normalized;
+    }
 
-    /** Directory used for config/views (trailing separator if set). Empty if unset. */
-    static const std::string& GetFilesBaseDirectory() { return GetBaseDirectoryRef(); }
+    static void SetRuntimeAssetDirectory(const std::string& baseDir) {
+        GetRuntimeAssetDirectoryRef() = NormalizeDirectoryPath(baseDir);
+    }
+
+    static void SetUserDataDirectory(const std::string& baseDir) {
+        GetUserDataDirectoryRef() = NormalizeDirectoryPath(baseDir);
+    }
+
+    /** Directory used for writable config/views/cache files (trailing separator if set). Empty if unset. */
+    static const std::string& GetFilesBaseDirectory() { return GetUserDataDirectory(); }
+
+    static const std::string& GetRuntimeAssetDirectory() {
+        const std::string& runtimeDir = GetRuntimeAssetDirectoryRef();
+        if (!runtimeDir.empty()) {
+            return runtimeDir;
+        }
+        return GetUserDataDirectoryRef();
+    }
+
+    static const std::string& GetUserDataDirectory() {
+        const std::string& userDataDir = GetUserDataDirectoryRef();
+        if (!userDataDir.empty()) {
+            return userDataDir;
+        }
+        return GetRuntimeAssetDirectoryRef();
+    }
 
     static std::string GetDefaultSettingsPath() {
-        const std::string& base = GetBaseDirectoryRef();
+        const std::string& base = GetRuntimeAssetDirectory();
         if (base.empty())
             return "default_settings.json";
         return base + "default_settings.json";
     }
 
     static nlohmann::json LoadJsonFile(const std::string& path) {
+        if (!FileExists(path)) {
+            return nlohmann::json::object();
+        }
         std::lock_guard<std::mutex> lock(GetIoMutexRef());
         ScopedFileLock fileLock(path);
         std::string raw;
@@ -543,13 +591,23 @@ class ConfigManager {
         j["plane_project_id"] = config.PlaneProjectId;
         j["jql"] = config.JqlQuery;
         j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
+        j["read_only_mode"] = config.ReadOnlyMode;
         j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
+        j["show_preferences_window"] = config.ShowPreferencesWindow;
+        j["show_views_dashboard_window"] = config.ShowViewsDashboardWindow;
         j["show_performance_window"] = config.ShowPerformanceWindow;
+        j["show_log_window"] = config.ShowLogWindow;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        j["show_lua_automation_window"] = config.ShowLuaAutomationWindow;
+#endif
         j["log_min_level"] = config.LogMinLevel;
         j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
         j["log_p4_io"] = config.LogP4Io;
-        j["ai_model"] = config.AiModel;
-        j["ai_base_url"] = config.AiBaseUrl;
+        j.erase("ai_model");
+        j.erase("ai_base_url");
+        j.erase("show_ai_assistant_window");
+        j.erase("ai_api_key");
+        j.erase("ai_api_key_enc");
         j["mcp_enabled"] = config.McpEnabled;
         j["mcp_port"] = config.McpPort;
         j["mcp_allow_remote"] = config.McpAllowRemote;
@@ -565,6 +623,10 @@ class ConfigManager {
         j["view_field_picker_height"] = config.ViewFieldPickerHeight;
         j["selected_font_name"] = config.SelectedFontName;
         j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
+        j["update_check_enabled"] = config.UpdateCheckEnabled;
+        j["update_include_prerelease"] = config.UpdateIncludePrerelease;
+        j["update_skip_version"] = config.UpdateSkipVersion;
+        j["update_github_repo"] = config.UpdateGithubRepo;
         j.erase("mcp_server_window_layout_valid");
         j.erase("mcp_server_window_x");
         j.erase("mcp_server_window_y");
@@ -580,28 +642,20 @@ class ConfigManager {
         j["last_export_directory"] = config.LastExportDirectory;
         {
             nlohmann::json inheritIds = nlohmann::json::array();
-            for (const auto& id : config.NewIssueInheritFieldIds) {
-                if (id != "summary") {
-                    inheritIds.push_back(id);
-                }
-            }
+            std::copy_if(config.NewIssueInheritFieldIds.begin(), config.NewIssueInheritFieldIds.end(),
+                         std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
             j["new_issue_inherit_field_ids"] = std::move(inheritIds);
         }
         {
             nlohmann::json inheritIds = nlohmann::json::array();
-            for (const auto& id : config.NewIssueInheritFieldIdsPlane) {
-                if (id != "summary") {
-                    inheritIds.push_back(id);
-                }
-            }
+            std::copy_if(config.NewIssueInheritFieldIdsPlane.begin(), config.NewIssueInheritFieldIdsPlane.end(),
+                         std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
             j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
         }
 #if defined(_WIN32)
         j.erase("token");
-        j.erase("ai_api_key");
         j.erase("plane_api_key");
         j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
-        j["ai_api_key_enc"] = ProtectSecretForConfig(config.AiApiKey);
         j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
         const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
         // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
@@ -611,11 +665,9 @@ class ConfigManager {
         j["mcp_auth_token_enc"] = mcpAuthTokenEnc;
 #else
         j.erase("token_enc");
-        j.erase("ai_api_key_enc");
         j.erase("plane_api_key_enc");
         j.erase("mcp_auth_token_enc");
         j["token"] = config.ApiToken;
-        j["ai_api_key"] = config.AiApiKey;
         j["plane_api_key"] = config.PlaneApiKey;
         j["mcp_auth_token"] = config.McpAuthToken;
 #endif
@@ -637,6 +689,8 @@ class ConfigManager {
         b.DefaultMaxFrames = ba.value("default_max_frames", b.DefaultMaxFrames);
         b.ChangelistCacheMaxEntries = ba.value("cl_cache_max", b.ChangelistCacheMaxEntries);
         b.CallstackTrackerFieldId = ba.value("callstack_jira_field_id", std::string());
+        b.LastFoundClTrackerFieldId = ba.value("last_found_cl_jira_field_id", std::string());
+        b.LastOccurrencesTrackerFieldId = ba.value("last_occurrences_jira_field_id", std::string());
         if (ba.contains("default_ignore_keywords") && ba["default_ignore_keywords"].is_array()) {
             for (const auto& item : ba["default_ignore_keywords"]) {
                 if (item.is_string()) {
@@ -699,6 +753,8 @@ class ConfigManager {
         ba["default_max_frames"] = b.DefaultMaxFrames;
         ba["cl_cache_max"] = b.ChangelistCacheMaxEntries;
         ba["callstack_jira_field_id"] = b.CallstackTrackerFieldId;
+        ba["last_found_cl_jira_field_id"] = b.LastFoundClTrackerFieldId;
+        ba["last_occurrences_jira_field_id"] = b.LastOccurrencesTrackerFieldId;
         ba["default_ignore_keywords"] = nlohmann::json::array();
         for (const auto& kw : b.DefaultIgnoreKeywords) {
             ba["default_ignore_keywords"].push_back(kw);
@@ -732,12 +788,14 @@ class ConfigManager {
         const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
         if (canUseCache) {
             std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+            // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not model
             if (GetHasCachedConfigRef()) {
                 return GetCachedConfigRef();
             }
         }
 
         nlohmann::json j = LoadMergedConfigJson();
+        const bool hasSetupConfig = !LoadJsonFile(GetConfigPath()).empty();
         TrackerConfig cfg;
         cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
         cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
@@ -776,23 +834,22 @@ class ConfigManager {
 
                 cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
                 cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
+                cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
                 cfg.GridEndWheelSwallowsBeforeHorizontal =
                     j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
+                cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
+                cfg.ShowViewsDashboardWindow =
+                    j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
                 cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
+                cfg.ShowLogWindow = j.value("show_log_window", cfg.ShowLogWindow);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                cfg.ShowLuaAutomationWindow =
+                    j.value("show_lua_automation_window", cfg.ShowLuaAutomationWindow);
+#endif
                 cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
                 cfg.LogTrackerHttpBodies =
                     j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
                 cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
-#if defined(_WIN32)
-                cfg.AiApiKey = UnprotectSecretFieldFromConfig("ai_api_key_enc", j.value("ai_api_key_enc", std::string{}));
-                if (cfg.AiApiKey.empty()) {
-                    cfg.AiApiKey = j.value("ai_api_key", std::string{});
-                }
-#else
-                cfg.AiApiKey = j.value("ai_api_key", std::string{});
-#endif
-                cfg.AiModel = j.value("ai_model", cfg.AiModel);
-                cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
                 cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
                 cfg.McpPort = j.value("mcp_port", cfg.McpPort);
                 cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
@@ -834,6 +891,10 @@ class ConfigManager {
                 cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
                 cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
                 cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
+                cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
+                cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);
+                cfg.UpdateSkipVersion = j.value("update_skip_version", cfg.UpdateSkipVersion);
+                cfg.UpdateGithubRepo = j.value("update_github_repo", cfg.UpdateGithubRepo);
                 if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
                     cfg.QuickCommentTemplates.clear();
                     for (const auto& item : j["quick_comment_templates"]) {
@@ -936,6 +997,12 @@ class ConfigManager {
                 LOG_ERROR("ConfigManager: Load() parse error (unknown)");
             }
         }
+        if (!hasSetupConfig && !j.contains("read_only_mode")) {
+            cfg.ReadOnlyMode = true;
+        }
+        if (!hasSetupConfig && !j.contains("show_preferences_window")) {
+            cfg.ShowPreferencesWindow = true;
+        }
 
 #if defined(_WIN32)
         // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
@@ -1002,26 +1069,170 @@ class ConfigManager {
     }
 
     static std::string GetConfigPath() {
-        const std::string& base = GetBaseDirectoryRef();
+        const std::string& base = GetUserDataDirectory();
         if (base.empty())
             return "smatchet_config.json";
         return base + "smatchet_config.json";
     }
 
     static std::string GetViewsPath() {
-        const std::string& base = GetBaseDirectoryRef();
+        const std::string& base = GetUserDataDirectory();
         if (base.empty())
             return "smatchet_views.json";
         return base + "smatchet_views.json";
     }
 
+    static std::string GetImGuiSettingsPath() {
+        const std::string& base = GetUserDataDirectory();
+        if (base.empty())
+            return "imgui.ini";
+        return base + "imgui.ini";
+    }
+
+    static const char* GetDefaultImGuiDockLayoutIni() {
+        return
+            "[Window][WindowOverViewport_11111111]\n"
+            "Pos=0,22\n"
+            "Size=1920,987\n"
+            "Collapsed=0\n"
+            "\n"
+            "[Window][Debug##Default]\n"
+            "Pos=60,60\n"
+            "Size=400,400\n"
+            "Collapsed=0\n"
+            "\n"
+            "[Window][Preferences]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,0\n"
+            "\n"
+            "[Window][Smatchet - Active Project]\n"
+            "Pos=0,22\n"
+            "Size=1611,535\n"
+            "Collapsed=0\n"
+            "DockId=0x00000002,0\n"
+            "\n"
+            "[Window][Views - Jira]\n"
+            "Pos=926,22\n"
+            "Size=354,698\n"
+            "Collapsed=0\n"
+            "DockId=0x00000008,0\n"
+            "\n"
+            "[Window][Performance]\n"
+            "Pos=0,427\n"
+            "Size=924,293\n"
+            "Collapsed=0\n"
+            "DockId=0x00000007,0\n"
+            "\n"
+            "[Window][SmatchetViewsDashboard]\n"
+            "Pos=1613,22\n"
+            "Size=307,535\n"
+            "Collapsed=0\n"
+            "DockId=0x00000004,0\n"
+            "\n"
+            "[Window][Log]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,1\n"
+            "\n"
+            "[Window][Backend Audit]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,2\n"
+            "\n"
+            "[Window][Scripting]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,3\n"
+            "\n"
+            "[Window][MCP Server]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,4\n"
+            "\n"
+            "[Window][Bulk import tickets]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,6\n"
+            "\n"
+            "[Window][Bulk export tickets]\n"
+            "Pos=0,559\n"
+            "Size=1920,450\n"
+            "Collapsed=0\n"
+            "DockId=0x0000000A,5\n"
+            "\n"
+            "[Table][0x518B645F,7]\n"
+            "Column 0  Weight=1.0000\n"
+            "Column 1  Weight=1.0000\n"
+            "Column 2  Weight=1.0000 Sort=0^\n"
+            "Column 3  Weight=1.0000\n"
+            "Column 4  Weight=1.0000\n"
+            "Column 5  Weight=1.0000\n"
+            "Column 6  Weight=1.0000\n"
+            "\n"
+            "[Table][0x4BC636F5,8]\n"
+            "RefScale=16\n"
+            "\n"
+            "[Table][0x70C366DB,5]\n"
+            "RefScale=16\n"
+            "Column 0  Width=48\n"
+            "Column 1  Width=180\n"
+            "Column 2  Weight=1.0000\n"
+            "Column 3  Width=120\n"
+            "Column 4  Width=220\n"
+            "\n"
+            "[Docking][Data]\n"
+            "DockSpace         ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1920,987 Split=Y Selected=0x51577D15\n"
+            "  DockNode        ID=0x00000009 Parent=0x08BD597D SizeRef=1920,535 Split=X\n"
+            "    DockNode      ID=0x00000001 Parent=0x00000009 SizeRef=1611,987 Split=X\n"
+            "      DockNode    ID=0x00000007 Parent=0x00000001 SizeRef=924,698 Split=X\n"
+            "        DockNode  ID=0x00000002 Parent=0x00000007 SizeRef=1028,698 CentralNode=1 Selected=0x7EBEC904\n"
+            "        DockNode  ID=0x00000003 Parent=0x00000007 SizeRef=250,698 Selected=0x51577D15\n"
+            "      DockNode    ID=0x00000008 Parent=0x00000001 SizeRef=354,698 Selected=0x51577D15\n"
+            "    DockNode      ID=0x00000004 Parent=0x00000009 SizeRef=307,987 Selected=0x74648FC6\n"
+            "  DockNode        ID=0x0000000A Parent=0x08BD597D SizeRef=1920,450 Selected=0x6A4695A4\n";
+    }
+
+    static bool WriteDefaultImGuiSettingsFile() {
+        const std::string path = GetImGuiSettingsPath();
+        std::lock_guard<std::mutex> lock(GetIoMutexRef());
+        ScopedFileLock fileLock(path);
+        EnsureParentDirectoryForFile(path);
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            LOG_WARN("ConfigManager: could not write default ImGui layout '%s'.", path.c_str());
+            return false;
+        }
+        file << GetDefaultImGuiDockLayoutIni();
+        return file.good();
+    }
+
+    static void EnsureDefaultImGuiSettingsFile() {
+        const std::string path = GetImGuiSettingsPath();
+        {
+            std::lock_guard<std::mutex> lock(GetIoMutexRef());
+            ScopedFileLock fileLock(path);
+            std::ifstream file(path, std::ios::binary);
+            if (file.good()) {
+                return;
+            }
+        }
+        WriteDefaultImGuiSettingsFile();
+    }
+
     /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */
     static std::string NormalizeViewsBackendKey(const std::string& trackerType) {
         std::string t;
-        t.reserve(trackerType.size());
-        for (char c : trackerType) {
-            t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-        }
+        t.resize(trackerType.size());
+        std::transform(trackerType.begin(), trackerType.end(), t.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
         if (t == "plane") {
             return "Plane";
         }
@@ -1073,9 +1284,8 @@ class ConfigManager {
         j["backends"] = nlohmann::json::object();
         std::vector<std::string> keys;
         keys.reserve(disk.Backends.size());
-        for (const auto& kv : disk.Backends) {
-            keys.push_back(kv.first);
-        }
+        std::transform(disk.Backends.begin(), disk.Backends.end(), std::back_inserter(keys),
+                       [](const auto& kv) { return kv.first; });
         std::sort(keys.begin(), keys.end());
         for (const auto& bk : keys) {
             const auto it = disk.Backends.find(bk);
@@ -1154,6 +1364,7 @@ class ConfigManager {
     // Crash-safe write: writes to <path>.tmp then atomically renames onto <path>.
     static bool AtomicWriteTextFile(const std::string& path, const std::string& content) {
         const std::string tmp = path + ".tmp";
+        EnsureParentDirectoryForFile(path);
         {
             std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
             if (!file.is_open()) {
@@ -1307,9 +1518,120 @@ class ConfigManager {
         return s_has;
     }
 
-    static std::string& GetBaseDirectoryRef() {
+    static std::string& GetRuntimeAssetDirectoryRef() {
         static std::string s;
         return s;
+    }
+
+    static std::string& GetUserDataDirectoryRef() {
+        static std::string s;
+        return s;
+    }
+
+    static std::string NormalizeDirectoryPath(const std::string& baseDir) {
+        if (baseDir.empty()) {
+            return std::string();
+        }
+        std::string normalized = baseDir;
+        for (char& c : normalized) {
+            if (c == '\\') {
+                c = '/';
+            }
+        }
+        if (normalized.back() != '/') {
+            normalized.push_back('/');
+        }
+        return normalized;
+    }
+
+    static void EnsureParentDirectoryForFile(const std::string& path) {
+        std::string normalizedPath = path;
+        for (char& c : normalizedPath) {
+            if (c == '\\') {
+                c = '/';
+            }
+        }
+        const std::string::size_type slash = normalizedPath.find_last_of('/');
+        if (slash == std::string::npos) {
+            return;
+        }
+        std::string parent = normalizedPath.substr(0, slash);
+        if (parent.empty()) {
+            return;
+        }
+        CreateDirectories(parent);
+    }
+
+    static bool EnsureDirectoryExists(const std::string& path) {
+#if defined(_WIN32)
+        const DWORD attrs = GetFileAttributesA(path.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES) {
+            return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+        if (CreateDirectoryA(path.c_str(), nullptr) != 0) {
+            return true;
+        }
+        return GetLastError() == ERROR_ALREADY_EXISTS;
+#else
+        struct stat st {};
+        if (::stat(path.c_str(), &st) == 0) {
+            return S_ISDIR(st.st_mode) != 0;
+        }
+        if (::mkdir(path.c_str(), 0755) == 0) {
+            return true;
+        }
+        return errno == EEXIST;
+#endif
+    }
+
+    static bool FileExists(const std::string& path) {
+#if defined(_WIN32)
+        const std::wstring wPath = Utf8ToWide(path);
+        if (wPath.empty()) {
+            return false;
+        }
+        const DWORD attrs = GetFileAttributesW(wPath.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
+        struct stat st {};
+        return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) != 0;
+#endif
+    }
+
+    static void CreateDirectories(const std::string& rawPath) {
+        const std::string normalized = NormalizeDirectoryPath(rawPath);
+        if (normalized.empty()) {
+            return;
+        }
+
+        std::string current;
+        std::string::size_type pos = 0;
+        if (normalized.size() >= 2 && normalized[1] == ':') {
+            current = normalized.substr(0, 2);
+            pos = 2;
+        }
+        if (pos < normalized.size() && normalized[pos] == '/') {
+            current.push_back('/');
+            ++pos;
+        }
+        while (pos < normalized.size()) {
+            const std::string::size_type next = normalized.find('/', pos);
+            const std::string part = normalized.substr(pos, next - pos);
+            if (!part.empty()) {
+                if (!current.empty() && current.back() != '/') {
+                    current.push_back('/');
+                }
+                current += part;
+                if (!EnsureDirectoryExists(current)) {
+                    LOG_WARN("ConfigManager: failed to create directory '%s'", current.c_str());
+                    return;
+                }
+            }
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1;
+        }
     }
 
     // Cross-process advisory lock on a sibling <path>.lock file.

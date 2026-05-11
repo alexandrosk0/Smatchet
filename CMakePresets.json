@@ -9,22 +9,66 @@
         {
             "name": "_smatchet-native-features",
             "hidden": true,
-            "description": "Shared SMATCHET_WITH_* defaults for all presets; edit ON/OFF here (or override with cmake -D) so Standalone and Unreal-packaged libs stay aligned. Lua matches CMakeLists option default (ON).",
+            "description": "Shared SMATCHET_WITH_* defaults for presets that use the host PATH for compilers (legacy non-MSYS2 flow).",
             "cacheVariables": {
                 "SMATCHET_WITH_LUA_AUTOMATION": "ON",
-                "SMATCHET_WITH_MCP": "ON",
-                "SMATCHET_WITH_AI": "OFF"
+                "SMATCHET_WITH_MCP": "ON"
             }
         },
         {
-            "name": "ninja-debug",
+            "name": "_smatchet-msys2-base",
+            "hidden": true,
+            "description": "Shared MSYS2 UCRT64 defaults for supported Smatchet workflows.",
+            "generator": "Ninja",
+            "environment": {
+                "MSYSTEM": "UCRT64",
+                "PATH": "$env{MSYSTEM_PREFIX}/bin;$env{MSYS2_ROOT}/usr/bin;$penv{PATH}",
+                "CHERE_INVOKING": "1"
+            },
+            "cacheVariables": {
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON",
+                "CMAKE_C_COMPILER": "gcc.exe",
+                "CMAKE_CXX_COMPILER": "g++.exe",
+                "CMAKE_AR": "ar.exe",
+                "CMAKE_RANLIB": "ranlib.exe"
+            }
+        },
+        {
+            "name": "vs-unreal-msvc",
+            "hidden": true,
             "inherits": [
                 "_smatchet-native-features"
             ],
-            "displayName": "Ninja Debug",
-            "description": "Debug build with Ninja (requires Ninja on PATH)",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-debug",
+            "description": "Hidden MSVC preset for Win64 Unreal plugin packaging consumed by Unreal Build Tool.",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/vs-unreal-msvc",
+            "architecture": "x64",
+            "cacheVariables": {
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+            }
+        },
+        {
+            "name": "ninja-iter-msys2",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Iteration (MSYS2 UCRT64)",
+            "description": "Recommended fast standalone developer build: RelWithDebInfo, compile_commands on, lld auto-detected when available.",
+            "binaryDir": "${sourceDir}/build/ninja-iter-msys2",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-debug-msys2",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Debug (MSYS2 UCRT64)",
+            "description": "Full standalone debug build with the MSYS2 UCRT64 toolchain.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -36,113 +80,38 @@
                 "_smatchet-native-features"
             ],
             "displayName": "Ninja Release",
-            "description": "Release build with Ninja (requires Ninja on PATH)",
+            "description": "Legacy release preset that uses gcc/g++ from the current PATH and writes to build/ninja-release.",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
             }
         },
         {
-            "name": "ninja-clang-debug",
+            "name": "ninja-iter-unreal-msys2",
             "inherits": [
-                "_smatchet-native-features"
+                "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Debug (Clang)",
-            "description": "Debug + compile_commands.json using clang/clang++ on PATH (best match for clang-tidy)",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-clang-debug",
+            "displayName": "Ninja Unreal Iteration (MSYS2 UCRT64)",
+            "description": "Fast Unreal plugin packaging iteration build: RelWithDebInfo, compile_commands on, Unreal third-party output enabled.",
+            "binaryDir": "${sourceDir}/build/ninja-iter-unreal-msys2",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "clang",
-                "CMAKE_CXX_COMPILER": "clang++",
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
         },
         {
-            "name": "ninja-clang-release",
+            "name": "ninja-debug-unreal-msys2",
             "inherits": [
-                "_smatchet-native-features"
+                "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Release (Clang)",
-            "description": "Release + compile_commands.json using clang/clang++ on PATH",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-clang-release",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "clang",
-                "CMAKE_CXX_COMPILER": "clang++",
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "ninja-msvc-debug",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Ninja Debug (MSVC)",
-            "description": "Debug build with Ninja and cl.exe from a Visual Studio developer shell",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-msvc-debug",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "cl",
-                "CMAKE_CXX_COMPILER": "cl",
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "ninja-msvc-release",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Ninja Release (MSVC)",
-            "description": "Release build with Ninja and cl.exe from a Visual Studio developer shell",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-msvc-release",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "cl",
-                "CMAKE_CXX_COMPILER": "cl",
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "vs-debug",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Visual Studio Debug",
-            "description": "Debug build with the Visual Studio 2022 generator",
-            "generator": "Visual Studio 17 2022",
-            "binaryDir": "${sourceDir}/build/vs-debug",
-            "cacheVariables": {
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "vs-release",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Visual Studio Release",
-            "description": "Release build with the Visual Studio 2022 generator",
-            "generator": "Visual Studio 17 2022",
-            "binaryDir": "${sourceDir}/build/vs-release",
-            "cacheVariables": {
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "ninja-unreal-dx12",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Ninja Unreal DX12",
-            "description": "Debug DX12 packaging using the compiler on PATH; use vs-unreal-dx12-release for MSVC ABI",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12",
+            "displayName": "Ninja Unreal Debug (MSYS2 UCRT64)",
+            "description": "Debug Unreal plugin packaging build for reproducing Unreal-specific integration issues.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-unreal-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
@@ -150,89 +119,73 @@
             }
         },
         {
-            "name": "ninja-unreal-dx12-release",
+            "name": "ninja-publish-msys2",
             "inherits": [
-                "_smatchet-native-features"
+                "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Unreal DX12 Release",
-            "description": "Release DX12 packaging using the compiler on PATH; use vs-unreal-dx12-release for MSVC ABI",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-unreal-dx12-release",
+            "displayName": "Ninja Publish (MSYS2 UCRT64, LTO)",
+            "description": "Distributable standalone plus Unreal packaging build using MSYS2 GCC LTO; forces BFD ld via SMATCHET_NO_LLD=1.",
+            "binaryDir": "${sourceDir}/build/ninja-publish-msys2",
+            "environment": {
+                "SMATCHET_NO_LLD": "1"
+            },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
-            }
-        },
-        {
-            "name": "vs-unreal-dx12-release",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "MSVC Unreal DX12 Release",
-            "description": "Release DX12 artifacts packaged for Unreal plugin (MSVC ABI compatible)",
-            "generator": "Visual Studio 17 2022",
-            "binaryDir": "${sourceDir}/build/vs-unreal-dx12-release",
-            "cacheVariables": {
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+                "SMATCHET_USE_PCH": "OFF",
+                "SMATCHET_ENABLE_LTO": "ON",
+                "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
                 "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
         }
     ],
     "buildPresets": [
         {
-            "name": "ninja-debug",
-            "configurePreset": "ninja-debug"
+            "name": "ninja-iter-msys2",
+            "configurePreset": "ninja-iter-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-msys2",
+            "configurePreset": "ninja-debug-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
         },
         {
             "name": "ninja-release",
-            "configurePreset": "ninja-release"
+            "configurePreset": "ninja-release",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
         },
         {
-            "name": "ninja-clang-debug",
-            "configurePreset": "ninja-clang-debug"
-        },
-        {
-            "name": "ninja-clang-release",
-            "configurePreset": "ninja-clang-release"
-        },
-        {
-            "name": "ninja-msvc-debug",
-            "configurePreset": "ninja-msvc-debug"
-        },
-        {
-            "name": "ninja-msvc-release",
-            "configurePreset": "ninja-msvc-release"
-        },
-        {
-            "name": "vs-debug",
-            "configurePreset": "vs-debug",
-            "configuration": "Debug"
-        },
-        {
-            "name": "vs-release",
-            "configurePreset": "vs-release",
-            "configuration": "Release"
-        },
-        {
-            "name": "ninja-unreal-dx12",
-            "configurePreset": "ninja-unreal-dx12",
+            "name": "ninja-iter-unreal-msys2",
+            "configurePreset": "ninja-iter-unreal-msys2",
+            "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetPackageUnrealLibs_DX12"
             ]
         },
         {
-            "name": "ninja-unreal-dx12-release",
-            "configurePreset": "ninja-unreal-dx12-release",
+            "name": "ninja-debug-unreal-msys2",
+            "configurePreset": "ninja-debug-unreal-msys2",
+            "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetPackageUnrealLibs_DX12"
             ]
         },
         {
-            "name": "vs-unreal-dx12-release",
-            "configurePreset": "vs-unreal-dx12-release",
-            "configuration": "Release",
+            "name": "ninja-publish-msys2",
+            "configurePreset": "ninja-publish-msys2",
+            "inheritConfigureEnvironment": true,
             "targets": [
+                "SmatchetStandalone",
                 "SmatchetPackageUnrealLibs_DX12"
             ]
         }

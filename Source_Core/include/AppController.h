@@ -12,6 +12,7 @@
 #endif
 
 // 3. THE REST OF YOUR INCLUDES
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -49,6 +50,23 @@ struct TrackerIssueFetchPack {
     std::string FetchError;
 };
 
+struct AppUpdateAsset {
+    std::string Name;
+    std::string DownloadUrl;
+};
+
+struct AppUpdateInfo {
+    bool Ok = false;
+    bool UpdateAvailable = false;
+    std::string CurrentVersion;
+    std::string LatestVersion;
+    std::string ReleaseTag;
+    std::string ReleaseUrl;
+    std::string ReleaseNotes;
+    std::string Error;
+    AppUpdateAsset InstallerAsset;
+};
+
 class AppController {
   public:
     ~AppController();
@@ -60,6 +78,17 @@ class AppController {
     };
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
+
+    /** Path passed to `Initialize` (may be relative to the process working directory). */
+    const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
+    /** Absolute path for display; falls back to the raw path if resolution fails. */
+    std::string GetResolvedLocalCacheDbPath() const;
+    /**
+     * UI thread: closes SQLite, deletes the cache file (and WAL sidecars), opens a new empty database,
+     * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
+     * to refill from the tracker.
+     */
+    bool RecreateLocalCacheDatabase(std::string& outError);
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink);
@@ -81,6 +110,8 @@ class AppController {
      */
     void SetCloseEmbeddedUiHandler(std::function<void()> handler);
     void CloseEmbeddedUi();
+    void SetRequestAppQuitHandler(std::function<void()> handler);
+    void RequestAppQuit() const;
 
     /** Standalone / embedded host: set so Preferences can start or stop MCP without app restart. */
     void SetRuntimePluginHost(PluginHost* host);
@@ -90,6 +121,10 @@ class AppController {
     /** Bounded ring buffer of MCP-related actions (thread-safe). */
     void AppendMcpActivity(const std::string& line);
     std::vector<std::string> CopyMcpActivityLog() const;
+    /** MCP HTTP server: any routed request after auth gate (worker threads). */
+    void NotifyMcpClientHttpActivity();
+    /** @return false if no client request has been recorded yet this process. */
+    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const;
 #endif
 
     /**
@@ -135,6 +170,11 @@ class AppController {
     void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError = nullptr);
+    std::string GetAppVersion() const;
+    std::string GetGitHubReleaseRepo() const;
+    AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
+    bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
+                                          std::string& outError) const;
 
     void InitLua();
     void InitLuaCore(sol::state& state);
@@ -146,7 +186,7 @@ class AppController {
 
     /**
      * Resolve a URL or local path for field icons / Lua `imgui.image`.
-     * Allows http(s) URLs; local files must lie under the Lua scripts directory or `GetFilesBaseDirectory()`.
+     * Allows http(s) URLs; local files must lie under the Lua scripts directory or the runtime asset directory.
      */
     std::string ResolveFieldIconAssetPath(const std::string& pathOrUrl) const;
 
@@ -162,11 +202,6 @@ class AppController {
     /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
     std::vector<std::string> GetLuaTicketActionNames() const;
     void ExecuteLuaTicketAction(const std::string& name, const std::string& issueId);
-    void AddAiContext(const std::string& text);
-    const std::vector<std::string>& GetAiContext() const;
-    void ClearAiContext();
-    void PromptAi(const std::string& message);
-    void SetAiPromptHandler(std::function<void(const std::string&)> handler);
     std::vector<std::string> GetLuaGlobalActionNames() const;
     void ExecuteLuaGlobalAction(const std::string& name);
     /**
@@ -184,7 +219,7 @@ class AppController {
      * Lua InitLua uses one functor struct per binding (see AppController_LuaBindings.cpp) so sol2/GCC never
      * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
      */
-    void LuaLogInfoBind(std::string msg);
+    void LuaLogInfoBind(const std::string& msg);
     std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId);
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
     void LuaRegisterFieldDisplayBind(const std::string& fieldId, sol::function fn);
@@ -199,8 +234,6 @@ class AppController {
     void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
     void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
-    void LuaAiAddContextBind(const std::string& text);
-    void LuaAiPromptBind(const std::string& message);
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
     std::vector<CachedTicket> LuaGetActiveTicketsBind();
     /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
@@ -213,6 +246,7 @@ class AppController {
         nlohmann::json parametersSchema;
         sol::protected_function callback;
     };
+    /** Thread-safe snapshot (e.g. MCP server thread vs Lua registration on the app thread). */
     std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
     std::string ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args, std::string& outError);
@@ -276,7 +310,7 @@ class AppController {
                                     const std::string& value) const;
 
     std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
-    std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) const;
+    static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
     const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
@@ -517,18 +551,18 @@ class AppController {
     std::vector<std::function<void(const std::string&)>> AutomationLogSinks;
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
+    std::function<void()> RequestAppQuitHandler;
     AttachmentViewerHandler AttachmentViewerHandlerCallback;
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
-    std::vector<std::string> aiContext_;
-    std::function<void(const std::string&)> aiPromptHandler_;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
     std::vector<McpToolDefinition> luaMcpTools_;
+    mutable std::mutex luaMcpToolsMutex_;
     std::vector<std::pair<std::string, sol::protected_function>> luaWindows_;
     std::vector<std::pair<std::string, std::string>> luaTicketActions_;
     std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
@@ -620,6 +654,8 @@ class AppController {
     static constexpr size_t kMcpActivityLogMax = 100;
     mutable std::mutex mcpActivityMutex_;
     std::deque<std::string> mcpActivityLog_;
+    /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
+    std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -647,7 +683,10 @@ class AppController {
 
   private:
     struct StreamingSyncState {
-        uint64_t RequestId = 0;
+        // Promoted to atomic: read from the worker thread and written from the UI thread
+        // (StartStreamingSync). All other accesses use the natural atomic conversions; no
+        // explicit .load()/.store() needed for the simple equality checks below.
+        std::atomic<std::uint64_t> RequestId{0};
         std::atomic<bool> Cancelled{false};
         std::atomic<bool> Superseded{false};
         std::atomic<bool> Active{false};
@@ -657,9 +696,13 @@ class AppController {
         // Accumulators / results
         std::atomic<size_t> TotalFetchedCount{0};
         std::atomic<bool> FullSyncCompleted{false};
+        // FetchError is a std::string so it cannot be atomic. All reads and writes MUST be
+        // guarded by QueueMutex below. The worker thread writes via the qLock at the bottom
+        // of the lambda; the UI thread reads/clears via lock_guard in TickStreamingApply +
+        // setup/teardown paths.
         std::string FetchError;
 
-        // Cache processing queue
+        // Cache processing queue + FetchError serialization. UI thread and worker thread.
         mutable std::mutex QueueMutex;
         std::vector<std::vector<CachedTicket>> PendingBatches;
 
@@ -678,16 +721,19 @@ class AppController {
     TrackerConfig pendingConfig_;
     ViewsStore pendingViews_;
 
-    bool isDeletingStale_ = false;
+    std::string localCacheDbPath_;
+
+    // isDeletingStale_ is read by IsStreamingSyncActive() (const, callable from any thread)
+    // and written on the UI thread inside TickStreamingApply / CancelAndJoinActiveStreamingSync.
+    // The atomic promotion is the simplest correctness fix; the remaining stale-delete state
+    // (vectors + counters) is UI-thread-only by contract.
+    std::atomic<bool> isDeletingStale_{false};
     std::vector<std::string> staleIdsToDelete_;
     size_t totalStaleToDelete_ = 0;
     size_t staleDeletedSoFar_ = 0;
 };
 
 #endif
-
-
-
 
 
 

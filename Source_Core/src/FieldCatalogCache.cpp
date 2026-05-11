@@ -50,7 +50,7 @@ std::string NormalizeEndpointForCache(std::string value) {
 }
 
 std::string FieldCatalogCachePath() {
-    const std::string& base = ConfigManager::GetFilesBaseDirectory();
+    const std::string& base = ConfigManager::GetUserDataDirectory();
     if (base.empty()) {
         return std::string("smatchet_field_catalog_cache.json");
     }
@@ -385,7 +385,6 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
 }
 
 } // namespace FieldCatalogCache
-
 
 
 

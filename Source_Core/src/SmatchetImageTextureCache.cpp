@@ -158,7 +158,7 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
         outError = "Invalid cache key or empty image bytes.";
         return false;
     }
-    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiIO& io = ImGui::GetIO();
     if ((io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) == 0) {
         outError = "Renderer does not support textures.";
         return false;

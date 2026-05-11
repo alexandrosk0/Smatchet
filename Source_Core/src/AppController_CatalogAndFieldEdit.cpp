@@ -120,7 +120,7 @@ std::string AppController::ResolveDisplayValue(const std::string& fieldId, const
     return Backend->ResolveDisplayValue(fieldId, field, value);
 }
 
-std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) const {
+std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) {
     if (cfg.Domain.empty() || jql.empty()) {
         return std::string();
     }
@@ -148,8 +148,6 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                 if (nextWarning != LastTrackerFieldCatalogWarning) {
                     LastTrackerFieldCatalogWarning = nextWarning;
                     TrackerFieldCatalogRevision.fetch_add(1);
-                } else {
-                    LastTrackerFieldCatalogWarning = nextWarning;
                 }
                 LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
                 return;
@@ -298,6 +296,10 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
         outError = "Issue id is empty.";
         return false;
     }
+    if (!Backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
     if (IsSprintField(field) || IsNonEditableTimetrackingFieldId(field.Id) ||
         IsEditableTimetrackingEstimateFieldId(field.Id)) {
         outError = "Field type not supported for this edit path.";
@@ -310,10 +312,10 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
                  [](const std::string& value) { return !value.empty(); });
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
         EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
     }
-    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         return false;
@@ -603,6 +605,12 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
 bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues, std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitFieldEdit blocked by read-only mode issue=%s field=%s", issueId.c_str(),
+                 field.Id.c_str());
+        return false;
+    }
     if (!Backend || !Cache) {
         outError = "Backend or cache is not initialized.";
         LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
@@ -614,6 +622,8 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         LOG_WARN("AppController::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
         return false;
     }
+
+    ITrackerClient& backend = *Backend;
 
     const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
     const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
@@ -629,10 +639,6 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     const auto& tickets = *ticketsSnap;
 
     if (IsSprintField(field)) {
-        if (!Backend) {
-            outError = "Jira backend is not initialized.";
-            return false;
-        }
         if (values.empty()) {
             outError = "Clearing sprint is not supported by this action.";
             LOG_WARN("AppController::SubmitFieldEdit sprint clear not supported issue=%s field=%s", issueId.c_str(),
@@ -640,12 +646,11 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             return false;
         }
         const std::string sprintId = values.front();
-        TrackerConfig cfg = ConfigManager::Load();
         auto ticketIt = std::find_if(tickets.begin(), tickets.end(),
                                      [&](const CachedTicket& ticket) { return ticket.id == issueId; });
         BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-        if (!Backend->AddIssueToSprint(issueId, sprintId, outError)) {
+        if (!backend.AddIssueToSprint(issueId, sprintId, outError)) {
             LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
                       issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
             BackendAuditTrail::AppendResult(
@@ -673,7 +678,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                           {"after", values.empty() ? std::string() : values.front()}});
+                           {"after", sprintId}});
         requestDeferredLiveTrackerBackendSuccessNotify_();
         return true;
     }
@@ -725,7 +730,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
         BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
-        if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outError)) {
+        if (!backend.UpdateIssueFields(issueId, fieldsPayload, outError)) {
             std::string payloadForLog;
             try {
                 payloadForLog = fieldsPayload.dump();
@@ -761,11 +766,11 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return true;
     }
 
-    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
         EnsureIssueEditMetaLoaded(issueId, nullptr);
     }
 
-    if (Backend && !IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !CanEditFieldForIssue(issueId, field.Id, &field)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         LOG_WARN("AppController::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
@@ -774,7 +779,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     }
 
     nlohmann::json fieldsPayload;
-    if (!Backend->BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
+    if (!backend.BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
         LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", 
                  issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
@@ -782,9 +787,9 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
-    bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
+    bool updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outError);
     bool didRetryAfter400 = false;
-    if (!updateOk && Backend && ErrorTextContainsHttpStatus(outError, 400)) {
+    if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr);
         if (!CanEditFieldForIssue(issueId, field.Id, &field)) {
@@ -799,7 +804,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                     {"after", rawValues}});
             return false;
         }
-        updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outError);
+        updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outError);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -830,7 +835,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                 if (i != 0) {
                     displayValue += ", ";
                 }
-                displayValue += Backend->ResolveDisplayValue(field.Id, &field, values[i]);
+                displayValue += backend.ResolveDisplayValue(field.Id, &field, values[i]);
             }
         }
 
@@ -859,6 +864,12 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
     outResult = FieldEditResult{};
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu",
               FieldEditAuditSource::Current(), issueId.c_str(), field.Id.c_str(), rawValues.size());
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outResult.Error = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitFieldEditNetworkOnly blocked by read-only mode issue=%s field=%s",
+                 issueId.c_str(), field.Id.c_str());
+        return false;
+    }
     if (issueId.empty()) {
         outResult.Error = "Issue id is empty.";
         return false;
@@ -868,7 +879,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         outResult.Error = "No tracker backend initialized.";
         return false;
     }
-    TrackerConfig cfg = ConfigManager::Load();
+    ITrackerClient& backend = *Backend;
     std::vector<std::string> values;
     values.reserve(rawValues.size());
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
@@ -880,7 +891,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
             return false;
         }
         const std::string sprintId = values.front();
-        if (!Backend->AddIssueToSprint(issueId, sprintId, outResult.Error)) {
+        if (!backend.AddIssueToSprint(issueId, sprintId, outResult.Error)) {
             return false;
         }
         std::string displayValue = sprintId;
@@ -928,7 +939,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
 
         nlohmann::json fieldsPayload = nlohmann::json::object();
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        if (!Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+        if (!backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
             return false;
         }
         outResult.Ok = true;
@@ -948,9 +959,9 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    bool updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    bool updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     bool didRetryAfter400 = false;
-    if (!updateOk && Backend && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
+    if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
         RefreshIssueEditMeta(issueId, nullptr, issueTypeKeyOpt);
         if (!CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
@@ -960,7 +971,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                      issueId.c_str(), field.Id.c_str());
             return false;
         }
-        updateOk = Backend->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+        updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -991,6 +1002,10 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
     outResult = FieldEditResult{};
     outFieldsPayloadJson.clear();
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        return false;
+    }
     nlohmann::json fieldsPayload;
     std::unordered_map<std::string, std::string> displayValues;
     if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
@@ -1104,6 +1119,11 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
 bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                              std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::AddIssueCommentPlain blocked by read-only mode issue=%s", issueKey.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1123,6 +1143,11 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
                                    const std::string& workDescription, const std::string& startedDate,
                                    std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitWorklog blocked by read-only mode issue=%s", issueId.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1144,6 +1169,11 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
                                                     const std::string& date, const bool approximated,
                                                     const std::string& codeSnippet, std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::AddIssueCommentBlameContext blocked by read-only mode issue=%s", issueKey.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Jira backend is not initialized.";
         return false;
@@ -1178,7 +1208,6 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
     }
     return ok;
 }
-
 
 
 

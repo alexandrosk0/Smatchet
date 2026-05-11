@@ -22,6 +22,8 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 - [Build Guide](BUILD.md): Supported CMake presets, prerequisites, local compiler paths, and wrapper scripts.
 - [Lua Scripting Guide](LUA_GUIDE.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](MCP_GUIDE.md): How to use Smatchet as an MCP server for AI agents.
+- [Windows Signing Guide](scripts/publish/SIGNING.md): How to sign the standalone app and installer during release packaging.
+- [Installer Smoke Test Guide](scripts/publish/INSTALLER_SMOKE_TEST.md): Repeatable release validation for installer, portable ZIP, Unreal plugin ZIP, and Fab bundle.
 
 ## Localization
 
@@ -46,11 +48,77 @@ Missing override keys fall back to the built-in strings, and missing translation
 
 Smatchet's build system uses CMake and is designed to require **zero manual dependency downloads**. All third-party libraries (ImGui, SQLiteCpp, cpr, nlohmann/json, etc.) are fetched and built automatically via `FetchContent`.
 
+MSYS2 for iteration (lld), publish explicitly uses BFD. Publish LTO and fast dev link.
+
+### Recommended Developer Path
+
+For developers who want both fast iteration and LTO publish builds, use MSYS2 UCRT64:
+
+```powershell
+winget install MSYS2.MSYS2
+```
+
+Then, in an MSYS2 terminal:
+
+```bash
+pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
+```
+
 ### Prerequisites
 
 - CMake 3.24 or higher
-- A C++14 compliant compiler (MSVC, GCC, or Clang)
-- Git (for fetching dependencies)
+- Git
+- MSYS2 UCRT64 with:
+  - `mingw-w64-ucrt-x86_64-toolchain`
+  - `mingw-w64-ucrt-x86_64-lld`
+
+### Supported Presets
+
+The supported shared presets are:
+
+- `ninja-iter-msys2`: fast standalone iteration (`RelWithDebInfo`)
+- `ninja-debug-msys2`: full standalone debug (`Debug`)
+- `ninja-iter-unreal-msys2`: fast Unreal plugin iteration (`RelWithDebInfo`)
+- `ninja-debug-unreal-msys2`: full Unreal-specific debug (`Debug`)
+- `ninja-publish-msys2`: LTO publish build for standalone plus Unreal packaging (`Release`)
+- `ninja-release`: supported legacy standalone release preset using `gcc`/`g++` from the current `PATH`
+
+### Build Workflows
+
+Standalone iteration:
+
+```bash
+cmake --preset ninja-iter-msys2
+cmake --build --preset ninja-iter-msys2
+```
+
+Standalone debug:
+
+```bash
+cmake --preset ninja-debug-msys2
+cmake --build --preset ninja-debug-msys2
+```
+
+Unreal plugin iteration:
+
+```bash
+cmake --preset ninja-iter-unreal-msys2
+cmake --build --preset ninja-iter-unreal-msys2
+```
+
+Unreal plugin debug:
+
+```bash
+cmake --preset ninja-debug-unreal-msys2
+cmake --build --preset ninja-debug-unreal-msys2
+```
+
+Publish with LTO:
+
+```bash
+cmake --preset ninja-publish-msys2
+cmake --build --preset ninja-publish-msys2
+```
 
 ### Configuration Options
 
@@ -60,15 +128,7 @@ Smatchet exposes several CMake options to customize the build:
 | :--- | :--- | :--- |
 | `SMATCHET_WITH_LUA_AUTOMATION` | `ON` | Builds with the Lua console plugin and `sol2` bindings for field automation. |
 | `SMATCHET_WITH_MCP` | `ON` | Builds the Model Context Protocol (MCP) server plugin. |
-| `SMATCHET_WITH_AI` | `OFF` | Includes the AI assistance HTTP client. |
 | `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
-
-### Quick Build
-
-```bash
-cmake --preset ninja-debug
-cmake --build --preset ninja-debug --target SmatchetStandalone
-```
 
 ### Unreal Engine Plugin
 
@@ -81,7 +141,7 @@ When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX
 * **`Plugins/`**: Optional plugin modules (Lua Console, MCP server).
 * **`UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.
 * **`ThirdParty/`**: Holds custom fixes or scripts for external dependencies.
-* **`scripts/`**: Default Lua scripts (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`). Edit them in-app via **Windows → Scripting…** (standalone copies this tree next to the exe as `Scripts/`).
+* **`scripts/`**: Runtime Lua/art assets plus tooling subfolders. `scripts/` root contains the shipped Lua runtime files (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`) and bundled art copied next to the standalone exe as `Scripts/`. Use `scripts/dev/` for local build/dev helpers and `scripts/publish/` for release, signing, installer, and smoke-test tooling.
 * **`cmake/`**: Additional CMake helper modules.
 
 ## License

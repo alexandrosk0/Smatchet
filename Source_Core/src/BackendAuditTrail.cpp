@@ -143,7 +143,7 @@ nlohmann::json RedactJsonWithKey(const std::string& key, const nlohmann::json& v
 } // namespace
 
 std::string GetAuditFilePath() {
-    const std::string& base = ConfigManager::GetFilesBaseDirectory();
+    const std::string& base = ConfigManager::GetUserDataDirectory();
     if (base.empty()) {
         return "smatchet_backend_audit.jsonl";
     }
@@ -292,7 +292,6 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
 }
 
 } // namespace BackendAuditTrail
-
 
 
 

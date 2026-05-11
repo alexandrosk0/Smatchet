@@ -115,6 +115,7 @@ struct UiDrawSession {
 
     bool showPreferences = false;
     bool showViewsDashboard = true;
+    bool requestActiveProjectFocus = false;
     bool requestViewsDashboardFocus = false;
     bool showPerformance = false;
     bool showBlameAnalysis = false;
@@ -124,9 +125,10 @@ struct UiDrawSession {
     bool requestAuditTrailFocus = false;
     /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
     bool showLogWindow = true;
+    int layoutForceDefaultsFrames = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    /** Scripting window; dock tab close clears this; reopen from Windows → Scripting…. */
+    /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
     bool showLuaAutomationWindow = true;
     bool requestLuaAutomationFocus = false;
     /** When true, the next draw selects the Scripts editor tab (not Tools & Actions). */
@@ -134,7 +136,7 @@ struct UiDrawSession {
 #endif
 
 #if defined(SMATCHET_WITH_MCP)
-    /** MCP status / endpoints / activity; reopen from Windows (or MCP menu when Lua automation is off). */
+    /** MCP status / endpoints / activity; reopen from Automation -> Agent Bridge (MCP).... */
     bool showMcpServerWindow = false;
     bool requestMcpServerFocus = false;
 #endif
@@ -171,10 +173,6 @@ struct UiDrawSession {
     char planeApiKeyBuf[512]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
-    char aiApiKeyBuf[512]{};
-
-    char aiModelBuf[128]{};
-    char aiBaseUrlBuf[256]{};
     bool mcpEnabled = false;
     int mcpPort = SmatchetDefaults::Mcp::kDefaultPort;
     bool mcpAllowRemote = false;
@@ -251,6 +249,16 @@ struct UiDrawSession {
     /** Green "TRACKER OK" chip: hide after `trackerOkChipHideAt` while banner clear and reachable. */
     bool trackerOkChipHideTimerArmed = false;
     std::chrono::steady_clock::time_point trackerOkChipHideAt{};
+#if defined(SMATCHET_WITH_MCP)
+    /** Grid header "MCP LIVE" chip: anchor for initial visibility window after enable. */
+    std::chrono::steady_clock::time_point mcpLiveHeaderAnchorAt{};
+    bool mcpLiveHeaderAnchorArmed = false;
+    bool mcpLiveHeaderLastCfgEnabled = false;
+    /** Previous-frame MCP header chip drawn (enabled or disabled) so hide always runs a fade. */
+    bool mcpHeaderLastFrameChipShown = false;
+    bool mcpHeaderFadeoutActive = false;
+    std::chrono::steady_clock::time_point mcpHeaderFadeoutStartAt{};
+#endif
     /** 0 none, 1 error, 2 success — mirrors single-slot gridEdit banner before it became toast-only. */
     int lastToastedGridBannerKind = 0;
     std::string lastToastedGridBannerMessage;
@@ -281,10 +289,13 @@ struct UiDrawSession {
     int gridBottomHorizontalWheelSwallowsRemaining = 0;
     int gridTopHorizontalWheelSwallowsRemaining = 0;
 
-    std::string aiResponse;
-    bool aiIsThinking = false;
-    bool aiPromptPending = false;
-    std::string aiPromptMessage;
+    bool appUpdateStartupCheckStarted = false;
+    bool appUpdateCheckInFlight = false;
+    bool appUpdateCheckManual = false;
+    bool appUpdateModalOpen = false;
+    std::future<AppUpdateInfo> appUpdateFuture;
+    AppUpdateInfo appUpdateInfo;
+    std::string appUpdateActionStatus;
 
     /** One visual row per string (embedded newlines in messages are split). */
     std::vector<std::string> logViewLines;
@@ -352,10 +363,6 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
-
-
-
-
 
 
 
