@@ -683,7 +683,10 @@ class AppController {
 
   private:
     struct StreamingSyncState {
-        uint64_t RequestId = 0;
+        // Promoted to atomic: read from the worker thread and written from the UI thread
+        // (StartStreamingSync). All other accesses use the natural atomic conversions; no
+        // explicit .load()/.store() needed for the simple equality checks below.
+        std::atomic<std::uint64_t> RequestId{0};
         std::atomic<bool> Cancelled{false};
         std::atomic<bool> Superseded{false};
         std::atomic<bool> Active{false};
@@ -693,9 +696,13 @@ class AppController {
         // Accumulators / results
         std::atomic<size_t> TotalFetchedCount{0};
         std::atomic<bool> FullSyncCompleted{false};
+        // FetchError is a std::string so it cannot be atomic. All reads and writes MUST be
+        // guarded by QueueMutex below. The worker thread writes via the qLock at the bottom
+        // of the lambda; the UI thread reads/clears via lock_guard in TickStreamingApply +
+        // setup/teardown paths.
         std::string FetchError;
 
-        // Cache processing queue
+        // Cache processing queue + FetchError serialization. UI thread and worker thread.
         mutable std::mutex QueueMutex;
         std::vector<std::vector<CachedTicket>> PendingBatches;
 
@@ -716,7 +723,11 @@ class AppController {
 
     std::string localCacheDbPath_;
 
-    bool isDeletingStale_ = false;
+    // isDeletingStale_ is read by IsStreamingSyncActive() (const, callable from any thread)
+    // and written on the UI thread inside TickStreamingApply / CancelAndJoinActiveStreamingSync.
+    // The atomic promotion is the simplest correctness fix; the remaining stale-delete state
+    // (vectors + counters) is UI-thread-only by contract.
+    std::atomic<bool> isDeletingStale_{false};
     std::vector<std::string> staleIdsToDelete_;
     size_t totalStaleToDelete_ = 0;
     size_t staleDeletedSoFar_ = 0;

@@ -1660,7 +1660,12 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     staleDeletedSoFar_ = 0;
     activeStreamingSync_.FullSyncCompleted = false;
     activeStreamingSync_.TotalFetchedCount = 0;
-    activeStreamingSync_.FetchError.clear();
+    {
+        // FetchError contract: every read/write through QueueMutex (worker has been joined here,
+        // so the lock is uncontended — but keeping the lock guards the contract from future drift).
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.FetchError.clear();
+    }
     activeStreamingSync_.KeepIds.clear();
     activeStreamingSync_.Cancelled = false;
     activeStreamingSync_.Superseded = false;
@@ -1894,7 +1899,11 @@ void AppController::TickStreamingApply() {
 
         activeStreamingSync_.TotalFetchedCount = 0;
 
-        activeStreamingSync_.FetchError.clear();
+        {
+            // FetchError contract: every read/write through QueueMutex (worker joined above).
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.FetchError.clear();
+        }
 
         activeStreamingSync_.KeepIds.clear();
 
@@ -2192,7 +2201,13 @@ void AppController::TickStreamingApply() {
 
 
 
-        std::string fetchError = activeStreamingSync_.FetchError;
+        // FetchError is written by the worker thread under QueueMutex; acquire it for the read.
+        // FullSyncCompleted is atomic and can be read without the lock.
+        std::string fetchError;
+        {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            fetchError = activeStreamingSync_.FetchError;
+        }
 
         bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
 
@@ -2398,13 +2413,16 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
     activeStreamingSync_.FullSyncCompleted = false;
 
-    activeStreamingSync_.FetchError.clear();
-
     activeStreamingSync_.KeepIds.clear();
 
     {
 
+        // FetchError contract: every read/write through QueueMutex. Worker for the new request has
+        // not been spawned yet, so the lock is uncontended.
+
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+
+        activeStreamingSync_.FetchError.clear();
 
         activeStreamingSync_.PendingBatches.clear();
 
@@ -2462,19 +2480,13 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
             if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
 
-                activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
-
-                activeStreamingSync_.FetchError = summary.FetchError;
-
-                activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
-
-
+                // FullSyncCompleted is atomic; FetchError is not and must be written under
+                // QueueMutex so TickStreamingApply on the UI thread reads a consistent value.
+                std::vector<std::string> localStaleIds;
 
                 if (summary.FullSyncCompleted && Cache) {
 
                     std::vector<std::string> existingIds = Cache->GetAllTicketIds();
-
-                    std::vector<std::string> localStaleIds;
 
                     std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
 
@@ -2484,7 +2496,17 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
                                  });
 
-                    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+                }
+
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+
+                activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
+
+                activeStreamingSync_.FetchError = summary.FetchError;
+
+                activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
+
+                if (summary.FullSyncCompleted && Cache) {
 
                     activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
 
@@ -2498,6 +2520,8 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
             if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
 
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+
                 activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
 
                 activeStreamingSync_.FullSyncCompleted = false;
@@ -2509,6 +2533,8 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
             LOG_ERROR("AppController: Worker thread caught unknown exception.");
 
             if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
 
                 activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
 
