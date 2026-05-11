@@ -67,9 +67,9 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 8. ✅ **DONE (commit pending in `review/logger-hardening`).** `SetFileSinkPath` is now atomic under `m_fileSinkLifecycleMutex` end-to-end (idempotency check → stop → assign → spawn). No TOCTOU.
 
-9. ⏳ **MCP SSE heartbeat blocks process shutdown for up to 1s per connected client** — `Plugins/Mcp/McpPlugin.cpp:621-635`. The lambda does `std::this_thread::sleep_for(1s)` before each heartbeat write. `impl_->svr.stop()` cannot reclaim a worker mid-sleep. With N clients that's up to N seconds of `~McpPlugin` latency. **Fix:** condvar-wait on a shutdown atom with a 1s timeout, or chunk the sleep into ~100ms ticks that re-check shutdown state.
+9. ✅ **DONE (commit `b610ec6` in `review/p1-cleanup`).** Heartbeat lambda now `wait_for`s on a per-Impl `shutdownCv` with a 1s timeout instead of sleeping unconditionally. `OnStop()` flips `shuttingDown` and notifies before `svr.stop()`, so every SSE worker returns within microseconds regardless of how many clients are connected. `OnStart()` resets the flag for start-after-stop cycles.
 
-10. ⏳ **`CellIdScope` collides cells when `column.FieldId` is empty** — `Source_Core/src/TicketFieldEditor.cpp:1414`. `ImGui::PushID("")` hashes identically for every empty-string column — synthetic / errored-catalog rows collapse onto one widget ID; edit state and popups leak between rows. **Fix:** `assert(!column.FieldId.empty())` or fall back to `ImGui::PushID((int)columnIndex)` when empty.
+10. ✅ **DONE (commit `945d42a` in `review/p1-cleanup`).** `CellIdScope` constructor now accepts the column index alongside the field id and pushes the index when the field id is empty. `RenderFieldCell` takes the index from the grid caller's column loop; synthetic / errored-catalog rows no longer collapse onto a single ImGui id.
 
 11. ✅ **DONE (commit pending in `review/process-stability`).** `BlameAnalysisUi::BlameState` now has an explicit destructor that signals `worker.Cancel.store(true)` and joins `worker.Thread` if joinable. The PR #8 pimpl move made step (b) easy: `~BlameAnalysisUi` releases the `unique_ptr<BlameState>`, which fires `~BlameState`, which joins synchronously before any `BlameState` member is destroyed. No more `std::terminate` at exit on a joinable worker.
 
@@ -89,7 +89,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 17. ✅ **DONE (commit pending in `review/process-stability`).** `Drain()` iterates destructively: `for (auto& t : tasks) { t(); t = nullptr; }`. Captures (especially `shared_ptr<X>`) are released after each task instead of being kept alive across the whole loop.
 
-18. ⏳ **`GridFrameContext` cache key misses in-place view edits** — `Source_Core/src/SmatchetUI.cpp:500-511`. Invalidation predicate is `(catalogRevision, activeViewId)`. `Views::UpdateActive` mutates the active `ViewDefinition` in place keeping its Id; after the user edits column order/fields/widths, `gridFrameCtx_.columns` is stale until catalog revision bumps or active view changes. Real correctness bug — grid renders the wrong columns for arbitrary frame counts. **Fix:** add a `viewsRevision` counter bumped in `Views::Save()` and include it in the cache key.
+18. ✅ **DONE (commit `c400ab3` in `review/p1-cleanup`).** Added `std::atomic<uint64_t> Revision_` to `Views`, bumped on every mutation (`Activate`/`Create`/`UpdateActive`/`DeleteActive`/backend swap). `BumpRevision()` is also called from the grid's column-width/sort-spec persistence (which mutates via `GetActiveViewMutable`). `GridFrameContext`'s cache key now includes `viewsRevision`, so in-place view edits invalidate within one frame.
 
 19. ✅ **DONE.** The code-level fix shipped in PR #10 (`fix(stability)`): `~AppController` now flips `automationWorkerShuttingDown_` under the job mutex, notifies, and `automationWorker_.join()`s *before* any member destruction begins. That join is the happens-before barrier — per-iteration `bgState` (with its `__smatchet_app = this`) cannot survive into member-dtor land. PR #13 then added the contract docstrings: `automationWorker_` in `AppController.h:679-688` and the `state["__smatchet_app"] = this` comment in `AppController_LuaBindings.cpp:529-538` now spell out the lifetime guarantees.
 
@@ -97,7 +97,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 21. ✅ **DONE (commit pending in `review/process-stability`).** `RunLuaSetupScript` now takes `automationJobMutex_` for the `find` + `push_back`. `AutomationWorkerLoop` takes the same mutex briefly to snapshot the vector into a per-job local before iteration (under `try/catch` from #3 above) — workers iterate the snapshot, eliminating the data race on reallocation.
 
-22. ⏳ **`SmatchetImGuiHost::UpdateRendererColorFormat` leaves DX12 backend torn down on init-failure** — `Source_Core/src/SmatchetImGuiHost.cpp:333-336`. `ImGui_ImplDX12_Shutdown()` always runs; `Smatchet_ImplDX12_InitBackend(...)` may fail and return false, leaving `ImplData->Initialized` still true while the backend is uninitialized. Subsequent `DrawUI`/`RenderDrawData` calls into a torn-down backend. **Fix:** on init failure, clear `Initialized` and restore the previous format or set a permanent-error state.
+22. ✅ **DONE (commit `d13a0d7` in `review/p1-cleanup`).** On `Smatchet_ImplDX12_InitBackend` failure inside `UpdateRendererColorFormat` we now clear `ImplData->Initialized` and record the error in `LastInitError`. The existing lazy-retry path inside `BuildFrame` (~once per second while UI is visible) then re-attempts `Initialize()` with the cached options. All `DrawUI`/`RenderDrawData` paths already gate on `Initialized`, so no calls reach a torn-down backend.
 
 ---
 

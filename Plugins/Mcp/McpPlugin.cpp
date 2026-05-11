@@ -21,10 +21,13 @@
 #include <iostream>
 #include <thread>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
+#include <condition_variable>
 #include <cstdint>
 #include <iterator>
+#include <mutex>
 
 namespace {
 std::string Base64Encode(const std::string& in) {
@@ -275,6 +278,20 @@ std::string ExtractJsonRpcErrorMessage(const nlohmann::json& jres, std::size_t m
 
 struct McpPlugin::Impl {
     AppController* app = nullptr;
+    // Shutdown signaling for SSE chunked-content providers. Heartbeat lambdas
+    // wait on shutdownCv with a 1s timeout instead of sleeping unconditionally
+    // so OnStop() can reclaim worker threads within microseconds rather than
+    // up to 1 second per connected client.
+    //
+    // Declared BEFORE `svr` on purpose: members destroy in reverse order, and
+    // `~Server` joins the worker pool in its destructor. If a worker is still
+    // executing the chunked-content lambda when ~Impl begins (svr.stop() does
+    // not synchronously drain in-flight handlers), it must read these primitives
+    // through the raw `impl` pointer. Putting them before `svr` guarantees they
+    // outlive `~Server`'s pool join.
+    std::mutex shutdownMutex;
+    std::condition_variable shutdownCv;
+    std::atomic<bool> shuttingDown{false};
     httplib::Server svr;
     std::thread thread;
     bool routes_installed = false;
@@ -336,6 +353,9 @@ void McpPlugin::OnStart(AppController& app) {
         return;
     }
     impl_->app = &app;
+    // Reset shutdown signal in case this plugin instance is being restarted
+    // after a prior OnStop()/OnStart() cycle.
+    impl_->shuttingDown.store(false);
     const TrackerConfig cfg = ConfigManager::Load();
     impl_->bind_host = cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     impl_->auth_token = cfg.McpAuthToken;
@@ -618,7 +638,7 @@ void McpPlugin::OnStart(AppController& app) {
 
         // --- Actual MCP JSON-RPC Specification (SSE) ---
 
-        impl_->svr.Get(SmatchetDefaults::Mcp::kSsePath, [authorize](const httplib::Request& req, httplib::Response& res) {
+        impl_->svr.Get(SmatchetDefaults::Mcp::kSsePath, [this, authorize](const httplib::Request& req, httplib::Response& res) {
             if (!authorize(req, res))
                 return;
 
@@ -631,20 +651,28 @@ void McpPlugin::OnStart(AppController& app) {
             std::string endpoint = "/mcp/messages";
             std::string event = "event: endpoint\ndata: " + endpoint + "\n\n";
 
+            // Capture impl_ by raw pointer: cpp-httplib's svr.stop() in OnStop()
+            // waits for in-flight handlers to return before destruction, so the
+            // Impl outlives every chunked-content callback invocation.
+            Impl* impl = impl_.get();
             res.set_chunked_content_provider(
                 "text/event-stream",
-                [event](size_t offset, httplib::DataSink& sink) {
+                [event, impl](size_t offset, httplib::DataSink& sink) {
                     if (offset == 0) {
                         // Initial endpoint event. `sink.write` returns false on client disconnect.
                         return sink.write(event.data(), event.size());
                     }
-                    // Heartbeat every 1s. cpp-httplib's DataSink in this version has no
-                    // is_writable(), so disconnect detection happens via the write() return
-                    // value — sending a heartbeat each second frees the httplib worker thread
-                    // within ~1s of a client going away (was up to 15s with a single long sleep).
-                    // SSE comment lines (`: text`) are ignored by clients per the SSE spec, and
-                    // ~12 bytes/sec of overhead per connected client is trivial.
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    // Wait up to 1s for shutdown; return early (closing the stream)
+                    // when OnStop() flips shuttingDown. Without this, svr.stop()
+                    // would block until every connected client's worker finished
+                    // its current sleep — up to N seconds for N clients.
+                    {
+                        std::unique_lock<std::mutex> lk(impl->shutdownMutex);
+                        if (impl->shutdownCv.wait_for(lk, std::chrono::seconds(1),
+                                                     [impl] { return impl->shuttingDown.load(); })) {
+                            return false;
+                        }
+                    }
                     constexpr char kSseHeartbeat[] = ": heartbeat\n\n";
                     return sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
                 },
@@ -889,6 +917,14 @@ void McpPlugin::OnStop() {
     if (!impl_ || !impl_->thread.joinable()) {
         return;
     }
+    // Wake any SSE heartbeat lambdas blocked in shutdownCv.wait_for before
+    // asking httplib to stop — otherwise svr.stop() would block while each
+    // worker finishes its current heartbeat cycle.
+    {
+        std::lock_guard<std::mutex> lk(impl_->shutdownMutex);
+        impl_->shuttingDown.store(true);
+    }
+    impl_->shutdownCv.notify_all();
     impl_->svr.stop();
     impl_->thread.join();
 }

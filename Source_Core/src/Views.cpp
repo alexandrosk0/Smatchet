@@ -31,6 +31,7 @@ bool Views::Activate(const std::string& viewId) {
         return false;
     }
     Slice_.ActiveViewId = viewId;
+    Revision_.fetch_add(1);
     Save();
     return true;
 }
@@ -54,6 +55,7 @@ bool Views::Create(const ViewDefinition& prototype) {
     }
     Slice_.Views.push_back(std::move(created));
     Slice_.ActiveViewId = Slice_.Views.back().Id;
+    Revision_.fetch_add(1);
     Save();
     return true;
 }
@@ -69,6 +71,7 @@ bool Views::UpdateActive(const ViewDefinition& updated) {
     if (active->Name.empty()) {
         active->Name = active->Id;
     }
+    Revision_.fetch_add(1);
     Save();
     return true;
 }
@@ -88,6 +91,7 @@ bool Views::DeleteActive() {
     } else {
         Slice_.ActiveViewId.clear();
     }
+    Revision_.fetch_add(1);
     Save();
     return true;
 }
@@ -108,6 +112,7 @@ void Views::ApplyTrackerFromConfig(const TrackerConfig& cfg) {
             ConfigManager::EnsureViewBucketBootstrapped(Disk, ActiveBackendKey, cfg, dirty);
             if (dirty) {
                 Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
+                Revision_.fetch_add(1);
                 ConfigManager::SavePersistentViewsToDisk(Disk);
             }
         }
@@ -124,6 +129,7 @@ void Views::ApplyTrackerFromConfig(const TrackerConfig& cfg) {
         ConfigManager::SavePersistentViewsToDisk(Disk);
     }
     Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
+    Revision_.fetch_add(1);
 }
 
 std::string Views::BuildIdFromName(const std::string& name) {

@@ -17,6 +17,7 @@ struct UiDrawSession;
 /// drawActiveProjectWindow so neither rebuilds it independently.
 struct GridFrameContext {
     std::uint64_t catalogRevision = 0;
+    std::uint64_t viewsRevision = 0;
     std::string activeViewId;
     std::unique_ptr<TrackerFieldCatalogIndex> catalogIndex;
     std::vector<TicketGridColumn> columns;
