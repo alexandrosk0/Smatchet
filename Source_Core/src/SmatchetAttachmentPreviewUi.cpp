@@ -1,6 +1,7 @@
 #include "SmatchetUI.h"
 
 #include "AppController.h"
+#include "Logger.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetUiSession.h"
 
