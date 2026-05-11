@@ -14,9 +14,9 @@
 
 These are real defects in the new code, not just polish. Each can fault at runtime.
 
-1. ⏳ **`Logger::SetFileSinkPath` start-then-restart race can call `std::terminate`** — `Source_Core/src/Logger.cpp:196-216` (added in PR #6 `1c3bebf`). Two threads calling `SetFileSinkPath` concurrently both pass the "same path" early-exit check under separate lock acquisitions, both call `StopFileSinkWorker()`, both assign `m_fileSinkThread = std::thread(...)` — assigning to a still-joinable thread invokes `std::terminate`. `StopFileSinkWorker` also reads `m_fileSinkThread.joinable()` *without* any mutex, so a parallel `SetFileSinkPath` racing with `~Logger` may both observe joinable and both `join()` → UB. **Fix:** introduce a dedicated `m_fileSinkLifecycleMutex` held for the entire stop+restart sequence.
+1. ✅ **DONE (commit pending in `review/logger-hardening`).** `Logger::SetFileSinkPath` now holds `m_fileSinkLifecycleMutex` for the entire stop+restart sequence; `StopFileSinkWorkerLocked` is private and requires the caller to hold the same mutex, so concurrent `SetFileSinkPath` calls and dtor races can no longer assign over a still-joinable thread.
 
-2. ⏳ **`Logger::Log` lock-release window leaks entries when sink stops mid-call** — `Source_Core/src/Logger.cpp:98-127`. Between releasing `m_mutex` (L112) and acquiring `m_fileSinkMutex` (L115), another thread can run `StopFileSinkWorker()`, clear `m_fileSinkPath`, and join the worker. The current call then pushes onto the queue of a no-longer-running worker; the entry is leaked until the next `SetFileSinkPath` (which clears the queue). **Fix:** acquire both mutexes in a fixed global order, or have the worker drain on shutdown.
+2. ✅ **DONE (commit pending in `review/logger-hardening`).** `Log()` re-checks `m_fileSinkPath` under `m_fileSinkMutex` before pushing; `StopFileSinkWorkerLocked` clears the path AND the queue under the same mutex. Worst case is a benign push onto a queue that the next `SetFileSinkPath` will clear — no UB, no leak across many sink cycles, no push to a queue with a dead consumer that lives forever.
 
 3. ⏳ **`AutomationWorkerLoop` has no try/catch — any sol2/JSON exception terminates the process** — `Source_Core/src/AppController_LuaBindings.cpp:838-873` (rewritten in PR #8). `InitLuaCore(bgState)`, `bgState.load_file(...)`, `CreateSandboxEnvironment(...)`, and `RunAutomationJob(...)` can each throw (`sol::error`, `std::bad_alloc`, JSON parse). An exception escapes the lambda, unwinds out of the thread function, `std::terminate` runs. **Fix:** wrap the inner job body in `try { ... } catch (const std::exception&) { LOG_ERROR(...) } catch (...) { LOG_ERROR(...) }`.
 
@@ -30,11 +30,11 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 ### From PR #6 (the P0 sweep)
 
-6. ⏳ **`Logger::FlushFileSink` lies in its contract — only calls `notify_one()`** — `Source_Core/src/Logger.cpp:218-222`. The header at `Logger.h:69` advertises "called from ~Logger" but `~Logger → StopFileSinkWorker` does the drain itself; callers relying on this method to flush before continuing silently lose data. **Fix:** make it synchronous (capture queue revision, wait on a new `m_drained` condvar) or rename to `RequestFileSinkFlush`.
+6. ✅ **DONE (commit pending in `review/logger-hardening`).** `FlushFileSink()` is now synchronous: it bumps a monotonic `m_fileSinkFlushRequestedGen` under `m_fileSinkMutex` while holding `m_fileSinkLifecycleMutex`, notifies the worker, then waits on a dedicated `m_fileSinkAckCv` until `m_fileSinkFlushAckedGen >= targetGen` (or shutdown). The worker publishes ack at the end of each batch. Header docstring updated to describe the new contract.
 
-7. ⏳ **`Logger::FileSinkWorker` doesn't recover from transient disk errors** — `Source_Core/src/Logger.cpp:240-254`. If `out.good()` flips false (disk full, file rotated/deleted externally), the worker `return`s silently and the sink is permanently disabled until `SetFileSinkPath("")` and a fresh `SetFileSinkPath(...)` are issued. **Fix:** on `!good()`, sleep + reopen with bounded retries.
+7. ✅ **DONE (commit pending in `review/logger-hardening`).** `FileSinkWorker` no longer `return`s permanently on `!good()`. After `kFileSinkMaxConsecutiveErrors = 5` failed batches it closes the file, sleeps `kFileSinkErrorBackoffMs = 1000ms`, reopens, and resumes the loop. Persistent failure degrades to a no-op sink but never abandons the worker — `FlushFileSink` waiters still get released via the ack publish on every batch (success or failure).
 
-8. ⏳ **`Logger::SetFileSinkPath` TOCTOU between two separate critical sections** — `Source_Core/src/Logger.cpp:197-214`. Lock → compare → unlock → Stop → lock → assign. Between the unlock and re-lock another thread can set the same path, making this call redundantly stop and restart the just-spawned worker (queue contents lost). **Fix:** unified lifecycle mutex held across the whole function.
+8. ✅ **DONE (commit pending in `review/logger-hardening`).** `SetFileSinkPath` is now atomic under `m_fileSinkLifecycleMutex` end-to-end (idempotency check → stop → assign → spawn). No TOCTOU.
 
 9. ⏳ **MCP SSE heartbeat blocks process shutdown for up to 1s per connected client** — `Plugins/Mcp/McpPlugin.cpp:621-635`. The lambda does `std::this_thread::sleep_for(1s)` before each heartbeat write. `impl_->svr.stop()` cannot reclaim a worker mid-sleep. With N clients that's up to N seconds of `~McpPlugin` latency. **Fix:** condvar-wait on a shutdown atom with a 1s timeout, or chunk the sleep into ~100ms ticks that re-check shutdown state.
 
@@ -76,7 +76,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 23. ⏳ **`PlaneClient` page-cap warning surfaces as a failure banner** — `Source_Core/src/PlaneClient.cpp:489-495`. `summary.FetchError = warn;` then `AppController::TickStreamingApply` reads `FetchError` (`AppController.cpp:2204-2209`) and displays it as a *failure* even though 5,000 issues ingested successfully. **Fix:** add `summary.Warning` channel (or prefix `[partial]`) so the UI can distinguish.
 
-24. ⏳ **`Logger::FlushFileSink` is dead public API** — `Logger.h:70`. No in-tree caller. Either wire into the crash handler / signal path or drop.
+24. 🟡 **PARTIAL (commit pending in `review/logger-hardening`).** `FlushFileSink` no longer lies (item 6 above) so the public surface is honest now. Still has no in-tree caller — a future wire-up into the crash handler / signal path or into `~AppController` (to ensure logs are flushed before SQLite/MCP shutdown) closes this. Not a bug as it stands.
 
 25. ⏳ **`isDeletingStale_` style consistency** — `AppController.h:298`. Reads via implicit `operator bool` while sibling `activeStreamingSync_.Active.load()` uses `.load()` on the same line. Pick one form to avoid the next reader assuming `isDeletingStale_` is still a plain `bool`.
 

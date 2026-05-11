@@ -61,12 +61,21 @@ class Logger {
     /**
      * Optional async file sink — when set, every log entry is also queued for an internal
      * worker thread that flushes to @p path. Idempotent (calling with the same path is a no-op).
-     * Passing an empty path stops the worker and closes the file. Errors during writing are
-     * silently dropped to avoid log-on-log loops; use OS file-permission tooling to diagnose.
-     * Safe to call from any thread; typical wiring is once at startup (main.cpp / Initialize).
+     * Passing an empty path stops the worker and closes the file. Disk I/O errors are retried
+     * with bounded backoff; persistent errors degrade to a no-op sink but never permanently
+     * deadlock the worker. Safe to call from any thread.
+     *
+     * All lifecycle operations (start, stop, path change, synchronous flush) are serialized
+     * under `m_fileSinkLifecycleMutex` so concurrent callers cannot race a still-joinable
+     * `std::thread` (previously triggered `std::terminate`).
      */
     void SetFileSinkPath(const std::string& path);
-    /** Best-effort flush of pending file-sink entries; called from ~Logger and on error. */
+
+    /**
+     * Synchronously drain pending file-sink entries to disk. Blocks until the worker has
+     * acknowledged a flush generation issued after this call; returns immediately if no sink
+     * is configured or the worker is shutting down. Safe to call from any thread.
+     */
     void FlushFileSink();
 
   private:
@@ -76,7 +85,8 @@ class Logger {
     Logger& operator=(const Logger&) = delete;
 
     void FileSinkWorker();
-    void StopFileSinkWorker();
+    /// Must be called with m_fileSinkLifecycleMutex held.
+    void StopFileSinkWorkerLocked();
 
     mutable std::mutex m_mutex;
     // deque gives O(1) pop_front for the overflow path; previous std::vector::erase(begin())
@@ -88,16 +98,26 @@ class Logger {
     std::atomic<std::uint64_t> m_revision{0};
     static constexpr std::size_t kMaxEntries = 1000;
 
-    // Async file sink. Background thread drains m_fileSinkQueue and writes to m_fileSinkPath.
-    // All file-sink state lives under m_fileSinkMutex (separate from m_mutex above so file I/O
-    // never blocks in-memory log emission). Bounded queue drops oldest on overflow.
+    // Async file sink lifecycle. m_fileSinkLifecycleMutex is acquired by SetFileSinkPath / dtor /
+    // FlushFileSink and serializes worker thread creation, destruction, and synchronous flush.
+    // m_fileSinkMutex protects the queue + path + flush-generation counters; held briefly by
+    // Log() (queue push) and by the worker (queue drain / ack publish). Lock order if both are
+    // taken: lifecycle FIRST, then m_fileSinkMutex.
+    mutable std::mutex m_fileSinkLifecycleMutex;
     mutable std::mutex m_fileSinkMutex;
-    std::condition_variable m_fileSinkCv;
+    std::condition_variable m_fileSinkCv;     // worker wakes on queue/shutdown/flush request
+    std::condition_variable m_fileSinkAckCv;  // FlushFileSink waits on this for ack publish
     std::deque<LogEntry> m_fileSinkQueue;
     std::string m_fileSinkPath;
     std::thread m_fileSinkThread;
     std::atomic<bool> m_fileSinkShutdown{false};
+    // Monotonic counters: callers bump RequestedGen; worker publishes AckedGen after writing
+    // every batch. FlushFileSink waits until Acked >= the gen it requested.
+    std::uint64_t m_fileSinkFlushRequestedGen{0};
+    std::uint64_t m_fileSinkFlushAckedGen{0};
     static constexpr std::size_t kFileSinkQueueMax = 4096;
+    static constexpr int kFileSinkMaxConsecutiveErrors = 5;
+    static constexpr int kFileSinkErrorBackoffMs = 1000;
 };
 
 // printf‑style macros for convenience.
