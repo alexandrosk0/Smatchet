@@ -67,6 +67,8 @@
 
 #include "ITrackerBackendFactory.h"
 
+#include "OfflineQueueService.h"
+
 #include "TrackerHttpUtils.h"
 
 #include "Logger.h"
@@ -1155,6 +1157,12 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     Cache = std::make_unique<LocalCacheManager>(dbPath);
 
+    // Construct OfflineQueueService eagerly so the legacy-pending startup migration below
+    // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
+    if (!offlineQueue_) {
+        offlineQueue_ = std::make_unique<OfflineQueueService>(*this);
+    }
+
     try {
 
         const size_t dropped = Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
@@ -1171,7 +1179,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
                           dropped);
 
-            legacyPendingStartupBanner_ = buf;
+            offlineQueue_->legacyPendingStartupBanner_ = buf;
 
         }
 
@@ -1720,7 +1728,9 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     }
 
     ClearLastTrackerTicketSyncWarning();
-    legacyPendingStartupBanner_.clear();
+    if (offlineQueue_) {
+        offlineQueue_->legacyPendingStartupBanner_.clear();
+    }
     RefreshLocalData();
     return true;
 }
