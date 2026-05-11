@@ -1,19 +1,18 @@
 #include "Logger.h"
 
 #include <algorithm>
-#include <mutex>
+#include <cctype>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
-#include <chrono>
-#include <cctype>
 #include <fstream>
+#include <mutex>
 #include <vector>
 
 namespace {
 std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 } // namespace
@@ -24,7 +23,8 @@ Logger& Logger::Instance() {
 }
 
 Logger::~Logger() {
-    StopFileSinkWorker();
+    std::lock_guard<std::mutex> lifeLock(m_fileSinkLifecycleMutex);
+    StopFileSinkWorkerLocked();
 }
 
 LogLevel Logger::ParseLogLevelString(const std::string& s, LogLevel fallback) {
@@ -94,7 +94,6 @@ void Logger::Log(LogLevel level, const std::string& message) {
     entry.level = level;
     entry.message = message;
 
-    bool forwardToFileSink = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (static_cast<int>(level) < m_minLevelInt.load(std::memory_order_relaxed)) {
@@ -104,24 +103,26 @@ void Logger::Log(LogLevel level, const std::string& message) {
         if (m_entries.size() >= kMaxEntries) {
             m_entries.pop_front(); // O(1) on deque, was O(N) on vector::erase(begin()).
         }
-        m_entries.push_back(entry);
+        m_entries.push_back(entry); // copy; `entry` still owned for the file-sink push below
         m_revision.fetch_add(1, std::memory_order_release);
-
-        // File sink decision needs a separate snapshot — checked under its own mutex below.
-        forwardToFileSink = true;
     }
 
-    if (forwardToFileSink) {
-        std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
+    // File sink push: re-check path under m_fileSinkMutex. If the sink was stopped between the
+    // in-memory push above and this lock acquisition, m_fileSinkPath is empty (cleared inside
+    // StopFileSinkWorkerLocked) and we skip — no entry leak into a dead-worker queue.
+    bool notify = false;
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
         if (m_fileSinkPath.empty()) {
             return;
         }
         if (m_fileSinkQueue.size() >= kFileSinkQueueMax) {
-            // Drop oldest to bound memory under sustained log pressure with a slow disk.
-            m_fileSinkQueue.pop_front();
+            m_fileSinkQueue.pop_front(); // bounded queue, drop oldest under sustained pressure
         }
         m_fileSinkQueue.push_back(std::move(entry));
-        sinkLock.unlock();
+        notify = true;
+    }
+    if (notify) {
         m_fileSinkCv.notify_one();
     }
 }
@@ -194,14 +195,21 @@ void Logger::Clear() {
 }
 
 void Logger::SetFileSinkPath(const std::string& path) {
+    // Lifecycle mutex held for the entire stop+restart sequence. Concurrent callers serialize
+    // here so we cannot assign over a still-joinable std::thread (which would std::terminate).
+    std::lock_guard<std::mutex> lifeLock(m_fileSinkLifecycleMutex);
+
     {
+        // Idempotency check under the queue mutex: the previously-set path is owned by the
+        // queue mutex, so we must read it there. Returning early avoids stop+restart churn that
+        // would otherwise lose buffered entries.
         std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
         if (m_fileSinkPath == path) {
-            return; // idempotent
+            return;
         }
     }
-    // Stop any existing worker before swapping the path.
-    StopFileSinkWorker();
+
+    StopFileSinkWorkerLocked();
 
     if (path.empty()) {
         return;
@@ -216,12 +224,39 @@ void Logger::SetFileSinkPath(const std::string& path) {
 }
 
 void Logger::FlushFileSink() {
-    // Best-effort: wake the worker and let it drain. The worker writes synchronously inside the
-    // loop; here we just nudge it. For a true sync flush callers should StopFileSinkWorker().
+    // Lifecycle mutex prevents the worker from being torn down between our request bump and
+    // the ack-wait below. If no worker is running we have nothing to flush.
+    std::unique_lock<std::mutex> lifeLock(m_fileSinkLifecycleMutex);
+    if (!m_fileSinkThread.joinable()) {
+        return;
+    }
+    if (m_fileSinkShutdown.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    std::uint64_t targetGen;
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        if (m_fileSinkPath.empty()) {
+            return;
+        }
+        targetGen = ++m_fileSinkFlushRequestedGen;
+    }
     m_fileSinkCv.notify_one();
+
+    // Wait for the worker to publish ack >= targetGen. The lifecycle mutex is still held so the
+    // worker cannot be joined out from under us; if shutdown is requested mid-wait we wake on
+    // the same condvar and exit.
+    std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
+    m_fileSinkAckCv.wait(sinkLock, [this, targetGen] {
+        return m_fileSinkFlushAckedGen >= targetGen || m_fileSinkShutdown.load(std::memory_order_acquire);
+    });
 }
 
-void Logger::StopFileSinkWorker() {
+void Logger::StopFileSinkWorkerLocked() {
+    // Caller must hold m_fileSinkLifecycleMutex. We signal shutdown, join the worker (releasing
+    // any cv wait), then clear queue + path. This is the only path that joins the thread so
+    // it cannot race with FlushFileSink or another SetFileSinkPath.
     if (!m_fileSinkThread.joinable()) {
         std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
         m_fileSinkPath.clear();
@@ -230,10 +265,14 @@ void Logger::StopFileSinkWorker() {
     }
     m_fileSinkShutdown.store(true, std::memory_order_release);
     m_fileSinkCv.notify_all();
+    m_fileSinkAckCv.notify_all();
     m_fileSinkThread.join();
+
     std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
     m_fileSinkPath.clear();
     m_fileSinkQueue.clear();
+    m_fileSinkFlushRequestedGen = 0;
+    m_fileSinkFlushAckedGen = 0;
 }
 
 void Logger::FileSinkWorker() {
@@ -246,38 +285,83 @@ void Logger::FileSinkWorker() {
         return;
     }
 
-    // Append mode so previous runs are preserved. Binary to avoid CRLF translation on Windows
-    // where the in-process line endings already match the platform expectation.
-    std::ofstream out(path.c_str(), std::ios::out | std::ios::app | std::ios::binary);
-    if (!out.is_open()) {
-        return; // file inaccessible — silent (no log-on-log loop)
-    }
+    auto openSinkFile = [&path]() {
+        // Append + binary: preserves prior runs; avoids CRLF translation on Windows where
+        // in-process line endings are already correct.
+        return std::ofstream(path.c_str(), std::ios::out | std::ios::app | std::ios::binary);
+    };
+
+    std::ofstream out = openSinkFile();
+    int consecutiveErrors = 0;
 
     while (true) {
         std::deque<LogEntry> batch;
+        std::uint64_t pendingFlushGen = 0;
         {
             std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
             m_fileSinkCv.wait(sinkLock, [this] {
-                return m_fileSinkShutdown.load(std::memory_order_acquire) || !m_fileSinkQueue.empty();
+                return m_fileSinkShutdown.load(std::memory_order_acquire) ||
+                       !m_fileSinkQueue.empty() ||
+                       m_fileSinkFlushRequestedGen > m_fileSinkFlushAckedGen;
             });
             if (m_fileSinkShutdown.load(std::memory_order_acquire) && m_fileSinkQueue.empty()) {
                 break;
             }
             batch.swap(m_fileSinkQueue);
+            pendingFlushGen = m_fileSinkFlushRequestedGen;
         }
 
-        for (const LogEntry& e : batch) {
-            // Plain text line; format `t=<seconds> level=<name> message`.
-            // Keep the format stable so external log readers can parse it without ceremony.
-            out << "t=" << e.timestampSeconds
-                << " level=" << LogLevelToString(e.level)
-                << ' ' << e.message
-                << '\n';
+        bool batchOk = true;
+        if (out.is_open()) {
+            for (const LogEntry& e : batch) {
+                // Plain text line; format `t=<seconds> level=<name> message`.
+                out << "t=" << e.timestampSeconds
+                    << " level=" << LogLevelToString(e.level)
+                    << ' ' << e.message
+                    << '\n';
+            }
+            out.flush();
+            if (!out.good()) {
+                batchOk = false;
+            }
+        } else {
+            batchOk = false;
         }
-        out.flush(); // flush after every batch so a crash mid-session loses at most one batch
-        if (!out.good()) {
-            // I/O failed; give up to avoid spinning on a bad disk. The in-memory ring still works.
-            return;
+
+        if (!batchOk) {
+            ++consecutiveErrors;
+            if (consecutiveErrors >= kFileSinkMaxConsecutiveErrors) {
+                // Persistent failure: close + sleep + retry-open. The queue continues to be
+                // drained (entries are dropped from this batch but new ones still enqueue;
+                // bounded queue keeps memory in check). Never `return` permanently — that
+                // would deadlock any FlushFileSink waiters and leave the sink unusable until
+                // SetFileSinkPath is re-issued.
+                out.close();
+                std::this_thread::sleep_for(std::chrono::milliseconds(kFileSinkErrorBackoffMs));
+                out = openSinkFile();
+                consecutiveErrors = out.is_open() ? 0 : kFileSinkMaxConsecutiveErrors;
+            }
+        } else {
+            consecutiveErrors = 0;
+        }
+
+        // Publish ack (even on error batches — the ack means "the worker advanced past this
+        // generation"; FlushFileSink is documented as best-effort under I/O failure).
+        {
+            std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+            if (pendingFlushGen > m_fileSinkFlushAckedGen) {
+                m_fileSinkFlushAckedGen = pendingFlushGen;
+            }
+        }
+        m_fileSinkAckCv.notify_all();
+    }
+
+    // Final ack on shutdown so any FlushFileSink waiter releases.
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        if (m_fileSinkFlushRequestedGen > m_fileSinkFlushAckedGen) {
+            m_fileSinkFlushAckedGen = m_fileSinkFlushRequestedGen;
         }
     }
+    m_fileSinkAckCv.notify_all();
 }
