@@ -3,6 +3,8 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdarg>
