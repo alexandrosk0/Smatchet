@@ -1089,7 +1089,8 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
                       const std::string& currentValue,
                       SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                       float availWidth) {
-    const std::string itemId = "##TextCell_" + ticket.id + "_" + field.Id;
+    // Widget-cell unique ID is provided by the CellIdScope pushed in RenderFieldCell
+    // (ticket.id + field.Id on the ImGui ID stack). Literal short labels below stay collision-free.
 
     // ADF / long-text fields (Jira description/environment, Plane description, custom textarea/wiki-renderer
     // fields) are too constrained by the inline 512-byte single-line InputText. Route them through the modal
@@ -1122,7 +1123,7 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
             }
             EditCbUser cbUser{&state};
             submitted = DrawDurationFieldWithSuggestions(
-                itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+                "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer),
                 ImGuiInputTextFlags_CallbackAlways,
                 InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser),
                 nullptr, editJustStarted
@@ -1133,7 +1134,7 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
                 ImGui::SetKeyboardFocusHere();
             }
             EditCbUser cbUser{&state};
-            submitted = ImGui::InputText(itemId.c_str(), state.EditBuffer, sizeof(state.EditBuffer),
+            submitted = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
                                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
                                          InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
         }
@@ -1159,7 +1160,7 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
     }
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
-    if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+    if (ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
         if (ImGui::IsMouseDoubleClicked(0)) {
             state.StartEditingField(ticket.id, field.Id, currentValue);
         }
@@ -1189,12 +1190,12 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
 
     const std::string currentId = ResolveOptionId(field, currentValue);
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const std::string comboId = "##SingleSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     const char* previewCStr =
         haveOverlayIcon ? " " : (preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str());
     ImGui::SetNextItemWidth(cellAvail);
-    const bool comboOpened = ImGui::BeginCombo(comboId.c_str(), previewCStr, ImGuiComboFlags_NoArrowButton);
+    const bool comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
@@ -1244,10 +1245,10 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const std::string comboId = "##MultiSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+    if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         static std::string activeEditorKey;
         static char searchBuf[128] = "";
         const std::string editorKey = ticket.id + "::" + field.Id;
@@ -1280,11 +1281,13 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
                 continue;
             }
             drewAny = true;
-            const std::string optionWidget = option.Value + "##Opt_" + ticket.id + "_" + field.Id + "_" + optionId;
+            // Per-option PushID disambiguates checkboxes whose visible labels could collide
+            // (e.g. duplicate option.Value across customfields); pop matches at the end of body.
+            ImGui::PushID(optionId.c_str());
             if (option.Disabled) {
                 ImGui::BeginDisabled();
             }
-            if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
+            if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
                 if (checked) {
                     selectedSet.insert(optionId);
                 } else {
@@ -1304,6 +1307,7 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
+            ImGui::PopID();
         }
         if (!drewAny) {
             ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
@@ -1331,10 +1335,10 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
     TryResolveCascadingSelection(field, currentValue, parentId, childId);
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
 
-    const std::string comboId = "##CascadeSelect_" + ticket.id + "_" + field.Id;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
+    if (ImGui::BeginCombo("##cascadeselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         if (ImGui::Selectable("<clear>", parentId.empty() && childId.empty())) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
         }
@@ -1380,6 +1384,26 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
 
 } // namespace
 
+namespace {
+/// RAII helper that pushes ticket.id + field-id onto the ImGui ID stack at cell entry, popping on
+/// scope exit. Every widget inside RenderFieldCell (and the editors it dispatches to) inherits a
+/// cell-unique ID without each call site re-allocating a "##TextCell_<ticket>_<field>" string.
+/// Saves an estimated 4-6 std::string allocations per cell per frame across ~200 visible rows ×
+/// ~30 columns.
+struct CellIdScope {
+    CellIdScope(const char* ticketId, const char* fieldId) {
+        ImGui::PushID(ticketId);
+        ImGui::PushID(fieldId);
+    }
+    ~CellIdScope() {
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+    CellIdScope(const CellIdScope&) = delete;
+    CellIdScope& operator=(const CellIdScope&) = delete;
+};
+} // namespace
+
 void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                         const TrackerField* field, const std::string& currentValue, float availWidth,
                                         bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
@@ -1387,6 +1411,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         TrackerGridFieldAsyncState& trackerGridAsync,
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
+    CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str());
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
     if (handledByLua) {
         return;
@@ -1450,14 +1475,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         break;
     case TicketGridColumn::RenderPlan::SpecialTimeSpent: {
         std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
-        std::string buttonId = "##TimeSpentBtn_" + ticket.id;
+        // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); // invisible background when normal
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
 
-        if (ImGui::Button((buttonText + buttonId).c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
+        if (ImGui::Button(buttonText.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
             s_ActiveWorklogState.IssueId = ticket.id;
             s_ActiveWorklogState.TimeSpent[0] = '\0';
             s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
