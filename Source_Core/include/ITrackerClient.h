@@ -15,7 +15,12 @@ struct RequiredFieldSet;
 struct TrackerIssueFetchSummary {
     size_t FetchedCount = 0;
     bool FullSyncCompleted = false;
+    // Hard failure: sync did not complete usefully. Drives the failure banner / error toast.
     std::string FetchError;
+    // Soft warning: sync did produce useful data but with a caveat (e.g. pagination cap reached).
+    // Distinct from FetchError so the UI can show "Sync Warning" without suppressing the success
+    // notification and without flipping connectivity state to TransportDown.
+    std::string Warning;
 };
 
 enum class TrackerReachabilityProbeKind {
@@ -51,11 +56,14 @@ class ITrackerClient {
      * @param outFetchError If non-null, set to a short diagnostic when the sync did not complete
      *        cleanly (e.g. first-page HTTP non-200). Empty on full success. Used for transport vs
      *        hard-failure UX (cached grid).
+     * @param outWarning If non-null, set to a soft caveat (e.g. pagination cap reached) when the
+     *        sync produced useful data but with a partial-coverage warning. Empty on clean completion.
      */
     virtual std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                                   const TrackerConfig* configOverride = nullptr,
                                                   const ViewsStore* viewsOverride = nullptr,
-                                                  std::string* outFetchError = nullptr) = 0;
+                                                  std::string* outFetchError = nullptr,
+                                                  std::string* outWarning = nullptr) = 0;
 
     using BatchCallback = std::function<void(std::vector<CachedTicket>&&)>;
     using CancelCallback = std::function<bool()>;

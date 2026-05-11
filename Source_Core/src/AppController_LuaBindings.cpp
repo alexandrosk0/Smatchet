@@ -873,7 +873,17 @@ void AppController::AutomationWorkerLoop() {
 
             sol::environment sandbox = CreateSandboxEnvironment(bgState);
 
-            // Load setup scripts so global actions are defined
+            // Load and run setup scripts so global actions are defined for this job.
+            //
+            // Lifecycle contract (backlog #34): the worker uses a *fresh* sol::state per job
+            // for isolation, so every top-level statement in a setup script re-fires on every
+            // job. Setup scripts MUST therefore be defining-only — declaring functions, tables,
+            // constants — and avoid side effects at module-load (no `tracker.create_issue(...)`
+            // at the top level, no `os.execute(...)` outside of a function body, etc.). Wrap any
+            // such side-effecting work in a function that the job explicitly invokes, and the
+            // re-execution becomes harmless. Caching compiled sol::function refs across jobs
+            // would not change this: bytecode bound to a destroyed state cannot be replayed,
+            // and persisting the state across jobs would lose the isolation guarantee.
             for (const auto& path : setupScriptsSnapshot) {
                 std::string resolved = ResolveLuaScriptPath(path);
                 if (!resolved.empty()) {

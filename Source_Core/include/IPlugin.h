@@ -1,5 +1,9 @@
 #pragma once
 
+#if defined(SMATCHET_WITH_MCP)
+#include "McpServerStatus.h"
+#endif
+
 class AppController;
 struct TrackerConfig;
 
@@ -26,6 +30,14 @@ class IPlugin {
      *  Called by PluginHost::SyncMcpPluginWithConfig (and any future config-sync paths).
      *  Default: never restart (stateless / config-independent plugins). */
     virtual bool NeedsRestart(const TrackerConfig&) const { return false; }
+
+#if defined(SMATCHET_WITH_MCP)
+    /** Opaque status accessor for the MCP plugin so the host can surface it via PluginHost
+     *  without a dynamic_cast<McpPlugin*>. Default returns false (plugin is not an MCP server);
+     *  McpPlugin overrides it to fill `out` and return true. Same pattern as MatchesConfig
+     *  added earlier — keeps the plugin host RTTI-free. */
+    virtual bool TryGetMcpStatusSnapshot(McpServerStatus& /*out*/) const { return false; }
+#endif
 };
 
 

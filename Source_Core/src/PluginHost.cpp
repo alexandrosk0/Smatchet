@@ -78,12 +78,16 @@ void PluginHost::OnStop() {
 
 #if defined(SMATCHET_WITH_MCP)
 McpServerStatus PluginHost::GetMcpServerStatus() const {
+    // Ask each plugin via the virtual TryGetMcpStatusSnapshot hook on IPlugin so the host
+    // doesn't need RTTI / a McpPlugin include. Only McpPlugin overrides the hook; other
+    // plugins return false and we skip them.
     for (size_t i = 0; i < plugins_.size(); ++i) {
-        if (!plugins_[i] || std::strcmp(plugins_[i]->Id(), "mcp") != 0) {
+        if (!plugins_[i]) {
             continue;
         }
-        if (const auto* mcp = dynamic_cast<const McpPlugin*>(plugins_[i].get())) {
-            return mcp->GetStatus();
+        McpServerStatus s;
+        if (plugins_[i]->TryGetMcpStatusSnapshot(s)) {
+            return s;
         }
     }
     return McpServerStatus();
