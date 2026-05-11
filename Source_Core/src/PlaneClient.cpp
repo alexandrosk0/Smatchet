@@ -336,13 +336,10 @@ bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out
     } else if (pt == "BOOLEAN" || pt == "CHECKBOX") {
         out.Type = "boolean";
         out.Family = TrackerFieldFamily::Text;
-    } else if (pt == "URL" || pt == "LINK") {
-        out.Type = "string";
-        out.Family = TrackerFieldFamily::Text;
-    } else if (pt == "RICH_TEXT" || pt == "HTML" || pt == "TEXT" || pt.empty()) {
-        out.Type = "string";
-        out.Family = TrackerFieldFamily::Text;
     } else {
+        // URL / LINK / RICH_TEXT / HTML / TEXT / empty / unknown — all collapse to the
+        // string+Text default. Kept as a single branch so cppcheck doesn't flag duplicate
+        // bodies; if any of these grow special handling in the future, split them back out.
         out.Type = "string";
         out.Family = TrackerFieldFamily::Text;
     }

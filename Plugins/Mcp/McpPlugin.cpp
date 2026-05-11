@@ -578,8 +578,8 @@ void McpPlugin::OnStart(AppController& app) {
                 LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu",
                           req.remote_addr.c_str(), name.c_str(), paramsStr.size(), req.body.size());
                 std::string error;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
                 std::string result;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
                 if (name == "run_lua") {
                     if (!impl_->allow_lua_execution) {
                         error = "run_lua is disabled by configuration";
@@ -604,9 +604,10 @@ void McpPlugin::OnStart(AppController& app) {
                     result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
                 }
 #else
-                std::string result = "";
                 error = "Lua automation disabled";
 #endif
+                // cppcheck-suppress knownConditionTrueFalse  // !error.empty() is condition-
+                // dependent on SMATCHET_WITH_LUA_AUTOMATION; only "always true" under #else.
                 if (!error.empty()) {
                     LOG_TRACE("MCP: REST tools/call error tool=%s %s", name.c_str(), error.c_str());
                     res.status = (name == "run_lua" && !impl_->allow_lua_execution) ? 404 : 500;
@@ -821,9 +822,9 @@ void McpPlugin::OnStart(AppController& app) {
                     } else {
                         // Check Lua tools
                         const nlohmann::json argObj = params.value("arguments", nlohmann::json::object());
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
                         std::string argsStr = argObj.dump();
                         std::string error;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
                         std::string result = impl_->app->ExecuteLuaMcpTool(name, argsStr, error);
                         if (error.empty() && !result.empty()) {
                             jres["result"] = {{"content", {{{"type", "text"}, {"text", result}}}}};

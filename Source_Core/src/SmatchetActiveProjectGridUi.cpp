@@ -437,6 +437,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 }
 
                 std::strncpy(lastFilter, d.gridFilterBuf, sizeof(lastFilter));
+                lastFilter[sizeof(lastFilter) - 1] = '\0';
             }
         }
 
