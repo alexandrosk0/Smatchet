@@ -1,6 +1,7 @@
 #include "BackendAuditTrail.h"
 
 #include "ConfigManager.h"
+#include "Logger.h"
 #include "StringUtil.h"
 
 #include <algorithm>
@@ -182,9 +183,29 @@ struct AuditWriter {
                 }
                 try {
                     if (path.empty()) path = GetAuditFilePath();
+                    // The file is also read by ReadRecentEvents under AuditMutex(); take the
+                    // same mutex around our append so the reader cannot observe a half-flushed
+                    // line (the reader's JSON parser silently swallows partial JSON, so the
+                    // race would otherwise lose audit events with zero observability).
+                    std::lock_guard<std::mutex> lock(AuditMutex());
                     std::ofstream file(path, std::ios::app | std::ios::binary);
-                    if (file.is_open()) {
-                        file << line << '\n';
+                    if (!file.is_open()) {
+                        // First-failure log goes via the Logger ring (NOT the audit trail, to
+                        // avoid log-on-log loops). Rate-limited to once-per-process.
+                        static std::atomic<bool> warnedAuditFileOpen{false};
+                        if (!warnedAuditFileOpen.exchange(true)) {
+                            LOG_ERROR("BackendAuditTrail: failed to open audit file '%s' for append",
+                                      path.c_str());
+                        }
+                        continue;
+                    }
+                    file << line << '\n';
+                    if (!file.good()) {
+                        static std::atomic<bool> warnedAuditFileWrite{false};
+                        if (!warnedAuditFileWrite.exchange(true)) {
+                            LOG_ERROR("BackendAuditTrail: write failed for audit line (path '%s')",
+                                      path.c_str());
+                        }
                     }
                 } catch (...) {}
             }

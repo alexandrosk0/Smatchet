@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -156,6 +157,16 @@ class LocalCacheManager {
 
     // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
     // Lazily initialised on first use; reset+clearBindings before each bind cycle.
+    //
+    // SQLite::Statement (and the underlying sqlite3_stmt) is NOT thread-safe per
+    // <https://sqlite.org/threadsafe.html> — even when the connection itself was
+    // opened with OPEN_FULLMUTEX (which serialises sqlite3_step calls on the
+    // connection), two threads sharing the same prepared statement still race on
+    // bound parameter state and result-row cursors. SaveTicket / TryGetTicket
+    // are called from both the UI thread and the Lua automation worker thread
+    // (via LuaGetTicketBind), so we serialise every cached-statement-using
+    // method through stmtMutex_ below.
+    mutable std::mutex stmtMutex_;
     SQLite::Statement& stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql);
 
     std::unique_ptr<SQLite::Statement> stmt_save_upsert_ticket_;

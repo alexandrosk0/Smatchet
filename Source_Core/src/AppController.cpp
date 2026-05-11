@@ -349,6 +349,11 @@ bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::stri
 
 AppController::~AppController() {
 
+    // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
+    // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
+    // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
+    mainThreadDispatcher.BeginShutdown();
+
     CancelAndJoinActiveStreamingSync();
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
