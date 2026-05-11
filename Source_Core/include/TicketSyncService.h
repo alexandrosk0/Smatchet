@@ -37,6 +37,16 @@ class TicketSyncService {
     /// remote when `FullSyncCompleted` is set. Does not touch streaming-sync state directly.
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
+    // --- Phase 1B: per-frame streaming-sync tick -----------------------------------------
+    /// Drain pending fetched batches into the cache + ActiveTickets, drive the supersede /
+    /// cancel FSM, run progressive stale-deletion in 3-ms / 10-id frame budgets, and surface
+    /// success / failure / warning toasts when the worker finishes. Called once per UI frame
+    /// from `SmatchetUI::Draw`. Self-gated — early-returns when no streaming session is in
+    /// flight. The stale-deletion state members it consumes (`isDeletingStale_`,
+    /// `staleIdsToDelete_`, `totalStaleToDelete_`, `staleDeletedSoFar_`) still live on
+    /// AppController in this PR; Phase 1C migrates them alongside the worker thread.
+    void TickStreamingApply();
+
   private:
     AppController& app_;
 };
