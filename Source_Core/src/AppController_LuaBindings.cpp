@@ -490,6 +490,12 @@ std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::table fields
 } // namespace smatchet_lua_init_detail
 
 void AppController::InitLua() {
+    // gApp is a process-wide Ticket-glue back-pointer. Only the main controller's main state
+    // should bind it — background sol::state instances (RunFlatScriptAsync) share the same
+    // process so reassigning from a worker thread races with main-thread Lua callbacks and
+    // would also clobber gApp under multi-controller scenarios (tests, Unreal hot-reload).
+    // Background states must NOT write gApp; see AutomationWorkerLoop.
+    smatchet_lua_init_detail::gApp = this;
     InitLuaCore(lua);
     InitLuaUi(lua);
 }
@@ -499,7 +505,9 @@ void AppController::InitLuaCore(sol::state& state) {
     state.open_libraries(sol::lib::string);
     state.open_libraries(sol::lib::table);
 
-    smatchet_lua_init_detail::gApp = this;
+    // Intentionally NOT writing gApp here: this function is also invoked on background
+    // sol::state instances from the automation worker; reassigning gApp from a worker thread
+    // is a documented hazard (see InitLua above and the code review notes).
 
     state.new_usertype<CachedTicket>("Ticket",
         "id", &CachedTicket::id,
