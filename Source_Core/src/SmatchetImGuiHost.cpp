@@ -332,6 +332,16 @@ bool SmatchetImGuiHost::UpdateRendererColorFormat(int colorFormat, std::string& 
 
     ImGui_ImplDX12_Shutdown();
     if (!Smatchet_ImplDX12_InitBackend(renderer, outError)) {
+        // Backend is now torn down. Without clearing Initialized, every gated
+        // path (DrawUI / RenderDrawData / NewFrame) would happily call into a
+        // dead backend on subsequent frames. Flip the flag so BuildFrame's
+        // lazy-retry path (~once per second while the UI is visible) will
+        // re-attempt Initialize(), and surface the error via LastInitError
+        // for the host's diagnostic accessors.
+        ImplData->Initialized.store(false, std::memory_order_release);
+        ImplData->LastInitError = outError;
+        LOG_ERROR("SmatchetImGuiHost::UpdateRendererColorFormat backend re-init failed: %s",
+                  outError.c_str());
         return false;
     }
 
