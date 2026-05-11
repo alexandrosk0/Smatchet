@@ -16,8 +16,10 @@
 // Phase 2 introduces small interface bundles so this service no longer needs `friend` access
 // to AppController's private state.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -87,10 +89,41 @@ class OfflineQueueService {
     AppController::DeadFieldEditDeleteSummary
     DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
+    // --- Phase 1C: replay loops + replay-timer accessors ---------------------------------
+    /// Replay queued offline creates. Called from the UI tick. Rate-limited internally via
+    /// `nextOfflineReplayAt_` and guarded by `offlineReplayInFlight_` so concurrent ticks
+    /// (or re-entry from worker callbacks) become no-ops.
+    void TickOfflineCreates();
+
+    /// Replay queued offline field edits. Same rate-limit + in-flight guard as
+    /// `TickOfflineCreates`; uses its own pair of state variables.
+    void TickOfflineFieldEdits();
+
+    /// Push both replay timers (creates + field-edits) forward to at least `pushTo`. Called
+    /// from `AppController::PushOfflineReplayTimersDuringTransportOutage` when a tracker
+    /// connectivity probe reports the transport is down — there's no point retrying replay
+    /// against an unreachable server. Existing schedule is preserved via `max(current, pushTo)`.
+    void PushReplayTimersForward(std::chrono::steady_clock::time_point pushTo);
+
+    /// Reset both replay timers to `now`, scheduling immediate replay on the next tick.
+    /// Called from `AppController::ConsumeTrackerConnectivityRecovery` when transport
+    /// reachability is regained.
+    void RestartReplayTimersNow(std::chrono::steady_clock::time_point now);
+
     /// Set by AppController during legacy migration on first launch with a pre-split cache schema.
     /// Reset to empty by `TakeLegacyPendingStartupBanner`. Read/write only on the UI thread.
     std::string legacyPendingStartupBanner_;
 
   private:
     AppController& app_;
+
+    // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
+    // All accesses go through `offlineReplayScheduleMutex_`. UI thread sets the schedule
+    // (via the public methods above); the background worker spawned by `TickOffline*` reads
+    // the in-flight flags + updates `next*ReplayAt_` when it finishes.
+    mutable std::mutex offlineReplayScheduleMutex_;
+    std::chrono::steady_clock::time_point nextOfflineReplayAt_ = std::chrono::steady_clock::now();
+    bool offlineReplayInFlight_ = false;
+    std::chrono::steady_clock::time_point nextOfflineFieldEditReplayAt_ = std::chrono::steady_clock::now();
+    bool offlineFieldEditReplayInFlight_ = false;
 };
