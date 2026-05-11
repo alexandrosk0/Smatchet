@@ -1,6 +1,7 @@
 #include "AppController.h"
 
 #include "MarkdownConvert.h"
+#include "OfflineQueueService.h"
 #include "TextMerge.h"
 #include "TrackerFieldPayload.h"
 
@@ -190,64 +191,23 @@ std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
     }
 }
 
+// GetPendingCreateCount / GetDeadPendingCreateCount / GetDeadPendingCreates / GetPendingCreates:
+// moved to OfflineQueueService in Phase 1A of the item 12 extraction. Thin delegators below.
+
 size_t AppController::GetPendingCreateCount() const {
-    if (!Cache) {
-        return 0;
-    }
-    try {
-        return Cache->LoadPendingCreates().size();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetPendingCreateCount failed: %s", ex.what());
-        return 0;
-    } catch (...) {
-        LOG_ERROR("AppController::GetPendingCreateCount failed: unknown exception");
-        return 0;
-    }
+    return offlineQueue_ ? offlineQueue_->GetPendingCreateCount() : 0;
 }
 
 size_t AppController::GetDeadPendingCreateCount() const {
-    if (!Cache) {
-        return 0;
-    }
-    try {
-        return Cache->GetDeadPendingCreateCount();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetDeadPendingCreateCount failed: %s", ex.what());
-        return 0;
-    } catch (...) {
-        LOG_ERROR("AppController::GetDeadPendingCreateCount failed: unknown exception");
-        return 0;
-    }
+    return offlineQueue_ ? offlineQueue_->GetDeadPendingCreateCount() : 0;
 }
 
 std::vector<DeadPendingCreate> AppController::GetDeadPendingCreates() const {
-    if (!Cache) {
-        return {};
-    }
-    try {
-        return Cache->LoadDeadPendingCreates();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetDeadPendingCreates failed: %s", ex.what());
-        return {};
-    } catch (...) {
-        LOG_ERROR("AppController::GetDeadPendingCreates failed: unknown exception");
-        return {};
-    }
+    return offlineQueue_ ? offlineQueue_->GetDeadPendingCreates() : std::vector<DeadPendingCreate>{};
 }
 
 std::vector<PendingCreate> AppController::GetPendingCreates() const {
-    if (!Cache) {
-        return {};
-    }
-    try {
-        return Cache->LoadPendingCreates();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetPendingCreates failed: %s", ex.what());
-        return {};
-    } catch (...) {
-        LOG_ERROR("AppController::GetPendingCreates failed: unknown exception");
-        return {};
-    }
+    return offlineQueue_ ? offlineQueue_->GetPendingCreates() : std::vector<PendingCreate>{};
 }
 
 AppController::DeadLetterRestoreSummary
@@ -285,7 +245,9 @@ AppController::RestoreDeadPendingCreates(const std::vector<std::int64_t>& origin
     return summary;
 }
 
-std::string AppController::TakeLegacyPendingStartupBanner() { return std::move(legacyPendingStartupBanner_); }
+std::string AppController::TakeLegacyPendingStartupBanner() {
+    return offlineQueue_ ? offlineQueue_->TakeLegacyPendingStartupBanner() : std::string{};
+}
 
 AppController::DeadLetterDeleteSummary
 AppController::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {

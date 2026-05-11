@@ -71,8 +71,15 @@ struct AppUpdateInfo {
 };
 
 class ITrackerBackendFactory;
+class OfflineQueueService;
 
 class AppController {
+    /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
+    /// `AvailableFields`, the offline-replay mutex, etc.) during the extraction transition.
+    /// See CODE_REVIEW.md §1.7 / §7 item 12 — Phase 2 will replace this with a small set of
+    /// interface bundles so the access is no longer trusted-friendship-based.
+    friend class OfflineQueueService;
+
   public:
     ~AppController();
 
@@ -553,6 +560,11 @@ class AppController {
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory> backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     std::unique_ptr<ITrackerClient> Backend;
+    /// Owns the offline-create / offline-field-edit replay queues and their dead-letter management.
+    /// Constructed lazily in `Initialize`. Public AppController methods (`QueueCreateOffline`,
+    /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
+    /// CODE_REVIEW.md §1.7 / §7 item 12.
+    std::unique_ptr<OfflineQueueService> offlineQueue_;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
@@ -660,7 +672,7 @@ class AppController {
     bool offlineReplayInFlight_ = false;
     std::chrono::steady_clock::time_point nextOfflineFieldEditReplayAt_ = std::chrono::steady_clock::now();
     bool offlineFieldEditReplayInFlight_ = false;
-    std::string legacyPendingStartupBanner_;
+    // legacyPendingStartupBanner_ moved to OfflineQueueService (Phase 1A of item 12 extraction).
 
     mutable std::mutex bulkImportPrefetchKeysMutex_;
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;
