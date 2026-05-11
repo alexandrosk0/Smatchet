@@ -46,9 +46,9 @@
 
 #include <ghc/filesystem.hpp>
 
-#include "JiraClient.h"
+#include "DefaultTrackerBackendFactory.h"
 
-#include "PlaneClient.h"
+#include "ITrackerBackendFactory.h"
 
 #include "TrackerHttpUtils.h"
 
@@ -346,6 +346,10 @@ bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::stri
 } // namespace
 
 
+
+void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory) {
+    backendFactory_ = std::move(factory);
+}
 
 AppController::~AppController() {
 
@@ -1178,22 +1182,14 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 
 
-    const std::string trackerLower = ToLowerAsciiCopy(activeTracker);
-
-
-
-    if (trackerLower == "plane") {
-
-        Backend = std::make_unique<PlaneClient>();
-
-        LOG_INFO("AppController: Plane backend initialized.");
-
+    if (!backendFactory_) {
+        backendFactory_ = std::make_unique<DefaultTrackerBackendFactory>();
+    }
+    Backend = backendFactory_->Create(activeTracker);
+    if (!Backend) {
+        LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
-
-        Backend = std::make_unique<JiraClient>();
-
-        LOG_INFO("AppController: Jira backend initialized.");
-
+        LOG_INFO("AppController: %s backend initialized.", Backend->GetTrackerType().c_str());
     }
 
     const std::string activeTrackerType = Backend ? Backend->GetTrackerType() : "Unknown";
@@ -2407,13 +2403,13 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
     if (trackerLower == "plane" && !isCurrentlyPlane) {
 
-        Backend = std::make_unique<PlaneClient>();
+        Backend = backendFactory_->Create("Plane");
 
         LOG_INFO("AppController: Switched backend to Plane.");
 
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
 
-        Backend = std::make_unique<JiraClient>();
+        Backend = backendFactory_->Create("Jira");
 
         LOG_INFO("AppController: Switched backend to Jira.");
 
