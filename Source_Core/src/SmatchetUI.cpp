@@ -51,7 +51,8 @@ static void ApplyLoggingSettingsFromConfig(const TrackerConfig& cfg) {
 
 static std::future<AppUpdateInfo> StartAppUpdateCheckAsync(AppController& app, const TrackerConfig& cfg) {
     const bool includePrerelease = cfg.UpdateIncludePrerelease;
-    return std::async(std::launch::async, [&app, includePrerelease]() { return app.CheckForAppUpdate(includePrerelease); });
+    return std::async(std::launch::async,
+                      [&app, includePrerelease]() { return app.CheckForAppUpdate(includePrerelease); });
 }
 
 static void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual) {
@@ -91,8 +92,8 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
     if (!d.appUpdateInfo.UpdateAvailable) {
         if (d.appUpdateCheckManual) {
-            SmatchetToastManager::Instance().Push("Updates", "You are already on the latest release.", ToastType::Success,
-                                                  3500);
+            SmatchetToastManager::Instance().Push("Updates", "You are already on the latest release.",
+                                                  ToastType::Success, 3500);
         }
         return;
     }
@@ -169,9 +170,7 @@ struct LayoutRect {
     ImVec2 Size;
 };
 
-static float ClampFloat(float v, float lo, float hi) {
-    return (std::max)(lo, (std::min)(v, hi));
-}
+static float ClampFloat(float v, float lo, float hi) { return (std::max)(lo, (std::min)(v, hi)); }
 
 static LayoutRect DefaultLayoutRectFor(const char* key, float defaultW, float defaultH) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -282,8 +281,8 @@ void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layou
                                        bool requestFocus) {
     const LayoutRect rect = DefaultLayoutRectFor(layoutKey, defaultW, defaultH);
     const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0)
-                                ? ImGuiCond_Always
-                                : (IsSessionUtilityLayoutKey(layoutKey) ? ImGuiCond_Appearing : ImGuiCond_FirstUseEver);
+                               ? ImGuiCond_Always
+                               : (IsSessionUtilityLayoutKey(layoutKey) ? ImGuiCond_Appearing : ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(rect.Pos, cond);
     ImGui::SetNextWindowSize(rect.Size, cond);
     if (requestFocus) {
@@ -505,8 +504,7 @@ void SmatchetUI::Draw(AppController& app) {
         // viewsRevision invalidates the cache when the active view is mutated
         // in place (column widths, fields, order edits) without its id changing.
         if (!gridFrameCtx_.catalogIndex || gridFrameCtx_.catalogRevision != catalogRev ||
-            gridFrameCtx_.viewsRevision != viewsRev ||
-            gridFrameCtx_.activeViewId != avId) {
+            gridFrameCtx_.viewsRevision != viewsRev || gridFrameCtx_.activeViewId != avId) {
             gridFrameCtx_.catalogRevision = catalogRev;
             gridFrameCtx_.viewsRevision = viewsRev;
             gridFrameCtx_.activeViewId = avId;
@@ -600,7 +598,11 @@ void SmatchetUI::Draw(AppController& app) {
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();
     }
-    if (g_ui.pendingViewStateSave && std::chrono::steady_clock::now() >= g_ui.pendingViewStateSaveAt) {
+    // Skip the debounced auto-save while a view edit is pending an explicit Save —
+    // widths / sort specs mutated under the unsaved-layout strip must not bleed
+    // through to disk until the user commits.
+    if (g_ui.pendingViewStateSave && !g_ui.viewsDirty &&
+        std::chrono::steady_clock::now() >= g_ui.pendingViewStateSaveAt) {
         SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
         ViewState.Save();
         g_ui.pendingViewStateSave = false;
@@ -833,8 +835,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
 
 namespace {
 
-template <typename T>
-void DrainFutureJoinQuiet(std::future<T>& f) {
+template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
     if (!f.valid()) {
         return;
     }
@@ -877,6 +878,4 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     DrainAuditReloadFuture(d);
 }
 
-UiDrawSession::~UiDrawSession() {
-    DrainAuditReloadFuture(*this);
-}
+UiDrawSession::~UiDrawSession() { DrainAuditReloadFuture(*this); }

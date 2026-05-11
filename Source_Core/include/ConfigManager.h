@@ -156,6 +156,10 @@ struct TrackerConfig {
 
     // View Field Picker height
     float ViewFieldPickerHeight = 220.0f;
+    // Views editor sidebar (saved-view list) width, modern two-pane layout.
+    float ViewsSidebarWidth = 220.0f;
+    // Views editor: split between Available (left) and Selected (right) panes inside the Fields tab.
+    float ViewsFieldsSplitRatio = 0.5f;
 
     // Font setting
     std::string SelectedFontName = "Segoe UI";

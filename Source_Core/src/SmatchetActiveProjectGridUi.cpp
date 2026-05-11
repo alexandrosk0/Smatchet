@@ -1,5 +1,6 @@
 #include "SmatchetUI.h"
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetViewsDashboardUi_detail.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -48,12 +49,9 @@
 
 namespace {
 
-constexpr std::chrono::milliseconds kViewStateSaveDebounceLocal{300};
-
 static bool IsPersistableSortDirection(ImGuiSortDirection dir) {
     return dir == ImGuiSortDirection_Ascending || dir == ImGuiSortDirection_Descending;
 }
-
 
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at
  * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). */
@@ -125,7 +123,6 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
 
 } // namespace
 
-
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestActiveProjectFocus;
     prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
@@ -140,7 +137,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     }
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
-    const bool readOnlyMode = d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+    const bool readOnlyMode =
+        d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
@@ -158,10 +156,16 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     if (viewChanged && activeViewForGrid) {
         d.lastGridActiveViewId = activeViewForGrid->Id;
         d.viewSortDirty = false;
+        // Active view switched — abandon unsaved edits that belonged to the old
+        // view (no confirmation in the grid path; Views editor has its own modal).
+        d.viewsDirty = false;
+        d.viewsHasOriginalSnapshot = false;
     }
     if (!activeViewForGrid) {
         d.lastGridActiveViewId.clear();
         d.viewSortDirty = false;
+        d.viewsDirty = false;
+        d.viewsHasOriginalSnapshot = false;
     }
 
     const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
@@ -173,6 +177,143 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     d.lastGridContextSignature = gridContextSignature;
 
     const bool gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+
+    // -------- Unsaved layout strip --------
+    // Appears whenever d.viewsDirty is true — fed by grid column reorder (below) OR
+    // by buffer edits made in the Views editor window. Lets the user commit, discard,
+    // or fork the in-memory edits without leaving the grid.
+    if (d.viewsDirty && activeViewForGrid) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.27f, 0.10f, 0.35f));
+        ImGui::BeginChild("##UnsavedLayoutStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
+                          ImGuiWindowFlags_NoScrollbar);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "●");
+        ImGui::SameLine();
+        ImGui::Text("Unsaved layout changes to \"%s\"", activeViewForGrid->Name.c_str());
+        ImGui::SameLine();
+        const float saveW = ImGui::CalcTextSize("Save").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+        const float saveAsW = ImGui::CalcTextSize("Save as new...").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+        const float discardW = ImGui::CalcTextSize("Discard").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float cluster = saveW + saveAsW + discardW + spacing * 2.0f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > cluster) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - cluster));
+        }
+        if (ImGui::Button("Save")) {
+            // Commit editing buffers + currently-stored widths/sort onto the active view.
+            ViewDefinition updated = *activeViewForGrid;
+            updated.Name = d.viewNameBuf[0] ? std::string(d.viewNameBuf) : activeViewForGrid->Name;
+            updated.Jql = d.viewJqlBuf[0] ? std::string(d.viewJqlBuf) : activeViewForGrid->Jql;
+            const std::vector<std::string> editedFields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+            if (!editedFields.empty()) {
+                updated.Fields = editedFields;
+            }
+            if (!d.editingColumnOrder.empty()) {
+                updated.ColumnOrder = d.editingColumnOrder;
+            }
+            if (ViewState.UpdateActive(updated)) {
+                d.cfg.JqlQuery = updated.Jql;
+                d.cfg.SelectedFields = updated.Fields;
+                d.lastSyncedColumnOrder = updated.ColumnOrder;
+                d.viewsDirty = false;
+                d.viewsHasOriginalSnapshot = false;
+                d.pendingViewStateSave = false;
+                ConfigManager::Save(d.cfg);
+                ViewState.Save();
+                SmatchetToastManager::Instance().Push("View saved", updated.Name, ToastType::Success, 1500);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save as new...")) {
+            ImGui::OpenPopup("Save view as new");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard")) {
+            // Restore the active view from the pre-dirty snapshot when present —
+            // covers widths / sort specs that got mutated in-place during this dirty
+            // session. Then reload the session edit buffers from that restored view.
+            ViewDefinition* mutableActiveForDiscard = ViewState.GetActiveViewMutable();
+            if (mutableActiveForDiscard && d.viewsHasOriginalSnapshot) {
+                *mutableActiveForDiscard = d.viewsOriginalSnapshot;
+            }
+            const ViewDefinition* restoreSource = mutableActiveForDiscard ? mutableActiveForDiscard : activeViewForGrid;
+            d.editingColumnOrder = restoreSource->ColumnOrder;
+            d.lastSyncedColumnOrder = restoreSource->ColumnOrder;
+            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, restoreSource->Name);
+            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, restoreSource->Jql);
+            const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(restoreSource->Fields);
+            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
+            d.viewsDirty = false;
+            d.viewsHasOriginalSnapshot = false;
+            d.pendingViewStateSave = false;
+            ViewState.BumpRevision(); // force grid to redraw columns in the stored order
+            SmatchetToastManager::Instance().Push("Reverted layout", restoreSource->Name, ToastType::Info, 1500);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // Save-as-new modal: name input + Save / Cancel.
+        if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static char s_newViewName[128] = {};
+            if (ImGui::IsWindowAppearing()) {
+                std::snprintf(s_newViewName, sizeof(s_newViewName), "%s (copy)", activeViewForGrid->Name.c_str());
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::TextUnformatted("New view name");
+            ImGui::SetNextItemWidth(300.0f);
+            const bool committed = ImGui::InputText("##NewViewName", s_newViewName, sizeof(s_newViewName),
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool disabled = s_newViewName[0] == '\0';
+            if (disabled) {
+                ImGui::BeginDisabled();
+            }
+            const bool saveClicked = ImGui::Button("Save") || committed;
+            if (disabled) {
+                ImGui::EndDisabled();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+            if (saveClicked && !disabled) {
+                ViewDefinition created = *activeViewForGrid;
+                created.Name = s_newViewName;
+                created.Id.clear();
+                if (!d.editingColumnOrder.empty()) {
+                    created.ColumnOrder = d.editingColumnOrder;
+                }
+                const std::vector<std::string> editedFields =
+                    SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+                if (!editedFields.empty()) {
+                    created.Fields = editedFields;
+                }
+                if (d.viewJqlBuf[0]) {
+                    created.Jql = d.viewJqlBuf;
+                }
+                ViewState.Create(created);
+                const ViewDefinition* nowActive = ViewState.GetActiveView();
+                if (nowActive) {
+                    d.editingViewId = nowActive->Id;
+                    d.lastSyncedColumnOrder = nowActive->ColumnOrder;
+                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, nowActive->Name);
+                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, nowActive->Jql);
+                    const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(nowActive->Fields);
+                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
+                    d.editingColumnOrder = nowActive->ColumnOrder;
+                    d.cfg.JqlQuery = nowActive->Jql;
+                    d.cfg.SelectedFields = nowActive->Fields;
+                    ConfigManager::Save(d.cfg);
+                    SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1500);
+                }
+                d.viewsDirty = false;
+                d.viewsHasOriginalSnapshot = false;
+                d.pendingViewStateSave = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
 
     const bool drewOfflineSection = DrawUnifiedOfflineQueuesPanel(app, d);
     if (drewOfflineSection) {
@@ -190,9 +331,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     bool ticketGridLeftClickInsideTableHit = false;
     std::uint64_t gridSortSig = 0;
     const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_Sortable |
-                                       ImGuiTableFlags_SortMulti | ImGuiTableFlags_SortTristate |
-                                       ImGuiTableFlags_NoSavedSettings;
+                                       ImGuiTableFlags_Reorderable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
+                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti |
+                                       ImGuiTableFlags_SortTristate | ImGuiTableFlags_NoSavedSettings;
 
     ImGui::Separator();
 
@@ -235,8 +376,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             if (activeViewForGrid) {
                 ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
                 const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
-                const bool shouldApplyPersistedSort =
-                    specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
+                const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
                 if (shouldApplyPersistedSort) {
                     // Re-applying whenever ImGui briefly reports zero specs can override a header click that is
                     // cycling through tri-state sort directions.
@@ -265,10 +405,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             }
         }
 
-
-    {
-        SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
-        ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+        {
+            SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
+            ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
             if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
                 d.cachedSortValid = false;
                 d.forceApplySortSpecs = false;
@@ -304,8 +443,12 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     }
 
                     if (changed) {
+                        // Snapshot pre-change view so Discard can revert sort + widths
+                        // + column order + buffers all at once.
+                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                         activeViewForGrid->SortSpecs = std::move(newSpecs);
                         d.viewSortDirty = true;
+                        d.viewsDirty = true;
                     }
                 }
             }
@@ -340,13 +483,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.gridState.RectSel.ClearAll();
             }
 
-            // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms) during streaming
+            // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms)
+            // during streaming
             bool needsProjectionRefresh = false;
             if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
                 d.cachedSortedIndices.size() != tickets.size() ||
                 activeTicketsRevision != d.cachedSortTicketsRevision ||
-                catalogRevision != d.cachedSortCatalogRevision ||
-                filterChanged) {
+                catalogRevision != d.cachedSortCatalogRevision || filterChanged) {
                 needsProjectionRefresh = true;
             }
 
@@ -383,9 +526,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     std::vector<SortKey> sortKeys;
                     for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
                         const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-                        if (!IsPersistableSortDirection(spec.SortDirection)) continue;
+                        if (!IsPersistableSortDirection(spec.SortDirection))
+                            continue;
                         const int ci = spec.ColumnIndex;
-                        if (ci < 0 || ci >= static_cast<int>(columns.size())) continue;
+                        if (ci < 0 || ci >= static_cast<int>(columns.size()))
+                            continue;
                         SortKey sk;
                         sk.col = &columns[static_cast<size_t>(ci)];
                         sk.fieldMeta = catalogIndex.Find(sk.col->FieldId);
@@ -399,15 +544,18 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                          for (const auto& sk : sortKeys) {
                                              if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
                                                  const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
-                                                 if (less) return sk.dir > 0;
-                                                 if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id)) continue;
+                                                 if (less)
+                                                     return sk.dir > 0;
+                                                 if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
+                                                     continue;
                                                  return sk.dir < 0;
                                              }
                                              const std::string aVal = tix[ia].GetFieldValue(sk.col->FieldId);
                                              const std::string bVal = tix[ib].GetFieldValue(sk.col->FieldId);
-                                             const int cmp = CompareFieldValuesForSort(
-                                                 sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
-                                             if (cmp != 0) return (cmp * sk.dir) < 0;
+                                             const int cmp = CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta,
+                                                                                       aVal, bVal, sk.dir);
+                                             if (cmp != 0)
+                                                 return (cmp * sk.dir) < 0;
                                          }
                                          return ia < ib;
                                      });
@@ -423,10 +571,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 auto checkMatch = [&](size_t idx) {
                     if (idx >= tickets.size())
                         return false;
-                    if (d.gridFilterBuf[0] == '\0') return true;
+                    if (d.gridFilterBuf[0] == '\0')
+                        return true;
                     const auto& t = tickets[idx];
-                    if (ContainsCaseInsensitive(t.id, d.gridFilterBuf)) return true;
-                    if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf)) return true;
+                    if (ContainsCaseInsensitive(t.id, d.gridFilterBuf))
+                        return true;
+                    if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf))
+                        return true;
                     return false;
                 };
 
@@ -436,8 +587,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     }
                 }
 
-                std::strncpy(lastFilter, d.gridFilterBuf, sizeof(lastFilter));
-                lastFilter[sizeof(lastFilter) - 1] = '\0';
+                // snprintf guarantees null-termination and avoids the strncpy
+                // truncation warning when the source fills the buffer exactly.
+                std::snprintf(lastFilter, sizeof(lastFilter), "%s", d.gridFilterBuf);
             }
         }
 
@@ -562,7 +714,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             std::unordered_map<std::string, ImVec4> statusColorMap;
             auto StatusRowColor = [&](const std::string& raw) -> ImVec4 {
                 const auto it = statusColorMap.find(raw);
-                if (it != statusColorMap.end()) return it->second;
+                if (it != statusColorMap.end())
+                    return it->second;
                 const std::string lower = ToLowerAsciiCopy(raw);
                 ImVec4 color(0, 0, 0, 0);
                 if (lower.find("done") != std::string::npos || lower.find("resolved") != std::string::npos)
@@ -612,7 +765,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     // not once per visible row. Cache is a lambda-captured unordered_map.
                     const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
                     if (statusColor.w > 0.0f) {
-                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
+                        ImGui::TableSetBgColor(
+                            ImGuiTableBgTarget_RowBg0,
+                            ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
                     }
 
                     for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
@@ -636,10 +791,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
                         if (column.ColumnKind == TicketGridColumn::Kind::Id) {
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(cellOriginForSel,
-                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
-                                                        cellOriginForSel.y + kTicketGridRowH),
-                                                true);
+                            ImGui::PushClipRect(
+                                cellOriginForSel,
+                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
+                                true);
                             if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected,
                                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                                 if (!ImGuiEffectiveKeyCtrl()) {
@@ -655,8 +810,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(),
-                                                         column.Label, ticket.id, std::string(),
-                                                         &app, &d, readOnlyMode, &ticket);
+                                                         column.Label, ticket.id, std::string(), &app, &d, readOnlyMode,
+                                                         &ticket);
                             handleCellRectSel(clippedRow, colIndex, cellOriginForSel, cellWidthForSel, cellGroupMin,
                                               cellGroupMax, true, ticket.id, activeIssueWasThisRow);
                             continue;
@@ -669,9 +824,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
                         const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
                         // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
-                        const auto feedbackIt = d.cellFeedbackByKey.empty()
-                            ? d.cellFeedbackByKey.end()
-                            : d.cellFeedbackByKey.find(cellKey);
+                        const auto feedbackIt =
+                            d.cellFeedbackByKey.empty() ? d.cellFeedbackByKey.end() : d.cellFeedbackByKey.find(cellKey);
                         const bool isSavingThisCell = feedbackIt != d.cellFeedbackByKey.end() &&
                                                       feedbackIt->second.State == CellWriteState::Saving;
 
@@ -699,14 +853,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             badgeText = "...";
                             badgeTooltip = "Saving...";
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(cellOriginForSel,
-                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
-                                                        cellOriginForSel.y + kTicketGridRowH),
-                                                true);
-                            const std::string saveDisplay =
-                                DisplayValueForTrackerDateField(column.FieldId, fieldMeta, currentValue,
-                                                               d.cfg.DateFormatOption,
-                                                               d.cfg.DateCompactRelativeThresholdDays);
+                            ImGui::PushClipRect(
+                                cellOriginForSel,
+                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
+                                true);
+                            const std::string saveDisplay = DisplayValueForTrackerDateField(
+                                column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption,
+                                d.cfg.DateCompactRelativeThresholdDays);
                             const std::string* saveTip = column.IsDateLike ? &currentValue : nullptr;
                             RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                    true, saveTip);
@@ -715,30 +868,28 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                                         ticket.GetFieldRichValue(column.FieldId),
-                                                         &app, &d, readOnlyMode, &ticket);
+                                                         ticket.GetFieldRichValue(column.FieldId), &app, &d,
+                                                         readOnlyMode, &ticket);
                         } else {
                             const bool allowEditsForCell =
                                 !readOnlyMode && column.NeedsAllowEditsCheck &&
                                 app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(cellOriginForSel,
-                                                ImVec2(cellOriginForSel.x + cellWidthForSel,
-                                                        cellOriginForSel.y + kTicketGridRowH),
-                                                true);
-                            TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue,
-                                                               valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
-                                                               allowEditsForCell, d.gridState, pendingEdits,
-                                                               d.trackerGridAsync,
-                                                               d.cfg.DateFormatOption,
-                                                               d.cfg.DateCompactRelativeThresholdDays);
+                            ImGui::PushClipRect(
+                                cellOriginForSel,
+                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
+                                true);
+                            TicketFieldEditor::RenderFieldCell(
+                                app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
+                                d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState, pendingEdits,
+                                d.trackerGridAsync, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays);
                             ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
                             DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                                         ticket.GetFieldRichValue(column.FieldId),
-                                                         &app, &d, readOnlyMode, &ticket);
+                                                         ticket.GetFieldRichValue(column.FieldId), &app, &d,
+                                                         readOnlyMode, &ticket);
                         }
 
                         if (showBadge) {
@@ -779,20 +930,25 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
             RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d);
 
-            // Persist column widths and sort specs back to the active view.
+            // Capture column widths and sort specs into the active view IN MEMORY so the
+            // grid renders the user's drag/sort immediately. The full unsaved-layout strip
+            // (see drawActiveProjectWindow above) gates these changes behind Save / Discard;
+            // the snapshot taken on first mutation lets Discard revert.
             if (activeViewForGrid) {
                 ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
                 if (mutableActive) {
                     bool metaChanged = false;
                     ImGuiTable* table = ImGui::GetCurrentTable();
                     if (table) {
-                        // Persist column widths only; column order is controlled via the Views dashboard.
                         for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
                             const std::string& key = columns[static_cast<size_t>(i)].Key;
                             const float width = (i < table->ColumnsCount) ? table->Columns[i].WidthGiven : 0.0f;
                             const auto oldIt = mutableActive->ColumnWidths.find(key);
                             const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
                             if (std::abs(oldWidth - width) > 0.5f) {
+                                if (!metaChanged) {
+                                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                                }
                                 mutableActive->ColumnWidths[key] = width;
                                 metaChanged = true;
                             }
@@ -813,25 +969,49 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             }
                         }
                         if (newSortSpecs != mutableActive->SortSpecs) {
+                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
                             mutableActive->SortSpecs = std::move(newSortSpecs);
                             metaChanged = true;
                         }
                     } else {
-                        // No active sort in the table; clear stored sort so it doesn't persist stale state.
                         if (!mutableActive->SortSpecs.empty()) {
+                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
                             mutableActive->SortSpecs.clear();
                             metaChanged = true;
                         }
                     }
                     if (metaChanged) {
-                        // Bump views revision so the GridFrameContext rebuild picks up
-                        // the new widths / sort specs on the next frame; Views can't
-                        // observe direct GetActiveViewMutable mutations on its own.
+                        // Bump revision so the grid frame context rebuilds with new widths/sort
+                        // next frame. Surface as dirty so the user can Save / Discard. No
+                        // debounced disk write here — explicit Save commits everything.
                         ViewState.BumpRevision();
-                        const auto now = std::chrono::steady_clock::now();
-                        const auto deadline = now + kViewStateSaveDebounceLocal;
-                        d.pendingViewStateSave = true;
-                        d.pendingViewStateSaveAt = std::max(d.pendingViewStateSaveAt, deadline);
+                        d.viewsDirty = true;
+                    }
+
+                    // Capture user-driven column reorder (drag the header) into the
+                    // editing buffer; mark the view dirty so the unsaved-layout strip
+                    // appears. Don't autosave: column order changes are destructive,
+                    // unlike width/sort which the user can revert with another drag.
+                    ImGuiTable* tableForOrder = ImGui::GetCurrentTable();
+                    if (tableForOrder && tableForOrder->ColumnsCount > 0) {
+                        std::vector<std::string> visualOrder;
+                        visualOrder.reserve(columns.size());
+                        for (int v = 0; v < tableForOrder->ColumnsCount; ++v) {
+                            // DisplayOrderToIndex is an ImSpan<short> sized to ColumnsCount.
+                            if (v >= tableForOrder->DisplayOrderToIndex.size()) {
+                                break;
+                            }
+                            const int logical = tableForOrder->DisplayOrderToIndex[v];
+                            if (logical < 0 || logical >= static_cast<int>(columns.size())) {
+                                continue;
+                            }
+                            visualOrder.push_back(columns[static_cast<size_t>(logical)].Key);
+                        }
+                        if (!visualOrder.empty() && visualOrder != mutableActive->ColumnOrder) {
+                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                            d.editingColumnOrder = visualOrder;
+                            d.viewsDirty = true;
+                        }
                     }
                 }
             }

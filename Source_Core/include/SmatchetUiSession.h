@@ -108,8 +108,8 @@ struct UiDrawSession {
 
     /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
     bool showConflictResolveModal = false;
-    std::int64_t conflictResolveDbId = 0;  ///< DB id of the pending_field_edit with the conflict.
-    std::string conflictContextJson;        ///< JSON blob: {base,mine,theirs,richKind}
+    std::int64_t conflictResolveDbId = 0; ///< DB id of the pending_field_edit with the conflict.
+    std::string conflictContextJson;      ///< JSON blob: {base,mine,theirs,richKind}
     /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
     std::vector<char> conflictResolveBuf;
 
@@ -237,6 +237,25 @@ struct UiDrawSession {
     std::string editingViewId;
     std::vector<std::string> lastSyncedColumnOrder;
 
+    // Modern two-pane Views editor — sidebar + tab state, dirty tracking, drag/keyboard reorder cursor.
+    // 0 = Filter, 1 = Fields, 2 = Columns, 3 = Sort (matches ViewsEditorTab enum in the Views UI .cpp).
+    int viewsActiveTab = 0;
+    bool viewsDirty = false;
+    int viewsKeyboardReorderRow = -1;
+    // Sidebar search filter for the saved-views list.
+    char viewsSidebarSearchBuf[128]{};
+    // Modal state: discard-changes confirm when switching views, delete-view confirm,
+    // and the "rename inline" buffer for the editor title.
+    bool viewsShowDiscardConfirm = false;
+    std::string viewsPendingActivateId;
+    bool viewsShowDeleteConfirm = false;
+    bool viewsTitleEditing = false;
+    // Snapshot of the active view at the moment viewsDirty transitioned false -> true.
+    // Used by the unsaved-layout strip's Discard button to revert widths / sort specs /
+    // column order / name / JQL / fields back to the on-disk state. Captured lazily.
+    bool viewsHasOriginalSnapshot = false;
+    ViewDefinition viewsOriginalSnapshot;
+
     SpreadsheetState gridState;
     std::string gridEditError;
     std::string gridEditSuccess;
@@ -363,6 +382,3 @@ extern UiDrawSession g_ui;
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);
-
-
-

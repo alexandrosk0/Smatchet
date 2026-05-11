@@ -136,6 +136,113 @@ These are regression-only smokes — the PR is pure cleanup, so the contract is 
 
 ---
 
+## Views window redesign (two-pane settings editor)
+
+- ⏳ **V1 — Sidebar list of saved views + active highlight.**
+  - **Setup**: Standalone with at least 3 saved views.
+  - **Action**: Open the Views window; click each view in the left sidebar; type into the search box.
+  - **Expected**: Active view marked with leading "* "; clicking another view loads its name / JQL / fields / column order into the right pane; search filters the list case-insensitively.
+  - **Why it matters**: Replaces the legacy single-line `BeginCombo`. No tests cover sidebar selection / search.
+
+- ⏳ **V2 — Tabbed editor: Filter / Fields / Columns / Sort.**
+  - **Setup**: Views window with an active view that has fields, columns, and at least one sort spec.
+  - **Action**: Click through each tab; switch to a different view; come back.
+  - **Expected**: Each tab shows the right body; switching views resets dirty flag; the selected tab persists across view switches within a single session.
+
+- ⏳ **V3 — Drag-and-drop reorder in Fields / Columns / Sort tabs.**
+  - **Setup**: Any view with ≥ 3 selected fields and ≥ 3 columns.
+  - **Action**: Grab the ⋮⋮ handle on a row and drop on another row in each of the three tabs.
+  - **Expected**: Row moves to the drop position; dirty indicator lights up; Apply & Sync persists the new order; legacy Move Up/Move Down buttons are gone.
+
+- ⏳ **V4 — Keyboard reorder via Alt+↑ / Alt+↓.**
+  - **Setup**: Same as V3.
+  - **Action**: Click a row in Selected (Fields tab), Column Order (Columns tab), or Sort tab to focus it; press Alt+↑ or Alt+↓.
+  - **Expected**: Focused row swaps with its neighbour; focus follows the row across the swap; no swap past list ends.
+
+- ⏳ **V5 — Dirty tracking + Discard-changes modal on view switch.**
+  - **Setup**: Open a view, edit name / JQL / a field checkbox.
+  - **Action**: Click a different view in the sidebar.
+  - **Expected**: "Discard changes?" modal appears with Save & switch / Discard & switch / Cancel. Cancel keeps you on the current view with edits intact; Save & switch persists then switches; Discard & switch drops edits.
+
+- ⏳ **V6 — Delete view confirm modal + Delete button styling.**
+  - **Setup**: Views window with ≥ 2 saved views.
+  - **Action**: Click "Delete view".
+  - **Expected**: Confirm modal asks "Delete view \"X\"? This cannot be undone." with a red-styled Delete button. Cancel keeps the view; Delete removes it and activates a neighbour.
+
+- ⏳ **V7 — Sort tab: direction cycle and add-key popup.**
+  - **Setup**: View with at least 2 columns selected.
+  - **Action**: In Sort tab, click "+ Add sort key", pick a column. Click the direction button on the new row to cycle — → Asc → Desc → —. Apply & Sync.
+  - **Expected**: Grid re-sorts in the chosen direction; SortSpecs persist across restart.
+
+- ⏳ **V8 — Sidebar splitter + Fields-pane splitter persist across restart.**
+  - **Setup**: Views window with default widths.
+  - **Action**: Drag the sidebar splitter wider; switch to Fields tab; drag the Available/Selected splitter; restart the app.
+  - **Expected**: Both widths restore on next launch (persisted as `views_sidebar_width` / `views_fields_split_ratio` in smatchet_config.json).
+
+- ⏳ **V9 — Ctrl+Enter / Ctrl+N shortcuts.**
+  - **Setup**: Views window focused.
+  - **Action**: With unsaved edits, press Ctrl+Enter; press Ctrl+N.
+  - **Expected**: Ctrl+Enter runs Apply & Sync (toast "View saved"); Ctrl+N creates a new view (toast "View created").
+
+- ⏳ **V10 — Toasts fire on save / create / duplicate / delete / discard.**
+  - **Setup**: Views window.
+  - **Action**: Apply & Sync; right-click a row → Duplicate; right-click → Delete; edit then Discard.
+  - **Expected**: Each action triggers a single toast with the view name and appropriate type (Success / Info).
+
+- ⏳ **V11 — Grid column reorder by header drag.**
+  - **Setup**: Active Project window with at least 4 columns visible.
+  - **Action**: Click and drag a column header sideways to reorder it; release.
+  - **Expected**: Column lands in the dropped position; an "● Unsaved layout changes to \"<view>\"" strip appears at the top of the grid with [Save] / [Save as new...] / [Discard] buttons; legacy autosave for widths/sort still fires silently.
+
+- ⏳ **V12 — Unsaved-layout strip: Save commits the order to the active view.**
+  - **Setup**: V11 dirty state.
+  - **Action**: Click [Save].
+  - **Expected**: Strip disappears; toast "View saved"; restart the app and confirm the new column order is restored from disk.
+
+- ⏳ **V13 — Unsaved-layout strip: Save as new... forks the view.**
+  - **Setup**: V11 dirty state.
+  - **Action**: Click [Save as new...]; modal opens with "<name> (copy)" pre-filled; press Enter or click Save.
+  - **Expected**: New view created with the reordered columns; sidebar in the Views window shows the new view as active; toast "View created"; original view's ColumnOrder is unchanged on disk.
+
+- ⏳ **V14 — Unsaved-layout strip: Discard reverts to stored order.**
+  - **Setup**: V11 dirty state.
+  - **Action**: Click [Discard].
+  - **Expected**: Columns snap back to the active view's stored ColumnOrder; strip disappears; toast "Reverted layout".
+
+- ⏳ **V15 — Dirty state crosses windows.**
+  - **Setup**: Both Active Project and Views windows visible.
+  - **Action**: Drag a column header in the grid to reorder.
+  - **Expected**: Unsaved strip appears in the grid AND the Views window title shows "  unsaved" + Discard button enables. Clicking either window's Save commits in both places.
+
+- ⏳ **V16 — Column resize now gates behind Save.**
+  - **Setup**: Active Project grid, no unsaved state.
+  - **Action**: Drag a column edge to resize one or more columns.
+  - **Expected**: The columns visibly resize *and* the unsaved-layout strip appears. Restart the app **without** clicking Save → original widths come back. Repeat, this time click Save → toast "View saved", restart, the new widths persist.
+  - **Pre-fix behaviour**: Column widths silently autosaved via a 300 ms debounce regardless of whether the user wanted to keep them.
+
+- ⏳ **V17 — Header sort click gates behind Save.**
+  - **Setup**: Active Project grid, no unsaved state.
+  - **Action**: Click a column header to sort by it (asc → desc → none).
+  - **Expected**: Grid re-sorts immediately and the unsaved-layout strip appears. Discard → sort reverts to the stored one. Save → toast "View saved" and the new sort persists across restart.
+  - **Pre-fix behaviour**: Header sort autosaved silently via the same 300 ms debounce.
+
+- ⏳ **V18 — Sort By popup mutations gate behind Save.**
+  - **Setup**: Active Project grid, no unsaved state.
+  - **Action**: Open "Sort By ↕" popup; click X to remove a sort rule, or toggle Ascending/Descending, or "+ Add Sort Rule".
+  - **Expected**: Each mutation triggers the unsaved-layout strip. Discard → all popup-driven mutations revert. Save → they persist.
+
+- ⏳ **V19 — Discard reverts widths + sort + column order together.**
+  - **Setup**: Active Project grid with a dirty layout containing (a) at least one resized column, (b) at least one sort spec change, and (c) one column reorder.
+  - **Action**: Click Discard.
+  - **Expected**: A single Discard reverts all three concerns to the on-disk values (the pre-dirty snapshot captures the full ViewDefinition).
+
+- ⏳ **V20 — Debounced auto-save does not fire while dirty.**
+  - **Setup**: Active Project grid with a dirty layout (any of: resize, sort, reorder).
+  - **Action**: Wait several seconds without clicking Save or Discard, then kill the process (Task Manager) without a clean exit.
+  - **Expected**: On next launch the original layout is restored (debounced save was skipped because `viewsDirty == true`). Pre-fix this would have silently saved within ~300 ms.
+
+---
+
 ## Lower priority / one-shot validations
 
 - ⏳ **L1 — Process shutdown smoke under load.** Open the app, trigger a tracker sync, queue a few Lua automation jobs, then quit while sync is in flight. Expected: clean exit, no `std::terminate`, no dangling threads. (Covers PR #10 cumulative effect — workers join before member destruction.)
