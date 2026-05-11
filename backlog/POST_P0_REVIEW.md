@@ -26,7 +26,6 @@ Open work (in priority order):
 - **P1 #9** — MCP SSE heartbeat blocks process shutdown for up to 1s per client.
 - **P1 #10** — `CellIdScope` ID collision when `column.FieldId` is empty.
 - **P1 #18** — `GridFrameContext` cache key misses in-place view edits (stale columns until catalog rev bump).
-- **P1 #20** — `AuditWriter` silent on disk failure. Partially addressed in PR #10 (added rate-limited LOG_ERROR); the queue-with-cap-or-fallback-path follow-up is still open.
 - **P1 #22** — `SmatchetImGuiHost::UpdateRendererColorFormat` torn-down backend on init failure.
 - **10 P2** — items 23, 25-34. Polish, dead surfaces, UTF-8 path handling, UX nits, MarkdownConvert edge cases.
 
@@ -94,7 +93,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 19. ✅ **DONE.** The code-level fix shipped in PR #10 (`fix(stability)`): `~AppController` now flips `automationWorkerShuttingDown_` under the job mutex, notifies, and `automationWorker_.join()`s *before* any member destruction begins. That join is the happens-before barrier — per-iteration `bgState` (with its `__smatchet_app = this`) cannot survive into member-dtor land. PR #13 then added the contract docstrings: `automationWorker_` in `AppController.h:679-688` and the `state["__smatchet_app"] = this` comment in `AppController_LuaBindings.cpp:529-538` now spell out the lifetime guarantees.
 
-20. ⏳ **`AuditWriter` silently drops events on disk failure** — `Source_Core/src/BackendAuditTrail.cpp:185-194`. If `ofstream(path, app|binary)` fails (permissions, full disk, AV lock), the popped line is gone with no `LOG_ERROR`, no retry, no metric. Zero observability for audit-data loss. **Fix:** rate-limited error log on first failure; either re-queue with cap or write to a fallback path.
+20. ✅ **DONE.** Queue cap (kWriterQueueMax = 512, drops oldest) was already in place from PR #8; rate-limited LOG_ERROR on first open / first write failure shipped in PR #10. This commit adds the remaining fallback-path leg: on primary-file open failure, the writer attempts `<userdata>/smatchet_backend_audit_fallback.jsonl` and writes there instead (with its own once-per-process LOG_ERROR on fallback write failure). When BOTH primary and fallback can't be opened, a dropped-event counter increments and LOG_ERRORs at log-spaced multiples (1 / 10 / 100 / 1000 / 10000) so a persistent failure stays visible without spamming. ReadRecentEvents continues to read only the primary file; the fallback is for post-mortem analysis when the primary is unwritable.
 
 21. ✅ **DONE (commit pending in `review/process-stability`).** `RunLuaSetupScript` now takes `automationJobMutex_` for the `find` + `push_back`. `AutomationWorkerLoop` takes the same mutex briefly to snapshot the vector into a per-job local before iteration (under `try/catch` from #3 above) — workers iterate the snapshot, eliminating the data race on reallocation.
 

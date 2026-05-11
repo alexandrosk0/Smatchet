@@ -154,6 +154,17 @@ std::string GetAuditFilePath() {
     return base + "smatchet_backend_audit.jsonl";
 }
 
+// Used by the writer thread when the primary audit file can't be opened (locked by
+// AV / permissions / read-only mount). Same directory so existing collectors that
+// rsync the audit dir pick the fallback up alongside the primary.
+static std::string GetAuditFallbackPath() {
+    const std::string& base = ConfigManager::GetUserDataDirectory();
+    if (base.empty()) {
+        return "smatchet_backend_audit_fallback.jsonl";
+    }
+    return base + "smatchet_backend_audit_fallback.jsonl";
+}
+
 // ---------------------------------------------------------------------------
 // Async file writer — decouples AppendEvent from disk I/O so tracker mutations
 // are not stalled by slow storage (§4.4). Bounded queue drops oldest on overflow.
@@ -171,6 +182,7 @@ struct AuditWriter {
     AuditWriter() {
         thread = std::thread([this] {
             std::string path;
+            std::string fallbackPath;
             while (true) {
                 std::string line;
                 {
@@ -183,28 +195,60 @@ struct AuditWriter {
                 }
                 try {
                     if (path.empty()) path = GetAuditFilePath();
+                    if (fallbackPath.empty()) fallbackPath = GetAuditFallbackPath();
                     // The file is also read by ReadRecentEvents under AuditMutex(); take the
                     // same mutex around our append so the reader cannot observe a half-flushed
                     // line (the reader's JSON parser silently swallows partial JSON, so the
                     // race would otherwise lose audit events with zero observability).
                     std::lock_guard<std::mutex> lock(AuditMutex());
                     std::ofstream file(path, std::ios::app | std::ios::binary);
+                    bool wroteToFallback = false;
                     if (!file.is_open()) {
-                        // First-failure log goes via the Logger ring (NOT the audit trail, to
-                        // avoid log-on-log loops). Rate-limited to once-per-process.
+                        // First-failure log on the primary goes via the Logger ring (NOT the audit
+                        // trail, to avoid log-on-log loops). Rate-limited to once-per-process.
                         static std::atomic<bool> warnedAuditFileOpen{false};
                         if (!warnedAuditFileOpen.exchange(true)) {
-                            LOG_ERROR("BackendAuditTrail: failed to open audit file '%s' for append",
-                                      path.c_str());
+                            LOG_ERROR("BackendAuditTrail: failed to open audit file '%s' for append; "
+                                      "attempting fallback path '%s'",
+                                      path.c_str(), fallbackPath.c_str());
                         }
-                        continue;
+                        // Try the fallback file. ReadRecentEvents only reads the primary, so the
+                        // fallback contents will not appear in the in-app audit viewer — but they
+                        // are still on disk for post-mortem analysis, which is the whole point.
+                        std::ofstream fb(fallbackPath, std::ios::app | std::ios::binary);
+                        if (fb.is_open()) {
+                            fb << line << '\n';
+                            wroteToFallback = true;
+                            if (!fb.good()) {
+                                static std::atomic<bool> warnedFallbackWrite{false};
+                                if (!warnedFallbackWrite.exchange(true)) {
+                                    LOG_ERROR("BackendAuditTrail: write failed for audit fallback "
+                                              "(path '%s')", fallbackPath.c_str());
+                                }
+                            }
+                        } else {
+                            // Both primary and fallback are unwritable: count the loss and surface
+                            // it at log-spaced multiples so a persistent failure stays visible
+                            // without spamming.
+                            static std::atomic<std::uint64_t> droppedSincePrimaryFailed{0};
+                            const std::uint64_t n = droppedSincePrimaryFailed.fetch_add(1) + 1;
+                            if (n == 1 || n == 10 || n == 100 || n == 1000 || n == 10000) {
+                                LOG_ERROR("BackendAuditTrail: %llu audit event(s) dropped — neither "
+                                          "primary ('%s') nor fallback ('%s') could be opened",
+                                          static_cast<unsigned long long>(n),
+                                          path.c_str(), fallbackPath.c_str());
+                            }
+                            continue;
+                        }
                     }
-                    file << line << '\n';
-                    if (!file.good()) {
-                        static std::atomic<bool> warnedAuditFileWrite{false};
-                        if (!warnedAuditFileWrite.exchange(true)) {
-                            LOG_ERROR("BackendAuditTrail: write failed for audit line (path '%s')",
-                                      path.c_str());
+                    if (!wroteToFallback) {
+                        file << line << '\n';
+                        if (!file.good()) {
+                            static std::atomic<bool> warnedAuditFileWrite{false};
+                            if (!warnedAuditFileWrite.exchange(true)) {
+                                LOG_ERROR("BackendAuditTrail: write failed for audit line (path '%s')",
+                                          path.c_str());
+                            }
                         }
                     }
                 } catch (...) {}
