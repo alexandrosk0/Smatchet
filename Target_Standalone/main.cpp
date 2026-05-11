@@ -54,6 +54,13 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // Smatchet Core Headers (Safe C++14 includes)
 #include "ConfigManager.h"
 #include "AppController.h"
+// AppController holds unique_ptr<> members of these service types; main.cpp's
+// stack instance triggers destructor / noexcept evaluation that requires the
+// complete types, so include them here (CODE_REVIEW items 11/12/13/14).
+#include "ITrackerBackendFactory.h"
+#include "LuaAutomationHost.h"
+#include "OfflineQueueService.h"
+#include "TicketSyncService.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #if defined(SMATCHET_WITH_MCP)
