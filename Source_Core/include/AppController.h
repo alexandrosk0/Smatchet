@@ -665,14 +665,8 @@ class AppController {
     std::vector<std::thread> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
 
-    // Offline-replay throttle + in-flight guards (UI thread + background workers — all accesses
-    // under offlineReplayScheduleMutex_).
-    mutable std::mutex offlineReplayScheduleMutex_;
-    std::chrono::steady_clock::time_point nextOfflineReplayAt_ = std::chrono::steady_clock::now();
-    bool offlineReplayInFlight_ = false;
-    std::chrono::steady_clock::time_point nextOfflineFieldEditReplayAt_ = std::chrono::steady_clock::now();
-    bool offlineFieldEditReplayInFlight_ = false;
-    // legacyPendingStartupBanner_ moved to OfflineQueueService (Phase 1A of item 12 extraction).
+    // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to
+    // OfflineQueueService (item 12 extraction phases 1A / 1C). Accessed via offlineQueue_.
 
     mutable std::mutex bulkImportPrefetchKeysMutex_;
     std::unordered_set<std::string> bulkImportPrefetchKeysInFlight_;

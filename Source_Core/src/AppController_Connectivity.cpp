@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "OfflineQueueService.h"
 
 #include <algorithm>
 #include <chrono>
@@ -65,10 +66,11 @@ bool AppController::IsConnectivityDegradedForProbeInterval(TrackerConnectivitySt
 }
 
 void AppController::PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) {
+    if (!offlineQueue_) {
+        return;
+    }
     const auto pushTo = now + kOfflineReplayDelayWhileTransportDown;
-    std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-    nextOfflineReplayAt_ = (std::max)(nextOfflineReplayAt_, pushTo);
-    nextOfflineFieldEditReplayAt_ = (std::max)(nextOfflineFieldEditReplayAt_, pushTo);
+    offlineQueue_->PushReplayTimersForward(pushTo);
 }
 
 void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
@@ -335,10 +337,8 @@ bool AppController::ConsumeTrackerConnectivityRecovery() {
     LastTrackerTicketSyncWarning.clear();
     LastTrackerFieldCatalogWarning.clear();
     const auto now = std::chrono::steady_clock::now();
-    {
-        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-        nextOfflineReplayAt_ = now;
-        nextOfflineFieldEditReplayAt_ = now;
+    if (offlineQueue_) {
+        offlineQueue_->RestartReplayTimersNow(now);
     }
     LOG_INFO("AppController: consumed tracker connectivity recovery latch.");
     return true;
