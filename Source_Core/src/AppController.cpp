@@ -1688,7 +1688,9 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         return false;
     }
 
-    hasPendingSyncRequest_ = false;
+    // hasPendingSyncRequest_ was removed by the TicketSyncService Phase 1C extraction
+    // (CODE_REVIEW item 11) — pending-sync state now lives on ticketSync_; the
+    // cancel-and-join below covers what the flag used to gate.
     CancelAndJoinActiveStreamingSync();
     JoinBackgroundTasks();
 
