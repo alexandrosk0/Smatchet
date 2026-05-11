@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 class AppController;
@@ -15,6 +16,11 @@ void OpenBlameAnalysisForGridIssue(AppController& app, bool& showBlameAnalysis, 
 
 class BlameAnalysisUi {
   public:
+    BlameAnalysisUi();
+    ~BlameAnalysisUi();
+
+    struct BlameState; // defined in BlameAnalysisUi.cpp; public so the module State() accessor compiles
+
     /** Call each frame with whether the blame panel is shown (used to detect open/close). */
     void SetBlamePanelOpen(bool open);
 
@@ -28,6 +34,8 @@ class BlameAnalysisUi {
 
   private:
     void ensureSettingsBuffersLoaded();
+
+    std::unique_ptr<BlameState> state_;
 
     bool cfgLoaded_ = false;
     bool blamePanelOpen_ = false;

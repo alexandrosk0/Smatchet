@@ -1349,6 +1349,10 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
         int listIndent = 0;
     };
     std::vector<Frame> stack;
+    // Href stack for <a> tags. Previously static thread_local — mid-parse exceptions left stale
+    // state that corrupted the next call. Now a plain local: reset on every call, shared across
+    // the open- and close-tag handlers below (they index into it via Frame::olCounter).
+    std::vector<std::string> linkHrefs;
 
     auto isInlineMark = [](const std::string& t) {
         return t == "strong" || t == "b" || t == "em" || t == "i" || t == "s" || t == "del" || t == "u" || t == "code";
@@ -1449,13 +1453,12 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
                 if (itClose != stack.rend()) {
                     auto it = itClose;
                     if (t == "a" && it->olCounter > 0) {
-                        static thread_local std::vector<std::string> sLinkHrefs;
                         const size_t idx = static_cast<size_t>(it->olCounter) - 1;
-                        if (idx < sLinkHrefs.size()) {
-                            poppedLinkHref = sLinkHrefs[idx];
+                        if (idx < linkHrefs.size()) {
+                            poppedLinkHref = linkHrefs[idx];
                         }
-                        if (idx + 1 == sLinkHrefs.size())
-                            sLinkHrefs.pop_back();
+                        if (idx + 1 == linkHrefs.size())
+                            linkHrefs.pop_back();
                     }
                     const size_t targetIdx = std::distance(it, stack.rend()) - 1;
                     while (stack.size() > targetIdx + 1)
@@ -1592,9 +1595,8 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             if (t == "a") {
                 stack.push_back({"a", 0, 0});
                 tail() += "[";
-                static thread_local std::vector<std::string> sLinkHrefs;
-                sLinkHrefs.push_back(tok.href);
-                stack.back().olCounter = static_cast<int>(sLinkHrefs.size());
+                linkHrefs.push_back(tok.href);
+                stack.back().olCounter = static_cast<int>(linkHrefs.size());
                 continue;
             }
             if (t == "span") {

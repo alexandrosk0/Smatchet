@@ -616,11 +616,14 @@ void AppController::JoinBackgroundTasks() {
         }
 
         if (worker.get_id() == selfId) {
-
-            worker.detach();
-
+            // A background worker called JoinBackgroundTasks — cannot self-join.
+            // Re-queue so ~AppController can join it from the main thread.
+            // Detaching was the previous behaviour but let detached threads outlive
+            // the controller and race against g_TrackerIssueFetchMutex teardown.
+            LOG_WARN("AppController::JoinBackgroundTasks: self-join detected; re-queuing thread for main-thread join.");
+            std::lock_guard<std::mutex> requeue_lock(backgroundWorkersMutex_);
+            backgroundWorkers_.push_back(std::move(worker));
             continue;
-
         }
 
         worker.join();
@@ -1124,7 +1127,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     localCacheDbPath_ = dbPath;
 
-    Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(dbPath));
+    Cache = std::make_unique<LocalCacheManager>(dbPath);
 
     try {
 
@@ -1178,13 +1181,13 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     if (trackerLower == "plane") {
 
-        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        Backend = std::make_unique<PlaneClient>();
 
         LOG_INFO("AppController: Plane backend initialized.");
 
     } else {
 
-        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        Backend = std::make_unique<JiraClient>();
 
         LOG_INFO("AppController: Jira backend initialized.");
 
@@ -1675,7 +1678,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     std::string removeErr;
     if (!RemoveLocalCacheDbFiles(localCacheDbPath_, removeErr)) {
         try {
-            Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_));
+            Cache = std::make_unique<LocalCacheManager>(localCacheDbPath_);
         } catch (const std::exception& ex) {
             outError = removeErr + " Failed to reopen database: " + ex.what();
             return false;
@@ -2383,13 +2386,13 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
     if (trackerLower == "plane" && !isCurrentlyPlane) {
 
-        Backend = std::unique_ptr<ITrackerClient>(new PlaneClient());
+        Backend = std::make_unique<PlaneClient>();
 
         LOG_INFO("AppController: Switched backend to Plane.");
 
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
 
-        Backend = std::unique_ptr<ITrackerClient>(new JiraClient());
+        Backend = std::make_unique<JiraClient>();
 
         LOG_INFO("AppController: Switched backend to Jira.");
 

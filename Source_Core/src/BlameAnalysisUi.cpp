@@ -40,7 +40,10 @@
 #include <shellapi.h>
 #endif
 
-namespace {
+// ---------------------------------------------------------------------------
+// File-scope types — visible to BlameAnalysisUi::BlameState defined below.
+// Not in anonymous namespace so BlameState (a nested class member) can use them.
+// ---------------------------------------------------------------------------
 
 struct BlameRow {
     ParsedCallstackFrame Parsed;
@@ -67,12 +70,11 @@ struct WorkerState {
     std::unique_ptr<P4ChangelistDescribeCache> Cache;
 };
 
-/// Consolidated file-local state for the Blame Analysis UI. Previously ~40 separate file-static
-/// `g_xxx` variables that made the file impossible to test or embed (Unreal hot-reload). Wrapping
-/// them in a struct + lazy singleton is the first step toward making BlameAnalysisUi a real
-/// instantiable class; the existing free functions still reach `State().xxx` for now. Reference:
-/// backlog/CODE_REVIEW.md section 3.3 and 3.5 (proposal 2).
-struct BlameAnalysisUiState {
+/// Pimpl state for BlameAnalysisUi. Owned by the class instance so it survives Unreal hot-reload
+/// (step (b) of CODE_REVIEW.md §3.5 proposal 2). Previously a Meyers singleton
+/// (BlameAnalysisUiState); all free helpers below reach it via State() which now indirects through
+/// s_stateInstance set by the constructor/destructor.
+struct BlameAnalysisUi::BlameState {
     WorkerState worker;
     P4ChangelistDescribeCache tooltipClCache{512};
 
@@ -127,14 +129,16 @@ struct BlameAnalysisUiState {
     /** Opened via grid "Open Source Blame…" with callstack; auto-process + compact UI until raw view. */
     bool blameStreamlinedFromGrid = false;
     bool blamePendingAutoProcess = false;
+
+    // Previously separate file-statics; folded in so they share instance lifetime.
+    std::string lastCallstackIssueKey;
+    bool blameCfgDiskHydrated = false;
 };
 
-inline BlameAnalysisUiState& State() {
-    static BlameAnalysisUiState s_state;
-    return s_state;
-}
+static BlameAnalysisUi::BlameState* s_stateInstance = nullptr;
+inline BlameAnalysisUi::BlameState& State() { return *s_stateInstance; }
 
-static std::string s_lastCallstackIssueKey;
+namespace {
 
 static void LogBlameP4PathsIfChanged(const char* reason) {
     auto& st = State();
@@ -167,15 +171,14 @@ void SyncJiraBlameAuxFieldBufsFromCfg() {
     CopyToBuffer(State().lastOccurrencesFieldBuf, State().blameCfg.LastOccurrencesTrackerFieldId);
 }
 
-static bool s_blameCfgDiskHydrated = false;
 static void HydrateBlameCfgDiskOnce() {
-    if (s_blameCfgDiskHydrated) {
+    if (State().blameCfgDiskHydrated) {
         return;
     }
     State().blameCfg = ConfigManager::LoadBlameAnalysis();
     SyncCallstackTrackerFieldBufFromCfg();
     SyncJiraBlameAuxFieldBufsFromCfg();
-    s_blameCfgDiskHydrated = true;
+    State().blameCfgDiskHydrated = true;
 }
 
 void MaybeAutoselectCallstackTrackerField(const AppController& app) {
@@ -1019,7 +1022,7 @@ void CloseBlameModal(bool* pOpen) {
     State().atClBuf[0] = '\0';
     State().lastUiStatus.clear();
     State().pendingSelectEntryIndex = -1;
-    s_lastCallstackIssueKey.clear();
+    State().lastCallstackIssueKey.clear();
     State().blameStreamlinedFromGrid = false;
     State().blamePendingAutoProcess = false;
     State().showRaw = false;
@@ -1402,6 +1405,9 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
 
 } // namespace
 
+BlameAnalysisUi::BlameAnalysisUi() : state_(std::make_unique<BlameState>()) { s_stateInstance = state_.get(); }
+BlameAnalysisUi::~BlameAnalysisUi() { s_stateInstance = nullptr; }
+
 void BlameAnalysisUi::SetBlamePanelOpen(bool open) { blamePanelOpen_ = open; }
 
 void BlameAnalysisUi::ServiceBackground() {
@@ -1485,8 +1491,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     const bool justOpened = !blameOpenPrev_;
     blameOpenPrev_ = true;
-    if (justOpened || selectedJiraIssueKey != s_lastCallstackIssueKey) {
-        s_lastCallstackIssueKey = selectedJiraIssueKey;
+    if (justOpened || selectedJiraIssueKey != State().lastCallstackIssueKey) {
+        State().lastCallstackIssueKey = selectedJiraIssueKey;
         TryFillCallstackFromJira(app, selectedJiraIssueKey);
         TryFillBeforeChangelistAndDateFromJira(app, selectedJiraIssueKey);
     }

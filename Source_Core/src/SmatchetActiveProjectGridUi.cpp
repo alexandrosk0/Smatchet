@@ -145,11 +145,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
     const auto& tickets = *ticketsSnap;
 
-    TrackerFieldCatalogIndex catalogIndex(app.GetAvailableFields());
     ViewDefinition* activeViewForGrid = ViewState.GetActiveViewMutable();
-    const std::vector<TicketGridColumn> columns =
-        activeViewForGrid ? TicketGridColumnsBuilder::Build(*activeViewForGrid, catalogIndex)
-                          : std::vector<TicketGridColumn>();
+    const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
+    const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");
@@ -549,6 +547,28 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.gridState.RectSel.ClearAll();
             }
             const std::vector<size_t>& indicesToUse = d.filteredIndices;
+
+            // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
+            // 4 find() per visible row — each unique status value is lowercased only once.
+            std::unordered_map<std::string, ImVec4> statusColorMap;
+            auto StatusRowColor = [&](const std::string& raw) -> ImVec4 {
+                const auto it = statusColorMap.find(raw);
+                if (it != statusColorMap.end()) return it->second;
+                const std::string lower = ToLowerAsciiCopy(raw);
+                ImVec4 color(0, 0, 0, 0);
+                if (lower.find("done") != std::string::npos || lower.find("resolved") != std::string::npos)
+                    color = SmatchetTheme::Colors::StatusDone;
+                else if (lower.find("progress") != std::string::npos)
+                    color = SmatchetTheme::Colors::StatusInProgress;
+                else if (lower.find("todo") != std::string::npos || lower.find("open") != std::string::npos ||
+                         lower.find("backlog") != std::string::npos)
+                    color = SmatchetTheme::Colors::StatusToDo;
+                else if (lower.find("block") != std::string::npos)
+                    color = SmatchetTheme::Colors::StatusBlocked;
+                statusColorMap.emplace(raw, color);
+                return color;
+            };
+
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(indicesToUse.size()));
             while (clipper.Step()) {
@@ -578,19 +598,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     const float kTicketGridRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
                     ImGui::TableNextRow(0, kTicketGridRowH);
 
-                    // Status-based Row Highlighting
-                    const std::string statusRaw = ticket.GetFieldValue("status");
-                    std::string statusLower = ToLowerAsciiCopy(statusRaw);
-                    ImVec4 statusColor = ImVec4(0, 0, 0, 0);
-                    if (statusLower.find("done") != std::string::npos || statusLower.find("resolved") != std::string::npos)
-                        statusColor = SmatchetTheme::Colors::StatusDone;
-                    else if (statusLower.find("progress") != std::string::npos)
-                        statusColor = SmatchetTheme::Colors::StatusInProgress;
-                    else if (statusLower.find("todo") != std::string::npos || statusLower.find("open") != std::string::npos || statusLower.find("backlog") != std::string::npos)
-                        statusColor = SmatchetTheme::Colors::StatusToDo;
-                    else if (statusLower.find("block") != std::string::npos)
-                        statusColor = SmatchetTheme::Colors::StatusBlocked;
-
+                    // Status-based Row Highlighting — color looked up from a per-frame cache so
+                    // ToLowerAsciiCopy + 4 string::find are paid once per unique status value,
+                    // not once per visible row. Cache is a lambda-captured unordered_map.
+                    const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
                     if (statusColor.w > 0.0f) {
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
                     }

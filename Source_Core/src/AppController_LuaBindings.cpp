@@ -305,16 +305,20 @@ sol::environment CreateSandboxEnvironment(sol::state& lua) {
  *  All InitLua callables here are plain functions with distinct symbols (plus scoped AppController* for Ticket glue). */
 namespace smatchet_lua_init_detail {
 
-/** Set in InitLua; cleared in ~AppController. Ticket userdata calls these without a per-call AppController*. */
-AppController* gApp = nullptr;
+static AppController* ResolveApp(sol::this_state L) {
+    sol::state_view lua(L);
+    return lua["__smatchet_app"].get_or<AppController*>(nullptr);
+}
 
-std::tuple<bool, std::string> TicketSetFieldGlue(CachedTicket& t, const std::string& fieldId, const std::string& val) {
-    if (gApp == nullptr) {
+std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket& t, const std::string& fieldId,
+                                                  const std::string& val) {
+    AppController* app = ResolveApp(L);
+    if (!app) {
         return {false, "AppController not available for Ticket:set_field"};
     }
     LOG_TRACE("Lua Ticket:set_field audit_source=%s issue=%s field=%s val_len=%zu", FieldEditAuditSource::Current(),
               t.id.c_str(), fieldId.c_str(), val.size());
-    const TrackerField* fieldMeta = gApp->FindFieldById(fieldId);
+    const TrackerField* fieldMeta = app->FindFieldById(fieldId);
     if (!fieldMeta) {
         return {false, "Field not found in tracker catalog: " + fieldId};
     }
@@ -323,22 +327,24 @@ std::tuple<bool, std::string> TicketSetFieldGlue(CachedTicket& t, const std::str
     if (!val.empty()) {
         vals.push_back(val);
     }
-    const bool ok = gApp->SubmitFieldEdit(t.id, *fieldMeta, vals, err);
+    const bool ok = app->SubmitFieldEdit(t.id, *fieldMeta, vals, err);
     return {ok, err};
 }
 
-std::tuple<bool, std::string> TicketTransitionGlue(CachedTicket& t, const std::string& statusName) {
-    if (gApp == nullptr) {
+std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t,
+                                                    const std::string& statusName) {
+    AppController* app = ResolveApp(L);
+    if (!app) {
         return {false, "AppController not available for Ticket:transition"};
     }
     LOG_TRACE("Lua Ticket:transition audit_source=%s issue=%s status=%s", FieldEditAuditSource::Current(), t.id.c_str(),
               statusName.c_str());
-    const TrackerField* statusField = gApp->FindFieldById("status");
+    const TrackerField* statusField = app->FindFieldById("status");
     if (!statusField) {
         return {false, "Tracker 'status' field meta not found"};
     }
     std::string err;
-    const bool ok = gApp->SubmitFieldEdit(t.id, *statusField, {statusName}, err);
+    const bool ok = app->SubmitFieldEdit(t.id, *statusField, {statusName}, err);
     return {ok, err};
 }
 
@@ -370,90 +376,111 @@ bool ImGuiButtonGlue(const std::string& label) {
     return ImGui::Button(label.c_str());
 }
 
-void LuaLogInfoGlue(std::string msg) {
-    gApp->LuaLogInfoBind(std::move(msg));
+void LuaLogInfoGlue(sol::this_state L, std::string msg) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaLogInfoBind(std::move(msg));
 }
 
-std::tuple<sol::object, std::string> LuaGetTicketGlue(const std::string& issueId) {
-    return gApp->LuaGetTicketBind(issueId);
+std::tuple<sol::object, std::string> LuaGetTicketGlue(sol::this_state L, const std::string& issueId) {
+    AppController* app = ResolveApp(L);
+    if (!app) return {sol::object(), "AppController not available for get_ticket"};
+    return app->LuaGetTicketBind(issueId);
 }
 
-std::vector<CachedTicket> LuaGetActiveTicketsGlue() {
-    return gApp->LuaGetActiveTicketsBind();
+std::vector<CachedTicket> LuaGetActiveTicketsGlue(sol::this_state L) {
+    AppController* app = ResolveApp(L);
+    if (!app) return {};
+    return app->LuaGetActiveTicketsBind();
 }
 
-std::tuple<sol::object, std::string> LuaDecodeJsonGlue(const std::string& s) {
-    return gApp->LuaDecodeJsonBind(s);
+std::tuple<sol::object, std::string> LuaDecodeJsonGlue(sol::this_state L, const std::string& s) {
+    AppController* app = ResolveApp(L);
+    if (!app) return {sol::object(), "AppController not available for decode_json"};
+    return app->LuaDecodeJsonBind(s);
 }
 
-void LuaRegisterFieldDisplayGlue(const std::string& fieldId, sol::function fn) {
-    gApp->LuaRegisterFieldDisplayBind(fieldId, std::move(fn));
+void LuaRegisterFieldDisplayGlue(sol::this_state L, const std::string& fieldId, sol::function fn) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaRegisterFieldDisplayBind(fieldId, std::move(fn));
 }
 
-void LuaUnregisterFieldDisplayGlue(const std::string& fieldId) {
-    gApp->LuaUnregisterFieldDisplayBind(fieldId);
+void LuaUnregisterFieldDisplayGlue(sol::this_state L, const std::string& fieldId) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUnregisterFieldDisplayBind(fieldId);
 }
 
-void LuaRegisterFieldDisplayByNameGlue(const std::string& displayName, sol::function fn) {
-    gApp->LuaRegisterFieldDisplayByNameBind(displayName, std::move(fn));
+void LuaRegisterFieldDisplayByNameGlue(sol::this_state L, const std::string& displayName, sol::function fn) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaRegisterFieldDisplayByNameBind(displayName, std::move(fn));
 }
 
-void LuaUnregisterFieldDisplayByNameGlue(const std::string& displayName) {
-    gApp->LuaUnregisterFieldDisplayByNameBind(displayName);
+void LuaUnregisterFieldDisplayByNameGlue(sol::this_state L, const std::string& displayName) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUnregisterFieldDisplayByNameBind(displayName);
 }
 
-void LuaRegisterFieldIconMapGlue(const std::string& fieldKey, sol::table map, sol::optional<bool> byName) {
-    gApp->LuaRegisterFieldIconMapBind(fieldKey, std::move(map), byName);
+void LuaRegisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::table map,
+                                  sol::optional<bool> byName) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaRegisterFieldIconMapBind(fieldKey, std::move(map), byName);
 }
 
-void LuaUnregisterFieldIconMapGlue(const std::string& fieldKey, sol::optional<bool> byName) {
-    gApp->LuaUnregisterFieldIconMapBind(fieldKey, byName);
+void LuaUnregisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::optional<bool> byName) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUnregisterFieldIconMapBind(fieldKey, byName);
 }
 
-void LuaImGuiTextGlue(const std::string& s) {
-    gApp->LuaImGuiTextBind(s);
+void LuaImGuiTextGlue(sol::this_state L, const std::string& s) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaImGuiTextBind(s);
 }
 
-void LuaImGuiTextUnformattedGlue(const std::string& s) {
-    gApp->LuaImGuiTextUnformattedBind(s);
+void LuaImGuiTextUnformattedGlue(sol::this_state L, const std::string& s) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaImGuiTextUnformattedBind(s);
 }
 
-bool LuaImGuiImageGlue(const std::string& path, float w, float h) {
-    return gApp->LuaImGuiImageBind(path, w, h);
+bool LuaImGuiImageGlue(sol::this_state L, const std::string& path, float w, float h) {
+    AppController* app = ResolveApp(L);
+    return app ? app->LuaImGuiImageBind(path, w, h) : false;
 }
 
-void LuaUiRegisterWindowGlue(const std::string& name, sol::function drawFn) {
-    gApp->LuaUiRegisterWindowBind(name, std::move(drawFn));
+void LuaUiRegisterWindowGlue(sol::this_state L, const std::string& name, sol::function drawFn) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUiRegisterWindowBind(name, std::move(drawFn));
 }
 
-void LuaUiRegisterTicketActionGlue(const std::string& name, const std::string& cb) {
-    gApp->LuaUiRegisterTicketActionBind(name, cb);
+void LuaUiRegisterTicketActionGlue(sol::this_state L, const std::string& name, const std::string& cb) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUiRegisterTicketActionBind(name, cb);
 }
 
-void LuaUiRegisterGlobalActionGlue(const std::string& name, const std::string& cb) {
-    gApp->LuaUiRegisterGlobalActionBind(name, cb);
+void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, const std::string& cb) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaUiRegisterGlobalActionBind(name, cb);
 }
 
-void LuaMcpRegisterToolGlue(sol::table toolDef, sol::function callback) {
-    gApp->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
+void LuaMcpRegisterToolGlue(sol::this_state L, sol::table toolDef, sol::function callback) {
+    AppController* app = ResolveApp(L);
+    if (app) app->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
 }
 
-std::tuple<sol::object, std::string> LuaCreateIssueGlue(sol::table spec) {
-    if (gApp == nullptr) {
-        return {sol::object(), std::string("AppController not available for create_issue")};
-    }
-    return gApp->LuaCreateIssueBind(std::move(spec));
+std::tuple<sol::object, std::string> LuaCreateIssueGlue(sol::this_state L, sol::table spec) {
+    AppController* app = ResolveApp(L);
+    if (!app) return {sol::object(), "AppController not available for create_issue"};
+    return app->LuaCreateIssueBind(std::move(spec));
 }
 
 std::string LuaTrackerGetTypeGlue() {
     return TrimCopy(ConfigManager::Load().TrackerType);
 }
 
-std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::table fields) {
-    if (gApp == nullptr) {
+std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::this_state L, sol::table fields) {
+    AppController* app = ResolveApp(L);
+    if (!app) {
         return {std::string(), std::string("AppController not available for tracker.create_issue")};
     }
-    std::tuple<sol::object, std::string> bindRet = gApp->LuaCreateIssueBind(std::move(fields));
+    std::tuple<sol::object, std::string> bindRet = app->LuaCreateIssueBind(std::move(fields));
     const std::string& preflightErr = std::get<1>(bindRet);
     const sol::object& resObj = std::get<0>(bindRet);
     if (!preflightErr.empty()) {
@@ -490,12 +517,6 @@ std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::table fields
 } // namespace smatchet_lua_init_detail
 
 void AppController::InitLua() {
-    // gApp is a process-wide Ticket-glue back-pointer. Only the main controller's main state
-    // should bind it — background sol::state instances (RunFlatScriptAsync) share the same
-    // process so reassigning from a worker thread races with main-thread Lua callbacks and
-    // would also clobber gApp under multi-controller scenarios (tests, Unreal hot-reload).
-    // Background states must NOT write gApp; see AutomationWorkerLoop.
-    smatchet_lua_init_detail::gApp = this;
     InitLuaCore(lua);
     InitLuaUi(lua);
 }
@@ -505,9 +526,11 @@ void AppController::InitLuaCore(sol::state& state) {
     state.open_libraries(sol::lib::string);
     state.open_libraries(sol::lib::table);
 
-    // Intentionally NOT writing gApp here: this function is also invoked on background
-    // sol::state instances from the automation worker; reassigning gApp from a worker thread
-    // is a documented hazard (see InitLua above and the code review notes).
+    // Store AppController* per-state so glue functions resolve it via sol::this_state without a
+    // process-wide pointer. Each state (main or background) holds its own entry — no cross-state
+    // races and no lifetime hazard when Ticket userdata outlives the controller (the entry is
+    // cleared in ClearLuaTicketContextGlue which is called from ~AppController before lua dtor).
+    state["__smatchet_app"] = this;
 
     state.new_usertype<CachedTicket>("Ticket",
         "id", &CachedTicket::id,
@@ -797,7 +820,7 @@ void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function cal
 }
 
 void AppController::ClearLuaTicketContextGlue() {
-    smatchet_lua_init_detail::gApp = nullptr;
+    lua["__smatchet_app"] = sol::lua_nil;
 }
 
 void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds) {
@@ -853,8 +876,9 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
     FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
 
     lua_sethook(state.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) {
-        // We could yield here if needed, but for now we just prevent infinite loops
-        if (smatchet_lua_init_detail::gApp && smatchet_lua_init_detail::gApp->shuttingDown_.load()) {
+        sol::state_view sv(L);
+        AppController* app = sv["__smatchet_app"].get_or<AppController*>(nullptr);
+        if (app && app->shuttingDown_.load()) {
             luaL_error(L, "Script execution aborted (shutdown).");
         }
     }, LUA_MASKCOUNT, 50000);

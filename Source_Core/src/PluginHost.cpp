@@ -96,21 +96,11 @@ void PluginHost::SyncMcpPluginWithConfig(AppController& app, const TrackerConfig
     const size_t mcpIndex = mcpIt != plugins_.end() ? static_cast<size_t>(mcpIt - plugins_.begin()) : plugins_.size();
     bool hasMcp = mcpIndex < plugins_.size();
     const int port = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
-    const std::string expectedBind =
-        cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
 
     if (cfg.McpEnabled) {
         bool needFresh = !hasMcp;
         if (hasMcp) {
-            if (const auto* mcp = dynamic_cast<const McpPlugin*>(plugins_[mcpIndex].get())) {
-                const McpServerStatus st = mcp->GetStatus();
-                if (st.ListenPort != port || st.BindHost != expectedBind || !mcp->AuthTokenMatches(cfg.McpAuthToken) ||
-                    !mcp->LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution)) {
-                    needFresh = true;
-                }
-            } else {
-                needFresh = true;
-            }
+            needFresh = plugins_[mcpIndex]->NeedsRestart(cfg);
         }
 
         if (needFresh && hasMcp) {

@@ -1,11 +1,26 @@
 #pragma once
 
+#include "BlameAnalysisUi.h"
+#include "TicketGridModel.h"
 #include "Views.h"
 
-#include "BlameAnalysisUi.h"
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
 
 class AppController; // Forward declaration
 struct UiDrawSession;
+
+/// Per-frame cache for TrackerFieldCatalogIndex + TicketGridColumns, keyed by catalog revision and
+/// active view id. Built once per frame in SmatchetUI::Draw before drawMainMenuBar and
+/// drawActiveProjectWindow so neither rebuilds it independently.
+struct GridFrameContext {
+    std::uint64_t catalogRevision = 0;
+    std::string activeViewId;
+    std::unique_ptr<TrackerFieldCatalogIndex> catalogIndex;
+    std::vector<TicketGridColumn> columns;
+};
 
 /**
  * Blocking join for UiDrawSession std::async futures that capture `app` (field catalog fetch,
@@ -21,6 +36,7 @@ class SmatchetUI {
   private:
     Views ViewState;
     BlameAnalysisUi blameAnalysisUi_;
+    GridFrameContext gridFrameCtx_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);

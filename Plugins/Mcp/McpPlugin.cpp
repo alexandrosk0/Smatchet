@@ -307,6 +307,16 @@ bool McpPlugin::LuaExecutionEnabledMatches(const bool enabled) const {
     return impl_->allow_lua_execution == enabled;
 }
 
+bool McpPlugin::NeedsRestart(const TrackerConfig& cfg) const {
+    const McpServerStatus st = GetStatus();
+    const int expectedPort =
+        (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
+    const std::string expectedBind =
+        cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
+    return st.ListenPort != expectedPort || st.BindHost != expectedBind ||
+           !AuthTokenMatches(cfg.McpAuthToken) || !LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution);
+}
+
 void McpPlugin::OnStart(AppController& app) {
     if (!impl_) {
         return;

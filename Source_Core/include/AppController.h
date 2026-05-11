@@ -299,7 +299,6 @@ class AppController {
     }
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
-    std::uint64_t GetTrackerFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
     std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const TrackerConfig& cfg);

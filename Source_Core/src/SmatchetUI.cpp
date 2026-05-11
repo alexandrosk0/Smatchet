@@ -493,6 +493,20 @@ void SmatchetUI::Draw(AppController& app) {
         drawEnsureCatalogAndInitialSync(app, d);
     }
     {
+        // Build the per-frame catalog+column cache once before any consumer.
+        const std::uint64_t catalogRev = app.GetFieldCatalogRevision();
+        ViewDefinition* av = ViewState.GetActiveViewMutable();
+        const std::string avId = av ? av->Id : "";
+        if (!gridFrameCtx_.catalogIndex || gridFrameCtx_.catalogRevision != catalogRev ||
+            gridFrameCtx_.activeViewId != avId) {
+            gridFrameCtx_.catalogRevision = catalogRev;
+            gridFrameCtx_.activeViewId = avId;
+            gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(app.GetAvailableFields());
+            gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)
+                                       : std::vector<TicketGridColumn>();
+        }
+    }
+    {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
@@ -677,10 +691,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         auto ticketsSnap = app.GetActiveTicketsSnapshot();
         const std::vector<CachedTicket> emptyTickets;
         const auto& tickets = ticketsSnap ? *ticketsSnap : emptyTickets;
-        TrackerFieldCatalogIndex catalogIndex(app.GetAvailableFields());
-        ViewDefinition* activeView = ViewState.GetActiveViewMutable();
-        const std::vector<TicketGridColumn> columns =
-            activeView ? TicketGridColumnsBuilder::Build(*activeView, catalogIndex) : std::vector<TicketGridColumn>();
+        const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
+        const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
         const bool hasSelection = d.gridState.RectSel.HasAnySelection();
         const bool hasTickets = !tickets.empty();
 

@@ -1,9 +1,10 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
-#include <vector>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 /** Max replay attempts for offline `pending_creates` before archive or drop. */
 namespace OfflineCreateQueue {
@@ -148,6 +149,19 @@ class LocalCacheManager {
 
   private:
     SQLite::Database db;
+
+    // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
+    // Lazily initialised on first use; reset+clearBindings before each bind cycle.
+    SQLite::Statement& stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql);
+
+    std::unique_ptr<SQLite::Statement> stmt_save_upsert_ticket_;
+    std::unique_ptr<SQLite::Statement> stmt_save_delete_fields_;
+    std::unique_ptr<SQLite::Statement> stmt_save_insert_field_;
+    std::unique_ptr<SQLite::Statement> stmt_save_delete_rich_;
+    std::unique_ptr<SQLite::Statement> stmt_save_insert_rich_;
+    std::unique_ptr<SQLite::Statement> stmt_get_exists_;
+    std::unique_ptr<SQLite::Statement> stmt_get_fields_;
+    std::unique_ptr<SQLite::Statement> stmt_get_rich_;
 };
 
 

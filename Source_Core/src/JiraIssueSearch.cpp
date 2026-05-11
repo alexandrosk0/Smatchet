@@ -465,14 +465,16 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
         std::string jql;
         if (n == 1) {
-            jql = "key = " + keys[offset];
+            jql = "key = \"" + keys[offset] + "\"";
         } else {
             jql = "key in (";
             for (size_t i = 0; i < n; ++i) {
                 if (i) {
                     jql += ',';
                 }
+                jql += '"';
                 jql += keys[offset + i];
+                jql += '"';
             }
             jql += ')';
         }

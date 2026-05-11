@@ -792,6 +792,15 @@ void SmatchetImGuiHost::FormatCachedRendererDebugSummary(char* buf, std::size_t 
 namespace {
 std::mutex gHostHandleSetMutex;
 std::unordered_set<SmatchetImGuiHost*> gLiveHostHandles;
+
+/// Safe handle resolution: checks gLiveHostHandles so stale handles from Unreal hot-reload
+/// or use-after-Destroy return nullptr rather than dereferencing freed memory.
+SmatchetImGuiHost* LookupHost(SmatchetImGuiHostHandle handle) {
+    if (!handle) return nullptr;
+    auto* h = reinterpret_cast<SmatchetImGuiHost*>(handle);
+    std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
+    return gLiveHostHandles.count(h) ? h : nullptr;
+}
 } // namespace
 
 extern "C" {
@@ -828,7 +837,7 @@ void SmatchetHost_SetInitOptions(SmatchetImGuiHostHandle host, const char* dbPat
                                  void* rendererResource2, void* nativeCommandQueue, SmatchetOpenUrlFn openUrlFn,
                                  void* openUrlUserData, SmatchetAttachmentViewerFn attachmentViewerFn,
                                  void* attachmentViewerUserData) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
 
@@ -864,7 +873,7 @@ void SmatchetHost_SetInitOptions(SmatchetImGuiHostHandle host, const char* dbPat
 }
 
 bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int colorFormat) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return false;
     std::string err;
@@ -872,63 +881,63 @@ bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int co
 }
 
 void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvDescriptors) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetRendererNumSrvDescriptors(numSrvDescriptors);
 }
 
 void SmatchetHost_SetUiVisible(SmatchetImGuiHostHandle host, bool visible) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetUiVisible(visible);
 }
 
 void SmatchetHost_ToggleUiVisible(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->ToggleUiVisible();
 }
 
 void SmatchetHost_SetSuppressSoftwareCursor(SmatchetImGuiHostHandle host, bool suppress) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetSuppressSoftwareCursor(suppress);
 }
 
 bool SmatchetHost_GetSuppressSoftwareCursor(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return false;
     return h->GetSuppressSoftwareCursor();
 }
 
 bool SmatchetHost_IsUiVisible(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return false;
     return h->IsUiVisible();
 }
 
 bool SmatchetHost_IsInitialized(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return false;
     return h->IsInitialized();
 }
 
 bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return false;
     return h->IsFrameActive();
 }
 
 void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->TickApplicationWork();
@@ -936,63 +945,63 @@ void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host) {
 
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,
                              float viewportHeight) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->BeginFrame(deltaTimeSeconds, viewportWidth, viewportHeight);
 }
 
 void SmatchetHost_DrawUI(SmatchetImGuiHostHandle host) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->DrawUI();
 }
 
 void SmatchetHost_RenderDrawData(SmatchetImGuiHostHandle host, int rendererBackend, void* nativeCommandList) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->RenderDrawData(static_cast<SmatchetRendererBackend>(rendererBackend), nativeCommandList);
 }
 
 void SmatchetHost_SetMousePosition(SmatchetImGuiHostHandle host, float x, float y) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetMousePosition(x, y);
 }
 
 void SmatchetHost_SetMouseButton(SmatchetImGuiHostHandle host, int button, bool isDown) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetMouseButton(button, isDown);
 }
 
 void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, float wheelY) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->AddMouseWheel(wheelX, wheelY);
 }
 
 void SmatchetHost_SetKeyDown(SmatchetImGuiHostHandle host, int imguiKey, bool isDown) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetKeyDown(imguiKey, isDown);
 }
 
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->SetKeyModifiers(ctrl, shift, alt, superKey);
 }
 
 void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int character) {
-    auto* h = reinterpret_cast<SmatchetImGuiHost*>(host);
+    auto* h = LookupHost(host);
     if (!h)
         return;
     h->AddInputCharacter(character);

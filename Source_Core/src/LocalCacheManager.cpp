@@ -114,21 +114,28 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     LOG_INFO("LocalCacheManager: schema ready");
 }
 
+SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql) {
+    if (!slot) slot = std::make_unique<SQLite::Statement>(db, sql);
+    slot->reset();
+    slot->clearBindings();
+    return *slot;
+}
+
 void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
     try {
         SQLite::Transaction transaction(db);
 
-        SQLite::Statement ticketUpsert(db, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
+        auto& ticketUpsert = stmt(stmt_save_upsert_ticket_, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
         ticketUpsert.bind(1, ticket.id);
         ticketUpsert.exec();
 
         // Keep selected field cache rows in sync with latest snapshot for this ticket.
-        SQLite::Statement deleteFields(db, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
+        auto& deleteFields = stmt(stmt_save_delete_fields_, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
         deleteFields.bind(1, ticket.id);
         deleteFields.exec();
 
-        SQLite::Statement fieldUpsert(
-            db, "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+        auto& fieldUpsert = stmt(stmt_save_insert_field_,
+            "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
         for (const auto& kv : ticket.fieldValues) {
             fieldUpsert.bind(1, ticket.id);
             fieldUpsert.bind(2, kv.first);
@@ -139,12 +146,12 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
         }
 
         // Mirror the rich-value table.
-        SQLite::Statement deleteRichFields(db, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
-        deleteRichFields.bind(1, ticket.id);
-        deleteRichFields.exec();
+        auto& deleteRich = stmt(stmt_save_delete_rich_,
+            "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
+        deleteRich.bind(1, ticket.id);
+        deleteRich.exec();
 
-        SQLite::Statement richUpsert(
-            db,
+        auto& richUpsert = stmt(stmt_save_insert_rich_,
             "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
         for (const auto& kv : ticket.fieldRichValues) {
             if (kv.second.empty()) continue;
@@ -167,20 +174,21 @@ bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& 
     out = CachedTicket{};
     out.id = ticketId;
     try {
-        SQLite::Statement exists(db, "SELECT 1 FROM tickets WHERE id = ? LIMIT 1");
+        auto& exists = stmt(stmt_get_exists_, "SELECT 1 FROM tickets WHERE id = ? LIMIT 1");
         exists.bind(1, ticketId);
         if (!exists.executeStep()) {
             return false;
         }
-        SQLite::Statement fieldQuery(db, "SELECT field_key, field_value FROM ticket_field_values WHERE ticket_id = ?");
+        auto& fieldQuery = stmt(stmt_get_fields_,
+            "SELECT field_key, field_value FROM ticket_field_values WHERE ticket_id = ?");
         fieldQuery.bind(1, ticketId);
         while (fieldQuery.executeStep()) {
             const std::string fieldKey = fieldQuery.getColumn(0).getText();
             out.fieldValues[fieldKey] =
                 fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
         }
-        SQLite::Statement richQuery(
-            db, "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
+        auto& richQuery = stmt(stmt_get_rich_,
+            "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
         richQuery.bind(1, ticketId);
         while (richQuery.executeStep()) {
             const std::string fieldKey = richQuery.getColumn(0).getText();

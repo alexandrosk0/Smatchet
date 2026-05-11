@@ -16,6 +16,8 @@ class McpPlugin : public IPlugin {
     // cppcheck-suppress virtualCallInConstructor // invoked from ~McpPlugin for non-dynamic teardown
     void OnStop() override;
 
+    bool NeedsRestart(const TrackerConfig& cfg) const override;
+
     McpServerStatus GetStatus() const;
     /** Compare bound auth token to current config (for restart-on-change). */
     bool AuthTokenMatches(const std::string& cfgToken) const;

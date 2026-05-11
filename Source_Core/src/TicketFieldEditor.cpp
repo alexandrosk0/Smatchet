@@ -162,6 +162,10 @@ struct ActiveLongTextEditorState {
     /// True when the last round-trip dropped ADF nodes (Adf path) or tripped the
     /// HtmlSubsetToMarkdown fallback (Html path) — drives the "(lossy)" caption.
     bool LastRoundTripLossy = false;
+    /// Debounce: set when the buffer diverges from LastRoundTripInput; conversion fires once
+    /// RoundTripFireAt is reached so rapid keystrokes don't re-convert on every frame.
+    bool RoundTripPending = false;
+    std::chrono::steady_clock::time_point RoundTripFireAt{};
 };
 
 static ActiveLongTextEditorState s_ActiveLongTextState;
@@ -1240,7 +1244,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
 }
 
 void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
-                             const std::string& currentValue,
+                             const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
@@ -1249,12 +1253,10 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        static std::string activeEditorKey;
-        static char searchBuf[128] = "";
         const std::string editorKey = ticket.id + "::" + field.Id;
-        if (activeEditorKey != editorKey) {
-            activeEditorKey = editorKey;
-            searchBuf[0] = '\0';
+        if (state.MultiSelectActiveKey != editorKey) {
+            state.MultiSelectActiveKey = editorKey;
+            state.MultiSelectSearchBuf[0] = '\0';
         }
 
         if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
@@ -1264,10 +1266,10 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 
         const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), searchBuf, sizeof(searchBuf));
+        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf, sizeof(state.MultiSelectSearchBuf));
         ImGui::Separator();
 
-        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(searchBuf));
+        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
         bool drewAny = false;
         for (const auto& option : field.AllowedValueOptions) {
             const std::string optionId = option.Id.empty() ? option.Value : option.Id;
@@ -1539,7 +1541,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        RenderMultiSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled);
         return;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {
@@ -1868,9 +1870,17 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
 
             // PR-5: round-trip the buffer through the same converter that runs on
             // save (Markdown -> ADF / HTML -> Markdown), then render the result.
-            // Any conversion loss surfaces here before the user clicks Save. The
-            // result is cached against the input so we only re-convert on edits.
-            if (md != s_ActiveLongTextState.LastRoundTripInput) {
+            // Any conversion loss surfaces here before the user clicks Save.
+            // Debounced: arm a 100 ms timer on each buffer change; fire only when idle so
+            // rapid keystrokes on 64 KB buffers don't re-convert every frame.
+            if (md != s_ActiveLongTextState.LastRoundTripInput && !s_ActiveLongTextState.RoundTripPending) {
+                s_ActiveLongTextState.RoundTripPending = true;
+                s_ActiveLongTextState.RoundTripFireAt =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+            }
+            if (s_ActiveLongTextState.RoundTripPending &&
+                std::chrono::steady_clock::now() >= s_ActiveLongTextState.RoundTripFireAt) {
+                s_ActiveLongTextState.RoundTripPending = false;
                 std::string rendered;
                 bool lossy = false;
                 try {
