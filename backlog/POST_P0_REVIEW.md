@@ -26,7 +26,6 @@ Open work (in priority order):
 - **P1 #9** — MCP SSE heartbeat blocks process shutdown for up to 1s per client.
 - **P1 #10** — `CellIdScope` ID collision when `column.FieldId` is empty.
 - **P1 #12** — `PlaneClient::CreateIssue` `cfg` snapshot inconsistency.
-- **P1 #15** — Recursive `Save(cfg)` in legacy-MCP migration → disk/cache divergence for one Load.
 - **P1 #18** — `GridFrameContext` cache key misses in-place view edits (stale columns until catalog rev bump).
 - **P1 #20** — `AuditWriter` silent on disk failure. Partially addressed in PR #10 (added rate-limited LOG_ERROR); the queue-with-cap-or-fallback-path follow-up is still open.
 - **P1 #22** — `SmatchetImGuiHost::UpdateRendererColorFormat` torn-down backend on init failure.
@@ -84,7 +83,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 14. ✅ **DONE (commit pending in `review/configmanager-finish`).** All seven `SmatchetViewsDiskDetail::*` functions moved into the anonymous namespace of `ConfigManager.cpp`. Public seam stays as the existing `ConfigManager::ViewWorkspaceToViewsStore` / `ViewsStoreToViewWorkspace` statics (which forward to the anon-namespace impls). External grep confirms zero external callers had been using the namespace directly — the move is invisible to every other TU.
 
-15. ⏳ **Recursive `Save(cfg)` in legacy-MCP migration leaves disk+cache divergent for one `Load()`** — `Source_Core/src/ConfigManager.cpp:1057-1060`. Migration runs `Save(cfg)` *before* env/CLI overrides are applied, then the outer `Load()` applies overrides and caches the override-applied `cfg`. So disk persists no-overrides but cache holds overrides — divergent until the next disk write. Pre-split behavior preserved, but the comment at L1056 doesn't hint at it. **Fix:** move the migration `Save(cfg)` below the override block (after L1095) or explicitly invalidate the cache after the override block.
+15. ✅ **DONE.** Investigated and concluded the divergence is intentional: env/CLI overrides are deliberately *not* persisted (they're meant to apply only to the current process), and the migration `Save(cfg)` must run before overrides so the on-disk file gets a clean re-encrypted token without ephemeral override values mixed in. Cache holding override-applied cfg vs disk holding pre-override cfg matches pre-split behavior. Added a block comment at the migration site documenting this ordering invariant so future readers don't try to "fix" it by moving Save below the override block (which would actually break the override semantics).
 
 ### From PR #8 (P0 partials + P1/P2 sweep)
 
