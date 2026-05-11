@@ -2,8 +2,11 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 
@@ -55,18 +58,46 @@ class Logger {
     // Clear all log entries.
     void Clear();
 
+    /**
+     * Optional async file sink — when set, every log entry is also queued for an internal
+     * worker thread that flushes to @p path. Idempotent (calling with the same path is a no-op).
+     * Passing an empty path stops the worker and closes the file. Errors during writing are
+     * silently dropped to avoid log-on-log loops; use OS file-permission tooling to diagnose.
+     * Safe to call from any thread; typical wiring is once at startup (main.cpp / Initialize).
+     */
+    void SetFileSinkPath(const std::string& path);
+    /** Best-effort flush of pending file-sink entries; called from ~Logger and on error. */
+    void FlushFileSink();
+
   private:
     Logger() = default;
+    ~Logger();
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
 
+    void FileSinkWorker();
+    void StopFileSinkWorker();
+
     mutable std::mutex m_mutex;
-    std::vector<LogEntry> m_entries;
+    // deque gives O(1) pop_front for the overflow path; previous std::vector::erase(begin())
+    // was O(N) and copied 999 entries on every log call after the cap.
+    std::deque<LogEntry> m_entries;
     std::atomic<int> m_minLevelInt{static_cast<int>(LogLevel::Info)};
     std::atomic<bool> m_logTrackerHttpBodies{false};
     std::atomic<bool> m_logP4Io{false};
     std::atomic<std::uint64_t> m_revision{0};
     static constexpr std::size_t kMaxEntries = 1000;
+
+    // Async file sink. Background thread drains m_fileSinkQueue and writes to m_fileSinkPath.
+    // All file-sink state lives under m_fileSinkMutex (separate from m_mutex above so file I/O
+    // never blocks in-memory log emission). Bounded queue drops oldest on overflow.
+    mutable std::mutex m_fileSinkMutex;
+    std::condition_variable m_fileSinkCv;
+    std::deque<LogEntry> m_fileSinkQueue;
+    std::string m_fileSinkPath;
+    std::thread m_fileSinkThread;
+    std::atomic<bool> m_fileSinkShutdown{false};
+    static constexpr std::size_t kFileSinkQueueMax = 4096;
 };
 
 // printf‑style macros for convenience.

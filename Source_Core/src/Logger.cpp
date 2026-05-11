@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <chrono>
 #include <cctype>
+#include <fstream>
+#include <vector>
 
 namespace {
 std::string ToLowerAscii(std::string s) {
@@ -19,6 +21,10 @@ std::string ToLowerAscii(std::string s) {
 Logger& Logger::Instance() {
     static Logger instance;
     return instance;
+}
+
+Logger::~Logger() {
+    StopFileSinkWorker();
 }
 
 LogLevel Logger::ParseLogLevelString(const std::string& s, LogLevel fallback) {
@@ -83,21 +89,41 @@ void Logger::Log(LogLevel level, const std::string& message) {
     using namespace std::chrono;
     const double nowSeconds = duration_cast<duration<double>>(steady_clock::now().time_since_epoch()).count();
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (static_cast<int>(level) < m_minLevelInt.load(std::memory_order_relaxed)) {
-        return;
-    }
-
-    if (m_entries.size() >= kMaxEntries) {
-        m_entries.erase(m_entries.begin());
-    }
-
     LogEntry entry;
     entry.timestampSeconds = nowSeconds;
     entry.level = level;
     entry.message = message;
-    m_entries.push_back(entry);
-    m_revision.fetch_add(1, std::memory_order_release);
+
+    bool forwardToFileSink = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (static_cast<int>(level) < m_minLevelInt.load(std::memory_order_relaxed)) {
+            return;
+        }
+
+        if (m_entries.size() >= kMaxEntries) {
+            m_entries.pop_front(); // O(1) on deque, was O(N) on vector::erase(begin()).
+        }
+        m_entries.push_back(entry);
+        m_revision.fetch_add(1, std::memory_order_release);
+
+        // File sink decision needs a separate snapshot — checked under its own mutex below.
+        forwardToFileSink = true;
+    }
+
+    if (forwardToFileSink) {
+        std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
+        if (m_fileSinkPath.empty()) {
+            return;
+        }
+        if (m_fileSinkQueue.size() >= kFileSinkQueueMax) {
+            // Drop oldest to bound memory under sustained log pressure with a slow disk.
+            m_fileSinkQueue.pop_front();
+        }
+        m_fileSinkQueue.push_back(std::move(entry));
+        sinkLock.unlock();
+        m_fileSinkCv.notify_one();
+    }
 }
 
 void Logger::Logf(LogLevel level, const char* fmt, ...) {
@@ -108,23 +134,55 @@ void Logger::Logf(LogLevel level, const char* fmt, ...) {
         return;
     }
 
-    char buffer[4096];
+    // First pass: try the stack buffer. Most log lines fit comfortably.
+    // Second pass: heap-allocate when truncation would occur, so HTTP body
+    // trace logs are not silently clipped at 4 KB.
+    constexpr int kStackBufBytes = 4096;
+    char stackBuf[kStackBufBytes];
 
     va_list args;
     va_start(args, fmt);
+    va_list argsCopy;
+    va_copy(argsCopy, args);
 #if defined(_MSC_VER)
-    _vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, fmt, args);
+    const int needed = _vscprintf(fmt, args);
+    if (needed >= 0 && needed < kStackBufBytes) {
+        _vsnprintf_s(stackBuf, sizeof(stackBuf), _TRUNCATE, fmt, argsCopy);
+        va_end(argsCopy);
+        va_end(args);
+        Log(level, std::string(stackBuf));
+        return;
+    }
 #else
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    const int needed = vsnprintf(stackBuf, sizeof(stackBuf), fmt, args);
+    if (needed >= 0 && needed < kStackBufBytes) {
+        va_end(argsCopy);
+        va_end(args);
+        Log(level, std::string(stackBuf));
+        return;
+    }
 #endif
-    va_end(args);
 
-    Log(level, std::string(buffer));
+    if (needed <= 0) {
+        va_end(argsCopy);
+        va_end(args);
+        return;
+    }
+
+    std::vector<char> heapBuf(static_cast<std::size_t>(needed) + 1u);
+#if defined(_MSC_VER)
+    _vsnprintf_s(heapBuf.data(), heapBuf.size(), _TRUNCATE, fmt, argsCopy);
+#else
+    vsnprintf(heapBuf.data(), heapBuf.size(), fmt, argsCopy);
+#endif
+    va_end(argsCopy);
+    va_end(args);
+    Log(level, std::string(heapBuf.data()));
 }
 
 std::vector<LogEntry> Logger::GetEntriesSnapshot() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_entries;
+    return std::vector<LogEntry>(m_entries.begin(), m_entries.end());
 }
 
 std::uint64_t Logger::GetRevision() const { return m_revision.load(std::memory_order_acquire); }
@@ -135,8 +193,91 @@ void Logger::Clear() {
     m_revision.fetch_add(1, std::memory_order_release);
 }
 
+void Logger::SetFileSinkPath(const std::string& path) {
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        if (m_fileSinkPath == path) {
+            return; // idempotent
+        }
+    }
+    // Stop any existing worker before swapping the path.
+    StopFileSinkWorker();
 
+    if (path.empty()) {
+        return;
+    }
 
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        m_fileSinkPath = path;
+        m_fileSinkShutdown.store(false, std::memory_order_release);
+    }
+    m_fileSinkThread = std::thread(&Logger::FileSinkWorker, this);
+}
 
+void Logger::FlushFileSink() {
+    // Best-effort: wake the worker and let it drain. The worker writes synchronously inside the
+    // loop; here we just nudge it. For a true sync flush callers should StopFileSinkWorker().
+    m_fileSinkCv.notify_one();
+}
 
+void Logger::StopFileSinkWorker() {
+    if (!m_fileSinkThread.joinable()) {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        m_fileSinkPath.clear();
+        m_fileSinkQueue.clear();
+        return;
+    }
+    m_fileSinkShutdown.store(true, std::memory_order_release);
+    m_fileSinkCv.notify_all();
+    m_fileSinkThread.join();
+    std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+    m_fileSinkPath.clear();
+    m_fileSinkQueue.clear();
+}
 
+void Logger::FileSinkWorker() {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> sinkLock(m_fileSinkMutex);
+        path = m_fileSinkPath;
+    }
+    if (path.empty()) {
+        return;
+    }
+
+    // Append mode so previous runs are preserved. Binary to avoid CRLF translation on Windows
+    // where the in-process line endings already match the platform expectation.
+    std::ofstream out(path.c_str(), std::ios::out | std::ios::app | std::ios::binary);
+    if (!out.is_open()) {
+        return; // file inaccessible — silent (no log-on-log loop)
+    }
+
+    while (true) {
+        std::deque<LogEntry> batch;
+        {
+            std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
+            m_fileSinkCv.wait(sinkLock, [this] {
+                return m_fileSinkShutdown.load(std::memory_order_acquire) || !m_fileSinkQueue.empty();
+            });
+            if (m_fileSinkShutdown.load(std::memory_order_acquire) && m_fileSinkQueue.empty()) {
+                break;
+            }
+            batch.swap(m_fileSinkQueue);
+        }
+
+        for (const LogEntry& e : batch) {
+            // Plain text line; format `t=<seconds> level=<name> message`.
+            // Keep the format stable so external log readers can parse it without ceremony.
+            out << "t=" << e.timestampSeconds
+                << " level=" << LogLevelToString(e.level)
+                << ' ' << e.message
+                << '\n';
+        }
+        out.flush(); // flush after every batch so a crash mid-session loses at most one batch
+        if (!out.good()) {
+            // I/O failed; give up to avoid spinning on a bad disk. The in-memory ring still works.
+            return;
+        }
+    }
+}
