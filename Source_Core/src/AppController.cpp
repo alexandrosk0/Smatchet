@@ -1684,27 +1684,14 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     CancelAndJoinActiveStreamingSync();
     JoinBackgroundTasks();
 
-    {
-        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-        activeStreamingSync_.PendingBatches.clear();
-        activeStreamingSync_.BackgroundStaleIds.clear();
+    // Streaming-sync teardown lives entirely on TicketSyncService since Phase 1C of the item
+    // 11 extraction: the cancel-and-join clears PendingBatches / BackgroundStaleIds /
+    // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
+    // counters. Both are no-ops if the service was never `Initialize`d.
+    if (ticketSync_) {
+        ticketSync_->CancelAndJoinActiveStreamingSync();
+        ticketSync_->ResetStaleDeletionState();
     }
-    staleIdsToDelete_.clear();
-    isDeletingStale_.store(false);
-    totalStaleToDelete_ = 0;
-    staleDeletedSoFar_ = 0;
-    activeStreamingSync_.FullSyncCompleted = false;
-    activeStreamingSync_.TotalFetchedCount = 0;
-    {
-        // FetchError contract: every read/write through QueueMutex (worker has been joined here,
-        // so the lock is uncontended — but keeping the lock guards the contract from future drift).
-        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-        activeStreamingSync_.FetchError.clear();
-        activeStreamingSync_.Warning.clear();
-    }
-    activeStreamingSync_.KeepIds.clear();
-    activeStreamingSync_.Cancelled = false;
-    activeStreamingSync_.Superseded = false;
 
     Cache.reset();
 
@@ -1791,265 +1778,15 @@ void AppController::TickStreamingApply() {
     }
 }
 
-
-
 void AppController::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride) {
-
-    LOG_INFO("AppController::SyncWithBackend started (asynchronous streaming refresh).");
-
-    TrackerConfig cfgCopy;
-
-    if (configOverride) {
-
-        cfgCopy = *configOverride;
-
-    } else {
-
-        cfgCopy = ConfigManager::Load();
-
+    if (ticketSync_) {
+        ticketSync_->SyncWithBackend(configOverride, viewsOverride);
     }
+}
 
-    ViewsStore viewsCopy;
-
-    if (viewsOverride) {
-
-        viewsCopy = *viewsOverride;
-
-    } else {
-
-        viewsCopy = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
-
-    }
-
-
-
-    bool isWorkerActive = activeStreamingSync_.Active.load();
-
-    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
-
-
-
-    if (isSessionBusy) {
-
-        activeStreamingSync_.Cancelled = true;
-
-        activeStreamingSync_.Superseded = true;
-
-        hasPendingSyncRequest_ = true;
-
-        pendingConfig_ = cfgCopy;
-
-        pendingViews_ = viewsCopy;
-
-        LOG_INFO("AppController: Active sync/apply/cleanup session busy. New sync request deferred to avoid UI thread block.");
-
-        return;
-
-    }
-
-    StartStreamingSync(cfgCopy, viewsCopy);
-
+bool AppController::IsStreamingSyncActive() const {
+    return ticketSync_ && ticketSync_->IsActive();
 }
 
 
 
-void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy) {
-
-    if (activeStreamingSync_.WorkerThread.joinable()) {
-
-        activeStreamingSync_.WorkerThread.join();
-
-    }
-
-    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
-
-    // Swapping Backend type safely before starting worker
-
-    std::string newTracker = cfgCopy.TrackerType;
-
-    if (newTracker.empty()) newTracker = "Jira";
-
-
-
-    const std::string trackerLower = ToLowerAsciiCopy(newTracker);
-
-
-
-    const std::string currentType = Backend ? Backend->GetTrackerType() : "";
-
-    const bool isCurrentlyJira  = (currentType == "Jira");
-
-    const bool isCurrentlyPlane = (currentType == "Plane");
-
-
-
-    if (trackerLower == "plane" && !isCurrentlyPlane) {
-
-        Backend = backendFactory_->Create("Plane");
-
-        LOG_INFO("AppController: Switched backend to Plane.");
-
-    } else if (trackerLower == "jira" && !isCurrentlyJira) {
-
-        Backend = backendFactory_->Create("Jira");
-
-        LOG_INFO("AppController: Switched backend to Jira.");
-
-    }
-
-
-
-    uint64_t reqId = ++currentFetchRequestId_;
-
-    activeStreamingSync_.RequestId = reqId;
-
-    activeStreamingSync_.Cancelled = false;
-
-    activeStreamingSync_.Superseded = false;
-
-    activeStreamingSync_.Active = true;
-
-    activeStreamingSync_.ActiveSessionRunning = true;
-
-    activeStreamingSync_.TotalFetchedCount = 0;
-
-    activeStreamingSync_.FullSyncCompleted = false;
-
-    activeStreamingSync_.KeepIds.clear();
-
-    {
-
-        // FetchError contract: every read/write through QueueMutex. Worker for the new request has
-        // not been spawned yet, so the lock is uncontended.
-
-        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-        activeStreamingSync_.FetchError.clear();
-        activeStreamingSync_.Warning.clear();
-
-        activeStreamingSync_.PendingBatches.clear();
-
-        activeStreamingSync_.BackgroundStaleIds.clear();
-
-    }
-
-
-
-    LOG_INFO("AppController: Spawning background worker for async streaming fetch request ID=%llu",
-
-             static_cast<unsigned long long>(reqId));
-
-
-
-    activeStreamingSync_.WorkerThread = std::thread([this, reqId, cfgCopy, viewsCopy]() {
-
-        try {
-
-            std::unordered_set<std::string> workerKeepIds;
-
-            auto onBatch = [this, reqId, &workerKeepIds](std::vector<CachedTicket>&& batch) {
-
-                for (const auto& ticket : batch) {
-
-                    if (!ticket.id.empty()) {
-
-                        workerKeepIds.insert(ticket.id);
-
-                    }
-
-                }
-
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-                if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-
-                    activeStreamingSync_.PendingBatches.push_back(std::move(batch));
-
-                }
-
-            };
-
-            auto shouldCancel = [this, reqId]() -> bool {
-
-                return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
-
-            };
-
-
-
-            TrackerIssueFetchSummary summary = Backend->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
-
-
-
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-
-                // FullSyncCompleted is atomic; FetchError is not and must be written under
-                // QueueMutex so TickStreamingApply on the UI thread reads a consistent value.
-                std::vector<std::string> localStaleIds;
-
-                if (summary.FullSyncCompleted && Cache) {
-
-                    std::vector<std::string> existingIds = Cache->GetAllTicketIds();
-
-                    std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
-
-                                 [&workerKeepIds](const std::string& id) {
-
-                                     return workerKeepIds.find(id) == workerKeepIds.end();
-
-                                 });
-
-                }
-
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-                activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
-
-                activeStreamingSync_.FetchError = summary.FetchError;
-                activeStreamingSync_.Warning = summary.Warning;
-
-                activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
-
-                if (summary.FullSyncCompleted && Cache) {
-
-                    activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
-
-                }
-
-            }
-
-        } catch (const std::exception& ex) {
-
-            LOG_ERROR("AppController: Worker thread caught exception: %s", ex.what());
-
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-                activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
-
-                activeStreamingSync_.FullSyncCompleted = false;
-
-            }
-
-        } catch (...) {
-
-            LOG_ERROR("AppController: Worker thread caught unknown exception.");
-
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-                activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
-
-                activeStreamingSync_.FullSyncCompleted = false;
-
-            }
-
-        }
-
-        activeStreamingSync_.Active = false;
-
-    });
-
-}

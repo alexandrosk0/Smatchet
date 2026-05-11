@@ -322,10 +322,10 @@ class AppController {
     /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
-    bool IsStreamingSyncActive() const {
-        return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() ||
-               isDeletingStale_.load();
-    }
+    /// De-inlined as of item 11 Phase 1C: the streaming-sync state lives on TicketSyncService.
+    /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to
+    /// `ticketSync_->IsActive()`.
+    bool IsStreamingSyncActive() const;
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
@@ -724,59 +724,16 @@ class AppController {
 #endif
 
   private:
-    struct StreamingSyncState {
-        // Promoted to atomic: read from the worker thread and written from the UI thread
-        // (StartStreamingSync). All other accesses use the natural atomic conversions; no
-        // explicit .load()/.store() needed for the simple equality checks below.
-        std::atomic<std::uint64_t> RequestId{0};
-        std::atomic<bool> Cancelled{false};
-        std::atomic<bool> Superseded{false};
-        std::atomic<bool> Active{false};
-        std::atomic<bool> ActiveSessionRunning{false};
-        std::thread WorkerThread;
-
-        // Accumulators / results
-        std::atomic<size_t> TotalFetchedCount{0};
-        std::atomic<bool> FullSyncCompleted{false};
-        // FetchError is a std::string so it cannot be atomic. All reads and writes MUST be
-        // guarded by QueueMutex below. The worker thread writes via the qLock at the bottom
-        // of the lambda; the UI thread reads/clears via lock_guard in TickStreamingApply +
-        // setup/teardown paths.
-        std::string FetchError;
-        // Soft warning channel (e.g. PlaneClient pagination cap). Same QueueMutex contract as
-        // FetchError above. Distinct from FetchError so the UI can surface the caveat without
-        // suppressing the success notification or flipping connectivity state.
-        std::string Warning;
-
-        // Cache processing queue + FetchError / Warning serialization. UI thread and worker thread.
-        mutable std::mutex QueueMutex;
-        std::vector<std::vector<CachedTicket>> PendingBatches;
-
-        // State tracking for stale row deletion
-        std::unordered_set<std::string> KeepIds;
-        std::vector<std::string> BackgroundStaleIds;
-    };
+    // StreamingSyncState struct, currentFetchRequestId_, activeStreamingSync_,
+    // hasPendingSyncRequest_, pendingConfig_, pendingViews_, isDeletingStale_,
+    // staleIdsToDelete_, totalStaleToDelete_, staleDeletedSoFar_ — all moved to
+    // TicketSyncService in Phase 1C of the item 11 extraction. CancelAndJoinActiveStreamingSync
+    // and StartStreamingSync (private) moved to TicketSyncService too — the public
+    // SyncWithBackend remains on AppController as a thin delegator.
 
     void CancelAndJoinActiveStreamingSync();
-    void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
-
-    std::atomic<uint64_t> currentFetchRequestId_{0};
-    StreamingSyncState activeStreamingSync_;
-
-    bool hasPendingSyncRequest_ = false;
-    TrackerConfig pendingConfig_;
-    ViewsStore pendingViews_;
 
     std::string localCacheDbPath_;
-
-    // isDeletingStale_ is read by IsStreamingSyncActive() (const, callable from any thread)
-    // and written on the UI thread inside TickStreamingApply / CancelAndJoinActiveStreamingSync.
-    // The atomic promotion is the simplest correctness fix; the remaining stale-delete state
-    // (vectors + counters) is UI-thread-only by contract.
-    std::atomic<bool> isDeletingStale_{false};
-    std::vector<std::string> staleIdsToDelete_;
-    size_t totalStaleToDelete_ = 0;
-    size_t staleDeletedSoFar_ = 0;
 };
 
 #endif
