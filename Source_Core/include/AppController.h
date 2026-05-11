@@ -72,6 +72,7 @@ struct AppUpdateInfo {
 
 class ITrackerBackendFactory;
 class OfflineQueueService;
+class TicketSyncService;
 
 class AppController {
     /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
@@ -79,6 +80,11 @@ class AppController {
     /// See CODE_REVIEW.md §1.7 / §7 item 12 — Phase 2 will replace this with a small set of
     /// interface bundles so the access is no longer trusted-friendship-based.
     friend class OfflineQueueService;
+    /// `TicketSyncService` needs access to `activeStreamingSync_`, `Cache`, `Backend`, the
+    /// connectivity-probe state, and various private methods (`requestDeferredLive…`,
+    /// `PushOfflineReplayTimersDuringTransportOutage`) during the extraction transition.
+    /// See CODE_REVIEW.md §1.7 / §7 item 11 — Phase 2 will replace this with interface bundles.
+    friend class TicketSyncService;
 
   public:
     ~AppController();
@@ -565,6 +571,12 @@ class AppController {
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
+    /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel transitions)
+    /// and applies fetched batches to the cache. Constructed eagerly in `Initialize` alongside
+    /// `offlineQueue_`. Public AppController methods (`ApplyIssueFetchPack`,
+    /// `CancelAndJoinActiveStreamingSync`, etc.) are thin delegators that forward here. See
+    /// CODE_REVIEW.md §1.7 / §7 item 11.
+    std::unique_ptr<TicketSyncService> ticketSync_;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};

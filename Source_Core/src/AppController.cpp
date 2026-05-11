@@ -69,6 +69,8 @@
 
 #include "OfflineQueueService.h"
 
+#include "TicketSyncService.h"
+
 #include "TrackerHttpUtils.h"
 
 #include "Logger.h"
@@ -1162,6 +1164,12 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (!offlineQueue_) {
         offlineQueue_ = std::make_unique<OfflineQueueService>(*this);
     }
+    // Construct TicketSyncService alongside — its `CancelAndJoinActiveStreamingSync` is called
+    // by `RecreateLocalCacheDatabase` (which the legacy-pending cleanup below may trigger),
+    // so the service must exist before that path runs (item 11 extraction).
+    if (!ticketSync_) {
+        ticketSync_ = std::make_unique<TicketSyncService>(*this);
+    }
 
     try {
 
@@ -1762,130 +1770,19 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
 
 
+// ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync: moved to TicketSyncService in
+// Phase 1A of the item 11 extraction. Thin delegators below.
+
 void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
-
-    if (!Backend || !Cache) {
-
-        LOG_WARN("AppController::ApplyIssueFetchPack skipped: backend=%d cache=%d", Backend ? 1 : 0, Cache ? 1 : 0);
-
-        return;
-
+    if (ticketSync_) {
+        ticketSync_->ApplyIssueFetchPack(std::move(pack));
     }
-
-    LastTrackerTicketSyncWarning.clear();
-
-    const std::vector<CachedTicket>& freshTickets = pack.Tickets;
-
-    const std::string& fetchError = pack.FetchError;
-    const std::string& fetchWarning = pack.Warning;
-
-    const bool fullSyncCompleted = pack.FullSyncCompleted;
-
-
-
-    if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-
-        LastTrackerTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
-
-        LOG_WARN("AppController::ApplyIssueFetchPack transport-style fetch issue: %s", fetchError.c_str());
-
-        lastTrackerConnectivityState_ = TrackerConnectivityState::TransportDown;
-
-        const auto nowProbe = std::chrono::steady_clock::now();
-
-        nextTrackerConnectivityProbeAt_ = nowProbe;
-
-        PushOfflineReplayTimersDuringTransportOutage(nowProbe);
-
-    } else if (fetchError.empty()) {
-
-        // Soft warnings still count as success — the fetched data is valid, just partial.
-        // Surface the caveat as a sync warning banner and still fire the success notify so
-        // the connectivity state isn't pinned to TransportDown.
-        if (!fetchWarning.empty()) {
-            LastTrackerTicketSyncWarning = "Sync completed with a caveat: " + fetchWarning;
-            LOG_WARN("AppController::ApplyIssueFetchPack soft warning: %s", fetchWarning.c_str());
-        }
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-
-    }
-
-    size_t saved = 0;
-
-    for (const auto& t : freshTickets) {
-
-        Cache->SaveTicket(t);
-
-        ++saved;
-
-    }
-
-    size_t deleted = 0;
-
-    if (fullSyncCompleted) {
-
-        std::unordered_set<std::string> keepIds;
-
-        keepIds.reserve(freshTickets.size());
-
-        for (const auto& t : freshTickets) {
-
-            if (!t.id.empty()) {
-
-                keepIds.insert(t.id);
-
-            }
-
-        }
-
-        std::vector<CachedTicket> existing = Cache->GetAllTickets();
-
-        for (const auto& row : existing) {
-
-            if (keepIds.find(row.id) == keepIds.end()) {
-
-                Cache->DeleteTicket(row.id);
-
-                ++deleted;
-
-            }
-
-        }
-
-    }
-
-    LOG_INFO("AppController::ApplyIssueFetchPack finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
-
-             freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
-
 }
 
-
-
 void AppController::CancelAndJoinActiveStreamingSync() {
-
-    activeStreamingSync_.Cancelled = true;
-    activeStreamingSync_.Superseded = true;
-
-    if (activeStreamingSync_.WorkerThread.joinable()) {
-
-        activeStreamingSync_.WorkerThread.join();
-
+    if (ticketSync_) {
+        ticketSync_->CancelAndJoinActiveStreamingSync();
     }
-
-    activeStreamingSync_.Active = false;
-
-    activeStreamingSync_.ActiveSessionRunning = false;
-
-    {
-
-        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-
-        activeStreamingSync_.PendingBatches.clear();
-        activeStreamingSync_.BackgroundStaleIds.clear();
-
-    }
-
 }
 
 
