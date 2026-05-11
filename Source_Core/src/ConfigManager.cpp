@@ -85,11 +85,17 @@ std::string NormalizeDirectoryPath(const std::string& baseDir) {
 
 bool EnsureDirectoryExists(const std::string& path) {
 #if defined(_WIN32)
-    const DWORD attrs = GetFileAttributesA(path.c_str());
+    // Use the wide-char APIs so non-ASCII paths (é/ñ/CJK) survive on systems where the
+    // active code page is not UTF-8.
+    const std::wstring wPath = Utf8ToWide(path);
+    if (wPath.empty()) {
+        return false;
+    }
+    const DWORD attrs = GetFileAttributesW(wPath.c_str());
     if (attrs != INVALID_FILE_ATTRIBUTES) {
         return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
-    if (CreateDirectoryA(path.c_str(), nullptr) != 0) {
+    if (CreateDirectoryW(wPath.c_str(), nullptr) != 0) {
         return true;
     }
     return GetLastError() == ERROR_ALREADY_EXISTS;
@@ -185,18 +191,28 @@ class ScopedFileLock {
             return;
         handle_ = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                               nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle_ == INVALID_HANDLE_VALUE)
+        if (handle_ == INVALID_HANDLE_VALUE) {
+            LOG_WARN("ConfigManager: CreateFileW failed for lock '%s' err=%lu — proceeding without exclusive access",
+                     lockPath_.c_str(), GetLastError());
             return;
+        }
         OVERLAPPED ov{};
         if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &ov)) {
+            LOG_WARN("ConfigManager: LockFileEx failed for '%s' err=%lu — proceeding without exclusive access",
+                     lockPath_.c_str(), GetLastError());
             CloseHandle(handle_);
             handle_ = INVALID_HANDLE_VALUE;
         }
 #else
         fd_ = ::open(lockPath_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-        if (fd_ < 0)
+        if (fd_ < 0) {
+            LOG_WARN("ConfigManager: open() failed for lock '%s' errno=%d — proceeding without exclusive access",
+                     lockPath_.c_str(), errno);
             return;
+        }
         if (::flock(fd_, LOCK_EX) != 0) {
+            LOG_WARN("ConfigManager: flock(LOCK_EX) failed for '%s' errno=%d — proceeding without exclusive access",
+                     lockPath_.c_str(), errno);
             ::close(fd_);
             fd_ = -1;
         }
@@ -364,7 +380,7 @@ std::string& GetUserDataDirectoryRef() {
 // Embedded default ImGui dock-layout ini. Used by WriteDefaultImGuiSettingsFile.
 // ---------------------------------------------------------------------------
 
-constexpr const char* kDefaultImGuiDockLayoutIni =
+constexpr char kDefaultImGuiDockLayoutIni[] =
     "[Window][WindowOverViewport_11111111]\n"
     "Pos=0,22\n"
     "Size=1920,987\n"
