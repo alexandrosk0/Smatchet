@@ -70,6 +70,8 @@ struct AppUpdateInfo {
     AppUpdateAsset InstallerAsset;
 };
 
+class ITrackerBackendFactory;
+
 class AppController {
   public:
     ~AppController();
@@ -79,6 +81,12 @@ class AppController {
         std::string Error;
         std::unordered_map<std::string, std::string> UpdatedDisplayValues;
     };
+
+    /// Inject a custom tracker-backend factory. Must be called BEFORE `Initialize` to take
+    /// effect on the first backend instantiation. Tests / Unreal-host embeddings use this
+    /// to substitute a mock or alternative-transport client; the default standalone build
+    /// leaves it null and `Initialize` lazily wires `DefaultTrackerBackendFactory`.
+    void SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory);
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
@@ -543,6 +551,7 @@ class AppController {
 
   private:
     std::unique_ptr<LocalCacheManager> Cache;
+    std::unique_ptr<ITrackerBackendFactory> backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     std::unique_ptr<ITrackerClient> Backend;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
