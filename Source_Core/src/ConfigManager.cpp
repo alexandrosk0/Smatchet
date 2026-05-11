@@ -1223,6 +1223,17 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 
 #if defined(_WIN32)
     // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
+    //
+    // Ordering note (backlog #15): this Save(cfg) runs BEFORE the env/CLI override block below, by design.
+    // - cfg here reflects what disk contained (with the legacy plaintext token already decoded into cfg.McpAuthToken).
+    //   Save() re-encrypts McpAuthToken into mcp_auth_token_enc on disk, which is the whole point of the migration.
+    // - Env / CLI overrides (DbPath, TrackerType, McpPort, McpAllowRemote) are ephemeral and must NOT be persisted —
+    //   they're meant to take effect this process only. Running Save AFTER overrides would write override values
+    //   back to disk and pollute the next launch when the env/CLI is no longer set.
+    // - Consequence: for the rest of this Load(), in-memory cfg (and the cache filled at the bottom) hold
+    //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
+    //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
+    //   override values to disk is a pre-existing concern outside the scope of this migration.
     if (migrateLegacyPlaintextMcpAuthToken) {
         LOG_INFO("ConfigManager: migrating legacy plaintext mcp_auth_token to protected storage.");
         Save(cfg);
