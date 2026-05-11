@@ -278,6 +278,20 @@ std::string ExtractJsonRpcErrorMessage(const nlohmann::json& jres, std::size_t m
 
 struct McpPlugin::Impl {
     AppController* app = nullptr;
+    // Shutdown signaling for SSE chunked-content providers. Heartbeat lambdas
+    // wait on shutdownCv with a 1s timeout instead of sleeping unconditionally
+    // so OnStop() can reclaim worker threads within microseconds rather than
+    // up to 1 second per connected client.
+    //
+    // Declared BEFORE `svr` on purpose: members destroy in reverse order, and
+    // `~Server` joins the worker pool in its destructor. If a worker is still
+    // executing the chunked-content lambda when ~Impl begins (svr.stop() does
+    // not synchronously drain in-flight handlers), it must read these primitives
+    // through the raw `impl` pointer. Putting them before `svr` guarantees they
+    // outlive `~Server`'s pool join.
+    std::mutex shutdownMutex;
+    std::condition_variable shutdownCv;
+    std::atomic<bool> shuttingDown{false};
     httplib::Server svr;
     std::thread thread;
     bool routes_installed = false;
@@ -286,13 +300,6 @@ struct McpPlugin::Impl {
     std::string tracker_domain;
     std::vector<std::string> export_fields;
     bool allow_lua_execution = false;
-    // Shutdown signaling for SSE chunked-content providers. Heartbeat lambdas
-    // wait on shutdownCv with a 1s timeout instead of sleeping unconditionally
-    // so OnStop() can reclaim worker threads within microseconds rather than
-    // up to 1 second per connected client.
-    std::mutex shutdownMutex;
-    std::condition_variable shutdownCv;
-    std::atomic<bool> shuttingDown{false};
 };
 
 McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
