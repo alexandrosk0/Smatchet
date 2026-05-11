@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
