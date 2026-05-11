@@ -620,14 +620,18 @@ void McpPlugin::OnStart(AppController& app) {
                 "text/event-stream",
                 [event](size_t offset, httplib::DataSink& sink) {
                     if (offset == 0) {
-                        sink.write(event.data(), event.size());
-                        return true;
+                        // Initial endpoint event. `sink.write` returns false on client disconnect.
+                        return sink.write(event.data(), event.size());
                     }
-                    // Keep-alive heartbeat
-                    std::this_thread::sleep_for(std::chrono::seconds(15));
+                    // Heartbeat every 1s. cpp-httplib's DataSink in this version has no
+                    // is_writable(), so disconnect detection happens via the write() return
+                    // value — sending a heartbeat each second frees the httplib worker thread
+                    // within ~1s of a client going away (was up to 15s with a single long sleep).
+                    // SSE comment lines (`: text`) are ignored by clients per the SSE spec, and
+                    // ~12 bytes/sec of overhead per connected client is trivial.
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
                     constexpr char kSseHeartbeat[] = ": heartbeat\n\n";
-                    sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
-                    return true;
+                    return sink.write(kSseHeartbeat, sizeof(kSseHeartbeat) - 1);
                 },
                 nullptr);
         });
