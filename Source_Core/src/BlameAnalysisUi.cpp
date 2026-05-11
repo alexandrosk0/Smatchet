@@ -67,73 +67,88 @@ struct WorkerState {
     std::unique_ptr<P4ChangelistDescribeCache> Cache;
 };
 
-static WorkerState g_worker;
-static P4ChangelistDescribeCache g_tooltipClCache(512);
+/// Consolidated file-local state for the Blame Analysis UI. Previously ~40 separate file-static
+/// `g_xxx` variables that made the file impossible to test or embed (Unreal hot-reload). Wrapping
+/// them in a struct + lazy singleton is the first step toward making BlameAnalysisUi a real
+/// instantiable class; the existing free functions still reach `State().xxx` for now. Reference:
+/// backlog/CODE_REVIEW.md section 3.3 and 3.5 (proposal 2).
+struct BlameAnalysisUiState {
+    WorkerState worker;
+    P4ChangelistDescribeCache tooltipClCache{512};
 
-static char g_callstackBuf[65536]{};
-static std::vector<char> g_ignoreBuf(4096, '\0');
-static char g_atClBuf[64]{};
-static std::string g_beforeDateIso;
-static int g_maxFramesVal = 64;
-static char g_remapFrom[512]{};
-static char g_remapTo[512]{};
-static char g_p4Exe[260]{};
-static char g_p4vcExe[260]{};
-static char g_timeTpl[1024]{};
-static char g_changeTpl[512]{};
-static char g_aiUrl[512]{};
-static bool g_showRaw = false;
-static BlameAnalysisConfig g_blameCfg;
+    char callstackBuf[65536]{};
+    std::vector<char> ignoreBuf = std::vector<char>(4096, '\0');
+    char atClBuf[64]{};
+    std::string beforeDateIso;
+    int maxFramesVal = 64;
+    char remapFrom[512]{};
+    char remapTo[512]{};
+    char p4Exe[260]{};
+    char p4vcExe[260]{};
+    char timeTpl[1024]{};
+    char changeTpl[512]{};
+    char aiUrl[512]{};
+    bool showRaw = false;
+    BlameAnalysisConfig blameCfg;
 
-static std::string g_loggedP4Exe;
-static std::string g_loggedP4vcExe;
+    std::string loggedP4Exe;
+    std::string loggedP4vcExe;
 
-static void LogBlameP4PathsIfChanged(const char* reason) {
-    if (g_blameCfg.P4Executable != g_loggedP4Exe) {
-        LOG_INFO("Blame [%s]: p4_exe \"%s\" -> \"%s\"", reason, g_loggedP4Exe.c_str(), g_blameCfg.P4Executable.c_str());
-        g_loggedP4Exe = g_blameCfg.P4Executable;
-    }
-    if (g_blameCfg.P4VcExecutable != g_loggedP4vcExe) {
-        LOG_INFO("Blame [%s]: p4vc_exe \"%s\" -> \"%s\"", reason, g_loggedP4vcExe.c_str(),
-                 g_blameCfg.P4VcExecutable.c_str());
-        g_loggedP4vcExe = g_blameCfg.P4VcExecutable;
-    }
+    std::mutex displayMutex;
+    std::vector<BlameRow> displayRows;
+    std::vector<std::shared_future<DetailPack>> detailFuts;
+    std::vector<std::shared_future<DetailPack>> detachedDetailFuts;
+    std::vector<int> detailPhase;
+    std::vector<DetailPack> detailData;
+    std::vector<bool> detailScrolled;
+
+    std::string profileName;
+    std::string profileEmail;
+    std::string profileErr;
+    std::vector<std::string> profileGroups;
+    bool openProfileModal = false;
+
+    std::string lastUiStatus;
+    int pendingSelectEntryIndex = -1;
+
+    std::string clHoverCl;
+    std::shared_future<P4ChangelistDetails> clHoverFut;
+    std::vector<std::shared_future<P4ChangelistDetails>> detachedClHoverFuts;
+
+    std::string assignTitle;
+    std::string assignAccountId;
+    bool assignHasJiraAccount = false;
+    BlameRow assignRow;
+
+    char callstackTrackerFieldBuf[260]{};
+    char lastFoundClFieldBuf[260]{};
+    char lastOccurrencesFieldBuf[260]{};
+
+    /** Opened via grid "Open Source Blame…" with callstack; auto-process + compact UI until raw view. */
+    bool blameStreamlinedFromGrid = false;
+    bool blamePendingAutoProcess = false;
+};
+
+inline BlameAnalysisUiState& State() {
+    static BlameAnalysisUiState s_state;
+    return s_state;
 }
 
-static std::mutex g_displayMutex;
-static std::vector<BlameRow> g_displayRows;
-static std::vector<std::shared_future<DetailPack>> g_detailFuts;
-static std::vector<std::shared_future<DetailPack>> g_detachedDetailFuts;
-static std::vector<int> g_detailPhase;
-static std::vector<DetailPack> g_detailData;
-static std::vector<bool> g_detailScrolled;
-
-static std::string g_profileName;
-static std::string g_profileEmail;
-static std::string g_profileErr;
-static std::vector<std::string> g_profileGroups;
-static bool g_openProfileModal = false;
-
-static std::string g_lastUiStatus;
-static int g_pendingSelectEntryIndex = -1;
-
-static std::string g_clHoverCl;
-static std::shared_future<P4ChangelistDetails> g_clHoverFut;
-static std::vector<std::shared_future<P4ChangelistDetails>> g_detachedClHoverFuts;
-
-static std::string g_assignTitle;
-static std::string g_assignAccountId;
-static bool g_assignHasJiraAccount = false;
-static BlameRow g_assignRow;
-
-static char g_callstackTrackerFieldBuf[260]{};
-static char g_lastFoundClFieldBuf[260]{};
-static char g_lastOccurrencesFieldBuf[260]{};
 static std::string s_lastCallstackIssueKey;
 
-/** Opened via grid "Open Source Blame…" with callstack; auto-process + compact UI until raw view. */
-static bool g_blameStreamlinedFromGrid = false;
-static bool g_blamePendingAutoProcess = false;
+static void LogBlameP4PathsIfChanged(const char* reason) {
+    auto& st = State();
+    if (st.blameCfg.P4Executable != st.loggedP4Exe) {
+        LOG_INFO("Blame [%s]: p4_exe \"%s\" -> \"%s\"", reason, st.loggedP4Exe.c_str(),
+                 st.blameCfg.P4Executable.c_str());
+        st.loggedP4Exe = st.blameCfg.P4Executable;
+    }
+    if (st.blameCfg.P4VcExecutable != st.loggedP4vcExe) {
+        LOG_INFO("Blame [%s]: p4vc_exe \"%s\" -> \"%s\"", reason, st.loggedP4vcExe.c_str(),
+                 st.blameCfg.P4VcExecutable.c_str());
+        st.loggedP4vcExe = st.blameCfg.P4VcExecutable;
+    }
+}
 
 template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
     static_assert(N > 0, "CopyToBuffer requires a non-empty char array");
@@ -145,11 +160,11 @@ template <size_t N> void CopyToBuffer(char (&dst)[N], const std::string& src) {
     }
 }
 
-void SyncCallstackTrackerFieldBufFromCfg() { CopyToBuffer(g_callstackTrackerFieldBuf, g_blameCfg.CallstackTrackerFieldId); }
+void SyncCallstackTrackerFieldBufFromCfg() { CopyToBuffer(State().callstackTrackerFieldBuf, State().blameCfg.CallstackTrackerFieldId); }
 
 void SyncJiraBlameAuxFieldBufsFromCfg() {
-    CopyToBuffer(g_lastFoundClFieldBuf, g_blameCfg.LastFoundClTrackerFieldId);
-    CopyToBuffer(g_lastOccurrencesFieldBuf, g_blameCfg.LastOccurrencesTrackerFieldId);
+    CopyToBuffer(State().lastFoundClFieldBuf, State().blameCfg.LastFoundClTrackerFieldId);
+    CopyToBuffer(State().lastOccurrencesFieldBuf, State().blameCfg.LastOccurrencesTrackerFieldId);
 }
 
 static bool s_blameCfgDiskHydrated = false;
@@ -157,14 +172,14 @@ static void HydrateBlameCfgDiskOnce() {
     if (s_blameCfgDiskHydrated) {
         return;
     }
-    g_blameCfg = ConfigManager::LoadBlameAnalysis();
+    State().blameCfg = ConfigManager::LoadBlameAnalysis();
     SyncCallstackTrackerFieldBufFromCfg();
     SyncJiraBlameAuxFieldBufsFromCfg();
     s_blameCfgDiskHydrated = true;
 }
 
 void MaybeAutoselectCallstackTrackerField(const AppController& app) {
-    if (!g_blameCfg.CallstackTrackerFieldId.empty()) {
+    if (!State().blameCfg.CallstackTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -175,14 +190,14 @@ void MaybeAutoselectCallstackTrackerField(const AppController& app) {
         return ToLowerAsciiCopy(f.Name) == "callstack";
     });
     if (it != fields.end()) {
-        g_blameCfg.CallstackTrackerFieldId = it->Id;
+        State().blameCfg.CallstackTrackerFieldId = it->Id;
         SyncCallstackTrackerFieldBufFromCfg();
-        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+        ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }
 
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
-    if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
+    if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -194,14 +209,14 @@ void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
         return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl";
     });
     if (it != fields.end()) {
-        g_blameCfg.LastFoundClTrackerFieldId = it->Id;
+        State().blameCfg.LastFoundClTrackerFieldId = it->Id;
         SyncJiraBlameAuxFieldBufsFromCfg();
-        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+        ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }
 
 void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
-    if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+    if (!State().blameCfg.LastOccurrencesTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -213,9 +228,9 @@ void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
         return n == "last occurrences" || n == "last occurances" || n == "last occurences" || n == "last_occurrences";
     });
     if (it != fields.end()) {
-        g_blameCfg.LastOccurrencesTrackerFieldId = it->Id;
+        State().blameCfg.LastOccurrencesTrackerFieldId = it->Id;
         SyncJiraBlameAuxFieldBufsFromCfg();
-        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+        ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }
 
@@ -255,7 +270,7 @@ static std::string NormalizeJiraDateForBeforePicker(const std::string& raw) {
 
 void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std::string& issueKey) {
     if (issueKey.empty()) {
-        g_beforeDateIso.clear();
+        State().beforeDateIso.clear();
         return;
     }
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
@@ -263,25 +278,25 @@ void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std:
         if (t.id != issueKey) {
             continue;
         }
-        if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
-            const std::string cl = SanitizeChangelistDigitsFromField(t.GetFieldValue(g_blameCfg.LastFoundClTrackerFieldId));
-            CopyToBuffer(g_atClBuf, cl);
+        if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+            const std::string cl = SanitizeChangelistDigitsFromField(t.GetFieldValue(State().blameCfg.LastFoundClTrackerFieldId));
+            CopyToBuffer(State().atClBuf, cl);
         }
-        if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
-            g_beforeDateIso = NormalizeJiraDateForBeforePicker(t.GetFieldValue(g_blameCfg.LastOccurrencesTrackerFieldId));
+        if (!State().blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+            State().beforeDateIso = NormalizeJiraDateForBeforePicker(t.GetFieldValue(State().blameCfg.LastOccurrencesTrackerFieldId));
         } else {
-            g_beforeDateIso.clear();
+            State().beforeDateIso.clear();
         }
         return;
     }
-    g_beforeDateIso.clear();
-    if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
-        g_atClBuf[0] = '\0';
+    State().beforeDateIso.clear();
+    if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+        State().atClBuf[0] = '\0';
     }
 }
 
 void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey) {
-    if (g_blameCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
+    if (State().blameCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
         return;
     }
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
@@ -289,11 +304,11 @@ void TryFillCallstackFromJira(const AppController& app, const std::string& issue
         if (t.id != issueKey) {
             continue;
         }
-        const std::string v = t.GetFieldValue(g_blameCfg.CallstackTrackerFieldId);
+        const std::string v = t.GetFieldValue(State().blameCfg.CallstackTrackerFieldId);
         if (v.empty()) {
             return;
         }
-        CopyToBuffer(g_callstackBuf, v);
+        CopyToBuffer(State().callstackBuf, v);
         return;
     }
 }
@@ -332,51 +347,51 @@ std::vector<std::string> SplitIgnoreKeywords(const std::string& multi) {
 }
 
 void JoinWorkerIfNeeded() {
-    if (g_worker.Thread.joinable() && !g_worker.Running.load()) {
-        g_worker.Thread.join();
+    if (State().worker.Thread.joinable() && !State().worker.Running.load()) {
+        State().worker.Thread.join();
     }
 }
 
 void MirrorWorkerToDisplay() {
-    std::lock_guard<std::mutex> lkW(g_worker.Mutex);
-    if (g_worker.Rows.empty() && !g_worker.Running.load()) {
+    std::lock_guard<std::mutex> lkW(State().worker.Mutex);
+    if (State().worker.Rows.empty() && !State().worker.Running.load()) {
         return;
     }
-    std::lock_guard<std::mutex> lkD(g_displayMutex);
-    g_displayRows = g_worker.Rows;
+    std::lock_guard<std::mutex> lkD(State().displayMutex);
+    State().displayRows = State().worker.Rows;
 }
 
 void ResetDetailAfterRunComplete() {
-    if (!g_worker.PendingPublish.exchange(false)) {
+    if (!State().worker.PendingPublish.exchange(false)) {
         return;
     }
-    std::lock_guard<std::mutex> lkD(g_displayMutex);
-    const size_t n = g_displayRows.size();
-    g_detailFuts.assign(n, std::shared_future<DetailPack>());
-    g_detailPhase.assign(n, 0);
-    g_detailData.assign(n, DetailPack{});
-    g_detailScrolled.assign(n, false);
+    std::lock_guard<std::mutex> lkD(State().displayMutex);
+    const size_t n = State().displayRows.size();
+    State().detailFuts.assign(n, std::shared_future<DetailPack>());
+    State().detailPhase.assign(n, 0);
+    State().detailData.assign(n, DetailPack{});
+    State().detailScrolled.assign(n, false);
 }
 
 void WorkerThreadMain(size_t n) {
-    BlameAnalysisConfig cfg = g_worker.Cfg;
-    const std::string atCl = g_worker.AtChangelist;
-    P4ChangelistDescribeCache* cache = g_worker.Cache.get();
+    BlameAnalysisConfig cfg = State().worker.Cfg;
+    const std::string atCl = State().worker.AtChangelist;
+    P4ChangelistDescribeCache* cache = State().worker.Cache.get();
     LOG_INFO("Blame worker: started rows=%zu atCl=\"%s\" p4_exe=\"%s\"", n, atCl.c_str(), cfg.P4Executable.c_str());
     try {
         int failures = 0;
         for (size_t i = 0; i < n; ++i) {
-            if (g_worker.Cancel.load()) {
+            if (State().worker.Cancel.load()) {
                 LOG_INFO("Blame worker: cancelled at row %zu/%zu (failures=%d)", i, n, failures);
                 break;
             }
             BlameRow row;
             {
-                std::lock_guard<std::mutex> lk(g_worker.Mutex);
-                if (i >= g_worker.Rows.size()) {
+                std::lock_guard<std::mutex> lk(State().worker.Mutex);
+                if (i >= State().worker.Rows.size()) {
                     break;
                 }
-                row = g_worker.Rows[i];
+                row = State().worker.Rows[i];
             }
             P4LineBlame b = P4BlameLine(cfg, row.PathForP4, row.Parsed.LineNumber, atCl);
             if (!b.Error.empty()) {
@@ -394,14 +409,14 @@ void WorkerThreadMain(size_t n) {
                 }
             }
             {
-                std::lock_guard<std::mutex> lk(g_worker.Mutex);
-                if (i < g_worker.Rows.size()) {
-                    g_worker.Rows[i].Blame = std::move(b);
+                std::lock_guard<std::mutex> lk(State().worker.Mutex);
+                if (i < State().worker.Rows.size()) {
+                    State().worker.Rows[i].Blame = std::move(b);
                 }
             }
-            g_worker.Progress = static_cast<int>(i + 1);
+            State().worker.Progress = static_cast<int>(i + 1);
         }
-        if (!g_worker.Cancel.load()) {
+        if (!State().worker.Cancel.load()) {
             LOG_INFO("Blame worker: finished rows=%zu failures=%d", n, failures);
         }
     } catch (const std::exception& ex) {
@@ -409,60 +424,60 @@ void WorkerThreadMain(size_t n) {
     } catch (...) {
         LOG_ERROR("Blame worker: unknown exception");
     }
-    g_worker.PendingPublish = true;
-    g_worker.Running = false;
+    State().worker.PendingPublish = true;
+    State().worker.Running = false;
 }
 
 void StartWorker(std::vector<BlameRow> rows, BlameAnalysisConfig cfg, std::string atCl) {
     JoinWorkerIfNeeded();
     LOG_INFO("Blame: StartWorker rows=%zu atCl=\"%s\"", rows.size(), atCl.c_str());
-    g_worker.Cancel = false;
-    g_worker.Progress = 0;
-    g_worker.PendingPublish = false;
-    g_worker.Cfg = std::move(cfg);
-    g_worker.AtChangelist = std::move(atCl);
-    const int cap = g_worker.Cfg.ChangelistCacheMaxEntries > 0 ? g_worker.Cfg.ChangelistCacheMaxEntries : 512;
-    g_worker.Cache.reset(new P4ChangelistDescribeCache(cap));
+    State().worker.Cancel = false;
+    State().worker.Progress = 0;
+    State().worker.PendingPublish = false;
+    State().worker.Cfg = std::move(cfg);
+    State().worker.AtChangelist = std::move(atCl);
+    const int cap = State().worker.Cfg.ChangelistCacheMaxEntries > 0 ? State().worker.Cfg.ChangelistCacheMaxEntries : 512;
+    State().worker.Cache.reset(new P4ChangelistDescribeCache(cap));
     const size_t n = rows.size();
-    g_worker.Total = n;
+    State().worker.Total = n;
     {
-        std::lock_guard<std::mutex> lk(g_worker.Mutex);
-        g_worker.Rows = std::move(rows);
+        std::lock_guard<std::mutex> lk(State().worker.Mutex);
+        State().worker.Rows = std::move(rows);
     }
     {
-        std::lock_guard<std::mutex> lkW(g_worker.Mutex);
-        std::lock_guard<std::mutex> lkD(g_displayMutex);
-        g_displayRows = g_worker.Rows;
-        g_detailFuts.assign(n, std::shared_future<DetailPack>());
-        g_detailPhase.assign(n, 0);
-        g_detailData.assign(n, DetailPack{});
-        g_detailScrolled.assign(n, false);
+        std::lock_guard<std::mutex> lkW(State().worker.Mutex);
+        std::lock_guard<std::mutex> lkD(State().displayMutex);
+        State().displayRows = State().worker.Rows;
+        State().detailFuts.assign(n, std::shared_future<DetailPack>());
+        State().detailPhase.assign(n, 0);
+        State().detailData.assign(n, DetailPack{});
+        State().detailScrolled.assign(n, false);
     }
-    g_worker.Running = true;
-    g_worker.Thread = std::thread(WorkerThreadMain, n);
+    State().worker.Running = true;
+    State().worker.Thread = std::thread(WorkerThreadMain, n);
 }
 
-/** Same logic as the Process button (parse `g_callstackBuf`, start worker). Caller ensures worker idle. */
+/** Same logic as the Process button (parse `State().callstackBuf`, start worker). Caller ensures worker idle. */
 static void RunBlameProcessFromBuffers() {
-    g_lastUiStatus.clear();
-    g_blameCfg.P4Executable = g_p4Exe;
-    g_blameCfg.P4VcExecutable = g_p4vcExe;
-    g_blameCfg.TimelapseCommandTemplate = g_timeTpl;
-    g_blameCfg.ChangeCommandTemplate = g_changeTpl;
-    g_blameCfg.AiChatUrl = g_aiUrl;
-    g_blameCfg.CallstackTrackerFieldId.assign(g_callstackTrackerFieldBuf);
-    g_blameCfg.LastFoundClTrackerFieldId.assign(g_lastFoundClFieldBuf);
-    g_blameCfg.LastOccurrencesTrackerFieldId.assign(g_lastOccurrencesFieldBuf);
-    g_blameCfg.PathRemaps.clear();
-    if (g_remapFrom[0] != '\0') {
-        g_blameCfg.PathRemaps.push_back({g_remapFrom, g_remapTo});
+    State().lastUiStatus.clear();
+    State().blameCfg.P4Executable = State().p4Exe;
+    State().blameCfg.P4VcExecutable = State().p4vcExe;
+    State().blameCfg.TimelapseCommandTemplate = State().timeTpl;
+    State().blameCfg.ChangeCommandTemplate = State().changeTpl;
+    State().blameCfg.AiChatUrl = State().aiUrl;
+    State().blameCfg.CallstackTrackerFieldId.assign(State().callstackTrackerFieldBuf);
+    State().blameCfg.LastFoundClTrackerFieldId.assign(State().lastFoundClFieldBuf);
+    State().blameCfg.LastOccurrencesTrackerFieldId.assign(State().lastOccurrencesFieldBuf);
+    State().blameCfg.PathRemaps.clear();
+    if (State().remapFrom[0] != '\0') {
+        State().blameCfg.PathRemaps.push_back({State().remapFrom, State().remapTo});
     }
     LogBlameP4PathsIfChanged("process");
-    std::vector<std::string> keywords = SplitIgnoreKeywords(std::string(g_ignoreBuf.data()));
+    std::vector<std::string> keywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
     if (keywords.empty()) {
-        keywords = g_blameCfg.DefaultIgnoreKeywords;
+        keywords = State().blameCfg.DefaultIgnoreKeywords;
     }
-    std::vector<ParsedCallstackFrame> parsed = ParseCallstackText(std::string(g_callstackBuf));
+    std::vector<ParsedCallstackFrame> parsed = ParseCallstackText(std::string(State().callstackBuf));
     std::vector<BlameRow> rows;
     for (auto& p : parsed) {
         if (FrameMatchesIgnoreKeywords(p, keywords)) {
@@ -470,24 +485,24 @@ static void RunBlameProcessFromBuffers() {
         }
         BlameRow br;
         br.Parsed = std::move(p);
-        br.PathForP4 = ApplyPathRemaps(br.Parsed.FilePath, g_blameCfg.PathRemaps);
+        br.PathForP4 = ApplyPathRemaps(br.Parsed.FilePath, State().blameCfg.PathRemaps);
         rows.push_back(std::move(br));
-        if (static_cast<int>(rows.size()) >= g_maxFramesVal) {
+        if (static_cast<int>(rows.size()) >= State().maxFramesVal) {
             break;
         }
     }
     {
-        std::lock_guard<std::mutex> lk(g_displayMutex);
-        g_displayRows.clear();
-        g_detailFuts.clear();
-        g_detailPhase.clear();
-        g_detailData.clear();
-        g_detailScrolled.clear();
+        std::lock_guard<std::mutex> lk(State().displayMutex);
+        State().displayRows.clear();
+        State().detailFuts.clear();
+        State().detailPhase.clear();
+        State().detailData.clear();
+        State().detailScrolled.clear();
     }
     if (rows.empty()) {
-        g_lastUiStatus = "No stack frames parsed (check format and ignore list).";
+        State().lastUiStatus = "No stack frames parsed (check format and ignore list).";
     } else {
-        StartWorker(std::move(rows), g_blameCfg, std::string(g_atClBuf));
+        StartWorker(std::move(rows), State().blameCfg, std::string(State().atClBuf));
     }
 }
 
@@ -669,22 +684,22 @@ bool LaunchP4VcLike(const BlameAnalysisConfig&, const std::string&, const std::s
 #endif
 
 void EnsureDetailLoading(size_t idx, const BlameAnalysisConfig& cfg, const std::string& atCl) {
-    std::lock_guard<std::mutex> lk(g_displayMutex);
-    if (idx >= g_displayRows.size()) {
+    std::lock_guard<std::mutex> lk(State().displayMutex);
+    if (idx >= State().displayRows.size()) {
         return;
     }
-    if (idx >= g_detailPhase.size() || g_detailPhase[idx] != 0) {
+    if (idx >= State().detailPhase.size() || State().detailPhase[idx] != 0) {
         return;
     }
-    g_detailPhase[idx] = 1;
-    const std::string path = g_displayRows[idx].PathForP4;
+    State().detailPhase[idx] = 1;
+    const std::string path = State().displayRows[idx].PathForP4;
     LOG_DEBUG("Blame detail: async load start idx=%zu path=%s", idx, path.c_str());
     std::future<DetailPack> fut = std::async(std::launch::async, [cfg, path, atCl]() {
         DetailPack p;
         p.Lines = P4AnnotateFile(cfg, path, atCl, p.Error);
         for (auto& ln : p.Lines) {
             if (!ln.Changelist.empty()) {
-                P4ChangelistDetails d = g_tooltipClCache.GetOrFetch(cfg, ln.Changelist);
+                P4ChangelistDetails d = State().tooltipClCache.GetOrFetch(cfg, ln.Changelist);
                 if (!d.Date.empty()) {
                     ln.Date = d.Date;
                 }
@@ -695,58 +710,58 @@ void EnsureDetailLoading(size_t idx, const BlameAnalysisConfig& cfg, const std::
         }
         return p;
     });
-    g_detailFuts[idx] = fut.share();
+    State().detailFuts[idx] = fut.share();
 }
 
 void PollDetails() {
-    for (size_t i = 0; i < g_detachedDetailFuts.size();) {
-        if (!g_detachedDetailFuts[i].valid() ||
-            g_detachedDetailFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            g_detachedDetailFuts.erase(g_detachedDetailFuts.begin() +
+    for (size_t i = 0; i < State().detachedDetailFuts.size();) {
+        if (!State().detachedDetailFuts[i].valid() ||
+            State().detachedDetailFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            State().detachedDetailFuts.erase(State().detachedDetailFuts.begin() +
                                        static_cast<std::vector<std::shared_future<DetailPack>>::difference_type>(i));
         } else {
             ++i;
         }
     }
-    for (size_t i = 0; i < g_detachedClHoverFuts.size();) {
-        if (!g_detachedClHoverFuts[i].valid() ||
-            g_detachedClHoverFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            g_detachedClHoverFuts.erase(
-                g_detachedClHoverFuts.begin() +
+    for (size_t i = 0; i < State().detachedClHoverFuts.size();) {
+        if (!State().detachedClHoverFuts[i].valid() ||
+            State().detachedClHoverFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            State().detachedClHoverFuts.erase(
+                State().detachedClHoverFuts.begin() +
                 static_cast<std::vector<std::shared_future<P4ChangelistDetails>>::difference_type>(i));
         } else {
             ++i;
         }
     }
 
-    std::lock_guard<std::mutex> lk(g_displayMutex);
-    for (size_t i = 0; i < g_detailFuts.size(); ++i) {
-        if (i >= g_detailPhase.size() || g_detailPhase[i] != 1) {
+    std::lock_guard<std::mutex> lk(State().displayMutex);
+    for (size_t i = 0; i < State().detailFuts.size(); ++i) {
+        if (i >= State().detailPhase.size() || State().detailPhase[i] != 1) {
             continue;
         }
-        if (!g_detailFuts[i].valid()) {
+        if (!State().detailFuts[i].valid()) {
             continue;
         }
-        if (g_detailFuts[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        if (State().detailFuts[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             continue;
         }
         std::string pathForLog;
-        if (i < g_displayRows.size()) {
-            pathForLog = g_displayRows[i].PathForP4;
+        if (i < State().displayRows.size()) {
+            pathForLog = State().displayRows[i].PathForP4;
         }
         try {
-            g_detailData[i] = g_detailFuts[i].get();
+            State().detailData[i] = State().detailFuts[i].get();
         } catch (const std::exception& ex) {
             LOG_WARN("Blame detail: idx=%zu path=%s async exception=%s", i, pathForLog.c_str(), ex.what());
-            g_detailData[i].Error = std::string("detail load failed: ") + ex.what();
+            State().detailData[i].Error = std::string("detail load failed: ") + ex.what();
         } catch (...) {
             LOG_WARN("Blame detail: idx=%zu path=%s async unknown exception", i, pathForLog.c_str());
-            g_detailData[i].Error = "detail load failed";
+            State().detailData[i].Error = "detail load failed";
         }
-        if (!g_detailData[i].Error.empty()) {
-            LOG_WARN("Blame detail: idx=%zu path=%s err=%s", i, pathForLog.c_str(), g_detailData[i].Error.c_str());
+        if (!State().detailData[i].Error.empty()) {
+            LOG_WARN("Blame detail: idx=%zu path=%s err=%s", i, pathForLog.c_str(), State().detailData[i].Error.c_str());
         }
-        g_detailPhase[i] = 2;
+        State().detailPhase[i] = 2;
     }
 }
 
@@ -779,10 +794,10 @@ bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User,
 }
 
 std::string BuildAiExport() {
-    std::lock_guard<std::mutex> lk(g_displayMutex);
+    std::lock_guard<std::mutex> lk(State().displayMutex);
     std::ostringstream oss;
-    for (size_t i = 0; i < g_displayRows.size(); ++i) {
-        const BlameRow& r = g_displayRows[i];
+    for (size_t i = 0; i < State().displayRows.size(); ++i) {
+        const BlameRow& r = State().displayRows[i];
         oss << "#" << (i + 1) << " " << r.Parsed.Function << "\n  " << r.PathForP4 << ":" << r.Parsed.LineNumber
             << "\n  User=" << r.Blame.User << " CL=" << r.Blame.Changelist << " Date=" << r.Blame.Date;
         if (r.Blame.Approximate) {
@@ -792,9 +807,9 @@ std::string BuildAiExport() {
         if (!r.Blame.LineSnippet.empty()) {
             oss << "  " << r.Blame.LineSnippet << "\n";
         }
-        if (i < g_detailData.size() && !g_detailData[i].Lines.empty()) {
+        if (i < State().detailData.size() && !State().detailData[i].Lines.empty()) {
             const int target = r.Parsed.LineNumber;
-            for (const auto& ln : g_detailData[i].Lines) {
+            for (const auto& ln : State().detailData[i].Lines) {
                 if (std::abs(ln.SourceLine - target) <= 3 && !ln.Code.empty()) {
                     oss << "  L" << ln.SourceLine << " [" << ln.Changelist << "] " << ln.User << ": " << ln.Code
                         << "\n";
@@ -827,11 +842,11 @@ std::string CsvEscape(const std::string& s) {
 }
 
 std::string BuildBlameExportCsv() {
-    std::lock_guard<std::mutex> lk(g_displayMutex);
+    std::lock_guard<std::mutex> lk(State().displayMutex);
     std::ostringstream oss;
     oss << "entry,function,path,line,user,changelist,date,approximate,line_snippet\n";
-    for (size_t i = 0; i < g_displayRows.size(); ++i) {
-        const BlameRow& r = g_displayRows[i];
+    for (size_t i = 0; i < State().displayRows.size(); ++i) {
+        const BlameRow& r = State().displayRows[i];
         oss << (i + 1) << "," << CsvEscape(r.Parsed.Function) << "," << CsvEscape(r.PathForP4) << ","
             << r.Parsed.LineNumber << "," << CsvEscape(r.Blame.User) << "," << CsvEscape(r.Blame.Changelist) << ","
             << CsvEscape(r.Blame.Date) << "," << (r.Blame.Approximate ? "true" : "false") << ","
@@ -841,11 +856,11 @@ std::string BuildBlameExportCsv() {
 }
 
 std::string BuildBlameExportJson() {
-    std::lock_guard<std::mutex> lk(g_displayMutex);
+    std::lock_guard<std::mutex> lk(State().displayMutex);
     nlohmann::json root = nlohmann::json::object();
     root["entries"] = nlohmann::json::array();
-    for (size_t i = 0; i < g_displayRows.size(); ++i) {
-        const BlameRow& r = g_displayRows[i];
+    for (size_t i = 0; i < State().displayRows.size(); ++i) {
+        const BlameRow& r = State().displayRows[i];
         nlohmann::json entry = nlohmann::json::object();
         entry["entry"] = static_cast<int>(i + 1);
         entry["function"] = r.Parsed.Function;
@@ -857,9 +872,9 @@ std::string BuildBlameExportJson() {
         entry["approximate"] = r.Blame.Approximate;
         entry["line_snippet"] = r.Blame.LineSnippet;
         entry["nearby_lines"] = nlohmann::json::array();
-        if (i < g_detailData.size() && !g_detailData[i].Lines.empty()) {
+        if (i < State().detailData.size() && !State().detailData[i].Lines.empty()) {
             const int target = r.Parsed.LineNumber;
-            for (const auto& ln : g_detailData[i].Lines) {
+            for (const auto& ln : State().detailData[i].Lines) {
                 if (std::abs(ln.SourceLine - target) > 3 || ln.Code.empty()) {
                     continue;
                 }
@@ -971,63 +986,63 @@ void CloseBlameModal(bool* pOpen) {
     if (!pOpen) {
         return;
     }
-    g_worker.Cancel = true;
-    if (g_worker.Thread.joinable()) {
-        g_worker.Thread.join();
+    State().worker.Cancel = true;
+    if (State().worker.Thread.joinable()) {
+        State().worker.Thread.join();
     }
     {
-        std::lock_guard<std::mutex> lk(g_worker.Mutex);
-        g_worker.Rows.clear();
-        g_worker.Progress = 0;
-        g_worker.Total = 0;
+        std::lock_guard<std::mutex> lk(State().worker.Mutex);
+        State().worker.Rows.clear();
+        State().worker.Progress = 0;
+        State().worker.Total = 0;
     }
     {
-        std::lock_guard<std::mutex> lk(g_displayMutex);
-        for (auto& fut : g_detailFuts) {
+        std::lock_guard<std::mutex> lk(State().displayMutex);
+        for (auto& fut : State().detailFuts) {
             if (fut.valid() && fut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-                g_detachedDetailFuts.push_back(fut);
+                State().detachedDetailFuts.push_back(fut);
             }
         }
-        g_displayRows.clear();
-        g_detailFuts.clear();
-        g_detailPhase.clear();
-        g_detailData.clear();
-        g_detailScrolled.clear();
+        State().displayRows.clear();
+        State().detailFuts.clear();
+        State().detailPhase.clear();
+        State().detailData.clear();
+        State().detailScrolled.clear();
     }
-    g_clHoverCl.clear();
-    if (g_clHoverFut.valid() && g_clHoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-        g_detachedClHoverFuts.push_back(g_clHoverFut);
+    State().clHoverCl.clear();
+    if (State().clHoverFut.valid() && State().clHoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        State().detachedClHoverFuts.push_back(State().clHoverFut);
     }
-    g_clHoverFut = std::shared_future<P4ChangelistDetails>();
-    std::memset(g_callstackBuf, 0, sizeof(g_callstackBuf));
-    g_beforeDateIso.clear();
-    g_atClBuf[0] = '\0';
-    g_lastUiStatus.clear();
-    g_pendingSelectEntryIndex = -1;
+    State().clHoverFut = std::shared_future<P4ChangelistDetails>();
+    std::memset(State().callstackBuf, 0, sizeof(State().callstackBuf));
+    State().beforeDateIso.clear();
+    State().atClBuf[0] = '\0';
+    State().lastUiStatus.clear();
+    State().pendingSelectEntryIndex = -1;
     s_lastCallstackIssueKey.clear();
-    g_blameStreamlinedFromGrid = false;
-    g_blamePendingAutoProcess = false;
-    g_showRaw = false;
+    State().blameStreamlinedFromGrid = false;
+    State().blamePendingAutoProcess = false;
+    State().showRaw = false;
     *pOpen = false;
 }
 
 void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User) {
-    g_openProfileModal = true;
-    g_profileErr.clear();
-    g_profileName.clear();
-    g_profileEmail.clear();
-    g_profileGroups.clear();
+    State().openProfileModal = true;
+    State().profileErr.clear();
+    State().profileName.clear();
+    State().profileEmail.clear();
+    State().profileGroups.clear();
     if (p4User.empty() || p4User == "-" || p4User == "...") {
-        g_profileName = "Past Employee";
+        State().profileName = "Past Employee";
         return;
     }
     std::vector<TrackerUser> users;
     std::string qerr;
     if (!app.SearchUsersByQuery(p4User, users, qerr) || users.empty()) {
-        g_profileName = "Past Employee";
-        g_profileEmail = p4User;
+        State().profileName = "Past Employee";
+        State().profileEmail = p4User;
         if (!qerr.empty()) {
-            g_profileErr = qerr;
+            State().profileErr = qerr;
         }
         return;
     }
@@ -1035,45 +1050,45 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
         return !u.EmailAddress.empty();
     });
     const TrackerUser* best = (it != users.end()) ? &(*it) : &users[0];
-    g_profileName = best->DisplayName;
-    g_profileEmail = best->EmailAddress;
+    State().profileName = best->DisplayName;
+    State().profileEmail = best->EmailAddress;
     std::string gerr;
-    app.FetchUserGroupNames(best->AccountId, g_profileGroups, gerr);
-    if (g_profileGroups.empty() && !gerr.empty()) {
-        g_profileErr = gerr;
+    app.FetchUserGroupNames(best->AccountId, State().profileGroups, gerr);
+    if (State().profileGroups.empty() && !gerr.empty()) {
+        State().profileErr = gerr;
     }
 }
 
 void PrepareAssignModal(const AppController& app, const BlameRow& row, const std::string& p4UserCell) {
-    g_assignRow = row;
+    State().assignRow = row;
     const std::string& pu = p4UserCell.empty() ? row.Blame.User : p4UserCell;
-    g_assignAccountId.clear();
-    g_assignHasJiraAccount = false;
+    State().assignAccountId.clear();
+    State().assignHasJiraAccount = false;
     if (pu.empty() || pu == "-" || pu == "...") {
-        g_assignTitle = "Past Employee";
+        State().assignTitle = "Past Employee";
         return;
     }
     std::vector<TrackerUser> users;
     std::string err;
     if (!app.SearchUsersByQuery(pu, users, err) || users.empty()) {
-        g_assignTitle = std::string("Past Employee (") + pu + ")";
+        State().assignTitle = std::string("Past Employee (") + pu + ")";
         return;
     }
     std::string aid;
     std::string e2;
     if (ResolveP4UserForAssign(app, pu, aid, e2) && !aid.empty()) {
-        g_assignAccountId = std::move(aid);
-        g_assignHasJiraAccount = true;
+        State().assignAccountId = std::move(aid);
+        State().assignHasJiraAccount = true;
         std::string dn = users[0].DisplayName;
         auto it = std::find_if(users.begin(), users.end(), [](const auto& u) {
-            return u.AccountId == g_assignAccountId;
+            return u.AccountId == State().assignAccountId;
         });
         if (it != users.end()) {
             dn = it->DisplayName;
         }
-        g_assignTitle = dn + " (" + pu + ")";
+        State().assignTitle = dn + " (" + pu + ")";
     } else {
-        g_assignTitle = std::string("Past Employee (") + pu + ")";
+        State().assignTitle = std::string("Past Employee (") + pu + ")";
     }
 }
 
@@ -1104,11 +1119,11 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
     if (cl.empty()) {
         return;
     }
-    if (g_clHoverCl != cl) {
-        g_clHoverCl = cl;
+    if (State().clHoverCl != cl) {
+        State().clHoverCl = cl;
         BlameAnalysisConfig cfgCopy = cfg;
-        g_clHoverFut = std::async(std::launch::async, [cfgCopy, cl]() {
-                           return g_tooltipClCache.GetOrFetch(cfgCopy, cl);
+        State().clHoverFut = std::async(std::launch::async, [cfgCopy, cl]() {
+                           return State().tooltipClCache.GetOrFetch(cfgCopy, cl);
                        }).share();
     }
     ImGui::BeginTooltip();
@@ -1116,13 +1131,13 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
     ImGui::Separator();
     const float wrapX = ImGui::GetCursorPosX() + 600.f;
     ImGui::PushTextWrapPos(wrapX);
-    if (!g_clHoverFut.valid()) {
+    if (!State().clHoverFut.valid()) {
         ImGui::TextUnformatted("Loading CL info...");
-    } else if (g_clHoverFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+    } else if (State().clHoverFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
         ImGui::TextUnformatted("Loading CL info...");
     } else {
         try {
-            const P4ChangelistDetails d = g_clHoverFut.get();
+            const P4ChangelistDetails d = State().clHoverFut.get();
             if (!d.Error.empty()) {
                 ImGui::TextUnformatted(d.Error.c_str());
             } else {
@@ -1155,21 +1170,21 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
 }
 
 void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeColors& theme) {
-    ImGui::InputInt("Max frames", &g_maxFramesVal);
-    if (g_maxFramesVal < 1) {
-        g_maxFramesVal = 1;
+    ImGui::InputInt("Max frames", &State().maxFramesVal);
+    if (State().maxFramesVal < 1) {
+        State().maxFramesVal = 1;
     }
-    if (g_maxFramesVal > 500) {
-        g_maxFramesVal = 500;
+    if (State().maxFramesVal > 500) {
+        State().maxFramesVal = 500;
     }
-    ImGui::InputTextMultiline("Ignore keywords (comma or newline)", g_ignoreBuf.data(), g_ignoreBuf.size(),
+    ImGui::InputTextMultiline("Ignore keywords (comma or newline)", State().ignoreBuf.data(), State().ignoreBuf.size(),
                               ImVec2(-1, 60));
-    ImGui::InputText("P4 executable", g_p4Exe, sizeof(g_p4Exe));
-    ImGui::InputText("p4vc executable", g_p4vcExe, sizeof(g_p4vcExe));
-    ImGui::InputText("Timelapse cmd (optional)", g_timeTpl, sizeof(g_timeTpl));
+    ImGui::InputText("P4 executable", State().p4Exe, sizeof(State().p4Exe));
+    ImGui::InputText("p4vc executable", State().p4vcExe, sizeof(State().p4vcExe));
+    ImGui::InputText("Timelapse cmd (optional)", State().timeTpl, sizeof(State().timeTpl));
     ImGui::TextDisabled("Placeholders: {file} {line} {cl}");
-    ImGui::InputText("Changelist cmd (optional)", g_changeTpl, sizeof(g_changeTpl));
-    ImGui::InputText("AI chat URL (optional)", g_aiUrl, sizeof(g_aiUrl));
+    ImGui::InputText("Changelist cmd (optional)", State().changeTpl, sizeof(State().changeTpl));
+    ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
     ImGui::Separator();
     ImGui::TextUnformatted("Callstack from Jira");
     ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when you "
@@ -1177,12 +1192,12 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
                         "issue from the grid.");
     {
         std::string comboPreview = "(none)";
-        if (!g_blameCfg.CallstackTrackerFieldId.empty()) {
-            const TrackerField* mf = app.FindFieldById(g_blameCfg.CallstackTrackerFieldId);
+        if (!State().blameCfg.CallstackTrackerFieldId.empty()) {
+            const TrackerField* mf = app.FindFieldById(State().blameCfg.CallstackTrackerFieldId);
             if (mf && !mf->Name.empty()) {
                 comboPreview = mf->Name + " (" + mf->Id + ")";
             } else {
-                comboPreview = g_blameCfg.CallstackTrackerFieldId;
+                comboPreview = State().blameCfg.CallstackTrackerFieldId;
             }
         }
         PushBlameLinkButtonColors(theme);
@@ -1196,8 +1211,8 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             }
         } else {
             PushBlameLinkTextOnly(theme);
-            if (ImGui::Selectable("(none)", g_blameCfg.CallstackTrackerFieldId.empty())) {
-                g_blameCfg.CallstackTrackerFieldId.clear();
+            if (ImGui::Selectable("(none)", State().blameCfg.CallstackTrackerFieldId.empty())) {
+                State().blameCfg.CallstackTrackerFieldId.clear();
                 SyncCallstackTrackerFieldBufFromCfg();
             }
             PopBlameLinkTextOnly();
@@ -1205,13 +1220,13 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
                 ImGui::SetTooltip("Do not pull callstack text from Jira.");
             }
             for (const auto& f : app.GetAvailableFields()) {
-                const bool sel = (f.Id == g_blameCfg.CallstackTrackerFieldId);
+                const bool sel = (f.Id == State().blameCfg.CallstackTrackerFieldId);
                 const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
                 // Stable ## id: display string can duplicate or change when Jira renames fields; never key off it alone.
                 const std::string lblWithId = lbl + "##callstack_field_" + f.Id;
                 PushBlameLinkTextOnly(theme);
                 if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
-                    g_blameCfg.CallstackTrackerFieldId = f.Id;
+                    State().blameCfg.CallstackTrackerFieldId = f.Id;
                     SyncCallstackTrackerFieldBufFromCfg();
                 }
                 PopBlameLinkTextOnly();
@@ -1224,7 +1239,7 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             ImGui::EndCombo();
         }
     }
-    ImGui::InputText("Callstack field id (optional)", g_callstackTrackerFieldBuf, sizeof(g_callstackTrackerFieldBuf));
+    ImGui::InputText("Callstack field id (optional)", State().callstackTrackerFieldBuf, sizeof(State().callstackTrackerFieldBuf));
     ImGui::TextDisabled("Override or set manually (e.g. customfield_10000). Saved with Save settings.");
     ImGui::Separator();
     ImGui::TextUnformatted("Before changelist (Jira)");
@@ -1232,12 +1247,12 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
                         "only). Autoselect matches a field named \"Last Found CL\".");
     {
         std::string comboPreview = "(none)";
-        if (!g_blameCfg.LastFoundClTrackerFieldId.empty()) {
-            const TrackerField* mf = app.FindFieldById(g_blameCfg.LastFoundClTrackerFieldId);
+        if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+            const TrackerField* mf = app.FindFieldById(State().blameCfg.LastFoundClTrackerFieldId);
             if (mf && !mf->Name.empty()) {
                 comboPreview = mf->Name + " (" + mf->Id + ")";
             } else {
-                comboPreview = g_blameCfg.LastFoundClTrackerFieldId;
+                comboPreview = State().blameCfg.LastFoundClTrackerFieldId;
             }
         }
         PushBlameLinkButtonColors(theme);
@@ -1249,18 +1264,18 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             }
         } else {
             PushBlameLinkTextOnly(theme);
-            if (ImGui::Selectable("(none)", g_blameCfg.LastFoundClTrackerFieldId.empty())) {
-                g_blameCfg.LastFoundClTrackerFieldId.clear();
+            if (ImGui::Selectable("(none)", State().blameCfg.LastFoundClTrackerFieldId.empty())) {
+                State().blameCfg.LastFoundClTrackerFieldId.clear();
                 SyncJiraBlameAuxFieldBufsFromCfg();
             }
             PopBlameLinkTextOnly();
             for (const auto& f : app.GetAvailableFields()) {
-                const bool sel = (f.Id == g_blameCfg.LastFoundClTrackerFieldId);
+                const bool sel = (f.Id == State().blameCfg.LastFoundClTrackerFieldId);
                 const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
                 const std::string lblWithId = lbl + "##lastfoundcl_field_" + f.Id;
                 PushBlameLinkTextOnly(theme);
                 if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
-                    g_blameCfg.LastFoundClTrackerFieldId = f.Id;
+                    State().blameCfg.LastFoundClTrackerFieldId = f.Id;
                     SyncJiraBlameAuxFieldBufsFromCfg();
                 }
                 PopBlameLinkTextOnly();
@@ -1268,19 +1283,19 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             ImGui::EndCombo();
         }
     }
-    ImGui::InputText("Last Found CL field id (optional)", g_lastFoundClFieldBuf, sizeof(g_lastFoundClFieldBuf));
+    ImGui::InputText("Last Found CL field id (optional)", State().lastFoundClFieldBuf, sizeof(State().lastFoundClFieldBuf));
     ImGui::TextUnformatted("Last occurrences date (Jira)");
     ImGui::TextDisabled("When set, opening Blame on an issue pre-fills the \"or day\" date from this field (ISO or "
                         "parseable date). Otherwise the date stays empty. Autoselect matches \"Last Occurrences\" or "
                         "\"Last Occurances\".");
     {
         std::string comboPreview = "(none)";
-        if (!g_blameCfg.LastOccurrencesTrackerFieldId.empty()) {
-            const TrackerField* mf = app.FindFieldById(g_blameCfg.LastOccurrencesTrackerFieldId);
+        if (!State().blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+            const TrackerField* mf = app.FindFieldById(State().blameCfg.LastOccurrencesTrackerFieldId);
             if (mf && !mf->Name.empty()) {
                 comboPreview = mf->Name + " (" + mf->Id + ")";
             } else {
-                comboPreview = g_blameCfg.LastOccurrencesTrackerFieldId;
+                comboPreview = State().blameCfg.LastOccurrencesTrackerFieldId;
             }
         }
         PushBlameLinkButtonColors(theme);
@@ -1292,18 +1307,18 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             }
         } else {
             PushBlameLinkTextOnly(theme);
-            if (ImGui::Selectable("(none)", g_blameCfg.LastOccurrencesTrackerFieldId.empty())) {
-                g_blameCfg.LastOccurrencesTrackerFieldId.clear();
+            if (ImGui::Selectable("(none)", State().blameCfg.LastOccurrencesTrackerFieldId.empty())) {
+                State().blameCfg.LastOccurrencesTrackerFieldId.clear();
                 SyncJiraBlameAuxFieldBufsFromCfg();
             }
             PopBlameLinkTextOnly();
             for (const auto& f : app.GetAvailableFields()) {
-                const bool sel = (f.Id == g_blameCfg.LastOccurrencesTrackerFieldId);
+                const bool sel = (f.Id == State().blameCfg.LastOccurrencesTrackerFieldId);
                 const std::string lbl = f.Name.empty() ? f.Id : (f.Name + std::string(" (") + f.Id + ")");
                 const std::string lblWithId = lbl + "##lastocc_field_" + f.Id;
                 PushBlameLinkTextOnly(theme);
                 if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
-                    g_blameCfg.LastOccurrencesTrackerFieldId = f.Id;
+                    State().blameCfg.LastOccurrencesTrackerFieldId = f.Id;
                     SyncJiraBlameAuxFieldBufsFromCfg();
                 }
                 PopBlameLinkTextOnly();
@@ -1311,69 +1326,69 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
             ImGui::EndCombo();
         }
     }
-    ImGui::InputText("Last occurrences field id (optional)", g_lastOccurrencesFieldBuf,
-                     sizeof(g_lastOccurrencesFieldBuf));
+    ImGui::InputText("Last occurrences field id (optional)", State().lastOccurrencesFieldBuf,
+                     sizeof(State().lastOccurrencesFieldBuf));
     ImGui::TextDisabled("Saved with Save settings.");
-    ImGui::InputText("Path remap from", g_remapFrom, sizeof(g_remapFrom));
-    ImGui::InputText("Path remap to", g_remapTo, sizeof(g_remapTo));
+    ImGui::InputText("Path remap from", State().remapFrom, sizeof(State().remapFrom));
+    ImGui::InputText("Path remap to", State().remapTo, sizeof(State().remapTo));
     PushBlameLinkButtonColors(theme);
     if (ImGui::Button("Save settings")) {
-        g_blameCfg.P4Executable = g_p4Exe;
-        g_blameCfg.P4VcExecutable = g_p4vcExe;
-        g_blameCfg.TimelapseCommandTemplate = g_timeTpl;
-        g_blameCfg.ChangeCommandTemplate = g_changeTpl;
-        g_blameCfg.AiChatUrl = g_aiUrl;
-        g_blameCfg.DefaultMaxFrames = g_maxFramesVal;
-        g_blameCfg.CallstackTrackerFieldId.assign(g_callstackTrackerFieldBuf);
-        g_blameCfg.LastFoundClTrackerFieldId.assign(g_lastFoundClFieldBuf);
-        g_blameCfg.LastOccurrencesTrackerFieldId.assign(g_lastOccurrencesFieldBuf);
-        g_blameCfg.PathRemaps.clear();
-        if (g_remapFrom[0] != '\0') {
-            g_blameCfg.PathRemaps.push_back({g_remapFrom, g_remapTo});
+        State().blameCfg.P4Executable = State().p4Exe;
+        State().blameCfg.P4VcExecutable = State().p4vcExe;
+        State().blameCfg.TimelapseCommandTemplate = State().timeTpl;
+        State().blameCfg.ChangeCommandTemplate = State().changeTpl;
+        State().blameCfg.AiChatUrl = State().aiUrl;
+        State().blameCfg.DefaultMaxFrames = State().maxFramesVal;
+        State().blameCfg.CallstackTrackerFieldId.assign(State().callstackTrackerFieldBuf);
+        State().blameCfg.LastFoundClTrackerFieldId.assign(State().lastFoundClFieldBuf);
+        State().blameCfg.LastOccurrencesTrackerFieldId.assign(State().lastOccurrencesFieldBuf);
+        State().blameCfg.PathRemaps.clear();
+        if (State().remapFrom[0] != '\0') {
+            State().blameCfg.PathRemaps.push_back({State().remapFrom, State().remapTo});
         }
-        g_blameCfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(g_ignoreBuf.data()));
-        ConfigManager::SaveBlameAnalysis(g_blameCfg);
+        State().blameCfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
+        ConfigManager::SaveBlameAnalysis(State().blameCfg);
         SyncCallstackTrackerFieldBufFromCfg();
         SyncJiraBlameAuxFieldBufsFromCfg();
         LogBlameP4PathsIfChanged("save_settings");
-        g_lastUiStatus = "Blame settings saved.";
+        State().lastUiStatus = "Blame settings saved.";
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::SetTooltip("Write blame options (P4 paths, Jira field, remaps, etc.) to smatchet_config.json.");
     }
     ImGui::SameLine();
     if (ImGui::Button("Reload settings")) {
-        g_blameCfg = ConfigManager::LoadBlameAnalysis();
-        CopyToBuffer(g_p4Exe, g_blameCfg.P4Executable);
-        CopyToBuffer(g_p4vcExe, g_blameCfg.P4VcExecutable);
-        CopyToBuffer(g_timeTpl, g_blameCfg.TimelapseCommandTemplate);
-        CopyToBuffer(g_changeTpl, g_blameCfg.ChangeCommandTemplate);
-        CopyToBuffer(g_aiUrl, g_blameCfg.AiChatUrl);
-        g_maxFramesVal = g_blameCfg.DefaultMaxFrames;
+        State().blameCfg = ConfigManager::LoadBlameAnalysis();
+        CopyToBuffer(State().p4Exe, State().blameCfg.P4Executable);
+        CopyToBuffer(State().p4vcExe, State().blameCfg.P4VcExecutable);
+        CopyToBuffer(State().timeTpl, State().blameCfg.TimelapseCommandTemplate);
+        CopyToBuffer(State().changeTpl, State().blameCfg.ChangeCommandTemplate);
+        CopyToBuffer(State().aiUrl, State().blameCfg.AiChatUrl);
+        State().maxFramesVal = State().blameCfg.DefaultMaxFrames;
         size_t off = 0;
-        for (const auto& kw : g_blameCfg.DefaultIgnoreKeywords) {
-            if (off + kw.size() + 2 >= g_ignoreBuf.size()) {
+        for (const auto& kw : State().blameCfg.DefaultIgnoreKeywords) {
+            if (off + kw.size() + 2 >= State().ignoreBuf.size()) {
                 break;
             }
             if (off > 0) {
-                g_ignoreBuf[off++] = '\n';
+                State().ignoreBuf[off++] = '\n';
             }
             for (char c : kw) {
-                if (off + 1 >= g_ignoreBuf.size()) {
+                if (off + 1 >= State().ignoreBuf.size()) {
                     break;
                 }
-                g_ignoreBuf[off++] = static_cast<char>(c);
+                State().ignoreBuf[off++] = static_cast<char>(c);
             }
         }
-        if (off < g_ignoreBuf.size()) {
-            g_ignoreBuf[off] = '\0';
+        if (off < State().ignoreBuf.size()) {
+            State().ignoreBuf[off] = '\0';
         }
-        if (g_blameCfg.PathRemaps.empty()) {
-            g_remapFrom[0] = '\0';
-            g_remapTo[0] = '\0';
+        if (State().blameCfg.PathRemaps.empty()) {
+            State().remapFrom[0] = '\0';
+            State().remapTo[0] = '\0';
         } else {
-            CopyToBuffer(g_remapFrom, g_blameCfg.PathRemaps[0].FromPrefix);
-            CopyToBuffer(g_remapTo, g_blameCfg.PathRemaps[0].ToPrefix);
+            CopyToBuffer(State().remapFrom, State().blameCfg.PathRemaps[0].FromPrefix);
+            CopyToBuffer(State().remapTo, State().blameCfg.PathRemaps[0].ToPrefix);
         }
         SyncCallstackTrackerFieldBufFromCfg();
         SyncJiraBlameAuxFieldBufsFromCfg();
@@ -1404,36 +1419,36 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
         return;
     }
     HydrateBlameCfgDiskOnce();
-    g_maxFramesVal = g_blameCfg.DefaultMaxFrames;
-    CopyToBuffer(g_p4Exe, g_blameCfg.P4Executable);
-    CopyToBuffer(g_p4vcExe, g_blameCfg.P4VcExecutable);
-    CopyToBuffer(g_timeTpl, g_blameCfg.TimelapseCommandTemplate);
-    CopyToBuffer(g_changeTpl, g_blameCfg.ChangeCommandTemplate);
-    CopyToBuffer(g_aiUrl, g_blameCfg.AiChatUrl);
+    State().maxFramesVal = State().blameCfg.DefaultMaxFrames;
+    CopyToBuffer(State().p4Exe, State().blameCfg.P4Executable);
+    CopyToBuffer(State().p4vcExe, State().blameCfg.P4VcExecutable);
+    CopyToBuffer(State().timeTpl, State().blameCfg.TimelapseCommandTemplate);
+    CopyToBuffer(State().changeTpl, State().blameCfg.ChangeCommandTemplate);
+    CopyToBuffer(State().aiUrl, State().blameCfg.AiChatUrl);
     size_t off = 0;
-    for (const auto& kw : g_blameCfg.DefaultIgnoreKeywords) {
-        if (off + kw.size() + 2 >= g_ignoreBuf.size()) {
+    for (const auto& kw : State().blameCfg.DefaultIgnoreKeywords) {
+        if (off + kw.size() + 2 >= State().ignoreBuf.size()) {
             break;
         }
         if (off > 0) {
-            g_ignoreBuf[off++] = '\n';
+            State().ignoreBuf[off++] = '\n';
         }
         for (char c : kw) {
-            if (off + 1 >= g_ignoreBuf.size()) {
+            if (off + 1 >= State().ignoreBuf.size()) {
                 break;
             }
-            g_ignoreBuf[off++] = static_cast<char>(c);
+            State().ignoreBuf[off++] = static_cast<char>(c);
         }
     }
-    if (off < g_ignoreBuf.size()) {
-        g_ignoreBuf[off] = '\0';
+    if (off < State().ignoreBuf.size()) {
+        State().ignoreBuf[off] = '\0';
     }
-    if (g_blameCfg.PathRemaps.empty()) {
-        g_remapFrom[0] = '\0';
-        g_remapTo[0] = '\0';
+    if (State().blameCfg.PathRemaps.empty()) {
+        State().remapFrom[0] = '\0';
+        State().remapTo[0] = '\0';
     } else {
-        CopyToBuffer(g_remapFrom, g_blameCfg.PathRemaps[0].FromPrefix);
-        CopyToBuffer(g_remapTo, g_blameCfg.PathRemaps[0].ToPrefix);
+        CopyToBuffer(State().remapFrom, State().blameCfg.PathRemaps[0].FromPrefix);
+        CopyToBuffer(State().remapTo, State().blameCfg.PathRemaps[0].ToPrefix);
     }
     SyncCallstackTrackerFieldBufFromCfg();
     SyncJiraBlameAuxFieldBufsFromCfg();
@@ -1449,7 +1464,7 @@ void BlameAnalysisUi::DrawBlamePreferencesTab(const AppController& app) {
     ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Blame Analysis (stored in "
                        "smatchet_config.json).");
     ImGui::Spacing();
-    const BlameUiThemeColors& theme = g_blameCfg.UiColors;
+    const BlameUiThemeColors& theme = State().blameCfg.UiColors;
     DrawBlamePersistedOptionsForm(app, theme);
 }
 
@@ -1476,12 +1491,12 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         TryFillBeforeChangelistAndDateFromJira(app, selectedJiraIssueKey);
     }
 
-    if (g_blamePendingAutoProcess && !g_worker.Running.load()) {
+    if (State().blamePendingAutoProcess && !State().worker.Running.load()) {
         RunBlameProcessFromBuffers();
-        g_blamePendingAutoProcess = false;
+        State().blamePendingAutoProcess = false;
     }
 
-    const BlameUiThemeColors& theme = g_blameCfg.UiColors;
+    const BlameUiThemeColors& theme = State().blameCfg.UiColors;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos, ImGuiCond_Always);
@@ -1527,8 +1542,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         if (ImGui::Button("Ask AI")) {
             const std::string payload = BuildAiExport();
             ImGui::SetClipboardText(payload.c_str());
-            if (g_aiUrl[0] != '\0') {
-                app.OpenUrl(std::string(g_aiUrl));
+            if (State().aiUrl[0] != '\0') {
+                app.OpenUrl(std::string(State().aiUrl));
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -1539,7 +1554,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         ImGui::SameLine();
         if (ImGui::Button("Export JSON")) {
             ImGui::SetClipboardText(BuildBlameExportJson().c_str());
-            g_lastUiStatus = "Blame JSON export copied to clipboard.";
+            State().lastUiStatus = "Blame JSON export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Copy structured blame export JSON (entries + nearby lines) to clipboard.");
@@ -1547,7 +1562,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         ImGui::SameLine();
         if (ImGui::Button("Export CSV")) {
             ImGui::SetClipboardText(BuildBlameExportCsv().c_str());
-            g_lastUiStatus = "Blame CSV export copied to clipboard.";
+            State().lastUiStatus = "Blame CSV export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Copy one-row-per-entry blame export CSV to clipboard.");
@@ -1582,25 +1597,25 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         }
     }
 
-    if (!g_lastUiStatus.empty()) {
-        ImGui::TextWrapped("%s", g_lastUiStatus.c_str());
+    if (!State().lastUiStatus.empty()) {
+        ImGui::TextWrapped("%s", State().lastUiStatus.c_str());
         ImGui::Separator();
     }
 
     std::vector<BlameRow> rowsSnap;
     size_t nrow = 0;
     {
-        std::lock_guard<std::mutex> lk(g_displayMutex);
-        rowsSnap = g_displayRows;
+        std::lock_guard<std::mutex> lk(State().displayMutex);
+        rowsSnap = State().displayRows;
         nrow = rowsSnap.size();
     }
 
-    const bool busy = g_worker.Running.load();
-    const int prog = g_worker.Progress.load();
+    const bool busy = State().worker.Running.load();
+    const int prog = State().worker.Progress.load();
 
     if (ImGui::BeginTabBar("blame_main_tabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Callstack")) {
-            const bool streamlinedHide = g_blameStreamlinedFromGrid && !g_showRaw;
+            const bool streamlinedHide = State().blameStreamlinedFromGrid && !State().showRaw;
 
             ImGui::Text("Callstack Frames: %zu", nrow);
             {
@@ -1613,9 +1628,9 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 if (!streamlinedHide) {
                     ImGui::SameLine();
                     PushBlameLinkButtonColors(theme);
-                    if (g_showRaw) {
+                    if (State().showRaw) {
                         if (ImGui::Button("Show Table", ImVec2(callstackViewBtnW, 0.f))) {
-                            g_showRaw = false;
+                            State().showRaw = false;
                         }
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                             ImGui::SetTooltip(
@@ -1624,7 +1639,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                         }
                     } else {
                         if (ImGui::Button("Show Raw Text", ImVec2(callstackViewBtnW, 0.f))) {
-                            g_showRaw = true;
+                            State().showRaw = true;
                         }
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                             ImGui::SetTooltip(
@@ -1637,7 +1652,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     ImGui::SameLine();
                     PushBlameLinkButtonColors(theme);
                     if (ImGui::Button("Show raw callstack…", ImVec2(callstackViewBtnW, 0.f))) {
-                        g_showRaw = true;
+                        State().showRaw = true;
                     }
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                         ImGui::SetTooltip(
@@ -1648,7 +1663,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 }
             }
 
-            if (!g_showRaw && nrow > 0) {
+            if (!State().showRaw && nrow > 0) {
                 ImGui::TextDisabled(
                     "Table: left-click the # column to open that frame in an Entry tab; right-click # for a menu "
                     "(Copy as TSV).");
@@ -1672,7 +1687,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 }
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(100.f);
-                ImGui::InputText("##before_cl_optional", g_atClBuf, sizeof(g_atClBuf));
+                ImGui::InputText("##before_cl_optional", State().atClBuf, sizeof(State().atClBuf));
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                     ImGui::SetTooltip("Perforce changelist number only (decimal digits).");
                 }
@@ -1685,21 +1700,21 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                         "on that day (server date window) is written into the field on the left.");
                 }
                 ImGui::SameLine();
-                if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##blame_before_day", g_beforeDateIso, false,
+                if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##blame_before_day", State().beforeDateIso, false,
                                                                          228.f)) {
                     ParsedJiraDateTime parsed;
-                    if (TryParseJiraDateTime(g_beforeDateIso, parsed)) {
+                    if (TryParseJiraDateTime(State().beforeDateIso, parsed)) {
                         std::string cl;
                         std::string err;
-                        if (P4FirstSubmittedChangelistOnCalendarDay(g_blameCfg, parsed.Year, parsed.Month, parsed.Day,
+                        if (P4FirstSubmittedChangelistOnCalendarDay(State().blameCfg, parsed.Year, parsed.Month, parsed.Day,
                                                                     cl, err)) {
-                            std::snprintf(g_atClBuf, sizeof(g_atClBuf), "%s", cl.c_str());
-                            g_lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
+                            std::snprintf(State().atClBuf, sizeof(State().atClBuf), "%s", cl.c_str());
+                            State().lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
                         } else {
-                            g_lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
+                            State().lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
                         }
                     } else {
-                        g_lastUiStatus = "Invalid date from picker.";
+                        State().lastUiStatus = "Invalid date from picker.";
                     }
                 }
 
@@ -1715,7 +1730,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel") && busy) {
-                    g_worker.Cancel = true;
+                    State().worker.Cancel = true;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && busy) {
                     ImGui::SetTooltip("Stop the in-progress blame worker.");
@@ -1724,7 +1739,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             } else if (busy) {
                 PushBlameLinkButtonColors(theme);
                 if (ImGui::Button("Cancel") && busy) {
-                    g_worker.Cancel = true;
+                    State().worker.Cancel = true;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                     ImGui::SetTooltip("Stop the in-progress blame worker.");
@@ -1735,8 +1750,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             float rawFieldW = -1.f;
             float rawMaxLineW = 0.f;
             if (!streamlinedHide) {
-                if (g_showRaw) {
-                    for (const char* p = g_callstackBuf; *p != '\0';) {
+                if (State().showRaw) {
+                    for (const char* p = State().callstackBuf; *p != '\0';) {
                         const char* nl = std::strchr(p, '\n');
                         const char* end = nl ? nl : p + std::strlen(p);
                         const ImVec2 sz = ImGui::CalcTextSize(p, end);
@@ -1750,21 +1765,21 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     rawFieldW = std::min(std::max(rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f, 120.f), cap);
                 }
 
-                if (g_showRaw) {
+                if (State().showRaw) {
                     ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
                                       ImGuiWindowFlags_HorizontalScrollbar);
                     const ImVec2 inner = ImGui::GetContentRegionAvail();
                     const float inputW = std::max(inner.x, rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f + 8.f);
-                    ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
+                    ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
                                               ImVec2(inputW, inner.y), ImGuiInputTextFlags_ReadOnly);
                     ImGui::EndChild();
                 } else {
-                    ImGui::InputTextMultiline("##callstackpaste", g_callstackBuf, sizeof(g_callstackBuf),
+                    ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
                                               ImVec2(-1.f, 120.f), 0);
                 }
             }
 
-            if (!g_showRaw && nrow > 0) {
+            if (!State().showRaw && nrow > 0) {
                 // Keep Process / callstack editor above a dedicated scroll region. A tall in-table
                 // ScrollY made the whole tab body exceed the viewport so the window scroll bar hid
                 // the controls at the top (Process looked "missing").
@@ -1799,8 +1814,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                               ImVec2(0.f, rowH));
                         PopBlameLinkTextOnly();
                         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                            g_pendingSelectEntryIndex = static_cast<int>(i);
-                            EnsureDetailLoading(i, g_blameCfg, std::string(g_atClBuf));
+                            State().pendingSelectEntryIndex = static_cast<int>(i);
+                            EnsureDetailLoading(i, State().blameCfg, std::string(State().atClBuf));
                         }
                         if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
                             ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -1847,7 +1862,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             const std::string shortLoc = shortPath + ":" + std::to_string(row.Parsed.LineNumber);
                             PushBlameLinkTextOnly(theme);
                             if (ImGui::SelectableRaw(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
-                                LaunchP4VcLike(g_blameCfg, g_timeTpl, g_changeTpl, true, row.PathForP4,
+                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, true, row.PathForP4,
                                                row.Parsed.LineNumber, row.Blame.Changelist);
                             }
                             PopBlameLinkTextOnly();
@@ -1922,11 +1937,11 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                                 } else if (row.Blame.Changelist.empty()) {
                                     ImGui::SetTooltip("No changelist on this row.");
                                 } else {
-                                    DrawClTooltipAsync(row.Blame.Changelist, g_blameCfg, theme);
+                                    DrawClTooltipAsync(row.Blame.Changelist, State().blameCfg, theme);
                                 }
                             }
                             if (ImGui::IsItemClicked() && !pending && !row.Blame.Changelist.empty()) {
-                                LaunchP4VcLike(g_blameCfg, g_timeTpl, g_changeTpl, false, row.PathForP4,
+                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, false, row.PathForP4,
                                                row.Parsed.LineNumber, row.Blame.Changelist);
                             }
                         }
@@ -1960,27 +1975,27 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             char tabName[80];
             std::snprintf(tabName, sizeof(tabName), "Entry %zu##BlameEntry%zu", ti + 1, ti);
             ImGuiTabItemFlags tflags = ImGuiTabItemFlags_None;
-            if (g_pendingSelectEntryIndex == static_cast<int>(ti)) {
+            if (State().pendingSelectEntryIndex == static_cast<int>(ti)) {
                 tflags = ImGuiTabItemFlags_SetSelected;
             }
             if (ImGui::BeginTabItem(tabName, nullptr, tflags)) {
-                if (g_pendingSelectEntryIndex == static_cast<int>(ti)) {
-                    g_pendingSelectEntryIndex = -1;
+                if (State().pendingSelectEntryIndex == static_cast<int>(ti)) {
+                    State().pendingSelectEntryIndex = -1;
                 }
-                EnsureDetailLoading(ti, g_blameCfg, std::string(g_atClBuf));
+                EnsureDetailLoading(ti, State().blameCfg, std::string(State().atClBuf));
                 BlameRow row = rowsSnap[ti];
                 ImGui::Text("File: %s", row.PathForP4.c_str());
                 ImGui::Text("Target Line: %d", row.Parsed.LineNumber);
 
                 int phase = 0;
-                if (ti < g_detailPhase.size()) {
-                    phase = g_detailPhase[ti];
+                if (ti < State().detailPhase.size()) {
+                    phase = State().detailPhase[ti];
                 }
                 if (phase == 1) {
                     ImGui::TextUnformatted("Loading annotated file...");
-                } else if (ti < g_detailData.size() && !g_detailData[ti].Error.empty()) {
-                    ImGui::TextColored(ThCol(theme.StatusError), "%s", g_detailData[ti].Error.c_str());
-                } else if (ti < g_detailData.size() &&
+                } else if (ti < State().detailData.size() && !State().detailData[ti].Error.empty()) {
+                    ImGui::TextColored(ThCol(theme.StatusError), "%s", State().detailData[ti].Error.c_str());
+                } else if (ti < State().detailData.size() &&
                            ImGui::BeginTable("ann", 6,
                                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                                  ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
@@ -1993,7 +2008,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
                     const int targetLine = row.Parsed.LineNumber;
-                    const std::vector<P4AnnotatedLine>& lines = g_detailData[ti].Lines;
+                    const std::vector<P4AnnotatedLine>& lines = State().detailData[ti].Lines;
                     const ImU32 hlU32 = ImGui::ColorConvertFloat4ToU32(ThCol(theme.FindHighlight));
                     const float annRowHitH = ImGui::GetTextLineHeightWithSpacing();
                     auto annRowOpenCopyMenu = []() {
@@ -2063,12 +2078,12 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             PushBlameLinkTextOnly(theme);
                             if (ImGui::SelectableRaw(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
                                                      ImVec2(clCellW, annRowHitH))) {
-                                LaunchP4VcLike(g_blameCfg, g_timeTpl, g_changeTpl, false, row.PathForP4, ln.SourceLine,
+                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, false, row.PathForP4, ln.SourceLine,
                                                ln.Changelist);
                             }
                             PopBlameLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                DrawClTooltipAsync(ln.Changelist, g_blameCfg, theme);
+                                DrawClTooltipAsync(ln.Changelist, State().blameCfg, theme);
                             }
                         }
                         annRowOpenCopyMenu();
@@ -2157,9 +2172,9 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             ImGui::EndPopup();
                         }
 
-                        if (hl && ti < g_detailScrolled.size() && !g_detailScrolled[ti]) {
+                        if (hl && ti < State().detailScrolled.size() && !State().detailScrolled[ti]) {
                             ImGui::SetScrollHereY(0.5f);
-                            g_detailScrolled[ti] = true;
+                            State().detailScrolled[ti] = true;
                         }
 
                         ImGui::PopID();
@@ -2177,7 +2192,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
         const TrackerConfig cfg = ConfigManager::Load();
         const bool readOnlyMode = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
-        ImGui::TextUnformatted(g_assignTitle.c_str());
+        ImGui::TextUnformatted(State().assignTitle.c_str());
         ImGui::Separator();
         if (cfg.ReadOnlyMode) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.82f, 0.22f, 1.0f));
@@ -2201,7 +2216,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         if (selectedJiraIssueKey.empty()) {
             ImGui::TextDisabled("Select a Jira issue in the grid.");
         } else {
-            const bool hasJiraAccount = g_assignHasJiraAccount && !g_assignAccountId.empty();
+            const bool hasJiraAccount = State().assignHasJiraAccount && !State().assignAccountId.empty();
             PushBlameLinkTextOnly(theme);
             ImGui::BeginDisabled(readOnlyMode);
             if (ImGui::Selectable("Assign issue to user", false)) {
@@ -2209,17 +2224,17 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 const TrackerField* f = app.FindFieldById("assignee");
                 if (!hasJiraAccount) {
                     LOG_ERROR("Blame UI: assign skipped — no Jira account match for this Perforce user.");
-                    g_lastUiStatus = "No Jira user match for assign.";
+                    State().lastUiStatus = "No Jira user match for assign.";
                 } else if (!f) {
                     LOG_ERROR("Blame UI: assignee field not in catalog.");
-                    g_lastUiStatus = "assignee field not in catalog.";
-                } else if (app.SubmitFieldEdit(selectedJiraIssueKey, *f, {g_assignAccountId}, err)) {
+                    State().lastUiStatus = "assignee field not in catalog.";
+                } else if (app.SubmitFieldEdit(selectedJiraIssueKey, *f, {State().assignAccountId}, err)) {
                     LOG_INFO("Blame UI: assignee set on %s", selectedJiraIssueKey.c_str());
-                    g_lastUiStatus = "Assignee updated.";
+                    State().lastUiStatus = "Assignee updated.";
                     ImGui::CloseCurrentPopup();
                 } else {
                     LOG_ERROR("Blame UI: assign failed: %s", err.c_str());
-                    g_lastUiStatus = err;
+                    State().lastUiStatus = err;
                 }
             }
             ImGui::EndDisabled();
@@ -2234,15 +2249,15 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             if (ImGui::Selectable("Add blame context comment", false)) {
                 std::string err;
                 if (app.AddIssueCommentBlameContext(
-                        selectedJiraIssueKey, g_assignRow.Blame.User, g_assignRow.Parsed.Function,
-                        g_assignRow.PathForP4, g_assignRow.Parsed.LineNumber, g_assignRow.Blame.Changelist,
-                        g_assignRow.Blame.Date, g_assignRow.Blame.Approximate, g_assignRow.Blame.LineSnippet, err)) {
+                        selectedJiraIssueKey, State().assignRow.Blame.User, State().assignRow.Parsed.Function,
+                        State().assignRow.PathForP4, State().assignRow.Parsed.LineNumber, State().assignRow.Blame.Changelist,
+                        State().assignRow.Blame.Date, State().assignRow.Blame.Approximate, State().assignRow.Blame.LineSnippet, err)) {
                     LOG_INFO("Blame UI: posted blame context comment for %s.", selectedJiraIssueKey.c_str());
-                    g_lastUiStatus = "Blame context comment posted.";
+                    State().lastUiStatus = "Blame context comment posted.";
                     ImGui::CloseCurrentPopup();
                 } else {
                     LOG_ERROR("Blame UI: comment failed: %s", err.c_str());
-                    g_lastUiStatus = err;
+                    State().lastUiStatus = err;
                 }
             }
             ImGui::EndDisabled();
@@ -2260,12 +2275,12 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     }
                     if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
                         std::string err;
-                        std::string commentBody = BuildBlameQuickCommentTemplate(selectedJiraIssueKey, t.Id, g_assignRow, jiraCfg.BlameCommentTemplates);
+                        std::string commentBody = BuildBlameQuickCommentTemplate(selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.BlameCommentTemplates);
                         if (app.AddIssueCommentPlain(selectedJiraIssueKey, commentBody, err)) {
-                            g_lastUiStatus = "Posted '" + t.Title + "' comment.";
+                            State().lastUiStatus = "Posted '" + t.Title + "' comment.";
                             ImGui::CloseCurrentPopup();
                         } else {
-                            g_lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
+                            State().lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
                         }
                     }
                     ImGui::PopID();
@@ -2288,19 +2303,19 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     err = "assignee field not in catalog.";
                     assigned = false;
                 } else {
-                    assigned = app.SubmitFieldEdit(selectedJiraIssueKey, *f, {g_assignAccountId}, err);
+                    assigned = app.SubmitFieldEdit(selectedJiraIssueKey, *f, {State().assignAccountId}, err);
                 }
                 if (assigned &&
                     app.AddIssueCommentBlameContext(
-                        selectedJiraIssueKey, g_assignRow.Blame.User, g_assignRow.Parsed.Function,
-                        g_assignRow.PathForP4, g_assignRow.Parsed.LineNumber, g_assignRow.Blame.Changelist,
-                        g_assignRow.Blame.Date, g_assignRow.Blame.Approximate, g_assignRow.Blame.LineSnippet, err)) {
+                        selectedJiraIssueKey, State().assignRow.Blame.User, State().assignRow.Parsed.Function,
+                        State().assignRow.PathForP4, State().assignRow.Parsed.LineNumber, State().assignRow.Blame.Changelist,
+                        State().assignRow.Blame.Date, State().assignRow.Blame.Approximate, State().assignRow.Blame.LineSnippet, err)) {
                     LOG_INFO("Blame UI: assigned %s and posted blame context comment.", selectedJiraIssueKey.c_str());
-                    g_lastUiStatus = "Assigned and commented.";
+                    State().lastUiStatus = "Assigned and commented.";
                     ImGui::CloseCurrentPopup();
                 } else {
                     LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
-                    g_lastUiStatus = err;
+                    State().lastUiStatus = err;
                 }
             }
             ImGui::EndDisabled();
@@ -2327,25 +2342,25 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         ImGui::EndPopup();
     }
 
-    if (g_openProfileModal) {
+    if (State().openProfileModal) {
         ImGui::OpenPopup("Jira user profile");
-        g_openProfileModal = false;
+        State().openProfileModal = false;
     }
     if (ImGui::BeginPopupModal("Jira user profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (!g_profileErr.empty() && g_profileName.empty()) {
-            ImGui::TextUnformatted(g_profileErr.c_str());
+        if (!State().profileErr.empty() && State().profileName.empty()) {
+            ImGui::TextUnformatted(State().profileErr.c_str());
         } else {
-            ImGui::Text("Name: %s", g_profileName.c_str());
-            ImGui::Text("Email: %s", g_profileEmail.c_str());
-            if (!g_profileErr.empty()) {
-                ImGui::TextDisabled("%s", g_profileErr.c_str());
+            ImGui::Text("Name: %s", State().profileName.c_str());
+            ImGui::Text("Email: %s", State().profileEmail.c_str());
+            if (!State().profileErr.empty()) {
+                ImGui::TextDisabled("%s", State().profileErr.c_str());
             }
             ImGui::Separator();
             ImGui::TextUnformatted("Groups (best effort):");
-            if (g_profileGroups.empty()) {
+            if (State().profileGroups.empty()) {
                 ImGui::TextDisabled("(none or not permitted)");
             } else {
-                for (const auto& gname : g_profileGroups) {
+                for (const auto& gname : State().profileGroups) {
                     ImGui::BulletText("%s", gname.c_str());
                 }
             }
@@ -2366,7 +2381,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
 bool BlameRowHasNonEmptyCallstackField(const AppController& app, const CachedTicket& ticket) {
     HydrateBlameCfgDiskOnce();
-    std::string fid = g_blameCfg.CallstackTrackerFieldId;
+    std::string fid = State().blameCfg.CallstackTrackerFieldId;
     if (fid.empty()) {
         const auto& fields = app.GetAvailableFields();
         const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
@@ -2390,8 +2405,8 @@ void OpenBlameAnalysisForGridIssue(AppController& app, bool& showBlameAnalysis, 
     MaybeAutoselectLastFoundClTrackerField(app);
     MaybeAutoselectLastOccurrencesTrackerField(app);
     gridState.SetActiveIssue(issueKey);
-    g_blameStreamlinedFromGrid = true;
-    g_blamePendingAutoProcess = true;
+    State().blameStreamlinedFromGrid = true;
+    State().blamePendingAutoProcess = true;
     showBlameAnalysis = true;
 }
 
