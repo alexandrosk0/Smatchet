@@ -1,5 +1,6 @@
 #include "PlaneClient.h"
 #include "MarkdownConvert.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -774,21 +775,40 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
         headers.insert({kv.first, kv.second});
     }
 
-    auto resp = cpr::Get(cpr::Url{url}, headers, cpr::Timeout{kTrackerProbeOverallTimeoutMs});
-    const long sc = resp.status_code;
+    // Route through TrackerGetLogged so NetworkUsageTracker + body-trace logging stay in the
+    // loop (was a §2.1 P1 bug: raw cpr::Get bypassed both). Classification via TrackerError
+    // also fixes the second §2.1 P1: a 404 from a stale base URL was wrongly TransportDown.
+    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs,
+                                                kTrackerProbeOverallTimeoutMs);
+    const TrackerHttpResult classified = ClassifyTrackerResponse(resp);
 
-    if (sc == 200) {
+    switch (classified.Error.Kind) {
+    case TrackerErrorKind::None:
         out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
         out.Diagnostic = "HTTP 200";
-    } else if (sc == 401 || sc == 403) {
+        break;
+    case TrackerErrorKind::Auth:
         out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        out.Diagnostic = "HTTP " + std::to_string(sc) + " (Auth Error)";
-    } else if (sc >= 500) {
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Auth Error)";
+        break;
+    case TrackerErrorKind::ServerError:
         out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
-        out.Diagnostic = "HTTP " + std::to_string(sc) + " (Server Error)";
-    } else {
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Server Error)";
+        break;
+    case TrackerErrorKind::NotFound:
+    case TrackerErrorKind::InvalidRequest:
+    case TrackerErrorKind::RateLimited:
+        // Reachable, but the response indicates a config / payload issue rather than transport
+        // failure. Surfaces as the auth-or-config banner so a stale base URL or rate-limited
+        // probe doesn't flip the connectivity banner to "offline".
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status());
+        break;
+    case TrackerErrorKind::Transport:
+    default:
         out.Kind = TrackerReachabilityProbeKind::TransportDown;
-        out.Diagnostic = resp.error.message.empty() ? ("HTTP " + std::to_string(sc)) : resp.error.message;
+        out.Diagnostic = resp.error.message.empty() ? classified.Error.Detail : resp.error.message;
+        break;
     }
     return out;
 }
