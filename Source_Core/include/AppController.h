@@ -300,7 +300,8 @@ class AppController {
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
     std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
     bool IsStreamingSyncActive() const {
-        return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() || isDeletingStale_;
+        return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() ||
+               isDeletingStale_.load();
     }
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */

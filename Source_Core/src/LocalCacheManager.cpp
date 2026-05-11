@@ -115,7 +115,11 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
 }
 
 SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql) {
-    if (!slot) slot = std::make_unique<SQLite::Statement>(db, sql);
+    if (!slot) {
+        // Freshly prepared statements have no bindings and no execution state to reset.
+        slot = std::make_unique<SQLite::Statement>(db, sql);
+        return *slot;
+    }
     slot->reset();
     slot->clearBindings();
     return *slot;

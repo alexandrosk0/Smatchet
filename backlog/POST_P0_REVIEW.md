@@ -113,25 +113,25 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 24. 🟡 **PARTIAL (commit pending in `review/logger-hardening`).** `FlushFileSink` no longer lies (item 6 above) so the public surface is honest now. Still has no in-tree caller — a future wire-up into the crash handler / signal path or into `~AppController` (to ensure logs are flushed before SQLite/MCP shutdown) closes this. Not a bug as it stands.
 
-25. ⏳ **`isDeletingStale_` style consistency** — `AppController.h:298`. Reads via implicit `operator bool` while sibling `activeStreamingSync_.Active.load()` uses `.load()` on the same line. Pick one form to avoid the next reader assuming `isDeletingStale_` is still a plain `bool`.
+25. ✅ **DONE.** All reads/writes of `isDeletingStale_` now go through explicit `.load()` / `.store()` to match the sibling atomics on the same expressions.
 
-26. ⏳ **`s_lastCallstackIssueKey` missed in `BlameAnalysisUiState` consolidation** — `BlameAnalysisUi.cpp:137`. A single straggler file-static survived the merge into `State()`. **Fix:** move it into the struct.
+26. ✅ **DONE.** Verified that `lastCallstackIssueKey` is now a member of the `BlameState` struct (referenced as `State().lastCallstackIssueKey`); no `s_lastCallstack…` file-static remains in `BlameAnalysisUi.cpp`. Resolved by an earlier change that wasn't reflected in this row.
 
 ### From PR #7
 
-27. ⏳ **`ScopedFileLock::Acquire` failure path on Windows is silent** — `ConfigManager.cpp:193-196`. `LockFileEx` failure closes the handle without logging; subsequent IO proceeds without exclusive access. Pre-split bug carried forward. **Fix:** `LOG_WARN("ConfigManager: LockFileEx failed for '%s' err=%lu", lockPath_.c_str(), GetLastError());`. POSIX `flock` path has the same issue.
+27. ✅ **DONE.** Both `ScopedFileLock::Acquire` failure branches now `LOG_WARN` with the path and the OS error code before proceeding without exclusive access — Win32 covers both `CreateFileW` and `LockFileEx`, POSIX covers `open()` and `flock(LOCK_EX)`. Subsequent IO is unchanged; the lock degrades to advisory-only with observable telemetry.
 
-28. ⏳ **`EnsureDirectoryExists` uses `*A` Win32 APIs while every other Win32 path uses `Utf8ToWide` + `*W`** — `ConfigManager.cpp:86-93`. Non-ASCII paths (UTF-8 user-data dir with é/ñ/CJK) lose characters when the system code page isn't UTF-8. Pre-split bug carried forward. **Fix:** `GetFileAttributesW(Utf8ToWide(path).c_str())` / `CreateDirectoryW(...)`.
+28. ✅ **DONE.** `EnsureDirectoryExists` now routes through `Utf8ToWide` and calls `GetFileAttributesW` / `CreateDirectoryW`. Non-ASCII user-data paths (é/ñ/CJK) survive on systems whose active code page isn't UTF-8.
 
-29. ⏳ **`kDefaultImGuiDockLayoutIni` declared as `constexpr const char*`** — `ConfigManager.cpp:366`. Pointer is constexpr but pointee storage is regular string-literal storage. **Fix:** `static constexpr char kDefaultImGuiDockLayoutIni[] = …;` — clearer intent, `sizeof` works.
+29. ✅ **DONE.** Changed to `constexpr char kDefaultImGuiDockLayoutIni[] = …;` so the array storage itself is constexpr and `sizeof` is meaningful at compile time.
 
 ### From PR #8
 
 30. ⏳ **`PluginHost::GetMcpServerStatus` still uses `dynamic_cast<const McpPlugin*>`** — `PluginHost.cpp:84-93`. CODE_REVIEW item 20 added `IPlugin::MatchesConfig` and is marked done, but this status accessor was missed and still reaches into the concrete plugin via RTTI. **Fix:** add `virtual IPlugin::GetMcpStatusSnapshot(McpServerStatus&) {}` or an opaque-blob accessor.
 
-31. ⏳ **`Views::DeleteActive` picks `Views.front()` after delete** — `Views.cpp:77-93`. UX nit: deleting the last view jumps to the first instead of the previous neighbour. **Fix:** capture index pre-erase; pick `min(idx, size-1)`.
+31. ✅ **DONE.** Captures the active index before erasing and picks `views[min(activeIndex, size-1)]` as the new active view — deleting the last view now selects its neighbour instead of jumping to the front.
 
-32. ⏳ **`LocalCacheManager::stmt()` calls `reset()` + `clearBindings()` even on first creation** — `LocalCacheManager.cpp:117-122`. Harmless but redundant; freshly prepared statements have no bindings. **Fix:** branch on whether `slot` was already populated.
+32. ✅ **DONE.** Freshly prepared statements now skip the redundant `reset()` / `clearBindings()` pair; existing slots still take the reset path before reuse.
 
 33. ⏳ **`MarkdownConvert` HTML path drops malformed nested tables silently** — `MarkdownConvert.cpp:1490-1499`. `appendPipeTable(tableRows)` fires only on `</table>` close; missing close-tag → rows lost (`fellBack` set, content gone). **Fix:** flush `tableRows` in the `while (outPtrStack.size() > 1)` cleanup at L1599.
 

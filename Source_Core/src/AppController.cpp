@@ -1661,7 +1661,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         activeStreamingSync_.BackgroundStaleIds.clear();
     }
     staleIdsToDelete_.clear();
-    isDeletingStale_ = false;
+    isDeletingStale_.store(false);
     totalStaleToDelete_ = 0;
     staleDeletedSoFar_ = 0;
     activeStreamingSync_.FullSyncCompleted = false;
@@ -1863,7 +1863,7 @@ void AppController::TickStreamingApply() {
 
     bool isWorkerActive = activeStreamingSync_.Active.load();
 
-    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_;
+    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
 
     if (activeStreamingSync_.Superseded.load()) {
 
@@ -1879,7 +1879,7 @@ void AppController::TickStreamingApply() {
 
         staleIdsToDelete_.clear();
 
-        isDeletingStale_ = false;
+        isDeletingStale_.store(false);
 
         totalStaleToDelete_ = 0;
 
@@ -1957,7 +1957,7 @@ void AppController::TickStreamingApply() {
 
     // 2. Progressive, budgeted stale ticket deletion over multiple frames to avoid UI hitches
 
-    if (isDeletingStale_) {
+    if (isDeletingStale_.load()) {
 
         auto start = std::chrono::high_resolution_clock::now();
 
@@ -2019,7 +2019,7 @@ void AppController::TickStreamingApply() {
 
         if (staleIdsToDelete_.empty()) {
 
-            isDeletingStale_ = false;
+            isDeletingStale_.store(false);
 
             LOG_INFO("AppController::TickStreamingApply finished stale deletion. total_deleted=%zu", totalStaleToDelete_);
 
@@ -2265,7 +2265,7 @@ void AppController::TickStreamingApply() {
 
             if (!staleIdsToDelete_.empty()) {
 
-                isDeletingStale_ = true;
+                isDeletingStale_.store(true);
 
                 totalStaleToDelete_ = staleIdsToDelete_.size();
 
@@ -2283,7 +2283,7 @@ void AppController::TickStreamingApply() {
 
 
 
-        if (!isDeletingStale_) {
+        if (!isDeletingStale_.load()) {
 
             WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
 
@@ -2327,7 +2327,7 @@ void AppController::SyncWithBackend(const TrackerConfig* configOverride, const V
 
     bool isWorkerActive = activeStreamingSync_.Active.load();
 
-    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_;
+    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
 
 
 

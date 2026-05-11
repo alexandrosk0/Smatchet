@@ -77,14 +77,18 @@ bool Views::DeleteActive() {
     if (Slice_.Views.size() <= 1) {
         return false;
     }
-    auto it = std::remove_if(Slice_.Views.begin(), Slice_.Views.end(),
-                             [&](const ViewDefinition& v) { return v.Id == Slice_.ActiveViewId; });
-    if (it == Slice_.Views.end()) {
+    // Capture the active index BEFORE erase so we can pick the neighbour as the new active
+    // view (UX nit: deleting the last view used to jump back to the first).
+    const auto activeIt = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                                       [&](const ViewDefinition& v) { return v.Id == Slice_.ActiveViewId; });
+    if (activeIt == Slice_.Views.end()) {
         return false;
     }
-    Slice_.Views.erase(it, Slice_.Views.end());
+    const std::size_t activeIndex = static_cast<std::size_t>(activeIt - Slice_.Views.begin());
+    Slice_.Views.erase(activeIt);
     if (!Slice_.Views.empty()) {
-        Slice_.ActiveViewId = Slice_.Views.front().Id;
+        const std::size_t pickIndex = (activeIndex < Slice_.Views.size()) ? activeIndex : Slice_.Views.size() - 1;
+        Slice_.ActiveViewId = Slice_.Views[pickIndex].Id;
     } else {
         Slice_.ActiveViewId.clear();
     }
