@@ -1,4 +1,4 @@
-# Smatchet — Senior Code Review (2026-05-10, refresh 2026-05-11)
+# Smatchet — Senior Code Review (2026-05-10, refresh 2026-05-11 after PRs #25–#33)
 
 > Scope: first-party code only (`Source_Core/`, `Plugins/`, `Target_Standalone/`). Dependencies under `.fetchcontent-src/`, `build/`, `out/`, and `.claude/worktrees/` are excluded.
 > Method: vexp-routed file-level inspection (skeletons + targeted reads) across ~140 first-party `.cpp`/`.h` files totalling ~48k LOC. This document is updated incrementally as the review progresses.
@@ -486,7 +486,7 @@ No raw `new`/`delete` found in scanned files outside of `IM_NEW(ImTextureData)()
 
 ### Follow-on hardening landed since 2026-05-10
 
-PRs #9–#22 closed every regression / new-code defect found while reviewing PRs #6 / #7 / #8 — tracked in [`POST_P0_REVIEW.md`](POST_P0_REVIEW.md). Develop tip at refresh time: `0a79de5` (Merge PR #20).
+PRs #9–#22 closed every regression / new-code defect found while reviewing PRs #6 / #7 / #8 — tracked in [`POST_P0_REVIEW.md`](POST_P0_REVIEW.md). PRs #25–#33 then landed three of the four "biggest wins" from §7 below (items 11 / 12 / 13 fully done, item 14 Phase 1A, item 15 type-only). Develop tip at refresh time: `a549dbc` (Merge PR #37).
 
 | PR | Title | What it closed |
 |----|-------|----------------|
@@ -503,6 +503,16 @@ PRs #9–#22 closed every regression / new-code defect found while reviewing PRs
 | [#20](https://github.com/alexandrosk0/Smatchet/pull/20) | `polish: P2 batch 2 — items 23/30/33/34` | POST_P0 items 23, 30, 33, 34 — extends this doc's item 20 (`PluginHost::GetMcpServerStatus` `dynamic_cast` removed via `TryGetMcpStatusSnapshot`); item 23 (PlaneClient page-cap mis-classified as fetch failure) splits a `Warning` channel out of `FetchError`. |
 | [#21](https://github.com/alexandrosk0/Smatchet/pull/21) | `chore(cppcheck): clear pre-existing baseline noise` | Issue #18 (cppcheck) closed — 4 sites cleared on McpPlugin / SmatchetActiveProjectGridUi / ConfigManager / PlaneClient. |
 | [#22](https://github.com/alexandrosk0/Smatchet/pull/22) | `docs(backlog): add MANUAL_TEST_QUEUE.md` | Added the smoke-test queue (B1–B2, M1–M12, L1–L3). |
+| [#25](https://github.com/alexandrosk0/Smatchet/pull/25) | `refactor(controller): introduce ITrackerBackendFactory` | Closes §7 item 13 — `AppController::Initialize` / `StartStreamingSync` no longer hard-code `new JiraClient` / `new PlaneClient`; `DefaultTrackerBackendFactory` is wired lazily and replaceable via `SetBackendFactory`. |
+| [#26](https://github.com/alexandrosk0/Smatchet/pull/26) | `OfflineQueueService extraction — Phase 1A` | Class skeleton + friend access; `Source_Core/{src,include}/OfflineQueueService.{h,cpp}` introduced. |
+| [#27](https://github.com/alexandrosk0/Smatchet/pull/27) | `OfflineQueueService extraction — Phase 1B write methods` | Queue-write APIs (`QueueCreateOffline`, `QueueFieldEditOffline`, dead-letter restore/delete) migrated. |
+| [#28](https://github.com/alexandrosk0/Smatchet/pull/28) | `OfflineQueueService extraction — Phase 1C Tick replay loops` | Completes §7 item 12 — `Tick*` replay loops + 3-way merge / `ResolveFieldEditConflict` now live on the service. AppController keeps thin facades. |
+| [#29](https://github.com/alexandrosk0/Smatchet/pull/29) | `TicketSyncService extraction — Phase 1A` | Class skeleton + friend access; `Source_Core/{src,include}/TicketSyncService.{h,cpp}` introduced. |
+| [#30](https://github.com/alexandrosk0/Smatchet/pull/30) | `TicketSyncService extraction — Phase 1B TickStreamingApply` | `TickStreamingApply` + supersede/cancel state moved; service owns `StreamingSyncState`. |
+| [#31](https://github.com/alexandrosk0/Smatchet/pull/31) | `TicketSyncService extraction — Phase 1C` | Completes §7 item 11 — `StartStreamingSync` / `CancelAndJoinActiveStreamingSync` / `ApplyIssueFetchPack` / stale-deletion all live on the service; AppController's `IsStreamingSyncActive` delegates. |
+| [#32](https://github.com/alexandrosk0/Smatchet/pull/32) | `feat(tracker): introduce TrackerError value type` | §7 item 15 Phase 1 — `Source_Core/include/TrackerError.h` adds `TrackerErrorKind` + `TrackerError` + `TRACKER_ERR_*` factories. **No call sites migrated yet** — that is the per-subsystem follow-up. |
+| [#33](https://github.com/alexandrosk0/Smatchet/pull/33) | `refactor(controller): LuaAutomationHost extraction — Phase 1A` | §7 item 14 Phase 1A — `Source_Core/{src,include}/LuaAutomationHost.{h,cpp}` introduced; log-sink methods + `AutomationLogSinks` state migrated. **Phases 1B (InitLua/InitLuaCore), 1C (~18 Lua binding methods, ~1100 LOC), 1D (automation worker thread) remain.** |
+| [#37](https://github.com/alexandrosk0/Smatchet/pull/37) | `fix(controller): repair develop-tip compile after PR #33 / PR #34 merge` | Compile-only fix for cross-PR interaction. No behavior change. |
 
 The 2026-05-10 numbered items below are unchanged in intent. Where one of those items received material follow-on hardening from a PR above, the row carries a `[hardened by #N]` annotation in the per-item commentary.
 
@@ -531,11 +541,17 @@ The 2026-05-10 numbered items below are unchanged in intent. Where one of those 
 
 ### P1 — significant code-health wins
 
-11. **Extract `TicketSyncService` from `AppController`** (~700 LOC). Addresses all the streaming-sync P0 races structurally (§1.7).
-12. **Extract `OfflineQueueService` from `AppController`** (~900 LOC) — `AppController_IssueCreateOffline.cpp` and field-edit equivalents (§1.7).
-13. **`ITrackerBackendFactory`** to remove hard-coded `new JiraClient`/`new PlaneClient` from `AppController` (§1.7).
-14. **`LuaAutomationHost`** to extract sol2 state, automation worker, and all `Lua*Bind` methods; remove `<sol/sol.hpp>` from `AppController.h` (§1.7).
-15. **`TrackerHttpClient` shared base + `TrackerError` value type** — remove ~12 hand-rolled error-parsing sites; enable retry on 429/5xx/transport (§2.3, §6.2).
+11. ✅ **DONE (PRs [#29](https://github.com/alexandrosk0/Smatchet/pull/29) / [#30](https://github.com/alexandrosk0/Smatchet/pull/30) / [#31](https://github.com/alexandrosk0/Smatchet/pull/31)).** `TicketSyncService` extracted from `AppController` across Phases 1A→1C: `Source_Core/{src,include}/TicketSyncService.{h,cpp}` (97h + 510cpp) now owns `StreamingSyncState`, `StartStreamingSync`, `TickStreamingApply`, `CancelAndJoinActiveStreamingSync`, `ApplyIssueFetchPack`, and stale-deletion state. `AppController` keeps an `IsStreamingSyncActive()` facade that delegates. The §1.7 P0 races over `RequestId` / `FetchError` / `isDeletingStale_` are now structurally contained inside the service's ownership boundary rather than scattered across AppController members.
+12. ✅ **DONE (PRs [#26](https://github.com/alexandrosk0/Smatchet/pull/26) / [#27](https://github.com/alexandrosk0/Smatchet/pull/27) / [#28](https://github.com/alexandrosk0/Smatchet/pull/28)).** `OfflineQueueService` extracted from `AppController` across Phases 1A→1C: `Source_Core/{src,include}/OfflineQueueService.{h,cpp}` (129h + 914cpp) now owns the `pending_creates` + `pending_creates_dead` + `pending_field_edits` write paths, the `Tick*` replay loops, dead-letter restore/delete, 3-way merge, and `ResolveFieldEditConflict`. `AppController_IssueCreateOffline.cpp` shrank from 1015 LOC → 245 LOC of thin facades. Currently still uses `friend class OfflineQueueService` for AppController-private access; the `IAuditSink` interface flagged in the original proposal is a follow-up (§7 item 18 has the audit-trail piece; the queue→audit boundary is documented in `OfflineQueueService.h`).
+13. ✅ **DONE (PR [#25](https://github.com/alexandrosk0/Smatchet/pull/25)).** `ITrackerBackendFactory` (`Source_Core/include/ITrackerBackendFactory.h`) plus `DefaultTrackerBackendFactory` (`Source_Core/{src,include}/DefaultTrackerBackendFactory.{h,cpp}`) introduced. `AppController::Initialize` instantiates `DefaultTrackerBackendFactory` lazily if not pre-set; `SetBackendFactory` lets the Unreal host (or a test) swap in a different factory. Removed 4 hard-coded `new JiraClient` / `new PlaneClient` sites in `AppController.cpp` and `TicketSyncService.cpp`.
+14. 🟡 **PARTIAL (PR [#33](https://github.com/alexandrosk0/Smatchet/pull/33)).** `LuaAutomationHost` skeleton landed: `Source_Core/{src,include}/LuaAutomationHost.{h,cpp}` (54h + 21cpp) owned by AppController via `std::unique_ptr`, friend-accessing private state. Phase 1A migrated the simplest cluster (log-sink methods + `AutomationLogSinks` state). Remaining phases per the header's roadmap:
+    - **1B** — `InitLua` / `InitLuaCore` (sol2 state setup + sandbox nilling + `__smatchet_app` registry hookup). ~150–300 LOC.
+    - **1C** — ~18 `Lua*Bind` methods (`LuaLog*Bind`, `LuaGetTicket*Bind`, `LuaRegister*Bind`, ImGui/Ui/Mcp glue, etc.) — ~1100 LOC, every binding wraps the patched-metatable contract from `CMakeLists.txt:355-411`.
+    - **1D** — Automation worker thread (`AutomationWorkerLoop`, `RunAutomationJob`, `automationJobMutex_` / `automationJobs_` / `automationWorker_` / `automationWorkerShuttingDown_`).
+    - **2** — Replace `friend class LuaAutomationHost;` with a `TrackerActions` interface so the host no longer needs AppController-private access (§1.7 design proposal #4 final state).
+
+    Until 1C lands, `<sol/sol.hpp>` is still PUBLIC on `AppController.h` (§1.3 P1 still open).
+15. 🟡 **PARTIAL (PR [#32](https://github.com/alexandrosk0/Smatchet/pull/32)).** `TrackerError` value type added (`Source_Core/include/TrackerError.h`): `TrackerErrorKind` enum (`Transport` / `Auth` / `RateLimited` / `NotFound` / `InvalidRequest` / `Server` / `Parse` / `Cancelled` / `Internal`), `TrackerError` struct with kind + detail + optional HTTP status, plus `TRACKER_ERR_*` factory macros. **No call sites migrated yet** — `JiraClient`, `PlaneClient`, `LocalCacheManager`, `IssueCreatePipeline`, `TextMerge` still use `bool foo(..., std::string& outError)`. The companion shared `TrackerHttpClient` base class (auth header / error parser / retry on 429/5xx/transport) is **not yet introduced** — that is the next mechanical PR (§2.3 design proposal #1). Until then, `IsTrackerTransportErrorText` is still the only retry signal and is never read.
 16. **Split `ITrackerClient` into role interfaces** (§2.3).
 17. ✅ **DONE** — covered by P0 item 6 (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `1c3bebf`). `Logf` uses 2-pass `vsnprintf`; async file sink added.
 18. ✅ **DONE (branch `claude/reverent-curran-109a96`; extended by PRs [#10](https://github.com/alexandrosk0/Smatchet/pull/10) and [#16](https://github.com/alexandrosk0/Smatchet/pull/16)).** `AuditWriter` struct added to `BackendAuditTrail.cpp` with a bounded `std::deque<std::string>` (max 512 entries), worker thread, and condition variable. `AppendEvent` now builds the JSON on the caller thread then posts the serialised line via `Writer().Post(j.dump())`; disk I/O happens on the writer thread. Drop-oldest policy prevents unbounded growth. `ReadRecentEvents` still holds `AuditMutex()` independently. Both targets build clean. **`[hardened by #10]`** Writer now takes `AuditMutex()` around the `<< line` write (same mutex `ReadRecentEvents` already holds — readers can no longer observe a partially-flushed line); first open / write failure logs once via the Logger ring (rate-limited atomic flags). **`[hardened by #16]`** On primary-file open failure, the writer attempts `<userdata>/smatchet_backend_audit_fallback.jsonl` and writes there; if both paths fail, a dropped-event counter LOG_ERRORs at log-spaced multiples (1 / 10 / 100 / 1000 / 10000) so persistent failures stay visible without spamming.
@@ -587,15 +603,52 @@ The 2026-05-10 numbered items below are unchanged in intent. Where one of those 
 60. ✅ **DONE.** `StripUtf8BomCopy` added to `StringUtil.h` as an inline; removed from `PlaneClient.cpp` anonymous namespace — all call sites in `PlaneClient.cpp` now use the shared version.
 61. ✅ **DONE.** `JiraIssueMutation.cpp`: status-transition name-fallback path split into a separate `else if` that emits `LOG_WARN` with the transition name, target status name, and actual status name before using the fallback id.
 
-### Sequencing suggestion
+### What's actually left (2026-05-11 refresh)
+
+After PRs #25–#33, the open work in §7 has narrowed to:
+
+**P0 tails** — original P0s landed; follow-up hookups remain:
+- §6.3 / item 3 tail — `TrackerConfig` caching to eliminate ~14 `ConfigManager::Load()` calls per field-edit submit in `AppController_CatalogAndFieldEdit.cpp`. Split landed (PR #11); cache + revision counter never followed.
+- Item 6 tail — `Logger::SetFileSinkPath` API exists but `ConfigManager` doesn't call it. Final wiring is one call site + a config knob.
+- Item 9 step (c) — `BlameAnalysisUi.cpp` globals → members done, but the file split (extract `BlameAnalysisModel.{h,cpp}` from `BlameAnalysisUi.cpp`) is still pending. Blocks Unreal hot-reload survival + unit tests.
+- Item 10 UI consumer — `TrackerField::IsRequired` is in the schema and populated for Plane; no UI surface reads it yet.
+- POST_P0 item 24 — `FlushFileSink` is wired but not called from the crash/shutdown handler.
+
+**P1 structural — only one true "big win" remains:**
+- **Item 14 Phase 1B → 1D** — finish migrating sol2 state + Lua bindings + automation worker into `LuaAutomationHost`. Until 1C lands, `<sol/sol.hpp>` stays PUBLIC on `AppController.h` (§1.3 P1 still open). Phasing is deliberate: 1B is ~150–300 LOC and self-contained; 1C is ~1100 LOC and high-risk (patched-metatable contract); 1D is the worker thread + shutdown contract.
+- **Item 15 follow-on** — `TrackerError` value type landed (PR #32); call-site migrations + the shared `TrackerHttpClient` base class (auth/error parser/retry policy) are the next mechanical PR. Enables 429/5xx/transport retry which today is dead code.
+- **Item 16** — split `ITrackerClient` into role interfaces (`ITrackerSearch` / `ITrackerMutation` / `ITrackerSchema` / `ITrackerUserDirectory` / `ITrackerWorkflow`). Removes the "unsupported default-impl" pattern.
+- **Item 23** — `PlaneClient::FetchIssuesForKeys` is still `FetchIssues(all) + filter in memory` (`PlaneClient.cpp:1456`). Use Plane filter API.
+- **Item 28** — Markdown table-cell rich content lost on ADF→Markdown (tracked in v2 backlog).
+
+**P2 polish — what's left:**
+- Item 34 — dedupe two retry-after-HTTP-400 blocks in `AppController_CatalogAndFieldEdit.cpp:790-808` vs `:962-975`.
+- Item 38 — reuse scratch buffers in `MarkdownConvert::EmitInlineText`.
+- Item 39 — `PlaneClient::FetchIssueEditMeta` still hardcoded 7 fields (`PlaneClient.cpp:1099-1108`).
+- Item 40 — `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` (`PlaneClient.cpp:1411-1453`) still drop custom-field UUIDs silently.
+- Item 41 — extract `ScopedFileLock` + `AtomicWriteTextFile` from `ConfigManager.cpp` into a shared `FileIo` helper (Win32-specific work).
+- Item 43 — `BackendAuditTrail::LooksSensitiveKey` blocklist needs product review.
+- Item 54 — verify or remove redundant manual `PushClipRect` per cell in grid (`SmatchetActiveProjectGridUi.cpp:794, 856, 878`).
+
+### Sequencing suggestion (revised)
+
+**Next PR:** LuaAutomationHost **Phase 1B** (item 14) — move `InitLua` / `InitLuaCore` (sol2 state setup + sandbox nilling + `__smatchet_app` registry hookup) into `LuaAutomationHost`. Self-contained, dual-target verifiable, no contract changes.
+
+**Then:** TrackerHttpClient base + first migration (item 15 Phase 2). The PR migrates one client (suggest `PlaneClient` — fewer callers) and lights up retry on 429/5xx. JiraClient follows in a second PR.
+
+**Then:** item 16 (role interfaces split) — mechanical, enabled by the role boundaries already implicit in the `unsupported` default returns.
+
+**Defer:** Phase 1C of item 14 (~1100 LOC) is a multi-session refactor — needs golden tests for the Lua bindings before extraction. Track in `RICH_TEXT_EDITING_V2_REMAINING.md`-style sibling doc when scheduled.
+
+### Sequencing suggestion (original, 2026-05-10)
 
 Three-week shape:
 
-**Week 1 (safety + build win):** items 1, 2, 3, 4, 5, 6, 7. Single PR per item; each is independently shippable. Item 3 lands the largest build-time win and unblocks items downstream.
+**Week 1 (safety + build win):** items 1, 2, 3, 4, 5, 6, 7. ✅ All seven landed via PRs #6 / #7 / #8 + follow-on hardening #9–#22.
 
-**Week 2 (UI perf + extraction prep):** items 8, 9, 10, 11 (start), 22, 31. Item 9 and 11 need test scaffolding (item 49 — but really part of the §6.7 testing proposal) — land that first.
+**Week 2 (UI perf + extraction prep):** items 8, 9, 10, 11 (start), 22, 31. Items 8 / 11 / 22 / 31 all landed. Items 9 / 10 carry the tails listed above.
 
-**Week 3 (structural refactors):** items 12, 14, 15, 18, 20, 21. Each builds on the §6.7 test infrastructure landing.
+**Week 3 (structural refactors):** items 12, 14, 15, 18, 20, 21. Items 12 / 13 / 18 / 20 / 21 all done; item 14 at Phase 1A; item 15 type-only.
 
 ### Out of scope here / already tracked
 
