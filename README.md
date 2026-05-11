@@ -13,7 +13,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 - **Dual Deployment**:
   - **Standalone App**: A native desktop application leveraging GLFW and OpenGL3.
   - **Unreal Engine Plugin**: Direct DX12 integration allowing Smatchet to run seamlessly inside the Unreal Engine editor.
-- **Views System**: Backend-aware views dashboard for managing saved queries, column layouts, sort orders, and column widths — stored per-tracker so switching backends preserves each backend's view set.
+- **Views System**: Backend-aware views editor for managing saved queries, column layouts, sort orders, and column widths — stored per-tracker so switching backends preserves each backend's view set. A modern two-pane layout (sidebar of saved views on the left, tabbed editor for Filter / Fields / Columns / Sort on the right) supports drag-and-drop reorder, `Alt+↑` / `Alt+↓` keyboard reorder, inline rename, and per-view duplicate. Column reorder, resize, and sort directly in the grid surface an *Unsaved layout changes* strip with `Save` / `Save as new...` / `Discard` so layout edits are gated behind an explicit commit instead of silently autosaving. Shortcuts: `Ctrl+Enter` applies the active view, `Ctrl+N` creates a new one.
 - **Optional Lua Automation**: Embeds a Lua 5.3 runtime using `sol2`, enabling custom scripts, automation hooks, custom ImGui windows, and a dedicated in-app Lua console.
 - **Optional AI & MCP Support**: Includes an AI assistant controller and an integrated MCP (Model Context Protocol) server plugin to bridge into modern AI workflows.
 
