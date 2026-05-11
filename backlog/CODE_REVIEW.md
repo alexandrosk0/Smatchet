@@ -473,18 +473,33 @@ No raw `new`/`delete` found in scanned files outside of `IM_NEW(ImTextureData)()
 
 ## 7. Prioritized recommendations
 
+> **Status legend** (added 2026-05-10):
+> - ✅ **DONE** — landed on `develop`; needs manual smoke-test validation.
+> - 🟡 **PARTIAL** — first step shipped; follow-up tracked.
+> - ⏳ **OPEN** — not yet started.
+>
+> Marking an item ✅ means the *code* matches the proposal. Behavioral validation (smoke tests with real Jira / Plane workspaces, MCP client churn, etc.) is still required — see per-item notes.
+
 ### P0 — safety / build / tooling — do first
 
-1. **Fix streaming-sync data races in `AppController`.** Promote `activeStreamingSync_.RequestId` to `std::atomic<uint64_t>`, guard `FetchError`/`FullSyncCompleted`/`isDeletingStale_`/`staleIdsToDelete_` either by atomic or by the queue mutex (§1.7).
-2. **Fix `gApp` Lua lifetime hazard.** Move `AppController*` into the `sol::state` registry; remove the worker-thread reassignment in `InitLuaCore` (§5.2).
-3. **Split `ConfigManager.h` (1696 LOC, header-only) into `.h` + `.cpp`.** Stop pulling `<nlohmann/json.hpp>`, `<windows.h>`, `<wincrypt.h>` through every consumer. Drives substantial build-time win and unblocks testability. Cache the parsed `TrackerConfig` to eliminate ~30 redundant disk reads per field-edit submit (§4.1, §6.3).
-4. **Lock-scope fix in `PlaneClient::UpdateIssueFields`/`CreateIssue`.** Drop `planeCacheMutex_` before the HTTP round trip (§2.1).
-5. **Add page cap to `PlaneClient` pagination outer loop** (§2.1).
-6. **Logger: replace `vector::erase(begin())` (O(N)) with deque/ring** + add an optional async file sink so logs survive crashes (§4.2).
-7. **MCP SSE heartbeat blocks worker thread for 15 s.** Move heartbeat off the worker thread (§5.1).
-8. **Per-frame allocation: grid cell IDs by string concat + catalog index rebuilt twice per frame.** `WidgetIdGuard` + `GridFrameContext` revision-keyed cache (§3.1).
-9. **`BlameAnalysisUi` 30+ TU-globals** → encapsulate in `BlameAnalysisModel`. Blocking Unreal embedding and tests (§3.3).
-10. **`PlaneClient::is_required` parse is a no-op.** One-line fix (`PlaneClient.cpp:298-300`).
+1. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `1226a04`).** Fix streaming-sync data races in `AppController` — `RequestId` and `isDeletingStale_` promoted to `std::atomic`; `FetchError` accesses serialized under `QueueMutex` (all 7 read/write sites verified). `FullSyncCompleted` was already atomic and stays so (§1.7).
+   - *Validation pending:* run a long-running sync + cancel-and-restart cycle, watch for sentinel "Sync failed with…" messages appearing under contention.
+2. 🟡 **PARTIAL (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `572ddcf`).** `gApp` no longer reassigned from background `InitLuaCore`; only the main controller's `InitLua` writes it. Worker-thread reassignment race is closed. The lifetime hazard (Ticket userdata outliving controller via Lua state retention) is still open — needs the registry-capture refactor described in §5.5 proposal 2 (§5.2).
+3. ✅ **DONE (PR [#7](https://github.com/alexandrosk0/Smatchet/pull/7), commit `faeb801`).** `ConfigManager.h` split: 1696 LOC header-only → 461 LOC slim header + 1333 LOC new `ConfigManager.cpp`. Removed from public surface: `<windows.h>`, `<wincrypt.h>`, `<fstream>`, `<sstream>`, `<sys/file.h>`, `<unistd.h>`, `<mutex>`, `<chrono>`, `"Logger.h"`, `"NewIssueInheritDefaults.h"`. **Note:** the related `TrackerConfig` caching to eliminate ~30 redundant disk reads per field-edit submit is **not** in PR #7 — still open (§4.1, §6.3).
+   - *Validation pending:* on a Windows host with an existing `token_enc`, confirm DPAPI unprotect still loads. On first launch with a legacy plaintext `mcp_auth_token`, confirm the lazy migration still runs.
+4. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `a06fbdd`).** `PlaneClient::UpdateIssueFields` and `CreateIssue` snapshot project + UUID under `planeCacheMutex_`, drop the lock, then issue the HTTP PATCH/POST. `CreateIssue` re-acquires the lock briefly to record `visualKey → uuid` in `keyToId_` (§2.1).
+   - *Validation pending:* edit a Plane field while another panel is doing display-value resolution — UI should not block.
+5. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `a06fbdd`).** `PlaneClient::FetchIssuesStreamed` outer pagination loop capped at `kMaxPlanePages = 50` (5,000 work-items). On cap-hit, `summary.FetchError` carries a clear "narrow your view" warning (§2.1).
+6. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `1c3bebf`).** `Logger::m_entries` is now `std::deque<LogEntry>` (O(1) overflow); `Logf` uses a 2-pass `vsnprintf` so HTTP body traces no longer truncate at 4 KB; optional async file sink with bounded queue + drop-oldest. API wired in but `SetFileSinkPath` is not yet called from `ConfigManager` — that final hookup is a follow-up (§4.2).
+   - *Validation pending:* call `Logger::Instance().SetFileSinkPath("./smatchet_runtime.log")` from `main.cpp`, verify entries accumulate across runs.
+7. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `98502cb`).** MCP SSE heartbeat now fires every 1 s (was a single 15 s sleep). cpp-httplib v0.14 has no `is_writable()`, so disconnect is detected via `sink.write()`'s `bool` return — the worker thread frees within ~1 s of client disconnect (§5.1).
+   - *Validation pending:* connect Cursor/Claude Desktop to the MCP server, abruptly close it, watch the httplib worker free up promptly.
+8. 🟡 **PARTIAL (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `1911e78`).** `CellIdScope` RAII pushes `ticket.id` + `column.FieldId` onto the ImGui ID stack at `RenderFieldCell` entry. All five widget-ID concats in `TicketFieldEditor.cpp` removed (`##TextCell_…`, `##SingleSelect_…`, `##MultiSelect_…`, `##CascadeSelect_…`, `##TimeSpentBtn_…`, multi-select option labels). Saves ~4–6 transient `std::string` allocations per cell per frame. **Not in this commit:** the second half of the §3.1 finding — `TrackerFieldCatalogIndex` rebuilt twice per frame (`SmatchetUI.cpp:680` + `SmatchetActiveProjectGridUi.cpp:148`) and `TicketGridColumnsBuilder::Build` called twice per frame. Needs the `GridFrameContext` extraction described in §3.5 proposal 1.
+9. 🟡 **PARTIAL (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `1bee50f`).** All ~40 file-static globals in `BlameAnalysisUi.cpp` are now members of `BlameAnalysisUiState` accessed via a `State()` Meyers singleton. This is step (a) of the three-step plan in §3.5 proposal 2. Steps (b) "move to class member" and (c) "split file" are still open — required to unblock Unreal hot-reload survival and unit tests of the callstack worker FSM (§3.3).
+10. ✅ **DONE (PR [#6](https://github.com/alexandrosk0/Smatchet/pull/6), commit `a06fbdd`).** `TrackerField::IsRequired` field added to the schema; `TrackerFieldFromPlaneProperty` now populates it from the Plane property's `is_required` JSON field. The previous `if (... is_required ...) { (void)0; }` dead branch is gone (§2.1).
+   - *Validation pending:* UI surfaces that consume "required" indicators should now show them for Plane custom properties; currently no UI consumer reads `TrackerField::IsRequired` directly — the field is wired through the data path but the UI hook-up is a follow-up.
+
+**P0 summary:** **7 fully done + 3 partial** (each partial has its remaining work tracked above). All 10 ship without regressions in the 145-step build on both `SmatchetStandalone` and `SmatchetCore_DX12`.
 
 ### P1 — significant code-health wins
 
