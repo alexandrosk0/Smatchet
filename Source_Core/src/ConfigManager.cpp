@@ -76,11 +76,7 @@ std::string NormalizeDirectoryPath(const std::string& baseDir) {
         return std::string();
     }
     std::string normalized = baseDir;
-    for (char& c : normalized) {
-        if (c == '\\') {
-            c = '/';
-        }
-    }
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
     if (normalized.back() != '/') {
         normalized.push_back('/');
     }
@@ -147,11 +143,7 @@ void CreateDirectories(const std::string& rawPath) {
 
 void EnsureParentDirectoryForFile(const std::string& path) {
     std::string normalizedPath = path;
-    for (char& c : normalizedPath) {
-        if (c == '\\') {
-            c = '/';
-        }
-    }
+    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
     const std::string::size_type slash = normalizedPath.find_last_of('/');
     if (slash == std::string::npos) {
         return;
@@ -245,14 +237,17 @@ std::string BinaryToBase64(const BYTE* data, DWORD dataSize) {
         return std::string();
     }
     DWORD outLen = 0;
-    if (!CryptBinaryToStringA(data, dataSize, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &outLen)) {
+    if (!CryptBinaryToStringA(data, dataSize, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &outLen) ||
+        outLen == 0) {
         return std::string();
     }
     std::string out(static_cast<size_t>(outLen), '\0');
     if (!CryptBinaryToStringA(data, dataSize, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, &out[0], &outLen)) {
         return std::string();
     }
-    if (!out.empty() && out.back() == '\0') {
+    // outLen > 0 was checked above, so `out` is non-empty here. Strip the trailing null
+    // terminator that CryptBinaryToStringA includes in its byte count.
+    if (out.back() == '\0') {
         out.pop_back();
     }
     return out;
