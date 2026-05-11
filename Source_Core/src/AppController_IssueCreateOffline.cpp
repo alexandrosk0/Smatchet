@@ -166,29 +166,7 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
 }
 
 std::int64_t AppController::QueueCreateOffline(const IssueDraft& draft) {
-    if (ConfigManager::Load().ReadOnlyMode) {
-        LOG_WARN("AppController::QueueCreateOffline blocked by read-only mode.");
-        return 0;
-    }
-    if (!Cache) {
-        LOG_WARN("AppController::QueueCreateOffline skipped: cache not initialized.");
-        return 0;
-    }
-    const std::string payload = IssueDraftHelpers::ToJson(draft);
-    try {
-        const std::int64_t id = Cache->EnqueuePendingCreate(payload);
-        LOG_INFO("AppController: queued offline create id=%lld", static_cast<long long>(id));
-        BackendAuditTrail::AppendResult(
-            "offline_queue_create", "ui", std::string(), std::to_string(id), true, std::string(),
-            nlohmann::json{{"pending_create_id", id}, {"draft", IssueDraftHelpers::ToJson(draft)}});
-        return id;
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::QueueCreateOffline failed: %s", ex.what());
-        BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(),
-                                        BackendAuditTrail::MakeOperationId("offline-queue"), false, ex.what(),
-                                        nlohmann::json{{"draft", IssueDraftHelpers::ToJson(draft)}});
-        return 0;
-    }
+    return offlineQueue_ ? offlineQueue_->QueueCreateOffline(draft) : 0;
 }
 
 // GetPendingCreateCount / GetDeadPendingCreateCount / GetDeadPendingCreates / GetPendingCreates:
@@ -212,37 +190,8 @@ std::vector<PendingCreate> AppController::GetPendingCreates() const {
 
 AppController::DeadLetterRestoreSummary
 AppController::RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds) {
-    DeadLetterRestoreSummary summary;
-    if (!Cache || originalIds.empty()) {
-        return summary;
-    }
-    for (const std::int64_t id : originalIds) {
-        try {
-            if (Cache->RestoreDeadPendingCreate(id)) {
-                ++summary.Restored;
-                BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
-                                                true, std::string(),
-                                                nlohmann::json{{"original_pending_create_id", id}});
-            } else {
-                ++summary.Failed;
-                BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
-                                                false, "Row not found.",
-                                                nlohmann::json{{"original_pending_create_id", id}});
-            }
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::RestoreDeadPendingCreates id=%lld err=%s", static_cast<long long>(id), ex.what());
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
-                                            false, ex.what(), nlohmann::json{{"original_pending_create_id", id}});
-        } catch (...) {
-            LOG_ERROR("AppController::RestoreDeadPendingCreates id=%lld unknown exception", static_cast<long long>(id));
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
-                                            false, "Unknown exception.",
-                                            nlohmann::json{{"original_pending_create_id", id}});
-        }
-    }
-    return summary;
+    return offlineQueue_ ? offlineQueue_->RestoreDeadPendingCreates(originalIds)
+                         : AppController::DeadLetterRestoreSummary{};
 }
 
 std::string AppController::TakeLegacyPendingStartupBanner() {
@@ -251,229 +200,51 @@ std::string AppController::TakeLegacyPendingStartupBanner() {
 
 AppController::DeadLetterDeleteSummary
 AppController::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
-    DeadLetterDeleteSummary summary;
-    if (!Cache || deadIds.empty()) {
-        return summary;
-    }
-    for (const std::int64_t id : deadIds) {
-        try {
-            Cache->DeleteDeadPendingCreate(id);
-            ++summary.Deleted;
-            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id), true,
-                                            std::string(), nlohmann::json{{"dead_id", id}});
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::DeleteDeadPendingCreates dead_id=%lld err=%s", static_cast<long long>(id),
-                      ex.what());
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id),
-                                            false, ex.what(), nlohmann::json{{"dead_id", id}});
-        } catch (...) {
-            LOG_ERROR("AppController::DeleteDeadPendingCreates dead_id=%lld unknown exception",
-                      static_cast<long long>(id));
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id),
-                                            false, "Unknown exception.", nlohmann::json{{"dead_id", id}});
-        }
-    }
-    return summary;
+    return offlineQueue_ ? offlineQueue_->DeleteDeadPendingCreates(deadIds)
+                         : AppController::DeadLetterDeleteSummary{};
 }
 
 AppController::PendingQueueDeleteSummary
 AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
-    PendingQueueDeleteSummary summary;
-    if (!Cache || pendingIds.empty()) {
-        return summary;
-    }
-    for (const std::int64_t id : pendingIds) {
-        try {
-            Cache->DeletePendingCreate(id);
-            ++summary.Deleted;
-            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), true,
-                                            std::string(), nlohmann::json{{"pending_create_id", id}});
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::DeletePendingCreates id=%lld err=%s", static_cast<long long>(id), ex.what());
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), false,
-                                            ex.what(), nlohmann::json{{"pending_create_id", id}});
-        } catch (...) {
-            LOG_ERROR("AppController::DeletePendingCreates id=%lld unknown exception", static_cast<long long>(id));
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), false,
-                                            "Unknown exception.", nlohmann::json{{"pending_create_id", id}});
-        }
-    }
-    return summary;
+    return offlineQueue_ ? offlineQueue_->DeletePendingCreates(pendingIds)
+                         : AppController::PendingQueueDeleteSummary{};
 }
 
 std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                   const std::string& fieldsPayloadJson, std::string& outError,
                                                   const std::string& originalRichValue) {
-    outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::QueueFieldEditOffline blocked by read-only mode issue=%s field=%s", issueKey.c_str(),
-                 fieldId.c_str());
+    if (!offlineQueue_) {
+        outError = "Offline queue not initialized.";
         return 0;
     }
-    if (!Cache) {
-        outError = "Cache is not initialized.";
-        return 0;
-    }
-    if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {
-        outError = "Invalid offline field edit enqueue parameters.";
-        return 0;
-    }
-    try {
-        const std::int64_t id = Cache->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson, originalRichValue);
-        LOG_INFO("AppController: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
-                 issueKey.c_str(), fieldId.c_str());
-        BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
-                                        std::string(),
-                                        nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
-        return id;
-    } catch (const std::exception& ex) {
-        outError = ex.what();
-        LOG_ERROR("AppController::QueueFieldEditOffline failed: %s", ex.what());
-        BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey,
-                                        BackendAuditTrail::MakeOperationId("offline-field-queue"), false, ex.what(),
-                                        nlohmann::json{{"field_id", fieldId}});
-        return 0;
-    }
+    return offlineQueue_->QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue);
 }
 
 std::vector<PendingFieldEditRecord> AppController::GetPendingFieldEdits() const {
-    if (!Cache) {
-        return {};
-    }
-    try {
-        return Cache->LoadPendingFieldEdits();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetPendingFieldEdits failed: %s", ex.what());
-        return {};
-    } catch (...) {
-        LOG_ERROR("AppController::GetPendingFieldEdits failed: unknown exception");
-        return {};
-    }
+    return offlineQueue_ ? offlineQueue_->GetPendingFieldEdits() : std::vector<PendingFieldEditRecord>{};
 }
 
 std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() const {
-    if (!Cache) {
-        return {};
-    }
-    try {
-        return Cache->LoadDeadPendingFieldEdits();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::GetDeadPendingFieldEdits failed: %s", ex.what());
-        return {};
-    } catch (...) {
-        LOG_ERROR("AppController::GetDeadPendingFieldEdits failed: unknown exception");
-        return {};
-    }
+    return offlineQueue_ ? offlineQueue_->GetDeadPendingFieldEdits() : std::vector<DeadPendingFieldEdit>{};
 }
 
 void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
                                              const std::string& richKind) {
-    if (!Cache) return;
-    try {
-        // Rebuild the final backend payload from the resolved Markdown.
-        std::string resolvedPayloadJson;
-        if (richKind == "adf") {
-            const nlohmann::json adfDoc = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
-            // We don't know the field id here, but the existing payload key is preserved by
-            // wrapping as-is. The replay will use the stored payload JSON directly.
-            // To know the field id we'd need to thread it through; for now we store the ADF doc
-            // as the entire payload — the replay already has the field id in row.FieldId.
-            resolvedPayloadJson = nlohmann::json{{std::string("__resolved__"), adfDoc}}.dump();
-        } else {
-            resolvedPayloadJson = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
-        }
-        // Simple approach: store the resolved payload back — the replay will use it directly.
-        // We parse the existing payload first to keep the correct field key.
-        try {
-            auto existing = Cache->LoadPendingFieldEdits();
-            const auto rowIt = std::find_if(existing.begin(), existing.end(),
-                                            [&](const auto& row) { return row.Id == id; });
-            if (rowIt != existing.end()) {
-                const auto& row = *rowIt;
-                nlohmann::json newPayload;
-                try { newPayload = nlohmann::json::parse(row.FieldsPayloadJson); }
-                catch (...) { newPayload = nlohmann::json::object(); }
-                // Determine the actual payload key: may be "description" (Jira)
-                // or "description_html" (Plane). Use the key already present in the payload.
-                std::string payloadKey = row.FieldId;
-                if (!newPayload.contains(payloadKey)) {
-                    const std::string altKey = row.FieldId + "_html";
-                    if (newPayload.contains(altKey)) payloadKey = altKey;
-                }
-                if (richKind == "adf") {
-                    newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
-                } else {
-                    newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
-                }
-                Cache->ResolveFieldEditConflict(id, newPayload.dump());
-                return;
-            }
-        } catch (...) {}
-        Cache->ResolveFieldEditConflict(id, resolvedPayloadJson);
-    } catch (const std::exception& ex) {
-        LOG_ERROR("AppController::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id), ex.what());
+    if (offlineQueue_) {
+        offlineQueue_->ResolveFieldEditConflict(id, resolvedMarkdown, richKind);
     }
 }
 
 AppController::PendingFieldEditDeleteSummary
 AppController::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
-    PendingFieldEditDeleteSummary summary;
-    if (!Cache || ids.empty()) {
-        return summary;
-    }
-    for (const std::int64_t id : ids) {
-        try {
-            Cache->DeletePendingFieldEdit(id);
-            ++summary.Deleted;
-            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            true, std::string(), nlohmann::json{{"pending_field_edit_id", id}});
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::DeletePendingFieldEdits id=%lld err=%s", static_cast<long long>(id), ex.what());
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            false, ex.what(), nlohmann::json{{"pending_field_edit_id", id}});
-        } catch (...) {
-            LOG_ERROR("AppController::DeletePendingFieldEdits id=%lld unknown exception", static_cast<long long>(id));
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            false, "Unknown exception.", nlohmann::json{{"pending_field_edit_id", id}});
-        }
-    }
-    return summary;
+    return offlineQueue_ ? offlineQueue_->DeletePendingFieldEdits(ids)
+                         : AppController::PendingFieldEditDeleteSummary{};
 }
 
 AppController::DeadFieldEditDeleteSummary
 AppController::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) {
-    DeadFieldEditDeleteSummary summary;
-    if (!Cache || deadIds.empty()) {
-        return summary;
-    }
-    for (const std::int64_t id : deadIds) {
-        try {
-            Cache->DeleteDeadPendingFieldEdit(id);
-            ++summary.Deleted;
-            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            true, std::string(), nlohmann::json{{"dead_field_edit_id", id}});
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::DeleteDeadPendingFieldEdits dead_id=%lld err=%s", static_cast<long long>(id),
-                      ex.what());
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            false, ex.what(), nlohmann::json{{"dead_field_edit_id", id}});
-        } catch (...) {
-            LOG_ERROR("AppController::DeleteDeadPendingFieldEdits dead_id=%lld unknown exception",
-                      static_cast<long long>(id));
-            ++summary.Failed;
-            BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
-                                            false, "Unknown exception.", nlohmann::json{{"dead_field_edit_id", id}});
-        }
-    }
-    return summary;
+    return offlineQueue_ ? offlineQueue_->DeleteDeadPendingFieldEdits(deadIds)
+                         : AppController::DeadFieldEditDeleteSummary{};
 }
 
 void AppController::TickOfflineFieldEdits() {
