@@ -35,6 +35,12 @@ class LuaConsolePlugin : public IPlugin {
     double lastScriptListRefreshImGuiTime_ = -1.0e30;
     bool runInBackground_ = false;
 
+    /// Lua window tab selection (Scripts=0, Tools=1). Previously `static int s_tabSel` in OnDraw —
+    /// a file-static that would corrupt state across hot-reload or multiple plugin instances.
+    int tabSel_ = 0;
+    /// Set when the scripting editor tab needs focus on the next draw.
+    bool pendingSelectScriptsTab_ = false;
+
     void EnsureLuaLanguageDef();
     void RefreshScriptList(const AppController& app, bool forceRescan = false);
     bool LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);

@@ -25,11 +25,10 @@ void SaveLuaLayoutDebounced(float scriptPaneHeightPx) {
     static std::chrono::steady_clock::time_point s_lastWrite{};
     static float s_lastSaved = -1.0f;
     const auto now = std::chrono::steady_clock::now();
+    // Skip writes when the change is negligible (the 350 ms time-check was a redundant guard
+    // subsumed by this condition — the second if always fired before the timed one could not).
     if (s_lastSaved >= 0.0f && std::fabs(scriptPaneHeightPx - s_lastSaved) <= 0.75f &&
         now - s_lastWrite < std::chrono::milliseconds(350)) {
-        return;
-    }
-    if (s_lastSaved >= 0.0f && std::fabs(scriptPaneHeightPx - s_lastSaved) <= 0.75f) {
         return;
     }
     nlohmann::json j = ConfigManager::LoadMergedConfigJson();
@@ -109,6 +108,10 @@ bool WriteFileAll(const std::string& path, const std::string& content, std::stri
         return false;
     }
     o << content;
+    if (!o.good()) {
+        err = "Write failed (disk full or I/O error): " + path;
+        return false;
+    }
     return true;
 }
 
@@ -349,11 +352,9 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     }
     RepairLuaWindowLayout();
 
-    static int s_tabSel = 0;
-    static bool s_pendingSelectScriptsTab = false;
     if (g_ui.requestScriptingEditorTabFocus) {
-        s_tabSel = 0;
-        s_pendingSelectScriptsTab = true;
+        tabSel_ = 0;
+        pendingSelectScriptsTab_ = true;
         g_ui.requestScriptingEditorTabFocus = false;
     }
 
@@ -363,7 +364,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     constexpr float kToolsLogH = 56.0f;
     const float splitStackTotalH = ImGui::GetContentRegionAvail().y;
 
-    const bool onToolsTab = (s_tabSel == 1);
+    const bool onToolsTab = (tabSel_ == 1);
     if (onToolsTab) {
         if (!onToolsTabLastFrame_) {
             scriptPaneHeightBeforeToolsTab_ = luaAutomationScriptPaneUserPx_;
@@ -392,12 +393,12 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     ImGui::BeginChild("##lua_script_pane", ImVec2(-1.0f, luaAutomationScriptPaneHeightPx_), ImGuiChildFlags_None);
     if (ImGui::BeginTabBar("##lua_main_tabs", ImGuiTabBarFlags_None)) {
         ImGuiTabItemFlags scriptFlags = ImGuiTabItemFlags_None;
-        if (s_pendingSelectScriptsTab) {
+        if (pendingSelectScriptsTab_) {
             scriptFlags |= ImGuiTabItemFlags_SetSelected;
-            s_pendingSelectScriptsTab = false;
+            pendingSelectScriptsTab_ = false;
         }
         if (ImGui::BeginTabItem("Scripts", nullptr, scriptFlags)) {
-            s_tabSel = 0;
+            tabSel_ = 0;
             RefreshScriptList(app);
             onScriptsTabLastFrame_ = true;
 
@@ -578,7 +579,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         }
 
         if (ImGui::BeginTabItem("Tools & Actions")) {
-            s_tabSel = 1;
+            tabSel_ = 1;
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Quick Access Tools");
             ImGui::SameLine();

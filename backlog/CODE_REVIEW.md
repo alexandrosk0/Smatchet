@@ -532,35 +532,35 @@ No raw `new`/`delete` found in scanned files outside of `IM_NEW(ImTextureData)()
 ### P2 — refactor / polish
 
 32. ✅ **DONE (branch `claude/reverent-curran-109a96`).** All 7 raw `std::unique_ptr<T>(new T(...))` in `AppController.cpp` switched to `std::make_unique<T>(...)` (`LocalCacheManager` × 3, `PlaneClient` × 2, `JiraClient` × 2).
-33. `MakeUniqueTempFilePath` collision risk under high concurrency (§1.7).
-34. Two near-identical retry-after-400 blocks in `AppController_CatalogAndFieldEdit.cpp:790-808` vs `962-975` (§1.7).
+33. ✅ **DONE.** `MakeUniqueTempFilePath` mixes `time_since_epoch` + `std::hash<thread::id>` + monotonic `std::atomic<uint64_t>` counter. Two concurrent downloads from different threads can no longer collide.
+34. Two near-identical retry-after-400 blocks in `AppController_CatalogAndFieldEdit.cpp:790-808` vs `962-975` (§1.7). ⏳ OPEN.
 35. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `GetTrackerFieldCatalogRevision()` removed from `AppController.h` (had zero callers outside the header); `GetFieldCatalogRevision()` is the canonical name.
-36. `ToLowerAsciiCopy` consistency across `AppController.cpp`, `PlaneClient.cpp`, and others (§1.7, §2.1).
-37. `DecodeHtmlEntities` should use a static `unordered_map` (§2.2).
-38. `MarkdownConvert` reuse scratch buffers in `EmitInlineText` (§2.2).
-39. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (§2.1).
-40. `PlaneClient::BuildCreatePayload`/`BuildUpdatePayload` ignore custom fields (§2.1).
-41. `ScopedFileLock` + `AtomicWriteTextFile` extract to `FileIo` helper (§4.9).
-42. `LocalCacheManager::GetAllTickets` streaming iterator (§4.3).
-43. `BackendAuditTrail::LooksSensitiveKey` blocklist overlaps with legitimate audit fields (§4.4).
-44. `NetworkUsageTracker` error-rate counter (§4.5).
-45. `Views.h` move bodies to `.cpp` (§4.8).
-46. `NavigationHistory` max-history cap (§4.8).
-47. `SmatchetImageTextureCache` LRU O(N) → O(1) (§4.8).
-48. `SmatchetLocalization` thread_local ring size 64 may overflow (§4.7).
-49. `LuaConsolePlugin` file-static stateful locals → member fields (§5.2).
-50. `LuaConsolePlugin::WriteFileAll` doesn't check stream error state (§5.2).
-51. `LuaConsolePlugin::TryParseLuaErrorLine` unbounded regex on UI thread (§5.2).
-52. MCP REST/JSON-RPC schema duplication (§5.1).
-53. `ImGui::SetWindowFontScale(1.0f)` hardcoded reset (§3.4).
-54. Manual `PushClipRect` per cell in grid — likely redundant (§3.4).
-55. `std::stable_sort` lambda re-resolves field meta per compare (§3.4).
-56. `ColumnWidths.find` per column per frame (§3.1).
-57. `BuildCellKey` hash+alloc per cell per frame (§3.1).
-58. `PlaneClient::BuildBrowseUrl` slug double-slash (§2.1).
-59. `AddIssueToSprint` key-vs-id ambiguity (§2.1).
-60. `StripUtf8BomCopy` duplicated in `PlaneClient.cpp` (§2.1).
-61. Status-transition match falls back to transition name without logging (§2.1).
+36. ✅ **DONE.** `AppController.cpp` two `std::transform(… ::tolower)` loops replaced with `ToLowerAsciiCopy(...)`.
+37. ✅ **DONE.** `DecodeHtmlEntities` in `MarkdownConvert.cpp`: named-entity if-chain replaced with a `static const std::unordered_map<std::string, char> kNamedEntities`; O(1) lookup per entity.
+38. `MarkdownConvert` reuse scratch buffers in `EmitInlineText` (§2.2). ⏳ OPEN.
+39. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (§2.1). ⏳ OPEN.
+40. `PlaneClient::BuildCreatePayload`/`BuildUpdatePayload` ignore custom fields (§2.1). ⏳ OPEN.
+41. `ScopedFileLock` + `AtomicWriteTextFile` extract to `FileIo` helper (§4.9). ⏳ OPEN.
+42. `LocalCacheManager::GetAllTickets` streaming iterator (§4.3). ⏳ OPEN.
+43. `BackendAuditTrail::LooksSensitiveKey` blocklist overlaps with legitimate audit fields (§4.4). ⏳ OPEN.
+44. ✅ **DONE.** `NetworkUsageTracker`: `trackerErrors_` atomic + `trackerErrors` snapshot field added; `Record()` increments on non-2xx status; `Reset()` clears it.
+45. `Views.h` move bodies to `.cpp` (§4.8). ⏳ OPEN.
+46. ✅ **DONE.** `NavigationHistory::Push` caps at `kMaxHistory = 200`; trims oldest entries and adjusts `_index` when exceeded.
+47. `SmatchetImageTextureCache` LRU O(N) → O(1) (§4.8). ⏳ OPEN.
+48. ✅ **DONE.** `SmatchetLocalization::StoreTempString` ring increased from 64 to 512 — a frame with 200 visible rows × ~3 label lookups each no longer risks overwriting live pointers.
+49. ✅ **DONE.** `LuaConsolePlugin`: `static int s_tabSel` and `static bool s_pendingSelectScriptsTab` promoted to `tabSel_` and `pendingSelectScriptsTab_` member fields. Two plugin instances no longer share UI state.
+50. ✅ **DONE.** `WriteFileAll` checks `o.good()` after `o << content`; returns `false` with a disk-full/I/O error message on failure.
+51. `LuaConsolePlugin::TryParseLuaErrorLine` unbounded regex on UI thread (§5.2). ⏳ OPEN.
+52. ✅ **DONE.** `BuildRunLuaToolEntry()` helper extracted; both REST `/mcp/tools/list` and JSON-RPC `tools/list` call it. `SaveLuaLayoutDebounced` duplicate guard also removed.
+53. ✅ **DONE.** `SetWindowFontScale` in `TicketFieldEditor.cpp`: saves `prevScale = GetCurrentWindow()->FontWindowScale` before scaling and restores it after, instead of hardcoding 1.0f.
+54. Manual `PushClipRect` per cell in grid — likely redundant (§3.4). ⏳ OPEN.
+55. `std::stable_sort` lambda re-resolves field meta per compare (§3.4). ⏳ OPEN.
+56. `ColumnWidths.find` per column per frame (§3.1). ⏳ OPEN.
+57. `BuildCellKey` hash+alloc per cell per frame (§3.1). ⏳ OPEN.
+58. ✅ **DONE.** `PlaneClient::BuildBrowseUrl`: if `PlaneWorkspaceSlug` starts with `/`, separator is `""` not `"/"` to prevent double-slash in the URL.
+59. `AddIssueToSprint` key-vs-id ambiguity (§2.1). ⏳ OPEN.
+60. ✅ **DONE.** `StripUtf8BomCopy` added to `StringUtil.h` as an inline; removed from `PlaneClient.cpp` anonymous namespace — all call sites in `PlaneClient.cpp` now use the shared version.
+61. ✅ **DONE.** `JiraIssueMutation.cpp`: status-transition name-fallback path split into a separate `else if` that emits `LOG_WARN` with the transition name, target status name, and actual status name before using the fallback id.
 
 ### Sequencing suggestion
 

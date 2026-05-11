@@ -1135,6 +1135,11 @@ const std::unordered_set<std::string>& HtmlAllowedTags() {
 }
 
 std::string DecodeHtmlEntities(const std::string& s) {
+    // Static map built once; O(1) lookup replaces O(entity-list-len) linear scan (§2.2).
+    static const std::unordered_map<std::string, char> kNamedEntities = {
+        {"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'},
+        {"apos", '\''}, {"#39", '\''}, {"nbsp", ' '},
+    };
     std::string out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size();) {
@@ -1142,33 +1147,9 @@ std::string DecodeHtmlEntities(const std::string& s) {
             const size_t end = s.find(';', i);
             if (end != std::string::npos && end - i <= 8) {
                 const std::string ent = s.substr(i + 1, end - i - 1);
-                if (ent == "amp") {
-                    out += '&';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "lt") {
-                    out += '<';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "gt") {
-                    out += '>';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "quot") {
-                    out += '"';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "apos" || ent == "#39") {
-                    out += '\'';
-                    i = end + 1;
-                    continue;
-                }
-                if (ent == "nbsp") {
-                    out += ' ';
+                const auto it = kNamedEntities.find(ent);
+                if (it != kNamedEntities.end()) {
+                    out += it->second;
                     i = end + 1;
                     continue;
                 }

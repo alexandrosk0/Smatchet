@@ -185,8 +185,14 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
                 }
 
                 if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
-                    (!targetStatusName.empty() && iequals(toStatusName, targetStatusName)) ||
-                    (!targetStatusName.empty() && iequals(transitionName, targetStatusName))) {
+                    (!targetStatusName.empty() && iequals(toStatusName, targetStatusName))) {
+                    transitionId = thisTransitionId;
+                    break;
+                }
+                if (!targetStatusName.empty() && iequals(transitionName, targetStatusName)) {
+                    LOG_WARN("JiraClient: transition name fallback triggered: transition '%s' matched target "
+                             "status name '%s' but status name is '%s' — workflow may have diverged.",
+                             transitionName.c_str(), targetStatusName.c_str(), toStatusName.c_str());
                     transitionId = thisTransitionId;
                     break;
                 }

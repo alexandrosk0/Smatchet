@@ -1173,9 +1173,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 
 
-    std::string trackerLower = activeTracker;
-
-    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+    const std::string trackerLower = ToLowerAsciiCopy(activeTracker);
 
 
 
@@ -2370,9 +2368,7 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
 
 
 
-    std::string trackerLower = newTracker;
-
-    std::transform(trackerLower.begin(), trackerLower.end(), trackerLower.begin(), ::tolower);
+    const std::string trackerLower = ToLowerAsciiCopy(newTracker);
 
 
 

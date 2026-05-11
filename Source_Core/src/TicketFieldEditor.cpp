@@ -535,11 +535,12 @@ static void PreviewFlushBlock(PreviewState& s) {
         for (StyledRun& r : s.runs) r.marks |= MARK_BOLD;
 
         const bool tinted = (s.headingLevel <= 2);
+        const float prevScale = ImGui::GetCurrentWindow()->FontWindowScale;
         if (scale != 1.0f) ImGui::SetWindowFontScale(scale);
         if (tinted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
         PreviewRenderRuns(s.runs);
         if (tinted) ImGui::PopStyleColor();
-        if (scale != 1.0f) ImGui::SetWindowFontScale(1.0f);
+        if (scale != 1.0f) ImGui::SetWindowFontScale(prevScale);
         if (s.headingLevel <= 2) ImGui::Separator();
     } else if (!s.runs.empty()) {
         PreviewRenderRuns(s.runs);

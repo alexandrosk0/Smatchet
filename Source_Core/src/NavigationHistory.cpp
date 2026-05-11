@@ -22,6 +22,15 @@ void NavigationHistory::Push(const NavigationEntry& entry) {
 
     _entries.push_back(entry);
     _index = static_cast<int>(_entries.size()) - 1;
+
+    // Cap history to prevent unbounded growth in long sessions.
+    constexpr int kMaxHistory = 200;
+    if (static_cast<int>(_entries.size()) > kMaxHistory) {
+        const int drop = static_cast<int>(_entries.size()) - kMaxHistory;
+        _entries.erase(_entries.begin(), _entries.begin() + drop);
+        _index -= drop;
+        if (_index < 0) _index = 0;
+    }
 }
 
 const NavigationEntry* NavigationHistory::GoBack() {

@@ -443,7 +443,7 @@ std::string TrimAscii(std::string s) {
 }
 
 const char* StoreTempString(std::string value) {
-    static thread_local std::vector<std::string> ring(64);
+    static thread_local std::vector<std::string> ring(512);
     static thread_local std::size_t index = 0;
     ring[index] = std::move(value);
     const char* result = ring[index].c_str();
