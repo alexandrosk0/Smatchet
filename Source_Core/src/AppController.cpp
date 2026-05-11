@@ -1,3 +1,20 @@
+// winsock2.h must be the FIRST Win32-related include in this TU. Several headers below
+// (ghc::filesystem, ConfigManager.h on Windows, ImGui backends) transitively pull
+// <windows.h>, which auto-includes the legacy <winsock.h> unless WIN32_LEAN_AND_MEAN is
+// defined. cpr/curl (via TrackerHttpUtils.h) then includes <winsock2.h>, which fires
+// `#warning Please include winsock2.h before windows.h` from MinGW's headers. Putting the
+// winsock2 block at the very top avoids both the warning and the symbol-conflict it
+// foreshadows.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#endif
+
 #include "AppController.h"
 
 

@@ -1,3 +1,19 @@
+// winsock2.h must be the FIRST Win32-related include in this TU: ghc/filesystem and many
+// other headers transitively pull in <windows.h>, which auto-includes the legacy <winsock.h>
+// unless WIN32_LEAN_AND_MEAN is defined. Once winsock1 has been included, a later <winsock2.h>
+// fires `#warning Please include winsock2.h before windows.h` from MinGW's headers. Putting
+// the winsock2 block at the very top (with WIN32_LEAN_AND_MEAN) avoids both the warning and
+// the symbol-conflict it foreshadows.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#endif
+
 #include <memory>
 #include <string>
 #include <exception>
@@ -17,18 +33,6 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
-#endif
-
-#if defined(_WIN32)
-// winsock2.h must be included before windows.h (including indirectly via other
-// headers) to avoid MinGW's "-Wcpp" warning.
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
 #endif
 
 // ImGui Core and Backends

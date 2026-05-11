@@ -238,6 +238,15 @@ endif()
 smatchet_patch_sqlitecpp_after_populate("${sqlitecpp_SOURCE_DIR}")
 add_subdirectory("${sqlitecpp_SOURCE_DIR}" "${sqlitecpp_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
+# SQLite's amalgamation (sqlite3.c) trips GCC's -Wstringop-overread on
+# sqlite3ColumnSetColl → sqlite3Strlen30 → strlen(z) — GCC's value-range analysis decides z
+# could be at address zero. This is a known SQLite/GCC interaction and a false positive
+# (the call site has a null guard upstream). Vendored source — suppress on the sqlite3
+# target only rather than patching the upstream amalgamation.
+if(TARGET sqlite3 AND (CMAKE_C_COMPILER_ID STREQUAL "GNU"))
+    target_compile_options(sqlite3 PRIVATE -Wno-stringop-overread)
+endif()
+
 smatchet_fetch_status("Fetching cpp-httplib...")
 smatchet_prepare_httplib()
 FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.14.1)
