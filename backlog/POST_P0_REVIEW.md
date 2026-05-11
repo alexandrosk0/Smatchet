@@ -11,23 +11,33 @@
 
 ---
 
-## Current status (as of 2026-05-11, after PRs #9 / #10 / #11 merged)
+## Current status (as of 2026-05-11, after PRs #9 / #10 / #11 / #12 / #13 / #14 / #15 / #16 merged)
 
 | Severity | Total | Done | Partial | Open |
 |----------|-------|------|---------|------|
 | **P0** | 5 | 5 ✅ | 0 | **0** |
-| **P1** | 17 | 12 ✅ | 0 | 5 |
+| **P1** | 17 | 17 ✅ | 0 | **0** |
 | **P2** | 12 | 1 🟡 | 0 | 11 |
 
-**P0 list is empty — no known bug introduced by the P0 sweep can still fault at runtime.**
+**P0 and P1 lists are both empty — every known bug introduced by the P0 sweep is closed on `develop`.**
 
 Open work (in priority order):
 
-- **P1 #9** — MCP SSE heartbeat blocks process shutdown for up to 1s per client.
-- **P1 #10** — `CellIdScope` ID collision when `column.FieldId` is empty.
-- **P1 #18** — `GridFrameContext` cache key misses in-place view edits (stale columns until catalog rev bump).
-- **P1 #22** — `SmatchetImGuiHost::UpdateRendererColorFormat` torn-down backend on init failure.
-- **10 P2** — items 23, 25-34. Polish, dead surfaces, UTF-8 path handling, UX nits, MarkdownConvert edge cases.
+- **10 P2** — items 23, 25-34. Polish, dead surfaces, UTF-8 path handling, UX nits, MarkdownConvert edge cases. See [PR #17](https://github.com/alexandrosk0/Smatchet/pull/17) (in flight) for a first polish batch.
+
+### Validation still pending on develop tip (`02fe09e`)
+
+Code is in; these are human-only steps that no PR has captured yet:
+
+- [ ] **Build verification** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` on the main worktree. Last verified tip was `93f561b` (pre-#12). The five P1-cleanup PRs all built individually on their authors' machines, but the cascade of develop-rebases for #15/#16 + the Impl-reorder on #12 wasn't validated end-to-end.
+- [ ] **Manual smokes from the merged PRs**:
+  - **#12 / item 9** — connect an MCP SSE client, then quit. Process should exit promptly (was up to 1s per connected client).
+  - **#12 / item 10** — open a view with columns whose `FieldId` is empty (synthetic / errored catalog row). Edit state and popups should be per-cell, not shared across the row.
+  - **#12 / item 18** — switch active view, edit column widths. Grid should reflect the edit on the next frame (was stale until catalog rev bumped).
+  - **#12 / item 22** — exercise renderer color-format change with a deliberately failing DX12 backend init. Subsequent frames should retry (~1s) instead of dispatching into a torn-down backend.
+  - **#15 / item 12** — create a Plane issue from the UI under credential rotation to confirm the snapshot-under-lock fix.
+  - **#16 / item 20** — chmod the primary audit file to read-only and confirm a backend mutation produces `<userdata>/smatchet_backend_audit_fallback.jsonl` next to it.
+- [ ] **Pre-existing cppcheck noise** — tracked separately in [Smatchet#18](https://github.com/alexandrosk0/Smatchet/issues/18). 4 sites; 2 may be real bugs (`terminateStrncpy` in `SmatchetActiveProjectGridUi.cpp:439`, `containerOutOfBounds` in `ConfigManager.cpp:252`).
 
 ### PR landings that produced this state
 
@@ -36,8 +46,13 @@ Open work (in priority order):
 | [#9](https://github.com/alexandrosk0/Smatchet/pull/9) | `fix(logger): harden async file-sink lifecycle` | 1, 2, 6, 7, 8 (P0/P1) + 24 (P2 partial) |
 | [#10](https://github.com/alexandrosk0/Smatchet/pull/10) | `fix(stability): close 7 shutdown / contention crash paths` | 3, 4, 5 (P0) + 11, 16, 17, 21 (P1) |
 | [#11](https://github.com/alexandrosk0/Smatchet/pull/11) | `refactor(config): finish the split — drop json.hpp from public header` | 13, 14 (P1) |
+| [#12](https://github.com/alexandrosk0/Smatchet/pull/12) | `review: P1 cleanup — 4 fixes from POST_P0_REVIEW` | 9, 10, 18, 22 (P1) + Impl member reorder hardening |
+| [#13](https://github.com/alexandrosk0/Smatchet/pull/13) | `docs(controller): clarify automation-worker lifetime contract` | 19 (P1) |
+| [#14](https://github.com/alexandrosk0/Smatchet/pull/14) | `docs(config): explain legacy-MCP migration ordering` | 15 (P1) |
+| [#15](https://github.com/alexandrosk0/Smatchet/pull/15) | `fix(plane): snapshot TrackerConfig under cache lock in CreateIssue` | 12 (P1) |
+| [#16](https://github.com/alexandrosk0/Smatchet/pull/16) | `fix(audit): fallback path when primary audit file is unwritable` | 20 (P1) |
 
-Final build verification on develop tip (`93f561b`): `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → **149/149 both targets clean**.
+Last build verification on develop tip (`93f561b`): `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → **149/149 both targets clean**. Re-verification on `02fe09e` is in the pending list above.
 
 ---
 
