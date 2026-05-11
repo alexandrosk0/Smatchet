@@ -209,7 +209,8 @@ bool JiraAppendCachedTicketFromSearchIssue(
 } // namespace
 
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
-                                                  const ViewsStore* viewsOverride, std::string* outFetchError) {
+                                                  const ViewsStore* viewsOverride, std::string* outFetchError,
+                                                  std::string* outWarning) {
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
@@ -221,6 +222,9 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
     }
     if (outFetchError) {
         *outFetchError = summary.FetchError;
+    }
+    if (outWarning) {
+        *outWarning = summary.Warning;
     }
     return results;
 }

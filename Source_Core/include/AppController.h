@@ -49,6 +49,8 @@ struct TrackerIssueFetchPack {
     std::vector<CachedTicket> Tickets;
     bool FullSyncCompleted = false;
     std::string FetchError;
+    /// Soft caveat (e.g. pagination cap). See TrackerIssueFetchSummary::Warning.
+    std::string Warning;
 };
 
 struct AppUpdateAsset {
@@ -706,8 +708,12 @@ class AppController {
         // of the lambda; the UI thread reads/clears via lock_guard in TickStreamingApply +
         // setup/teardown paths.
         std::string FetchError;
+        // Soft warning channel (e.g. PlaneClient pagination cap). Same QueueMutex contract as
+        // FetchError above. Distinct from FetchError so the UI can surface the caveat without
+        // suppressing the success notification or flipping connectivity state.
+        std::string Warning;
 
-        // Cache processing queue + FetchError serialization. UI thread and worker thread.
+        // Cache processing queue + FetchError / Warning serialization. UI thread and worker thread.
         mutable std::mutex QueueMutex;
         std::vector<std::vector<CachedTicket>> PendingBatches;
 

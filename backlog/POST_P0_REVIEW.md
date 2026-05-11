@@ -109,7 +109,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 ### From PR #6
 
-23. ⏳ **`PlaneClient` page-cap warning surfaces as a failure banner** — `Source_Core/src/PlaneClient.cpp:489-495`. `summary.FetchError = warn;` then `AppController::TickStreamingApply` reads `FetchError` (`AppController.cpp:2204-2209`) and displays it as a *failure* even though 5,000 issues ingested successfully. **Fix:** add `summary.Warning` channel (or prefix `[partial]`) so the UI can distinguish.
+23. ✅ **DONE.** Added a `Warning` channel to `TrackerIssueFetchSummary` / `TrackerIssueFetchPack` / `StreamingSyncState`, with an optional `outWarning` parameter on `ITrackerClient::FetchIssues` (both Jira and Plane overrides updated). PlaneClient's page-cap message now goes to `Warning` instead of `FetchError`. `ApplyIssueFetchPack` and `TickStreamingApply` surface non-empty `Warning` as a `LastTrackerTicketSyncWarning` banner + "Sync Warning" toast (streaming path) while still firing `requestDeferredLiveTrackerBackendSuccessNotify_()` — the partial pull is no longer misclassified as a fetch failure.
 
 24. 🟡 **PARTIAL (commit pending in `review/logger-hardening`).** `FlushFileSink` no longer lies (item 6 above) so the public surface is honest now. Still has no in-tree caller — a future wire-up into the crash handler / signal path or into `~AppController` (to ensure logs are flushed before SQLite/MCP shutdown) closes this. Not a bug as it stands.
 
@@ -127,15 +127,15 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 ### From PR #8
 
-30. ⏳ **`PluginHost::GetMcpServerStatus` still uses `dynamic_cast<const McpPlugin*>`** — `PluginHost.cpp:84-93`. CODE_REVIEW item 20 added `IPlugin::MatchesConfig` and is marked done, but this status accessor was missed and still reaches into the concrete plugin via RTTI. **Fix:** add `virtual IPlugin::GetMcpStatusSnapshot(McpServerStatus&) {}` or an opaque-blob accessor.
+30. ✅ **DONE.** Added `virtual bool IPlugin::TryGetMcpStatusSnapshot(McpServerStatus&) const { return false; }` (gated by `SMATCHET_WITH_MCP`). `McpPlugin` overrides it to fill the snapshot and return true; `PluginHost::GetMcpServerStatus` now iterates plugins via the virtual hook with no RTTI. Same pattern as the `MatchesConfig` hook added under CODE_REVIEW item 20.
 
 31. ⏳ **`Views::DeleteActive` picks `Views.front()` after delete** — `Views.cpp:77-93`. UX nit: deleting the last view jumps to the first instead of the previous neighbour. **Fix:** capture index pre-erase; pick `min(idx, size-1)`.
 
 32. ⏳ **`LocalCacheManager::stmt()` calls `reset()` + `clearBindings()` even on first creation** — `LocalCacheManager.cpp:117-122`. Harmless but redundant; freshly prepared statements have no bindings. **Fix:** branch on whether `slot` was already populated.
 
-33. ⏳ **`MarkdownConvert` HTML path drops malformed nested tables silently** — `MarkdownConvert.cpp:1490-1499`. `appendPipeTable(tableRows)` fires only on `</table>` close; missing close-tag → rows lost (`fellBack` set, content gone). **Fix:** flush `tableRows` in the `while (outPtrStack.size() > 1)` cleanup at L1599.
+33. ✅ **DONE.** After the orphan-sink merge loop in the HTML→markdown converter, non-empty `tableRows` are now flushed via `appendPipeTable(tableRows)` (with `fellBack = true` so callers still prefer raw mode). Documents that end mid-table render as best-effort pipe-table output instead of vanishing.
 
-34. ⏳ **Setup scripts re-load + re-invoke on every automation job** — `AppController_LuaBindings.cpp:859-869`. PR #8 kept the per-job fresh `sol::state` pattern; setup scripts with side effects (e.g. `tracker.create_issue(...)` at module-load) re-fire every job. **Fix:** cache compiled `sol::function` references and invoke without reloading; or run setup scripts once on the first job.
+34. ✅ **DONE (documented).** Investigation: the suggested fixes don't actually solve the problem. Caching compiled `sol::function` refs across jobs isn't viable — bytecode bound to a destroyed state can't be replayed, and persisting `bgState` across jobs would lose the per-job isolation guarantee that the fresh-state pattern provides. The right resolution is contractual: setup scripts must be defining-only (declare functions / tables / constants) and avoid side effects at module-load level. Added a block comment at the setup-script load site (`AppController_LuaBindings.cpp`) spelling out the contract and the reasoning so a future reader doesn't try to "optimise" the re-run.
 
 ---
 

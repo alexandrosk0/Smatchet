@@ -17,6 +17,10 @@ class McpPlugin : public IPlugin {
     void OnStop() override;
 
     bool NeedsRestart(const TrackerConfig& cfg) const override;
+    bool TryGetMcpStatusSnapshot(McpServerStatus& out) const override {
+        out = GetStatus();
+        return true;
+    }
 
     McpServerStatus GetStatus() const;
     /** Compare bound auth token to current config (for restart-on-change). */

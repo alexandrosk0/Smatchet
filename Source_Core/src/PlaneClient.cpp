@@ -359,7 +359,8 @@ bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out
 std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
                                                    const TrackerConfig* configOverride,
                                                    const ViewsStore* viewsOverride,
-                                                   std::string* outFetchError) {
+                                                   std::string* outFetchError,
+                                                   std::string* outWarning) {
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
@@ -371,6 +372,9 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
     }
     if (outFetchError) {
         *outFetchError = summary.FetchError;
+    }
+    if (outWarning) {
+        *outWarning = summary.Warning;
     }
     return results;
 }
@@ -484,7 +488,10 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
                     ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
                 LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
-                summary.FetchError = warn;
+                // Soft warning: the issues we did fetch are valid; treat as a partial success
+                // rather than a fetch failure so the UI fires its success notify and the
+                // connectivity banner stays clear.
+                summary.Warning = warn;
                 break;
             }
             ++pageCount;

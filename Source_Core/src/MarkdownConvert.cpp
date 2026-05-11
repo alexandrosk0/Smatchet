@@ -1602,6 +1602,15 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
         outPtrStack.pop_back();
         tail() += orphan;
     }
+    // If the document ended mid-table (missing </table>), appendPipeTable never fired on the
+    // </table> close path and the accumulated rows would be lost. Flush them here so the
+    // partial table at least renders as best-effort pipe-table output before the fallback flag
+    // routes the caller to raw mode.
+    if (!tableRows.empty()) {
+        fellBack = true;
+        appendPipeTable(tableRows);
+        tableRows.clear();
+    }
 
     flushBuffer(false);
     if (outFellBack)

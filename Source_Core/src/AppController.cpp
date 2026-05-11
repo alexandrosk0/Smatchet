@@ -1671,6 +1671,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         // so the lock is uncontended — but keeping the lock guards the contract from future drift).
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
         activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
     }
     activeStreamingSync_.KeepIds.clear();
     activeStreamingSync_.Cancelled = false;
@@ -1729,7 +1730,8 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
-    pack.Tickets = Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError);
+    pack.Tickets = Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError,
+                                        &pack.Warning);
 
     return pack;
 
@@ -1752,6 +1754,7 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     const std::vector<CachedTicket>& freshTickets = pack.Tickets;
 
     const std::string& fetchError = pack.FetchError;
+    const std::string& fetchWarning = pack.Warning;
 
     const bool fullSyncCompleted = pack.FullSyncCompleted;
 
@@ -1773,6 +1776,13 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 
     } else if (fetchError.empty()) {
 
+        // Soft warnings still count as success — the fetched data is valid, just partial.
+        // Surface the caveat as a sync warning banner and still fire the success notify so
+        // the connectivity state isn't pinned to TransportDown.
+        if (!fetchWarning.empty()) {
+            LastTrackerTicketSyncWarning = "Sync completed with a caveat: " + fetchWarning;
+            LOG_WARN("AppController::ApplyIssueFetchPack soft warning: %s", fetchWarning.c_str());
+        }
         requestDeferredLiveTrackerBackendSuccessNotify_();
 
     }
@@ -1909,6 +1919,7 @@ void AppController::TickStreamingApply() {
             // FetchError contract: every read/write through QueueMutex (worker joined above).
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
         }
 
         activeStreamingSync_.KeepIds.clear();
@@ -2207,12 +2218,14 @@ void AppController::TickStreamingApply() {
 
 
 
-        // FetchError is written by the worker thread under QueueMutex; acquire it for the read.
-        // FullSyncCompleted is atomic and can be read without the lock.
+        // FetchError + Warning are written by the worker thread under QueueMutex; acquire it
+        // for the read. FullSyncCompleted is atomic and can be read without the lock.
         std::string fetchError;
+        std::string fetchWarning;
         {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             fetchError = activeStreamingSync_.FetchError;
+            fetchWarning = activeStreamingSync_.Warning;
         }
 
         bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
@@ -2241,6 +2254,13 @@ void AppController::TickStreamingApply() {
 
         } else {
 
+            // Soft warnings: data is good, just partial — still notify success but surface
+            // the caveat as a warning banner + toast.
+            if (!fetchWarning.empty()) {
+                LastTrackerTicketSyncWarning = "Sync completed with a caveat: " + fetchWarning;
+                LOG_WARN("AppController::TickStreamingApply soft warning: %s", fetchWarning.c_str());
+                SmatchetToastManager::Instance().Push("Sync Warning", fetchWarning, ToastType::Warning, 5000);
+            }
             requestDeferredLiveTrackerBackendSuccessNotify_();
 
             std::string msg = "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
@@ -2427,6 +2447,7 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
 
         activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
 
         activeStreamingSync_.PendingBatches.clear();
 
@@ -2507,6 +2528,7 @@ void AppController::StartStreamingSync(const TrackerConfig& cfgCopy, const Views
                 activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
 
                 activeStreamingSync_.FetchError = summary.FetchError;
+                activeStreamingSync_.Warning = summary.Warning;
 
                 activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
 
