@@ -679,6 +679,13 @@ class AppController {
     mutable std::mutex automationJobMutex_;
     std::condition_variable automationJobCv_;
     std::deque<AutomationJob> automationJobs_;
+    // Lifetime contract (see ~AppController and AutomationWorkerLoop):
+    //   - The worker reads `this` indirectly via each iteration's `bgState["__smatchet_app"] = this`.
+    //   - `bgState` is a stack-local per iteration; it never escapes the iteration's try-block.
+    //   - `~AppController` flips `automationWorkerShuttingDown_` and `automationWorker_.join()` BEFORE
+    //     any AppController member is destroyed. The join therefore provides both the
+    //     happens-before barrier and the guarantee that no live `bgState` (and no `__smatchet_app`
+    //     pointer reachable from worker code) survives into member destruction.
     std::thread automationWorker_;
     std::atomic<bool> automationWorkerShuttingDown_{false};
     void AutomationWorkerLoop();

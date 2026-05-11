@@ -528,8 +528,13 @@ void AppController::InitLuaCore(sol::state& state) {
 
     // Store AppController* per-state so glue functions resolve it via sol::this_state without a
     // process-wide pointer. Each state (main or background) holds its own entry — no cross-state
-    // races and no lifetime hazard when Ticket userdata outlives the controller (the entry is
-    // cleared in ClearLuaTicketContextGlue which is called from ~AppController before lua dtor).
+    // races and no lifetime hazard:
+    //   - For the main `lua` state: ClearLuaTicketContextGlue (called from ~AppController before
+    //     the lua dtor) nils the entry, so userdata that outlives the controller resolves to null.
+    //   - For per-iteration `bgState` in AutomationWorkerLoop: bgState is a stack-local destroyed
+    //     at the end of each iteration. ~AppController joins automationWorker_ before any member
+    //     destruction (see the automationWorker_ contract in AppController.h), so the worker can
+    //     never observe a half-destroyed AppController through `__smatchet_app`.
     state["__smatchet_app"] = this;
 
     state.new_usertype<CachedTicket>("Ticket",
