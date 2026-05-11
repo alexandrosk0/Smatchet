@@ -1311,17 +1311,24 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
     // Resolve config + headers + project under the cache lock, then drop the lock before the HTTP
     // POST so UI display-name lookups are not blocked during the round trip. Re-acquire briefly at
     // the end to record `visualKey -> uuid` in `keyToId_`.
-    TrackerConfig cfg = ConfigManager::Load();
-    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+    //
+    // Backlog #12: the cfg snapshot and the cache read must happen under the same lock.
+    // Snapshotting cfg before the lock would let a concurrent ConfigManager::Save() rotate
+    // credentials or workspace identifiers between the snapshot and the cache lookup — the
+    // request would then go out with stale auth while the cache was inspected with fresh state.
+    std::string planeApi;
     cpr::Header headers;
-    for (const auto& kv : BuildPlaneHeaders(cfg)) {
-        headers.insert({kv.first, kv.second});
-    }
-
+    std::string workspaceSlug;
     std::string resolvedProjectId;
     std::string projectIdentifier;
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        TrackerConfig cfg = ConfigManager::Load();
+        planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+        for (const auto& kv : BuildPlaneHeaders(cfg)) {
+            headers.insert({kv.first, kv.second});
+        }
+        workspaceSlug = cfg.PlaneWorkspaceSlug;
         if (planeProjectId_.empty()) {
             ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
         }
@@ -1332,7 +1339,7 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         projectIdentifier = planeProjectIdentifier_;
     }
 
-    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
+    const std::string url = planeApi + "/api/v1/workspaces/" + workspaceSlug +
                             "/projects/" + resolvedProjectId + "/work-items/";
 
     auto response = TrackerPostLogged("PlaneClient", url, headers, fields.dump());

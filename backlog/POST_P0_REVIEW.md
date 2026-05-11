@@ -25,7 +25,6 @@ Open work (in priority order):
 
 - **P1 #9** — MCP SSE heartbeat blocks process shutdown for up to 1s per client.
 - **P1 #10** — `CellIdScope` ID collision when `column.FieldId` is empty.
-- **P1 #12** — `PlaneClient::CreateIssue` `cfg` snapshot inconsistency.
 - **P1 #18** — `GridFrameContext` cache key misses in-place view edits (stale columns until catalog rev bump).
 - **P1 #20** — `AuditWriter` silent on disk failure. Partially addressed in PR #10 (added rate-limited LOG_ERROR); the queue-with-cap-or-fallback-path follow-up is still open.
 - **P1 #22** — `SmatchetImGuiHost::UpdateRendererColorFormat` torn-down backend on init failure.
@@ -75,7 +74,7 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 11. ✅ **DONE (commit pending in `review/process-stability`).** `BlameAnalysisUi::BlameState` now has an explicit destructor that signals `worker.Cancel.store(true)` and joins `worker.Thread` if joinable. The PR #8 pimpl move made step (b) easy: `~BlameAnalysisUi` releases the `unique_ptr<BlameState>`, which fires `~BlameState`, which joins synchronously before any `BlameState` member is destroyed. No more `std::terminate` at exit on a joinable worker.
 
-12. ⏳ **`PlaneClient::CreateIssue` snapshots `cfg` *before* the cache lock but reads cache state *under* it — inconsistent view** — `Source_Core/src/PlaneClient.cpp:1317-1342`. The lock-scope fix correctly pushes HTTP outside the lock, but `cfg` is captured pre-lock; if another thread mutates credentials between snapshot and HTTP POST, the POST uses old auth while the cache lookup under lock saw fresh state. Comment at L1314 advertises atomicity that isn't actually there. **Fix:** snapshot the entire `TrackerConfig` under the lock, or document the read-old-config-write-with-old-cache contract.
+12. ✅ **DONE.** Moved the `TrackerConfig` snapshot, header build, and `workspaceSlug` capture inside the `planeCacheMutex_` critical section so they're consistent with the cache lookup. HTTP POST still runs after the lock is released. The advertised "config + headers + project under the cache lock" contract now matches the code.
 
 ### From PR #7 (ConfigManager split)
 
