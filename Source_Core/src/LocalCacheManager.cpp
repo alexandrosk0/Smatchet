@@ -272,6 +272,39 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
     }
 }
 
+void LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>& fn) {
+    try {
+        // Join tickets with their field values and rich values in one pass per ticket to avoid
+        // materialising the entire result set into memory (§4.3).
+        SQLite::Statement q(db,
+            "SELECT t.id, fv.field_key, fv.field_value, rv.field_key, rv.field_value "
+            "FROM tickets t "
+            "LEFT JOIN ticket_field_values fv ON fv.ticket_id = t.id "
+            "LEFT JOIN ticket_field_rich_values rv ON rv.ticket_id = t.id AND rv.field_key = fv.field_key "
+            "ORDER BY t.id");
+        CachedTicket cur;
+        while (q.executeStep()) {
+            const std::string id = q.getColumn(0).getText();
+            if (id != cur.id) {
+                if (!cur.id.empty()) fn(std::move(cur));
+                cur = CachedTicket{};
+                cur.id = id;
+            }
+            if (!q.getColumn(1).isNull()) {
+                const std::string fk = q.getColumn(1).getText();
+                cur.fieldValues[fk] = q.getColumn(2).isNull() ? std::string() : q.getColumn(2).getText();
+                if (!q.getColumn(3).isNull()) {
+                    cur.fieldRichValues[fk] = q.getColumn(4).isNull() ? std::string() : q.getColumn(4).getText();
+                }
+            }
+        }
+        if (!cur.id.empty()) fn(std::move(cur));
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::ForEachTicket failed err=%s", ex.what());
+        throw;
+    }
+}
+
 std::vector<std::string> LocalCacheManager::GetAllTicketIds() {
     try {
         std::vector<std::string> results;

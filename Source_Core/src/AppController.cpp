@@ -168,7 +168,7 @@ SemanticVersion ParseSemanticVersion(const std::string& raw) {
     }
     const size_t dash = s.find('-');
     if (dash != std::string::npos) {
-        s = s.substr(0, dash);
+        s.resize(dash);
     }
 
     std::array<int, 3> parts{{0, 0, 0}};
@@ -535,7 +535,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
 
         }
 
-        for (auto& t : tickets) {
+        for (const auto& t : tickets) {
 
             Cache->SaveTicket(t);
 
@@ -1085,7 +1085,7 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 
     cpr::Header headers{{"Accept", "application/octet-stream"}, {"User-Agent", "SmatchetUpdater/" + GetAppVersion()}};
     cpr::Redirect redirect(true, true);
-    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+    cpr::WriteCallback writeCb{[&](const std::string& data, intptr_t) -> bool {
         ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
         return ofs.good();
     }};
@@ -1744,7 +1744,7 @@ void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 
     LastTrackerTicketSyncWarning.clear();
 
-    std::vector<CachedTicket>& freshTickets = pack.Tickets;
+    const std::vector<CachedTicket>& freshTickets = pack.Tickets;
 
     const std::string& fetchError = pack.FetchError;
 

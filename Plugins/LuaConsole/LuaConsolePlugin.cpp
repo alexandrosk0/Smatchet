@@ -12,7 +12,6 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
-#include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -150,13 +149,19 @@ bool LuaConsolePlugin::IsHooksFile(const std::string& rel) {
 }
 
 int LuaConsolePlugin::TryParseLuaErrorLine(const std::string& err) {
-    try {
-        std::regex re(R"((?:^|\n)[^\n:]{0,400}:(\d+):)");
-        std::smatch m;
-        if (std::regex_search(err, m, re)) {
-            return std::stoi(m[1].str());
+    // Hand-parser replaces std::regex_search (§5.2): avoids backtracking stall on malformed input
+    // on the UI thread. Lua errors are "<source>:<line>: <message>"; we scan for ":<digits>:".
+    const size_t n = err.size();
+    for (size_t i = 0; i < n; ++i) {
+        if (err[i] == ':') {
+            size_t j = i + 1;
+            if (j >= n || err[j] < '0' || err[j] > '9') continue;
+            size_t k = j;
+            while (k < n && err[k] >= '0' && err[k] <= '9') ++k;
+            if (k < n && err[k] == ':' && k > j) {
+                try { return std::stoi(err.substr(j, k - j)); } catch (...) {}
+            }
         }
-    } catch (...) {
     }
     return -1;
 }

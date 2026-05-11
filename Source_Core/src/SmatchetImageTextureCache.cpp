@@ -26,6 +26,7 @@ struct CacheValue {
     ImTextureData* Texture = nullptr;
     int Width = 0;
     int Height = 0;
+    std::list<std::string>::iterator LruIt; ///< O(1) splice via stored iterator (§4.8 item 47).
 };
 
 static std::mutex g_mutex;
@@ -91,11 +92,14 @@ static void EvictOneUnlocked() {
 }
 
 static void TouchLruUnlocked(const std::string& key) {
-    auto it = std::find(g_lru.begin(), g_lru.end(), key);
-    if (it != g_lru.end()) {
-        g_lru.erase(it);
+    const auto mapIt = g_map.find(key);
+    if (mapIt != g_map.end()) {
+        // O(1) splice — iterator remains valid after splice, still points to the front element.
+        g_lru.splice(g_lru.begin(), g_lru, mapIt->second.LruIt);
+        mapIt->second.LruIt = g_lru.begin();
+    } else {
+        g_lru.push_front(key);
     }
-    g_lru.push_front(key);
 }
 
 static bool DecodeWithStb(const unsigned char* bytes, size_t byteCount, std::vector<unsigned char>& outRgba, int& outW,
@@ -195,8 +199,9 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
         return false;
     }
 
-    g_map[cacheKey] = CacheValue{tex, w, h};
-    TouchLruUnlocked(cacheKey);
+    g_lru.push_front(cacheKey);
+    g_map[cacheKey] = CacheValue{tex, w, h, g_lru.begin()};
+    // LruIt is set; TouchLruUnlocked will use it for O(1) splice on subsequent accesses.
     out.Texture = tex;
     out.Width = w;
     out.Height = h;

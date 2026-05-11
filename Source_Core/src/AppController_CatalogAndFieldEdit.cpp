@@ -215,9 +215,12 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         return;
     }
 
-    AvailableFields = std::move(fields);
-    AvailableComponents = std::move(components);
-    AvailableIssueTypeMeta = std::move(issueTypeMeta);
+    {
+        std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+        AvailableFields = std::move(fields);
+        AvailableComponents = std::move(components);
+        AvailableIssueTypeMeta = std::move(issueTypeMeta);
+    }
     LastTrackerFieldCatalogError.clear();
     LastTrackerFieldCatalogWarning.clear();
     fieldCatalogEverLoaded_ = true;
@@ -242,6 +245,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
+    std::lock_guard<std::mutex> lk(availableFieldsMutex_);
     const auto it = std::find_if(AvailableFields.begin(), AvailableFields.end(),
                                  [&](const TrackerField& field) { return field.Id == fieldId; });
     return it == AvailableFields.end() ? nullptr : &(*it);

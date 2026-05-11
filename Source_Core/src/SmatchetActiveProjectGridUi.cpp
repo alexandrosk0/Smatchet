@@ -200,15 +200,20 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
-            for (const auto& column : columns) {
-                float width = (column.ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
+            // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.
+            std::vector<float> colWidths(columns.size());
+            for (size_t ci = 0; ci < columns.size(); ++ci) {
+                float w = (columns[ci].ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
                 if (activeViewForGrid) {
-                    const auto it = activeViewForGrid->ColumnWidths.find(column.Key);
-                    if (it != activeViewForGrid->ColumnWidths.end() && it->second > 0.0f) {
-                        width = it->second;
+                    const auto wIt = activeViewForGrid->ColumnWidths.find(columns[ci].Key);
+                    if (wIt != activeViewForGrid->ColumnWidths.end() && wIt->second > 0.0f) {
+                        w = wIt->second;
                     }
                 }
-                ImGui::TableSetupColumn(column.Label.c_str(), ImGuiTableColumnFlags_WidthFixed, width);
+                colWidths[ci] = w;
+            }
+            for (size_t ci = 0; ci < columns.size(); ++ci) {
+                ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
             }
             ImGui::TableSetupScrollFreeze(1, 1);
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
@@ -368,38 +373,41 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 }
 
                 if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
+                    // Resolve field meta once per sort spec outside the comparator (§3.4 item 55):
+                    // avoids catalogIndex.Find() on every pair comparison in O(N log N) sort.
+                    struct SortKey {
+                        const TicketGridColumn* col = nullptr;
+                        const TrackerField* fieldMeta = nullptr;
+                        int dir = 1;
+                    };
+                    std::vector<SortKey> sortKeys;
+                    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+                        const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+                        if (!IsPersistableSortDirection(spec.SortDirection)) continue;
+                        const int ci = spec.ColumnIndex;
+                        if (ci < 0 || ci >= static_cast<int>(columns.size())) continue;
+                        SortKey sk;
+                        sk.col = &columns[static_cast<size_t>(ci)];
+                        sk.fieldMeta = catalogIndex.Find(sk.col->FieldId);
+                        sk.dir = (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
+                        sortKeys.push_back(sk);
+                    }
                     const std::vector<CachedTicket>* ticketsPtr = &tickets;
-                    const std::vector<TicketGridColumn>* columnsPtr = &columns;
-                    const TrackerFieldCatalogIndex* catalogPtr = &catalogIndex;
                     std::stable_sort(d.cachedSortedIndices.begin(), d.cachedSortedIndices.end(),
-                                     [ticketsPtr, columnsPtr, catalogPtr, sortSpecs](size_t ia, size_t ib) {
+                                     [ticketsPtr, &sortKeys](size_t ia, size_t ib) {
                                          const auto& tix = *ticketsPtr;
-                                         const auto& cols = *columnsPtr;
-                                         for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-                                             const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-                                             if (!IsPersistableSortDirection(spec.SortDirection))
-                                                 continue;
-                                             const int colIndex = spec.ColumnIndex;
-                                             if (colIndex < 0 || colIndex >= static_cast<int>(cols.size()))
-                                                 continue;
-                                             const TicketGridColumn& col = cols[static_cast<size_t>(colIndex)];
-                                             const int dir =
-                                                 (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
-                                             if (col.ColumnKind == TicketGridColumn::Kind::Id) {
+                                         for (const auto& sk : sortKeys) {
+                                             if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
                                                  const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
-                                                 if (less)
-                                                     return dir > 0;
-                                                 if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
-                                                     continue;
-                                                 return dir < 0;
+                                                 if (less) return sk.dir > 0;
+                                                 if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id)) continue;
+                                                 return sk.dir < 0;
                                              }
-                                             const std::string aVal = tix[ia].GetFieldValue(col.FieldId);
-                                             const std::string bVal = tix[ib].GetFieldValue(col.FieldId);
-                                             const TrackerField* fieldMeta = catalogPtr->Find(col.FieldId);
-                                             const int cmp =
-                                                 CompareFieldValuesForSort(col.FieldId, fieldMeta, aVal, bVal, dir);
-                                             if (cmp != 0)
-                                                 return (cmp * dir) < 0;
+                                             const std::string aVal = tix[ia].GetFieldValue(sk.col->FieldId);
+                                             const std::string bVal = tix[ib].GetFieldValue(sk.col->FieldId);
+                                             const int cmp = CompareFieldValuesForSort(
+                                                 sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
+                                             if (cmp != 0) return (cmp * sk.dir) < 0;
                                          }
                                          return ia < ib;
                                      });
@@ -659,7 +667,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidthForSel;
                         const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
                         const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
-                        const auto feedbackIt = d.cellFeedbackByKey.find(cellKey);
+                        // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
+                        const auto feedbackIt = d.cellFeedbackByKey.empty()
+                            ? d.cellFeedbackByKey.end()
+                            : d.cellFeedbackByKey.find(cellKey);
                         const bool isSavingThisCell = feedbackIt != d.cellFeedbackByKey.end() &&
                                                       feedbackIt->second.State == CellWriteState::Saving;
 

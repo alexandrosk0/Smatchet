@@ -674,6 +674,9 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg, true);
     const std::string url = base + "/rest/agile/1.0/sprint/" + UrlEncode(sprintId) + "/issue";
+    // Jira Agile API accepts either issue key or issue numeric ID in the `issues` array.
+    // We pass the key (e.g. "PROJ-123"); if the board's Jira version requires a numeric ID,
+    // resolve first via GET /rest/api/3/issue/{key}?fields=id and swap before this call.
     const nlohmann::json body = nlohmann::json{{"issues", nlohmann::json::array({issueKey})}};
     const std::string bodyStr = body.dump();
     auto response = TrackerPostLogged("JiraClient", url, headers, bodyStr);

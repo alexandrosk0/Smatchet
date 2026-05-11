@@ -489,6 +489,10 @@ void SmatchetUI::Draw(AppController& app) {
         g_ui.triggerCatalogRefetch = true;
     }
     {
+        SMATCHET_UI_PERF_SCOPE("MainThreadDispatcher::Drain");
+        app.mainThreadDispatcher.Drain();
+    }
+    {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);
     }

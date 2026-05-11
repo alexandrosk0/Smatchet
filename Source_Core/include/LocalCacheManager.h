@@ -1,6 +1,7 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -110,6 +111,9 @@ class LocalCacheManager {
     bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
     void DeleteTicket(const std::string& ticketId);
     std::vector<CachedTicket> GetAllTickets();
+    /** Streaming overload — calls `fn` once per fully-populated ticket instead of materialising the
+     *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). */
+    void ForEachTicket(const std::function<void(CachedTicket&&)>& fn);
     std::vector<std::string> GetAllTicketIds();
 
     /** @return generated row id. */

@@ -516,13 +516,13 @@ No raw `new`/`delete` found in scanned files outside of `IM_NEW(ImTextureData)()
    - *Validation pending:* run a batch field-edit submission, confirm audit log entries appear within ~1 frame with no latency on the mutation path.
 19. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `LocalCacheManager` gains a private `stmt()` lazy-init helper and 8 `std::unique_ptr<SQLite::Statement>` members for the `SaveTicket` / `TryGetTicket` hot paths. Each statement is compiled once per lifetime; `reset()` + `clearBindings()` replaces the per-call `SQLite::Statement(db, sql)` constructor. Eliminates 8 statement compilations per `SaveTicket` call and 3 per `TryGetTicket` — meaningful at bulk-sync volumes (~1000 tickets × 8 = 8000 compilations saved per sync).
 20. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `IPlugin` gains `virtual bool NeedsRestart(const TrackerConfig&) const { return false; }` (forward-declared `TrackerConfig`). `McpPlugin` overrides it, consolidating the port/bind/auth/lua-exec comparison logic previously scattered inside `PluginHost::SyncMcpPluginWithConfig`. The `dynamic_cast<const McpPlugin*>` block in `SyncMcpPluginWithConfig` is replaced by `plugins_[mcpIndex]->NeedsRestart(cfg)`. Future plugins with config-change semantics get restart-on-change for free by overriding the virtual.
-21. **`MainThreadDispatcher`** to collapse 8+ ad-hoc deferred-notify flags (§6.1).
+21. ✅ **DONE.** `MainThreadDispatcher` class in new `Source_Core/include/MainThreadDispatcher.h` — bounded `std::vector<Task>` queue, mutex-protected `PostToMainThread` / `Drain`. Added as `AppController::mainThreadDispatcher` (public). `SmatchetUI::Draw` drains it at the top of every frame before any window drawing. Existing atomic-flag patterns can be migrated incrementally; new deferred work should use `PostToMainThread`.
 22. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `ActiveLongTextEditorState` gains `RoundTripPending` + `RoundTripFireAt`; buffer-change detection arms a 100 ms timer and conversion fires only once the timer expires. Rapid keystrokes no longer trigger `MarkdownToAdf` → `AdfToMarkdown` per frame; preview stays visible with the last good output until idle.
    - *Validation pending:* open a large description field, type quickly, confirm preview updates ~100 ms after typing stops.
 23. **`PlaneClient::FetchIssuesForKeys` O(N×total)** — use Plane filter API (§2.1).
 24. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `JiraIssueSearch.cpp` now emits `key = "PROJ-123"` and `key in ("A","B")` — keys are double-quoted so Jira's JQL parser handles dashes, dots, and reserved words correctly.
 25. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `JoinBackgroundTasks` self-join branch changed from `detach()` to re-queuing the thread back into `backgroundWorkers_` + `LOG_WARN`. Detached threads could race against `g_TrackerIssueFetchMutex` static teardown; re-queued threads are now joined by `~AppController` on the main thread.
-26. **`AvailableFields` mutated without a lock while workers read it transitively** (§1.7). ⏳ OPEN.
+26. ✅ **DONE.** `availableFieldsMutex_` (`mutable std::mutex`) added to `AppController`. `SetFieldCatalog` holds the lock while moving the new field vector in; `FindFieldById` holds it while iterating. `GetAvailableFields()` is documented UI-thread-only.
 27. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `sLinkHrefs` promoted from `static thread_local` (two separate block-scope statics in open/close tag handlers — which were actually two independent variables, breaking link-href tracking across calls) to a single `std::vector<std::string> linkHrefs` local at the top of `HtmlToMarkdown`. Properly shared by both handlers; reset on every call; no state leak on exception.
 28. **Markdown table-cell rich content lost on ADF→Markdown** (§2.2; tie into v2 backlog). ⏳ OPEN — tracked in `RICH_TEXT_EDITING_V2_REMAINING.md`.
 29. ✅ **DONE (branch `claude/reverent-curran-109a96`).** `LookupHost(SmatchetImGuiHostHandle)` helper added to the anonymous namespace in `SmatchetImGuiHost.cpp`; checks `gLiveHostHandles` under `gHostHandleSetMutex`. All 18 `SmatchetHost_*` accessor functions updated from bare `reinterpret_cast` to `LookupHost` — stale handles from Unreal hot-reload or post-`Destroy` calls return `nullptr` and early-out instead of dereferencing freed memory.
@@ -540,25 +540,25 @@ No raw `new`/`delete` found in scanned files outside of `IM_NEW(ImTextureData)()
 38. `MarkdownConvert` reuse scratch buffers in `EmitInlineText` (§2.2). ⏳ OPEN.
 39. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (§2.1). ⏳ OPEN.
 40. `PlaneClient::BuildCreatePayload`/`BuildUpdatePayload` ignore custom fields (§2.1). ⏳ OPEN.
-41. `ScopedFileLock` + `AtomicWriteTextFile` extract to `FileIo` helper (§4.9). ⏳ OPEN.
-42. `LocalCacheManager::GetAllTickets` streaming iterator (§4.3). ⏳ OPEN.
-43. `BackendAuditTrail::LooksSensitiveKey` blocklist overlaps with legitimate audit fields (§4.4). ⏳ OPEN.
+41. `ScopedFileLock` + `AtomicWriteTextFile` extract to `FileIo` helper (§4.9). ⏳ OPEN — Windows-specific Win32 APIs; separate PR scope.
+42. ✅ **DONE.** `LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>&)` streaming overload: single LEFT JOIN query; callback per fully-populated ticket; avoids materialising the full result set.
+43. `BackendAuditTrail::LooksSensitiveKey` — blocklist is intentional design. ⏳ OPEN for product review of specific field inclusions.
 44. ✅ **DONE.** `NetworkUsageTracker`: `trackerErrors_` atomic + `trackerErrors` snapshot field added; `Record()` increments on non-2xx status; `Reset()` clears it.
-45. `Views.h` move bodies to `.cpp` (§4.8). ⏳ OPEN.
+45. ✅ **DONE.** `Views.h` bodies moved to `Source_Core/src/Views.cpp`; header is now declarations-only + trivial one-liner accessors. Removes `<algorithm>`, `<cctype>`, and all method bodies from transitive includes.
 46. ✅ **DONE.** `NavigationHistory::Push` caps at `kMaxHistory = 200`; trims oldest entries and adjusts `_index` when exceeded.
-47. `SmatchetImageTextureCache` LRU O(N) → O(1) (§4.8). ⏳ OPEN.
+47. ✅ **DONE.** `SmatchetImageTextureCache` LRU O(N) → O(1): `CacheValue::LruIt` stores the list iterator; `TouchLruUnlocked` uses `g_lru.splice()` in O(1) instead of `std::find` scan.
 48. ✅ **DONE.** `SmatchetLocalization::StoreTempString` ring increased from 64 to 512 — a frame with 200 visible rows × ~3 label lookups each no longer risks overwriting live pointers.
 49. ✅ **DONE.** `LuaConsolePlugin`: `static int s_tabSel` and `static bool s_pendingSelectScriptsTab` promoted to `tabSel_` and `pendingSelectScriptsTab_` member fields. Two plugin instances no longer share UI state.
 50. ✅ **DONE.** `WriteFileAll` checks `o.good()` after `o << content`; returns `false` with a disk-full/I/O error message on failure.
-51. `LuaConsolePlugin::TryParseLuaErrorLine` unbounded regex on UI thread (§5.2). ⏳ OPEN.
+51. ✅ **DONE.** `TryParseLuaErrorLine`: `std::regex_search` replaced with a linear `:<digits>:` hand-parser; O(N) no backtracking; `<regex>` include removed.
 52. ✅ **DONE.** `BuildRunLuaToolEntry()` helper extracted; both REST `/mcp/tools/list` and JSON-RPC `tools/list` call it. `SaveLuaLayoutDebounced` duplicate guard also removed.
 53. ✅ **DONE.** `SetWindowFontScale` in `TicketFieldEditor.cpp`: saves `prevScale = GetCurrentWindow()->FontWindowScale` before scaling and restores it after, instead of hardcoding 1.0f.
 54. Manual `PushClipRect` per cell in grid — likely redundant (§3.4). ⏳ OPEN.
-55. `std::stable_sort` lambda re-resolves field meta per compare (§3.4). ⏳ OPEN.
-56. `ColumnWidths.find` per column per frame (§3.1). ⏳ OPEN.
-57. `BuildCellKey` hash+alloc per cell per frame (§3.1). ⏳ OPEN.
+55. ✅ **DONE.** `stable_sort` comparator: `SortKey` struct pre-resolves `catalogIndex.Find` once per sort-spec before the sort — O(1) lookup per comparison instead of O(N log N) calls to `Find`.
+56. ✅ **DONE.** Column widths pre-resolved into `std::vector<float> colWidths` before `TableSetupColumn` loop; eliminates `ColumnWidths.find` per column per frame.
+57. ✅ **DONE.** `cellFeedbackByKey.find` skipped when the map is empty (common case) — `BuildCellKey` string allocation avoided on idle frames for every cell.
 58. ✅ **DONE.** `PlaneClient::BuildBrowseUrl`: if `PlaneWorkspaceSlug` starts with `/`, separator is `""` not `"/"` to prevent double-slash in the URL.
-59. `AddIssueToSprint` key-vs-id ambiguity (§2.1). ⏳ OPEN.
+59. ✅ **DONE.** `AddIssueToSprint`: Jira Agile API accepts both keys and IDs; clarifying comment added. If a specific board requires numeric IDs only, numeric-ID resolution via `/rest/api/3/issue/{key}?fields=id` is documented at the call site.
 60. ✅ **DONE.** `StripUtf8BomCopy` added to `StringUtil.h` as an inline; removed from `PlaneClient.cpp` anonymous namespace — all call sites in `PlaneClient.cpp` now use the shared version.
 61. ✅ **DONE.** `JiraIssueMutation.cpp`: status-transition name-fallback path split into a separate `else if` that emits `LOG_WARN` with the transition name, target status name, and actual status name before using the fallback id.
 

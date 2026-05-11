@@ -28,6 +28,7 @@
 #include <future>
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
+#include "MainThreadDispatcher.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
 #include "JiraClient.h"
@@ -89,6 +90,10 @@ class AppController {
      * to refill from the tracker.
      */
     bool RecreateLocalCacheDatabase(std::string& outError);
+
+    /// Worker-to-UI-thread deferred task queue (CODE_REVIEW.md §6.1). Post lambdas here from any
+    /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
+    MainThreadDispatcher mainThreadDispatcher;
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink);
@@ -540,6 +545,7 @@ class AppController {
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
     std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
+    mutable std::mutex availableFieldsMutex_; ///< Guards AvailableFields writes (UI) vs. FindFieldById reads (workers).
     std::vector<TrackerField> AvailableFields;
     std::vector<TrackerComponent> AvailableComponents;
     std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
