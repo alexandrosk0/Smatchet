@@ -295,8 +295,8 @@ bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out
     const std::string pt = ToUpperAscii(JsonFieldToString(prop, "property_type"));
     out.IsCustom = true;
     out.ReadOnly = prop.value("is_readonly", false);
-    if (prop.contains("is_required") && prop["is_required"].is_boolean() && prop["is_required"].get<bool>()) {
-        (void)0;
+    if (prop.contains("is_required") && prop["is_required"].is_boolean()) {
+        out.IsRequired = prop["is_required"].get<bool>();
     }
 
     if (pt == "NUMBER" || pt == "INTEGER" || pt == "DECIMAL" || pt == "FLOAT") {
@@ -472,14 +472,29 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
         }
 
         const int pageSize = 100;
+        // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
+        // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
+        // and matches the per-server safety limit in JiraIssueSearch.cpp.
+        constexpr int kMaxPlanePages = 50;
         std::string listCursor;
         bool syncEndedCleanly = false;
+        int pageCount = 0;
 
         while (true) {
             if (shouldCancel && shouldCancel()) {
                 syncEndedCleanly = false;
                 break;
             }
+
+            if (pageCount >= kMaxPlanePages) {
+                const std::string warn =
+                    "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
+                    ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
+                LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
+                summary.FetchError = warn;
+                break;
+            }
+            ++pageCount;
 
             const std::string listBase =
                 planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId +
@@ -1102,7 +1117,9 @@ std::string PlaneClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::str
 }
 
 bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) {
-    std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+    // Resolve config + headers + project + UUID under the cache lock, then drop the lock before
+    // the HTTP PATCH so UI thread calls to ResolveDisplayValue / display-name lookups are not
+    // blocked for the duration of the round trip.
     TrackerConfig cfg = ConfigManager::Load();
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
@@ -1110,29 +1127,37 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
         headers.insert({kv.first, kv.second});
     }
 
-    if (planeProjectId_.empty()) {
-        ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
-    }
-    if (planeProjectId_.empty()) {
-        return false;
-    }
-
-    std::string targetUuid = issueId;
-    if (!LooksLikeUuid(issueId)) {
-        auto it = keyToId_.find(issueId);
-        if (it != keyToId_.end()) {
-            targetUuid = it->second;
-        } else {
-            // If not in cache, we might be replaying an offline edit after restart.
-            // In a real app we might need to search Plane for this key to get the UUID,
-            // but for now we'll assume it's in the cache from a recent fetch.
-            outError = "Could not resolve Plane visual key '" + issueId + "' to UUID. Try refreshing the grid.";
+    std::string resolvedProjectId;
+    std::string targetUuid;
+    {
+        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        if (planeProjectId_.empty()) {
+            // First-call HTTP under the lock is acceptable: it runs at most once per process
+            // lifetime; the steady-state PATCH path below is the hot one that needed the fix.
+            ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+        }
+        if (planeProjectId_.empty()) {
             return false;
+        }
+        resolvedProjectId = planeProjectId_;
+
+        targetUuid = issueId;
+        if (!LooksLikeUuid(issueId)) {
+            auto it = keyToId_.find(issueId);
+            if (it != keyToId_.end()) {
+                targetUuid = it->second;
+            } else {
+                // If not in cache, we might be replaying an offline edit after restart.
+                // In a real app we might need to search Plane for this key to get the UUID,
+                // but for now we'll assume it's in the cache from a recent fetch.
+                outError = "Could not resolve Plane visual key '" + issueId + "' to UUID. Try refreshing the grid.";
+                return false;
+            }
         }
     }
 
-    std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
-                      "/projects/" + planeProjectId_ + "/work-items/" + targetUuid + "/";
+    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
+                            "/projects/" + resolvedProjectId + "/work-items/" + targetUuid + "/";
 
     auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "PATCH", url, response);
@@ -1286,21 +1311,32 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
 }
 
 std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
-    std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+    // Resolve config + headers + project under the cache lock, then drop the lock before the HTTP
+    // POST so UI display-name lookups are not blocked during the round trip. Re-acquire briefly at
+    // the end to record `visualKey -> uuid` in `keyToId_`.
     TrackerConfig cfg = ConfigManager::Load();
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
     for (const auto& kv : BuildPlaneHeaders(cfg)) {
         headers.insert({kv.first, kv.second});
     }
-    if (planeProjectId_.empty()) {
-        ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+
+    std::string resolvedProjectId;
+    std::string projectIdentifier;
+    {
+        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        if (planeProjectId_.empty()) {
+            ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+        }
+        if (planeProjectId_.empty()) {
+            return "";
+        }
+        resolvedProjectId = planeProjectId_;
+        projectIdentifier = planeProjectIdentifier_;
     }
-    if (planeProjectId_.empty()) {
-        return "";
-    }
-    std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
-                      "/projects/" + planeProjectId_ + "/work-items/";
+
+    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
+                            "/projects/" + resolvedProjectId + "/work-items/";
 
     auto response = TrackerPostLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "POST", url, response);
@@ -1330,8 +1366,8 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         const std::string seqId = JsonFieldToString(j, "sequence_id");
 
         std::string visualKey;
-        if (!planeProjectIdentifier_.empty() && !seqId.empty()) {
-            visualKey = planeProjectIdentifier_ + "-" + seqId;
+        if (!projectIdentifier.empty() && !seqId.empty()) {
+            visualKey = projectIdentifier + "-" + seqId;
         } else if (!seqId.empty()) {
             visualKey = "#" + seqId;
         } else {
@@ -1339,6 +1375,7 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         }
 
         if (!uuid.empty() && !visualKey.empty()) {
+            std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
             keyToId_[visualKey] = uuid;
         }
 
