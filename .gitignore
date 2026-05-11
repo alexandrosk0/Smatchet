@@ -58,6 +58,7 @@ smatchet_field_catalog_cache.json
 .vexp/
 .cursor/
 .claude/*.local.json
+.claude/worktrees/
 *.cppcheck
 *.sln
 *.vcxproj
@@ -67,9 +68,6 @@ smatchet_field_catalog_cache.json
 cppcheck_*.txt
 /.fetchcontent-msvc
 BUILD_ITERATION_PLAN.md
-.claude/CLAUDE.md
 .vscode/settings.json
 backlog/CPPCHECK_PLAN.md
 backlog/RICH_TEXT_EDITING_V3_PLAN.md
-.claude/CLAUDE.md
-.claude/CLAUDE.md
