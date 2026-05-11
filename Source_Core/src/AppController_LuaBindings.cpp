@@ -836,6 +836,10 @@ void AppController::RunFlatScriptAsync(const std::string& scriptPath) {
 }
 
 void AppController::AutomationWorkerLoop() {
+    // Per-iteration try/catch wrapping all sol2/JSON/STL paths. Without this, a single throw
+    // (sol::error from a malformed script, std::bad_alloc from a runaway capture, etc.) escapes
+    // the thread function and triggers std::terminate. The error is logged and the worker
+    // continues serving the next job — same liveness contract as a UI-thread exception handler.
     while (true) {
         AutomationJob job;
         {
@@ -849,26 +853,42 @@ void AppController::AutomationWorkerLoop() {
             job = std::move(automationJobs_.front());
             automationJobs_.pop_front();
         }
-        
-        sol::state bgState;
-        InitLuaCore(bgState);
-        
-        sol::environment sandbox = CreateSandboxEnvironment(bgState);
-        
-        // Load setup scripts so global actions are defined
-        for (const auto& path : activeSetupScripts_) {
-            std::string resolved = ResolveLuaScriptPath(path);
-            if (!resolved.empty()) {
-                auto script = bgState.load_file(resolved);
-                if (script.valid()) {
-                    sol::protected_function func = script;
-                    sandbox.set_on(func);
-                    func();
+
+        // Snapshot activeSetupScripts_ under the same mutex used by RunLuaSetupScript so the
+        // iteration below sees a stable view even if the UI thread mutates the vector mid-job.
+        std::vector<std::string> setupScriptsSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(automationJobMutex_);
+            setupScriptsSnapshot = activeSetupScripts_;
+        }
+
+        try {
+            sol::state bgState;
+            InitLuaCore(bgState);
+
+            sol::environment sandbox = CreateSandboxEnvironment(bgState);
+
+            // Load setup scripts so global actions are defined
+            for (const auto& path : setupScriptsSnapshot) {
+                std::string resolved = ResolveLuaScriptPath(path);
+                if (!resolved.empty()) {
+                    auto script = bgState.load_file(resolved);
+                    if (script.valid()) {
+                        sol::protected_function func = script;
+                        sandbox.set_on(func);
+                        func();
+                    }
                 }
             }
+
+            RunAutomationJob(bgState, sandbox, job);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::AutomationWorkerLoop: exception escaped job '%s': %s",
+                      job.scriptPathOrActionName.c_str(), ex.what());
+        } catch (...) {
+            LOG_ERROR("AppController::AutomationWorkerLoop: unknown exception escaped job '%s'",
+                      job.scriptPathOrActionName.c_str());
         }
-        
-        RunAutomationJob(bgState, sandbox, job);
     }
 }
 
@@ -1009,8 +1029,14 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
         return;
     }
 
-    if (std::find(activeSetupScripts_.begin(), activeSetupScripts_.end(), scriptPath) == activeSetupScripts_.end()) {
-        activeSetupScripts_.push_back(scriptPath);
+    // activeSetupScripts_ is read by AutomationWorkerLoop on the worker thread — every mutation
+    // must take automationJobMutex_ so the worker's snapshot copy sees a consistent vector.
+    {
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        if (std::find(activeSetupScripts_.begin(), activeSetupScripts_.end(), scriptPath) ==
+            activeSetupScripts_.end()) {
+            activeSetupScripts_.push_back(scriptPath);
+        }
     }
 
     LOG_TRACE("RunLuaSetupScript: begin path=%s scriptPath=%s", path.c_str(), scriptPath.c_str());

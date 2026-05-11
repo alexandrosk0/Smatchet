@@ -133,6 +133,19 @@ struct BlameAnalysisUi::BlameState {
     // Previously separate file-statics; folded in so they share instance lifetime.
     std::string lastCallstackIssueKey;
     bool blameCfgDiskHydrated = false;
+
+    // Signal cancel + join the worker before any other member is destroyed. Without this,
+    // `WorkerState::Thread` (a joinable std::thread member) is destroyed with a running worker
+    // still pointed at our soon-to-be-freed state — `std::terminate` is mandated by the standard
+    // for that case. This destructor runs synchronously on the UI thread when ~BlameAnalysisUi
+    // releases its unique_ptr<BlameState>; the worker treats `Cancel` as a poll-point in every
+    // long-running step so the join completes promptly.
+    ~BlameState() {
+        worker.Cancel.store(true, std::memory_order_release);
+        if (worker.Thread.joinable()) {
+            worker.Thread.join();
+        }
+    }
 };
 
 static BlameAnalysisUi::BlameState* s_stateInstance = nullptr;

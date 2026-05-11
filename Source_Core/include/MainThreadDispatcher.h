@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -10,30 +12,68 @@
 /// the UI-thread-callback contract (CODE_REVIEW.md §6.1). Drain is called at the head of
 /// SmatchetUI::Draw so tasks execute before any window drawing begins that frame.
 ///
-/// Replaces the 8+ scattered deferred-notify booleans described in §6.1 incrementally:
-/// new deferred work should go through PostToMainThread; existing flags are migrated over time.
+/// Lifetime contract: the dispatcher is typically a member of `AppController`. Callers MUST
+/// stop posting (via `BeginShutdown()`) and join all worker threads before `~AppController`
+/// runs — `BeginShutdown()` flips a shutdown atom so late posts no-op rather than touching
+/// the about-to-be-destroyed mutex.
+///
+/// Bound: `kMaxQueueSize` tasks. On overflow the oldest task is dropped silently. This bound
+/// existed in the original docstring but was not enforced; this implementation enforces it.
 class MainThreadDispatcher {
   public:
     using Task = std::function<void()>;
 
+    /// Maximum number of pending tasks. Posts beyond this drop the oldest pending task on the
+    /// floor so a runaway producer cannot grow memory without bound. 4096 mirrors Logger's
+    /// file-sink bound and is well above any reasonable per-frame burst.
+    static constexpr std::size_t kMaxQueueSize = 4096;
+
+    /// Post a task to be run on the UI thread at the next `Drain()`. Safe to call from any
+    /// thread. No-ops if `BeginShutdown()` has been called.
     void PostToMainThread(Task t) {
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
         std::lock_guard<std::mutex> lk(mutex_);
+        if (shuttingDown_.load(std::memory_order_relaxed)) {
+            // Re-check under the lock so a teardown that started between the unlocked check
+            // and the lock acquisition does not see a partially-posted task.
+            return;
+        }
+        if (queue_.size() >= kMaxQueueSize) {
+            // Drop oldest: vector erase from front is O(N) but only fires at the cap, which is
+            // pathological. If the dispatcher saturates regularly switch to std::deque.
+            queue_.erase(queue_.begin());
+        }
         queue_.push_back(std::move(t));
     }
 
-    /// Drain all queued tasks on the calling thread (must be the UI thread).
+    /// Drain all queued tasks on the calling thread (must be the UI thread). Tasks are moved
+    /// out of the queue and each `Task` is released after invocation so captures (especially
+    /// shared_ptr / large state) do not live across the whole drain loop.
     void Drain() {
         std::vector<Task> tasks;
         {
             std::lock_guard<std::mutex> lk(mutex_);
             tasks.swap(queue_);
         }
-        for (const auto& t : tasks) {
-            t();
+        for (auto& t : tasks) {
+            if (t) {
+                t();
+                t = nullptr; // release captures eagerly; previous code held them across the loop
+            }
         }
+    }
+
+    /// Stop accepting new posts. After this returns, all `PostToMainThread` calls become
+    /// no-ops, even if they're already past the early atomic check (re-checked under lock).
+    /// Drain remaining tasks one last time on the UI thread before destruction.
+    void BeginShutdown() {
+        shuttingDown_.store(true, std::memory_order_release);
     }
 
   private:
     std::mutex mutex_;
     std::vector<Task> queue_;
+    std::atomic<bool> shuttingDown_{false};
 };

@@ -122,6 +122,7 @@ SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& s
 }
 
 void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
+    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     try {
         SQLite::Transaction transaction(db);
 
@@ -171,6 +172,7 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
 }
 
 bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& out) {
+    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     out = CachedTicket{};
     out.id = ticketId;
     try {
