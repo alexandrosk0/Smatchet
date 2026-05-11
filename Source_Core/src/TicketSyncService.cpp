@@ -2,10 +2,14 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ITrackerBackendFactory.h"
+#include "ITrackerClient.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "SmatchetToast.h"
+#include "StringUtil.h"
 #include "TrackerHttpUtils.h"
+#include "Views.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,20 +24,20 @@
 TicketSyncService::TicketSyncService(AppController& app) : app_(app) {}
 
 void TicketSyncService::CancelAndJoinActiveStreamingSync() {
-    app_.activeStreamingSync_.Cancelled = true;
-    app_.activeStreamingSync_.Superseded = true;
+    activeStreamingSync_.Cancelled = true;
+    activeStreamingSync_.Superseded = true;
 
-    if (app_.activeStreamingSync_.WorkerThread.joinable()) {
-        app_.activeStreamingSync_.WorkerThread.join();
+    if (activeStreamingSync_.WorkerThread.joinable()) {
+        activeStreamingSync_.WorkerThread.join();
     }
 
-    app_.activeStreamingSync_.Active = false;
-    app_.activeStreamingSync_.ActiveSessionRunning = false;
+    activeStreamingSync_.Active = false;
+    activeStreamingSync_.ActiveSessionRunning = false;
 
     {
-        std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-        app_.activeStreamingSync_.PendingBatches.clear();
-        app_.activeStreamingSync_.BackgroundStaleIds.clear();
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.PendingBatches.clear();
+        activeStreamingSync_.BackgroundStaleIds.clear();
     }
 }
 
@@ -98,70 +102,70 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 void TicketSyncService::TickStreamingApply() {
     // 1. If we have a pending sync request and the previous session (worker + apply queue +
     //    stale cleanup) is fully drained, start it safely now.
-    bool isWorkerActive = app_.activeStreamingSync_.Active.load();
-    bool isSessionBusy = isWorkerActive || app_.activeStreamingSync_.ActiveSessionRunning ||
-                         app_.isDeletingStale_.load();
+    bool isWorkerActive = activeStreamingSync_.Active.load();
+    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning ||
+                         isDeletingStale_.load();
 
-    if (app_.activeStreamingSync_.Superseded.load()) {
+    if (activeStreamingSync_.Superseded.load()) {
         {
-            std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-            app_.activeStreamingSync_.PendingBatches.clear();
-            app_.activeStreamingSync_.BackgroundStaleIds.clear();
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.PendingBatches.clear();
+            activeStreamingSync_.BackgroundStaleIds.clear();
         }
-        app_.staleIdsToDelete_.clear();
-        app_.isDeletingStale_.store(false);
-        app_.totalStaleToDelete_ = 0;
-        app_.staleDeletedSoFar_ = 0;
+        staleIdsToDelete_.clear();
+        isDeletingStale_.store(false);
+        totalStaleToDelete_ = 0;
+        staleDeletedSoFar_ = 0;
 
         if (isWorkerActive) {
             return;
         }
-        if (app_.activeStreamingSync_.WorkerThread.joinable()) {
-            app_.activeStreamingSync_.WorkerThread.join();
+        if (activeStreamingSync_.WorkerThread.joinable()) {
+            activeStreamingSync_.WorkerThread.join();
         }
-        app_.activeStreamingSync_.Active = false;
-        app_.activeStreamingSync_.ActiveSessionRunning = false;
-        app_.activeStreamingSync_.FullSyncCompleted = false;
-        app_.activeStreamingSync_.TotalFetchedCount = 0;
+        activeStreamingSync_.Active = false;
+        activeStreamingSync_.ActiveSessionRunning = false;
+        activeStreamingSync_.FullSyncCompleted = false;
+        activeStreamingSync_.TotalFetchedCount = 0;
         {
             // FetchError contract: every read/write through QueueMutex (worker joined above).
-            std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-            app_.activeStreamingSync_.FetchError.clear();
-            app_.activeStreamingSync_.Warning.clear();
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.FetchError.clear();
+            activeStreamingSync_.Warning.clear();
         }
-        app_.activeStreamingSync_.KeepIds.clear();
-        app_.activeStreamingSync_.Cancelled = false;
-        app_.activeStreamingSync_.Superseded = false;
+        activeStreamingSync_.KeepIds.clear();
+        activeStreamingSync_.Cancelled = false;
+        activeStreamingSync_.Superseded = false;
 
         LOG_INFO("TicketSyncService::TickStreamingApply discarded superseded streaming sync session.");
 
-        if (app_.hasPendingSyncRequest_) {
-            app_.hasPendingSyncRequest_ = false;
-            app_.StartStreamingSync(app_.pendingConfig_, app_.pendingViews_);
+        if (hasPendingSyncRequest_) {
+            hasPendingSyncRequest_ = false;
+            StartStreamingSync(pendingConfig_, pendingViews_);
         }
         return;
     }
 
     if (!isSessionBusy) {
-        if (app_.activeStreamingSync_.WorkerThread.joinable()) {
-            app_.activeStreamingSync_.WorkerThread.join();
+        if (activeStreamingSync_.WorkerThread.joinable()) {
+            activeStreamingSync_.WorkerThread.join();
         }
-        if (app_.hasPendingSyncRequest_) {
-            app_.hasPendingSyncRequest_ = false;
-            app_.StartStreamingSync(app_.pendingConfig_, app_.pendingViews_);
+        if (hasPendingSyncRequest_) {
+            hasPendingSyncRequest_ = false;
+            StartStreamingSync(pendingConfig_, pendingViews_);
             return;
         }
     }
 
     // 2. Progressive, budgeted stale ticket deletion over multiple frames to avoid UI hitches.
-    if (app_.isDeletingStale_.load()) {
+    if (isDeletingStale_.load()) {
         auto start = std::chrono::high_resolution_clock::now();
         size_t deletedThisFrame = 0;
         bool inMemoryChanged = false;
 
-        while (!app_.staleIdsToDelete_.empty()) {
-            std::string id = std::move(app_.staleIdsToDelete_.back());
-            app_.staleIdsToDelete_.pop_back();
+        while (!staleIdsToDelete_.empty()) {
+            std::string id = std::move(staleIdsToDelete_.back());
+            staleIdsToDelete_.pop_back();
 
             if (app_.Cache) {
                 app_.Cache->DeleteTicket(id);
@@ -175,7 +179,7 @@ void TicketSyncService::TickStreamingApply() {
             }
             inMemoryChanged = true;
             deletedThisFrame++;
-            app_.staleDeletedSoFar_++;
+            staleDeletedSoFar_++;
 
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::high_resolution_clock::now() - start)
@@ -191,17 +195,17 @@ void TicketSyncService::TickStreamingApply() {
             app_.ActiveTicketsRevision.fetch_add(1);
         }
 
-        if (app_.staleIdsToDelete_.empty()) {
-            app_.isDeletingStale_.store(false);
+        if (staleIdsToDelete_.empty()) {
+            isDeletingStale_.store(false);
             LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu",
-                     app_.totalStaleToDelete_);
+                     totalStaleToDelete_);
             // Trigger editmeta warmup after cleanup completes
             app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
         }
         return;
     }
 
-    if (!app_.activeStreamingSync_.ActiveSessionRunning) {
+    if (!activeStreamingSync_.ActiveSessionRunning) {
         return;
     }
 
@@ -215,13 +219,13 @@ void TicketSyncService::TickStreamingApply() {
     while (true) {
         batchToProcess.clear();
         {
-            std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-            if (app_.activeStreamingSync_.PendingBatches.empty()) {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            if (activeStreamingSync_.PendingBatches.empty()) {
                 break;
             }
-            auto& frontBatch = app_.activeStreamingSync_.PendingBatches.front();
+            auto& frontBatch = activeStreamingSync_.PendingBatches.front();
             if (frontBatch.empty()) {
-                app_.activeStreamingSync_.PendingBatches.erase(app_.activeStreamingSync_.PendingBatches.begin());
+                activeStreamingSync_.PendingBatches.erase(activeStreamingSync_.PendingBatches.begin());
                 continue;
             }
 
@@ -235,7 +239,7 @@ void TicketSyncService::TickStreamingApply() {
             frontBatch.erase(frontBatch.begin(), frontBatch.begin() + sliceSize);
 
             if (frontBatch.empty()) {
-                app_.activeStreamingSync_.PendingBatches.erase(app_.activeStreamingSync_.PendingBatches.begin());
+                activeStreamingSync_.PendingBatches.erase(activeStreamingSync_.PendingBatches.begin());
             }
         }
 
@@ -244,7 +248,7 @@ void TicketSyncService::TickStreamingApply() {
                 app_.Cache->SaveTicket(t);
             }
             if (!t.id.empty()) {
-                app_.activeStreamingSync_.KeepIds.insert(t.id);
+                activeStreamingSync_.KeepIds.insert(t.id);
             }
             ticketsProcessedInFrame++;
         }
@@ -278,27 +282,27 @@ void TicketSyncService::TickStreamingApply() {
         app_.ActiveTicketsRevision.fetch_add(1);
     }
 
-    bool isWorkerFinished = !app_.activeStreamingSync_.Active.load();
+    bool isWorkerFinished = !activeStreamingSync_.Active.load();
     bool hasPending = false;
     {
-        std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-        hasPending = !app_.activeStreamingSync_.PendingBatches.empty();
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        hasPending = !activeStreamingSync_.PendingBatches.empty();
     }
 
-    if (isWorkerFinished && !hasPending && app_.activeStreamingSync_.ActiveSessionRunning) {
-        app_.activeStreamingSync_.ActiveSessionRunning = false;
+    if (isWorkerFinished && !hasPending && activeStreamingSync_.ActiveSessionRunning) {
+        activeStreamingSync_.ActiveSessionRunning = false;
 
         // FetchError + Warning are written by the worker thread under QueueMutex; acquire it
         // for the read. FullSyncCompleted is atomic and can be read without the lock.
         std::string fetchError;
         std::string fetchWarning;
         {
-            std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-            fetchError = app_.activeStreamingSync_.FetchError;
-            fetchWarning = app_.activeStreamingSync_.Warning;
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            fetchError = activeStreamingSync_.FetchError;
+            fetchWarning = activeStreamingSync_.Warning;
         }
 
-        bool fullSyncCompleted = app_.activeStreamingSync_.FullSyncCompleted;
+        bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
 
         if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
             app_.LastTrackerTicketSyncWarning =
@@ -322,32 +326,185 @@ void TicketSyncService::TickStreamingApply() {
             app_.requestDeferredLiveTrackerBackendSuccessNotify_();
 
             std::string msg =
-                "Synchronized " + std::to_string(app_.activeStreamingSync_.KeepIds.size()) + " issues successfully.";
+                "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
             SmatchetToastManager::Instance().Push("Sync Complete", msg, ToastType::Success, 4000);
         }
 
-        app_.totalStaleToDelete_ = 0;
-        app_.staleDeletedSoFar_ = 0;
-        app_.staleIdsToDelete_.clear();
+        totalStaleToDelete_ = 0;
+        staleDeletedSoFar_ = 0;
+        staleIdsToDelete_.clear();
 
         if (fullSyncCompleted) {
-            std::lock_guard<std::mutex> qLock(app_.activeStreamingSync_.QueueMutex);
-            app_.staleIdsToDelete_ = std::move(app_.activeStreamingSync_.BackgroundStaleIds);
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
 
-            if (!app_.staleIdsToDelete_.empty()) {
-                app_.isDeletingStale_.store(true);
-                app_.totalStaleToDelete_ = app_.staleIdsToDelete_.size();
-                app_.staleDeletedSoFar_ = 0;
+            if (!staleIdsToDelete_.empty()) {
+                isDeletingStale_.store(true);
+                totalStaleToDelete_ = staleIdsToDelete_.size();
+                staleDeletedSoFar_ = 0;
             }
         }
 
         LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
                  "fullSync=%d err=%s",
-                 app_.activeStreamingSync_.KeepIds.size(), app_.totalStaleToDelete_, fullSyncCompleted ? 1 : 0,
+                 activeStreamingSync_.KeepIds.size(), totalStaleToDelete_, fullSyncCompleted ? 1 : 0,
                  fetchError.c_str());
 
-        if (!app_.isDeletingStale_.load()) {
+        if (!isDeletingStale_.load()) {
             app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
         }
     }
+}
+
+bool TicketSyncService::IsActive() const {
+    return activeStreamingSync_.Active.load() || activeStreamingSync_.ActiveSessionRunning.load() ||
+           isDeletingStale_.load();
+}
+
+void TicketSyncService::ResetStaleDeletionState() {
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.PendingBatches.clear();
+        activeStreamingSync_.BackgroundStaleIds.clear();
+        activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
+    }
+    staleIdsToDelete_.clear();
+    isDeletingStale_.store(false);
+    totalStaleToDelete_ = 0;
+    staleDeletedSoFar_ = 0;
+    activeStreamingSync_.FullSyncCompleted = false;
+    activeStreamingSync_.TotalFetchedCount = 0;
+    activeStreamingSync_.KeepIds.clear();
+    activeStreamingSync_.Cancelled = false;
+    activeStreamingSync_.Superseded = false;
+}
+
+void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride) {
+    LOG_INFO("TicketSyncService::SyncWithBackend started (asynchronous streaming refresh).");
+
+    TrackerConfig cfgCopy = configOverride ? *configOverride : ConfigManager::Load();
+    ViewsStore viewsCopy = viewsOverride ? *viewsOverride : ConfigManager::LoadViewsOrBootstrap(cfgCopy);
+
+    const bool isWorkerActive = activeStreamingSync_.Active.load();
+    const bool isSessionBusy =
+        isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
+
+    if (isSessionBusy) {
+        activeStreamingSync_.Cancelled = true;
+        activeStreamingSync_.Superseded = true;
+        hasPendingSyncRequest_ = true;
+        pendingConfig_ = cfgCopy;
+        pendingViews_ = viewsCopy;
+        LOG_INFO("TicketSyncService: Active sync/apply/cleanup session busy. New sync request "
+                 "deferred to avoid UI thread block.");
+        return;
+    }
+
+    StartStreamingSync(cfgCopy, viewsCopy);
+}
+
+void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy) {
+    if (activeStreamingSync_.WorkerThread.joinable()) {
+        activeStreamingSync_.WorkerThread.join();
+    }
+
+    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
+
+    // Swap Backend type safely before starting the worker.
+    std::string newTracker = cfgCopy.TrackerType;
+    if (newTracker.empty()) newTracker = "Jira";
+    const std::string trackerLower = ToLowerAsciiCopy(newTracker);
+    const std::string currentType = app_.Backend ? app_.Backend->GetTrackerType() : "";
+    const bool isCurrentlyJira = (currentType == "Jira");
+    const bool isCurrentlyPlane = (currentType == "Plane");
+
+    if (trackerLower == "plane" && !isCurrentlyPlane) {
+        app_.Backend = app_.backendFactory_->Create("Plane");
+        LOG_INFO("TicketSyncService: Switched backend to Plane.");
+    } else if (trackerLower == "jira" && !isCurrentlyJira) {
+        app_.Backend = app_.backendFactory_->Create("Jira");
+        LOG_INFO("TicketSyncService: Switched backend to Jira.");
+    }
+
+    const std::uint64_t reqId = ++currentFetchRequestId_;
+    activeStreamingSync_.RequestId = reqId;
+    activeStreamingSync_.Cancelled = false;
+    activeStreamingSync_.Superseded = false;
+    activeStreamingSync_.Active = true;
+    activeStreamingSync_.ActiveSessionRunning = true;
+    activeStreamingSync_.TotalFetchedCount = 0;
+    activeStreamingSync_.FullSyncCompleted = false;
+    activeStreamingSync_.KeepIds.clear();
+    {
+        // FetchError contract: every read/write through QueueMutex. Worker for the new request
+        // has not been spawned yet, so the lock is uncontended.
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
+        activeStreamingSync_.PendingBatches.clear();
+        activeStreamingSync_.BackgroundStaleIds.clear();
+    }
+
+    LOG_INFO("TicketSyncService: Spawning background worker for async streaming fetch request ID=%llu",
+             static_cast<unsigned long long>(reqId));
+
+    activeStreamingSync_.WorkerThread = std::thread([this, reqId, cfgCopy, viewsCopy]() {
+        try {
+            std::unordered_set<std::string> workerKeepIds;
+            auto onBatch = [this, reqId, &workerKeepIds](std::vector<CachedTicket>&& batch) {
+                for (const auto& ticket : batch) {
+                    if (!ticket.id.empty()) {
+                        workerKeepIds.insert(ticket.id);
+                    }
+                }
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+                if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+                    activeStreamingSync_.PendingBatches.push_back(std::move(batch));
+                }
+            };
+            auto shouldCancel = [this, reqId]() -> bool {
+                return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+            };
+
+            TrackerIssueFetchSummary summary =
+                app_.Backend->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
+
+            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+                std::vector<std::string> localStaleIds;
+                if (summary.FullSyncCompleted && app_.Cache) {
+                    std::vector<std::string> existingIds = app_.Cache->GetAllTicketIds();
+                    std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
+                                 [&workerKeepIds](const std::string& id) {
+                                     return workerKeepIds.find(id) == workerKeepIds.end();
+                                 });
+                }
+
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+                activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
+                activeStreamingSync_.FetchError = summary.FetchError;
+                activeStreamingSync_.Warning = summary.Warning;
+                activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
+                if (summary.FullSyncCompleted && app_.Cache) {
+                    activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
+                }
+            }
+        } catch (const std::exception& ex) {
+            LOG_ERROR("TicketSyncService: Worker thread caught exception: %s", ex.what());
+            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+                activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
+                activeStreamingSync_.FullSyncCompleted = false;
+            }
+        } catch (...) {
+            LOG_ERROR("TicketSyncService: Worker thread caught unknown exception.");
+            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+                activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
+                activeStreamingSync_.FullSyncCompleted = false;
+            }
+        }
+
+        activeStreamingSync_.Active = false;
+    });
 }
