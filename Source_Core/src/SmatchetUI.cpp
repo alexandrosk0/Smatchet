@@ -499,11 +499,16 @@ void SmatchetUI::Draw(AppController& app) {
     {
         // Build the per-frame catalog+column cache once before any consumer.
         const std::uint64_t catalogRev = app.GetFieldCatalogRevision();
+        const std::uint64_t viewsRev = ViewState.GetRevision();
         ViewDefinition* av = ViewState.GetActiveViewMutable();
         const std::string avId = av ? av->Id : "";
+        // viewsRevision invalidates the cache when the active view is mutated
+        // in place (column widths, fields, order edits) without its id changing.
         if (!gridFrameCtx_.catalogIndex || gridFrameCtx_.catalogRevision != catalogRev ||
+            gridFrameCtx_.viewsRevision != viewsRev ||
             gridFrameCtx_.activeViewId != avId) {
             gridFrameCtx_.catalogRevision = catalogRev;
+            gridFrameCtx_.viewsRevision = viewsRev;
             gridFrameCtx_.activeViewId = avId;
             gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(app.GetAvailableFields());
             gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)

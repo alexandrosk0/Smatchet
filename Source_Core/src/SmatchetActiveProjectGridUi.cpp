@@ -823,6 +823,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                         }
                     }
                     if (metaChanged) {
+                        // Bump views revision so the GridFrameContext rebuild picks up
+                        // the new widths / sort specs on the next frame; Views can't
+                        // observe direct GetActiveViewMutable mutations on its own.
+                        ViewState.BumpRevision();
                         const auto now = std::chrono::steady_clock::now();
                         const auto deadline = now + kViewStateSaveDebounceLocal;
                         d.pendingViewStateSave = true;
