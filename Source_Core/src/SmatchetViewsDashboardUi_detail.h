@@ -84,15 +84,40 @@ inline std::vector<std::string> ToSortedVector(const std::unordered_set<std::str
 
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
 
-void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views& viewState,
-                                   const ViewDefinition& activeView);
+/// Snapshot the active view's full ViewDefinition into UiDrawSession on the
+/// first transition into dirty state. Used by the unsaved-layout strip's
+/// Discard button to revert widths / sort specs / column order / name / JQL /
+/// fields back to disk. Cheap to call every frame — bails fast if already
+/// snapshotted. The snapshot is cleared by Save / Discard / view switch.
+void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view);
 
-void DrawJqlQueryEditor(AppController& app, UiDrawSession& d, Views& viewState, const ViewDefinition& activeView);
+void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views& viewState,
+                                    const ViewDefinition& activeView);
+
+/// Embedded JQL editor for the Filter tab — input + clear + autocomplete
+/// popup. The surrounding tab provides its own label and "open in browser"
+/// chrome. The popup is drawn as part of this call.
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d);
+
+/// Vertical splitter that lets the user drag a horizontal divider; stores the new
+/// height in *height and clamps to [min, max]. Triggers ConfigManager::Save(d.cfg)
+/// when the user releases the mouse so layout survives restart.
+void DrawVerticalSplitter(const char* id, UiDrawSession& d, float* height, float minHeight, float maxHeight);
+
+/// Horizontal splitter (vertical divider line). *widthLeft is the left-pane width
+/// in pixels; *widthLeft is updated on drag and persisted on release.
+void DrawHorizontalSplitter(const char* id, UiDrawSession& d, float* widthLeft, float minLeft, float maxLeft);
+
+/// Renders a drag handle glyph (vertical dots) sized to a row of frame-height,
+/// changes the cursor on hover, and treats subsequent same-row item as a drag
+/// source for the payload type "VIEWS_REORDER_ROW" carrying the row index.
+void DrawDragHandle(const char* id, int rowIndex, const char* payloadType);
+
+/// Begins a drag-and-drop target on the previously drawn item that accepts the
+/// "VIEWS_REORDER_ROW" payload and reorders entries in `order` accordingly.
+/// Also handles Alt+Up / Alt+Down for the focused row when keyboardFocusRow ==
+/// rowIndex, swapping with neighbour and updating *keyboardFocusRow.
+/// Returns true if the order was mutated this frame (caller can mark dirty).
+bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboardFocusRow, const char* payloadType);
 
 } // namespace SmatchetViewsDashboardUiDetail
-
-
-
-
-
-

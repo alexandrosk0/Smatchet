@@ -100,7 +100,7 @@ bool EnsureDirectoryExists(const std::string& path) {
     }
     return GetLastError() == ERROR_ALREADY_EXISTS;
 #else
-    struct stat st {};
+    struct stat st{};
     if (::stat(path.c_str(), &st) == 0) {
         return S_ISDIR(st.st_mode) != 0;
     }
@@ -170,7 +170,7 @@ bool FileExists(const std::string& path) {
     const DWORD attrs = GetFileAttributesW(wPath.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 #else
-    struct stat st {};
+    struct stat st{};
     return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) != 0;
 #endif
 }
@@ -189,8 +189,8 @@ class ScopedFileLock {
         const std::wstring wLock = Utf8ToWide(lockPath_);
         if (wLock.empty())
             return;
-        handle_ = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        handle_ = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle_ == INVALID_HANDLE_VALUE) {
             LOG_WARN("ConfigManager: CreateFileW failed for lock '%s' err=%lu — proceeding without exclusive access",
                      lockPath_.c_str(), GetLastError());
@@ -275,8 +275,8 @@ std::vector<BYTE> Base64ToBinary(const std::string& base64) {
         return out;
     }
     DWORD outLen = 0;
-    if (!CryptStringToBinaryA(base64.c_str(), static_cast<DWORD>(base64.size()), CRYPT_STRING_BASE64, nullptr,
-                              &outLen, nullptr, nullptr)) {
+    if (!CryptStringToBinaryA(base64.c_str(), static_cast<DWORD>(base64.size()), CRYPT_STRING_BASE64, nullptr, &outLen,
+                              nullptr, nullptr)) {
         return out;
     }
     out.resize(static_cast<size_t>(outLen));
@@ -720,7 +720,7 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
                     while (off < n) {
                         const size_t room = n - off;
                         const DWORD toRead = room > static_cast<size_t>(1u << 20) ? static_cast<DWORD>(1u << 20)
-                                                                                   : static_cast<DWORD>(room);
+                                                                                  : static_cast<DWORD>(room);
                         DWORD rd = 0;
                         if (!ReadFile(h, &raw[off], toRead, &rd, nullptr) || rd == 0) {
                             raw.clear();
@@ -846,6 +846,8 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["date_format_option"] = config.DateFormatOption;
     j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
     j["view_field_picker_height"] = config.ViewFieldPickerHeight;
+    j["views_sidebar_width"] = config.ViewsSidebarWidth;
+    j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
     j["selected_font_name"] = config.SelectedFontName;
     j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
     j["update_check_enabled"] = config.UpdateCheckEnabled;
@@ -1013,7 +1015,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
-        // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not model
+        // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not
+        // model
         if (GetHasCachedConfigRef()) {
             return GetCachedConfigRef();
         }
@@ -1049,8 +1052,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
 
 #if defined(_WIN32)
-            cfg.PlaneApiKey = UnprotectSecretFieldFromConfig("plane_api_key_enc",
-                                                             j.value("plane_api_key_enc", std::string{}));
+            cfg.PlaneApiKey =
+                UnprotectSecretFieldFromConfig("plane_api_key_enc", j.value("plane_api_key_enc", std::string{}));
             if (cfg.PlaneApiKey.empty()) {
                 cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
             }
@@ -1064,13 +1067,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.GridEndWheelSwallowsBeforeHorizontal =
                 j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
             cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
-            cfg.ShowViewsDashboardWindow =
-                j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
+            cfg.ShowViewsDashboardWindow = j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
             cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
             cfg.ShowLogWindow = j.value("show_log_window", cfg.ShowLogWindow);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            cfg.ShowLuaAutomationWindow =
-                j.value("show_lua_automation_window", cfg.ShowLuaAutomationWindow);
+            cfg.ShowLuaAutomationWindow = j.value("show_lua_automation_window", cfg.ShowLuaAutomationWindow);
 #endif
             cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
             cfg.LogTrackerHttpBodies =
@@ -1080,8 +1081,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.McpPort = j.value("mcp_port", cfg.McpPort);
             cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
 #if defined(_WIN32)
-            cfg.McpAuthToken = UnprotectSecretFieldFromConfig("mcp_auth_token_enc",
-                                                               j.value("mcp_auth_token_enc", std::string{}));
+            cfg.McpAuthToken =
+                UnprotectSecretFieldFromConfig("mcp_auth_token_enc", j.value("mcp_auth_token_enc", std::string{}));
             if (cfg.McpAuthToken.empty()) {
                 cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
                 migrateLegacyPlaintextMcpAuthToken = !cfg.McpAuthToken.empty();
@@ -1116,6 +1117,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
             cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
             cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
+            cfg.ViewsSidebarWidth = j.value("views_sidebar_width", cfg.ViewsSidebarWidth);
+            cfg.ViewsFieldsSplitRatio = j.value("views_fields_split_ratio", cfg.ViewsFieldsSplitRatio);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
             cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
@@ -1328,9 +1331,7 @@ std::string ConfigManager::GetImGuiSettingsPath() {
     return base + "imgui.ini";
 }
 
-const char* ConfigManager::GetDefaultImGuiDockLayoutIni() {
-    return kDefaultImGuiDockLayoutIni;
-}
+const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
 
 bool ConfigManager::WriteDefaultImGuiSettingsFile() {
     const std::string path = GetImGuiSettingsPath();
@@ -1362,9 +1363,8 @@ void ConfigManager::EnsureDefaultImGuiSettingsFile() {
 std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerType) {
     std::string t;
     t.resize(trackerType.size());
-    std::transform(trackerType.begin(), trackerType.end(), t.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(trackerType.begin(), trackerType.end(), t.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (t == "plane") {
         return "Plane";
     }
@@ -1469,13 +1469,11 @@ ViewsStore ConfigManager::LoadViewsOrBootstrap(const TrackerConfig& cfg) {
     } catch (const std::exception& ex) {
         LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error: %s", ex.what());
         const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
-        return ViewWorkspaceToViewsStoreImpl(
-            MakeDefaultViewWorkspaceForBackend(key, cfg));
+        return ViewWorkspaceToViewsStoreImpl(MakeDefaultViewWorkspaceForBackend(key, cfg));
     } catch (...) {
         LOG_ERROR("ConfigManager: LoadViewsOrBootstrap error (unknown)");
         const std::string key = NormalizeViewsBackendKey(cfg.TrackerType);
-        return ViewWorkspaceToViewsStoreImpl(
-            MakeDefaultViewWorkspaceForBackend(key, cfg));
+        return ViewWorkspaceToViewsStoreImpl(MakeDefaultViewWorkspaceForBackend(key, cfg));
     }
 }
 

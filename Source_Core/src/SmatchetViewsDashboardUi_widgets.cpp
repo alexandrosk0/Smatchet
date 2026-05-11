@@ -1,0 +1,252 @@
+#include "SmatchetViewsDashboardUi_detail.h"
+
+#include "AppController.h"
+#include "ConfigManager.h"
+#include "SmatchetAutocompleteUi.h"
+#include "SmatchetUiSession.h"
+#include "Views.h"
+
+#include "imgui.h"
+#include "SmatchetLocalizedImGui.h"
+#define ImGui SmatchetLocalizedImGui
+
+#include <algorithm>
+#include <cstring>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+namespace SmatchetViewsDashboardUiDetail {
+
+void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view) {
+    if (d.viewsHasOriginalSnapshot) {
+        return;
+    }
+    d.viewsOriginalSnapshot = view;
+    d.viewsHasOriginalSnapshot = true;
+}
+
+void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
+    ConfigManager::Save(d.cfg);
+    if (pushHistory) {
+        d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
+    }
+    app.SyncWithBackend(&d.cfg, &store);
+}
+
+void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views& viewState,
+                                    const ViewDefinition& activeView) {
+    ViewDefinition updated = activeView;
+    updated.Name = d.viewNameBuf;
+    updated.Jql = d.viewJqlBuf;
+    updated.Fields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+    updated.ColumnOrder = d.editingColumnOrder;
+    if (viewState.UpdateActive(updated)) {
+        d.cfg.JqlQuery = updated.Jql;
+        d.cfg.SelectedFields = updated.Fields;
+        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, viewState.GetStore(), true);
+    }
+}
+
+void DrawVerticalSplitter(const char* id, UiDrawSession& d, float* height, float minHeight, float maxHeight) {
+    if (!height) {
+        return;
+    }
+    ImGui::InvisibleButton(id, ImVec2(-FLT_MIN, 6.0f));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    }
+    if (ImGui::IsItemActive()) {
+        *height += ImGui::GetIO().MouseDelta.y;
+        if (*height < minHeight) {
+            *height = minHeight;
+        }
+        if (*height > maxHeight) {
+            *height = maxHeight;
+        }
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        ConfigManager::Save(d.cfg);
+    }
+    ImVec2 pMin = ImGui::GetItemRectMin();
+    ImVec2 pMax = ImGui::GetItemRectMax();
+    pMin.y += 2.0f;
+    pMax.y -= 2.0f;
+    ImGui::GetWindowDrawList()->AddRectFilled(pMin, pMax, ImGui::GetColorU32(ImGuiCol_Separator));
+}
+
+void DrawHorizontalSplitter(const char* id, UiDrawSession& d, float* widthLeft, float minLeft, float maxLeft) {
+    if (!widthLeft) {
+        return;
+    }
+    ImGui::InvisibleButton(id, ImVec2(6.0f, -FLT_MIN));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    if (ImGui::IsItemActive()) {
+        *widthLeft += ImGui::GetIO().MouseDelta.x;
+        if (*widthLeft < minLeft) {
+            *widthLeft = minLeft;
+        }
+        if (*widthLeft > maxLeft) {
+            *widthLeft = maxLeft;
+        }
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        ConfigManager::Save(d.cfg);
+    }
+    ImVec2 pMin = ImGui::GetItemRectMin();
+    ImVec2 pMax = ImGui::GetItemRectMax();
+    pMin.x += 2.0f;
+    pMax.x -= 2.0f;
+    ImGui::GetWindowDrawList()->AddRectFilled(pMin, pMax, ImGui::GetColorU32(ImGuiCol_Separator));
+}
+
+void DrawDragHandle(const char* id, int rowIndex, const char* payloadType) {
+    // Render the handle as a small invisible button so it has its own hit rect
+    // (separate from the row body). The visual is six dots drawn manually.
+    ImGui::PushID(id);
+    const float handleWidth = ImGui::GetFontSize() * 0.75f;
+    const float handleHeight = ImGui::GetFrameHeight();
+    ImVec2 cursor = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##handle", ImVec2(handleWidth, handleHeight));
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        ImGui::SetDragDropPayload(payloadType, &rowIndex, sizeof(int));
+        ImGui::TextDisabled("Move row %d", rowIndex);
+        ImGui::EndDragDropSource();
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    const float cx = cursor.x + handleWidth * 0.5f;
+    const float cy0 = cursor.y + handleHeight * 0.25f;
+    const float cy1 = cursor.y + handleHeight * 0.50f;
+    const float cy2 = cursor.y + handleHeight * 0.75f;
+    const float r = 1.5f;
+    const float dx = 2.5f;
+    dl->AddCircleFilled(ImVec2(cx - dx, cy0), r, col);
+    dl->AddCircleFilled(ImVec2(cx + dx, cy0), r, col);
+    dl->AddCircleFilled(ImVec2(cx - dx, cy1), r, col);
+    dl->AddCircleFilled(ImVec2(cx + dx, cy1), r, col);
+    dl->AddCircleFilled(ImVec2(cx - dx, cy2), r, col);
+    dl->AddCircleFilled(ImVec2(cx + dx, cy2), r, col);
+    ImGui::PopID();
+    ImGui::SameLine();
+}
+
+bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboardFocusRow, const char* payloadType) {
+    bool mutated = false;
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(payloadType)) {
+            if (payload->DataSize == static_cast<int>(sizeof(int))) {
+                int src = *static_cast<const int*>(payload->Data);
+                if (src >= 0 && src < static_cast<int>(order.size()) && rowIndex >= 0 &&
+                    rowIndex < static_cast<int>(order.size()) && src != rowIndex) {
+                    std::string moved = order[static_cast<size_t>(src)];
+                    order.erase(order.begin() + src);
+                    int dst = rowIndex;
+                    if (src < dst) {
+                        --dst; // adjust for erase
+                    }
+                    order.insert(order.begin() + dst, std::move(moved));
+                    if (keyboardFocusRow) {
+                        *keyboardFocusRow = dst;
+                    }
+                    mutated = true;
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    // Keyboard reorder: when row is focused and Alt+Up / Alt+Down pressed.
+    if (keyboardFocusRow && *keyboardFocusRow == rowIndex && ImGui::IsItemFocused()) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyAlt) {
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && rowIndex > 0) {
+                std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex - 1)]);
+                *keyboardFocusRow = rowIndex - 1;
+                mutated = true;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && rowIndex + 1 < static_cast<int>(order.size())) {
+                std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex + 1)]);
+                *keyboardFocusRow = rowIndex + 1;
+                mutated = true;
+            }
+        }
+    }
+    return mutated;
+}
+
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
+    // Lightweight variant of DrawJqlQueryEditor — used when the surrounding tab
+    // already provides the label / open-in-browser chrome. Reuses the same
+    // autocomplete machinery (TrackerQueryAcp_*) and viewJqlBuf storage so the
+    // legacy flow and modern flow stay in lock-step.
+    QuerySuggestBuild jqlSuggestBuild;
+    QuerySuggestMeta jqlMeta;
+    TrackerQueryAcpCallbackUserData jqlCb{};
+    jqlCb.session = &d;
+    jqlCb.app = &app;
+    jqlCb.suggestBuild = &jqlSuggestBuild;
+    jqlCb.meta = &jqlMeta;
+    jqlCb.kind = d.cfg.TrackerType == "Plane" ? TrackerQuerySuggestKind::PlaneFilter : TrackerQuerySuggestKind::JiraJql;
+
+    if (d.jqlAcpWantsJqlInputFocus) {
+        ImGui::SetKeyboardFocusHere(0);
+        d.jqlAcpWantsJqlInputFocus = false;
+    }
+
+    const float clearBtnW = ImGui::CalcTextSize("x").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float inputW = ImGui::GetContentRegionAvail().x - clearBtnW - spacing;
+    ImGui::SetNextItemWidth((std::max)(120.0f, inputW));
+    ImGui::InputText("##JQLEmbedded", d.viewJqlBuf, sizeof(d.viewJqlBuf),
+                     ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackHistory,
+                     &TrackerQueryAcp_InputTextCallback, &jqlCb);
+    const bool jqlInputHot = ImGui::IsItemActive() || ImGui::IsItemFocused();
+    const ImVec2 jqlFieldRectMin = ImGui::GetItemRectMin();
+    const ImVec2 jqlFieldRectSize = ImGui::GetItemRectSize();
+    if (!jqlInputHot) {
+        d.jqlAcpListDismissed = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("x##ClearQueryEmbedded")) {
+        std::memset(d.viewJqlBuf, 0, sizeof(d.viewJqlBuf));
+        d.jqlAcpAsyncUserItems.clear();
+        d.jqlAcpAsyncUserError.clear();
+        d.jqlAcpUserSearchFireAt = 0.0;
+        d.jqlAcpUserSearchQuery.clear();
+        ++d.jqlAcpUserSearchRequestId;
+        d.jqlAcpListDismissed = false;
+        d.jqlAcpCaretSnapFramesRemaining = 0;
+        d.viewsDirty = true;
+    }
+    ImGui::SetItemTooltip("Clear query");
+
+    TrackerQueryAcp_TickDebouncedUserSearch(app, d, jqlMeta, jqlSuggestBuild);
+
+    std::vector<QuerySuggestion> merged = jqlSuggestBuild.Items;
+    if (!d.jqlAcpAsyncUserItems.empty()) {
+        std::unordered_set<std::string> seen;
+        for (const auto& s : merged) {
+            seen.insert(s.Insert);
+        }
+        std::copy_if(d.jqlAcpAsyncUserItems.begin(), d.jqlAcpAsyncUserItems.end(), std::back_inserter(merged),
+                     [&](const auto& a) { return seen.insert(a.Insert).second; });
+    }
+
+    const bool waitingUser = d.cfg.TrackerType != "Plane" && jqlMeta.UserValueToken &&
+                             jqlMeta.UserSearchPrefix.size() >= 2 && d.jqlAcpUserSearchFireAt > 0.0 &&
+                             ImGui::GetTime() < d.jqlAcpUserSearchFireAt;
+    const bool jqlAcpOpen =
+        jqlInputHot && !d.jqlAcpListDismissed &&
+        (!merged.empty() || waitingUser || (!d.jqlAcpAsyncUserError.empty() && jqlMeta.UserValueToken));
+    if (jqlAcpOpen) {
+        TrackerQueryAcp_DrawPopup(d, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged);
+    }
+    TrackerQueryAcp_FlushPendingReplace(d);
+}
+
+} // namespace SmatchetViewsDashboardUiDetail
