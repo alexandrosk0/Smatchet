@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 

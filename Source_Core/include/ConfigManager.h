@@ -2,18 +2,23 @@
 #define CONFIG_MANAGER_H
 
 // Public surface of the Smatchet config persistence layer. The implementation lives in
-// Source_Core/src/ConfigManager.cpp — including this header no longer pulls <windows.h>,
-// <wincrypt.h>, <fstream>, <sstream>, or 1200 lines of inline method bodies. nlohmann/json
-// stays because the struct serializers (CommentTemplate to_json/from_json) need it.
+// Source_Core/src/ConfigManager.cpp.
+//
+// Build-time win: this header pulls only <nlohmann/json_fwd.hpp> (a ~75 LOC forward-decl
+// header) instead of the full <nlohmann/json.hpp> (~30 k LOC of templated code). Every TU
+// that needs a TrackerConfig field used to pay the json.hpp parse cost; now only the few
+// TUs that actually construct/parse json values (this .cpp, plus call sites that compose
+// `nlohmann::json` directly) include the full header.
+//
+// Friend serializers (CommentTemplate::to_json / from_json) are declared here and defined
+// in the .cpp — nlohmann's adl_serializer finds them via ADL from any TU that includes
+// this header and uses j["…"] = config.QuickCommentTemplates.
 
-#include <algorithm>
-#include <cctype>
-#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include "SmatchetDefaults.h"
 
@@ -22,16 +27,9 @@ struct CommentTemplate {
     std::string Title;
     std::string Text;
 
-    // Support nlohmann::json serialization
-    friend void to_json(nlohmann::json& j, const CommentTemplate& t) {
-        j = nlohmann::json{{"id", t.Id}, {"title", t.Title}, {"text", t.Text}};
-    }
-
-    friend void from_json(const nlohmann::json& j, CommentTemplate& t) {
-        t.Id = j.value("id", "");
-        t.Title = j.value("title", "");
-        t.Text = j.value("text", "");
-    }
+    // Bodies in ConfigManager.cpp — declaration is sufficient for ADL lookup at call sites.
+    friend void to_json(nlohmann::json& j, const CommentTemplate& t);
+    friend void from_json(const nlohmann::json& j, CommentTemplate& t);
 };
 
 inline std::vector<CommentTemplate> GetDefaultQuickCommentTemplates() {
@@ -205,149 +203,10 @@ struct PersistentViewsFile {
     std::unordered_map<std::string, ViewWorkspaceState> Backends;
 };
 
-namespace SmatchetViewsDiskDetail {
-
-inline ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
-    ViewDefinition view;
-    view.Id = viewJson.value("id", std::string());
-    view.Name = viewJson.value("name", std::string());
-    view.Jql = viewJson.value("jql", view.Jql);
-    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
-        for (const auto& field : viewJson["fields"]) {
-            if (field.is_string()) {
-                view.Fields.push_back(field.get<std::string>());
-            }
-        }
-    }
-    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
-        for (const auto& col : viewJson["column_order"]) {
-            if (col.is_string()) {
-                view.ColumnOrder.push_back(col.get<std::string>());
-            }
-        }
-    }
-    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
-        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
-            if (it.value().is_number()) {
-                view.ColumnWidths[it.key()] = it.value().get<float>();
-            }
-        }
-    }
-    if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
-        for (const auto& specJson : viewJson["sort_specs"]) {
-            if (specJson.is_object() && specJson.contains("column") && specJson["column"].is_string()) {
-                ViewSortSpec spec;
-                spec.ColumnKey = specJson["column"].get<std::string>();
-                spec.Direction = specJson.value("direction", 0);
-                if (spec.Direction != 0) {
-                    view.SortSpecs.push_back(spec);
-                }
-            }
-        }
-    }
-    if (view.Id.empty()) {
-        view.Id = view.Name;
-    }
-    if (view.Name.empty()) {
-        view.Name = view.Id.empty() ? std::string("View") : view.Id;
-    }
-    return view;
-}
-
-inline ViewWorkspaceState ParseWorkspaceObject(const nlohmann::json& root) {
-    ViewWorkspaceState ws;
-    ws.ActiveViewId = root.value("active_view_id", std::string());
-    if (root.contains("views") && root["views"].is_array()) {
-        for (const auto& viewJson : root["views"]) {
-            if (!viewJson.is_object()) {
-                continue;
-            }
-            ws.Views.push_back(ParseViewDefinition(viewJson));
-        }
-    }
-    if (ws.ActiveViewId.empty() && !ws.Views.empty()) {
-        ws.ActiveViewId = ws.Views.front().Id;
-    }
-    return ws;
-}
-
-inline nlohmann::json SerializeView(const ViewDefinition& view) {
-    nlohmann::json viewJson;
-    viewJson["id"] = view.Id;
-    viewJson["name"] = view.Name;
-    viewJson["jql"] = view.Jql;
-    viewJson["fields"] = view.Fields;
-    viewJson["column_order"] = view.ColumnOrder;
-    viewJson["column_widths"] = nlohmann::json::object();
-    for (const auto& kv : view.ColumnWidths) {
-        viewJson["column_widths"][kv.first] = kv.second;
-    }
-    viewJson["sort_specs"] = nlohmann::json::array();
-    for (const auto& spec : view.SortSpecs) {
-        if (spec.Direction != 0) {
-            viewJson["sort_specs"].push_back(nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
-        }
-    }
-    return viewJson;
-}
-
-inline nlohmann::json SerializeWorkspace(const ViewWorkspaceState& ws) {
-    nlohmann::json j = nlohmann::json::object();
-    j["active_view_id"] = ws.ActiveViewId;
-    j["views"] = nlohmann::json::array();
-    for (const auto& view : ws.Views) {
-        j["views"].push_back(SerializeView(view));
-    }
-    return j;
-}
-
-inline ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backendKey, const TrackerConfig& cfg) {
-    ViewWorkspaceState ws;
-    if (backendKey == "Plane") {
-        ViewDefinition v;
-        v.Id = "plane_default_view";
-        v.Name = "Default Plane View";
-        v.Jql = "";
-        v.Fields = {"summary", "status", "priority", "assignee", "labels", "created", "updated"};
-        v.ColumnOrder = {"id"};
-        for (const auto& fieldId : v.Fields) {
-            v.ColumnOrder.push_back("field:" + fieldId);
-        }
-        v.ColumnWidths["id"] = 90.0f;
-        ws.ActiveViewId = v.Id;
-        ws.Views.push_back(std::move(v));
-        return ws;
-    }
-
-    ViewDefinition defaultView;
-    defaultView.Id = "default_view";
-    defaultView.Name = "Default View";
-    defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-    defaultView.Fields = {"summary", "assignee", "priority", "status", "created", "updated"};
-    defaultView.ColumnOrder = {"id"};
-    for (const auto& fieldId : defaultView.Fields) {
-        defaultView.ColumnOrder.push_back("field:" + fieldId);
-    }
-    defaultView.ColumnWidths["id"] = 90.0f;
-    ws.ActiveViewId = defaultView.Id;
-    ws.Views.push_back(std::move(defaultView));
-    return ws;
-}
-
-inline ViewsStore ViewWorkspaceToViewsStore(const ViewWorkspaceState& ws) {
-    ViewsStore s;
-    s.Version = 2;
-    s.ActiveViewId = ws.ActiveViewId;
-    s.Views = ws.Views;
-    return s;
-}
-
-inline void ViewsStoreToViewWorkspace(const ViewsStore& slice, ViewWorkspaceState& ws) {
-    ws.ActiveViewId = slice.ActiveViewId;
-    ws.Views = slice.Views;
-}
-
-} // namespace SmatchetViewsDiskDetail
+// Note: the previous public `SmatchetViewsDiskDetail::*` namespace (Parse / Serialize / default
+// view helpers) was moved into the anonymous namespace of ConfigManager.cpp. They had exactly one
+// caller (ConfigManager.cpp itself); leaving them inline in the header forced every consumer to
+// re-parse ~140 LOC of nlohmann::json template-using code for no benefit.
 
 struct PathRemapRule {
     std::string FromPrefix;
