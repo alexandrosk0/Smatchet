@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetTheme.h"
+#include "SmatchetViewsDashboardUi_detail.h"
 #include "StringUtil.h"
 #include "TicketGridModel.h"
 #include "Views.h"
@@ -32,21 +33,18 @@ constexpr auto kMcpHeaderFlickerRecent = std::chrono::milliseconds(350);
 ImVec4 LerpTowardBackground(const ImVec4& fg, const ImVec4& bg, float fade01) {
     const float t = std::min(1.0f, std::max(0.0f, fade01));
     return ImVec4(fg.x + (bg.x - fg.x) * t, fg.y + (bg.y - fg.y) * t, fg.z + (bg.z - fg.z) * t,
-                   fg.w + (bg.w - fg.w) * t);
+                  fg.w + (bg.w - fg.w) * t);
 }
 } // namespace
 
-void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
-                           ViewDefinition*& activeViewForGrid,
-                           const std::vector<TicketGridColumn>& columns,
-                           const std::vector<CachedTicket>& tickets,
-                           bool readOnlyMode,
-                           Views& viewState,
-                           const TrackerConnectivityBannerForUi& trackerBanner) {
+void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
+                           const std::vector<TicketGridColumn>& columns, const std::vector<CachedTicket>& tickets,
+                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner) {
     ImGui::Separator();
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##ViewSelectorCombo", activeViewForGrid ? activeViewForGrid->Name.c_str() : "(no active view)")) {
+    if (ImGui::BeginCombo("##ViewSelectorCombo",
+                          activeViewForGrid ? activeViewForGrid->Name.c_str() : "(no active view)")) {
         for (const auto& view : viewState.GetStore().Views) {
             const bool isSelected = activeViewForGrid && (activeViewForGrid->Id == view.Id);
             if (ImGui::Selectable(view.Name.c_str(), isSelected)) {
@@ -72,7 +70,11 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
     // View Save/Refresh Buttons
     if (activeViewForGrid) {
         ImGui::SameLine();
-        if (d.viewSortDirty) {
+        // When the full unsaved-layout strip is visible (viewsDirty), it covers Save /
+        // Discard / Save-as-new comprehensively; suppress the old quick "Save View" chip
+        // so both affordances don't compete. When the strip is absent, fall through to
+        // the normal Refresh View button.
+        if (d.viewSortDirty && !d.viewsDirty) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.65f, 0.25f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.75f, 0.35f, 1.0f));
             if (ImGui::Button("Save View")) {
@@ -80,8 +82,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                 d.viewSortDirty = false;
             }
             ImGui::PopStyleColor(2);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save sort order changes to this view.");
-        } else {
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Save sort order changes to this view.");
+        } else if (!d.viewsDirty) {
             if (ImGui::Button("Refresh View")) {
                 d.cfg.JqlQuery = activeViewForGrid->Jql;
                 d.cfg.SelectedFields = activeViewForGrid->Fields;
@@ -98,7 +101,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
     }
     if (d.gridFilterBuf[0] != '\0') {
         ImGui::SameLine();
-        if (ImGui::Button("Clear")) { d.gridFilterBuf[0] = '\0'; }
+        if (ImGui::Button("Clear")) {
+            d.gridFilterBuf[0] = '\0';
+        }
     }
 
     // Modern Sort By Popup UX
@@ -110,53 +115,62 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
         if (ImGui::BeginPopup("SortByPopup")) {
             ImGui::TextDisabled("Active Sort Rules");
             bool sortChanged = false;
-            
-            for (size_t i = 0; i < activeViewForGrid->SortSpecs.size(); ) {
+
+            for (size_t i = 0; i < activeViewForGrid->SortSpecs.size();) {
                 ViewSortSpec& spec = activeViewForGrid->SortSpecs[i];
                 ImGui::PushID(static_cast<int>(i));
-                
+
                 std::string colName = spec.ColumnKey;
-                auto colIt = std::find_if(columns.begin(), columns.end(), [&](const auto& c) {
-                    return c.Key == spec.ColumnKey;
-                });
+                auto colIt = std::find_if(columns.begin(), columns.end(),
+                                          [&](const auto& c) { return c.Key == spec.ColumnKey; });
                 if (colIt != columns.end()) {
                     colName = colIt->Label;
                 }
-                
+
                 if (ImGui::Button("X")) {
+                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                     activeViewForGrid->SortSpecs.erase(activeViewForGrid->SortSpecs.begin() + i);
                     sortChanged = true;
                     ImGui::PopID();
                     continue; // Do not increment i
                 }
                 ImGui::SameLine();
-                
+
                 const char* dirStr = (spec.Direction == 1) ? "Ascending" : "Descending";
                 ImGui::SetNextItemWidth(100.0f);
                 if (ImGui::BeginCombo("##dir", dirStr, ImGuiComboFlags_NoArrowButton)) {
-                    if (ImGui::Selectable("Ascending", spec.Direction == 1)) { spec.Direction = 1; sortChanged = true; }
-                    if (ImGui::Selectable("Descending", spec.Direction == 2)) { spec.Direction = 2; sortChanged = true; }
+                    if (ImGui::Selectable("Ascending", spec.Direction == 1)) {
+                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
+                        spec.Direction = 1;
+                        sortChanged = true;
+                    }
+                    if (ImGui::Selectable("Descending", spec.Direction == 2)) {
+                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
+                        spec.Direction = 2;
+                        sortChanged = true;
+                    }
                     ImGui::EndCombo();
                 }
                 ImGui::SameLine();
                 ImGui::Text("%s", colName.c_str());
-                
+
                 ImGui::PopID();
                 ++i;
             }
-            
+
             if (activeViewForGrid->SortSpecs.empty()) {
                 ImGui::TextDisabled("  No sort active.");
             }
-            
+
             ImGui::Separator();
-            
+
             if (ImGui::BeginMenu("+ Add Sort Rule")) {
                 for (const auto& c : columns) {
-                    bool alreadySorted = std::any_of(activeViewForGrid->SortSpecs.begin(), activeViewForGrid->SortSpecs.end(), [&](const auto& s) {
-                        return s.ColumnKey == c.Key;
-                    });
+                    bool alreadySorted =
+                        std::any_of(activeViewForGrid->SortSpecs.begin(), activeViewForGrid->SortSpecs.end(),
+                                    [&](const auto& s) { return s.ColumnKey == c.Key; });
                     if (!alreadySorted && ImGui::MenuItem(c.Label.c_str())) {
+                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                         ViewSortSpec newSpec;
                         newSpec.ColumnKey = c.Key;
                         newSpec.Direction = 1; // Default Ascending
@@ -166,12 +180,13 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                 }
                 ImGui::EndMenu();
             }
-            
+
             if (sortChanged) {
                 d.viewSortDirty = true;
                 d.forceApplySortSpecs = true;
+                d.viewsDirty = true;
             }
-            
+
             ImGui::EndPopup();
         }
     }
@@ -238,9 +253,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
             trackerChipFade01 = 0.0f;
         } else if (nowChip < d.trackerOkChipHideAt + kHeaderChipFadeOutDuration) {
             showTrackerChip = true;
-            trackerChipFade01 =
-                std::chrono::duration<float>(nowChip - d.trackerOkChipHideAt).count()
-                / std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
+            trackerChipFade01 = std::chrono::duration<float>(nowChip - d.trackerOkChipHideAt).count() /
+                                std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
         } else {
             showTrackerChip = false;
             trackerChipFade01 = 1.0f;
@@ -268,8 +282,7 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
     const bool mcpChipWasDrawnLastFrame = d.mcpHeaderLastFrameChipShown;
 
     std::chrono::steady_clock::time_point lastMcp{};
-    const bool haveLastMcp =
-        d.cfg.McpEnabled && app.TryGetMcpLastClientHttpActivity(&lastMcp);
+    const bool haveLastMcp = d.cfg.McpEnabled && app.TryGetMcpLastClientHttpActivity(&lastMcp);
 
     bool withinInitial = false;
     if (connectivityGoodOk) {
@@ -298,10 +311,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
             d.mcpHeaderFadeoutStartAt = nowMcp;
         }
         if (d.mcpHeaderFadeoutActive) {
-            const float fadeSec =
-                std::chrono::duration<float>(nowMcp - d.mcpHeaderFadeoutStartAt).count();
-            const float fadeDur =
-                std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
+            const float fadeSec = std::chrono::duration<float>(nowMcp - d.mcpHeaderFadeoutStartAt).count();
+            const float fadeDur = std::chrono::duration<float>(kHeaderChipFadeOutDuration).count();
             if (fadeSec < fadeDur) {
                 showMcpHeaderChip = true;
                 mcpChipFade01 = fadeSec / fadeDur;
@@ -404,7 +415,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                 mcpBase = ImVec4(1.0f, 0.8f, 0.25f, 1.0f);
             } else {
                 std::chrono::steady_clock::time_point lastMcpDraw{};
-                if (app.TryGetMcpLastClientHttpActivity(&lastMcpDraw) && (nowChip - lastMcpDraw) < kMcpHeaderFlickerRecent) {
+                if (app.TryGetMcpLastClientHttpActivity(&lastMcpDraw) &&
+                    (nowChip - lastMcpDraw) < kMcpHeaderFlickerRecent) {
                     const int phase = static_cast<int>(ImGui::GetTime() / 0.12) & 1;
                     mcpBase = phase != 0 ? trColor : ImVec4(1.0f, 0.82f, 0.22f, 1.0f);
                 }
@@ -444,7 +456,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                         }
                     }
 
-                    const std::vector<std::string>& inheritIds = (d.cfg.TrackerType == "Plane") ? d.cfg.NewIssueInheritFieldIdsPlane : d.cfg.NewIssueInheritFieldIds;
+                    const std::vector<std::string>& inheritIds = (d.cfg.TrackerType == "Plane")
+                                                                     ? d.cfg.NewIssueInheritFieldIdsPlane
+                                                                     : d.cfg.NewIssueInheritFieldIds;
                     if (lastVisibleTicket) {
                         d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
                             *lastVisibleTicket, app.GetAvailableFields(), d.cfg.ProjectKey, d.cfg.DefaultIssueTypeId,
