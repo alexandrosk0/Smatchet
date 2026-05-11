@@ -1394,9 +1394,18 @@ namespace {
 /// Saves an estimated 4-6 std::string allocations per cell per frame across ~200 visible rows ×
 /// ~30 columns.
 struct CellIdScope {
-    CellIdScope(const char* ticketId, const char* fieldId) {
+    // Pushes ticket.id then fieldId — or the column index when fieldId is empty.
+    // PushID("") hashes to the same value for every empty-FieldId column, which
+    // would collapse synthetic / errored-catalog rows onto a single ImGui ID
+    // and leak edit-state and popups between cells. The columnIndex fallback
+    // keeps each cell distinct.
+    CellIdScope(const char* ticketId, const char* fieldId, int columnIndex) {
         ImGui::PushID(ticketId);
-        ImGui::PushID(fieldId);
+        if (fieldId != nullptr && fieldId[0] != '\0') {
+            ImGui::PushID(fieldId);
+        } else {
+            ImGui::PushID(columnIndex);
+        }
     }
     ~CellIdScope() {
         ImGui::PopID();
@@ -1408,13 +1417,13 @@ struct CellIdScope {
 } // namespace
 
 void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
-                                        const TrackerField* field, const std::string& currentValue, float availWidth,
-                                        bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
+                                        int columnIndex, const TrackerField* field, const std::string& currentValue,
+                                        float availWidth, bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                         std::vector<PendingFieldEdit>& pendingEdits,
                                         TrackerGridFieldAsyncState& trackerGridAsync,
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
-    CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str());
+    CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
     const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
     if (handledByLua) {
         return;

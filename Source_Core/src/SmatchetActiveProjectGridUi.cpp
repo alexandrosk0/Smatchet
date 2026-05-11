@@ -725,7 +725,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                                 ImVec2(cellOriginForSel.x + cellWidthForSel,
                                                         cellOriginForSel.y + kTicketGridRowH),
                                                 true);
-                            TicketFieldEditor::RenderFieldCell(app, ticket, column, fieldMeta, currentValue,
+                            TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue,
                                                                valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                                allowEditsForCell, d.gridState, pendingEdits,
                                                                d.trackerGridAsync,
