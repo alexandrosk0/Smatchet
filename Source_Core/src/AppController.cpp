@@ -67,6 +67,8 @@
 
 #include "ITrackerBackendFactory.h"
 
+#include "LuaAutomationHost.h"
+
 #include "OfflineQueueService.h"
 
 #include "TicketSyncService.h"
@@ -910,19 +912,20 @@ void AppController::OpenUrl(const std::string& url) const {
 
 
 
+// AddAutomationLogSink / ClearAutomationLogSinks moved to LuaAutomationHost in Phase 1A of
+// the item 14 extraction. Thin delegators below.
+
 void AppController::AddAutomationLogSink(std::function<void(const std::string&)> sink) {
-
-    if (sink) {
-
-        AutomationLogSinks.push_back(std::move(sink));
-
+    if (luaHost_) {
+        luaHost_->AddAutomationLogSink(std::move(sink));
     }
-
 }
 
-
-
-void AppController::ClearAutomationLogSinks() { AutomationLogSinks.clear(); }
+void AppController::ClearAutomationLogSinks() {
+    if (luaHost_) {
+        luaHost_->ClearAutomationLogSinks();
+    }
+}
 
 
 
@@ -1169,6 +1172,11 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // so the service must exist before that path runs (item 11 extraction).
     if (!ticketSync_) {
         ticketSync_ = std::make_unique<TicketSyncService>(*this);
+    }
+    // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
+    // OnEarlyInit have a target (item 14 extraction, Phase 1A).
+    if (!luaHost_) {
+        luaHost_ = std::make_unique<LuaAutomationHost>(*this);
     }
 
     try {
