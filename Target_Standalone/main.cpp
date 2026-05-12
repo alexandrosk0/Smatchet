@@ -54,6 +54,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // Smatchet Core Headers (Safe C++14 includes)
 #include "ConfigManager.h"
 #include "AppController.h"
+#include "CliCommandRunner.h"
 // AppController holds unique_ptr<> members of these service types; main.cpp's
 // stack instance triggers destructor / noexcept evaluation that requires the
 // complete types, so include them here (CODE_REVIEW items 11/12/13/14).
@@ -61,6 +62,8 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "LuaAutomationHost.h"
 #include "OfflineQueueService.h"
 #include "TicketSyncService.h"
+#include "Commands/CommandRegistry.h"
+#include "Commands/Scenarios/IScenario.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #if defined(SMATCHET_WITH_MCP)
@@ -215,6 +218,28 @@ static std::string SmatchetGetStandaloneUserDataDirectory() {
 }
 
 int main(int argc, char** argv) {
+    // SMATCHET_USER_DATA — override the writable user data directory.
+    // Applied here, before ConfigManager::Load(), so the config file, SQLite DB,
+    // views, recents, and instance.json all resolve under the overridden path.
+    // Stable API: see backlog/COMMAND_SYSTEM_PLAN.md §"Environment contract".
+    {
+        const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+        if (envUserData && envUserData[0] != '\0') {
+            const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
+            SmatchetEnsureDirectoryExists(userDataDir);
+            ConfigManager::SetUserDataDirectory(userDataDir);
+        }
+    }
+
+    // Unified Command System — when the first non-flag positional after the
+    // program name is `cmd`, short-circuit the GUI boot and run as an HTTP
+    // client to a running Smatchet instance. This is the agent-friendly path
+    // (see backlog/COMMAND_SYSTEM_PLAN.md §CLI). All output is structured JSON
+    // on stdout / errors on stderr; no GLFW / ImGui init happens in this mode.
+    if (smatchet::cli::ArgvHasCmdSubcommand(argc, argv)) {
+        return smatchet::cli::RunCmdAttach(argc, argv);
+    }
+
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {

@@ -339,6 +339,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
+        // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
+        // tests can drive the grid position without human input.
+        if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0) {
+            ImGui::SetScrollY(static_cast<float>(d.scenarioScrollTarget));
+        }
         {
             SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
             // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.

@@ -29,6 +29,10 @@ class UiPerfMonitor {
 
     std::vector<UiPerfRow> GetLastFrameRows() const;
 
+    /// Clear all accumulated measurements (last-frame rows, working accumulators, EMA history).
+    /// Call before starting a benchmarking scenario so timings reflect only the run of interest.
+    void Reset();
+
   private:
     UiPerfMonitor() = default;
 

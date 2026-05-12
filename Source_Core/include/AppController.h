@@ -75,6 +75,9 @@ class OfflineQueueService;
 class TicketSyncService;
 class LuaAutomationHost;
 
+namespace smatchet { namespace cmd { class CommandRegistry; } }
+namespace smatchet { namespace cmd { class ScenarioRunner; } }
+
 class AppController {
     /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
     /// `AvailableFields`, the offline-replay mutex, etc.) during the extraction transition.
@@ -108,6 +111,18 @@ class AppController {
     void SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory);
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
+
+    /// Unified Command System registry. See backlog/COMMAND_SYSTEM_PLAN.md.
+    /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
+    /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
+    /// and the in-app Ctrl+Shift+P palette.
+    smatchet::cmd::CommandRegistry& Commands();
+    const smatchet::cmd::CommandRegistry& Commands() const;
+
+    /// Scenario runner — feeds from scenario.run / scenario.cancel / scenario.list.
+    /// Tick is driven per-frame by SmatchetUI::Draw.
+    smatchet::cmd::ScenarioRunner& Scenarios();
+    const smatchet::cmd::ScenarioRunner& Scenarios() const;
 
     /** Path passed to `Initialize` (may be relative to the process working directory). */
     const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
@@ -600,6 +615,11 @@ class AppController {
     /// state and worker thread. Constructed eagerly in `Initialize` to keep the
     /// `Add*LogSink` calls from `OnEarlyInit` working.
     std::unique_ptr<LuaAutomationHost> luaHost_;
+    /// Unified Command System registry — owns the catalog of named commands and dispatches them to
+    /// CLI / MCP / Lua / Palette callers. Constructed eagerly in `Initialize` after the tracker
+    /// backend so handlers can capture `*this` and safely call AppController methods.
+    std::unique_ptr<smatchet::cmd::CommandRegistry> commandRegistry_;
+    std::unique_ptr<smatchet::cmd::ScenarioRunner>  scenarioRunner_;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};

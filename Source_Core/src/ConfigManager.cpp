@@ -801,6 +801,11 @@ void ConfigManager::WriteConfigJson(const nlohmann::json& j) {
     }
 }
 
+void ConfigManager::InvalidateCache() {
+    std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+    GetHasCachedConfigRef() = false;
+}
+
 void ConfigManager::Save(const TrackerConfig& config) {
     {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
@@ -1272,6 +1277,38 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     if (const char* envMcpRemote = std::getenv("SMATCHET_MCP_ALLOW_REMOTE")) {
         std::string s(envMcpRemote);
         cfg.McpAllowRemote = (s == "true" || s == "1");
+    }
+
+    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken or Plane ApiKey).
+    // Never stored in argv; always passed as an env var for CI/agent runs.
+    if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
+        if (envToken[0] != '\0') {
+            if (cfg.TrackerType == "Plane") {
+                cfg.PlaneApiKey = envToken;
+            } else {
+                cfg.ApiToken = envToken;
+            }
+        }
+    }
+
+    // SMATCHET_TRACKER_BASE_URL — tracker origin URL.
+    // For Jira: maps to cfg.Domain (e.g. "https://company.atlassian.net").
+    // For Plane: maps to cfg.PlaneUrl (e.g. "https://api.plane.so").
+    if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
+        if (envBase[0] != '\0') {
+            if (cfg.TrackerType == "Plane") {
+                cfg.PlaneUrl = envBase;
+            } else {
+                cfg.Domain = envBase;
+            }
+        }
+    }
+
+    // SMATCHET_LOG_LEVEL — minimum log verbosity: trace|debug|info|warn|error.
+    if (const char* envLog = std::getenv("SMATCHET_LOG_LEVEL")) {
+        if (envLog[0] != '\0') {
+            cfg.LogMinLevel = envLog;
+        }
     }
 
     // Apply Option 4 overrides (CLI parameters)

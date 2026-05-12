@@ -15,11 +15,13 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
   - **Unreal Engine Plugin**: Direct DX12 integration allowing Smatchet to run seamlessly inside the Unreal Engine editor.
 - **Views System**: Backend-aware views editor for managing saved queries, column layouts, sort orders, and column widths — stored per-tracker so switching backends preserves each backend's view set. A modern two-pane layout (sidebar of saved views on the left, tabbed editor for Filter / Fields / Columns / Sort on the right) supports drag-and-drop reorder, `Alt+↑` / `Alt+↓` keyboard reorder, inline rename, and per-view duplicate. Column reorder, resize, and sort directly in the grid surface an *Unsaved layout changes* strip with `Save` / `Save as new...` / `Discard` so layout edits are gated behind an explicit commit instead of silently autosaving. Shortcuts: `Ctrl+Enter` applies the active view, `Ctrl+N` creates a new one.
 - **Optional Lua Automation**: Embeds a Lua 5.3 runtime using `sol2`, enabling custom scripts, automation hooks, custom ImGui windows, and a dedicated in-app Lua console.
+- **Unified Command System**: A single registry of 56+ named commands feeds four frontends simultaneously — a shell CLI (`SmatchetStandalone.exe cmd <name>`), an in-app Command Palette (Ctrl+Shift+P), MCP `tools/call`, and `commands.invoke()` from Lua. Adding a new command means one `RegisterCommand({...})` call and it appears everywhere automatically. See [CLI Guide](CLI_GUIDE.md).
 - **Optional AI & MCP Support**: Includes an AI assistant controller and an integrated MCP (Model Context Protocol) server plugin to bridge into modern AI workflows.
 
 ## Documentation
 
 - [Build Guide](BUILD.md): Supported CMake presets, prerequisites, local compiler paths, and wrapper scripts.
+- [CLI Guide](CLI_GUIDE.md): Command-line interface for all 56+ registered commands — discovery, output flags, config overrides, environment variables, and composability examples. Suitable for shell scripts and AI agents.
 - [Lua Scripting Guide](LUA_GUIDE.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](MCP_GUIDE.md): How to use Smatchet as an MCP server for AI agents.
 - [Windows Signing Guide](scripts/publish/SIGNING.md): How to sign the standalone app and installer during release packaging.

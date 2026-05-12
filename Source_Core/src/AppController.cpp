@@ -57,6 +57,11 @@
 
 #include "ConfigManager.h"
 
+#include "Commands/BuiltinCommands.h"
+
+#include "Commands/CommandRegistry.h"
+#include "Commands/Scenarios/IScenario.h"
+
 #include "FieldCatalogCache.h"
 
 
@@ -1379,6 +1384,66 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     }
 
+    // Scenario runner — constructed before the registry so scenario.* commands
+    // can capture a reference to it in their handlers.
+    scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+    // Register built-in scenario factories. Additional scenarios are added by
+    // plugging a new .cpp + RegisterFactory call here.
+    scenarioRunner_->RegisterFactory("priority-grid-scroll", []() {
+        // Concrete type defined in PriorityGridScrollScenario.cpp.
+        // Use a forward-declared factory function declared in the same TU as the scenario.
+        // Because we cannot include the concrete .cpp type here, we use a free function
+        // defined in that file that returns a unique_ptr<IScenario>.
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario();
+        return MakePriorityGridScrollScenario();
+    });
+
+    // Unified Command System — register the catalog last so handlers can capture
+    // references to AppController state that's now fully wired (tracker backend,
+    // Lua host, offline queue, etc.). See backlog/COMMAND_SYSTEM_PLAN.md.
+    try {
+        commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+        commandRegistry_->LoadRecents();
+        smatchet::cmd::RegisterBuiltinCommands(*commandRegistry_, *this);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::Initialize: CommandRegistry init failed: %s", ex.what());
+        // Surface as a degraded registry rather than aborting startup — CLI / MCP
+        // / Lua callers will see `not-connected` or empty `commands.list`.
+        commandRegistry_.reset();
+    } catch (...) {
+        LOG_ERROR("AppController::Initialize: CommandRegistry init failed: unknown exception");
+        commandRegistry_.reset();
+    }
+
+}
+
+smatchet::cmd::CommandRegistry& AppController::Commands() {
+    if (!commandRegistry_) {
+        // Lazy fallback — caller invoked us before Initialize (tests, embedded hosts).
+        commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+    }
+    return *commandRegistry_;
+}
+
+const smatchet::cmd::CommandRegistry& AppController::Commands() const {
+    if (!commandRegistry_) {
+        const_cast<AppController*>(this)->commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+    }
+    return *commandRegistry_;
+}
+
+smatchet::cmd::ScenarioRunner& AppController::Scenarios() {
+    if (!scenarioRunner_) {
+        scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+    }
+    return *scenarioRunner_;
+}
+
+const smatchet::cmd::ScenarioRunner& AppController::Scenarios() const {
+    if (!scenarioRunner_) {
+        const_cast<AppController*>(this)->scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+    }
+    return *scenarioRunner_;
 }
 
 

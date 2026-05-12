@@ -1,5 +1,8 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
+#include "Commands/CommandPaletteUi.h"
+#include "Commands/Scenarios/IScenario.h"
+#include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
@@ -444,6 +447,21 @@ void SmatchetUI::Draw(AppController& app) {
 #endif
     UiPerfMonitor::Instance().BeginFrame();
     SmatchetImageTextureCache::TickPendingDestroys();
+
+    // Unified Command System: palette (Ctrl+Shift+P) — must run before any
+    // sub-window draws so it can intercept key events first.
+    commandPalette_.Draw(app);
+
+    // Scenario tick: drive the active scenario one frame and propagate scroll state
+    // into the session so SmatchetActiveProjectGridUi can honor it.
+    {
+        bool scenScrollActive = false;
+        int  scenScrollTarget = -1;
+        app.Scenarios().Tick(app, scenScrollActive, scenScrollTarget);
+        d.scenarioScrollActive = scenScrollActive;
+        d.scenarioScrollTarget = scenScrollTarget;
+    }
+
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
     {
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
@@ -462,6 +480,8 @@ void SmatchetUI::Draw(AppController& app) {
         }
         d.lastViewsBackendKey = bk;
     }
+    // Register view.* commands once ViewState is loaded (idempotent — skips on 2nd+ call).
+    smatchet::cmd::RegisterViewCommands(app, ViewState);
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);
