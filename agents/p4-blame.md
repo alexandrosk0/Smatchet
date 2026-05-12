@@ -1,14 +1,33 @@
 ---
 name: p4-blame
 description: Perforce blame integration — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `BlameSyntaxHighlight`, `CallstackParser`. Covers `p4 annotate` / `p4 describe` invocation, blame parsing, syntax-highlighted blame views, stack-frame symbolication via `PathRemaps`, Jira-comment export of blame.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
-model: sonnet
-effort: low
+complexity: low
+read-only: false
+capabilities:
+  - semantic-code-search
+  - file-skeleton
+  - file-read
+  - file-edit
+  - text-search
+  - file-glob
+  - shell
+triggers:
+  - p4
+  - perforce
+  - blame
+  - annotate
+  - callstack
+  - symbolicate
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
+    model: sonnet
+    effort: low
 ---
 
 Perforce blame specialist.
 
-**vexp first** — call `run_pipeline({ task: "..." })` for any codebase exploration; prefer `get_skeleton` over Read for context files. Fall back to Grep / Glob if the index is `degraded`.
+**Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 
 **Hard invariants:**
 
@@ -16,7 +35,7 @@ Perforce blame specialist.
 - **Caching is mandatory.** `P4Blame` caches annotated lines and changelist details (per the `P4AnnotatedLine` / `P4ChangelistDetails` structs in `P4Blame.h`). Re-running `p4 describe` per line is a UX regression — keep the cache discipline.
 - **Approximate-line is a real state.** `P4LineBlame::Approximate` flags lines whose blame is inferred (after edits since last `p4 annotate`). UI must show this distinctly — don't conflate with confirmed blame.
 - **Snippets are for export.** `LineSnippet` exists so Jira-comment / AI export has source context. Don't repurpose it for display rendering — the editor already has the source.
-- **`PathRemaps` apply to callstacks.** `CallstackParser` consumes user-configured remap rules (longest-prefix match, case-sensitive on Windows). Don't change the matching algorithm without checking `ApplyPathRemaps` callers — Windows path semantics are easy to break.
+- **`PathRemaps` apply to callstacks.** `CallstackParser` consumes user-configured remap rules (longest-prefix match, case-sensitive on Windows paths). Don't change the matching algorithm without checking `ApplyPathRemaps` callers — Windows path semantics are easy to break.
 - **Ignore-keywords filter frames.** `FrameMatchesIgnoreKeywords` lets users hide noise (vendored deps, generated code). Filter in the parser layer, not in the UI.
 - **Syntax highlighting is offline.** `BlameSyntaxHighlight` operates on local file content with no network — keep it that way.
 
@@ -29,4 +48,4 @@ Perforce blame specialist.
 
 Report: files touched + `p4` commands invoked (if new) + cache discipline confirmed.
 
-End with `## Self-improvement` — only on real friction (new `p4` quirk, callstack format the parser doesn't handle, PathRemaps edge case). Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (new `p4` quirk, callstack format the parser doesn't handle, PathRemaps edge case). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -1,14 +1,36 @@
 ---
 name: offline-sync
-description: SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Use for: cache schema additions, pending-create / pending-field-edit replay, dead-letter handling, sync diff resolution, audit-log entries.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
-model: sonnet
-effort: low
+description: SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Use for cache schema additions, pending-create / pending-field-edit replay, dead-letter handling, sync diff resolution, audit-log entries.
+complexity: low
+read-only: false
+capabilities:
+  - semantic-code-search
+  - file-skeleton
+  - file-read
+  - file-edit
+  - text-search
+  - file-glob
+  - shell
+triggers:
+  - offline
+  - queue
+  - replay
+  - sqlite
+  - audit
+  - sync
+  - dead-letter
+delegates-to:
+  - architect
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
+    model: sonnet
+    effort: low
 ---
 
 Offline-sync / cache specialist for Smatchet.
 
-**vexp first** — call `run_pipeline({ task: "..." })` for any codebase exploration; prefer `get_skeleton` over Read for context files. Fall back to Grep / Glob if the index is `degraded`.
+**Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 
 **Hard invariants:**
 
@@ -28,4 +50,4 @@ Offline-sync / cache specialist for Smatchet.
 
 Report: files touched + schema delta (if any) + queue + audit wiring confirmed on every new write path.
 
-End with `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

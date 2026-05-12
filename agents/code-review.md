@@ -1,9 +1,29 @@
 ---
 name: code-review
-description: Code review of pending branch changes, a specific PR, or a specific file — correctness, code quality, Smatchet invariants. Calls vexp `run_pipeline` for impact / memory / context, then runs cppcheck / clang-tidy / clang-format over the whole diff (not just the most recent edit) and flags new findings. Read-only; returns a severity-tagged punch list. Wraps the `/review` skill with Smatchet-specific checks. Use proactively before opening a PR or merging.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Grep, Glob, Bash
-model: sonnet
-effort: high
+description: Code review of pending branch changes, a specific PR, or a specific file — correctness, code quality, Smatchet invariants. Calls your harness's semantic codebase search for impact / memory / context, then runs cppcheck / clang-tidy / clang-format over the whole diff (not just the most recent edit) and flags new findings. Read-only; returns a severity-tagged punch list. Wraps the harness's standard pre-merge review skill (e.g. Claude Code's `/review`) with Smatchet-specific checks. Use proactively before opening a PR or merging.
+complexity: medium
+read-only: true
+capabilities:
+  - semantic-code-search
+  - file-skeleton
+  - file-read
+  - text-search
+  - file-glob
+  - shell
+  - git-history
+triggers:
+  - review
+  - lint
+  - pre-merge
+  - pr-review
+delegates-to:
+  - spike-hunter
+  - perf-detective
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Grep, Glob, Bash
+    model: sonnet
+    effort: high
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
@@ -15,13 +35,13 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
    - PR number → `gh pr diff <num>` and `gh pr view <num>`
    - File path → review that file in full
 
-2. **vexp first — MANDATORY** (per `.claude/CLAUDE.md`):
-   - Call `run_pipeline({ task: "review <one-line summary of the diff>" })` to get impact analysis (what depends on changed code), session memory (prior decisions / observations on these files), and supporting-file context.
-   - If `status: "degraded"` or empty index, fall back to Grep / Glob / Read.
-   - For any supporting file you need to understand the change but isn't in the diff, use `get_skeleton` (70–90% token savings vs Read).
-   - For usage / call-site scans ("who calls this new function?", "where else is this invariant used?"), use `run_pipeline` again — don't Grep the codebase.
+2. **Semantic search first** (per AGENTS.md):
+   - Call your harness's semantic codebase search (e.g. vexp `run_pipeline({ task: "review <one-line summary of the diff>" })` under Claude Code) to get impact analysis (what depends on the changed code), session memory (prior decisions / observations on these files), and supporting-file context.
+   - If unavailable or degraded, fall back to text-search / file-read / file-glob.
+   - For supporting files needed to understand the change but not in the diff, use compact file-skeleton views (e.g. vexp `get_skeleton`) — 70–90% token savings vs full reads.
+   - For usage / call-site scans ("who calls this new function?", "where else is this invariant used?"), prefer semantic search — don't grep the codebase manually.
 
-3. **Static-analysis pass** (parallel via Bash, capture stderr):
+3. **Static-analysis pass** (parallel via shell, capture stderr):
    - `cppcheck --enable=warning,style,performance,portability --suppress=missingIncludeSystem --quiet <changed-cpp-and-h>`
    - `clang-tidy <changed-cpp> -- -std=c++14 -ISource_Core/include`
    - `clang-format --dry-run --Werror <changed-cpp-and-h>`
@@ -115,4 +135,4 @@ Severity guide:
 
 If the diff is clean, say "no findings" and list what you verified.
 
-End every review with `## Self-improvement` — checklist items that should be added (recurring miss), invariants that aren't real anymore, tooling that would catch a class of issue you noticed. Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every review with `## Self-improvement` — checklist items that should be added (recurring miss), invariants that aren't real anymore, tooling that would catch a class of issue you noticed. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

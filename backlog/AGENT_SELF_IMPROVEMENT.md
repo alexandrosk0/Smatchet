@@ -1,6 +1,6 @@
 # Agent self-improvement backlog
 
-Suggestions emitted by subagents (in `.claude/agents/`) for improving the agent ecosystem itself — prompt tweaks, missing context, redundant steps, new-subagent candidates, tooling gaps.
+Suggestions emitted by delegated agents (canonical at `agents/`, mirrored to `.claude/agents/` for Claude Code auto-discovery) for improving the agent ecosystem itself — prompt tweaks, missing context, redundant steps, new-subagent candidates, tooling gaps.
 
 The main thread appends new entries here (dedupe against existing). Periodically triage and apply real wins to agent prompts; close out items that landed by deleting them from this file (git history preserves them).
 
@@ -22,16 +22,15 @@ Categories:
 
 ## Workflow
 
-1. Subagents end every report with a `## Self-improvement` section. Empty is the common case and explicitly fine — agents only flag real friction.
-2. Main thread reads the section, dedupes against this file, appends new entries with date + source agent + category.
-3. When an entry has gathered enough evidence (mentioned by ≥ 2 agents, or blocks the same workflow ≥ 3 times), apply it: edit the relevant agent prompt(s) and close out the entry.
+1. Delegated agents end every report with a `## Self-improvement` section. Empty is the common case and explicitly fine — agents only flag real friction.
+2. The orchestrator reads the section, dedupes against this file, appends new entries with date + source agent + category.
+3. When an entry has gathered enough evidence (mentioned by ≥ 2 agents, or blocks the same workflow ≥ 3 times), apply it: edit the relevant agent prompt(s) in `agents/`, regenerate the mirror via `scripts/sync-agents.sh`, and close out the entry.
 
 ## Triage cadence
 
 Sweep the file when:
 
-- Opening any PR that touches `.claude/agents/`
-- The user calls `/triage-agents` (future skill — TBD)
+- Opening any PR that touches `agents/`
 - The list exceeds ~20 open items
 
 ## Entries

@@ -1,14 +1,32 @@
 ---
 name: command-system
-description: Add or modify commands in the unified command system (CLI + Palette + MCP + Lua + Scenarios). Touches `Source_Core/{include,src}/Commands/` — `CommandRegistry`, `Command`, `BuiltinCommands`, `ViewCommands`, `Scenarios/`, `CommandPaletteUi`, `FuzzyMatch`. Examples: new `view.export` command, new config key, new scenario step.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
-model: sonnet
-effort: low
+description: Add or modify commands in the unified command system (CLI + Palette + MCP + Lua + Scenarios). Touches `Source_Core/{include,src}/Commands/` — `CommandRegistry`, `Command`, `BuiltinCommands`, `ViewCommands`, `Scenarios/`, `CommandPaletteUi`, `FuzzyMatch`. Examples — new `view.export` command, new config key, new scenario step.
+complexity: low
+read-only: false
+capabilities:
+  - semantic-code-search
+  - file-skeleton
+  - file-read
+  - file-edit
+  - text-search
+  - file-glob
+  - shell
+triggers:
+  - command
+  - cli
+  - palette
+  - scenario
+  - register-command
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
+    model: sonnet
+    effort: low
 ---
 
 Command-system specialist.
 
-**vexp first** — call `run_pipeline({ task: "..." })` for any codebase exploration; prefer `get_skeleton` over Read for context files. Fall back to Grep / Glob if the index is `degraded`.
+**Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 
 **The pattern**: every command is one `RegisterCommand({...})` entry. CLI, palette, MCP, Lua, and scenarios all dispatch through the same registry — register once, surface everywhere. Don't duplicate logic per surface.
 
@@ -30,4 +48,4 @@ Command-system specialist.
 
 Report: file(s) changed + command name + which surfaces it appears on (CLI / palette / MCP / Lua / scenario).
 
-End with `## Self-improvement` — only if a pattern this prompt doesn't cover came up. Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if a pattern this prompt doesn't cover came up. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

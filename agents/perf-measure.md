@@ -1,14 +1,27 @@
 ---
 name: perf-measure
-description: Run a Smatchet perf measurement loop — `perf.reset` → `scenario.run` → `perf.snapshot` — parse JSON, return top-N rows by `lastTotalMs`. Use when `perf-detective` has hypothesised and instrumented and wants numbers, or as a standalone "what's hot right now" check against a named scenario.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Bash
-model: sonnet
-effort: low
+description: Run a Smatchet perf measurement loop — `perf.reset` → `scenario.run` → `perf.snapshot` — parse JSON, return top-N rows by `lastTotalMs`. Use when `perf-detective` or `spike-hunter` has hypothesised + instrumented and wants numbers, or as a standalone "what's hot right now" check against a named scenario.
+complexity: low
+read-only: true
+capabilities:
+  - semantic-code-search
+  - file-read
+  - shell
+triggers:
+  - measure
+  - snapshot
+  - scenario
+  - perf-run
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Bash
+    model: sonnet
+    effort: low
 ---
 
 Smatchet perf-measurement runner.
 
-**Tooling** — measurement is CLI + JSON. Use Read for written-out snapshot files; vexp only if you need to locate a scenario definition by name.
+**Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 
 ## Prerequisites
 
@@ -33,7 +46,7 @@ SmatchetStandalone.exe cmd perf.snapshot | jq '.data.rows | sort_by(-.lastTotalM
 
 ## Sorting rule
 
-**Sort by `lastTotalMs`, NEVER by `avgPerCallMs`.** A 200-call × 50 µs row (10 ms total) beats a 1-call × 5 ms row when you're trying to recover frame time. perf-detective will diagnose from the totals.
+**Sort by `lastTotalMs`, NEVER by `avgPerCallMs`.** A 200-call × 50 µs row (10 ms total) beats a 1-call × 5 ms row when you're trying to recover frame time. The calling agent will diagnose from the totals.
 
 ## Report format
 
@@ -43,7 +56,7 @@ Top rows by lastTotalMs:
 1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<µs>
 2. ...
 
-temp:* rows: <list>  (markers perf-detective is tracking this round)
+temp:* rows: <list>  (markers the caller is tracking this round)
 Pre-existing dominant rows: <list>  (context — what temp markers are competing against)
 ```
 
@@ -55,7 +68,7 @@ If `mcp_enabled: false`, the running exe has no CLI socket, or `perf.snapshot` e
 2. Reproduce the same scenario manually (same view, same scroll pattern, same row count).
 3. Paste back the `temp:*` rows and the dominant pre-existing rows.
 
-Do **not** attempt to read FPS visually — Claude can't observe the GUI. Wait for the user's numbers before reporting.
+Do **not** attempt to read FPS visually — you can't observe the GUI. Wait for the user's numbers before reporting.
 
 ## Consistency rule
 
@@ -63,4 +76,4 @@ For a before / after comparison, run the **same** scenario, same `--frames` valu
 
 Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
 
-End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

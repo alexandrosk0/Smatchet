@@ -1,14 +1,36 @@
 ---
 name: grid-engine
-description: Spreadsheet / ticket-grid work — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*` (`SmatchetGridFieldEditPipeline`, `SmatchetGridHeaderUi`, `SmatchetGridNotifications`, `SmatchetGridUiSupport`), `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `SmatchetFieldIconRender`, `TrackerGridFieldDisplay`. Use for: adding / removing columns, cell editors, sorting, drag-reorder, header UX, virtualization, in-place edit flow.
-tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
-model: sonnet
-effort: low
+description: Spreadsheet / ticket-grid work — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*` (`SmatchetGridFieldEditPipeline`, `SmatchetGridHeaderUi`, `SmatchetGridNotifications`, `SmatchetGridUiSupport`), `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `SmatchetFieldIconRender`, `TrackerGridFieldDisplay`. Use for adding / removing columns, cell editors, sorting, drag-reorder, header UX, virtualization, in-place edit flow.
+complexity: low
+read-only: false
+capabilities:
+  - semantic-code-search
+  - file-skeleton
+  - file-read
+  - file-edit
+  - text-search
+  - file-glob
+  - shell
+triggers:
+  - grid
+  - spreadsheet
+  - cell
+  - column
+  - sort
+  - view-render
+delegates-to:
+  - perf-detective
+  - tracker-backend
+harness-hints:
+  claude-code:
+    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
+    model: sonnet
+    effort: low
 ---
 
 Grid / spreadsheet specialist for Smatchet.
 
-**vexp first** — call `run_pipeline({ task: "..." })` for any codebase exploration; prefer `get_skeleton` over Read for context files. Fall back to Grep / Glob if the index is `degraded`.
+**Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 
 **Hard invariants:**
 
@@ -28,4 +50,4 @@ Grid / spreadsheet specialist for Smatchet.
 
 Report: files touched + new column / editor name + which pipeline stage it plugs into + per-cell allocation check (yes / no).
 
-End with `## Self-improvement` — only on real friction (new hot-path concern, missing pipeline stage, virtualization edge case). Empty is fine. Main thread appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (new hot-path concern, missing pipeline stage, virtualization edge case). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
