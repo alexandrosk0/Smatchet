@@ -1193,17 +1193,26 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         SmatchetFieldIconRender::TryGetInlineFieldIconTexture(app, field, currentValue, overlayIcon, overlayLoadErr);
     (void)overlayLoadErr;
 
-    const std::string currentId = ResolveOptionId(field, currentValue);
-    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    // Hot path: ResolveOptionId + ResolveDisplayValue both parse / linear-scan against the raw JSON
+    // value blob. They're only needed when the combo opens (currentId for the selected-row check)
+    // or when the visible preview text actually shows (haveOverlayIcon = false). For a 100-row
+    // priority column they fired ~100×/frame and the result was discarded — see PR #41.
+    std::string preview;
+    const char* previewCStr;
+    if (haveOverlayIcon) {
+        previewCStr = " ";
+    } else {
+        preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+        previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
+    }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
-    const char* previewCStr =
-        haveOverlayIcon ? " " : (preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str());
     ImGui::SetNextItemWidth(cellAvail);
     const bool comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
+        const std::string currentId = ResolveOptionId(field, currentValue);
         const bool selectedNone = currentId.empty();
         if (ImGui::Selectable("<clear>", selectedNone)) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
@@ -1231,7 +1240,13 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
                                              ImVec2(1.0f, 1.0f));
     }
+    // Tooltip only fires when the combo is actually hovered — defer the clip-test text measurement
+    // (and resolve the preview lazily for the icon-overlay branch where preview was skipped).
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
+        if (haveOverlayIcon && preview.empty()) {
+            preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+            previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
+        }
         const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
         const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
         if (previewClipped) {

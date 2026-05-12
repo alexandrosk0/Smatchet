@@ -334,16 +334,25 @@ void DrawLoadedIconSized(const SmatchetLoadedIconTexture& icon, float maxEdge) {
     ImGui::Image(icon.Texture->GetTexRef(), ImVec2(drawW, drawH));
 }
 
-void DrawLoadedIconOnly(const SmatchetLoadedIconTexture& icon, float maxEdge, bool tooltipsEnabled,
-                        const std::string& tooltip) {
+/// Lazy-tooltip variant: builds the tooltip string only when ImGui reports the icon is hovered.
+/// Saves a per-cell DisplayValueForTrackerDateField call (which JSON-parses the value) when the
+/// vast majority of cells aren't being hovered.
+template <typename TooltipFn>
+void DrawLoadedIconWithLazyTooltip(const SmatchetLoadedIconTexture& icon, float maxEdge, bool tooltipsEnabled,
+                                   TooltipFn&& tooltipBuilder) {
     DrawLoadedIconSized(icon, maxEdge);
-    if (tooltipsEnabled && !tooltip.empty() && ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-        ImGui::TextUnformatted(tooltip.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
+    if (!tooltipsEnabled || !ImGui::IsItemHovered()) {
+        return;
     }
+    const std::string tooltip = tooltipBuilder();
+    if (tooltip.empty()) {
+        return;
+    }
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+    ImGui::TextUnformatted(tooltip.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
 }
 
 } // namespace
@@ -445,9 +454,9 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
         SmatchetLoadedIconTexture icon;
         if (LoadTextureForResolvedPath(loadPath, icon, err)) {
             const float maxEdge = ImGui::GetFrameHeight();
-            const std::string display =
-                field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(rawValue);
-            DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);
+            DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
+                return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(rawValue);
+            });
             return true;
         }
     }
@@ -463,9 +472,11 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
         const auto it = memo.find(rawValue);
         if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
             const float maxEdge = ImGui::GetFrameHeight();
-            const std::string display = field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
-                                              : (it->second.Label.empty() ? rawValue : it->second.Label);
-            DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);
+            const std::string& memoLabel = it->second.Label;
+            DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
+                return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
+                             : (memoLabel.empty() ? rawValue : memoLabel);
+            });
             return true;
         }
     }
@@ -485,9 +496,10 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     RememberPriorityResolution(rawValue, resolvedKey, label);
 
     const float maxEdge = ImGui::GetFrameHeight();
-    const std::string display =
-        field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(label.empty() ? rawValue : label);
-    DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);
+    DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
+        return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
+                     : std::string(label.empty() ? rawValue : label);
+    });
     return true;
 }
 
