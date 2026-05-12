@@ -419,7 +419,8 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
-    SmatchetTheme::ApplyStyle();
+    // Initial palette before cfg is loaded; SmatchetUI::Draw re-applies once cfg is available.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
     // Ensure this thread has the correct ImGui context during DX12 init.

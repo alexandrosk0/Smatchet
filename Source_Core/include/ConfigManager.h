@@ -21,6 +21,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "SmatchetDefaults.h"
+#include "SmatchetThemeIds.h"
 
 struct CommentTemplate {
     std::string Id;
@@ -166,6 +167,9 @@ struct TrackerConfig {
     // Font size in points, used by View > Appearance > Zoom In/Out/Reset.
     // Clamped to [8, 32] at load. 16 matches the legacy hardcoded value.
     int FontSizePt = 16;
+    // Active ImGui style palette, applied per-frame from View > Appearance > Theme.
+    // Default keeps the legacy palette bit-identical for existing users.
+    ThemeId Theme = ThemeId::SmatchetDark;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.

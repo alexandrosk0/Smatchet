@@ -867,6 +867,17 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
     j["selected_font_name"] = config.SelectedFontName;
     j["font_size_pt"] = config.FontSizePt;
+    auto themeToString = [](ThemeId t) -> const char* {
+        switch (t) {
+            case ThemeId::ModernDark:   return "ModernDark";
+            case ThemeId::Vs2022Dark:   return "Vs2022Dark";
+            case ThemeId::Vs2022Light:  return "Vs2022Light";
+            case ThemeId::HighContrast: return "HighContrast";
+            case ThemeId::SmatchetDark:
+            default:                    return "SmatchetDark";
+        }
+    };
+    j["theme"] = themeToString(config.Theme);
     j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
     j["update_check_enabled"] = config.UpdateCheckEnabled;
     j["update_include_prerelease"] = config.UpdateIncludePrerelease;
@@ -1144,6 +1155,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
             if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
             if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }
+            const std::string themeStr = j.value("theme", std::string("SmatchetDark"));
+            if (themeStr == "ModernDark")        cfg.Theme = ThemeId::ModernDark;
+            else if (themeStr == "Vs2022Dark")   cfg.Theme = ThemeId::Vs2022Dark;
+            else if (themeStr == "Vs2022Light")  cfg.Theme = ThemeId::Vs2022Light;
+            else if (themeStr == "HighContrast") cfg.Theme = ThemeId::HighContrast;
+            else                                 cfg.Theme = ThemeId::SmatchetDark;
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
             cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
             cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);

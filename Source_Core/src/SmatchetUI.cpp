@@ -8,6 +8,7 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
+#include "SmatchetTheme.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
 #include "TicketGridModel.h"
@@ -378,6 +379,14 @@ void SmatchetUI::Draw(AppController& app) {
 
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
     ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+
+    // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
+    // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
+    // any user-saved value through this check.
+    if (d.cfg.Theme != lastAppliedTheme_) {
+        SmatchetTheme::ApplyStyle(d.cfg.Theme);
+        lastAppliedTheme_ = d.cfg.Theme;
+    }
 
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
@@ -796,6 +805,24 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::Separator();
             if (ImGui::BeginMenu("Appearance")) {
+                if (ImGui::BeginMenu("Theme")) {
+                    struct ThemeEntry { ThemeId id; const char* label; };
+                    constexpr ThemeEntry kEntries[] = {
+                        {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
+                        {ThemeId::ModernDark,   "Modern Dark"},
+                        {ThemeId::Vs2022Dark,   "VS 2022 Dark"},
+                        {ThemeId::Vs2022Light,  "VS 2022 Light"},
+                        {ThemeId::HighContrast, "High Contrast"},
+                    };
+                    for (const ThemeEntry& e : kEntries) {
+                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Theme == e.id)) {
+                            d.cfg.Theme = e.id;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {
                     d.cfg.FontSizePt = (d.cfg.FontSizePt < 32) ? (d.cfg.FontSizePt + 1) : 32;
                     ConfigManager::Save(d.cfg);
