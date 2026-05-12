@@ -12,24 +12,24 @@ The first FPS-regression PR on this codebase missed the dominant cost twice in a
 
 ### 1. Instrument
 
-Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("temp:<area>")` from `Source_Core/include/UiPerfMonitor.h`.
+Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source_Core/include/UiPerfMonitor.h`.
 
-- **Always prefix new markers with `temp:`** so cleanup is mechanical (one Grep call).
+- **Always prefix new markers with `perf_temp:`** so cleanup is mechanical (one Grep call) and the prefix is unique enough to never collide with production scope names.
 - Cover the whole hypothesis tree: the call site, every candidate sub-call, and the surrounding render-plan branch — but read the overhead note below before going deep inside per-cell loops.
-- Pre-existing non-`temp:` scopes stay; do not retag them.
+- Pre-existing non-`perf_temp:` scopes stay; do not retag them.
 - Scope names are `const char*`, compared by string equality — always use a **string literal**, not `std::string::c_str()` from a temporary.
 
 **Marker overhead — non-trivial.** Each scope does: 2× `steady_clock::now()`, a mutex lock, and an O(N) linear scan over the working set. Per-call cost is ~200–500 ns with ~20 active names. With 100 cells × 5 nested scopes that's 100–250 µs/frame — visible at 144 Hz. Implications:
 
 - One wrapping scope around the whole hot loop (e.g. the rows-clipper block) is **always safe**.
 - Targeted sub-scopes inside per-cell code are fine for **relative** ranking only — their absolute ms values are inflated by instrumentation overhead.
-- Never nest a `temp:` scope inside something that runs millions of times per frame. Move the scope outward.
+- Never nest a `perf_temp:` scope inside something that runs millions of times per frame. Move the scope outward.
 
 ```cpp
 void RenderFooCell(...) {
-    SMATCHET_UI_PERF_SCOPE("temp:RenderFooCell");
+    SMATCHET_UI_PERF_SCOPE("perf_temp:RenderFooCell");
     {
-        SMATCHET_UI_PERF_SCOPE("temp:RenderFooCell.resolve");
+        SMATCHET_UI_PERF_SCOPE("perf_temp:RenderFooCell.resolve");
         // ...
     }
     DrawFoo(...);  // already has its own non-temp scope — don't double-wrap
@@ -86,11 +86,11 @@ build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.reset
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot --pretty
 ```
 
-Filter to `temp:*` rows only:
+Filter to `perf_temp:*` rows only:
 
 ```bash
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
-  | jq '[.data.rows[] | select(.name | startswith("temp:"))]'
+  | jq '[.data.rows[] | select(.name | startswith("perf_temp:"))]'
 ```
 
 Top rows for frame-budget context:
@@ -167,7 +167,7 @@ Ask the user to:
 1. Run the rebuilt exe.
 2. Open **`Inspect > Performance Monitor...`**.
 3. Reproduce the bad scenario (same view, same scroll, same row count).
-4. Paste back all rows whose `name` starts with `temp:` plus the top ~10 rows overall.
+4. Paste back all rows whose `name` starts with `perf_temp:` plus the top ~10 rows overall.
 5. Optionally report FPS before/after for a sanity check against marker totals.
 
 **Don't attempt to read FPS yourself on Path B** — Claude can't observe the GUI.
@@ -176,8 +176,8 @@ Ask the user to:
 
 ### 3. Diagnose from the numbers
 
-- The dominant `temp:*` row by `lastTotalMs` is the target. Sort by that, not `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row when recovering frame time.
-- If no `temp:*` row stands out, the markers are at the wrong granularity — add finer sub-scopes inside the suspected scope and re-measure.
+- The dominant `perf_temp:*` row by `lastTotalMs` is the target. Sort by that, not `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row when recovering frame time.
+- If no `perf_temp:*` row stands out, the markers are at the wrong granularity — add finer sub-scopes inside the suspected scope and re-measure.
 - If the dominant row is a pre-existing (non-temp) scope, still treat it as the target.
 
 ### 4. Change, rebuild, re-measure
@@ -196,8 +196,8 @@ Same view, same scroll pattern, same row count — otherwise the comparison is n
 
 ```bash
 jq -s '
-  [ .[0].data.rows[] | select(.name | startswith("temp:")) ] as $before |
-  [ .[1].data.rows[] | select(.name | startswith("temp:")) ] as $after |
+  [ .[0].data.rows[] | select(.name | startswith("perf_temp:")) ] as $before |
+  [ .[1].data.rows[] | select(.name | startswith("perf_temp:")) ] as $after |
   $before[] as $b | $after[] | select(.name == $b.name) |
   { name,
     before_ms: $b.lastTotalMs,
@@ -207,17 +207,17 @@ jq -s '
 ```
 
 **All paths — ruling:**
-- ≥30% drop on the dominant `temp:*` row **and** user confirms FPS gap closed → fix worked.
+- ≥30% drop on the dominant `perf_temp:*` row **and** user confirms FPS gap closed → fix worked.
 - Drop <30% or another row now dominates → **iterate**, don't declare victory.
-- FPS recovered but no `temp:*` row shows the win → markers don't cover the changed path; add finer scopes and re-measure.
+- FPS recovered but no `perf_temp:*` row shows the win → markers don't cover the changed path; add finer scopes and re-measure.
 
 ### 6. Clean up
 
-1. Strip every `temp:` marker from source.
+1. Strip every `perf_temp:` marker from source.
 2. Verify with the Grep tool (project rules forbid bash grep):
 
 ```
-Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("temp:',
+Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("perf_temp:',
      path: 'Source_Core', output_mode: 'files_with_matches')
 ```
 
