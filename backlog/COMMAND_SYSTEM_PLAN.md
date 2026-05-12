@@ -18,12 +18,14 @@ The CLI must be agent-friendly first, human-friendly second. Every design decisi
 2. **Structured output, default JSON.** Stdout is JSON. Exactly one JSON document per invocation. `--pretty` indents it; `--quiet`/`-q` outputs bare values one-per-line for `xargs`-style pipes; `--format=table` renders human-friendly text (only for interactive terminals — never the default).
 3. **Stdout = data, stderr = diagnostics.** Logs, progress, warnings → stderr. Stdout never mixes formats. A successful command's stdout is parseable JSON even if `--quiet` is on (then it's NDJSON or bare scalars).
 4. **Descriptive naming.** Verbs are explicit (`sync.incremental` not `sync.run`; `tickets.list` not `tickets.fetch`). One verb = one operation, no flag-toggled mode-switches inside a command.
-5. **Fail loud, fail structured.** Errors are JSON `{ok:false, error:{code, message, hint, suggestions:[...]}}`. `code` is a stable enum (`unknown_command`, `missing_required_arg`, `validation_error`, `handler_error`, `confirm_required`, `not_connected`). `suggestions` for `unknown_command` returns the top 3 fuzzy matches.
+5. **Fail loud, fail structured.** Errors are JSON `{ok:false, error:{code, message, hint, suggestions:[...]}}`. `code` is a stable kebab-case enum (`unknown-command`, `missing-required-arg`, `validation-error`, `handler-error`, `confirm-required`, `not-connected`, `dry-run-unsupported`, `timeout`, …). `suggestions` for `unknown-command` returns the top 3 fuzzy matches.
 6. **Self-describing.** `cmd <name> --help` and `cmd commands.help --name=<name>` both return the full schema + 1-2 example invocations. `cmd commands.list --json` is the agent's discovery entry point.
 7. **Composable.** `--quiet` extracts the primary key (id/name) for pipe-chaining. List commands accept `--limit` + `--offset` (or `--cursor` for streamed). Numeric exit codes are stable (see CLI section).
 8. **Token-aware.** `--tokens` flag estimates the output size in tokens (rough: `chars / 4`) and prints `{tokens_estimate, bytes}` to stderr without producing the data — so agents can decide whether to materialize a large response.
 9. **Idempotency hints.** `Command.Idempotent: bool` field. Returned in `commands.help` so agents know which commands are safe to retry on transient failure.
 10. **Stable contract.** Once a command name + schema ships, it's API. Renames go through alias tables (same mechanism as `list_active_tickets` → `tickets.list_active`). Schema changes are additive (new optional params with defaults) until a major version bump.
+11. **Dry-run for destructive ops.** Every destructive command honors `--dry-run`: handler runs validation + computes the diff (`wouldDo`/`wouldChange`) but never mutates. Combined with `--yes` for real execution, this gives agents a safe two-phase loop (preview → confirm → execute). Commands advertise support via `Command.DryRunSupported`; commands without dry-run support return `dry-run-unsupported` if asked.
+12. **Env-vars for ambient config and secrets.** Sensitive values (tracker tokens) and ambient runtime config (port, user-data dir) read from a stable set of `SMATCHET_*` env vars. Argv is for per-call params only — never secrets. Env names are part of the API contract; see "Environment contract" below.
 
 ---
 
@@ -37,7 +39,7 @@ The CLI must be agent-friendly first, human-friendly second. Every design decisi
 - `Source_Core/src/Commands/CommandRegistry.cpp` — thread-safe map, recents ring, dispatch with arg validation/coercion/defaults.
 - `Source_Core/src/Commands/BuiltinCommands.cpp` — registers ~55 commands wrapping `AppController` API.
 - `Source_Core/include/Commands/FuzzyMatch.h` + `.cpp` — Sublime-style subsequence scorer (no helper exists in repo; needs building).
-- `Source_Core/include/Commands/CommandPaletteUi.h` + `Source_Core/src/CommandPaletteUi.cpp` — Ctrl+Shift+P modal.
+- `Source_Core/include/Commands/CommandPaletteUi.h` + `Source_Core/src/Commands/CommandPaletteUi.cpp` — Ctrl+Shift+P modal. Header includes only ImGui (linked to both targets); no GLFW/OpenGL/Win32 includes — DX12 build must compile this file unchanged.
 - `Source_Core/include/Commands/Scenarios/IScenario.h` — scenario base + `ScenarioRunner`.
 - `Source_Core/src/Commands/Scenarios/PriorityGridScrollScenario.cpp` — first scenario.
 - `Source_Core/src/Commands/PerfDump.cpp` — `UiPerfMonitor::GetLastFrameRows()` → JSON.
@@ -82,7 +84,9 @@ enum class ErrorCode {
     NotConnected,          // CLI attach mode: no running app
     AppendOnly,            // attempted to mutate read-only state
     NotFound,              // ticket / view / field not found
-    BackendError           // tracker (Jira/Plane) returned non-2xx
+    BackendError,          // tracker (Jira/Plane) returned non-2xx
+    DryRunUnsupported,     // --dry-run passed to a command without Command.DryRunSupported
+    Timeout                // spawn-mode async wait exceeded --timeout
 };
 const char* ErrorCodeString(ErrorCode c);  // stable kebab-case strings
 
@@ -112,6 +116,8 @@ struct CommandContext {
     AppController* App = nullptr;
     CommandSource  Source = CommandSource::Internal;
     bool           ConfirmedDestructive = false;
+    bool           DryRun = false;                  // set by --dry-run / __dry_run; handler must not mutate
+    int            TimeoutMs = 0;                   // 0 = no cap; spawn-mode async wait ceiling
 };
 
 struct Command {
@@ -120,9 +126,10 @@ struct Command {
     std::string Summary;       // one-line, agent-readable verb-first
     std::string Description;   // multi-line. Must include: returns shape, side effects, 1-2 example invocations
     std::vector<ParamSpec> Params;
-    bool Destructive = false;  // requires --yes / __confirm
-    bool Idempotent  = true;   // safe to retry on transient failure (returned in commands.help)
-    bool AsyncSafe   = true;   // false => must run on UI thread next-tick
+    bool Destructive      = false;   // requires --yes / __confirm
+    bool Idempotent       = true;    // safe to retry on transient failure (returned in commands.help)
+    bool AsyncSafe        = true;    // false => must run on UI thread next-tick AND completes asynchronously (spawn-mode driver waits on PendingAsyncResult() future)
+    bool DryRunSupported  = false;   // honors ctx.DryRun by computing diff without mutating
     std::vector<std::string> Aliases;  // back-compat: e.g. "list_active_tickets" -> "tickets.list_active"
     std::function<CommandResult(const nlohmann::json&, CommandContext&)> Handler;
 
@@ -133,7 +140,7 @@ struct Command {
 }}
 ```
 
-`CommandRegistry` exposes `Register / Has / Find / All / ByCategory / Dispatch / Recents / FuzzyMatch`. One instance lives on `AppController`; per-call handler copy under mutex avoids reentrant lock. `Find(name)` resolves aliases (e.g. `list_active_tickets` → `tickets.list_active`).
+`CommandRegistry` exposes `Register / Has / Find / All / ByCategory / Dispatch / Recents / FuzzyMatch`. One instance lives on `AppController`. **Reentrancy contract:** `Dispatch` copies the `Command` struct (including its `Handler` `std::function`) under a `std::mutex`, then releases the lock before invoking the handler — so a Lua handler that recurses back into `commands.invoke` can take the lock again without deadlock. **Guard order inside `Dispatch`:** (1) resolve aliases via `Find`; (2) `unknown-command` if not found; (3) param validation/coercion → `missing-required-arg` / `validation-error`; (4) if `Destructive && !ctx.ConfirmedDestructive && !ctx.DryRun` → `confirm-required` (dry-run intentionally bypasses confirm so agents can preview destructive ops); (5) if `ctx.DryRun && !DryRunSupported` → `dry-run-unsupported`; (6) invoke handler. `Find(name)` resolves aliases (e.g. `list_active_tickets` → `tickets.list_active`).
 
 ### Canonical wire JSON shape
 
@@ -160,25 +167,65 @@ Every CLI/MCP/Lua dispatch returns this shape — one JSON document, stable cont
 }
 ```
 
-Stdout is always exactly one such document (or an NDJSON stream for `--stream` commands like long-running scenarios). Logs / progress / warnings → stderr only.
+Stdout is always exactly one such document (or an NDJSON stream for `--stream` commands like long-running scenarios). Logs / progress / warnings → stderr only. The one explicit exception is `cmd <name> --help`, which prints human-readable text to stdout (machine-readable help comes from `cmd commands.help --name=<n>`, which returns the canonical JSON envelope).
+
+Dry-run shape adds a `dryRun:true` marker and a `wouldDo` payload describing the intended mutation without performing it:
+
+```json
+{
+  "ok": true,
+  "command": "ticket.set_field",
+  "dryRun": true,
+  "data": {
+    "wouldDo": {
+      "ticket": "X-1",
+      "field": "status",
+      "from": "In Progress",
+      "to": "Done"
+    }
+  }
+}
+```
 
 ---
 
-## Initial command catalogue (~58 commands)
+## Environment contract
+
+These env vars are stable API surface — naming changes are breaking.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `SMATCHET_MCP_PORT` | Override `instance.json` discovery for CLI attach | (read `instance.json`) |
+| `SMATCHET_MCP_HOST` | MCP host for CLI attach (loopback only unless `--mcp-allow-remote` agrees) | `127.0.0.1` |
+| `SMATCHET_USER_DATA` | Override `ConfigManager::GetUserDataDirectory()` | platform default |
+| `SMATCHET_LOG_LEVEL` | One of `TRACE\|DEBUG\|INFO\|WARN\|ERROR` for CLI mode | `WARN` |
+| `SMATCHET_NO_COLOR` / `NO_COLOR` | Suppress ANSI in `--format=table` | (auto-detect TTY) |
+| `SMATCHET_DEFAULT_FORMAT` | `json` (default) or `table` for interactive shells | `json` |
+| `SMATCHET_TRACKER_TOKEN` | Tracker (Jira/Plane) bearer token for `--spawn` mode | (read from config) |
+| `SMATCHET_TRACKER_BASE_URL` | Tracker base URL for `--spawn` mode | (read from config) |
+| `SMATCHET_SPAWN_TIMEOUT_MS` | Default wait ceiling for spawn-mode async commands | `120000` |
+
+**Precedence**: explicit flag > env var > config file > built-in default. Env-var-only values (no equivalent flag) are tokens and other secrets — never pass these as argv.
+
+**Discovery**: `cmd config.path` lists which env vars were observed at startup (key + redacted value for tokens, raw value otherwise) so an agent can verify the runtime environment.
+
+---
+
+## Initial command catalogue (~60 commands)
 
 Naming pass applied: one verb = one operation. Mode flags split into separate commands when behavior differs (`sync.incremental` vs `sync.full` instead of `sync.run --full`). Every list-returning command supports `--limit` + `--offset`.
 
-Format: `name` — args — D=destructive · I=non-idempotent
+Format: `name` — args — D=destructive · I=non-idempotent · P=dry-run-previewable
 
 **app** (5): `app.quit`; `app.version` (returns `{version, build, gitSha}`); `app.check_updates` I; `app.copy_selection`; `app.set_readonly` `{on:bool}` D.
 
-**sync** (5): `sync.incremental` D·I (last-fetched delta); `sync.full` D·I (replace-all); `sync.fetch_active_view` I; `sync.refresh_local` (rebuild local cache from disk); `sync.tracker_status` (returns `{state, lastSuccess, lastError}`).
+**sync** (5): `sync.incremental` D·I·P (last-fetched delta; preview shows pending fetch count); `sync.full` D·I·P (replace-all; preview shows wipe + fetch counts); `sync.fetch_active_view` I; `sync.refresh_local` (rebuild local cache from disk); `sync.tracker_status` (returns `{state, lastSuccess, lastError}`).
 
 **view** (6): `view.list` `{limit?, offset?}`; `view.get` `{id}`; `view.activate` `{id}`; `view.current`; `view.scroll_to_row` `{row:int}`; `view.refresh_active`.
 
 **tickets** (5): `tickets.list_active` `{limit?, offset?}`; `tickets.search_active` `{query, limit?, offset?}`; `tickets.get` `{id}`; `tickets.history` `{id, limit?}`; `tickets.exists` `{id}` (returns `{exists:bool}`).
 
-**ticket** (6): `ticket.set_field` `{id, field, value}` D; `ticket.set_fields` `{id, fields:object}` D; `ticket.transition` `{id, toStatus}` D; `ticket.add_comment` `{id, body}` D·I; `ticket.add_worklog` `{id, seconds, started?, comment?}` D·I; `ticket.create` `{draft:object}` D·I.
+**ticket** (6): `ticket.set_field` `{id, field, value}` D·P; `ticket.set_fields` `{id, fields:object}` D·P; `ticket.transition` `{id, toStatus}` D·P; `ticket.add_comment` `{id, body}` D·I; `ticket.add_worklog` `{id, seconds, started?, comment?}` D·I; `ticket.create` `{draft:object}` D·I·P.
 
 **fields** (4): `fields.list_available` `{limit?, offset?}`; `fields.get` `{id}`; `fields.refresh_catalog` I; `fields.icon_for` `{field, value}`.
 
@@ -186,9 +233,9 @@ Format: `name` — args — D=destructive · I=non-idempotent
 
 **attach** (2): `attach.open` `{ticketId, attachmentId}` D; `attach.download_preview` `{ticketId, attachmentId}` D·I.
 
-**offline** (3): `offline.list_pending` `{limit?, offset?}`; `offline.replay_now` D·I; `offline.prune_dead` D.
+**offline** (3): `offline.list_pending` `{limit?, offset?}`; `offline.replay_now` D·I·P; `offline.prune_dead` D·P.
 
-**config** (4): `config.get` `{key?}`; `config.set` `{key, value}` D; `config.reload`; `config.path` (returns `{userData, runtimeAssets}`).
+**config** (4): `config.get` `{key?}`; `config.set` `{key, value}` D·P; `config.reload`; `config.path` (returns `{userData, runtimeAssets, env:{observed:[...]}}` — observed `SMATCHET_*` env vars with tokens redacted).
 
 **perf** (5): `perf.snapshot` (returns rows inline JSON); `perf.dump` `{outPath?}` (writes to disk, returns `{file, count}`); `perf.reset`; `perf.frame_count`; `perf.toggle_panel` `{open?:bool}`.
 
@@ -210,9 +257,10 @@ Format: `name` — args — D=destructive · I=non-idempotent
 
 Per the user's insight: prefer attaching to a running instance. Architecture:
 
-1. `SmatchetStandalone.exe cmd <name> [--arg=value]…` — discover MCP endpoint:
-   - Read `ConfigManager::GetUserDataDirectory() + "instance.json"` for `{pid, port}`. Written by `McpPlugin` on startup, deleted on shutdown.
-   - Or `--mcp-port=<port>` CLI override.
+1. `SmatchetStandalone.exe cmd <name> [--arg=value]…` — discover MCP endpoint, in this precedence order:
+   - `--mcp-host=<host> --mcp-port=<port>` CLI flags (highest precedence).
+   - `SMATCHET_MCP_HOST` / `SMATCHET_MCP_PORT` env vars.
+   - `ConfigManager::GetUserDataDirectory() + "instance.json"` for `{pid, port}` (default). Written by `McpPlugin` on startup, deleted on shutdown.
    - If endpoint reachable: POST `{"name": "...", "arguments": {...}}` to `/mcp/tools/call`, print response JSON to stdout, exit with status from `CommandResult.Ok`.
    - If endpoint unreachable AND `--spawn` flag: boot app in "ephemeral" mode (windowed-but-auto-quit), dispatch in-process, write JSON to stdout, quit.
    - If endpoint unreachable AND no `--spawn`: print structured `not-connected` error to stdout (with hint suggesting `--spawn`), exit code 6.
@@ -221,19 +269,21 @@ Per the user's insight: prefer attaching to a running instance. Architecture:
    - `--pretty` — indent the JSON document (2 spaces). Default is compact single-line.
    - `--quiet` / `-q` — extract the primary value from `data` and print bare. For lists, NDJSON one-per-line of just the id. For scalars, the value alone, no quotes. Designed for `xargs` / `grep` pipelines. Errors still go to stderr in JSON form.
    - `--format=table` — render `data` as a human-friendly text table (only for interactive terminals; auto-falls-back to JSON when stdout is piped). Never the default.
-   - `--tokens` — instead of running the command, run it with output suppressed and print `{"tokens_estimate": N, "bytes": M}` to stderr. Lets agents pre-check before spending context on a large response.
+   - `--tokens` — instead of running the command, run it with output suppressed and print `{"tokens_estimate": N, "bytes": M}` to stderr. Lets agents pre-check before spending context on a large response. Estimator is `chars/4` for ASCII-heavy JSON — treat as **±30%**; not a substitute for a real tokenizer.
    - `--stream` — for long-running commands (scenarios), emit NDJSON progress events to stdout as the command runs; final document is the last line.
+   - `--dry-run` — for commands with `DryRunSupported=true`: validate args, compute the diff, and return `{ok:true, dryRun:true, data:{wouldDo:...}}` without mutating. Commands without dry-run support return exit 9 / `dry-run-unsupported`. Combining with `--yes` is a no-op — dry-run never mutates, regardless of confirmation state.
+   - `--timeout=<ms>` — for `--spawn` mode and `--stream` commands: cap the wait for async completion. On expiry: exit 8 / `timeout`. Default from `SMATCHET_SPAWN_TIMEOUT_MS` (120 s); set to `0` to disable.
 
 3. **Help & discovery flags**:
    - `cmd <name> --help` — prints `Command::BuildHelpText()` to stdout (full schema + examples + idempotency + destructive flag), exits 0. This is the agent's path of least resistance for "how do I call this?".
    - `cmd --help` (no name) — prints categorized command list grouped by `Category`. Each category collapsed to one line per command (`name` + `summary`).
    - `cmd commands.list --json` — full machine-readable catalog (the canonical agent-discovery entry point; `--help` is for humans).
 
-4. **Destructive guard**: `--yes` flag sets `ctx.ConfirmedDestructive` (also injects `__confirm:true` over HTTP). Without it, a destructive command exits 5 and prints a `confirm-required` error envelope. Never prompts.
+4. **Destructive guard**: `--yes` flag sets `ctx.ConfirmedDestructive` (also injects `__confirm:true` over HTTP). Without it, a destructive command exits 5 and prints a `confirm-required` error envelope. Never prompts. **Safe two-phase pattern for agents:** call once with `--dry-run` to preview the diff, then re-invoke with `--yes` once the preview is acceptable.
 
 5. **Type coercion**: arg values from string to `ParamSpec.Type` — `Int`/`Bool`/`Number` via `std::stoi/stod` (with structured `validation-error` on failure naming the param); `Json` parsed via `nlohmann::json::parse`; `String` raw; `Bool` accepts `true|false|1|0|yes|no`. `Enum`-typed string params validated against `ParamSpec.Enum`.
 
-6. **Stdout vs stderr**: stdout is always exactly one JSON document (or NDJSON stream with `--stream`). All logs, progress, warnings, `--tokens` previews → stderr.
+6. **Stdout vs stderr**: stdout is always exactly one JSON document (or NDJSON stream with `--stream`). All logs, progress, warnings, `--tokens` previews → stderr. The one documented exception: `cmd <name> --help` prints human-readable text to stdout (agents should use `cmd commands.help --name=<n>` for JSON help). **Logger routing:** `main.cpp` detects CLI mode (presence of `cmd` token in argv) and calls `Logger::EnableCliStderrSink()` before `RegisterBuiltinCommands` runs, redirecting `LOG_*` macros to stderr instead of the standard file/UI sinks. This preserves CLAUDE.md's "no `std::cerr`" rule — logs still flow through Logger, just to a different sink.
 
 7. **Exit codes** (stable contract):
    - `0` — `ok: true`
@@ -243,20 +293,24 @@ Per the user's insight: prefer attaching to a running instance. Architecture:
    - `5` — `confirm-required` (destructive without `--yes`)
    - `6` — `not-connected` (no running instance, no `--spawn`)
    - `7` — transport error to running instance (HTTP failed)
+   - `8` — `timeout` (spawn-mode async wait exceeded `--timeout` / `SMATCHET_SPAWN_TIMEOUT_MS`)
+   - `9` — `dry-run-unsupported` (`--dry-run` passed to a command that doesn't implement it)
 
 8. **`--help` text precision**: `Command::BuildHelpText()` produces text agents can grep. Format:
    ```
    tickets.search_active — Search active-view tickets by case-insensitive substring.
 
-   Returns: { "matches": [ { "id", "summary", "status" }, ... ] }
+   Returns: { "items": [ { "id", "summary", "status" }, ... ], "total", "limit", "offset", "hasMore" }
    Idempotent: yes
    Destructive: no
+   Dry-run:    no (read-only)
    Async-safe: yes
 
    Required:
      --query=<string>     case-insensitive substring to match in summary/id
    Optional:
-     --limit=<int>        max matches to return (default: 25)
+     --limit=<int>        max matches to return (default: 50, max: 500)
+     --offset=<int>       pagination offset (default: 0)
 
    Examples:
      SmatchetStandalone.exe cmd tickets.search_active --query=auth
@@ -299,10 +353,14 @@ for (const auto* c : app->Commands().All()) {
 `/mcp/tools/call`: registry check first.
 ```cpp
 if (app->Commands().Has(name)) {
-    CommandContext ctx{app, CommandSource::Mcp,
-                       arguments.value("__confirm", false)};
+    CommandContext ctx;
+    ctx.App                  = app;
+    ctx.Source               = CommandSource::Mcp;
+    ctx.ConfirmedDestructive = arguments.value("__confirm",  false);
+    ctx.DryRun               = arguments.value("__dry_run",  false);
+    ctx.TimeoutMs            = arguments.value("__timeout_ms", 0);
     auto r = app->Commands().Dispatch(name, arguments, ctx);
-    if (!r.Ok && cmdPtr->Destructive && !ctx.ConfirmedDestructive) {
+    if (!r.Ok && cmdPtr->Destructive && !ctx.ConfirmedDestructive && !ctx.DryRun) {
         return ConfirmRequiredEnvelope(name, cmdPtr->Summary);
     }
     return WrapResult(r);
@@ -320,15 +378,20 @@ local result = commands.invoke("ticket.set_field", { id="X-1", field="status", v
 -- result is a Lua table with {ok, error, data}
 ```
 
-`ui.register_global_action(name, fn)` becomes sugar:
+`ui.register_global_action(name, fn)` becomes sugar (field assignment — C++14 has no designated initializers, and aggregate positional init breaks every time we add a field):
 ```cpp
-reg.Register(Command{
-    "lua." + name, "lua", "(Lua) " + name, "", {}, false, true,
-    [fn](const nlohmann::json&, CommandContext&) {
-        fn();
-        return CommandResult::Success({});
-    }
-});
+Command c;
+c.Name        = "lua." + name;
+c.Category    = "lua";
+c.Summary     = "(Lua) " + name;
+c.Destructive = false;
+c.Idempotent  = true;
+c.AsyncSafe   = true;
+c.Handler     = [fn](const nlohmann::json&, CommandContext&) {
+    fn();
+    return CommandResult::Success({});
+};
+reg.Register(std::move(c));
 ```
 
 The existing helper window listing `ui.register_global_action` actions stays as a category filter on the palette ("show only `lua.*`").
@@ -369,12 +432,21 @@ private:
 
 `ScenarioRunner::Tick` is called from `SmatchetUI::Draw` once per frame. When `IsDone`, calls `OnFinish`, writes JSON to `outPath_`, optionally calls `app.RequestAppQuit()` for `--spawn` mode (or just stops for attach-mode).
 
+**Spawn-mode async wait contract.** When `--spawn` dispatches a command whose handler returns immediately but the real work continues asynchronously (`scenario.run`, `sync.full`, `sync.incremental`, `offline.replay_now`), `main.cpp` must block on a completion condition before emitting the final JSON envelope and quitting. Mechanism: each async-completing command (`AsyncSafe=false`) writes its terminal `CommandResult` into a one-shot `std::promise<CommandResult>` stored on `AppController` (`PendingAsyncResult()`); the spawn-mode driver waits on the matching `std::future` with `wait_for(ctx.TimeoutMs)`. On timeout it emits `{ok:false, error:{code:"timeout", details:{commandStillRunning:true}}}`, exits 8, and the app continues to drain in background before being killed by `app.RequestAppQuit()`. Sync-completing commands (every read-only command + most local-only mutations) have `AsyncSafe=true` and bypass the promise entirely — their dispatch result is the final result. `commands.help` exposes `asyncCompletes: !AsyncSafe` so agents pick a sensible `--timeout`.
+
 ### `PriorityGridScrollScenario`
 
-- `OnStart(app, args)`: parse `frames` (default 600), `outPath` (default `<userData>/perf/priority-grid-scroll-<ts>.json`), optional `viewId`. Activate the view via `app.GetUiState().ViewState.Activate(viewId)`. Set scenario-driven scroll target on a new struct field `app.GetUiState().scenarioScrollTarget` (cleaner than the global I originally proposed — addresses CODE_REVIEW's complaint about file-static globals). Reset `UiPerfMonitor`.
-- `OnFrame(app, i)`: bump `scenarioScrollTarget` by `pixelsPerFrame` (default 8). Inside `SmatchetActiveProjectGridUi.cpp:341+` the existing `BeginTable` block reads the target and calls `ImGui::SetScrollY(scenarioScrollTarget)` if set.
+**New session field** (in `Source_Core/include/SmatchetUiSession.h`, alongside other scenario plumbing):
+```cpp
+int  scenarioScrollTarget = -1;   // -1 = inactive; >=0 = pixel Y forced by active scenario
+bool scenarioScrollActive = false;
+```
+Owned by `SmatchetUiSession`, written by scenarios, read by `SmatchetActiveProjectGridUi.cpp:341+` inside the `BeginTable` block via `if (session.scenarioScrollActive) ImGui::SetScrollY(static_cast<float>(session.scenarioScrollTarget));`. No file-static globals (addresses CODE_REVIEW's complaint).
+
+- `OnStart(app, args)`: parse `frames` (default 600), `outPath` (default `<userData>/perf/priority-grid-scroll-<ts>.json`), optional `viewId`. Activate the view via `app.GetUiState().ViewState.Activate(viewId)`. Set `app.GetUiState().scenarioScrollActive = true; scenarioScrollTarget = 0;`. Reset `UiPerfMonitor`. If `ctx.DryRun`, skip activation + reset, return `{wouldDo:{frames, viewId, outPath}}` instead.
+- `OnFrame(app, i)`: bump `app.GetUiState().scenarioScrollTarget` by `pixelsPerFrame` (default 8).
 - `IsDone(i)`: `i >= frames`.
-- `OnFinish(app)`: snapshot `UiPerfMonitor::Instance().GetLastFrameRows()` + EMA snapshot, return `{file, frames, rows: [...]}`. Writes the same JSON to `outPath_`. Returns the data inline so attach-mode CLI gets it back too.
+- `OnFinish(app)`: snapshot `UiPerfMonitor::Instance().GetLastFrameRows()` + EMA snapshot, return `{file, frames, rows: [...]}`. Writes the same JSON to `outPath_`. Clears `scenarioScrollActive=false`. Returns the data inline so attach-mode CLI gets it back too.
 
 Adding a new scenario = one new `.cpp` + one `RegisterFactory` line in `BuiltinCommands.cpp`.
 
@@ -405,6 +477,14 @@ SmatchetStandalone.exe cmd commands.list --json | jq '.data.items[] | select(.ca
 
 # Get full schema for a single command (agent's typical second step):
 SmatchetStandalone.exe cmd ticket.set_field --help
+
+# Two-phase safe mutation: preview, then execute if the diff is acceptable:
+SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --dry-run \
+  | jq -e '.data.wouldDo.to == "Done"' \
+  && SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --yes
+
+# Run with bounded async wait — fail fast on hung scenarios:
+SmatchetStandalone.exe --spawn cmd scenario.run --name=priority-grid-scroll --frames=600 --timeout=30000 --yes
 ```
 
 ## Critical files to modify
@@ -413,8 +493,8 @@ SmatchetStandalone.exe cmd ticket.set_field --help
 - `Source_Core/src/AppController.cpp` — own registry + scenario runner; call `RegisterBuiltinCommands` in `Initialize()`.
 - `Source_Core/src/AppController_LuaBindings.cpp` — add `commands.invoke`, migrate `ui.register_global_action`.
 - `Source_Core/src/SmatchetUI.cpp` — Ctrl+Shift+P poll, palette draw, scenario tick.
-- `Source_Core/src/SmatchetActiveProjectGridUi.cpp:341` — read `scenarioScrollTarget` inside `BeginTable` block.
-- `Source_Core/include/SmatchetUiSession.h` — add `int scenarioScrollTarget = -1;` member.
+- `Source_Core/src/SmatchetActiveProjectGridUi.cpp:341` — inside `BeginTable` block, honor `session.scenarioScrollActive` by calling `ImGui::SetScrollY(static_cast<float>(session.scenarioScrollTarget))`.
+- `Source_Core/include/SmatchetUiSession.h` — add `int scenarioScrollTarget = -1;` and `bool scenarioScrollActive = false;` members (see Scenario subsystem § for data-flow).
 - `Target_Standalone/main.cpp` — extract arg parser; route `cmd` subcommand to HTTP client or `--spawn` in-process path.
 - `Plugins/Mcp/McpPlugin.cpp:550-741` — merge registry into `/tools/list` and `/tools/call`. Write `instance.json` on startup, delete on shutdown.
 
@@ -449,7 +529,7 @@ Run after the mega-PR lands on the branch, before merge to develop:
    - Esc closes; reopen; Recents floats `sync.run` to top.
 
 4. **CLI attach mode** (with a Smatchet instance running):
-   - `SmatchetStandalone.exe cmd commands.list` → single-line JSON `{ok, command, data:{items, total, limit, offset, hasMore}}`, exit 0, includes ~58 commands.
+   - `SmatchetStandalone.exe cmd commands.list` → single-line JSON `{ok, command, data:{items, total, limit, offset, hasMore}}`, exit 0, includes ~60 commands.
    - `SmatchetStandalone.exe cmd commands.list --pretty` → indented JSON, same content.
    - `SmatchetStandalone.exe cmd commands.list --quiet` → bare command names one-per-line.
    - `SmatchetStandalone.exe cmd tickets.search_active --query=foo --limit=5` → JSON `{ok, command, data:{items:[...], total, ...}}`, exit 0.
@@ -457,16 +537,21 @@ Run after the mega-PR lands on the branch, before merge to develop:
    - `SmatchetStandalone.exe cmd ticket.set_fild --query=foo` → exit 2 with `{ok:false, error:{code:"unknown-command", suggestions:["ticket.set_field", ...]}}`.
    - `SmatchetStandalone.exe cmd ticket.set_field --id=X-1` → exit 3 with `{ok:false, error:{code:"missing-required-arg", details:{param:"field"}}}` — never prompts.
    - `SmatchetStandalone.exe cmd offline.prune_dead` → exit 5 with `{ok:false, error:{code:"confirm-required", hint:"Re-run with --yes."}}`; with `--yes` → exit 0.
+   - `SmatchetStandalone.exe cmd ticket.set_field --id=X-1 --field=status --value=Done --dry-run` → exit 0, JSON `{ok:true, dryRun:true, data:{wouldDo:{ticket:"X-1", field:"status", from:"...", to:"Done"}}}`; real ticket state unchanged after the call.
+   - `SmatchetStandalone.exe cmd tickets.list_active --dry-run` → exit 9 with `{ok:false, error:{code:"dry-run-unsupported"}}` (read-only command).
    - `SmatchetStandalone.exe cmd tickets.list_active --limit=200 --tokens` → exit 0, no stdout, stderr `{"tokens_estimate": N, "bytes": M}`.
    - With no app running: `cmd commands.list` → exit 6, JSON `{ok:false, error:{code:"not-connected", hint:"Start Smatchet or pass --spawn."}}`.
+   - `SmatchetStandalone.exe cmd config.path` → JSON `data.env.observed` lists every `SMATCHET_*` env var seen at startup, with `SMATCHET_TRACKER_TOKEN` value redacted as `"***"`.
 
 5. **CLI spawn mode** (no app running):
-   - `SmatchetStandalone.exe --spawn cmd scenario.run --name=priority-grid-scroll --frames=300 --yes` → window opens, scrolls, single-document JSON to stdout, file at `<userData>/perf/priority-grid-scroll-<ts>.json`, app exits 0.
+   - `SmatchetStandalone.exe --spawn cmd scenario.run --name=priority-grid-scroll --frames=300 --yes` → window opens, scrolls, single-document JSON to stdout **after the scenario has actually finished** (verified by checking `data.frames == 300` and the output file exists), file at `<userData>/perf/priority-grid-scroll-<ts>.json`, app exits 0.
    - `SmatchetStandalone.exe --spawn cmd scenario.run --name=priority-grid-scroll --frames=300 --stream --yes` → NDJSON stream to stdout (one event per N frames), final line is the result document.
+   - `SmatchetStandalone.exe --spawn cmd scenario.run --name=priority-grid-scroll --frames=10000 --timeout=2000 --yes` → exit 8, JSON `{ok:false, error:{code:"timeout", details:{commandStillRunning:true}}}`, no partial result on stdout.
+   - `SMATCHET_TRACKER_TOKEN=... SMATCHET_TRACKER_BASE_URL=... SmatchetStandalone.exe --spawn cmd tickets.list_active --limit=5` → exit 0, JSON with items; same call without env vars and no on-disk config → exit 4, JSON `{ok:false, error:{code:"backend-error", hint:"Set SMATCHET_TRACKER_TOKEN or configure via config.set."}}`.
 
 5b. **Composability sanity** (Bash, with running app):
    - `cmd tickets.search_active --query=foo --quiet | xargs -I{} cmd tickets.get --id={} --quiet | wc -l` produces non-zero count.
-   - `cmd commands.list --json | jq '.data.items | length'` returns ~58.
+   - `cmd commands.list --json | jq '.data.items | length'` returns ~60.
    - `cmd scenario.run --name=priority-grid-scroll --frames=600 --yes | jq '.data.rows[0].name'` extracts dominant marker.
 
 6. **MCP**:
@@ -484,12 +569,12 @@ Run after the mega-PR lands on the branch, before merge to develop:
 
 ## Risks and open follow-ups
 
-- **Auto-quit on `--spawn` after async commands.** Some commands (`sync.run`, `scenario.run`) finish in background. The spawn-mode loop must wait on a "command complete" condition variable, not just dispatch-and-quit. Handler signature already returns when done for sync commands; async commands need to mark completion via `ScenarioRunner::Active()` or a parallel completion flag.
 - **`instance.json` race.** Two simultaneous app instances would clobber the file. Mitigation: include PID + port; CLI verifies PID is alive before connecting. Final hardening can move to a per-port lock file.
 - **MCP confirm phase pattern.** Already required by the project's prompt-injection-defense rules. Implementation needs care to match how AI agent hosts (Claude, etc.) handle two-phase confirmation envelopes — refer to existing MCP tool patterns before finalizing the envelope shape.
 - **Param widget polish in palette.** First pass is functional but plain (one row per param, no inline help). Future PR could add per-param tooltips, enum dropdowns, JSON validation feedback.
 - **Cancel mid-scenario.** `scenario.cancel` should be wired to also work from the palette — bind Esc inside an active scenario to dispatch it.
-- **Lua `commands.invoke` reentrancy.** Lua handlers calling commands that call Lua handlers can deadlock the registry mutex. Use copy-then-unlock dispatch pattern or recursive_mutex.
+- **Dry-run fidelity for tracker mutations.** First-cut `wouldDo` for `ticket.set_field` is a local diff (current value → proposed value) computed without hitting the tracker. If the tracker's validation rules reject the value the real call would have failed too — but the preview won't know. Acceptable for v1; later, `--dry-run` could optionally call the tracker's "validate" endpoint where one exists (Jira `PUT /rest/api/3/issue/{id}?validate=true` etc.).
+- **Token estimator accuracy.** `chars/4` heuristic is ±30% for JSON. Good enough for "is this 500 tokens or 50000 tokens?" but agents shouldn't budget against the estimate; clarified in `--tokens` help.
 
 ---
 
