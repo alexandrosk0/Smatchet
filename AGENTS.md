@@ -53,6 +53,20 @@ Harnesses other than Claude Code should read from `agents/` and ignore the `.cla
 
 Default: stay in the orchestrator's primary model for routine work. Delegate to an agent in `agents/` when the task matches.
 
+### Orchestrator delegation packet
+
+Before delegating a design-doc PR or any multi-step implementation slice, build a compact handoff packet. This saves agents from re-reading the same docs, rediscovering the same call sites, or re-litigating invariants.
+
+Each packet should include:
+
+- **Owner + scope**: target agent, allowed write set, and files / modules that are explicitly out of scope.
+- **Inline task context**: paste only the relevant design-doc section(s). Say "do not reopen the design doc unless blocked" when the excerpt is complete.
+- **Shared inventory**: for exact symbol / literal work, do one exhaustive text-search in the orchestrator and pass matches as `<file>:<line>:<role>` (for example `(cfg-read)`, `(draft-write)`, `(audit-only)`). Do not make every agent rediscover the same inventory.
+- **Invariant decisions**: scan the task against the hard rules in this file first. If the plan collides with `ITrackerClient`, command registry contracts, view storage, MCP schemas, dual-target constraints, or other invariants, pre-resolve the intended option in the prompt.
+- **Subsystem split**: count the subsystem table rows touched. If a design-doc PR spans more than one subsystem row, split it before delegating unless a single cross-cutting design decision is still unresolved.
+- **Output budget**: for routine implementation agents, request `Report <= 200 words, table form, no prose paragraphs` unless the task needs a design write-up.
+- **Comment discipline**: remind implementation agents that code comments must explain durable code intent, never the task / PR / temporary plan (no comments like `PR 4:` or `remove in PR 7`).
+
 ### Cross-cutting
 
 | Agent | Complexity · access | Use when |
@@ -166,6 +180,8 @@ vexp returns pre-indexed, graph-ranked context in a single call.
 2. Make targeted changes based on the context returned
 3. `run_pipeline` again only if you need more context
 
+Exception: exhaustive literal / symbol inventories, mechanical renames, and cleanup checks need complete match sets, not graph-ranked context. Use text-search (`rg` / harness equivalent) for those, preferably once in the orchestrator, then pass the inventory to agents. Semantic search remains first for understanding impact, ownership, or surrounding logic.
+
 ### Available MCP tools
 - `run_pipeline` — **PRIMARY TOOL**. Runs capsule + impact + memory in 1 call.
   Auto-detects intent. Includes file content. Example: `run_pipeline({ "task": "fix auth bug" })`
@@ -182,6 +198,7 @@ vexp returns pre-indexed, graph-ranked context in a single call.
 - Do NOT use built-in file search, grep, or codebase indexing — always call `run_pipeline` first
 - If you spawn sub-agents or background tasks, pass them the context from `run_pipeline`
   rather than letting them search the codebase independently
+- Exception: if the task is explicitly "find every occurrence of this literal / symbol", text-search is the primary tool because semantic ranking is not exhaustive. Record the inventory and reuse it across delegated agents.
 
 ### Smart Features
 Intent auto-detection, hybrid ranking, session memory, auto-expanding budget.

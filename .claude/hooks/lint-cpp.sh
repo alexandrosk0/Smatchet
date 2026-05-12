@@ -39,6 +39,18 @@ ABS_FILE="$NORM_FILE"
 
 ISSUES=""
 add_issues() { ISSUES+="$1"$'\n'; }
+format_issues() {
+    local max_lines="${SMATCHET_LINT_MAX_LINES:-120}"
+    printf '%s' "$ISSUES" | awk -v max="$max_lines" '
+        NF && !seen[$0]++ { lines[++n] = $0 }
+        END {
+            limit = (max ~ /^[0-9]+$/ && max > 0) ? max : n
+            for (i = 1; i <= n && i <= limit; ++i) print lines[i]
+            if (n > limit) {
+                printf("lint-cpp: truncated %d duplicate-filtered diagnostic lines; rerun hook manually for full output.\n", n - limit)
+            }
+        }'
+}
 
 # --- 1) clang-format -i (apply in place) -----------------------------------
 if command -v clang-format >/dev/null 2>&1; then
@@ -81,7 +93,7 @@ fi
 if [[ -n "$ISSUES" ]]; then
     {
         echo "lint-cpp: issues found in $REL — fix before responding."
-        printf '%s' "$ISSUES"
+        format_issues
     } >&2
     exit 2
 fi

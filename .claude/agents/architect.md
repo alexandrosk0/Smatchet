@@ -41,7 +41,8 @@ Project rules already in `AGENTS.md` (layout, banned C++14 features, dual-target
 2. **Affected components** — every dir / module touched with change shape (interface delta / new file / call-site change / behaviour-only).
 3. **Interface contracts** — exact deltas to `ITrackerClient`, `RegisterCommand({...})` entries, sol2 bindings, MCP schemas, per-backend view storage. Backend-specific code stays inside the concrete client; never leaks into `Source_Core` interfaces.
 4. **Risks** — ABI / save-format breaks (views, config, SQLite cache), backend leakage into core, Unreal vs standalone divergence (`SMATCHET_EMBEDDED_IN_UNREAL`, `SMATCHET_WITH_MCP`), localization key churn, MCP wire-format changes, dual-target compile failures (DX12 path also compiles `Source_Core/`).
-5. **Open questions** — specific. "What should the API look like?" is not specific.
+5. **Implementation handoff** — split work by subsystem owner. For each slice, name the agent, allowed write scope, pre-resolved invariant decisions, and any exact symbol / literal inventory the orchestrator should pass inline. If a slice spans more than one subsystem table row, split it further or explain why it must stay together.
+6. **Open questions** — specific. "What should the API look like?" is not specific.
 
 No implementation code unless genuinely trivial. A 30-line design doc that prevents an hour of rework is the win.
 

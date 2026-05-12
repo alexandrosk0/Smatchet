@@ -37,7 +37,7 @@ Tracker backend specialist (Jira + Plane.so).
 **Hard invariants:**
 
 - Backend-specific code stays in the concrete client (`JiraClient*.cpp`, `PlaneClient*.cpp`). Never leak Jira- or Plane-specific shapes into `ITrackerClient.h` or any other header in `Source_Core/include/` outside the concrete `*Client.h`.
-- `Source_Core/include/ITrackerClient.h` is the contract. Adding a method is a wider change — coordinate with `architect` first.
+- `Source_Core/include/ITrackerClient.h` is the contract. Do not widen it unless the prompt explicitly says `architect` approved the exact interface delta. If the design implies an interface change but the prompt did not pre-resolve it, stop and report the concrete alternative instead of editing.
 - Field catalog: every new field type flows through `TrackerFieldCatalog` → `TrackerFieldValueParser` → `TrackerFieldPayload`. Don't bypass.
 - HTTP: route through `TrackerHttpClient`. Never call `cpr::` directly from a feature file — centralised retry, auth, and `NetworkUsageTracker` live there.
 - JSON: `nlohmann::json` with `obj["k"] = v` style. Brace-list reassignment doesn't compile (see AGENTS.md).

@@ -43,6 +43,7 @@ Grid / spreadsheet specialist for Smatchet.
 - **Edit pipeline is the dispatch point.** `SmatchetGridFieldEditPipeline` is where a cell commit goes — every new editable field type plugs in here, not into a special-case branch elsewhere.
 - **Virtualization assumptions** live in the header / row code. If you add a column whose width depends on data, you'll fight the layout cache — coordinate with the existing `SmatchetGridHeaderUi` pattern.
 - **Notifications** (toasts, in-grid status) route through `SmatchetGridNotifications` — don't render `ImGui::Text("Saved")` ad-hoc.
+- **Localization** uses `SmatchetLocalization::T(key, englishFallback)` — not `Loc(...)`, `Translate(...)`, or guessed helper names.
 - **Views** vs **grid**: `SmatchetViewsDashboardUi*` owns view CRUD UX; the grid renders the current view. Storage / serialization changes are `architect` territory.
 
 **Workflow:**

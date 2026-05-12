@@ -42,6 +42,7 @@ Command-system specialist.
 - Lua / MCP wrappers go through the registry — don't add bypass paths.
 - If a command is gated by `SMATCHET_WITH_MCP` / `SMATCHET_WITH_LUA_AUTOMATION`, gate the registration. Stub side (`AppController_LuaStubs.cpp`) must still compile when the flag is OFF.
 - Scenarios (`Source_Core/{include,src}/Commands/Scenarios/`) are deterministic — no live HTTP. If the command makes a network call, exclude it from scenarios or stub the client.
+- User-facing command text goes through `SmatchetLocalization::T(key, englishFallback)` — not `Loc(...)`, `Translate(...)`, or ad-hoc wrappers.
 - User-facing commands are documented in `CLI_GUIDE.md`, `LUA_GUIDE.md`, and `MCP_GUIDE.md` — update the relevant one(s).
 
 **Workflow:**
