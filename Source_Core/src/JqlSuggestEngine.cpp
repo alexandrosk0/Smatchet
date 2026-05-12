@@ -279,6 +279,14 @@ static std::string BuildJqlUserInsert(const TrackerUser& user) {
 /// on tenants with thousands of users.
 static void AppendJqlUserCatalogSuggestions(const AppController& app, const std::string& prefix,
                                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    // Empty-prefix bail-out: on tenants with hundreds of users, dumping an alphabetic slice
+    // of the org chart on `assignee = ` adds noise without value. The legacy `currentUser()`
+    // / `membersOf()` function suggestions still appear in this case (they're appended by
+    // AppendJqlFunctionSuggestions). Real name matching kicks in as soon as the user types
+    // the first character.
+    if (prefix.empty()) {
+        return;
+    }
     const std::string pre = ToLowerAsciiCopy(prefix);
     constexpr int kMaxUsers = 50;
     int added = 0;
@@ -287,7 +295,10 @@ static void AppendJqlUserCatalogSuggestions(const AppController& app, const std:
             continue;
         }
         const bool nameMatch = AsciiStartsWithIgnoreCase(user.DisplayName, pre);
-        const bool emailMatch = !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);
+        // EmailAddress prefix-match is the rare path (most users search by name). Skip the
+        // ToLowerAsciiCopy cost on every iteration when the name already matched.
+        const bool emailMatch =
+            !nameMatch && !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);
         if (!nameMatch && !emailMatch) {
             continue;
         }
