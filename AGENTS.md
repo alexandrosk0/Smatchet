@@ -134,3 +134,58 @@ Each agent declares a closed set of **capability tags**. The orchestrator (and t
 - Harnesses without `semantic-code-search` should fall back to text-search with the symbol set named in each agent's prose. Output is degraded but workable — expect more round-trips and larger context per query.
 
 **Per-agent harness hints**: each agent's YAML frontmatter may carry a `harness-hints.<harness>:` block with harness-specific routing details (e.g. Anthropic model selection, MCP tool list). Harnesses ignore unknown blocks.
+
+## Recommended companion — caveman
+
+[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill (also Codex / Gemini / Cursor / Windsurf / Cline / Copilot / 30+ more) that compresses agent output by ~65% with no loss of technical accuracy. It preserves code, paths, URLs, and structural elements **byte-for-byte** — validation markers, severity-tagged punch lists, `file:line` references, and the `## Self-improvement` section convention used throughout this repo all survive intact. Only surrounding prose gets compressed.
+
+**Install** (per-user, system-wide — safe to re-run):
+
+```bash
+# bash / WSL / Git Bash / MSYS2
+curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex
+```
+
+**Use with Smatchet** — recommended default: **`/caveman full`** at session start. Compresses everything including delegated agents until session end. Switch to `/caveman lite` if you want more nuance in design-doc / security-review outputs from the Opus-tier agents (`architect`, `perf-detective`, `spike-hunter`, `security-review`). Exit with "normal mode". Other useful skills: `/caveman-commit` (Conventional Commit messages ≤ 50 chars), `/caveman-review` (one-line PR comments), `/caveman-stats` (session token usage + lifetime savings), `/caveman-compress <file>` (rewrite memory files in caveman-speak — ~46% input-token savings every session).
+
+Caveman's value scales with agent complexity tier: Opus-tier agents in this repo emit the longest reports (design docs, perf write-ups, attack-surface findings) and benefit most from compression — that's where the dollar savings concentrate. Subsystem specialists at `low` complexity are already terse; caveman's compression there is marginal but harmless.
+
+**Trade-off worth knowing**: caveman compresses *output* tokens, not thinking tokens. Brain stays full size; only the mouth shrinks. Combined with the read-only Opus agents in this repo (`architect`, `perf-detective`, `spike-hunter`, `security-review`, `code-review`), caveman tightens the most expensive part of each delegated call without altering reasoning quality.
+
+
+## vexp <!-- vexp v1.2.28 -->
+
+**MANDATORY: use `run_pipeline` — do NOT grep or glob the codebase.**
+vexp returns pre-indexed, graph-ranked context in a single call.
+
+### Workflow
+1. `run_pipeline` with your task description — ALWAYS FIRST (replaces all other tools)
+2. Make targeted changes based on the context returned
+3. `run_pipeline` again only if you need more context
+
+### Available MCP tools
+- `run_pipeline` — **PRIMARY TOOL**. Runs capsule + impact + memory in 1 call.
+  Auto-detects intent. Includes file content. Example: `run_pipeline({ "task": "fix auth bug" })`
+- `get_context_capsule` — lightweight, for simple questions only
+- `get_impact_graph` — impact analysis of a specific symbol
+- `search_logic_flow` — execution paths between functions
+- `get_skeleton` — compact file structure
+- `index_status` — indexing status
+- `get_session_context` — recall observations from sessions
+- `search_memory` — cross-session search
+- `save_observation` — persist insights (prefer run_pipeline's observation param)
+
+### Agentic search
+- Do NOT use built-in file search, grep, or codebase indexing — always call `run_pipeline` first
+- If you spawn sub-agents or background tasks, pass them the context from `run_pipeline`
+  rather than letting them search the codebase independently
+
+### Smart Features
+Intent auto-detection, hybrid ranking, session memory, auto-expanding budget.
+
+### Multi-Repo
+`run_pipeline` auto-queries all indexed repos. Use `repos: ["alias"]` to scope. Run `index_status` to see aliases.
+<!-- /vexp -->
