@@ -6,6 +6,7 @@
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
 #include "ConfigManager.h"
 #include "Views.h"
 
@@ -58,12 +59,16 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "List all configured ticket-grid views.";
         c.Params = {[]{ ParamSpec p; p.Name="limit"; p.Type=ParamType::Int; p.Default=50; return p; }(),
                     []{ ParamSpec p; p.Name="offset"; p.Type=ParamType::Int; p.Default=0; return p; }()};
-        c.Handler = [&views](const nlohmann::json& args, const CommandContext&) {
-            const ViewsStore& store = views.GetStore();
-            return CommandResult::Success(
-                PaginateViewDefs(store.Views,
-                                 args.value("limit", 50),
-                                 args.value("offset", 0)));
+        // view.list reads ViewState.Slice_.Views — written by Views Dashboard window on
+        // the UI thread without an internal mutex. Hop to UI thread for race-free read.
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext&) {
+            return RunOnUiThreadAsCommandResult(app, [&views, args]() {
+                const ViewsStore& store = views.GetStore();
+                return CommandResult::Success(
+                    PaginateViewDefs(store.Views,
+                                     args.value("limit", 50),
+                                     args.value("offset", 0)));
+            });
         };
         reg.Register(std::move(c));
     }
@@ -74,14 +79,16 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "Get definition of a single view by id.";
         c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
                         p.Required=true; p.Description="View id."; return p; }()};
-        c.Handler = [&views](const nlohmann::json& args, const CommandContext&) {
-            const std::string id = args.value("id", std::string());
-            const ViewsStore& store = views.GetStore();
-            for (const ViewDefinition& v : store.Views) {
-                if (v.Id == id) return CommandResult::Success(ViewDefToJson(v));
-            }
-            return CommandResult::Failure(ErrorCode::NotFound,
-                "View '" + id + "' not found.");
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext&) {
+            return RunOnUiThreadAsCommandResult(app, [&views, args]() {
+                const std::string id = args.value("id", std::string());
+                const ViewsStore& store = views.GetStore();
+                for (const ViewDefinition& v : store.Views) {
+                    if (v.Id == id) return CommandResult::Success(ViewDefToJson(v));
+                }
+                return CommandResult::Failure(ErrorCode::NotFound,
+                    "View '" + id + "' not found.");
+            });
         };
         reg.Register(std::move(c));
     }
@@ -90,13 +97,15 @@ void RegisterViewCommands(AppController& app, Views& views) {
         Command c;
         c.Name = "view.current"; c.Category = "view";
         c.Summary = "Get the currently active view.";
-        c.Handler = [&views](const nlohmann::json&, const CommandContext&) {
-            const ViewDefinition* active = views.GetActiveView();
-            if (!active) {
-                return CommandResult::Failure(ErrorCode::NotFound,
-                    "No active view configured.");
-            }
-            return CommandResult::Success(ViewDefToJson(*active));
+        c.Handler = [&app, &views](const nlohmann::json&, const CommandContext&) {
+            return RunOnUiThreadAsCommandResult(app, [&views]() {
+                const ViewDefinition* active = views.GetActiveView();
+                if (!active) {
+                    return CommandResult::Failure(ErrorCode::NotFound,
+                        "No active view configured.");
+                }
+                return CommandResult::Success(ViewDefToJson(*active));
+            });
         };
         reg.Register(std::move(c));
     }
@@ -107,15 +116,19 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "Switch the active view by id.";
         c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
                         p.Required=true; p.Description="View id from view.list."; return p; }()};
-        c.Handler = [&views, &app](const nlohmann::json& args, const CommandContext&) {
-            const std::string id = args.value("id", std::string());
-            if (!views.Activate(id)) {
-                return CommandResult::Failure(ErrorCode::NotFound,
-                    "View '" + id + "' not found.");
-            }
-            views.Save();
-            app.SyncWithBackend(nullptr, &views.GetStore());
-            return CommandResult::Success({{"activated", id}});
+        // view.activate mutates ActiveViewId + persists views + kicks a sync. All three
+        // touch UI-thread-owned state; do the mutation on the UI thread, then return.
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext&) {
+            return RunOnUiThreadAsCommandResult(app, [&app, &views, args]() {
+                const std::string id = args.value("id", std::string());
+                if (!views.Activate(id)) {
+                    return CommandResult::Failure(ErrorCode::NotFound,
+                        "View '" + id + "' not found.");
+                }
+                views.Save();
+                app.SyncWithBackend(nullptr, &views.GetStore());
+                return CommandResult::Success({{"activated", id}});
+            });
         };
         c.Idempotent = false;
         reg.Register(std::move(c));
@@ -126,8 +139,12 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Name = "view.refresh_active"; c.Category = "view";
         c.Summary = "Re-sync tickets for the active view from the tracker.";
         c.Handler = [&app, &views](const nlohmann::json&, const CommandContext&) {
-            app.SyncWithBackend(nullptr, &views.GetStore());
-            return CommandResult::Success({{"triggered", true}});
+            // SyncWithBackend reads ViewState.Slice_.Views to build the JQL; hop to UI thread
+            // so the read is serialised with any concurrent Views Dashboard mutation.
+            return RunOnUiThreadAsCommandResult(app, [&app, &views]() {
+                app.SyncWithBackend(nullptr, &views.GetStore());
+                return CommandResult::Success({{"triggered", true}});
+            });
         };
         c.Idempotent = false;
         c.AsyncSafe = false;
@@ -158,46 +175,50 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="triggerSync"; p.Type=ParamType::Bool; p.Default=false;
                 p.Description="If true, also sync from tracker immediately after create."; return p; }(),
         };
+        // view.create writes Views::Slice_ + persists to disk + may trigger a sync.
+        // All steps run on the UI thread to avoid racing the Views Dashboard.
         c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
-            const std::string name = args.value("name", std::string());
-            const std::string jql  = args.value("jql",  std::string());
-            const bool triggerSync = args.value("triggerSync", false);
+            const bool dryRun = ctx.DryRun;
+            return RunOnUiThreadAsCommandResult(app, [&app, &views, args, dryRun]() {
+                const std::string name = args.value("name", std::string());
+                const std::string jql  = args.value("jql",  std::string());
+                const bool triggerSync = args.value("triggerSync", false);
 
-            ViewDefinition proto;
-            proto.Name = name;
-            if (!jql.empty()) proto.Jql = jql;
-            // Optional fields array.
-            if (args.contains("fields") && args["fields"].is_array()) {
-                for (const auto& f : args["fields"]) {
-                    if (f.is_string()) proto.Fields.push_back(f.get<std::string>());
+                ViewDefinition proto;
+                proto.Name = name;
+                if (!jql.empty()) proto.Jql = jql;
+                if (args.contains("fields") && args["fields"].is_array()) {
+                    for (const auto& f : args["fields"]) {
+                        if (f.is_string()) proto.Fields.push_back(f.get<std::string>());
+                    }
                 }
-            }
 
-            if (ctx.DryRun) {
-                nlohmann::json wd;
-                wd["name"] = proto.Name;
-                wd["jql"]  = proto.Jql;
-                wd["fields"] = proto.Fields;
-                return CommandResult::Success({{"wouldDo", std::move(wd)}});
-            }
+                if (dryRun) {
+                    nlohmann::json wd;
+                    wd["name"]   = proto.Name;
+                    wd["jql"]    = proto.Jql;
+                    wd["fields"] = proto.Fields;
+                    return CommandResult::Success({{"wouldDo", std::move(wd)}});
+                }
 
-            if (!views.Create(proto)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                    "Views::Create() failed.");
-            }
-            const ViewDefinition* created = views.GetActiveView();
-            nlohmann::json out;
-            if (created) {
-                out["id"]   = created->Id;
-                out["name"] = created->Name;
-                out["jql"]  = created->Jql;
-            }
-            out["created"] = true;
-            if (triggerSync) {
-                app.SyncWithBackend(nullptr, &views.GetStore());
-                out["syncTriggered"] = true;
-            }
-            return CommandResult::Success(std::move(out));
+                if (!views.Create(proto)) {
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                        "Views::Create() failed.");
+                }
+                const ViewDefinition* created = views.GetActiveView();
+                nlohmann::json out;
+                if (created) {
+                    out["id"]   = created->Id;
+                    out["name"] = created->Name;
+                    out["jql"]  = created->Jql;
+                }
+                out["created"] = true;
+                if (triggerSync) {
+                    app.SyncWithBackend(nullptr, &views.GetStore());
+                    out["syncTriggered"] = true;
+                }
+                return CommandResult::Success(std::move(out));
+            });
         };
         reg.Register(std::move(c));
     }
@@ -223,43 +244,47 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="fields"; p.Type=ParamType::Json;
                 p.Description="Replacement JSON array of field ids."; return p; }(),
         };
-        c.Handler = [&views](const nlohmann::json& args, const CommandContext& ctx) {
-            const ViewDefinition* active = views.GetActiveView();
-            if (!active) {
-                return CommandResult::Failure(ErrorCode::NotFound,
-                    "No active view to update.");
-            }
-            ViewDefinition updated = *active;
-            if (args.contains("name") && args["name"].is_string()) {
-                updated.Name = args["name"].get<std::string>();
-            }
-            if (args.contains("jql") && args["jql"].is_string()) {
-                updated.Jql = args["jql"].get<std::string>();
-            }
-            if (args.contains("fields") && args["fields"].is_array()) {
-                updated.Fields.clear();
-                for (const auto& f : args["fields"]) {
-                    if (f.is_string()) updated.Fields.push_back(f.get<std::string>());
+        // view.update reads + writes the active ViewDefinition; UI thread only.
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
+            const bool dryRun = ctx.DryRun;
+            return RunOnUiThreadAsCommandResult(app, [&views, args, dryRun]() {
+                const ViewDefinition* active = views.GetActiveView();
+                if (!active) {
+                    return CommandResult::Failure(ErrorCode::NotFound,
+                        "No active view to update.");
                 }
-            }
+                ViewDefinition updated = *active;
+                if (args.contains("name") && args["name"].is_string()) {
+                    updated.Name = args["name"].get<std::string>();
+                }
+                if (args.contains("jql") && args["jql"].is_string()) {
+                    updated.Jql = args["jql"].get<std::string>();
+                }
+                if (args.contains("fields") && args["fields"].is_array()) {
+                    updated.Fields.clear();
+                    for (const auto& f : args["fields"]) {
+                        if (f.is_string()) updated.Fields.push_back(f.get<std::string>());
+                    }
+                }
 
-            if (ctx.DryRun) {
-                nlohmann::json wd;
-                wd["from"] = {{"name", active->Name}, {"jql", active->Jql}};
-                wd["to"]   = {{"name", updated.Name}, {"jql", updated.Jql},
-                              {"fields", updated.Fields}};
-                return CommandResult::Success({{"wouldDo", std::move(wd)}});
-            }
+                if (dryRun) {
+                    nlohmann::json wd;
+                    wd["from"] = {{"name", active->Name}, {"jql", active->Jql}};
+                    wd["to"]   = {{"name", updated.Name}, {"jql", updated.Jql},
+                                  {"fields", updated.Fields}};
+                    return CommandResult::Success({{"wouldDo", std::move(wd)}});
+                }
 
-            if (!views.UpdateActive(updated)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                    "Views::UpdateActive() failed.");
-            }
-            return CommandResult::Success({
-                {"updated", true},
-                {"id",      updated.Id},
-                {"name",    updated.Name},
-                {"jql",     updated.Jql},
+                if (!views.UpdateActive(updated)) {
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                        "Views::UpdateActive() failed.");
+                }
+                return CommandResult::Success({
+                    {"updated", true},
+                    {"id",      updated.Id},
+                    {"name",    updated.Name},
+                    {"jql",     updated.Jql},
+                });
             });
         };
         reg.Register(std::move(c));
@@ -279,38 +304,41 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="id"; p.Type=ParamType::String; p.Required=true;
                 p.Description="View id to delete."; return p; }(),
         };
-        c.Handler = [&views](const nlohmann::json& args, const CommandContext& ctx) {
-            const std::string id = args.value("id", std::string());
-            // Find the view first so we can report what would be deleted.
-            const ViewsStore& store = views.GetStore();
-            const ViewDefinition* target = nullptr;
-            for (const ViewDefinition& v : store.Views) {
-                if (v.Id == id) { target = &v; break; }
-            }
-            if (!target) {
-                return CommandResult::Failure(ErrorCode::NotFound,
-                    "View '" + id + "' not found.");
-            }
-            if (store.Views.size() <= 1) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                    "Cannot delete the last remaining view.");
-            }
+        // view.delete reads + mutates Slice_; runs on UI thread.
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
+            const bool dryRun = ctx.DryRun;
+            return RunOnUiThreadAsCommandResult(app, [&views, args, dryRun]() {
+                const std::string id = args.value("id", std::string());
+                const ViewsStore& store = views.GetStore();
+                const ViewDefinition* target = nullptr;
+                for (const ViewDefinition& v : store.Views) {
+                    if (v.Id == id) { target = &v; break; }
+                }
+                if (!target) {
+                    return CommandResult::Failure(ErrorCode::NotFound,
+                        "View '" + id + "' not found.");
+                }
+                if (store.Views.size() <= 1) {
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                        "Cannot delete the last remaining view.");
+                }
 
-            if (ctx.DryRun) {
-                return CommandResult::Success({{"wouldDo",
-                    {{"id", target->Id}, {"name", target->Name}, {"jql", target->Jql}}}});
-            }
+                if (dryRun) {
+                    return CommandResult::Success({{"wouldDo",
+                        {{"id", target->Id}, {"name", target->Name}, {"jql", target->Jql}}}});
+                }
 
-            // Switch active to the target, then DeleteActive (the only delete API on Views).
-            if (!views.Activate(id)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                    "Could not activate view '" + id + "' for deletion.");
-            }
-            if (!views.DeleteActive()) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                    "Views::DeleteActive() failed.");
-            }
-            return CommandResult::Success({{"deleted", id}});
+                // Activate the target first (Views only exposes DeleteActive).
+                if (!views.Activate(id)) {
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                        "Could not activate view '" + id + "' for deletion.");
+                }
+                if (!views.DeleteActive()) {
+                    return CommandResult::Failure(ErrorCode::HandlerError,
+                        "Views::DeleteActive() failed.");
+                }
+                return CommandResult::Success({{"deleted", id}});
+            });
         };
         reg.Register(std::move(c));
     }

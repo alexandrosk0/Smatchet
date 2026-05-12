@@ -112,6 +112,12 @@ class AppController {
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
+    /// True iff the calling thread is the one that called `Initialize` (the UI thread).
+    /// Used by Command handlers to decide whether to mutate UI state inline (safe) or post
+    /// the mutation to `mainThreadDispatcher` (required when called from an MCP / Lua worker).
+    /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
+    bool IsOnUiThread() const;
+
     /// Unified Command System registry. See backlog/COMMAND_SYSTEM_PLAN.md.
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
     /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
@@ -778,6 +784,15 @@ class AppController {
     void CancelAndJoinActiveStreamingSync();
 
     std::string localCacheDbPath_;
+
+    /// Set once in `Initialize` (which runs on the UI thread) and read by `IsOnUiThread`
+    /// from any thread. `std::thread::id` is trivially copyable; atomic load via std::atomic
+    /// of the same type is well-supported but std::thread::id isn't an atomic-friendly type
+    /// on all toolchains — so we wrap it in a tiny mutex-free pattern: the value is written
+    /// exactly once before any reader exists (Initialize is called before any worker is
+    /// spawned), and never mutated afterwards. Reads are race-free under the "publish once,
+    /// read many" pattern.
+    std::thread::id uiThreadId_{};
 };
 
 #endif

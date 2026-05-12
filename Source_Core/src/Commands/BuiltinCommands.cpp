@@ -9,6 +9,7 @@
 
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AppController.h"
@@ -1583,6 +1584,9 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     }
 
     {
+        // scenario.list reads factories_ which is set up once in Initialize and never
+        // mutated afterwards (built-in factories are registered before any worker is
+        // spawned). Safe to read from any thread — no dispatch hop needed.
         Command c = MakeCommand(
             "scenario.list",
             "List registered scenario names.",
@@ -1594,12 +1598,22 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     }
 
     {
+        // scenario.run writes ScenarioRunner::active_ (a unique_ptr) which the UI thread
+        // dereferences every frame inside Tick(). Mutating active_ from an MCP worker
+        // races with Tick. Hop to UI thread so Start() runs while Tick() is paused
+        // between frames.
         Command c = MakeCommand(
             "scenario.run",
             "Run a named automation scenario (perf measurement, scroll driver, etc.).",
             [&app](const nlohmann::json& args, const CommandContext& ctx) {
-                const std::string name = args.value("name", std::string());
-                return app.Scenarios().Start(name, args, ctx);
+                // Copy ctx into the closure so the UI-thread lambda has the dry-run /
+                // destructive flags (it cannot capture the const reference safely across
+                // a thread boundary — the original ctx may live on the worker stack).
+                CommandContext ctxCopy = ctx;
+                return RunOnUiThreadAsCommandResult(app, [&app, args, ctxCopy]() {
+                    const std::string name = args.value("name", std::string());
+                    return app.Scenarios().Start(name, args, ctxCopy);
+                });
             });
         c.Destructive = true;
         c.Idempotent = false;
@@ -1614,13 +1628,17 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     }
 
     {
+        // scenario.cancel resets ScenarioRunner::active_ while Tick() may be reading it.
+        // Same race as scenario.run — must run on UI thread.
         Command c = MakeCommand(
             "scenario.cancel",
             "Abort the active running scenario.",
             [&app](const nlohmann::json&, const CommandContext&) {
-                const bool was = app.Scenarios().Active();
-                app.Scenarios().Cancel();
-                return CommandResult::Success({{"wasCancelled", was}});
+                return RunOnUiThreadAsCommandResult(app, [&app]() {
+                    const bool was = app.Scenarios().Active();
+                    app.Scenarios().Cancel();
+                    return CommandResult::Success({{"wasCancelled", was}});
+                });
             });
         reg.Register(std::move(c));
     }

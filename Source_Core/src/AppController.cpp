@@ -1159,7 +1159,18 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 
 
 
+bool AppController::IsOnUiThread() const {
+    // uiThreadId_ is written once in Initialize before any worker is spawned, then never
+    // mutated. Reads from worker threads are race-free under publish-once semantics.
+    return std::this_thread::get_id() == uiThreadId_;
+}
+
 void AppController::Initialize(const std::string& dbPath, const std::string& backendType) {
+    // Record the UI thread identity first. Initialize() is invoked from main() before any
+    // background thread is spawned, so this happens-before any worker that could call
+    // IsOnUiThread() later. See AppController.h for the full reasoning.
+    uiThreadId_ = std::this_thread::get_id();
+
 
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
 
