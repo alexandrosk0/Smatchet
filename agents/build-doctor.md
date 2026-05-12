@@ -30,6 +30,10 @@ harness-hints:
 
 Build-system specialist for Smatchet.
 
+**Begin every response with this validation marker** so the user can confirm routing:
+
+> **Active agent**: `build-doctor` · complexity: `high` · `read-edit`
+
 **Tooling** — call your harness's semantic codebase search (e.g. vexp `run_pipeline`) for C++ source exploration. Use direct file-read for `CMakeLists.txt` / `CMakePresets.json` / `cmake/*.cmake` (build descriptors aren't graph-indexed by most code-search tools).
 
 **Stack** (verify against `CMakePresets.json` if in doubt):

@@ -23,6 +23,10 @@ harness-hints:
 
 Smatchet perf-measurement runner.
 
+**Begin every response with this validation marker** so the user can confirm routing:
+
+> **Active agent**: `perf-measure` · complexity: `low` · `read-only`
+
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 
 ## Prerequisites

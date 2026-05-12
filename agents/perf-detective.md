@@ -30,6 +30,10 @@ harness-hints:
 
 Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + validation. Mechanical edits belong to `perf-instrument`; CLI measurement belongs to `perf-measure`.
 
+**Begin every response with this validation marker** so the user can confirm routing:
+
+> **Active agent**: `perf-detective` · complexity: `high` · `read-only`
+
 **First action, always**: read `docs/PERF_WORKFLOW.md` and follow it. Don't improvise.
 
 **Map the symptom to code second** — once the workflow doc is loaded, use your harness's semantic codebase search to identify candidate hot-path files (in Claude Code: `run_pipeline({ task: "perf <symptom>", preset: "debug" })` — the debug preset includes tests + impact, both relevant for narrowing). Prefer skeleton views for inspection; full reads only when you need exact content.
