@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include <string>
 #include <vector>
+#include <cstdint>
 #include <unordered_map>
 #include <mutex>
 
@@ -65,7 +66,21 @@ class PlaneClient : public ITrackerClient {
 
     std::string ExtractProjectFromQuery(const std::string& query) const override;
 
+    /**
+     * GET /api/v1/workspaces/{slug}/projects/ — list projects in the configured workspace.
+     * Caches result in-memory for 5 minutes (per-instance). Errors/parse failures
+     * log WARN and return an empty vector without poisoning the cache.
+     */
+    std::vector<RemoteProject> ListProjects() override;
+
+    /** Drop the cached project list so the next ListProjects() refetches. */
+    void InvalidateListProjectsCache();
+
   private:
+    // Per-instance project-list cache (5 min TTL). Mutated under planeCacheMutex_.
+    std::vector<RemoteProject> cachedProjects_;
+    std::int64_t cachedProjectsAtUnix_ = 0;
+
     struct CachedState {
         std::string Id;
         std::string Name;

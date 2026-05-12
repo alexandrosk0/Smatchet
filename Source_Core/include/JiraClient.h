@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -127,6 +129,23 @@ class JiraClient : public ITrackerClient {
                           std::string& outError);
 
     std::string ExtractProjectFromQuery(const std::string& query) const override;
+
+    /**
+     * GET /rest/api/3/project — list projects visible to the current credentials.
+     * Caches result in-memory for 5 minutes (per-instance). Errors/parse failures
+     * log WARN and return an empty vector without poisoning the cache.
+     * If the API returns >200 entries, only the first 200 are kept.
+     */
+    std::vector<RemoteProject> ListProjects() override;
+
+    /** Drop the cached project list so the next ListProjects() refetches. */
+    void InvalidateListProjectsCache();
+
+    // Per-instance project-list cache (5 min TTL). Mutated under listProjectsMutex_.
+  private:
+    std::vector<RemoteProject> cachedProjects_;
+    std::int64_t cachedProjectsAtUnix_ = 0;
+    std::mutex listProjectsMutex_;
 };
 
 #endif

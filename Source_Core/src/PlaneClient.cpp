@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cpr/cpr.h>
 #include <iterator>
@@ -1539,6 +1540,96 @@ std::string ExtractProjectFromPlaneQuery(const std::string& planeQueryJson) {
 
 std::string PlaneClient::ExtractProjectFromQuery(const std::string& query) const {
     return ExtractProjectFromPlaneQuery(query);
+}
+
+namespace {
+constexpr std::int64_t kPlaneListProjectsTtlSeconds = 300; // 5 minutes
+
+std::int64_t PlaneNowUnixSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
+
+void PlaneClient::InvalidateListProjectsCache() {
+    std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+    cachedProjects_.clear();
+    cachedProjectsAtUnix_ = 0;
+}
+
+std::vector<RemoteProject> PlaneClient::ListProjects() {
+    // Fast path: serve from cache when still warm.
+    {
+        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        const std::int64_t now = PlaneNowUnixSeconds();
+        if (!cachedProjects_.empty() && (now - cachedProjectsAtUnix_) < kPlaneListProjectsTtlSeconds) {
+            return cachedProjects_;
+        }
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.PlaneWorkspaceSlug.empty()) {
+        LOG_WARN("PlaneClient::ListProjects: PlaneWorkspaceSlug is empty.");
+        return {};
+    }
+
+    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+    cpr::Header headers;
+    for (const auto& kv : BuildPlaneHeaders(cfg)) {
+        headers[kv.first] = kv.second;
+    }
+
+    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
+    cpr::Parameters params;
+    params.Add({"per_page", "100"});
+
+    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, params);
+    if (resp.status_code != 200) {
+        LOG_WARN("PlaneClient::ListProjects: HTTP %ld on %s", resp.status_code, url.c_str());
+        return {};
+    }
+
+    std::vector<RemoteProject> projects;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(resp.text), nullptr, false);
+        if (j.is_discarded()) {
+            LOG_WARN("PlaneClient::ListProjects: invalid JSON in response.");
+            return {};
+        }
+        const auto& arr = (j.is_object() && j.contains("results")) ? j["results"] : j;
+        if (!arr.is_array()) {
+            LOG_WARN("PlaneClient::ListProjects: response has no results array.");
+            return {};
+        }
+        projects.reserve(arr.size());
+        for (const auto& p : arr) {
+            if (!p.is_object()) {
+                continue;
+            }
+            RemoteProject rp;
+            rp.id = JsonFieldToString(p, "id");
+            rp.key = JsonFieldToString(p, "identifier"); // may be empty
+            rp.displayName = JsonFieldToString(p, "name");
+            if (rp.id.empty()) {
+                continue;
+            }
+            projects.push_back(std::move(rp));
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("PlaneClient::ListProjects: parse error: %s", ex.what());
+        return {};
+    } catch (...) {
+        LOG_WARN("PlaneClient::ListProjects: parse error (unknown)");
+        return {};
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        cachedProjects_ = projects;
+        cachedProjectsAtUnix_ = PlaneNowUnixSeconds();
+    }
+    return projects;
 }
 
 
