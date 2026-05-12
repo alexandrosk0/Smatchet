@@ -10,8 +10,11 @@ struct TrackerConfig;
 /** JSON snapshot under ConfigManager::GetUserDataDirectory() (see .cpp for filename). */
 namespace FieldCatalogCache {
 
-/** Stable key for `schema_version` 2 entries: `Jira|<domain>|<project>` or `Plane|<url>|<ws>|<project>`. */
-std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg);
+/** Stable key for `schema_version` 2 entries: `Jira|<domain>|<project>` or `Plane|<url>|<ws>|<project>`.
+ *  `projectKey` is the per-operation project (Jira key, e.g. "PROJ", or Plane project UUID). Confines
+ *  the per-project axis to an explicit parameter so PR 4/6 can drop the global `cfg.ProjectKey` without
+ *  touching this signature. */
+std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::string& projectKey);
 
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::vector<TrackerField>& fields,
                               const std::vector<TrackerComponent>& components,

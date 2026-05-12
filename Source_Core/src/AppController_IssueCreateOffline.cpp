@@ -23,6 +23,7 @@
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "JiraClient.h"
+#include "ProjectResolver.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "LocalCacheManager.h"
@@ -59,7 +60,9 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
         lastTicket = tickets.back();
     }
     const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, cfg.ProjectKey, cfg.DefaultIssueTypeId,
+    const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+        Backend.get(), cfg.JqlQuery, lastTicket.id, cfg.ProjectKey);
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
 

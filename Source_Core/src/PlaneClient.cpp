@@ -166,8 +166,9 @@ bool LooksLikeUuid(const std::string& s) {
     return true;
 }
 
-bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const cpr::Header& headers,
-                         std::string& outId, std::string& outIdentifier, std::string* outError) {
+bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const std::string& projectKey,
+                         const cpr::Header& headers, std::string& outId, std::string& outIdentifier,
+                         std::string* outError) {
     const std::string projectsUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
     cpr::Parameters params;
@@ -175,7 +176,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
     auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
     if (response.status_code != 200) {
         const std::string err = "Plane API error " + std::to_string(response.status_code) +
-                                " resolving project '" + cfg.PlaneProjectId + "': " +
+                                " resolving project '" + projectKey + "': " +
                                 response.text.substr(0, 300);
         if (outError) *outError = err;
         return false;
@@ -184,7 +185,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
     const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
     if (j.is_discarded()) {
         const std::string err = "Plane project list returned invalid JSON while resolving project '" +
-                                cfg.PlaneProjectId + "'.";
+                                projectKey + "'.";
         if (outError) *outError = err;
         return false;
     }
@@ -192,7 +193,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
     const auto projects = (j.is_object() && j.contains("results")) ? j["results"] : j;
     if (!projects.is_array()) {
         const std::string err = "Plane project list response has no results array while resolving project '" +
-                                cfg.PlaneProjectId + "'.";
+                                projectKey + "'.";
         if (outError) *outError = err;
         return false;
     }
@@ -202,7 +203,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
         const std::string id = JsonFieldToString(p, "id");
         const std::string identifier = JsonFieldToString(p, "identifier");
         const std::string name = JsonFieldToString(p, "name");
-        if (id == cfg.PlaneProjectId || identifier == cfg.PlaneProjectId || name == cfg.PlaneProjectId) {
+        if (id == projectKey || identifier == projectKey || name == projectKey) {
             outId = id;
             outIdentifier = identifier;
             return true;
@@ -213,7 +214,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
         }
     }
 
-    const std::string err = "Plane project '" + cfg.PlaneProjectId +
+    const std::string err = "Plane project '" + projectKey +
                             "' was not found in workspace '" + cfg.PlaneWorkspaceSlug +
                             "'. Available project identifiers/names: " + available;
     if (outError) *outError = err;
@@ -387,7 +388,12 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || cfg.PlaneProjectId.empty()) {
+    // PR 2: confine the global Plane project source to a single capture per fetcher (mirrors the
+    // Jira treatment in TrackerFieldCatalog.cpp). PR 4 (picker) / PR 6 (final removal) swap this
+    // one line. See docs/design/remove-global-project-key.md §2.5 / §7 PR 2.
+    const std::string projectKey = cfg.PlaneProjectId;
+
+    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
         summary.FetchError = "Plane is not configured. Set URL, Workspace Slug, and Project ID in Preferences.";
         return summary;
     }
@@ -421,7 +427,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
     std::string resolveError;
     std::string tempProjectId = prevProjectId;
     std::string tempProjectIdentifier = prevProjectIdentifier;
-    if (!ResolvePlaneProject(planeApi, cfg, headers, tempProjectId, tempProjectIdentifier, &resolveError)) {
+    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, tempProjectId, tempProjectIdentifier, &resolveError)) {
         summary.FetchError = resolveError;
         return summary;
     }
@@ -819,7 +825,10 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     outError.clear();
     std::vector<std::string> warns;
 
-    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || cfg.PlaneProjectId.empty()) {
+    // PR 2: single capture of the global Plane project source. See remove-global-project-key.md §2.5.
+    const std::string projectKey = cfg.PlaneProjectId;
+
+    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
         outError = "Plane is not configured. Set URL, Workspace Slug, and Project ID in Preferences.";
         return false;
     }
@@ -836,7 +845,7 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
 
     std::string resolvedProjectId;
     std::string resolvedProjectIdentifier;
-    if (!ResolvePlaneProject(planeApi, cfg, headers, resolvedProjectId, resolvedProjectIdentifier, &outError)) {
+    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier, &outError)) {
         return false;
     }
     const std::string planeProjectId = resolvedProjectId;
@@ -1142,6 +1151,8 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
     // the HTTP PATCH so UI thread calls to ResolveDisplayValue / display-name lookups are not
     // blocked for the duration of the round trip.
     TrackerConfig cfg = ConfigManager::Load();
+    // PR 2: single capture of global Plane project source (see remove-global-project-key.md §2.5).
+    const std::string projectKey = cfg.PlaneProjectId;
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
     for (const auto& kv : BuildPlaneHeaders(cfg)) {
@@ -1155,7 +1166,7 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
         if (planeProjectId_.empty()) {
             // First-call HTTP under the lock is acceptable: it runs at most once per process
             // lifetime; the steady-state PATCH path below is the hot one that needed the fix.
-            ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError);
         }
         if (planeProjectId_.empty()) {
             return false;
@@ -1348,13 +1359,15 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         TrackerConfig cfg = ConfigManager::Load();
+        // PR 2: single capture of global Plane project source (see remove-global-project-key.md §2.5).
+        const std::string projectKey = cfg.PlaneProjectId;
         planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
         for (const auto& kv : BuildPlaneHeaders(cfg)) {
             headers.insert({kv.first, kv.second});
         }
         workspaceSlug = cfg.PlaneWorkspaceSlug;
         if (planeProjectId_.empty()) {
-            ResolvePlaneProject(planeApi, cfg, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError);
         }
         if (planeProjectId_.empty()) {
             return "";

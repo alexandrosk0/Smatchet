@@ -4,6 +4,7 @@
 #include "TrackerHttpUtils.h"
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
+#include "ProjectResolver.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -171,7 +172,9 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     if (ImGui::Button("Parse preview")) {
         const std::string text(d.bulkImportTextBuf.data());
         const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
-        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), d.cfg.ProjectKey,
+        const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+            app.GetTrackerBackend(), d.cfg.JqlQuery, std::string(), d.cfg.ProjectKey);
+        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), resolvedProject,
                                                                 d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
         d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
         d.bulkImportError = d.bulkImportPreview.Error;

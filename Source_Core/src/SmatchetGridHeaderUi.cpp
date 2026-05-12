@@ -9,6 +9,7 @@
 #include "TicketGridModel.h"
 #include "Views.h"
 #include "IssueDraft.h"
+#include "ProjectResolver.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -460,8 +461,12 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                                                                      ? d.cfg.NewIssueInheritFieldIdsPlane
                                                                      : d.cfg.NewIssueInheritFieldIds;
                     if (lastVisibleTicket) {
+                        const std::string activeViewQuery =
+                            activeViewForGrid ? activeViewForGrid->Jql : std::string();
+                        const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+                            app.GetTrackerBackend(), activeViewQuery, lastVisibleTicket->id, d.cfg.ProjectKey);
                         d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
-                            *lastVisibleTicket, app.GetAvailableFields(), d.cfg.ProjectKey, d.cfg.DefaultIssueTypeId,
+                            *lastVisibleTicket, app.GetAvailableFields(), resolvedProject, d.cfg.DefaultIssueTypeId,
                             d.cfg.DefaultIssueTypeName, inheritIds);
                     } else {
                         d.newIssueDraft = app.BuildDraftFromLastTicket(d.cfg);

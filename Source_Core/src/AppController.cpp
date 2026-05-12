@@ -1304,7 +1304,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
         std::string snapErr;
 
-        const std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg);
+        const std::string projectKeyForCache =
+            ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType) == "Plane" ? cfg.PlaneProjectId : cfg.ProjectKey;
+        const std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
 
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
 

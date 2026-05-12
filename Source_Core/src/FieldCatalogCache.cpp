@@ -259,13 +259,13 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
 
 namespace FieldCatalogCache {
 
-std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg) {
+std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::string& projectKey) {
     const std::string bk = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
     if (bk == "Plane") {
         return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
-               cfg.PlaneProjectId;
+               projectKey;
     }
-    return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + cfg.ProjectKey;
+    return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + projectKey;
 }
 
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::vector<TrackerField>& fields,

@@ -431,6 +431,11 @@ class AppController {
         return AvailableIssueTypeMeta;
     }
 
+    /** Read-only accessor used by UI sites (e.g. `ResolveProjectForDraft`) to call
+     *  `ITrackerClient::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
+     *  `Initialize` has wired up the factory. Do not retain the pointer past the current frame. */
+    const ITrackerClient* GetTrackerBackend() const { return Backend.get(); }
+
     // ---- Create issue flow -------------------------------------------------
 
     /**

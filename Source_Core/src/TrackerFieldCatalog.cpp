@@ -102,10 +102,11 @@ void MergeComponentIntoCatalog(std::vector<TrackerField>& fields, std::vector<Tr
     MergeTrackerFieldOption(fieldIt->AllowedValueOptions, option);
 }
 
-bool MergeProjectComponentsFromEndpoint(const TrackerConfig& cfg, const std::string& base, const cpr::Header& headers,
+bool MergeProjectComponentsFromEndpoint(const TrackerConfig& /*cfg*/, const std::string& projectKey,
+                                        const std::string& base, const cpr::Header& headers,
                                         std::vector<TrackerField>& fields,
                                         std::vector<TrackerComponent>& components) {
-    if (cfg.ProjectKey.empty()) {
+    if (projectKey.empty()) {
         return false;
     }
 
@@ -114,7 +115,7 @@ bool MergeProjectComponentsFromEndpoint(const TrackerConfig& cfg, const std::str
     constexpr int kMaxPages = 50;
     for (int page = 0; page < kMaxPages; ++page) {
         const int startAt = page * kPageSize;
-        const std::string url = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey) +
+        const std::string url = base + "/rest/api/3/project/" + UrlEncode(projectKey) +
                                 "/component?startAt=" + std::to_string(startAt) +
                                 "&maxResults=" + std::to_string(kPageSize) + "&orderBy=name";
         auto response = TrackerGetLogged("JiraClient", url, headers);
@@ -238,6 +239,10 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
         return false;
     }
 
+    // PR 2: confine the global project source to a single capture per fetcher. PR 4 (picker) and
+    // PR 6 (final removal) will swap this one line for an explicit per-operation projectKey
+    // without touching the body. See docs/design/remove-global-project-key.md §2.6 / §7 PR 2.
+    const std::string projectKey = cfg.ProjectKey;
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     std::vector<std::string> sprintFieldIds;
@@ -319,7 +324,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
         return false;
     }
 
-    if (cfg.ProjectKey.empty()) {
+    if (projectKey.empty()) {
         LOG_INFO("JiraClient: skipping createmeta enrichment because project key is empty.");
         return true;
     }
@@ -329,7 +334,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
         fieldIndexById[outFields[i].Id] = i;
     }
 
-    const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(cfg.ProjectKey) +
+    const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(projectKey) +
                                 "&expand=projects.issuetypes.fields";
     auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     std::set<std::string> uniqueIssueTypes;
@@ -368,7 +373,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
             if (metaJson.contains("projects") && metaJson["projects"].is_array()) {
                 std::set<std::string> uniqueComponentIds;
                 for (const auto& project : metaJson["projects"]) {
-                    std::string projectKey = project.value("key", cfg.ProjectKey);
+                    std::string projectKeyForIssueType = project.value("key", projectKey);
                     if (!project.contains("issuetypes") || !project["issuetypes"].is_array()) {
                         continue;
                     }
@@ -379,7 +384,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
                         }
 
                         TrackerIssueTypeCreateMeta metaEntry;
-                        metaEntry.ProjectKey = projectKey;
+                        metaEntry.ProjectKey = projectKeyForIssueType;
                         metaEntry.IsSubtask = issueType.value("subtask", false);
                         if (issueType.contains("id")) {
                             if (issueType["id"].is_string()) {
@@ -466,7 +471,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
     // Createmeta only returns components that are available on create screens. The project component endpoint is the
     // authoritative project catalog and keeps the grid editor useful even when createmeta is sparse.
     try {
-        (void)MergeProjectComponentsFromEndpoint(cfg, base, headers, outFields, outComponents);
+        (void)MergeProjectComponentsFromEndpoint(cfg, projectKey, base, headers, outFields, outComponents);
     } catch (const std::exception& ex) {
         LOG_WARN("JiraClient: project components enrichment failed: %s", ex.what());
     } catch (...) {
@@ -481,7 +486,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
             TrackerField& issueTypeField = outFields[issueTypeIt->second];
             bool filledFromProject = false;
             try {
-                const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(cfg.ProjectKey);
+                const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(projectKey);
                 auto projectResp = TrackerGetLogged("JiraClient", projectUrl, headers);
                 if (projectResp.status_code == 200) {
                     auto projectJson = nlohmann::json::parse(projectResp.text);
@@ -602,7 +607,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
     }
 
     // Enrich sprint custom fields with selectable sprint options (active/future) from Jira Agile.
-    if (!sprintFieldIds.empty() && !cfg.ProjectKey.empty()) {
+    if (!sprintFieldIds.empty() && !projectKey.empty()) {
         try {
             std::vector<int> boardIds;
             std::set<int> seenBoardIds;
@@ -611,7 +616,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
             for (int page = 0; page < kMaxBoardPages; ++page) {
                 const int startAt = page * kBoardsPerPage;
                 const std::string boardsUrl =
-                    base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(cfg.ProjectKey) +
+                    base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
                     "&maxResults=" + std::to_string(kBoardsPerPage) + "&startAt=" + std::to_string(startAt);
                 auto boardsResp = TrackerGetLogged("JiraClient", boardsUrl, headers);
                 if (boardsResp.status_code != 200) {

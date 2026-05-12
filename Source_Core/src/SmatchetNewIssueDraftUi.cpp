@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "ProjectResolver.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "SmatchetFieldRender.h"
@@ -176,8 +177,10 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         if (ImGui::SmallButton("+ New issue")) {
             if (lastVisibleTicket) {
                 const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+                const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+                    app.GetTrackerBackend(), cfg.JqlQuery, lastVisibleTicket->id, cfg.ProjectKey);
                 d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
-                    *lastVisibleTicket, app.GetAvailableFields(), cfg.ProjectKey, cfg.DefaultIssueTypeId,
+                    *lastVisibleTicket, app.GetAvailableFields(), resolvedProject, cfg.DefaultIssueTypeId,
                     cfg.DefaultIssueTypeName, inheritIds);
             } else {
                 d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);

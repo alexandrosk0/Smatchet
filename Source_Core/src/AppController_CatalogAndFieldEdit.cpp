@@ -139,8 +139,9 @@ void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
-    const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap);
     const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
+    const std::string projectKeyForCache = catalogPlane ? cfgSnap.PlaneProjectId : cfgSnap.ProjectKey;
+    const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, projectKeyForCache);
 
     if (!error.empty()) {
         if (IsTrackerTransportErrorText(error)) {
