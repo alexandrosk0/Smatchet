@@ -29,7 +29,7 @@ Read-only architecture specialist. Output is a design doc; the orchestrator impl
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `architect` · complexity: `high` · `read-only`
+> **Active agent**: `architect` · model: `opus` · effort: `high` · complexity: `high` · `read-only`
 
 **Semantic search first** — when your harness provides indexed codebase search (e.g. vexp `run_pipeline` under Claude Code), use it before text-search. Prefer compact file-skeleton views (e.g. vexp `get_skeleton`) over full file reads for context files — typically 70–90% token savings. Fall back to text-search + full reads if no semantic search is available.
 

@@ -31,7 +31,7 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `security-review` · complexity: `high` · `read-only`
+> **Active agent**: `security-review` · model: `opus` · effort: `high` · complexity: `high` · `read-only`
 
 ## Process
 

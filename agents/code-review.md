@@ -30,7 +30,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `code-review` · complexity: `medium` · `read-only`
+> **Active agent**: `code-review` · model: `sonnet` · effort: `high` · complexity: `medium` · `read-only`
 
 ## Process
 
