@@ -123,6 +123,12 @@ class LocalCacheManager {
     void UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError);
     void DeletePendingCreate(std::int64_t id);
     void ArchivePendingCreate(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
+    /** PR 5 legacy-project sweep: replace the stored `payload` JSON for an active pending row. */
+    void UpdatePendingCreatePayload(std::int64_t id, const std::string& payload);
+
+    /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
+    bool HasCacheMetaFlag(const std::string& key);
+    void SetCacheMetaFlag(const std::string& key);
     std::vector<DeadPendingCreate> LoadDeadPendingCreates();
     size_t GetDeadPendingCreateCount();
 

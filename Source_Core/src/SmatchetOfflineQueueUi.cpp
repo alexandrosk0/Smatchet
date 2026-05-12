@@ -5,6 +5,7 @@
 #include "IssueDraft.h"
 #include "MarkdownConvert.h"
 #include "TrackerHttpUtils.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -753,6 +754,23 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
                 ImGui::TextUnformatted("Dead create");
                 ImGui::PopStyleColor();
+                // PR 5 of docs/design/remove-global-project-key.md: surface a small badge for
+                // rows the legacy-project sweep dead-lettered, so the user knows to restore
+                // and pick a project rather than mistaking it for a transport failure.
+                if (row.terminalReason == "legacy_missing_project") {
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+                    ImGui::TextUnformatted(SmatchetLocalization::T(
+                        "offlineQueue.badge.missingProject", "missing project"));
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s",
+                                          SmatchetLocalization::T(
+                                              "offlineQueue.badge.missingProject.tooltip",
+                                              "This queued create was missing a project after the "
+                                              "project-key migration. Restore and pick a project to retry."));
+                    }
+                }
             } else if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
                 if (row.hasMergeConflict) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));

@@ -114,6 +114,18 @@ class OfflineQueueService {
     /// Reset to empty by `TakeLegacyPendingStartupBanner`. Read/write only on the UI thread.
     std::string legacyPendingStartupBanner_;
 
+    /// PR 5 of docs/design/remove-global-project-key.md: one-shot startup sweep that fills in
+    /// `IssueDraft::ProjectKey` on legacy `pending_creates` rows whose draft was authored
+    /// against the now-removed global project. Recovery order per row:
+    ///   1. parent key prefix from `draft.ExistingIssueKey` (Jira `PROJ-123` -> `PROJ`)
+    ///   2. legacy global captured during config load (Jira or Plane per `trackerType`)
+    ///   3. dead-letter with terminal_reason `legacy_missing_project`
+    /// Guarded by the `cache_meta` flag `legacy_project_swept_v1`; subsequent calls return 0
+    /// without scanning. Logged at INFO with a per-bucket summary.
+    void RunLegacyProjectSweep(const std::string& legacyJiraProjectKey,
+                               const std::string& legacyPlaneProjectId,
+                               const std::string& trackerType);
+
   private:
     AppController& app_;
 

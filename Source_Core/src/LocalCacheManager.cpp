@@ -376,6 +376,41 @@ void LocalCacheManager::UpdatePendingCreate(std::int64_t id, int attempts, const
     }
 }
 
+void LocalCacheManager::UpdatePendingCreatePayload(std::int64_t id, const std::string& payload) {
+    try {
+        SQLite::Statement update(db, "UPDATE pending_creates SET payload = ? WHERE id = ?");
+        update.bind(1, payload);
+        update.bind(2, id);
+        update.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::UpdatePendingCreatePayload failed id=%lld err=%s",
+                  static_cast<long long>(id), ex.what());
+        throw;
+    }
+}
+
+bool LocalCacheManager::HasCacheMetaFlag(const std::string& key) {
+    try {
+        SQLite::Statement probe(db, "SELECT 1 FROM cache_meta WHERE key = ? LIMIT 1");
+        probe.bind(1, key);
+        return probe.executeStep();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::HasCacheMetaFlag failed key=%s err=%s", key.c_str(), ex.what());
+        throw;
+    }
+}
+
+void LocalCacheManager::SetCacheMetaFlag(const std::string& key) {
+    try {
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, '1')");
+        ins.bind(1, key);
+        ins.exec();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::SetCacheMetaFlag failed key=%s err=%s", key.c_str(), ex.what());
+        throw;
+    }
+}
+
 void LocalCacheManager::DeletePendingCreate(std::int64_t id) {
     try {
         SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");

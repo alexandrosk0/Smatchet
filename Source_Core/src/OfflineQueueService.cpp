@@ -119,6 +119,128 @@ std::string OfflineQueueService::TakeLegacyPendingStartupBanner() {
     return std::move(legacyPendingStartupBanner_);
 }
 
+void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraProjectKey,
+                                                const std::string& legacyPlaneProjectId,
+                                                const std::string& trackerType) {
+    static const std::string kSweepFlag = "legacy_project_swept_v1";
+    if (!app_.Cache) {
+        LOG_WARN("OfflineQueueService::RunLegacyProjectSweep skipped: cache not initialized.");
+        return;
+    }
+    try {
+        if (app_.Cache->HasCacheMetaFlag(kSweepFlag)) {
+            return;
+        }
+    } catch (const std::exception& ex) {
+        LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep flag probe failed: %s", ex.what());
+        return;
+    }
+
+    const bool backendIsPlane = ConfigManager::NormalizeViewsBackendKey(trackerType) == "Plane";
+    const std::string& legacyForBackend = backendIsPlane ? legacyPlaneProjectId : legacyJiraProjectKey;
+
+    std::vector<PendingCreate> rows;
+    try {
+        rows = app_.Cache->LoadPendingCreates();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep LoadPendingCreates failed: %s", ex.what());
+        return;
+    }
+
+    int recovered = 0;
+    int deadLettered = 0;
+    int untouched = 0;
+    for (const PendingCreate& pc : rows) {
+        IssueDraft draft;
+        std::string parseErr;
+        if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
+            // Malformed payloads are handled by the normal replay tick (which archives them);
+            // skip here so we don't double-archive.
+            ++untouched;
+            continue;
+        }
+        if (!draft.ProjectKey.empty()) {
+            ++untouched;
+            continue;
+        }
+        // Strategy 1: parent key prefix (Jira-style PROJ-123).
+        std::string recoveredKey;
+        std::string recoverySource;
+        if (!draft.ExistingIssueKey.empty()) {
+            const std::size_t dashPos = draft.ExistingIssueKey.find('-');
+            if (dashPos != std::string::npos && dashPos > 0) {
+                recoveredKey = draft.ExistingIssueKey.substr(0, dashPos);
+                recoverySource = std::string("parent='") + draft.ExistingIssueKey + "' -> '" + recoveredKey + "'";
+            }
+        }
+        // Strategy 2: legacy global project (per-backend).
+        if (recoveredKey.empty() && !legacyForBackend.empty()) {
+            recoveredKey = legacyForBackend;
+            recoverySource = std::string("legacy='") + legacyForBackend + "'";
+        }
+
+        if (!recoveredKey.empty()) {
+            draft.ProjectKey = recoveredKey;
+            const std::string newPayload = IssueDraftHelpers::ToJson(draft);
+            try {
+                app_.Cache->UpdatePendingCreatePayload(pc.Id, newPayload);
+                ++recovered;
+                LOG_INFO("Sweep: pending_create id=%lld project recovered from %s",
+                         static_cast<long long>(pc.Id), recoverySource.c_str());
+                BackendAuditTrail::AppendResult(
+                    "offline_legacy_project_sweep", "startup_migration", std::string(),
+                    std::to_string(pc.Id), true, std::string(),
+                    nlohmann::json{{"pending_create_id", pc.Id},
+                                   {"recovery_source", recoverySource},
+                                   {"project", recoveredKey}});
+            } catch (const std::exception& ex) {
+                LOG_ERROR("Sweep: UpdatePendingCreatePayload failed id=%lld err=%s",
+                          static_cast<long long>(pc.Id), ex.what());
+                ++untouched;
+            }
+            continue;
+        }
+
+        // Strategy 3: dead-letter.
+        const std::string terminal = FormatOfflineQueueTerminalLine(
+            "offline_legacy_project_sweep", "startup_migration", "legacy_missing_project",
+            std::string("IssueDraft has no ProjectKey and no parent/legacy fallback is available."));
+        try {
+            app_.Cache->ArchivePendingCreate(pc.Id, "legacy_missing_project", terminal);
+            ++deadLettered;
+            LOG_WARN("Sweep: pending_create id=%lld dead-lettered (legacy_missing_project)",
+                     static_cast<long long>(pc.Id));
+            BackendAuditTrail::AppendResult(
+                "offline_dead_letter", "startup_migration", std::string(),
+                std::to_string(pc.Id), true, std::string(),
+                nlohmann::json{{"pending_create_id", pc.Id},
+                               {"reason", "legacy_missing_project"}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("Sweep: ArchivePendingCreate failed id=%lld err=%s; falling back to delete",
+                      static_cast<long long>(pc.Id), ex.what());
+            try {
+                app_.Cache->DeletePendingCreate(pc.Id);
+                ++deadLettered;
+                LOG_WARN("Sweep: pending_create id=%lld dropped (archive unavailable). payload_preview=%.200s",
+                         static_cast<long long>(pc.Id), pc.Payload.c_str());
+            } catch (const std::exception& ex2) {
+                LOG_ERROR("Sweep: DeletePendingCreate fallback failed id=%lld err=%s",
+                          static_cast<long long>(pc.Id), ex2.what());
+                ++untouched;
+            }
+        }
+    }
+
+    try {
+        app_.Cache->SetCacheMetaFlag(kSweepFlag);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep flag set failed: %s", ex.what());
+    }
+
+    LOG_INFO("Legacy-project sweep: recovered=%d, dead-lettered=%d, untouched=%d",
+             recovered, deadLettered, untouched);
+}
+
 // --- Phase 1B: write methods + remaining field-edit read accessors ----------------------
 
 std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {

@@ -59,7 +59,15 @@ struct TrackerConfig {
     std::string Email;    // e.g., "dev@company.com"
     std::string ApiToken; // Your Atlassian API Token
     // Jira project key used by create meta enrichment calls (e.g. PROJ).
+    // Removed in PR 6 of docs/design/remove-global-project-key.md. Kept here while migration
+    // sweeps (PR 5) drain legacy state.
     std::string ProjectKey;
+
+    // PR 5 migration carrier: captured from on-disk `project_key` during Load() and consumed
+    // by the offline-queue + Plane-view legacy sweeps. Not persisted by Save(). Distinct from
+    // `ProjectKey` (which other code paths still read as a fallback until PR 6 deletes it).
+    std::string LegacyProjectKey;
+    std::string LegacyPlaneProjectId;
 
     // Tracker Type: "Jira" or "Plane"
     std::string TrackerType = SmatchetDefaults::kDefaultBackendType;

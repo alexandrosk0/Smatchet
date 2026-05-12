@@ -814,11 +814,16 @@ void ConfigManager::Save(const TrackerConfig& config) {
     nlohmann::json j = LoadMergedConfigJson();
     j["domain"] = config.Domain;
     j["email"] = config.Email;
-    j["project_key"] = config.ProjectKey;
+    // PR 5 of docs/design/remove-global-project-key.md: stop persisting the legacy global
+    // project scope. The fields are still on `TrackerConfig` until PR 6 deletes them, but the
+    // on-disk JSON no longer round-trips them — older builds reading the new config will see
+    // them missing and default to empty, matching the new code path. Erase explicitly so any
+    // legacy keys carried in from disk via `LoadMergedConfigJson()` are dropped.
+    j.erase("project_key");
+    j.erase("plane_project_id");
     j["tracker_type"] = config.TrackerType;
     j["plane_url"] = config.PlaneUrl;
     j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
-    j["plane_project_id"] = config.PlaneProjectId;
     j["jql"] = config.JqlQuery;
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["read_only_mode"] = config.ReadOnlyMode;
@@ -1052,10 +1057,23 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ApiToken = j.value("token", std::string{});
 #endif
             cfg.ProjectKey = j.value("project_key", std::string{});
+            // PR 5: capture legacy global project scope into a transient carrier so the
+            // offline-queue + Plane-view sweeps can fill in per-entity project state. Logged
+            // once per Load() (cache is invalidated rarely; the noise is acceptable).
+            cfg.LegacyProjectKey = cfg.ProjectKey;
+            if (!cfg.LegacyProjectKey.empty()) {
+                LOG_INFO("Migrated legacy global project_key='%s' - see release notes",
+                         cfg.LegacyProjectKey.c_str());
+            }
             cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
             cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
             cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
             cfg.PlaneProjectId = j.value("plane_project_id", cfg.PlaneProjectId);
+            cfg.LegacyPlaneProjectId = cfg.PlaneProjectId;
+            if (!cfg.LegacyPlaneProjectId.empty()) {
+                LOG_INFO("Migrated legacy global plane_project_id='%s' - see release notes",
+                         cfg.LegacyPlaneProjectId.c_str());
+            }
 
 #if defined(_WIN32)
             cfg.PlaneApiKey =

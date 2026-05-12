@@ -1252,6 +1252,72 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     const std::string activeTrackerType = Backend ? Backend->GetTrackerType() : "Unknown";
 
+    // PR 5 of docs/design/remove-global-project-key.md: one-shot legacy-project sweeps.
+    // Drain legacy global project state into per-entity carriers (offline-queue payloads,
+    // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
+    // exactly once per database file; subsequent launches are no-ops.
+    if (offlineQueue_) {
+        try {
+            offlineQueue_->RunLegacyProjectSweep(cfg.LegacyProjectKey, cfg.LegacyPlaneProjectId,
+                                                 activeTrackerType);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::Initialize legacy-project offline sweep failed: %s", ex.what());
+        }
+    }
+    if (Backend && Cache && activeTrackerType == "Plane") {
+        try {
+            static const std::string kPlaneSweepFlag = "legacy_plane_view_swept_v1";
+            if (!Cache->HasCacheMetaFlag(kPlaneSweepFlag)) {
+                PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+                bool dirty = false;
+                const std::string backendKey = ConfigManager::NormalizeViewsBackendKey("Plane");
+                auto bucketIt = disk.Backends.find(backendKey);
+                if (bucketIt != disk.Backends.end()) {
+                    for (ViewDefinition& view : bucketIt->second.Views) {
+                        const std::string extracted = Backend->ExtractProjectFromQuery(view.Jql);
+                        if (!extracted.empty()) {
+                            continue;
+                        }
+                        if (cfg.LegacyPlaneProjectId.empty()) {
+                            LOG_WARN("Plane view '%s' has no project scope; pick a project in the view editor",
+                                     view.Name.c_str());
+                            continue;
+                        }
+                        nlohmann::json patched;
+                        if (view.Jql.empty()) {
+                            patched = nlohmann::json::object();
+                        } else {
+                            try {
+                                patched = nlohmann::json::parse(view.Jql);
+                            } catch (const std::exception&) {
+                                patched = nlohmann::json::object();
+                            }
+                            if (!patched.is_object()) {
+                                patched = nlohmann::json::object();
+                            }
+                        }
+                        // Don't overwrite if a different project_id snuck in via another path.
+                        if (patched.contains("project_id") && patched["project_id"].is_string() &&
+                            !patched["project_id"].get<std::string>().empty()) {
+                            continue;
+                        }
+                        patched["project_id"] = cfg.LegacyPlaneProjectId;
+                        view.Jql = patched.dump();
+                        dirty = true;
+                        LOG_INFO("Plane view '%s' patched with legacy project_id='%s'",
+                                 view.Name.c_str(), cfg.LegacyPlaneProjectId.c_str());
+                    }
+                }
+                if (dirty) {
+                    ConfigManager::SavePersistentViewsToDisk(disk);
+                }
+                Cache->SetCacheMetaFlag(kPlaneSweepFlag);
+            }
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::Initialize legacy Plane-view sweep failed: %s", ex.what());
+        }
+    }
+
 
 
     const std::string& fileBase = ConfigManager::GetRuntimeAssetDirectory();
