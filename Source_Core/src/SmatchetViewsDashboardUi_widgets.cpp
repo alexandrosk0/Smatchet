@@ -166,20 +166,29 @@ bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboa
     // focused item-ID belongs to the PREVIOUS Selectable widget — after a swap the
     // PushID + label combo at this index is different, so the focus check would fail
     // on every press after the first. Window focus is the correct shortcut scope.
-    if (keyboardFocusRow && *keyboardFocusRow == rowIndex &&
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        const ImGuiIO& io = ImGui::GetIO();
-        if (io.KeyAlt) {
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && rowIndex > 0) {
-                std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex - 1)]);
-                *keyboardFocusRow = rowIndex - 1;
-                mutated = true;
-            } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && rowIndex + 1 < static_cast<int>(order.size())) {
-                std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex + 1)]);
-                *keyboardFocusRow = rowIndex + 1;
-                mutated = true;
-            }
-        }
+    //
+    // Hot-path: this helper runs once per visible row, every frame. Bail out on the
+    // cheapest checks first (focus-row mismatch, then `KeyAlt` test against the cached
+    // IO struct) before paying for `IsWindowFocused`. On a typical "no Alt held" frame
+    // with N rows, we now exit at the `io.KeyAlt` branch and skip 3N+ ImGui calls.
+    if (!keyboardFocusRow || *keyboardFocusRow != rowIndex) {
+        return mutated;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.KeyAlt) {
+        return mutated;
+    }
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        return mutated;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && rowIndex > 0) {
+        std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex - 1)]);
+        *keyboardFocusRow = rowIndex - 1;
+        mutated = true;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && rowIndex + 1 < static_cast<int>(order.size())) {
+        std::swap(order[static_cast<size_t>(rowIndex)], order[static_cast<size_t>(rowIndex + 1)]);
+        *keyboardFocusRow = rowIndex + 1;
+        mutated = true;
     }
     return mutated;
 }
