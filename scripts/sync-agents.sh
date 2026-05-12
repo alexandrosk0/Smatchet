@@ -46,9 +46,11 @@ for src in "$CANONICAL_DIR"/*.md; do
 done
 
 # Drop stale mirrors that no longer have a canonical source.
+# README.md is intentional documentation about the mirror itself — never managed by sync.
 for dst in "$MIRROR_DIR"/*.md; do
   [[ -e "$dst" ]] || continue
   name="$(basename "$dst")"
+  [[ "$name" == "README.md" ]] && continue
   if [[ ! -f "$CANONICAL_DIR/$name" ]]; then
     echo "removing stale mirror: $dst" >&2
     rm "$dst"

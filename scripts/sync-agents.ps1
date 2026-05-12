@@ -46,8 +46,10 @@ foreach ($src in $canonicalFiles) {
 }
 
 # Drop stale mirrors that no longer have a canonical source.
+# README.md is intentional documentation about the mirror itself — never managed by sync.
 $mirrorFiles = Get-ChildItem -Path $MirrorDir -Filter '*.md' -File
 foreach ($dst in $mirrorFiles) {
+  if ($dst.Name -eq 'README.md') { continue }
   $canonicalPath = Join-Path $CanonicalDir $dst.Name
   if (-not (Test-Path $canonicalPath)) {
     Write-Host "removing stale mirror: $($dst.FullName)"
