@@ -13,6 +13,7 @@
 #include "SpreadsheetState.h"
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
+#include "SmatchetProjectPicker.h"
 
 #include "imgui.h"
 
@@ -346,6 +347,15 @@ struct UiDrawSession {
     // PR 3: when the draft's ProjectKey diverges from this guard, the new-issue draft UI kicks an
     // async RefreshFieldCatalog so per-project required-fields/create-meta land before submit.
     std::string newIssueDraftLastFetchedProjectKey;
+
+    // PR 4b: project-picker state for the new-issue draft combo and the bulk-import modal.
+    // Each has its own State because the lazy "All projects" fetch caches per call site.
+    SmatchetProjectPicker::State newIssueProjectPickerState;
+    SmatchetProjectPicker::State bulkImportProjectPickerState;
+    // Bulk-import modal lifecycle: open=true while the modal is up; pendingChosenKey latches the
+    // user's pick so the "Use this project" path can flow into ParseDrafts on confirm.
+    bool bulkImportProjectModalOpen = false;
+    std::string bulkImportProjectModalChosenKey;
 
     std::vector<char> bulkImportTextBuf;
     char bulkImportPathBuf[1024]{};

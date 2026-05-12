@@ -4,7 +4,10 @@
 #include "TrackerHttpUtils.h"
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
+#include "ITrackerClient.h"
 #include "ProjectResolver.h"
+#include "SmatchetLocalization.h"
+#include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -169,12 +172,10 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     const char* kFormats[] = {"Auto", "CSV", "TSV", "JSON"};
     ImGui::Combo("##bulkImportFmt", &d.bulkImportFormatSel, kFormats, IM_ARRAYSIZE(kFormats));
     ImGui::SameLine();
-    if (ImGui::Button("Parse preview")) {
+    auto runParse = [&](const std::string& fallbackProject) {
         const std::string text(d.bulkImportTextBuf.data());
         const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
-        const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-            app.GetTrackerBackend(), d.cfg.JqlQuery, std::string(), d.cfg.ProjectKey);
-        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), resolvedProject,
+        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
                                                                 d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
         d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
         d.bulkImportError = d.bulkImportPreview.Error;
@@ -182,6 +183,61 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
         d.bulkImportRunning = false;
         d.bulkImportFutures.clear();
         d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
+    };
+
+    if (ImGui::Button("Parse preview")) {
+        // PR 4b: if the active view has no project scope, ask the user before parsing — the parser
+        // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
+        const ITrackerClient* backend = app.GetTrackerBackend();
+        const std::string scopeProj = backend ? backend->ExtractProjectFromQuery(d.cfg.JqlQuery) : std::string();
+        if (scopeProj.empty()) {
+            d.bulkImportProjectModalOpen = true;
+            d.bulkImportProjectModalChosenKey.clear();
+        } else {
+            runParse(scopeProj);
+        }
+    }
+
+    // PR 4b: target-project modal. Opened above when the active view has no project clause; the
+    // user must pick a project before parse can run.
+    if (d.bulkImportProjectModalOpen) {
+        ImGui::OpenPopup("##BulkImportProjectModal");
+    }
+    if (ImGui::BeginPopupModal("##BulkImportProjectModal", &d.bulkImportProjectModalOpen,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("bulkImport.chooseProject.title",
+                                                       "Choose target project for bulk import"));
+        ImGui::Separator();
+        const std::string backendKind = (d.cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
+        const std::string endpoint = (d.cfg.TrackerType == "Plane")
+                                         ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
+                                         : d.cfg.Domain;
+        ImGui::SetNextItemWidth(360.0f);
+        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState,
+                                    app.GetTrackerBackendMutable(), backendKind, endpoint,
+                                    d.bulkImportProjectModalChosenKey);
+        ImGui::Separator();
+        if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel"))) {
+            d.bulkImportProjectModalOpen = false;
+            d.bulkImportProjectModalChosenKey.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool canConfirm = !d.bulkImportProjectModalChosenKey.empty();
+        if (!canConfirm) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.confirm", "Use this project"))) {
+            const std::string chosen = d.bulkImportProjectModalChosenKey;
+            d.bulkImportProjectModalOpen = false;
+            d.bulkImportProjectModalChosenKey.clear();
+            ImGui::CloseCurrentPopup();
+            runParse(chosen);
+        }
+        if (!canConfirm) {
+            ImGui::EndDisabled();
+        }
+        ImGui::EndPopup();
     }
 
     if (!d.bulkImportError.empty()) {

@@ -196,4 +196,108 @@ bool HasProjectScope(const std::string& jql) {
     return !projects.empty();
 }
 
+namespace {
+
+// Locate the first project clause in `s`. On success returns true and sets [outBegin, outEnd)
+// to the slice covering the clause (e.g. "project = FOO" / "project in (A, B)"). Mirrors
+// TryParseProjectClause's parse, but additionally skips trailing `AND` / `OR` so we can
+// rewrite cleanly without leaving stray boolean connectives.
+bool FindFirstProjectClauseRange(const std::string& s, size_t& outBegin, size_t& outEnd,
+                                 bool& consumedTrailingConnective) {
+    consumedTrailingConnective = false;
+    size_t i = 0;
+    while (i < s.size()) {
+        const char c = s[i];
+        if (c == '"' || c == '\'') {
+            const char quote = c;
+            ++i;
+            while (i < s.size() && s[i] != quote) {
+                ++i;
+            }
+            if (i < s.size()) {
+                ++i;
+            }
+            continue;
+        }
+        const bool atWordBoundary = (i == 0) || !IsIdentChar(s[i - 1]);
+        if (atWordBoundary) {
+            const size_t clauseStart = i;
+            std::vector<std::string> dummy;
+            size_t save = i;
+            if (TryParseProjectClause(s, save, dummy)) {
+                size_t end = save;
+                // Try to absorb a trailing connective ("AND" / "OR") to keep the JQL well-formed
+                // when we drop the clause.
+                size_t afterWs = end;
+                SkipWs(s, afterWs);
+                size_t afterKw = 0;
+                if (MatchKeywordCI(s, afterWs, "and", afterKw) ||
+                    MatchKeywordCI(s, afterWs, "or", afterKw)) {
+                    end = afterKw;
+                    consumedTrailingConnective = true;
+                }
+                outBegin = clauseStart;
+                outEnd = end;
+                return true;
+            }
+        }
+        ++i;
+    }
+    return false;
+}
+
+std::string LTrimAscii(std::string s) {
+    while (!s.empty() && IsAsciiSpace(s.front())) {
+        s.erase(s.begin());
+    }
+    return s;
+}
+
+std::string RTrimAscii(std::string s) {
+    while (!s.empty() && IsAsciiSpace(s.back())) {
+        s.pop_back();
+    }
+    return s;
+}
+
+} // namespace
+
+std::string SetProjectClause(const std::string& jql, const std::string& projectKey) {
+    if (projectKey.empty()) {
+        return jql;
+    }
+    const std::string replacement = std::string("project = ") + projectKey;
+
+    size_t b = 0;
+    size_t e = 0;
+    bool consumedConn = false;
+    if (FindFirstProjectClauseRange(jql, b, e, consumedConn)) {
+        std::string head = jql.substr(0, b);
+        std::string tail = jql.substr(e);
+        if (consumedConn) {
+            // We absorbed the connective; emit replacement + " AND " + remainder.
+            std::string out = RTrimAscii(std::move(head));
+            std::string tailTrim = LTrimAscii(std::move(tail));
+            if (!out.empty()) {
+                out += " ";
+            }
+            out += replacement;
+            if (!tailTrim.empty()) {
+                out += " AND ";
+                out += tailTrim;
+            }
+            return out;
+        }
+        // No connective absorbed; literal splice.
+        return head + replacement + tail;
+    }
+
+    // No existing project clause — prepend.
+    const std::string trimmed = LTrimAscii(jql);
+    if (trimmed.empty()) {
+        return replacement;
+    }
+    return replacement + " AND " + trimmed;
+}
+
 } // namespace JqlProjectScope

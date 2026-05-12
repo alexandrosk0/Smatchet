@@ -26,4 +26,18 @@ std::string ResolveProjectForDraft(const ITrackerClient* client,
                                    const std::string& lastVisibleTicketId,
                                    const std::string& legacyFallback);
 
+/** PR 4b / OQ-6: when a draft is built from a known parent ticket (clone / child-of), the
+ *  parent's own project — not the active view — should seed the picker. For Jira this is the
+ *  parent's key prefix ("PARENT-12" -> "PARENT"). For Plane the parent has no key prefix, so
+ *  this helper falls straight through to ResolveProjectForDraft.
+ *
+ *  Step order (Jira):
+ *    1. parentTicketId key prefix
+ *    2. ResolveProjectForDraft(client, activeViewQuery, "", legacyFallback)
+ *  (Plane skips step 1.) */
+std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId,
+                                             const ITrackerClient* client,
+                                             const std::string& activeViewQuery,
+                                             const std::string& legacyFallback);
+
 } // namespace smatchet

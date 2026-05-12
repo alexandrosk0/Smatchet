@@ -56,4 +56,18 @@ std::string ResolveProjectForDraft(const ITrackerClient* client,
     return legacyFallback;
 }
 
+std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId,
+                                             const ITrackerClient* client,
+                                             const std::string& activeViewQuery,
+                                             const std::string& legacyFallback) {
+    const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
+    if (!isPlane && !parentTicketId.empty()) {
+        const std::string prefix = ExtractKeyPrefix(parentTicketId);
+        if (!prefix.empty()) {
+            return prefix;
+        }
+    }
+    return ResolveProjectForDraft(client, activeViewQuery, std::string(), legacyFallback);
+}
+
 } // namespace smatchet

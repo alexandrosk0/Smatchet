@@ -435,6 +435,9 @@ class AppController {
      *  `ITrackerClient::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
      *  `Initialize` has wired up the factory. Do not retain the pointer past the current frame. */
     const ITrackerClient* GetTrackerBackend() const { return Backend.get(); }
+    // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
+    // ListProjects() which populates a per-client in-memory cache).
+    ITrackerClient* GetTrackerBackendMutable() { return Backend.get(); }
 
     // ---- Create issue flow -------------------------------------------------
 

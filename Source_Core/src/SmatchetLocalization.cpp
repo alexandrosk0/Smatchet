@@ -383,6 +383,32 @@ const TranslationEntry kEntries[] = {
     {"blame.assign_and_comment", "Assign and add blame context", u8"Assigner et ajouter le contexte blame"},
     {"blame.groups", "Groups (best effort):", u8"Groupes (au mieux) :"},
     {"blame.none_permitted", "(none or not permitted)", u8"(aucun ou non autorisé)"},
+
+    // PR 4b: project picker (draft + bulk import modal).
+    {"draft.project", "Project", u8"Projet"},
+    {"draft.project.placeholder", "(pick one)", u8"(choisir)"},
+    {"draft.project.section.recent", "Recently used", u8"Récemment utilisés"},
+    {"draft.project.section.all", "All projects", u8"Tous les projets"},
+    {"draft.project.search", "Search...", u8"Rechercher..."},
+    {"draft.project.loading", "Loading...", u8"Chargement..."},
+    {"draft.project.submit_disabled_tooltip", "Pick a project", u8"Choisir un projet"},
+
+    // PR 4b: active-view JQL bar project pill (Jira only).
+    {"view.projectPill.single", "Project: %s", u8"Projet : %s"},
+    {"view.projectPill.multi", "Project: multi", u8"Projet : multiple"},
+    {"view.projectPill.tooltip.single",
+     "Active view is scoped to a single project. Click to switch project.",
+     u8"La vue active est limitée à un seul projet. Cliquer pour changer de projet."},
+    {"view.projectPill.tooltip.multi",
+     "Active view spans multiple projects (or has no project clause). Click to pick a single project.",
+     u8"La vue active couvre plusieurs projets (ou n'a aucune clause de projet). Cliquer pour choisir un seul projet."},
+    {"view.projectPill.empty", "(no cached projects)", u8"(aucun projet en cache)"},
+
+    // PR 4b: bulk import modal.
+    {"bulkImport.chooseProject.title", "Choose target project for bulk import",
+     u8"Choisir le projet cible pour l'import en masse"},
+    {"bulkImport.chooseProject.cancel", "Cancel", u8"Annuler"},
+    {"bulkImport.chooseProject.confirm", "Use this project", u8"Utiliser ce projet"},
 };
 
 std::mutex& LocalizationMutex() {

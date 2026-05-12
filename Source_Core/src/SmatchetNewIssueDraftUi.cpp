@@ -7,7 +7,9 @@
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "SmatchetFieldRender.h"
+#include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -252,6 +254,11 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             const ImVec2 draftActionBtn(ImGui::GetContentRegionAvail().x, 0.0f);
             if (disabled)
                 ImGui::BeginDisabled();
+            // PR 4b: submit requires an explicit project pick. Disable + tooltip when empty.
+            const bool projectMissing = d.newIssueDraft.ProjectKey.empty();
+            if (projectMissing) {
+                ImGui::BeginDisabled();
+            }
             if (ImGui::Button("Create", draftActionBtn)) {
                 PrepareNewIssueDraftForSubmit(d);
                 d.gridEditError.clear();
@@ -267,6 +274,14 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                 } else {
                     d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
                     d.newIssueCreateInFlight = true;
+                }
+            }
+            if (projectMissing) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s",
+                                      SmatchetLocalization::T("draft.project.submit_disabled_tooltip",
+                                                              "Pick a project"));
                 }
             }
             const bool canOfferFallbackQueue = !disabled && d.newIssueQueueFallbackVisible;
@@ -377,8 +392,29 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
 
         const std::string& current = d.newIssueDraft.FieldValues[fieldId];
 
-        // Project/IssueType dropdowns come from catalog option sets when available.
-        if (fieldId == "issuetype" || fieldId == "project" ||
+        // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
+        if (fieldId == "project") {
+            const std::string backendKind = (cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
+            const std::string endpoint = (cfg.TrackerType == "Plane")
+                                             ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug)
+                                             : cfg.Domain;
+            std::string sel = d.newIssueDraft.ProjectKey;
+            if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState,
+                                            app.GetTrackerBackendMutable(), backendKind, endpoint, sel)) {
+                d.newIssueDraft.ProjectKey = sel;
+                d.newIssueDraft.FieldValues[fieldId] = sel;
+                d.newIssueQueueFallbackVisible = false;
+                d.newIssueQueueFallbackError.clear();
+            }
+            ImGui::PopID();
+            if (isMissing) {
+                ImGui::PopStyleColor();
+            }
+            continue;
+        }
+
+        // IssueType / other catalog-option dropdowns come from catalog option sets when available.
+        if (fieldId == "issuetype" ||
             (field && !field->IsArray && !field->AllowedValueOptions.empty() &&
              (field->Family == TrackerFieldFamily::SelectSingle ||
               field->Family == TrackerFieldFamily::StructuredSingle || field->Family == TrackerFieldFamily::IssueType ||
