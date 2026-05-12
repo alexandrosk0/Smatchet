@@ -154,6 +154,23 @@ void TickPendingDestroys() {
     }
 }
 
+bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out) {
+    out = {};
+    if (cacheKey.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_map.find(cacheKey);
+    if (it == g_map.end() || it->second.Texture == nullptr) {
+        return false;
+    }
+    TouchLruUnlocked(cacheKey);
+    out.Texture = it->second.Texture;
+    out.Width = it->second.Width;
+    out.Height = it->second.Height;
+    return true;
+}
+
 bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes, size_t byteCount,
                          SmatchetLoadedIconTexture& out, std::string& outError) {
     out = {};
@@ -215,6 +232,9 @@ bool GetOrLoadFromFile(const std::string& cacheKey, const std::string& absoluteP
     if (absolutePath.empty()) {
         outError = "Empty path.";
         return false;
+    }
+    if (TryGetCached(cacheKey, out)) {
+        return true;
     }
     std::ifstream ifs(absolutePath.c_str(), std::ios::binary);
     if (!ifs) {

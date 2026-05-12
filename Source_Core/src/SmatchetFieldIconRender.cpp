@@ -21,6 +21,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -202,15 +203,23 @@ bool HttpGetBinary(const std::string& url, std::vector<unsigned char>& out, std:
 bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out, std::string& outError) {
     out = {};
     outError.clear();
+    const std::string memKey = std::string("url:") + url;
+    if (SmatchetImageTextureCache::TryGetCached(memKey, out)) {
+        return true;
+    }
     std::string cacheDir;
     if (!EnsureFieldIconsCacheDir(cacheDir, outError)) {
         return false;
     }
     const std::string fileName = UrlToCacheFileName(url);
     const std::string diskPath = cacheDir + fileName;
+    const std::string fileKey = std::string("file:") + diskPath;
+    if (SmatchetImageTextureCache::TryGetCached(fileKey, out)) {
+        return true;
+    }
     std::error_code ec;
     if (fs::exists(fs::path(diskPath), ec) && fs::file_size(fs::path(diskPath), ec) > 0) {
-        return SmatchetImageTextureCache::GetOrLoadFromFile(std::string("file:") + diskPath, diskPath, out, outError);
+        return SmatchetImageTextureCache::GetOrLoadFromFile(fileKey, diskPath, out, outError);
     }
     std::vector<unsigned char> bytes;
     if (!HttpGetBinary(url, bytes, outError)) {
@@ -238,13 +247,47 @@ bool LoadTextureForResolvedPath(const std::string& resolved, SmatchetLoadedIconT
 }
 
 /**
+ * Per-frame fast path: maps a raw priority value (Jira priority JSON blob) to the texture-cache key
+ * that resolved successfully on a prior frame. Lets the grid hot path skip JSON parse, slug
+ * normalization, candidate building and disk stat — collapses to one hashmap lookup + the locked
+ * cache lookup. Capped to bound memory if a customer has many distinct values.
+ */
+constexpr size_t kPriorityResolveMemoCap = 256;
+struct PriorityResolveMemo {
+    std::string CacheKey;
+    std::string Label; ///< Parsed friendly name; preserves tooltip text on the fast path.
+};
+std::unordered_map<std::string, PriorityResolveMemo>& PriorityRawValueToCacheKey() {
+    static std::unordered_map<std::string, PriorityResolveMemo> m;
+    return m;
+}
+
+void RememberPriorityResolution(const std::string& rawValue, const std::string& cacheKey, const std::string& label) {
+    if (rawValue.empty() || cacheKey.empty()) {
+        return;
+    }
+    auto& m = PriorityRawValueToCacheKey();
+    if (m.size() >= kPriorityResolveMemoCap) {
+        m.clear();
+    }
+    PriorityResolveMemo entry;
+    entry.CacheKey = cacheKey;
+    entry.Label = label;
+    m[rawValue] = entry;
+}
+
+/**
  * Load priority icon: Jira `iconUrl` (absolute or `/...` on your site), then same slugs as the admin
  * priorities page (`<domain>/images/icons/priorities/<slug>.png`), then bundled offline fallback.
+ *
+ * On success, populates `outResolvedCacheKey` with the texture-cache key that resolved so the caller
+ * can memoise it for subsequent frames.
  */
 bool LoadPriorityIconWithFallbacks(const std::string& iconUrl, const std::string& slug, SmatchetLoadedIconTexture& out,
-                                   std::string& outLastError) {
+                                   std::string& outResolvedCacheKey, std::string& outLastError) {
     out = {};
     outLastError.clear();
+    outResolvedCacheKey.clear();
     const std::string domain = GetCachedJiraDomainForPriorityIcons();
     std::vector<std::string> candidates;
     auto pushUnique = [&](const std::string& s) {
@@ -270,6 +313,8 @@ bool LoadPriorityIconWithFallbacks(const std::string& iconUrl, const std::string
     for (const auto& c : candidates) {
         std::string err;
         if (LoadTextureForResolvedPath(c, out, err)) {
+            const bool isUrl = c.rfind("https://", 0) == 0 || c.rfind("http://", 0) == 0;
+            outResolvedCacheKey = (isUrl ? std::string("url:") : std::string("file:")) + c;
             return true;
         }
         outLastError = err;
@@ -347,13 +392,25 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
     if (field.Id != "priority") {
         return false;
     }
+    {
+        const auto& memo = PriorityRawValueToCacheKey();
+        const auto it = memo.find(rawValue);
+        if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, outIcon)) {
+            return true;
+        }
+    }
     std::string iconUrl;
     std::string label;
     std::string slug;
     if (!ParsePriorityJson(rawValue, iconUrl, label, slug)) {
         return false;
     }
-    return LoadPriorityIconWithFallbacks(iconUrl, slug, outIcon, outError);
+    std::string resolvedKey;
+    if (!LoadPriorityIconWithFallbacks(iconUrl, slug, outIcon, resolvedKey, outError)) {
+        return false;
+    }
+    RememberPriorityResolution(rawValue, resolvedKey, label);
+    return true;
 }
 
 bool DrawInlineFieldIconIfAny(const AppController& app, const TrackerField& field, const std::string& rawValue) {
@@ -400,6 +457,19 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
         return false;
     }
 
+    SmatchetLoadedIconTexture icon;
+    {
+        const auto& memo = PriorityRawValueToCacheKey();
+        const auto it = memo.find(rawValue);
+        if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
+            const float maxEdge = ImGui::GetFrameHeight();
+            const std::string display = field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
+                                              : (it->second.Label.empty() ? rawValue : it->second.Label);
+            DrawLoadedIconOnly(icon, maxEdge, tooltipsEnabled, display);
+            return true;
+        }
+    }
+
     std::string iconUrl;
     std::string label;
     std::string slug;
@@ -408,10 +478,11 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     }
 
     std::string err;
-    SmatchetLoadedIconTexture icon;
-    if (!LoadPriorityIconWithFallbacks(iconUrl, slug, icon, err)) {
+    std::string resolvedKey;
+    if (!LoadPriorityIconWithFallbacks(iconUrl, slug, icon, resolvedKey, err)) {
         return false;
     }
+    RememberPriorityResolution(rawValue, resolvedKey, label);
 
     const float maxEdge = ImGui::GetFrameHeight();
     const std::string display =
