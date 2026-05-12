@@ -622,9 +622,10 @@ void McpPlugin::OnStart(AppController& app) {
                           req.remote_addr.c_str(), name.c_str(), paramsStr.size(), req.body.size());
                 std::string error;
                 std::string result;
-                // Unified Command System: try registry first (covers all commands
-                // exposed via /mcp/tools/list above, including aliases like
-                // `list_active_tickets` → `tickets.list_active`).
+                // Unified Command System: try registry first. Always returns HTTP 200
+                // with a canonical envelope {ok, command, data|error} in content[0].text —
+                // even for structured errors (confirm-required, not-found, etc.). This lets
+                // callers parse the envelope rather than treating every error as a transport fail.
                 if (impl_->app->Commands().FindLocked(name) != nullptr) {
                     smatchet::cmd::CommandContext cctx;
                     cctx.App = impl_->app;
@@ -634,13 +635,19 @@ void McpPlugin::OnStart(AppController& app) {
                     cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
                     smatchet::cmd::CommandResult cr =
                         impl_->app->Commands().Dispatch(name, arguments, cctx);
-                    nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
-                    result = envelope.dump();
-                    if (!cr.Ok) {
-                        error = cr.Error.Message;
-                    }
-                    // Fall through to common success/error response path below.
+                    const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+                    const std::string envelopeStr = envelope.dump();
                     LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
+                    AppendMcpActivityLine(impl_->app,
+                        "MCP: REST tools/call " + name +
+                        (cr.Ok ? " ok" : " FAIL(" + cr.Error.Message.substr(0, 80) + ")") +
+                        " remote=" + remote);
+                    // Always HTTP 200: the envelope carries ok/error; isError=true only for
+                    // genuine tool-call failures, not for structured command errors.
+                    res.set_content(
+                        nlohmann::json{{"content", {{{"type", "text"}, {"text", envelopeStr}}}}}.dump(),
+                        "application/json");
+                    return;
                 } else
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                 if (name == "run_lua") {
@@ -664,10 +671,52 @@ void McpPlugin::OnStart(AppController& app) {
                         }
                     }
                 } else {
-                    result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+                    // Check whether this name belongs to an mcp.register_tool Lua tool before
+                    // trying ExecuteLuaMcpTool. If it's not a Lua MCP tool either, fall back to
+                    // the registry for a structured unknown-command response with fuzzy suggestions.
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                    const auto luaTools = impl_->app->GetLuaMcpTools();
+                    bool isLuaMcpTool = false;
+                    for (const auto& lt : luaTools) {
+                        if (lt.name == name) { isLuaMcpTool = true; break; }
+                    }
+                    if (isLuaMcpTool) {
+                        result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+                    } else {
+#endif
+                        // Not in registry, not run_lua, not a Lua MCP tool.
+                        // Dispatch through registry to get a canonical unknown-command envelope
+                        // with fuzzy suggestions (e.g. "did you mean 'tickets.search_active'?").
+                        smatchet::cmd::CommandContext cctx;
+                        cctx.App = impl_->app;
+                        cctx.Source = smatchet::cmd::CommandSource::Mcp;
+                        smatchet::cmd::CommandResult cr =
+                            impl_->app->Commands().Dispatch(name, arguments, cctx);
+                        const nlohmann::json envelope = cr.ToWireJson(name, false);
+                        res.set_content(
+                            nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
+                            "application/json");
+                        AppendMcpActivityLine(impl_->app,
+                            "MCP: REST tools/call " + name + " unknown-command remote=" + remote);
+                        return;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                    }
+#endif
                 }
 #else
-                error = "Lua automation disabled";
+                // No Lua: unknown name → structured unknown-command from registry.
+                {
+                    smatchet::cmd::CommandContext cctx;
+                    cctx.App = impl_->app;
+                    cctx.Source = smatchet::cmd::CommandSource::Mcp;
+                    smatchet::cmd::CommandResult cr =
+                        impl_->app->Commands().Dispatch(name, arguments, cctx);
+                    const nlohmann::json envelope = cr.ToWireJson(name, false);
+                    res.set_content(
+                        nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
+                        "application/json");
+                    return;
+                }
 #endif
                 // cppcheck-suppress knownConditionTrueFalse  // !error.empty() is condition-
                 // dependent on SMATCHET_WITH_LUA_AUTOMATION; only "always true" under #else.

@@ -68,7 +68,7 @@ struct ParsedArgs {
     int  timeoutMs = 0;          ///< --timeout=<ms> → passed as __timeout_ms; 0=no cap
     std::string mcpHost;         ///< empty -> default
     int mcpPort = 0;             ///< 0 -> resolve from env / default
-    nlohmann::json args;         ///< collected --key=value arguments
+    nlohmann::json args = nlohmann::json::object();  ///< collected --key=value arguments
 };
 
 std::string EnvOr(const char* name, std::string fallback) {
