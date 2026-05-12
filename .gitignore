@@ -59,6 +59,11 @@ smatchet_field_catalog_cache.json
 .cursor/
 .claude/*.local.json
 .claude/worktrees/
+
+# caveman (https://github.com/JuliusBrussee/caveman) — user-installed; see AGENTS.md
+.agents/
+.claude/skills/
+skills-lock.json
 *.cppcheck
 *.sln
 *.vcxproj
