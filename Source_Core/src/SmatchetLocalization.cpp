@@ -160,12 +160,8 @@ const TranslationEntry kEntries[] = {
     {"prefs.domain", "Domain", u8"Domaine"},
     {"prefs.email", "Email", u8"E-mail"},
     {"prefs.api_token", "API Token", u8"Jeton d'API"},
-    // PR 6: deprecated, slated for removal in PR 7 (keys still here for one release per R-9).
-    {"prefs.project_key", "Project Key", u8"Clé de projet"},
     {"prefs.url", "URL", u8"URL"},
     {"prefs.workspace_slug", "Workspace Slug", u8"Slug de l'espace de travail"},
-    // PR 6: deprecated, slated for removal in PR 7.
-    {"prefs.project_id_uuid", "Project ID (UUID)", u8"ID du projet (UUID)"},
     // PR 6: new "Recently used projects" section in Preferences (replaces the deleted rows).
     {"prefs.recentProjects", "Recently used projects", u8"Projets récemment utilisés"},
     {"prefs.recentProjects.forget", "Forget", u8"Oublier"},

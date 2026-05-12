@@ -1056,23 +1056,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #else
             cfg.ApiToken = j.value("token", std::string{});
 #endif
-            // PR 5/6: capture legacy global project scope into a transient carrier so the
-            // offline-queue + Plane-view sweeps can fill in per-entity project state. The
-            // user-facing TrackerConfig::ProjectKey/PlaneProjectId fields are gone in PR 6;
-            // these carriers are read directly from the on-disk JSON. Logged once per Load()
-            // (cache is invalidated rarely; the noise is acceptable).
-            cfg.LegacyProjectKey = j.value("project_key", std::string{});
-            if (!cfg.LegacyProjectKey.empty()) {
-                LOG_INFO("Migrated legacy global project_key='%s' - see release notes", cfg.LegacyProjectKey.c_str());
-            }
+            // PR 7: legacy `project_key` / `plane_project_id` migration carriers removed.
+            // The one-shot sweeps still run but with empty values; the cache_meta marker
+            // (`legacy_project_swept_v1`) ensures they no-op on installs that already migrated.
             cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
             cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
             cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
-            cfg.LegacyPlaneProjectId = j.value("plane_project_id", std::string{});
-            if (!cfg.LegacyPlaneProjectId.empty()) {
-                LOG_INFO("Migrated legacy global plane_project_id='%s' - see release notes",
-                         cfg.LegacyPlaneProjectId.c_str());
-            }
 
 #if defined(_WIN32)
             cfg.PlaneApiKey =

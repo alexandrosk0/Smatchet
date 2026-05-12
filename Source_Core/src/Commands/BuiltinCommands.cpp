@@ -1037,10 +1037,6 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                     all["trackerType"] = cfg.TrackerType;
                                     all["domain"] = cfg.Domain;
                                     all["email"] = cfg.Email;
-                                    // PR 6: soft-deprecate; remove in PR 7. Field removed from TrackerConfig in PR 6
-                                    // (project is now per-operation) — return "" for one release so downstream scripts
-                                    // don't NPE on a missing key.
-                                    all["projectKey"] = std::string();
                                     all["jqlQuery"] = cfg.JqlQuery;
                                     all["mcpEnabled"] = cfg.McpEnabled;
                                     all["mcpPort"] = cfg.McpPort;
@@ -1052,8 +1048,6 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                     all["dbPath"] = cfg.DbPath;
                                     all["planeUrl"] = cfg.PlaneUrl;
                                     all["planeWorkspaceSlug"] = cfg.PlaneWorkspaceSlug;
-                                    // PR 6: soft-deprecate; remove in PR 7. Same rationale as projectKey above.
-                                    all["planeProjectId"] = std::string();
                                     // Never expose token/password in output.
                                     if (!key.empty()) {
                                         if (all.contains(key)) {

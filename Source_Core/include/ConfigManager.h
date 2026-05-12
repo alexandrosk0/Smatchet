@@ -59,15 +59,6 @@ struct TrackerConfig {
     std::string Email;    // e.g., "dev@company.com"
     std::string ApiToken; // Your Atlassian API Token
 
-    // PR 5/6 migration carriers: captured from on-disk `project_key` / `plane_project_id` during
-    // Load() and consumed by the offline-queue + Plane-view legacy sweeps. Not persisted by Save().
-    // The user-facing `ProjectKey` / `PlaneProjectId` fields were removed in PR 6
-    // (docs/design/remove-global-project-key.md). Project is now per-operation; these carriers
-    // remain for one release so installs upgrading from pre-PR-5 builds can still recover legacy
-    // project scope at startup. Slated for removal in PR 7.
-    std::string LegacyProjectKey;
-    std::string LegacyPlaneProjectId;
-
     // Tracker Type: "Jira" or "Plane"
     std::string TrackerType = SmatchetDefaults::kDefaultBackendType;
 
