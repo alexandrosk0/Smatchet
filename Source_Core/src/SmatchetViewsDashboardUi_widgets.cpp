@@ -161,8 +161,13 @@ bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboa
         }
         ImGui::EndDragDropTarget();
     }
-    // Keyboard reorder: when row is focused and Alt+Up / Alt+Down pressed.
-    if (keyboardFocusRow && *keyboardFocusRow == rowIndex && ImGui::IsItemFocused()) {
+    // Keyboard reorder: Alt+Up / Alt+Down on the row whose index matches
+    // `keyboardFocusRow`. Gate on window-level focus (not IsItemFocused) because the
+    // focused item-ID belongs to the PREVIOUS Selectable widget — after a swap the
+    // PushID + label combo at this index is different, so the focus check would fail
+    // on every press after the first. Window focus is the correct shortcut scope.
+    if (keyboardFocusRow && *keyboardFocusRow == rowIndex &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyAlt) {
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && rowIndex > 0) {
@@ -177,6 +182,43 @@ bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboa
         }
     }
     return mutated;
+}
+
+void TickDragDropAutoScroll() {
+    // Nudge ScrollY when a drag-drop payload is in flight and the mouse is hovering
+    // near the top or bottom edge of the current (scrollable) window. Public-API only
+    // so it works inside any BeginChild block. Call once per frame near the end of
+    // the scrollable region (before EndChild).
+    // Stable-API check: GetDragDropPayload returns non-null whenever a payload is in
+    // flight (it does NOT require being inside a BeginDragDropTarget block, unlike
+    // AcceptDragDropPayload). IsDragDropActive() is imgui_internal-only.
+    if (ImGui::GetDragDropPayload() == nullptr) {
+        return;
+    }
+    const ImVec2 windowPos = ImGui::GetWindowPos();
+    const ImVec2 windowSize = ImGui::GetWindowSize();
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (mouse.x < windowPos.x || mouse.x > windowPos.x + windowSize.x || mouse.y < windowPos.y ||
+        mouse.y > windowPos.y + windowSize.y) {
+        return;
+    }
+    constexpr float kEdgeBand = 32.0f;
+    constexpr float kMaxSpeed = 18.0f;
+    const float topEdge = windowPos.y;
+    const float bottomEdge = windowPos.y + windowSize.y;
+    float delta = 0.0f;
+    if (mouse.y < topEdge + kEdgeBand) {
+        const float t = (topEdge + kEdgeBand - mouse.y) / kEdgeBand;
+        delta = -kMaxSpeed * t;
+    } else if (mouse.y > bottomEdge - kEdgeBand) {
+        const float t = (mouse.y - (bottomEdge - kEdgeBand)) / kEdgeBand;
+        delta = kMaxSpeed * t;
+    }
+    if (delta != 0.0f) {
+        const float maxY = ImGui::GetScrollMaxY();
+        const float newY = (std::max)(0.0f, (std::min)(maxY, ImGui::GetScrollY() + delta));
+        ImGui::SetScrollY(newY);
+    }
 }
 
 void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {

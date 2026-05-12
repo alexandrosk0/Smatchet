@@ -120,4 +120,9 @@ void DrawDragHandle(const char* id, int rowIndex, const char* payloadType);
 /// Returns true if the order was mutated this frame (caller can mark dirty).
 bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboardFocusRow, const char* payloadType);
 
+/// Auto-scroll the current scrollable window when a drag-drop payload is in flight and
+/// the mouse hovers near the top or bottom edge. Call once per frame inside the
+/// BeginChild block of any list that accepts drag-reorder.
+void TickDragDropAutoScroll();
+
 } // namespace SmatchetViewsDashboardUiDetail
