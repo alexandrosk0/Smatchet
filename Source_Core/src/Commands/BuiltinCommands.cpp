@@ -108,13 +108,17 @@ nlohmann::json ObservedSmatchetEnv() {
     static const char* const kEnvNames[] = {
         "SMATCHET_MCP_PORT",
         "SMATCHET_MCP_HOST",
+        "SMATCHET_MCP_ALLOW_REMOTE",
         "SMATCHET_USER_DATA",
         "SMATCHET_LOG_LEVEL",
         "SMATCHET_NO_COLOR",
         "NO_COLOR",
         "SMATCHET_DEFAULT_FORMAT",
-        "SMATCHET_TRACKER_TOKEN",
-        "SMATCHET_TRACKER_BASE_URL",
+        "SMATCHET_TRACKER_TOKEN",      // → cfg.ApiToken (Jira) or cfg.PlaneApiKey (Plane)
+        "SMATCHET_TRACKER_BASE_URL",   // → cfg.Domain (Jira) or cfg.PlaneUrl (Plane)
+        "SMATCHET_BACKEND_TYPE",
+        "SMATCHET_TRACKER_TYPE",
+        "SMATCHET_DB_PATH",
         "SMATCHET_SPAWN_TIMEOUT_MS",
     };
     nlohmann::json out = nlohmann::json::array();
@@ -992,14 +996,22 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                 const std::string key = args.value("key", std::string());
                 // Build a full projection of commonly-queried fields.
                 nlohmann::json all;
-                all["trackerType"]   = cfg.TrackerType;
-                all["domain"]        = cfg.Domain;
-                all["email"]         = cfg.Email;
-                all["mcpEnabled"]    = cfg.McpEnabled;
-                all["mcpPort"]       = cfg.McpPort;
-                all["mcpAllowRemote"]= cfg.McpAllowRemote;
-                all["readOnlyMode"]  = cfg.ReadOnlyMode;
-                all["dbPath"]        = cfg.DbPath;
+                all["trackerType"]         = cfg.TrackerType;
+                all["domain"]              = cfg.Domain;
+                all["email"]               = cfg.Email;
+                all["projectKey"]          = cfg.ProjectKey;
+                all["jqlQuery"]            = cfg.JqlQuery;
+                all["mcpEnabled"]          = cfg.McpEnabled;
+                all["mcpPort"]             = cfg.McpPort;
+                all["mcpAllowRemote"]      = cfg.McpAllowRemote;
+                all["mcpAllowLuaExecution"]= cfg.McpAllowLuaExecution;
+                all["readOnlyMode"]        = cfg.ReadOnlyMode;
+                all["logMinLevel"]         = cfg.LogMinLevel;
+                all["logTrackerHttpBodies"]= cfg.LogTrackerHttpBodies;
+                all["dbPath"]              = cfg.DbPath;
+                all["planeUrl"]            = cfg.PlaneUrl;
+                all["planeWorkspaceSlug"]  = cfg.PlaneWorkspaceSlug;
+                all["planeProjectId"]      = cfg.PlaneProjectId;
                 // Never expose token/password in output.
                 if (!key.empty()) {
                     if (all.contains(key)) {
@@ -1313,43 +1325,96 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     // === config (remaining) ==============================================
 
     {
+        // config.set — bidirectional key table: cmd key name → JSON file key name.
+        // Precedence contract: env vars beat the JSON file. config.set writes to the JSON
+        // file, so it is overridden by SMATCHET_* env vars if both are set simultaneously.
+        // Keys marked (restart) require the app or MCP plugin to restart to take effect;
+        // all others are picked up on the next ConfigManager::Load() call (next sync, etc.).
+        //
+        // Credentials (ApiToken, PlaneApiKey, McpAuthToken) are NOT in this table — use
+        // SMATCHET_TRACKER_TOKEN / SMATCHET_MCP_AUTH_TOKEN env vars for secrets.
+        struct CfgKey { const char* cmd; const char* json; const char* hint; };
+        static const CfgKey kKeys[] = {
+            {"readOnlyMode",              "read_only_mode",              ""},
+            {"logMinLevel",               "log_min_level",               ""},
+            {"logTrackerHttpBodies",      "log_tracker_http_bodies",     ""},
+            {"showPerformance",           "show_performance_window",     ""},
+            {"showLogWindow",             "show_log_window",             ""},
+            {"enableFieldOverflowTooltips","field_overflow_tooltips",    ""},
+            {"jqlQuery",                  "jql",                         "takes effect on next sync"},
+            {"domain",                    "domain",                      "restart required to reconnect"},
+            {"email",                     "email",                       "restart required to reconnect"},
+            {"projectKey",                "project_key",                 ""},
+            {"trackerType",               "tracker_type",                "restart required"},
+            {"planeUrl",                  "plane_url",                   "restart required to reconnect"},
+            {"planeWorkspaceSlug",        "plane_workspace_slug",        "restart required to reconnect"},
+            {"planeProjectId",            "plane_project_id",            "restart required to reconnect"},
+            {"mcpEnabled",                "mcp_enabled",                 "MCP plugin restart required"},
+            {"mcpPort",                   "mcp_port",                    "MCP plugin restart required"},
+            {"mcpAllowRemote",            "mcp_allow_remote",            "MCP plugin restart required"},
+            {"mcpAllowLuaExecution",      "mcp_allow_lua_execution",     "MCP plugin restart required"},
+            {nullptr, nullptr, nullptr},
+        };
+
         Command c = MakeCommand(
             "config.set",
-            "Persist one config key to smatchet_config.json.",
+            "Persist one config key to smatchet_config.json (allowlisted; env vars override).",
             [](const nlohmann::json& args, CommandContext& ctx) {
-                const std::string key   = args.value("key",   std::string());
-                const nlohmann::json val= args.value("value", nlohmann::json());
-                // Allowlist — only expose keys that are safe to set without restarting.
-                static const char* kAllowed[] = {
-                    "readOnlyMode", "logMinLevel", "showPerformance",
-                    "showLogWindow", "enableFieldOverflowTooltips", nullptr
-                };
-                bool allowed = false;
-                for (int i = 0; kAllowed[i]; ++i) {
-                    if (key == kAllowed[i]) { allowed = true; break; }
+                const std::string key = args.value("key", std::string());
+                // Parse the string value as JSON first (handles true/false/integers).
+                // Fall back to a plain JSON string so bare values like `debug` work.
+                const std::string rawVal = args.value("value", std::string());
+                nlohmann::json val;
+                try {
+                    val = nlohmann::json::parse(rawVal);
+                } catch (...) {
+                    val = rawVal;  // treat as plain string
                 }
-                if (!allowed) {
+                const CfgKey* found = nullptr;
+                for (int i = 0; kKeys[i].cmd; ++i) {
+                    if (key == kKeys[i].cmd) { found = &kKeys[i]; break; }
+                }
+                if (!found) {
+                    std::string allowed;
+                    for (int i = 0; kKeys[i].cmd; ++i) {
+                        if (i) allowed += ", ";
+                        allowed += kKeys[i].cmd;
+                    }
                     return CommandResult::Failure(ErrorCode::ValidationError,
                         "Key '" + key + "' is not in the config.set allowlist.",
-                        "Allowed: readOnlyMode, logMinLevel, showPerformance, showLogWindow, "
-                        "enableFieldOverflowTooltips.");
+                        "Allowed: " + allowed);
                 }
                 if (ctx.DryRun) {
-                    return CommandResult::Success({{"wouldDo", {{"key", key}, {"value", val}}}});
+                    return CommandResult::Success({{"wouldDo",
+                        {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
                 }
-                // Read-merge-write pattern.
-                TrackerConfig cfg = ConfigManager::Load();
                 nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-                cfgJson[key] = val;
+                cfgJson[found->json] = val;
                 ConfigManager::WriteConfigJson(cfgJson);
-                return CommandResult::Success({{"key", key}, {"value", val}, {"written", true}});
+                // Invalidate the Load() cache so next call picks up the new value.
+                ConfigManager::InvalidateCache();
+                nlohmann::json out;
+                out["key"]     = key;
+                out["jsonKey"] = found->json;
+                out["value"]   = val;
+                out["written"] = true;
+                if (found->hint && found->hint[0]) {
+                    out["hint"] = std::string(found->hint);
+                }
+                return CommandResult::Success(std::move(out));
             });
-        c.Destructive = true;
+        c.Destructive = false;   // Config edits are easily undone; --yes would be friction.
+        c.Idempotent = false;
         c.DryRunSupported = true;
+        c.Description = "cmd-key → JSON-key mapping is bidirectional with config.get. "
+                        "Credentials (token, apiKey) are not settable via this command; "
+                        "use SMATCHET_TRACKER_TOKEN env var instead.";
         c.Params = {
-            PString("key",   "Config key name (allowlisted set).", true),
-            {[]{ ParamSpec p; p.Name="value"; p.Type=ParamType::Json; p.Required=true;
-                 p.Description="New value (any JSON scalar or bool)."; return p; }()},
+            PString("key",   "Config key name (camelCase, from config.get).", true),
+            // String type: bare values like `debug` and `true` both work.
+            // The handler parses JSON (for bools/ints) then falls back to treating
+            // the input as a plain string so users don't need to escape quotes.
+            PString("value", "New value — plain string, bool (true/false), or integer.", true),
         };
         reg.Register(std::move(c));
     }
@@ -1381,6 +1446,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                 TrackerConfig cfg = ConfigManager::Load();
                 cfg.ReadOnlyMode = on;
                 ConfigManager::Save(cfg);
+                ConfigManager::InvalidateCache();
                 return CommandResult::Success({{"readOnlyMode", on}});
             });
         c.Destructive = true;
@@ -1408,8 +1474,9 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                     return CommandResult::Success({{"wouldDo", {{"showPerformance", newOpen}}}});
                 }
                 nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-                cfgJson["show_performance"] = newOpen;
+                cfgJson["show_performance_window"] = newOpen;
                 ConfigManager::WriteConfigJson(cfgJson);
+                ConfigManager::InvalidateCache();
                 return CommandResult::Success({{"showPerformance", newOpen}});
             });
         c.DryRunSupported = true;

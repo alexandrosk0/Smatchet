@@ -289,6 +289,10 @@ class ConfigManager {
     static std::string NormalizeUiLanguageCode(const std::string& code);
     static void WriteConfigJson(const nlohmann::json& j);
 
+    /// Invalidate the in-process Load() cache so the next call re-reads from disk.
+    /// Call after WriteConfigJson() to ensure the change is visible without restarting.
+    static void InvalidateCache();
+
     static void Save(const TrackerConfig& config);
     static BlameAnalysisConfig LoadBlameAnalysis();
     static void SaveBlameAnalysis(const BlameAnalysisConfig& b);
