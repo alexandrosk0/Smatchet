@@ -18,7 +18,12 @@
 
 namespace {
 
-constexpr size_t kMaxCacheEntries = 96;
+// Bumped from 96 → 384 to cover busy grids: a typical view shows 20+ rows × 4-6 icon-bearing
+// columns (priority, status, type, assignee avatar, attachment) = 80-120 distinct textures;
+// with the old cap, scrolling caused constant eviction → priority/status memo entries became
+// stale → slow-path re-resolution every frame. Each entry holds an `ImTextureData*` whose
+// pixel storage is ~16-64 KB; 384 × 64 KB ≈ 24 MB worst-case GPU memory — negligible.
+constexpr size_t kMaxCacheEntries = 384;
 constexpr size_t kMaxFileReadBytes = 4u * 1024u * 1024u;
 constexpr int kMaxIconDimension = 512;
 
