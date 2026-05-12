@@ -738,6 +738,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                     }
                     ImGui::PopID();
                 }
+                SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
                 ImGui::EndChild();
             }
             ImGui::EndChild();
@@ -783,6 +784,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 }
                 ImGui::PopID();
             }
+            SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
             ImGui::EndChild();
 
             ImGui::TextDisabled("Tip: Add or remove columns from the Fields tab. Resize columns directly in the grid.");
@@ -868,6 +870,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                     d.viewsDirty = true;
                 }
             }
+            SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
             ImGui::EndChild();
 
             // + Add sort key (popup picker scoped to current column order).
