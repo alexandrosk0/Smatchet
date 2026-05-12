@@ -6,7 +6,6 @@
 #include "Logger.h"
 #include "StringUtil.h"
 
-
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -18,6 +17,7 @@ void ParseTrackerUserObject(const nlohmann::json& user, TrackerUser& out) {
     out.AccountId = user.value("accountId", std::string());
     out.DisplayName = user.value("displayName", std::string());
     out.EmailAddress = user.value("emailAddress", std::string());
+    out.AccountType = user.value("accountType", std::string());
     out.Active = user.value("active", true);
 }
 
@@ -57,6 +57,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
             TrackerUser.AccountId = user.value("accountId", std::string());
             TrackerUser.DisplayName = user.value("displayName", std::string());
             TrackerUser.EmailAddress = user.value("emailAddress", std::string());
+            TrackerUser.AccountType = user.value("accountType", std::string());
             TrackerUser.Active = user.value("active", true);
 
             if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
@@ -65,7 +66,8 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
             }
 
             if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
-                const std::string suffix = TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
+                const std::string suffix =
+                    TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
                 TrackerUser.DisplayName += "_" + suffix;
             }
 
@@ -231,9 +233,9 @@ bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string&
     return true;
 }
 
-bool JiraClient::FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outVoters,
-                                 std::string& outError, int* outVoteCount, bool* outHasVoted,
-                                 bool* outVotersArrayInResponse) {
+bool JiraClient::FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey,
+                                 std::vector<TrackerUser>& outVoters, std::string& outError, int* outVoteCount,
+                                 bool* outHasVoted, bool* outVotersArrayInResponse) {
     outVoters.clear();
     outError.clear();
     if (outVoteCount) {
@@ -309,8 +311,8 @@ bool JiraClient::FetchIssueVotes(const TrackerConfig& cfg, const std::string& is
     return true;
 }
 
-bool JiraClient::SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,
-                                    std::string& outError) {
+bool JiraClient::SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query,
+                                    std::vector<TrackerUser>& outUsers, std::string& outError) {
     outUsers.clear();
     outError.clear();
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
@@ -401,12 +403,3 @@ bool JiraClient::FetchUserGroupNames(const TrackerConfig& cfg, const std::string
     }
     return true;
 }
-
-
-
-
-
-
-
-
-

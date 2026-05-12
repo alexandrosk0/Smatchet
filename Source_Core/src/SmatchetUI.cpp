@@ -643,6 +643,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             if (result.Ok) {
                 app.SetFieldCatalog(std::move(result.Fields), std::move(result.Components),
                                     std::move(result.IssueTypeMeta), std::string());
+                // Push the fetched user list into the AppController cache so JQL
+                // autocomplete can suggest assignees / reporters by display name.
+                app.SetAvailableUsers(std::move(result.Users));
                 d.fieldCatalogWarning = result.Warning;
                 if (!d.fieldCatalogWarning.empty()) {
                     LOG_WARN("SmatchetUI: users fetch warning: %s", d.fieldCatalogWarning.c_str());
@@ -650,6 +653,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             } else {
                 app.SetFieldCatalog(
                     {}, {}, result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error);
+                app.SetAvailableUsers({});
                 d.fieldCatalogWarning.clear();
             }
         } catch (const std::exception& ex) {

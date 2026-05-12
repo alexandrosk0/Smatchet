@@ -26,7 +26,6 @@
 #include "TrackerFieldSchema.h"
 #include "TrackerFieldValueUtils.h"
 
-
 namespace {
 
 bool IsSprintField(const TrackerField& field) {
@@ -132,6 +131,11 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     SetFieldCatalog(std::move(fields), std::move(components), {}, error);
 }
 
+void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
+    std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+    AvailableUsers = std::move(users);
+}
+
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
@@ -142,9 +146,9 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         if (IsTrackerTransportErrorText(error)) {
             if (!AvailableFields.empty()) {
                 LastTrackerFieldCatalogError.clear();
-                const std::string nextWarning =
-                    std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
-                    " field catalog. Last fetch failed: " + error;
+                const std::string nextWarning = std::string("Offline: using cached ") +
+                                                (catalogPlane ? "Plane" : "Jira") +
+                                                " field catalog. Last fetch failed: " + error;
                 if (nextWarning != LastTrackerFieldCatalogWarning) {
                     LastTrackerFieldCatalogWarning = nextWarning;
                     TrackerFieldCatalogRevision.fetch_add(1);
@@ -164,9 +168,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                 AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
                 fieldCatalogEverLoaded_ = true;
                 LastTrackerFieldCatalogError.clear();
-                LastTrackerFieldCatalogWarning =
-                    std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
-                    " field catalog from local snapshot. Last fetch failed: " + error;
+                LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
+                                                 " field catalog from local snapshot. Last fetch failed: " + error;
                 if (!catalogPlane) {
                     for (auto& field : AvailableFields) {
                         if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
@@ -197,8 +200,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
             fieldCatalogEverLoaded_ = false;
             LastTrackerFieldCatalogWarning.clear();
             LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
-                                        " field catalog available. " +
-                                        (error.empty() ? std::string("Last fetch failed.") : error);
+                                           " field catalog available. " +
+                                           (error.empty() ? std::string("Last fetch failed.") : error);
             TrackerFieldCatalogRevision.fetch_add(1);
             LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
             return;
@@ -327,7 +330,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
 
     nlohmann::json valuePayload;
     if (!Backend->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
-        LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s", 
+        LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s",
                  issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
     }
@@ -784,8 +787,8 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
     nlohmann::json fieldsPayload;
     if (!backend.BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
-        LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", 
-                 issueId.c_str(), field.Id.c_str(), outError.c_str());
+        LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
+                 field.Id.c_str(), outError.c_str());
         return false;
     }
 
@@ -845,10 +848,10 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
         updatedTicket.fieldValues[field.Id] = displayValue;
         UpdateTicket(updatedTicket);
-        BackendAuditTrail::AppendResult("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
-                                        nlohmann::json{{"field_id", field.Id},
-                                                       {"before", ticketIt->GetFieldValue(field.Id)},
-                                                       {"after", displayValue}});
+        BackendAuditTrail::AppendResult(
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
+            nlohmann::json{
+                {"field_id", field.Id}, {"before", ticketIt->GetFieldValue(field.Id)}, {"after", displayValue}});
     } else {
         RefreshLocalData();
         BackendAuditTrail::AppendResult(
@@ -866,8 +869,8 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                                                const std::string& remainingEstimateSnapshot,
                                                const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
     outResult = FieldEditResult{};
-    LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu",
-              FieldEditAuditSource::Current(), issueId.c_str(), field.Id.c_str(), rawValues.size());
+    LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu", FieldEditAuditSource::Current(),
+              issueId.c_str(), field.Id.c_str(), rawValues.size());
     if (ConfigManager::Load().ReadOnlyMode) {
         outResult.Error = "Read-only mode is enabled in Preferences.";
         LOG_WARN("AppController::SubmitFieldEditNetworkOnly blocked by read-only mode issue=%s field=%s",
@@ -1092,7 +1095,8 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount, outHasVoted, outVotersInResponse);
+    const bool ok =
+        Backend->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount, outHasVoted, outVotersInResponse);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1102,7 +1106,7 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
 }
 
 bool AppController::SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
-                                           std::string& outError) const {
+                                       std::string& outError) const {
     outUsers.clear();
     outError.clear();
     if (!Backend) {
@@ -1121,7 +1125,7 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
 }
 
 bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
-                                             std::string& outError) {
+                                         std::string& outError) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1143,9 +1147,9 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
 }
 
 bool AppController::SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
-                                   const std::string& timeRemaining, const std::string& adjustEstimate,
-                                   const std::string& workDescription, const std::string& startedDate,
-                                   std::string& outError) {
+                                  const std::string& timeRemaining, const std::string& adjustEstimate,
+                                  const std::string& workDescription, const std::string& startedDate,
+                                  std::string& outError) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1157,7 +1161,8 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate, workDescription, startedDate, outError);
+    const bool ok = Backend->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate, workDescription,
+                                        startedDate, outError);
     if (!ok) {
         LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outError.c_str());
     } else {
@@ -1168,10 +1173,10 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
 }
 
 bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
-                                                    const std::string& functionName, const std::string& filePath,
-                                                    const int lineNumber, const std::string& changelist,
-                                                    const std::string& date, const bool approximated,
-                                                    const std::string& codeSnippet, std::string& outError) {
+                                                const std::string& functionName, const std::string& filePath,
+                                                const int lineNumber, const std::string& changelist,
+                                                const std::string& date, const bool approximated,
+                                                const std::string& codeSnippet, std::string& outError) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1184,7 +1189,7 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
-                                                             changelist, date, approximated, codeSnippet, outError);
+                                                         changelist, date, approximated, codeSnippet, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
@@ -1195,7 +1200,7 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
 }
 
 bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
-                                            std::string& outError) const {
+                                        std::string& outError) const {
     outGroupNames.clear();
     outError.clear();
     if (!Backend) {
@@ -1205,16 +1210,10 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
     const TrackerConfig cfg = ConfigManager::Load();
     const bool ok = Backend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
-        LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s",
-                  TruncateForLog(accountId, 40).c_str(), outError.c_str());
+        LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s", TruncateForLog(accountId, 40).c_str(),
+                  outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     }
     return ok;
 }
-
-
-
-
-
-

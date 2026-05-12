@@ -78,7 +78,7 @@ static void RunSuggestBuild(TrackerQuerySuggestKind kind, const char* buf, int b
  * Returns the new cursor position (end of inserted text).
  */
 static int ApplyInlineReplace(ImGuiInputTextCallbackData* data, int replaceStart, int replaceEnd,
-                              const std::string& ins) {
+                              const std::string& ins, int caretOffset = -1) {
     replaceStart = (std::max)(0, (std::min)(replaceStart, data->BufTextLen));
     replaceEnd = (std::max)(replaceStart, (std::min)(replaceEnd, data->BufTextLen));
     const int deleteLen = replaceEnd - replaceStart;
@@ -88,10 +88,26 @@ static int ApplyInlineReplace(ImGuiInputTextCallbackData* data, int replaceStart
     if (!ins.empty()) {
         data->InsertChars(replaceStart, ins.c_str(), ins.c_str() + ins.size());
     }
-    const int newCursor = replaceStart + static_cast<int>(ins.size());
+    const int endCursor = replaceStart + static_cast<int>(ins.size());
+    int newCursor = endCursor;
+    if (caretOffset >= 0 && caretOffset <= static_cast<int>(ins.size())) {
+        newCursor = replaceStart + caretOffset;
+    }
     data->CursorPos = newCursor;
     data->SelectionStart = data->SelectionEnd = newCursor;
     return newCursor;
+}
+
+/** Strip the \x7F caret-anchor sentinel from `text` (used by JQL function suggestions like
+ *  `membersOf("\x7F")` so the caret lands between the parens on insert). Returns the byte
+ *  offset where the sentinel was, or -1 if not present. */
+static int StripCaretAnchorSentinel(std::string& text) {
+    const std::string::size_type pos = text.find('\x7F');
+    if (pos == std::string::npos) {
+        return -1;
+    }
+    text.erase(pos, 1);
+    return static_cast<int>(pos);
 }
 
 } // namespace
@@ -104,6 +120,7 @@ bool TrackerQueryAcp_QueueApplyReplacement(UiDrawSession& d, const QuerySuggestB
     d.jqlAcpReplaceStart = b.ReplaceStart;
     d.jqlAcpReplaceEnd = b.ReplaceEnd;
     d.jqlAcpReplaceText = b.Items[static_cast<size_t>(index)].Insert;
+    d.jqlAcpReplaceCaretOffset = StripCaretAnchorSentinel(d.jqlAcpReplaceText);
     d.jqlAcpApplyReplace = true;
     d.jqlAcpListDismissed = false;
     // Always re-focus: both keyboard (Enter may deactivate InputText) and mouse (popup click
@@ -169,19 +186,25 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
         if (d != nullptr && d->jqlAcpApplyReplace) {
             d->jqlAcpApplyReplace = false;
             d->jqlAcpListSelected = -1;
-            ApplyInlineReplace(data, d->jqlAcpReplaceStart, d->jqlAcpReplaceEnd, d->jqlAcpReplaceText);
+            const int caretOffset = d->jqlAcpReplaceCaretOffset;
+            ApplyInlineReplace(data, d->jqlAcpReplaceStart, d->jqlAcpReplaceEnd, d->jqlAcpReplaceText, caretOffset);
             d->jqlAcpReplaceStart = -1;
             d->jqlAcpReplaceEnd = -1;
             d->jqlAcpReplaceText.clear();
+            d->jqlAcpReplaceCaretOffset = -1;
             // Sync the external buf so it reflects what ImGui has internally.
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d->viewJqlBuf, data->Buf);
-            // Force cursor+scroll to end for a few more frames so ImGui's re-init (from SetKeyboardFocusHere)
-            // does not leave the scroll position at 0.
-            d->jqlAcpCaretSnapFramesRemaining = 3;
+            // Force cursor+scroll to end for a few more frames so ImGui's re-init (from
+            // SetKeyboardFocusHere) does not leave the scroll at 0. Skip this when a
+            // mid-insert caret was requested — the snap-to-end logic would fight the
+            // caret position we just set inside the parens.
+            if (caretOffset < 0) {
+                d->jqlAcpCaretSnapFramesRemaining = 3;
+            }
         }
 
-        RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
-                        *ud->app, *ud->suggestBuild, ud->meta);
+        RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
+                        data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
         if (d != nullptr) {
             MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
         }
@@ -254,14 +277,14 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, const ImVec2& fieldRectMin, con
     for (int i = 0; i < n; ++i) {
         const bool sel = (i == d.jqlAcpListSelected);
         const ImGuiSelectableFlags flags =
-            ImGuiSelectableFlags_NoAutoClosePopups |
-            (sel ? ImGuiSelectableFlags_Highlight : ImGuiSelectableFlags_None);
+            ImGuiSelectableFlags_NoAutoClosePopups | (sel ? ImGuiSelectableFlags_Highlight : ImGuiSelectableFlags_None);
         const bool rowPress = ImGui::Selectable(mergedItems[static_cast<size_t>(i)].Label.c_str(), sel, flags);
         const bool reclickSelected = sel && ImGui::IsItemClicked(0);
         if (rowPress || reclickSelected) {
             d.jqlAcpReplaceStart = syncBuild.ReplaceStart;
             d.jqlAcpReplaceEnd = syncBuild.ReplaceEnd;
             d.jqlAcpReplaceText = mergedItems[static_cast<size_t>(i)].Insert;
+            d.jqlAcpReplaceCaretOffset = StripCaretAnchorSentinel(d.jqlAcpReplaceText);
             d.jqlAcpApplyReplace = true;
             d.jqlAcpListDismissed = false;
             d.jqlAcpWantsJqlInputFocus = true;

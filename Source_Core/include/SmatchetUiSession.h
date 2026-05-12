@@ -193,6 +193,10 @@ struct UiDrawSession {
     int jqlAcpReplaceEnd = -1;
     std::string jqlAcpReplaceText;
     bool jqlAcpApplyReplace = false;
+    /** If >= 0, override the post-insert cursor to this many bytes INTO the replace text
+     *  (used by JQL function suggestions like `membersOf("…")` so the caret lands between
+     *  the parens). -1 = default behaviour (cursor at end of inserted text). */
+    int jqlAcpReplaceCaretOffset = -1;
     int jqlAcpListSelected = -1;
     /** Set after JQL apply from popup; next frame: refocus JQL so typing continues. */
     bool jqlAcpWantsJqlInputFocus = false;

@@ -61,6 +61,11 @@ struct TrackerUser {
     std::string AccountId;
     std::string DisplayName;
     std::string EmailAddress;
+    /// Jira `accountType` from `/rest/api/3/users/search`: "atlassian" (human),
+    /// "app" (Connect / Forge integrations), "customer" (Jira Service Management
+    /// portal users). Empty when the source backend didn't surface this metadata.
+    /// Used by JQL autocomplete to suppress non-human accounts.
+    std::string AccountType;
     bool Active = true;
 };
 
@@ -79,10 +84,3 @@ struct TrackerFieldCatalogResult {
     std::vector<TrackerUser> Users;
     std::string Warning;
 };
-
-
-
-
-
-
-
