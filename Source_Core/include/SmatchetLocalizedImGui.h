@@ -9,8 +9,15 @@ namespace SmatchetLocalizedImGui {
 
 using namespace ::ImGui;
 
+// VS Code shell: every panel routed through this wrapper picks up NoCollapse + NoMove,
+// belt-and-braces alongside the dockspace-wide ImGuiDockNodeFlags_NoUndocking set at
+// SmatchetImGuiHost.cpp DockSpaceOverViewport. Floating popouts (Watchers / Votes /
+// Attachment Preview) bypass this by calling ::ImGui::Begin directly with NoDocking.
+constexpr ImGuiWindowFlags kSmatchetPanelFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove;
+
 inline bool Begin(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0) {
-    return ::ImGui::Begin(SmatchetLocalization::WindowTitleFromSource(name), p_open, flags);
+    return ::ImGui::Begin(SmatchetLocalization::WindowTitleFromSource(name), p_open,
+                          flags | kSmatchetPanelFlags);
 }
 
 inline bool BeginPopupModal(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0) {
