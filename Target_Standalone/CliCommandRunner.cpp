@@ -47,6 +47,79 @@ constexpr int kExitNotConnected = 6;
 constexpr int kExitTransport = 7;
 // 8 (timeout) + 9 (dry-run-unsupported) are reachable once spawn/dry-run land.
 
+// ============================================================================
+// Safe JSON value extractors — never throw on type mismatch or missing keys.
+// ParseArgs stores every --key=value as a string, and external responses can
+// have any shape; defensive reads avoid type_error.302 from nlohmann.
+// ============================================================================
+
+bool SafeBool(const nlohmann::json& j, const char* key, bool fallback) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_boolean()) return v.get<bool>();
+        if (v.is_number_integer()) return v.get<long long>() != 0;
+        if (v.is_string()) {
+            const std::string s = v.get<std::string>();
+            return s == "true" || s == "1" || s == "yes" || s == "on";
+        }
+        return fallback;
+    } catch (...) { return fallback; }
+}
+
+std::string SafeString(const nlohmann::json& j, const char* key, const std::string& fallback = {}) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_string()) return v.get<std::string>();
+        if (v.is_null()) return fallback;
+        // Numeric / boolean → stringify for display purposes.
+        return v.dump();
+    } catch (...) { return fallback; }
+}
+
+int SafeInt(const nlohmann::json& j, const char* key, int fallback) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_number_integer()) return static_cast<int>(v.get<long long>());
+        if (v.is_number_float())   return static_cast<int>(v.get<double>());
+        if (v.is_string()) {
+            try { return std::stoi(v.get<std::string>()); } catch (...) { return fallback; }
+        }
+        return fallback;
+    } catch (...) { return fallback; }
+}
+
+/// Return j[key] as a nested object, or an empty object on any mismatch.
+nlohmann::json SafeObject(const nlohmann::json& j, const char* key) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return nlohmann::json::object();
+        const auto& v = j[key];
+        return v.is_object() ? v : nlohmann::json::object();
+    } catch (...) { return nlohmann::json::object(); }
+}
+
+/// Try to parse a JSON document; returns true on success.
+bool SafeParseJson(const std::string& text, nlohmann::json& out) {
+    try { out = nlohmann::json::parse(text); return true; }
+    catch (...) { out = nlohmann::json::object(); return false; }
+}
+
+/// Build a canonical error envelope without ever throwing.
+nlohmann::json MakeErrorEnvelope(const std::string& command, const std::string& code,
+                                 const std::string& message, const std::string& hint = {}) {
+    nlohmann::json env;
+    env["ok"] = false;
+    env["command"] = command;
+    nlohmann::json err;
+    err["code"] = code;
+    err["message"] = message;
+    if (!hint.empty()) err["hint"] = hint;
+    env["error"] = std::move(err);
+    return env;
+}
+
 int ExitCodeForErrorCode(const std::string& code) {
     if (code == "ok") return kExitOk;
     if (code == "unknown-command") return kExitUnknownCommand;
@@ -365,7 +438,13 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 
 void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     if (!quiet) {
-        std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+        try {
+            std::fprintf(stdout, "%s\n",
+                pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+        } catch (...) {
+            std::fprintf(stdout, "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
+                                 "\"message\":\"failed to serialize envelope\"}}\n");
+        }
         return;
     }
     // Quiet: extract a primary value for shell pipelines. Heuristic:
@@ -373,11 +452,12 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     //   - else if data.items[] is a list of objects with `id`: emit id one-per-line
     //   - else if data is a scalar: emit it bare
     //   - else fall back to compact JSON (still parseable)
-    if (!envelope.value("ok", false)) {
+    if (!SafeBool(envelope, "ok", false)) {
         // Errors still go through stderr below; nothing to extract.
         return;
     }
-    const nlohmann::json& data = envelope.value("data", nlohmann::json::object());
+    nlohmann::json data = SafeObject(envelope, "data");
+    // If data wasn't an object, fall through using empty object — quiet output skips.
     if (data.contains("items") && data["items"].is_array()) {
         for (const auto& it : data["items"]) {
             if (it.is_string()) {
@@ -425,17 +505,21 @@ nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
     } else {
         result = &body;
     }
-    if (result->contains("content") && (*result)["content"].is_array() &&
-        !(*result)["content"].empty() && (*result)["content"][0].contains("text")) {
-        const std::string text = (*result)["content"][0]["text"].get<std::string>();
-        try {
-            return nlohmann::json::parse(text);
-        } catch (...) {
+    try {
+        if (result->contains("content") && (*result)["content"].is_array() &&
+            !(*result)["content"].empty() && (*result)["content"][0].is_object() &&
+            (*result)["content"][0].contains("text") &&
+            (*result)["content"][0]["text"].is_string()) {
+            const std::string text = (*result)["content"][0]["text"].get<std::string>();
+            nlohmann::json parsed;
+            if (SafeParseJson(text, parsed)) return parsed;
             nlohmann::json env;
             env["ok"] = true;
             env["data"] = text;
             return env;
         }
+    } catch (...) {
+        // Fall through — return result as-is below.
     }
     return *result;
 }
@@ -461,6 +545,7 @@ nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
 /// Launches a hidden ephemeral app instance, sends the command, waits for results, quits the app.
 int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
                 const nlohmann::json& argsToSendRaw) {
+    try {
     // Normalize outPath: relative paths must be made absolute so both processes agree on location.
     const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
     const std::string exePath = GetExePath();
@@ -537,15 +622,36 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
         return kExitTransport;
     }
 
-    const nlohmann::json envelope = ExtractEnvelopeFromMcpResult(
-        nlohmann::json::parse(res->body));
+    nlohmann::json parsedBody;
+    if (!SafeParseJson(res->body, parsedBody)) {
+        nlohmann::json env = MakeErrorEnvelope(commandName, "transport",
+            "--spawn: server returned non-JSON response (status " +
+            std::to_string(res->status) + ").");
+        EmitErrorToStderr(env);
+        // Best-effort quit.
+        nlohmann::json qb;
+        qb["name"] = "app.quit";
+        qb["arguments"] = {{"__confirm", true}};
+        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
+        return kExitTransport;
+    }
+
+    nlohmann::json envelope;
+    try {
+        envelope = ExtractEnvelopeFromMcpResult(parsedBody);
+    } catch (...) {
+        envelope = MakeErrorEnvelope(commandName, "transport",
+            "--spawn: failed to extract envelope from response.");
+    }
+
+    nlohmann::json envData = SafeObject(envelope, "data");
+    const bool isAsync = SafeBool(envelope, "ok", false) &&
+                         SafeBool(envData, "running", false) &&
+                         envData.contains("outPath") && envData["outPath"].is_string();
 
     // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
-    if (envelope.value("ok", false) &&
-        envelope["data"].value("running", false) &&
-        envelope["data"].contains("outPath")) {
-
-        const std::string outPath = envelope["data"]["outPath"].get<std::string>();
+    if (isAsync) {
+        const std::string outPath = SafeString(envData, "outPath");
         std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n",
                      frames, frames / 60);
         const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
@@ -599,9 +705,9 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
     } else {
         // Non-async command: emit envelope directly.
         EmitEnvelope(envelope, pa.pretty, pa.quiet);
-        if (!envelope.value("ok", false)) {
-            const std::string code = envelope.value("error",
-                nlohmann::json::object()).value("code", "");
+        if (!SafeBool(envelope, "ok", false)) {
+            const nlohmann::json errObj = SafeObject(envelope, "error");
+            const std::string code = SafeString(errObj, "code");
             nlohmann::json quitBody;
             quitBody["name"] = "app.quit";
             quitBody["arguments"] = {{"__confirm", true}};  // app.quit is Destructive
@@ -617,6 +723,18 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
     quitBody["arguments"] = {{"__confirm", true}};
     cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
     return kExitOk;
+    } catch (const std::exception& e) {
+        nlohmann::json env = MakeErrorEnvelope(commandName, "handler-error",
+            std::string("--spawn: internal error: ") + e.what());
+        try { EmitErrorToStderr(env); } catch (...) {}
+        return kExitHandler;
+    } catch (...) {
+        std::fprintf(stderr,
+            "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
+            "\"message\":\"--spawn: unknown internal exception.\"}}\n",
+            commandName.c_str());
+        return kExitHandler;
+    }
 }
 
 }  // namespace
@@ -635,7 +753,23 @@ bool IsEphemeralMode(int argc, char** argv) {
     return false;
 }
 
+/// Last-resort terminate handler installed by RunCmdAttach. Emits a minimal canonical
+/// error envelope to stderr without invoking destructors (which themselves could throw).
+[[noreturn]] static void CliTerminateHandler() {
+    // Avoid nlohmann::json — could throw again. Use a fixed literal.
+    std::fprintf(stderr,
+        "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+        "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
+    std::_Exit(4);  // matches kExitHandler — bypass destructors.
+}
+
 int RunCmdAttach(int argc, char** argv) {
+    // Defense-in-depth: any uncaught throw inside this function is caught and converted
+    // to a canonical error envelope below. std::terminate handler catches the case where
+    // an exception escapes even that (double-throw, noexcept violation, stack corruption).
+    std::set_terminate(&CliTerminateHandler);
+
+    try {
     ParsedArgs pa;
     std::string parseErr;
     if (!ParseArgs(argc, argv, pa, parseErr)) {
@@ -659,10 +793,10 @@ int RunCmdAttach(int argc, char** argv) {
             size_t n;
             while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) json.append(buf, n);
             std::fclose(f);
-            try {
-                const auto j = nlohmann::json::parse(json);
-                const int instPort = j.value("port", 0);
-                const long long instPid = j.value("pid", 0LL);
+            nlohmann::json j;
+            if (SafeParseJson(json, j) && j.is_object()) try {
+                const int instPort = SafeInt(j, "port", 0);
+                const long long instPid = static_cast<long long>(SafeInt(j, "pid", 0));
                 // Verify the PID is still alive before trusting this port.
                 bool pidAlive = false;
 #if defined(_WIN32)
@@ -771,7 +905,14 @@ int RunCmdAttach(int argc, char** argv) {
         return kExitTransport;
     }
 
-    nlohmann::json envelope = ExtractEnvelopeFromMcpResult(parsed);
+    nlohmann::json envelope;
+    try {
+        envelope = ExtractEnvelopeFromMcpResult(parsed);
+    } catch (...) {
+        envelope = MakeErrorEnvelope(toolName, "transport",
+            "Failed to extract envelope from MCP response.");
+    }
+    if (!envelope.is_object()) envelope = nlohmann::json::object();
     if (!envelope.contains("ok")) {
         nlohmann::json wrap;
         wrap["ok"] = true;
@@ -781,10 +922,11 @@ int RunCmdAttach(int argc, char** argv) {
     }
 
     // --tokens: estimate size from serialized data, print to stderr, produce no stdout.
-    if (doTokenEstimate && envelope.value("ok", false)) {
-        const std::string dataStr = envelope.contains("data")
-                                        ? envelope["data"].dump()
-                                        : std::string("{}");
+    if (doTokenEstimate && SafeBool(envelope, "ok", false)) {
+        std::string dataStr;
+        try {
+            dataStr = envelope.contains("data") ? envelope["data"].dump() : std::string("{}");
+        } catch (...) { dataStr = "{}"; }
         const long long bytes  = static_cast<long long>(dataStr.size());
         const long long tokens = (bytes + 3) / 4;  // rough ASCII heuristic (±30%)
         nlohmann::json estimate;
@@ -794,17 +936,30 @@ int RunCmdAttach(int argc, char** argv) {
         return kExitOk;
     }
 
-    if (envelope.value("ok", false)) {
+    if (SafeBool(envelope, "ok", false)) {
         EmitEnvelope(envelope, pa.pretty, pa.quiet);
         return kExitOk;
     }
 
     // Error path — envelope goes to stderr; exit code from error.code.
     EmitErrorToStderr(envelope);
-    const std::string code = envelope.contains("error") && envelope["error"].contains("code")
-                                 ? envelope["error"]["code"].get<std::string>()
-                                 : std::string("handler-error");
+    const nlohmann::json errObj = SafeObject(envelope, "error");
+    const std::string code = SafeString(errObj, "code", "handler-error");
     return ExitCodeForErrorCode(code);
+
+    } catch (const std::exception& e) {
+        // Catch anything that escaped a lower-level handler. Emit a clean envelope and exit.
+        nlohmann::json env = MakeErrorEnvelope("", "handler-error",
+            std::string("CLI internal error: ") + e.what(),
+            "This is a bug — bad input should produce a structured error, not throw.");
+        try { EmitErrorToStderr(env); } catch (...) {}
+        return kExitHandler;
+    } catch (...) {
+        std::fprintf(stderr,
+            "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+            "\"message\":\"CLI internal error: unknown exception.\"}}\n");
+        return kExitHandler;
+    }
 }
 
 }  // namespace cli
