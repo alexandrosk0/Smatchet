@@ -182,6 +182,11 @@ std::string Command::BuildHelpText() const {
         }
     }
     os << "\n";
+
+    // Agent-friendly tip — humans see plain text here, but agents should fetch the
+    // machine-readable JSON schema. This is the only documented stdout-non-JSON path.
+    os << "\nFor JSON schema (agent-friendly):\n";
+    os << "  SmatchetStandalone.exe cmd commands.help --name=" << Name << "\n";
     return os.str();
 }
 

@@ -86,7 +86,56 @@ int EnvIntOr(const char* name, int fallback) {
     }
 }
 
-void PrintCliHelp(std::FILE* out) {
+// Try to fetch the live catalog and print a categorised summary. Returns true on
+// success, false if no running instance is reachable — caller can show a hint.
+bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int port) {
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(1, 0);
+    cli.set_read_timeout(3, 0);
+    nlohmann::json body;
+    body["name"] = "commands.list";
+    body["arguments"] = nlohmann::json::object();
+    auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+    if (!res || res->status < 200 || res->status >= 300) return false;
+    try {
+        const auto parsed = nlohmann::json::parse(res->body);
+        if (!parsed.contains("content") || !parsed["content"].is_array() ||
+            parsed["content"].empty() || !parsed["content"][0].contains("text")) {
+            return false;
+        }
+        const auto envelope = nlohmann::json::parse(parsed["content"][0]["text"].get<std::string>());
+        if (!envelope.value("ok", false)) return false;
+        const auto items = envelope["data"]["items"];
+        if (!items.is_array() || items.empty()) return false;
+
+        // Group by category, preserving sort order from the registry (alphabetical).
+        std::string lastCategory;
+        std::fprintf(out, "\nAvailable commands (%d total — fetched from running instance):\n",
+                     envelope["data"].value("total", static_cast<int>(items.size())));
+        for (const auto& item : items) {
+            const std::string category = item.value("category", "?");
+            const std::string name     = item.value("name",     "?");
+            const std::string summary  = item.value("summary",  "");
+            const bool destructive     = item.value("destructive", false);
+            if (category != lastCategory) {
+                std::fprintf(out, "\n  [%s]\n", category.c_str());
+                lastCategory = category;
+            }
+            std::fprintf(out, "    %-32s %s%s\n",
+                         name.c_str(),
+                         destructive ? "(destructive) " : "",
+                         summary.c_str());
+        }
+        std::fprintf(out,
+            "\nFor full schema:    SmatchetStandalone.exe cmd commands.help --name=<name>\n"
+            "All commands + schema: SmatchetStandalone.exe cmd commands.list --full --pretty\n");
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void PrintCliHelp(std::FILE* out, const std::string& mcpHost, int mcpPort) {
     std::fprintf(out,
         "Smatchet CLI — unified Command System front-end.\n"
         "\n"
@@ -94,6 +143,8 @@ void PrintCliHelp(std::FILE* out) {
         "  SmatchetStandalone.exe cmd <name> [--key=value ...] [flags]\n"
         "  SmatchetStandalone.exe cmd <name> --help        Show command schema + examples.\n"
         "  SmatchetStandalone.exe cmd commands.list        List all available commands.\n"
+        "  SmatchetStandalone.exe cmd commands.list --full Include params per command.\n"
+        "  SmatchetStandalone.exe cmd commands.search --query=<q>  Fuzzy-find a command.\n"
         "\n"
         "Output flags:\n"
         "  --pretty                Indent stdout JSON (2 spaces).\n"
@@ -110,9 +161,16 @@ void PrintCliHelp(std::FILE* out) {
         "\n"
         "Notes:\n"
         "  - Requires a running Smatchet instance with MCP enabled.\n"
-        "  - Stdout is always JSON (or bare scalars under --quiet). Logs go to stderr.\n"
-        "  - Discovery: cmd commands.list  /  cmd commands.help --name=<name>\n",
+        "  - Stdout is always JSON (or bare scalars under --quiet). Logs go to stderr.\n",
         SmatchetDefaults::Mcp::kDefaultPort);
+
+    // Try to fetch a live command summary so the help is informative on first run.
+    if (!TryAppendLiveCatalogToHelp(out, mcpHost, mcpPort)) {
+        std::fprintf(out,
+            "\n(No running instance detected at %s:%d — start Smatchet with mcp_enabled\n"
+            " to see the live command catalog here. See CLI_GUIDE.md for the full reference.)\n",
+            mcpHost.c_str(), mcpPort);
+    }
 }
 
 bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
@@ -263,11 +321,6 @@ int RunCmdAttach(int argc, char** argv) {
         return kExitValidation;
     }
 
-    if (pa.wantListHelp) {
-        PrintCliHelp(stdout);
-        return kExitOk;
-    }
-
     // Host/port discovery: explicit flag > env > instance.json (PID-verified) > default.
     std::string host = pa.mcpHost.empty() ? EnvOr("SMATCHET_MCP_HOST", "127.0.0.1") : pa.mcpHost;
     int port = pa.mcpPort > 0 ? pa.mcpPort : EnvIntOr("SMATCHET_MCP_PORT", 0);
@@ -308,6 +361,14 @@ int RunCmdAttach(int argc, char** argv) {
         }
     }
     if (port == 0) port = SmatchetDefaults::Mcp::kDefaultPort;
+
+    // Top-level --help: print flag summary + fetch live catalog if possible.
+    // Discovery is much more useful when the user sees what commands actually exist
+    // on first run, so we do this after host/port resolution.
+    if (pa.wantListHelp) {
+        PrintCliHelp(stdout, host, port);
+        return kExitOk;
+    }
 
     // --help for a single command — call commands.help over the wire.
     nlohmann::json argsToSend = pa.args;
