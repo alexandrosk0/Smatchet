@@ -17,15 +17,13 @@ Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("temp:<area>")` from `Source
 - **Always prefix new markers with `temp:`** so cleanup is mechanical (one Grep call).
 - Cover the whole hypothesis tree: the call site, every candidate sub-call, and the surrounding render-plan branch — but read the overhead note below before going deep inside per-cell loops.
 - Pre-existing non-`temp:` scopes stay; do not retag them.
-- Scope names are passed as `const char*` and compared by string equality; **always use a string literal**, not a `std::string::c_str()` from a temporary.
+- Scope names are `const char*`, compared by string equality — always use a **string literal**, not `std::string::c_str()` from a temporary.
 
-**Marker overhead — non-trivial.** Each scope does: 2× `steady_clock::now()`, a mutex lock, and an O(N) linear scan over the working set to find/insert its entry. Per-call cost is ~200-500 ns when ~20 distinct names are active. With 100 cells × 5 nested scopes per cell, that's 100–250 µs/frame just from instrumentation — visible at 144 Hz. Implications:
+**Marker overhead — non-trivial.** Each scope does: 2× `steady_clock::now()`, a mutex lock, and an O(N) linear scan over the working set. Per-call cost is ~200–500 ns with ~20 active names. With 100 cells × 5 nested scopes that's 100–250 µs/frame — visible at 144 Hz. Implications:
 
 - One wrapping scope around the whole hot loop (e.g. the rows-clipper block) is **always safe**.
-- Targeted sub-scopes inside per-cell code are fine if you accept that their own measurements are inflated, and you read them only as **relative** ranking ("which of these three sub-paths dominates"), not absolute ms.
-- Never nest a `temp:` scope inside something that runs millions of times per frame (e.g. a glyph-rendering inner loop). Move the scope outward.
-
-Example pattern when chasing a hot per-cell render — one outer scope, sub-scopes only inside the suspected culprit:
+- Targeted sub-scopes inside per-cell code are fine for **relative** ranking only — their absolute ms values are inflated by instrumentation overhead.
+- Never nest a `temp:` scope inside something that runs millions of times per frame. Move the scope outward.
 
 ```cpp
 void RenderFooCell(...) {
@@ -34,71 +32,68 @@ void RenderFooCell(...) {
         SMATCHET_UI_PERF_SCOPE("temp:RenderFooCell.resolve");
         // ...
     }
-    DrawFoo(...);  // already wrapped in its own non-temp scope, don't double-wrap
+    DrawFoo(...);  // already has its own non-temp scope — don't double-wrap
 }
 ```
 
-### 2. Build & measure
+---
 
-Build first:
+### 2. Build & measure
 
 ```
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 ```
 
-Then pick the appropriate measurement path:
+The CLI is available. Use the highest path that applies:
 
 ---
 
-#### Path A — CLI (preferred)
+#### Path A1 — Named scenario (fully automated)
 
-Requires the command system from `backlog/COMMAND_SYSTEM_PLAN.md` to be implemented. Check availability first:
+**Use when:** the slow path has a registered scenario (check `cmd scenario.list`).
 
-```
-build/ninja-iter-msys2/SmatchetStandalone.exe cmd commands.list
-```
-
-Exit 0 → CLI available. Any other exit or unrecognised output → fall back to **Path B**.
-
-**A1 — Named scenario (fully automated, no user needed):**
-
-Use this when the slow scenario has a registered entry in `ScenarioRunner` (e.g. `priority-grid-scroll`):
+The CLI talks to a running app via MCP HTTP — launch the app first if it isn't already running.
 
 ```bash
+# List available scenarios
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.list
+
+# Run the scenario and capture perf output
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.run \
-  --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --spawn --yes
+  --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --yes
 ```
 
-Then read the result directly — no user paste required:
+`scenario.run` returns immediately with `{ok:true, command:"scenario.run", data:{running:true, outPath:"..."}}`. The scenario executes in the running app's frame loop. Estimated duration: `frames / 60` seconds + a few seconds buffer for startup. Then read the file:
 
 ```python
 Read("perf_before.json")
-# data.rows[] sorted by lastTotalMs descending — pick temp:* entries
+# data.rows[] — sorted by lastTotalMs descending
 ```
 
-**A2 — App already running, ad-hoc scenario:**
+---
 
-Use this when the user is already navigated to the slow screen and you just need to capture a snapshot:
+#### Path A2 — Ad-hoc snapshot (app running, no registered scenario)
+
+**Use when:** no named scenario exists, but the user can navigate to the slow screen manually.
 
 ```bash
-# Reset accumulated data from previous frames
+# Reset so stale data from prior frames doesn't pollute the snapshot
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.reset
 
-# (user reproduces the bad scenario for ~5 s — the only manual step on this path)
+# ← user navigates to the slow screen and reproduces for ~5 s (only manual step)
 
-# Read rows directly into context — no panel, no paste
+# Pull rows directly into context — no panel, no paste
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot --pretty
 ```
 
-Parse `data.rows` from the JSON output. The rows are pre-sorted by `lastTotalMs` descending.
-Filter to `temp:*` entries:
+Filter to `temp:*` rows only:
 
 ```bash
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
   | jq '[.data.rows[] | select(.name | startswith("temp:"))]'
 ```
 
-Also capture the top non-temp rows for context (they show the overall frame budget):
+Top rows for frame-budget context:
 
 ```bash
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
@@ -107,89 +102,191 @@ build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
 
 ---
 
-#### Path B — Manual (fallback when CLI is not yet built)
+#### Path A3 — Extend the CLI with a new scenario
+
+**Use when:** A1 has no matching scenario, and A2 requires too much manual navigation to be repeatable. **Prefer this over manual (Path B)** — a scenario is permanent and usable in future investigations.
+
+**How to add a scenario:**
+
+1. Create `Source_Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario`:
+
+```cpp
+#include "Commands/Scenarios/IScenario.h"
+#include "AppController.h"
+#include "SmatchetUiSession.h"
+#include "UiPerfMonitor.h"
+
+class MySlowPathScenario : public IScenario {
+public:
+    std::string Name() const override { return "my-slow-path"; }
+
+    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+        frames_ = args.value("frames", 600);
+        // Activate the right view, reset perf monitor
+        app.GetUiState().ViewState.Activate(args.value("viewId", std::string("default")));
+        UiPerfMonitor::Instance().Reset();
+    }
+
+    void OnFrame(AppController& app, int /*frameIndex*/) override {
+        // Drive the slow path: scroll, interact, etc.
+        app.GetUiState().scenarioScrollTarget += 8;
+    }
+
+    bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
+
+    nlohmann::json OnFinish(AppController& /*app*/) override {
+        auto rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& r : rows)
+            j.push_back({{"name",r.name},{"lastTotalMs",r.lastTotalMs},
+                         {"avgPerCallMs",r.avgPerCallMs},{"calls",r.calls}});
+        return {{"rows", j}};
+    }
+
+private:
+    int frames_ = 600;
+};
+```
+
+2. Register one line in `Source_Core/src/Commands/BuiltinCommands.cpp` in the scenario registration block:
+
+```cpp
+app.Scenarios().RegisterFactory("my-slow-path",
+    []{ return std::make_unique<MySlowPathScenario>(); });
+```
+
+3. Build, then use Path A1 with `--name=my-slow-path`.
+
+---
+
+#### Path B — Manual (last resort)
+
+**Use only when** the slow path genuinely cannot be driven programmatically (e.g. requires real user typing to trigger, or is a race condition that disappears under automation).
 
 Ask the user to:
+1. Run the rebuilt exe.
+2. Open **`Inspect > Performance Monitor...`**.
+3. Reproduce the bad scenario (same view, same scroll, same row count).
+4. Paste back all rows whose `name` starts with `temp:` plus the top ~10 rows overall.
+5. Optionally report FPS before/after for a sanity check against marker totals.
 
-1. Run the rebuilt exe (`build/ninja-iter-msys2/SmatchetStandalone.exe`).
-2. Open the Perf panel: **menu `Inspect > Performance Monitor...`**.
-3. Reproduce the bad scenario as concretely as possible (e.g. "open a view that includes the priority column, scroll continuously for 5 s") so the panel's per-frame numbers reflect the loaded state, not the idle desktop.
-4. Paste back the rows whose `name` starts with `temp:` — and the top ~10 rows overall so I see what they're competing against.
-5. Optionally: also report the user-visible FPS reading before/after, so I can sanity-check the marker totals against the actual frame budget gap.
+**Don't attempt to read FPS yourself on Path B** — Claude can't observe the GUI.
 
-**Do not attempt to read FPS yourself on Path B.** There is no headless export and Claude can't observe the GUI. Wait for the user's numbers before making code changes.
+---
 
 ### 3. Diagnose from the numbers
 
-- The dominant `temp:*` row by `lastTotalMs` is the target. Sort by that, not by `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row when you're trying to recover frame time.
-- Don't change anything that isn't measurably hot. If no `temp:*` row stands out, the markers are at the wrong granularity — add finer ones inside the suspected scope and re-measure before editing.
-- If the dominant row is a marker you didn't write (a pre-existing scope), still treat it as the target — it just means the cost lives in already-known infrastructure.
+- The dominant `temp:*` row by `lastTotalMs` is the target. Sort by that, not `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row when recovering frame time.
+- If no `temp:*` row stands out, the markers are at the wrong granularity — add finer sub-scopes inside the suspected scope and re-measure.
+- If the dominant row is a pre-existing (non-temp) scope, still treat it as the target.
 
 ### 4. Change, rebuild, re-measure
 
-Apply the targeted fix. Rebuild (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`). Then re-measure using the **same path (A1/A2/B) you used in step 2**:
+Apply the fix. Rebuild. Re-measure using the **same path (A1/A2/A3/B) as the baseline**:
 
-- **A1** — rerun `cmd scenario.run` with `--outPath=perf_after.json`. Read both files and compare `rows[].lastTotalMs` on the target scope.
+- **A1/A3** — rerun `cmd scenario.run` with `--outPath=perf_after.json`. Compare both files (see step 5).
 - **A2** — `cmd perf.reset`, user reproduces, `cmd perf.snapshot`.
-- **B** — ask the user to repeat the same scenario and paste the new `temp:*` rows.
+- **B** — ask the user to repeat and paste new rows.
 
-Same view, same scroll pattern, same row count as the baseline — otherwise the comparison is noise.
+Same view, same scroll pattern, same row count — otherwise the comparison is noise.
 
 ### 5. Validate
 
-Compare before/after on the dominant row(s).
+**A1/A3 — diff before/after files directly:**
 
-**CLI path (A1)** — diff the two JSON files directly:
 ```bash
 jq -s '
   [ .[0].data.rows[] | select(.name | startswith("temp:")) ] as $before |
   [ .[1].data.rows[] | select(.name | startswith("temp:")) ] as $after |
   $before[] as $b | $after[] | select(.name == $b.name) |
-  { name, before: $b.lastTotalMs, after: .lastTotalMs,
-    drop_pct: ((($b.lastTotalMs - .lastTotalMs) / $b.lastTotalMs * 100) | round) }
+  { name,
+    before_ms: $b.lastTotalMs,
+    after_ms:  .lastTotalMs,
+    drop_pct:  ((($b.lastTotalMs - .lastTotalMs) / $b.lastTotalMs * 100) | round) }
 ' perf_before.json perf_after.json
 ```
 
-**All paths** — ruling:
-- ≥30% drop on the dominant `temp:*` row **and** user confirms the FPS gap closed → fix worked.
+**All paths — ruling:**
+- ≥30% drop on the dominant `temp:*` row **and** user confirms FPS gap closed → fix worked.
 - Drop <30% or another row now dominates → **iterate**, don't declare victory.
-- FPS recovered but no `temp:*` row shows the win → markers don't cover the path the fix changed; add finer scopes and re-measure.
+- FPS recovered but no `temp:*` row shows the win → markers don't cover the changed path; add finer scopes and re-measure.
 
 ### 6. Clean up
 
-Once the user confirms the FPS improvement is real:
-
 1. Strip every `temp:` marker from source.
-2. Verify with the Grep tool (per project rules — do not use bash `grep`):
+2. Verify with the Grep tool (project rules forbid bash grep):
 
 ```
 Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("temp:',
      path: 'Source_Core', output_mode: 'files_with_matches')
 ```
 
-Plus the same check against `Plugins/` and `Target_Standalone/`. All three must return zero matches before the PR commit. Pre-existing non-`temp:` scopes stay untouched.
+Repeat for `Plugins/` and `Target_Standalone/`. All three must return zero matches before the PR commit.
 
-3. **CLI path** — reset accumulated data so stale temp: rows don't persist in the monitor between sessions:
+3. Reset the monitor so stale rows don't appear in the next session:
 ```bash
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.reset
 ```
 
-4. Delete any `perf_before.json` / `perf_after.json` scratch files written during step 2/4 (they live in the working directory or `<userData>/perf/`; not committed).
+4. Delete `perf_before.json` / `perf_after.json` scratch files (not committed).
+
+---
 
 ## Skip clause
 
-Fixes whose cost is obvious from the code alone (e.g. removing a confirmed per-frame disk read, deleting a dead loop) can skip the markers — but **prefer to confirm with one measurement round before declaring victory**. The cheapest mistake is a "fix" that didn't move the number.
+Fixes whose cost is obvious from the code (e.g. removing a confirmed per-frame disk read) can skip instrumentation — but **prefer at least one measurement round before declaring victory**. The cheapest mistake is a "fix" that didn't move the number.
 
-## Reference
+---
 
-- Macro: `SMATCHET_UI_PERF_SCOPE(name)` — `Source_Core/include/UiPerfMonitor.h`
-- Aggregator: `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source_Core/src/UiPerfMonitor.cpp`
-- UI panel: `Source_Core/src/SmatchetPerfUi.cpp` (menu `Inspect > Performance Monitor...`)
-- BeginFrame call site: `Source_Core/src/SmatchetUI.cpp` (`UiPerfMonitor::Instance().BeginFrame()`)
+## CLI reference
 
-**CLI commands (requires `backlog/COMMAND_SYSTEM_PLAN.md` to be implemented):**
-- `cmd perf.snapshot [--pretty]` — returns all current frame rows as JSON inline.
-- `cmd perf.dump [--outPath=<path>]` — writes rows to disk, returns `{file, count}`.
-- `cmd perf.reset` — clears accumulated data.
-- `cmd scenario.run --name=<id> --frames=<n> [--outPath=<path>] [--spawn] --yes` — drives a named scenario end-to-end and dumps perf JSON.
-- `cmd scenario.list` — lists registered scenario names.
+The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `SMATCHET_MCP_HOST` / `SMATCHET_MCP_PORT` env vars → PID-verified `instance.json` in user-data dir → `--mcp-host` / `--mcp-port` flags.
+
+**Global flags (all `cmd` invocations):**
+
+| Flag | Effect |
+|------|--------|
+| `--pretty` | Indent stdout JSON (2 spaces) |
+| `--quiet` / `-q` | Bare scalars / NDJSON id-per-line for lists; pipe-friendly |
+| `--yes` | Confirm destructive command (no prompt) |
+| `--dry-run` | Preview mutation without applying; exit 9 if unsupported |
+| `--tokens` | Estimate output size to stderr, no stdout produced |
+| `--timeout=<ms>` | Cap async wait; 0 = no cap |
+| `--mcp-host=<h>` | Override host |
+| `--mcp-port=<p>` | Override port |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | success |
+| 2 | unknown-command |
+| 3 | validation-error / missing-required-arg |
+| 4 | handler-error / backend-error / not-found |
+| 5 | confirm-required (destructive without --yes) |
+| 6 | not-connected |
+| 7 | transport-error |
+| 8 | timeout |
+| 9 | dry-run-unsupported |
+
+**Wire JSON:** `{ok, command, data: <payload>}` on success; `{ok:false, command, error:{code, message, hint?, suggestions?, details?}}` on failure.
+
+**Perf commands:**
+
+| Command | Params | Returns |
+|---------|--------|---------|
+| `perf.snapshot` | — | `{rows:[{name, lastTotalMs, avgPerCallMs, maxMs, calls, lifetimeHits, emaAvgMs}]}` |
+| `perf.dump` | `outPath?` | `{file, count}` |
+| `perf.reset` | — | `{reset:true}` |
+| `perf.frame_count` | — | `{scopeCount, totalCalls}` |
+| `perf.toggle_panel` | `open?:bool` | `{showPerformance:bool}` |
+| `scenario.list` | `limit?, offset?` | paginated array of names |
+| `scenario.run` | `name` (req), `frames?`, `outPath?` | `{running:true, outPath}` — async; read file after frames/60 s |
+| `scenario.cancel` | — | `{wasCancelled:bool}` |
+
+**Adding a scenario:** create `Source_Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario` + one `RegisterFactory` line in `BuiltinCommands.cpp`. No other files needed.
+
+**Instrument macros:**
+- `SMATCHET_UI_PERF_SCOPE(name)` — `Source_Core/include/UiPerfMonitor.h`
+- `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source_Core/src/UiPerfMonitor.cpp`
+- UI panel: `Inspect > Performance Monitor...`
