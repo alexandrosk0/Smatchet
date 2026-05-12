@@ -12,6 +12,12 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "Commands/Command.h"
+#include <cstdio>   // std::remove, std::fopen/fwrite/fclose
+#if !defined(_WIN32)
+#include <unistd.h>   // getpid()
+#endif
+#include "Commands/CommandRegistry.h"
 #include "Logger.h"
 #include <httplib.h>
 #include <cpr/cpr.h>
@@ -300,6 +306,8 @@ struct McpPlugin::Impl {
     std::string tracker_domain;
     std::vector<std::string> export_fields;
     bool allow_lua_execution = false;
+    /// Path to the instance.json written by OnStart and deleted by OnStop.
+    std::string instanceJsonPath;
 };
 
 McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
@@ -370,6 +378,34 @@ void McpPlugin::OnStart(AppController& app) {
     }
 
     // Limit request body and slow-read abuse when exposed on LAN.
+    // Write instance.json so CLI attach-mode can discover this MCP endpoint
+    // without needing explicit --mcp-host/--mcp-port flags.
+    // Format: { "pid": <int>, "port": <int> } — CLI verifies PID is still alive.
+    {
+        const std::string userDataDir = ConfigManager::GetUserDataDirectory();
+        const std::string instancePath = userDataDir + "instance.json";
+        try {
+            nlohmann::json inst;
+            inst["pid"]  = static_cast<long long>(
+#if defined(_WIN32)
+                GetCurrentProcessId()
+#else
+                getpid()
+#endif
+            );
+            inst["port"] = port_;
+            std::FILE* f = std::fopen(instancePath.c_str(), "wb");
+            if (f) {
+                const std::string s = inst.dump();
+                std::fwrite(s.data(), 1, s.size(), f);
+                std::fclose(f);
+            }
+        } catch (...) {
+            // Non-fatal — CLI can fall back to explicit flags.
+        }
+        impl_->instanceJsonPath = instancePath;
+    }
+
     impl_->svr.set_payload_max_length(1u * 1024u * 1024u);
     impl_->svr.set_read_timeout(10, 0);
     impl_->svr.set_write_timeout(30, 0);
@@ -551,19 +587,26 @@ void McpPlugin::OnStart(AppController& app) {
             if (!authorize(req, res))
                 return;
             LOG_TRACE("MCP: GET /mcp/tools/list remote=%s", req.remote_addr.c_str());
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            const auto tools = impl_->app->GetLuaMcpTools();
             nlohmann::json j = nlohmann::json::array();
+            // Unified Command System — registered commands take precedence and define
+            // canonical names. Legacy `list_active_tickets` / `search_active_tickets`
+            // surface via the registry's alias table; we don't double-list them.
+            const auto registryCommands = impl_->app->Commands().All();
+            for (const auto& c : registryCommands) {
+                j.push_back({{"name", c.Name},
+                             {"description", c.Summary},
+                             {"inputSchema", c.BuildJsonSchema()}});
+            }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            const auto luaTools = impl_->app->GetLuaMcpTools();
             if (impl_->allow_lua_execution) {
                 j.push_back(BuildRunLuaToolEntry());
             }
-            std::transform(tools.begin(), tools.end(), std::back_inserter(j), [](const auto& t) {
+            std::transform(luaTools.begin(), luaTools.end(), std::back_inserter(j), [](const auto& t) {
                 return nlohmann::json{{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
             });
-            res.set_content(nlohmann::json{{"tools", j}}.dump(), "application/json");
-#else
-            res.set_content(R"({"tools":[]})", "application/json");
 #endif
+            res.set_content(nlohmann::json{{"tools", j}}.dump(), "application/json");
         });
 
         impl_->svr.Post("/mcp/tools/call", [this, authorize](const httplib::Request& req, httplib::Response& res) {
@@ -579,6 +622,26 @@ void McpPlugin::OnStart(AppController& app) {
                           req.remote_addr.c_str(), name.c_str(), paramsStr.size(), req.body.size());
                 std::string error;
                 std::string result;
+                // Unified Command System: try registry first (covers all commands
+                // exposed via /mcp/tools/list above, including aliases like
+                // `list_active_tickets` → `tickets.list_active`).
+                if (impl_->app->Commands().FindLocked(name) != nullptr) {
+                    smatchet::cmd::CommandContext cctx;
+                    cctx.App = impl_->app;
+                    cctx.Source = smatchet::cmd::CommandSource::Mcp;
+                    cctx.ConfirmedDestructive = arguments.value("__confirm", false);
+                    cctx.DryRun = arguments.value("__dry_run", false);
+                    cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
+                    smatchet::cmd::CommandResult cr =
+                        impl_->app->Commands().Dispatch(name, arguments, cctx);
+                    nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+                    result = envelope.dump();
+                    if (!cr.Ok) {
+                        error = cr.Error.Message;
+                    }
+                    // Fall through to common success/error response path below.
+                    LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
+                } else
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                 if (name == "run_lua") {
                     if (!impl_->allow_lua_execution) {
@@ -714,19 +777,16 @@ void McpPlugin::OnStart(AppController& app) {
                 } else if (method == "tools/list") {
                     nlohmann::json toolList = nlohmann::json::array();
 
-                    // Core C++ Tools
-                    toolList.push_back(
-                        {{"name", "list_active_tickets"},
-                         {"description",
-                          "Returns a list of all tickets currently loaded in the Smatchet project grid."},
-                         {"inputSchema", {{"type", "object"}, {"properties", nlohmann::json::object()}}}});
-                    toolList.push_back(
-                        {{"name", "search_active_tickets"},
-                         {"description", "Search for a specific query string within the active tickets."},
-                         {"inputSchema",
-                          {{"type", "object"},
-                           {"properties", {{"query", {{"type", "string"}, {"description", "The search term"}}}}},
-                           {"required", {"query"}}}}});
+                    // Unified Command System — canonical command catalog. Legacy names
+                    // `list_active_tickets` / `search_active_tickets` are aliases on the
+                    // matching registry commands, so they continue to route through
+                    // tools/call without needing a duplicate tools/list entry.
+                    const auto registryCommands = impl_->app->Commands().All();
+                    for (const auto& c : registryCommands) {
+                        toolList.push_back({{"name", c.Name},
+                                            {"description", c.Summary},
+                                            {"inputSchema", c.BuildJsonSchema()}});
+                    }
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                     if (impl_->allow_lua_execution) {
@@ -748,7 +808,26 @@ void McpPlugin::OnStart(AppController& app) {
                     const std::string rpcRemote = req.remote_addr;
                     LOG_TRACE("MCP: JSON-RPC tools/call tool=%s", name.c_str());
 
-                    if (name == "run_lua") {
+                    if (impl_->app->Commands().FindLocked(name) != nullptr) {
+                        const nlohmann::json args = params.value("arguments", nlohmann::json::object());
+                        smatchet::cmd::CommandContext cctx;
+                        cctx.App = impl_->app;
+                        cctx.Source = smatchet::cmd::CommandSource::Mcp;
+                        cctx.ConfirmedDestructive = args.value("__confirm", false);
+                        cctx.DryRun = args.value("__dry_run", false);
+                        cctx.TimeoutMs = args.value("__timeout_ms", 0);
+                        smatchet::cmd::CommandResult cr =
+                            impl_->app->Commands().Dispatch(name, args, cctx);
+                        const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+                        // MCP `result.content[0].text` carries the envelope as a string —
+                        // that's the standard MCP shape and what hosts know to parse. The
+                        // envelope itself stays the canonical JSON contract for agents.
+                        jres["result"] = {
+                            {"content", {{{"type", "text"}, {"text", envelope.dump()}}}}};
+                        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call " + name +
+                                                             (cr.Ok ? " ok" : " FAIL") +
+                                                             " remote=" + rpcRemote);
+                    } else if (name == "run_lua") {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
                         const nlohmann::json luaArgs = params.value("arguments", nlohmann::json::object());
                         if (!impl_->allow_lua_execution) {
@@ -928,6 +1007,12 @@ void McpPlugin::OnStop() {
     impl_->shutdownCv.notify_all();
     impl_->svr.stop();
     impl_->thread.join();
+
+    // Delete instance.json so the CLI knows the server is gone.
+    if (!impl_->instanceJsonPath.empty()) {
+        std::remove(impl_->instanceJsonPath.c_str());  // best-effort; ignore failure
+        impl_->instanceJsonPath.clear();
+    }
 }
 
 

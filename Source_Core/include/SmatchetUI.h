@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BlameAnalysisUi.h"
+#include "Commands/CommandPaletteUi.h"
 #include "TicketGridModel.h"
 #include "Views.h"
 
@@ -38,6 +39,7 @@ class SmatchetUI {
     Views ViewState;
     BlameAnalysisUi blameAnalysisUi_;
     GridFrameContext gridFrameCtx_;
+    smatchet::cmd::CommandPaletteUi commandPalette_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);

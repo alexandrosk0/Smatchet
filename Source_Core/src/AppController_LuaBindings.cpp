@@ -1,6 +1,9 @@
 #include "AppController.h"
 #include "LuaAutomationHost.h"
 
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
 #include "IssueTableSerializer.h"
@@ -461,6 +464,35 @@ void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, c
     if (app) app->LuaUiRegisterGlobalActionBind(name, cb);
 }
 
+// commands.invoke — wraps AppController::Commands().Dispatch so Lua scripts
+// can call any registered command and receive a plain table {ok, data, error}.
+sol::table LuaCommandsInvokeGlue(sol::this_state L, const std::string& cmdName, sol::optional<sol::table> argsTable) {
+    sol::state_view sv(L);
+    sol::table result = sv.create_table();
+    AppController* app = ResolveApp(L);
+    if (!app) {
+        result["ok"] = false;
+        result["error"] = std::string("AppController not available");
+        return result;
+    }
+    nlohmann::json args = (argsTable) ? LuaToJson(argsTable.value()) : nlohmann::json::object();
+    smatchet::cmd::CommandContext ctx;
+    ctx.App = app;
+    ctx.Source = smatchet::cmd::CommandSource::Lua;
+    smatchet::cmd::CommandResult cr = app->Commands().Dispatch(cmdName, args, ctx);
+    result["ok"] = cr.Ok;
+    if (cr.Ok) {
+        result["data"] = JsonToLua(sv, cr.Data);
+    } else {
+        sol::table errTbl = sv.create_table();
+        errTbl["code"] = std::string(smatchet::cmd::ErrorCodeString(cr.Error.Code));
+        errTbl["message"] = cr.Error.Message;
+        errTbl["hint"] = cr.Error.Hint;
+        result["error"] = errTbl;
+    }
+    return result;
+}
+
 void LuaMcpRegisterToolGlue(sol::this_state L, sol::table toolDef, sol::function callback) {
     AppController* app = ResolveApp(L);
     if (app) app->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
@@ -561,6 +593,12 @@ void AppController::InitLuaCore(sol::state& state) {
     sol::table mcp = state.create_table();
     mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
     state["mcp"] = mcp;
+
+    // Unified Command System: `commands.invoke("name", {arg=val})` → `{ok, data, error}`.
+    // Lets Lua scripts call any registered command without needing direct AppController access.
+    sol::table commands = state.create_table();
+    commands.set_function("invoke", &smatchet_lua_init_detail::LuaCommandsInvokeGlue);
+    state["commands"] = commands;
 }
 
 void AppController::InitLuaUi(sol::state& state) {
@@ -792,6 +830,38 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
                           luaGlobalActions_.end());
     if (!callbackFuncName.empty()) {
         luaGlobalActions_.push_back({name, callbackFuncName});
+    }
+
+    // Mirror into the unified command registry as a `lua.<name>` command so it is
+    // discoverable via CLI / MCP / Palette without extra registration. See plan §Lua.
+    if (commandRegistry_) {
+        const std::string cmdName = "lua." + name;
+        // De-dup: if the action was already registered (e.g. script reloaded), remove the old one
+        // from the registry. There is no `Unregister` API (registrations are permanent for safety),
+        // so we skip re-registration when the exact name is already present.
+        if (!commandRegistry_->HasExact(cmdName) && !name.empty() && !callbackFuncName.empty()) {
+            smatchet::cmd::Command c;
+            c.Name = cmdName;
+            c.Category = "lua";
+            c.Summary = "(Lua) " + name;
+            c.Description = "Lua global action registered via ui.register_global_action(\"" + name + "\", ...).";
+            c.Idempotent = false;   // Lua actions may mutate state
+            c.AsyncSafe = true;
+            // Capture by value so the handler owns a copy of the callback name string.
+            const std::string cbName = callbackFuncName;
+            AppController* appPtr = this;
+            c.Handler = [appPtr, cbName](const nlohmann::json& /*args*/,
+                                         smatchet::cmd::CommandContext& /*ctx*/) {
+                appPtr->ExecuteLuaGlobalAction(cbName);
+                return smatchet::cmd::CommandResult::Success(nlohmann::json::object());
+            };
+            try {
+                commandRegistry_->Register(std::move(c));
+            } catch (const std::exception& ex) {
+                LOG_WARN("LuaUiRegisterGlobalActionBind: could not register '%s' in registry: %s",
+                         cmdName.c_str(), ex.what());
+            }
+        }
     }
 }
 

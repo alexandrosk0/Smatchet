@@ -80,6 +80,14 @@ std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows() const {
     return lastFrame_;
 }
 
+void UiPerfMonitor::Reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    working_.clear();
+    lastFrame_.clear();
+    emaByName_.clear();
+    lifetimeHits_.clear();
+}
+
 UiPerfScope::UiPerfScope(const char* name)
     : name_(name), t0_(name ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
 
