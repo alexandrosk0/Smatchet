@@ -1,9 +1,14 @@
 #include "JiraClient.h"
 
+#include "JqlProjectScope.h"
 #include "TrackerHttpUtils.h"
 
 #include <sstream>
 #include <string>
+
+std::string JiraClient::ExtractProjectFromQuery(const std::string& query) const {
+    return JqlProjectScope::ExtractSingleProject(query);
+}
 
 TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig& cfg) {
     TrackerReachabilityProbeResult out;

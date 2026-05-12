@@ -1494,6 +1494,41 @@ bool PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector
     return true;
 }
 
+namespace {
+
+// Pull `project_id` from a Plane structured-query JSON blob. "" sentinel covers
+// both "no project_id key" and "malformed JSON" — callers must fall back.
+std::string ExtractProjectFromPlaneQuery(const std::string& planeQueryJson) {
+    if (planeQueryJson.empty()) {
+        return "";
+    }
+    try {
+        const nlohmann::json j = nlohmann::json::parse(planeQueryJson);
+        if (j.is_object()) {
+            auto it = j.find("project_id");
+            if (it != j.end() && it->is_string()) {
+                return it->get<std::string>();
+            }
+            auto it2 = j.find("project");
+            if (it2 != j.end() && it2->is_string()) {
+                return it2->get<std::string>();
+            }
+        }
+    } catch (const std::exception&) {
+        return "";
+    } catch (...) {
+        return "";
+    }
+    return "";
+}
+
+} // namespace
+
+std::string PlaneClient::ExtractProjectFromQuery(const std::string& query) const {
+    return ExtractProjectFromPlaneQuery(query);
+}
+
+
 
 
 

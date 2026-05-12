@@ -80,6 +80,7 @@
 
 #include "TrackerHttpUtils.h"
 
+#include "JqlProjectScope.h"
 #include "Logger.h"
 
 #include "StringUtil.h"
@@ -1426,6 +1427,36 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         commandRegistry_.reset();
     }
 
+    // One-time audit per design doc §2.8: list saved views whose JQL has no
+    // project scope. After PR 6 removes the global project key, those views
+    // will broaden to "all projects you can read".
+    static bool s_loggedViewsWithoutProjectScope = false;
+    if (!s_loggedViewsWithoutProjectScope) {
+        s_loggedViewsWithoutProjectScope = true;
+        try {
+            const TrackerConfig auditCfg = ConfigManager::Load();
+            if (auditCfg.TrackerType == "Jira" || auditCfg.TrackerType.empty()) {
+                const ViewsStore auditViews = ConfigManager::LoadViewsOrBootstrap(auditCfg);
+                std::string namesList;
+                size_t count = 0;
+                for (const auto& v : auditViews.Views) {
+                    if (!JqlProjectScope::HasProjectScope(v.Jql)) {
+                        if (!namesList.empty()) {
+                            namesList += ", ";
+                        }
+                        namesList += v.Name;
+                        ++count;
+                    }
+                }
+                if (count > 0) {
+                    LOG_INFO("Views without project scope: [%s]", namesList.c_str());
+                }
+            }
+        } catch (const std::exception& ex) {
+            LOG_WARN("AppController::Initialize: project-scope audit failed: %s", ex.what());
+        } catch (...) {
+        }
+    }
 }
 
 smatchet::cmd::CommandRegistry& AppController::Commands() {

@@ -69,6 +69,12 @@ struct TrackerUser {
     bool Active = true;
 };
 
+struct RemoteProject {
+    std::string id;          // Jira numeric id or Plane UUID
+    std::string key;         // Jira key (e.g., "PROJ"); empty for Plane
+    std::string displayName; // human-readable
+};
+
 struct TrackerIssueTypeCreateMeta {
     std::string ProjectKey;
     std::string IssueTypeId;

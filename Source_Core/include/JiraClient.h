@@ -125,6 +125,8 @@ class JiraClient : public ITrackerClient {
     /** Move/add an issue to a sprint via Jira Agile API. */
     bool AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
                           std::string& outError);
+
+    std::string ExtractProjectFromQuery(const std::string& query) const override;
 };
 
 #endif

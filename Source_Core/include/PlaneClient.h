@@ -63,6 +63,8 @@ class PlaneClient : public ITrackerClient {
                             std::unordered_map<std::string, bool>& outFieldIdCanEdit,
                             std::string& outError) override;
 
+    std::string ExtractProjectFromQuery(const std::string& query) const override;
+
   private:
     struct CachedState {
         std::string Id;
