@@ -48,33 +48,33 @@ The CLI is available. Use the highest path that applies:
 
 ---
 
-#### Path A1 — Named scenario (fully automated)
+#### Path A1 — Named scenario (fully automated, no user needed)
 
-**Use when:** the slow path has a registered scenario (check `cmd scenario.list`).
-
-The CLI talks to a running app via MCP HTTP — launch the app first if it isn't already running.
+**Use when:** a registered scenario exists for the slow path. No running app, no user clicks, no waiting — `--spawn` handles everything.
 
 ```bash
-# List available scenarios
-build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.list
+# Check available scenarios (optional — also uses --spawn if no instance running)
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.list --spawn
 
-# Run the scenario and capture perf output
+# Run the scenario end-to-end. Claude executes this alone.
 build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.run \
-  --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --yes
+  --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --spawn --yes
 ```
 
-`scenario.run` returns immediately with `{ok:true, command:"scenario.run", data:{running:true, outPath:"..."}}`. The scenario executes in the running app's frame loop. Estimated duration: `frames / 60` seconds + a few seconds buffer for startup. Then read the file:
+`--spawn` flow (all automatic): detects no running instance → launches a hidden ephemeral app on a free port → polls until MCP is reachable (up to 15 s) → sends `scenario.run` → waits for the result file (`frames/60 s` + 30 s buffer) → reads the file → sends `app.quit` → exits. The spawned window is invisible (`GLFW_VISIBLE=false`).
+
+Read the result directly once the command returns — no paste, no panel:
 
 ```python
 Read("perf_before.json")
-# data.rows[] — sorted by lastTotalMs descending
+# data.rows[] sorted by lastTotalMs descending — filter perf_temp:* entries
 ```
 
 ---
 
 #### Path A2 — Ad-hoc snapshot (app running, no registered scenario)
 
-**Use when:** no named scenario exists, but the user can navigate to the slow screen manually.
+**Use when:** no named scenario exists yet. Requires the user to navigate to the slow screen — the only manual step. Prefer A3 (add a scenario) to eliminate even this step next time.
 
 ```bash
 # Reset so stale data from prior frames doesn't pollute the snapshot
@@ -251,6 +251,7 @@ The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `SMA
 | `--yes` | Confirm destructive command (no prompt) |
 | `--dry-run` | Preview mutation without applying; exit 9 if unsupported |
 | `--tokens` | Estimate output size to stderr, no stdout produced |
+| `--spawn` | Launch a hidden ephemeral app instance if none reachable; quit it when done |
 | `--timeout=<ms>` | Cap async wait; 0 = no cap |
 | `--mcp-host=<h>` | Override host |
 | `--mcp-port=<p>` | Override port |
@@ -281,7 +282,7 @@ The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `SMA
 | `perf.frame_count` | — | `{scopeCount, totalCalls}` |
 | `perf.toggle_panel` | `open?:bool` | `{showPerformance:bool}` |
 | `scenario.list` | `limit?, offset?` | paginated array of names |
-| `scenario.run` | `name` (req), `frames?`, `outPath?` | `{running:true, outPath}` — async; read file after frames/60 s |
+| `scenario.run` | `name` (req), `frames?`, `outPath?` | `{running:true, outPath}` — use `--spawn` for fully-automated; CLI waits for file and prints result |
 | `scenario.cancel` | — | `{wasCancelled:bool}` |
 
 **Adding a scenario:** create `Source_Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario` + one `RegisterFactory` line in `BuiltinCommands.cpp`. No other files needed.

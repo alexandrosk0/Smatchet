@@ -23,13 +23,16 @@
 namespace smatchet {
 namespace cli {
 
-/// Returns true if argv contains a `cmd` token (followed by a command name)
-/// — used by `main.cpp` to skip the GUI boot path.
+/// Returns true if argv contains a `cmd` token — used by `main.cpp` to skip the GUI boot.
 bool ArgvHasCmdSubcommand(int argc, char** argv);
 
-/// Run the `cmd` subcommand in attach mode (HTTP client to running instance).
-/// Returns the process exit code per the stable mapping above. All stdout/
-/// stderr is written by this function — caller should not print anything else.
+/// Returns true if argv contains `--ephemeral` — spawned instances pass this to suppress
+/// the window and signal they were launched by the CLI for automated scenario/testing use.
+bool IsEphemeralMode(int argc, char** argv);
+
+/// Run the `cmd` subcommand. Attaches to a running instance via MCP HTTP; if --spawn is
+/// passed and no instance is reachable, launches one automatically and waits for results.
+/// Returns the process exit code. All stdout/stderr is written by this function.
 int RunCmdAttach(int argc, char** argv);
 
 }  // namespace cli

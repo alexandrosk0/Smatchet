@@ -16,15 +16,21 @@
 #include "ConfigManager.h"
 #include "SmatchetDefaults.h"
 
+#include <ghc/filesystem.hpp>
+
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #if !defined(_WIN32)
 #include <signal.h>
 #include <unistd.h>
 #endif
+
+namespace fs = ghc::filesystem;
 
 namespace smatchet {
 namespace cli {
@@ -40,6 +46,79 @@ constexpr int kExitConfirmRequired = 5;
 constexpr int kExitNotConnected = 6;
 constexpr int kExitTransport = 7;
 // 8 (timeout) + 9 (dry-run-unsupported) are reachable once spawn/dry-run land.
+
+// ============================================================================
+// Safe JSON value extractors — never throw on type mismatch or missing keys.
+// ParseArgs stores every --key=value as a string, and external responses can
+// have any shape; defensive reads avoid type_error.302 from nlohmann.
+// ============================================================================
+
+bool SafeBool(const nlohmann::json& j, const char* key, bool fallback) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_boolean()) return v.get<bool>();
+        if (v.is_number_integer()) return v.get<long long>() != 0;
+        if (v.is_string()) {
+            const std::string s = v.get<std::string>();
+            return s == "true" || s == "1" || s == "yes" || s == "on";
+        }
+        return fallback;
+    } catch (...) { return fallback; }
+}
+
+std::string SafeString(const nlohmann::json& j, const char* key, const std::string& fallback = {}) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_string()) return v.get<std::string>();
+        if (v.is_null()) return fallback;
+        // Numeric / boolean → stringify for display purposes.
+        return v.dump();
+    } catch (...) { return fallback; }
+}
+
+int SafeInt(const nlohmann::json& j, const char* key, int fallback) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return fallback;
+        const auto& v = j[key];
+        if (v.is_number_integer()) return static_cast<int>(v.get<long long>());
+        if (v.is_number_float())   return static_cast<int>(v.get<double>());
+        if (v.is_string()) {
+            try { return std::stoi(v.get<std::string>()); } catch (...) { return fallback; }
+        }
+        return fallback;
+    } catch (...) { return fallback; }
+}
+
+/// Return j[key] as a nested object, or an empty object on any mismatch.
+nlohmann::json SafeObject(const nlohmann::json& j, const char* key) {
+    try {
+        if (!j.is_object() || !j.contains(key)) return nlohmann::json::object();
+        const auto& v = j[key];
+        return v.is_object() ? v : nlohmann::json::object();
+    } catch (...) { return nlohmann::json::object(); }
+}
+
+/// Try to parse a JSON document; returns true on success.
+bool SafeParseJson(const std::string& text, nlohmann::json& out) {
+    try { out = nlohmann::json::parse(text); return true; }
+    catch (...) { out = nlohmann::json::object(); return false; }
+}
+
+/// Build a canonical error envelope without ever throwing.
+nlohmann::json MakeErrorEnvelope(const std::string& command, const std::string& code,
+                                 const std::string& message, const std::string& hint = {}) {
+    nlohmann::json env;
+    env["ok"] = false;
+    env["command"] = command;
+    nlohmann::json err;
+    err["code"] = code;
+    err["message"] = message;
+    if (!hint.empty()) err["hint"] = hint;
+    env["error"] = std::move(err);
+    return env;
+}
 
 int ExitCodeForErrorCode(const std::string& code) {
     if (code == "ok") return kExitOk;
@@ -65,11 +144,144 @@ struct ParsedArgs {
     bool yes = false;
     bool dryRun = false;         ///< --dry-run → inject __dry_run:true
     bool tokens = false;         ///< --tokens → estimate output size, print to stderr, no stdout
+    bool spawn = false;          ///< --spawn → launch app subprocess if no instance reachable
     int  timeoutMs = 0;          ///< --timeout=<ms> → passed as __timeout_ms; 0=no cap
     std::string mcpHost;         ///< empty -> default
     int mcpPort = 0;             ///< 0 -> resolve from env / default
     nlohmann::json args = nlohmann::json::object();  ///< collected --key=value arguments
 };
+
+/// Return the path to the running executable (for relaunching as a spawned instance).
+std::string GetExePath() {
+#if defined(_WIN32)
+    char buf[4096] = {};
+    DWORD n = GetModuleFileNameA(nullptr, buf, static_cast<DWORD>(sizeof(buf)));
+    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
+#elif defined(__linux__)
+    char buf[4096] = {};
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    return (n > 0) ? std::string(buf, static_cast<size_t>(n)) : std::string();
+#elif defined(__APPLE__)
+    char buf[4096] = {};
+    uint32_t sz = sizeof(buf);
+    return (_NSGetExecutablePath(buf, &sz) == 0) ? std::string(buf) : std::string();
+#else
+    return std::string();
+#endif
+}
+
+/// Bind to port 0, read back the OS-assigned port, close the socket.
+/// Small TOCTOU race is acceptable for ephemeral test scenarios.
+int FindFreePort() {
+#if defined(_WIN32)
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s); return 0;
+    }
+    int len = sizeof(addr);
+    if (getsockname(s, reinterpret_cast<struct sockaddr*>(&addr), &len) == SOCKET_ERROR) {
+        closesocket(s); return 0;
+    }
+    int port = ntohs(addr.sin_port);
+    closesocket(s);
+    return port;
+#else
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return 0;
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        close(s); return 0;
+    }
+    socklen_t len = sizeof(addr);
+    if (getsockname(s, reinterpret_cast<struct sockaddr*>(&addr), &len) < 0) {
+        close(s); return 0;
+    }
+    int port = ntohs(addr.sin_port);
+    close(s);
+    return port;
+#endif
+}
+
+/// Launch the exe as a hidden/minimized background process with --ephemeral --mcp-port=<port>.
+/// Propagates SMATCHET_USER_DATA so the spawned instance shares the same data dir.
+/// Returns false on launch failure.
+bool LaunchEphemeralInstance(const std::string& exePath, int port) {
+    if (exePath.empty()) return false;
+    const std::string portStr = std::to_string(port);
+    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+#if defined(_WIN32)
+    // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
+    std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr,
+                             FALSE, 0, nullptr, nullptr, &si, &pi);
+    if (ok) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    return ok != FALSE;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        setsid();
+        const char* args[] = {
+            exePath.c_str(), "--ephemeral",
+            "--mcp-port", portStr.c_str(),
+            nullptr
+        };
+        execv(exePath.c_str(), const_cast<char* const*>(args));
+        _exit(1);
+    }
+    return true;
+#endif
+}
+
+/// Poll until the MCP endpoint at host:port becomes reachable or timeoutMs elapses.
+bool WaitForMcpReady(const std::string& host, int port, int timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        httplib::Client cli(host, port);
+        cli.set_connection_timeout(0, 200000);  // 200 ms
+        cli.set_read_timeout(1, 0);
+        nlohmann::json body;
+        body["name"] = "app.version";
+        body["arguments"] = nlohmann::json::object();
+        auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+        if (res && res->status >= 200 && res->status < 300) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    return false;
+}
+
+/// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
+bool WaitForFile(const std::string& outPath, int timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::error_code ec;
+        if (fs::exists(fs::path(outPath), ec) &&
+            fs::file_size(fs::path(outPath), ec) > 0) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    return false;
+}
 
 std::string EnvOr(const char* name, std::string fallback) {
     const char* v = std::getenv(name);
@@ -195,6 +407,7 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
         if (a == "--yes")                       { out.yes      = true; continue; }
         if (a == "--dry-run")                   { out.dryRun   = true; continue; }
         if (a == "--tokens")                    { out.tokens   = true; continue; }
+        if (a == "--spawn")                     { out.spawn    = true; continue; }
         if (a.rfind("--mcp-host=", 0) == 0) { out.mcpHost = a.substr(11); continue; }
         if (a.rfind("--mcp-port=", 0) == 0) {
             try { out.mcpPort = std::stoi(a.substr(11)); }
@@ -225,7 +438,13 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 
 void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     if (!quiet) {
-        std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+        try {
+            std::fprintf(stdout, "%s\n",
+                pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+        } catch (...) {
+            std::fprintf(stdout, "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
+                                 "\"message\":\"failed to serialize envelope\"}}\n");
+        }
         return;
     }
     // Quiet: extract a primary value for shell pipelines. Heuristic:
@@ -233,11 +452,12 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     //   - else if data.items[] is a list of objects with `id`: emit id one-per-line
     //   - else if data is a scalar: emit it bare
     //   - else fall back to compact JSON (still parseable)
-    if (!envelope.value("ok", false)) {
+    if (!SafeBool(envelope, "ok", false)) {
         // Errors still go through stderr below; nothing to extract.
         return;
     }
-    const nlohmann::json& data = envelope.value("data", nlohmann::json::object());
+    nlohmann::json data = SafeObject(envelope, "data");
+    // If data wasn't an object, fall through using empty object — quiet output skips.
     if (data.contains("items") && data["items"].is_array()) {
         for (const auto& it : data["items"]) {
             if (it.is_string()) {
@@ -285,19 +505,236 @@ nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
     } else {
         result = &body;
     }
-    if (result->contains("content") && (*result)["content"].is_array() &&
-        !(*result)["content"].empty() && (*result)["content"][0].contains("text")) {
-        const std::string text = (*result)["content"][0]["text"].get<std::string>();
-        try {
-            return nlohmann::json::parse(text);
-        } catch (...) {
+    try {
+        if (result->contains("content") && (*result)["content"].is_array() &&
+            !(*result)["content"].empty() && (*result)["content"][0].is_object() &&
+            (*result)["content"][0].contains("text") &&
+            (*result)["content"][0]["text"].is_string()) {
+            const std::string text = (*result)["content"][0]["text"].get<std::string>();
+            nlohmann::json parsed;
+            if (SafeParseJson(text, parsed)) return parsed;
             nlohmann::json env;
             env["ok"] = true;
             env["data"] = text;
             return env;
         }
+    } catch (...) {
+        // Fall through — return result as-is below.
     }
     return *result;
+}
+
+/// Normalize a relative outPath argument to an absolute path resolved against the CLI's CWD,
+/// since the spawned instance may have a different working directory. Pass-through for absolute paths.
+nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
+    nlohmann::json out = argsToSend;
+    if (!out.contains("outPath") || !out["outPath"].is_string()) return out;
+    const std::string p = out["outPath"].get<std::string>();
+    if (p.empty()) return out;
+    fs::path path(p);
+    if (path.is_absolute()) return out;
+    std::error_code ec;
+    fs::path abs = fs::absolute(path, ec);
+    if (!ec) {
+        out["outPath"] = abs.string();
+    }
+    return out;
+}
+
+/// Full spawn-attach-run flow invoked when --spawn is set and no instance is reachable.
+/// Launches a hidden ephemeral app instance, sends the command, waits for results, quits the app.
+int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
+                const nlohmann::json& argsToSendRaw) {
+    try {
+    // Normalize outPath: relative paths must be made absolute so both processes agree on location.
+    const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+    const std::string exePath = GetExePath();
+    if (exePath.empty()) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: could not determine exe path to relaunch."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    const int port = FindFreePort();
+    if (port == 0) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: could not bind a free TCP port."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n", port);
+    if (!LaunchEphemeralInstance(exePath, port)) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: failed to launch subprocess."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    const std::string host = "127.0.0.1";
+    const int readyTimeoutMs = 15000;
+    std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
+                 readyTimeoutMs / 1000);
+    if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","timeout"},
+                        {"message","--spawn: ephemeral instance did not become reachable in time."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    // Send the actual command.
+    nlohmann::json body;
+    body["name"] = commandName;
+    body["arguments"] = argsToSend;
+
+    // For scenario.run, compute a wait timeout from the frames param.
+    // ParseArgs stores --key=value pairs as strings; coerce defensively.
+    int frames = 600;
+    if (argsToSend.contains("frames")) {
+        const auto& v = argsToSend["frames"];
+        if (v.is_number()) {
+            frames = v.get<int>();
+        } else if (v.is_string()) {
+            try { frames = std::stoi(v.get<std::string>()); } catch (...) {}
+        }
+    }
+    const int scenarioWaitMs = (frames / 60 + 30) * 1000;
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(2, 0);
+    cli.set_read_timeout(30, 0);
+    auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+    if (!res || res->status < 200 || res->status >= 300) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","transport"},
+                        {"message","--spawn: command dispatch failed after launch."}};
+        EmitErrorToStderr(env);
+        return kExitTransport;
+    }
+
+    nlohmann::json parsedBody;
+    if (!SafeParseJson(res->body, parsedBody)) {
+        nlohmann::json env = MakeErrorEnvelope(commandName, "transport",
+            "--spawn: server returned non-JSON response (status " +
+            std::to_string(res->status) + ").");
+        EmitErrorToStderr(env);
+        // Best-effort quit.
+        nlohmann::json qb;
+        qb["name"] = "app.quit";
+        qb["arguments"] = {{"__confirm", true}};
+        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
+        return kExitTransport;
+    }
+
+    nlohmann::json envelope;
+    try {
+        envelope = ExtractEnvelopeFromMcpResult(parsedBody);
+    } catch (...) {
+        envelope = MakeErrorEnvelope(commandName, "transport",
+            "--spawn: failed to extract envelope from response.");
+    }
+
+    nlohmann::json envData = SafeObject(envelope, "data");
+    const bool isAsync = SafeBool(envelope, "ok", false) &&
+                         SafeBool(envData, "running", false) &&
+                         envData.contains("outPath") && envData["outPath"].is_string();
+
+    // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
+    if (isAsync) {
+        const std::string outPath = SafeString(envData, "outPath");
+        std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n",
+                     frames, frames / 60);
+        const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
+        // Small delay to ensure fwrite+fclose has fully flushed before we read.
+        // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
+        // but kernel write buffers can briefly show a partial file on some filesystems.
+        if (fileReady) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        if (!fileReady) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false; errEnv["command"] = commandName;
+            errEnv["error"] = {{"code","timeout"},
+                               {"message","--spawn: scenario did not finish within expected time."},
+                               {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
+            EmitErrorToStderr(errEnv);
+            // Still try to quit the spawned app.
+            nlohmann::json quitBody;
+            quitBody["name"] = "app.quit";
+            quitBody["arguments"] = {{"__confirm", true}};  // app.quit is Destructive
+            cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+            return 8;
+        }
+
+        // Read the result file and build an envelope around it.
+        std::FILE* f = std::fopen(outPath.c_str(), "rb");
+        if (!f) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false; errEnv["command"] = commandName;
+            errEnv["error"] = {{"code","handler-error"},
+                               {"message","--spawn: could not read result file: " + outPath}};
+            EmitErrorToStderr(errEnv);
+        } else {
+            std::string content;
+            char buf[4096]; size_t n;
+            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) content.append(buf, n);
+            std::fclose(f);
+            try {
+                const nlohmann::json fileData = nlohmann::json::parse(content);
+                nlohmann::json resultEnv;
+                resultEnv["ok"] = true;
+                resultEnv["command"] = commandName;
+                resultEnv["data"] = fileData;
+                EmitEnvelope(resultEnv, pa.pretty, pa.quiet);
+            } catch (...) {
+                nlohmann::json errEnv;
+                errEnv["ok"] = false; errEnv["command"] = commandName;
+                errEnv["error"] = {{"code","handler-error"},
+                                   {"message","--spawn: result file is not valid JSON: " + outPath}};
+                EmitErrorToStderr(errEnv);
+            }
+        }
+    } else {
+        // Non-async command: emit envelope directly.
+        EmitEnvelope(envelope, pa.pretty, pa.quiet);
+        if (!SafeBool(envelope, "ok", false)) {
+            const nlohmann::json errObj = SafeObject(envelope, "error");
+            const std::string code = SafeString(errObj, "code");
+            nlohmann::json quitBody;
+            quitBody["name"] = "app.quit";
+            quitBody["arguments"] = {{"__confirm", true}};  // app.quit is Destructive
+            cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+            return ExitCodeForErrorCode(code);
+        }
+    }
+
+    // Quit the spawned instance (app.quit is Destructive → __confirm:true).
+    std::fprintf(stderr, "[spawn] sending app.quit ...\n");
+    nlohmann::json quitBody;
+    quitBody["name"] = "app.quit";
+    quitBody["arguments"] = {{"__confirm", true}};
+    cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+    return kExitOk;
+    } catch (const std::exception& e) {
+        nlohmann::json env = MakeErrorEnvelope(commandName, "handler-error",
+            std::string("--spawn: internal error: ") + e.what());
+        try { EmitErrorToStderr(env); } catch (...) {}
+        return kExitHandler;
+    } catch (...) {
+        std::fprintf(stderr,
+            "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
+            "\"message\":\"--spawn: unknown internal exception.\"}}\n",
+            commandName.c_str());
+        return kExitHandler;
+    }
 }
 
 }  // namespace
@@ -309,7 +746,30 @@ bool ArgvHasCmdSubcommand(int argc, char** argv) {
     return false;
 }
 
+bool IsEphemeralMode(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--ephemeral") == 0) return true;
+    }
+    return false;
+}
+
+/// Last-resort terminate handler installed by RunCmdAttach. Emits a minimal canonical
+/// error envelope to stderr without invoking destructors (which themselves could throw).
+[[noreturn]] static void CliTerminateHandler() {
+    // Avoid nlohmann::json — could throw again. Use a fixed literal.
+    std::fprintf(stderr,
+        "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+        "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
+    std::_Exit(4);  // matches kExitHandler — bypass destructors.
+}
+
 int RunCmdAttach(int argc, char** argv) {
+    // Defense-in-depth: any uncaught throw inside this function is caught and converted
+    // to a canonical error envelope below. std::terminate handler catches the case where
+    // an exception escapes even that (double-throw, noexcept violation, stack corruption).
+    std::set_terminate(&CliTerminateHandler);
+
+    try {
     ParsedArgs pa;
     std::string parseErr;
     if (!ParseArgs(argc, argv, pa, parseErr)) {
@@ -333,10 +793,10 @@ int RunCmdAttach(int argc, char** argv) {
             size_t n;
             while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) json.append(buf, n);
             std::fclose(f);
-            try {
-                const auto j = nlohmann::json::parse(json);
-                const int instPort = j.value("port", 0);
-                const long long instPid = j.value("pid", 0LL);
+            nlohmann::json j;
+            if (SafeParseJson(json, j) && j.is_object()) try {
+                const int instPort = SafeInt(j, "port", 0);
+                const long long instPid = static_cast<long long>(SafeInt(j, "pid", 0));
                 // Verify the PID is still alive before trusting this port.
                 bool pidAlive = false;
 #if defined(_WIN32)
@@ -402,14 +862,17 @@ int RunCmdAttach(int argc, char** argv) {
 
     auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
     if (!res) {
+        // --spawn: launch an ephemeral instance and retry in-process.
+        if (pa.spawn) {
+            return SpawnAndRun(pa, toolName, argsToSend);
+        }
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = toolName;
         env["error"] = {
             {"code", "not-connected"},
             {"message", "Could not reach Smatchet MCP at " + host + ":" + std::to_string(port) + "."},
-            {"hint", "Start Smatchet (with MCP enabled) or pass --mcp-host / --mcp-port. "
-                     "See backlog/COMMAND_SYSTEM_PLAN.md."},
+            {"hint", "Start Smatchet (with MCP enabled), or pass --spawn to launch automatically."},
         };
         EmitErrorToStderr(env);
         return kExitNotConnected;
@@ -442,7 +905,14 @@ int RunCmdAttach(int argc, char** argv) {
         return kExitTransport;
     }
 
-    nlohmann::json envelope = ExtractEnvelopeFromMcpResult(parsed);
+    nlohmann::json envelope;
+    try {
+        envelope = ExtractEnvelopeFromMcpResult(parsed);
+    } catch (...) {
+        envelope = MakeErrorEnvelope(toolName, "transport",
+            "Failed to extract envelope from MCP response.");
+    }
+    if (!envelope.is_object()) envelope = nlohmann::json::object();
     if (!envelope.contains("ok")) {
         nlohmann::json wrap;
         wrap["ok"] = true;
@@ -452,10 +922,11 @@ int RunCmdAttach(int argc, char** argv) {
     }
 
     // --tokens: estimate size from serialized data, print to stderr, produce no stdout.
-    if (doTokenEstimate && envelope.value("ok", false)) {
-        const std::string dataStr = envelope.contains("data")
-                                        ? envelope["data"].dump()
-                                        : std::string("{}");
+    if (doTokenEstimate && SafeBool(envelope, "ok", false)) {
+        std::string dataStr;
+        try {
+            dataStr = envelope.contains("data") ? envelope["data"].dump() : std::string("{}");
+        } catch (...) { dataStr = "{}"; }
         const long long bytes  = static_cast<long long>(dataStr.size());
         const long long tokens = (bytes + 3) / 4;  // rough ASCII heuristic (±30%)
         nlohmann::json estimate;
@@ -465,17 +936,30 @@ int RunCmdAttach(int argc, char** argv) {
         return kExitOk;
     }
 
-    if (envelope.value("ok", false)) {
+    if (SafeBool(envelope, "ok", false)) {
         EmitEnvelope(envelope, pa.pretty, pa.quiet);
         return kExitOk;
     }
 
     // Error path — envelope goes to stderr; exit code from error.code.
     EmitErrorToStderr(envelope);
-    const std::string code = envelope.contains("error") && envelope["error"].contains("code")
-                                 ? envelope["error"]["code"].get<std::string>()
-                                 : std::string("handler-error");
+    const nlohmann::json errObj = SafeObject(envelope, "error");
+    const std::string code = SafeString(errObj, "code", "handler-error");
     return ExitCodeForErrorCode(code);
+
+    } catch (const std::exception& e) {
+        // Catch anything that escaped a lower-level handler. Emit a clean envelope and exit.
+        nlohmann::json env = MakeErrorEnvelope("", "handler-error",
+            std::string("CLI internal error: ") + e.what(),
+            "This is a bug — bad input should produce a structured error, not throw.");
+        try { EmitErrorToStderr(env); } catch (...) {}
+        return kExitHandler;
+    } catch (...) {
+        std::fprintf(stderr,
+            "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+            "\"message\":\"CLI internal error: unknown exception.\"}}\n");
+        return kExitHandler;
+    }
 }
 
 }  // namespace cli

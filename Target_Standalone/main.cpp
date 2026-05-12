@@ -240,6 +240,11 @@ int main(int argc, char** argv) {
         return smatchet::cli::RunCmdAttach(argc, argv);
     }
 
+    // --ephemeral: launched by the CLI's --spawn mechanism for automated testing.
+    // Run normally (full app init, MCP server) but start with a hidden window so
+    // there is no visible UI. The CLI will send app.quit when it's done.
+    const bool ephemeralMode = smatchet::cli::IsEphemeralMode(argc, argv);
+
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
@@ -262,6 +267,9 @@ int main(int argc, char** argv) {
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 #endif
+    if (ephemeralMode) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
 
     // Create window with graphics context
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Smatchet - Standalone", NULL, NULL);
@@ -407,7 +415,10 @@ int main(int argc, char** argv) {
         });
 #if defined(SMATCHET_WITH_MCP)
         {
-            if (cfg.McpEnabled) {
+            // Ephemeral spawn mode forces MCP on regardless of user config, since the spawning
+            // CLI process needs the HTTP endpoint to dispatch commands and request app.quit.
+            const bool wantMcp = cfg.McpEnabled || ephemeralMode;
+            if (wantMcp) {
                 const int mcpPort =
                     (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
                 pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));

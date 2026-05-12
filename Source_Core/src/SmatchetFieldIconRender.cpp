@@ -203,8 +203,14 @@ bool HttpGetBinary(const std::string& url, std::vector<unsigned char>& out, std:
 bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out, std::string& outError) {
     out = {};
     outError.clear();
-    const std::string memKey = std::string("url:") + url;
-    if (SmatchetImageTextureCache::TryGetCached(memKey, out)) {
+    // Canonical cache key for URL-loaded icons. All paths through this function MUST
+    // end up storing the texture under this key — otherwise the caller's memo (which
+    // derives its key from the URL candidate) will look it up and miss, falling back
+    // to the slow path every frame. This was a bug pre-PR: when the disk cache was
+    // hit, the texture got stored under a "file:" key instead of "url:", causing
+    // ~6ms / frame of wasted re-resolution work on a 18-cell priority column.
+    const std::string urlKey = std::string("url:") + url;
+    if (SmatchetImageTextureCache::TryGetCached(urlKey, out)) {
         return true;
     }
     std::string cacheDir;
@@ -213,14 +219,21 @@ bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out,
     }
     const std::string fileName = UrlToCacheFileName(url);
     const std::string diskPath = cacheDir + fileName;
-    const std::string fileKey = std::string("file:") + diskPath;
-    if (SmatchetImageTextureCache::TryGetCached(fileKey, out)) {
-        return true;
-    }
+    // If we have the bytes on disk already, decode them and stash the texture under
+    // the URL key (not a "file:" key) so subsequent lookups via the URL hit.
     std::error_code ec;
     if (fs::exists(fs::path(diskPath), ec) && fs::file_size(fs::path(diskPath), ec) > 0) {
-        return SmatchetImageTextureCache::GetOrLoadFromFile(fileKey, diskPath, out, outError);
+        std::ifstream ifs(diskPath.c_str(), std::ios::binary);
+        if (ifs) {
+            std::vector<unsigned char> buf((std::istreambuf_iterator<char>(ifs)),
+                                            std::istreambuf_iterator<char>());
+            if (!buf.empty()) {
+                return SmatchetImageTextureCache::GetOrLoadFromMemory(
+                    urlKey, buf.data(), buf.size(), out, outError);
+            }
+        }
     }
+    // Fetch from network and persist both bytes (disk) and texture (cache under url:).
     std::vector<unsigned char> bytes;
     if (!HttpGetBinary(url, bytes, outError)) {
         return false;
@@ -229,8 +242,7 @@ bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out,
     if (ofs) {
         ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
-    return SmatchetImageTextureCache::GetOrLoadFromMemory(std::string("url:") + url, bytes.data(), bytes.size(), out,
-                                                          outError);
+    return SmatchetImageTextureCache::GetOrLoadFromMemory(urlKey, bytes.data(), bytes.size(), out, outError);
 }
 
 bool LoadTextureForResolvedPath(const std::string& resolved, SmatchetLoadedIconTexture& out, std::string& outError) {
@@ -254,8 +266,9 @@ bool LoadTextureForResolvedPath(const std::string& resolved, SmatchetLoadedIconT
  */
 constexpr size_t kPriorityResolveMemoCap = 256;
 struct PriorityResolveMemo {
-    std::string CacheKey;
-    std::string Label; ///< Parsed friendly name; preserves tooltip text on the fast path.
+    std::string CacheKey;       ///< Texture-cache key (empty iff Negative).
+    std::string Label;          ///< Parsed friendly name; preserves tooltip text on the fast path.
+    bool        Negative = false; ///< True when the load failed and we want to suppress future retries.
 };
 std::unordered_map<std::string, PriorityResolveMemo>& PriorityRawValueToCacheKey() {
     static std::unordered_map<std::string, PriorityResolveMemo> m;
@@ -273,6 +286,23 @@ void RememberPriorityResolution(const std::string& rawValue, const std::string& 
     PriorityResolveMemo entry;
     entry.CacheKey = cacheKey;
     entry.Label = label;
+    entry.Negative = false;
+    m[rawValue] = entry;
+}
+
+/// Memoise a failed-load: keeps the slow path from being re-entered every frame for cells whose
+/// icon URL/file genuinely cannot be resolved (offline, missing bundle, malformed JSON). Without
+/// this, ParsePriorityJson + LoadPriorityIconWithFallbacks would run on every frame for every
+/// such cell — dominating the FPS budget at typical grid sizes.
+void RememberNegativePriorityResolution(const std::string& rawValue, const std::string& label) {
+    if (rawValue.empty()) return;
+    auto& m = PriorityRawValueToCacheKey();
+    if (m.size() >= kPriorityResolveMemoCap) {
+        m.clear();
+    }
+    PriorityResolveMemo entry;
+    entry.Label = label;
+    entry.Negative = true;
     m[rawValue] = entry;
 }
 
@@ -401,21 +431,40 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
     if (field.Id != "priority") {
         return false;
     }
+    // Empty priority values: no JSON to parse and no icon to render. Skipping the slow path
+    // entirely is the main per-frame saving for cells with no priority assigned — at typical
+    // grid sizes the unconditional ParsePriorityJson + LoadPriorityIconWithFallbacks pair
+    // was dominating the FPS budget.
+    if (rawValue.empty()) {
+        return false;
+    }
     {
         const auto& memo = PriorityRawValueToCacheKey();
         const auto it = memo.find(rawValue);
-        if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, outIcon)) {
-            return true;
+        if (it != memo.end()) {
+            // Negative entry: load failed previously — return false without re-attempting.
+            if (it->second.Negative) {
+                return false;
+            }
+            if (SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, outIcon)) {
+                return true;
+            }
+            // Texture evicted — fall through to slow path which will re-load and refresh the memo.
         }
     }
     std::string iconUrl;
     std::string label;
     std::string slug;
     if (!ParsePriorityJson(rawValue, iconUrl, label, slug)) {
+        // Malformed / empty priority JSON: negative-cache so we don't keep parsing every frame.
+        RememberNegativePriorityResolution(rawValue, label);
         return false;
     }
     std::string resolvedKey;
     if (!LoadPriorityIconWithFallbacks(iconUrl, slug, outIcon, resolvedKey, outError)) {
+        // Load failed across all fallback paths — remember the failure so subsequent frames
+        // short-circuit at the memo lookup above instead of repeating the full work.
+        RememberNegativePriorityResolution(rawValue, label);
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);
