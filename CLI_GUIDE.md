@@ -194,10 +194,31 @@ Registered once `ViewState` is loaded (first render frame). Returns `{id, name, 
 | `view.current` | — | Currently active view |
 | `view.activate` | `id` *(required)* | Switch active view + trigger sync |
 | `view.refresh_active` | — | Re-sync active view from tracker |
+| `view.create` | `name` *(required)*, `jql?`, `fields?` *(JSON array)*, `triggerSync?` | Create a new view (auto-activated). Dry-run supported. |
+| `view.update` | `name?`, `jql?`, `fields?` *(JSON array)* | Edit the currently active view in place. Omitted keys preserve current value. Dry-run supported. |
+| `view.delete` | `id` *(required)* | Destructive (`--yes`). Refuses to delete the last remaining view. Dry-run supported. |
 
 ```bash
-SmatchetStandalone.exe cmd view.list --quiet          # print view ids
-SmatchetStandalone.exe cmd view.activate --id=mine   # switch and sync
+# List existing views
+SmatchetStandalone.exe cmd view.list --quiet
+
+# Create a new view + trigger sync immediately
+SmatchetStandalone.exe cmd view.create --name="High priority" --jql="priority=High" --triggerSync=true
+
+# Preview a create without applying
+SmatchetStandalone.exe cmd view.create --name=blockers --jql="status=Blocked" --dry-run
+
+# Select (activate) a specific view — triggers sync from tracker
+SmatchetStandalone.exe cmd view.activate --id=high_priority
+
+# Update the currently active view's JQL
+SmatchetStandalone.exe cmd view.update --jql="priority in (High, Highest)"
+
+# Update fields (must pass as JSON array)
+SmatchetStandalone.exe cmd view.update --fields='["summary","status","priority","assignee"]'
+
+# Delete a view (requires --yes)
+SmatchetStandalone.exe cmd view.delete --id=high_priority --yes
 ```
 
 ---
