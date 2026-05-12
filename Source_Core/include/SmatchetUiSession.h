@@ -343,6 +343,9 @@ struct UiDrawSession {
     std::vector<std::string> newIssueMissingFieldIds;
     bool newIssueQueueFallbackVisible = false;
     std::string newIssueQueueFallbackError;
+    // PR 3: when the draft's ProjectKey diverges from this guard, the new-issue draft UI kicks an
+    // async RefreshFieldCatalog so per-project required-fields/create-meta land before submit.
+    std::string newIssueDraftLastFetchedProjectKey;
 
     std::vector<char> bulkImportTextBuf;
     char bulkImportPathBuf[1024]{};

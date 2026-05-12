@@ -82,6 +82,9 @@ struct TrackerConfig {
     // Wheel ticks at top/bottom before vertical wheel reroutes to horizontal grid scroll.
     // Exposed in UI as Settings -> Preferences -> Appearance.
     int GridEndWheelSwallowsBeforeHorizontal = 15;
+    // PR 3: max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
+    // 0/negative falls back to the in-cache default (16).
+    int FieldCatalogCacheMaxProjects = 16;
     // Restores Settings -> Preferences window visibility on launch.
     bool ShowPreferencesWindow = false;
     // Restores Workspace -> Views & Queries window visibility on launch.

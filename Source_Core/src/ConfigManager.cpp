@@ -823,6 +823,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["read_only_mode"] = config.ReadOnlyMode;
     j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
+    j["field_catalog_cache_max_projects"] = config.FieldCatalogCacheMaxProjects;
     j["show_preferences_window"] = config.ShowPreferencesWindow;
     j["show_views_dashboard_window"] = config.ShowViewsDashboardWindow;
     j["show_performance_window"] = config.ShowPerformanceWindow;
@@ -1071,6 +1072,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
             cfg.GridEndWheelSwallowsBeforeHorizontal =
                 j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
+            cfg.FieldCatalogCacheMaxProjects =
+                j.value("field_catalog_cache_max_projects", cfg.FieldCatalogCacheMaxProjects);
             cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
             cfg.ShowViewsDashboardWindow = j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
             cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);

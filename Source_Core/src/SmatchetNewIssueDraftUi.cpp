@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unordered_set>
 
@@ -196,8 +197,35 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             d.newIssueQueueFallbackError.clear();
             d.gridEditError.clear();
             d.gridEditSuccess.clear();
+            // PR 3: seed the project-change guard with the draft's initial project so the first
+            // render doesn't redundantly refetch a catalog AppController already loaded at startup.
+            d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
         }
         return;
+    }
+
+    // PR 3: if the user changed the draft's project mid-session (project combo at line ~385 below,
+    // or PR 4's picker once it lands), kick a per-project catalog refresh on a worker thread so the
+    // returned create-meta becomes per-project required-fields for the next submit attempt. The
+    // refresh writes through SetFieldCatalog → SaveFieldCatalogSnapshot, populating the new cache
+    // entry. We use std::async(launch::async) — the UI thread cannot block on HTTP.
+    if (!d.newIssueDraft.ProjectKey.empty() &&
+        d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
+        d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
+        TrackerConfig refetchCfg = cfg;
+        if (cfg.TrackerType == "Plane") {
+            refetchCfg.PlaneProjectId = d.newIssueDraft.ProjectKey;
+        } else {
+            refetchCfg.ProjectKey = d.newIssueDraft.ProjectKey;
+        }
+        // Detach: fire-and-forget. AppController serializes catalog writes via its own mutex.
+        std::thread([&app, refetchCfg]() {
+            try {
+                app.RefreshFieldCatalog(refetchCfg);
+            } catch (...) {
+                // Already logged inside RefreshFieldCatalog / SetFieldCatalog; never throw across UI.
+            }
+        }).detach();
     }
 
     // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.

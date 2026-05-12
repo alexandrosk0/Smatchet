@@ -5,8 +5,29 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdint>
 #include <fstream>
+#include <mutex>
 #include <nlohmann/json.hpp>
+
+namespace {
+// FieldCatalogCache exposes free functions and reads/writes a single JSON file under the user data
+// directory. PR 3 adds an `entries` index and per-read lastUsedUnix touches; we serialize all
+// file-modifying paths so concurrent UI/HTTP/offline-replay threads don't race on read-modify-write.
+std::mutex& FieldCatalogCacheFileMutex() {
+    static std::mutex m;
+    return m;
+}
+
+constexpr int kFieldCatalogCacheSchemaVersion = 3;
+constexpr int kDefaultMaxCachedProjects = 16;
+
+std::int64_t NowUnixSeconds() {
+    return static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+} // namespace
 
 namespace {
 
@@ -255,6 +276,155 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
     return true;
 }
 
+// PR 3: split parse/normalize of the on-disk root so Save/Load/List/Forget share migration logic.
+// Schema 1: flat top-level "fields"/"components"/"issue_type_meta" (Jira only, pre-multi-backend).
+// Schema 2: { "schema_version": 2, "entries": { "<cacheKey>": { fields, components, issue_type_meta } } }.
+// Schema 3: { "schema_version": 3, "entries": [ { cacheKey, projectKey, backend, endpoint, lastUsedUnix } ... ],
+//             "<cacheKey>": <entry blob>, ... }.
+// MigrateOnDiskRootToV3 produces a v3-shaped root (entries-array index + per-cacheKey blobs at root).
+// Missing metadata (backend/endpoint/projectKey from a v1/v2 entry) is left empty in the index entry
+// and populated on the next Save for that cacheKey.
+nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
+    nlohmann::json out = nlohmann::json::object();
+    out["schema_version"] = kFieldCatalogCacheSchemaVersion;
+    nlohmann::json indexArr = nlohmann::json::array();
+
+    const int oldVer = rootOnDisk.is_object() ? rootOnDisk.value("schema_version", 0) : 0;
+    const std::int64_t now = NowUnixSeconds();
+
+    auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey,
+                                const std::string& backend, const std::string& endpoint,
+                                std::int64_t lastUsed) {
+        nlohmann::json e = nlohmann::json::object();
+        e["cacheKey"] = cacheKey;
+        e["projectKey"] = projectKey;
+        e["backend"] = backend;
+        e["endpoint"] = endpoint;
+        e["lastUsedUnix"] = lastUsed;
+        indexArr.push_back(std::move(e));
+    };
+
+    if (oldVer >= 3 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_array()) {
+        // v3 → v3: preserve the index as-is.
+        for (const auto& idx : rootOnDisk["entries"]) {
+            if (!idx.is_object()) continue;
+            const std::string cacheKey = idx.value("cacheKey", std::string());
+            if (cacheKey.empty()) continue;
+            appendIndexEntry(cacheKey, idx.value("projectKey", std::string()),
+                             idx.value("backend", std::string()), idx.value("endpoint", std::string()),
+                             idx.value("lastUsedUnix", now));
+        }
+        // Preserve per-cacheKey blobs at root (everything except schema_version + entries).
+        for (auto it = rootOnDisk.begin(); it != rootOnDisk.end(); ++it) {
+            if (it.key() == "schema_version" || it.key() == "entries") continue;
+            out[it.key()] = it.value();
+        }
+        return out;
+    }
+
+    if (oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object()) {
+        // v2 → v3: hoist each cacheKey blob from entries-object to root, add an index entry per blob
+        // with empty backend/endpoint/projectKey (next Save backfills them). lastUsedUnix = now so a
+        // newly-upgraded cache doesn't evict good entries on the first write.
+        for (auto it = rootOnDisk["entries"].begin(); it != rootOnDisk["entries"].end(); ++it) {
+            const std::string& cacheKey = it.key();
+            if (!it.value().is_object()) continue;
+            out[cacheKey] = it.value();
+            appendIndexEntry(cacheKey, std::string(), std::string(), std::string(), now);
+        }
+        out["entries"] = std::move(indexArr);
+        return out;
+    }
+
+    if (rootOnDisk.is_object() && rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array()) {
+        // v1 → v3: legacy flat layout was Jira-only; store under the historical "Jira_legacy_v1" key
+        // (TryLoadFieldCatalogSnapshot below substitutes this when a "Jira|..." key isn't found).
+        nlohmann::json legacyEntry = nlohmann::json::object();
+        legacyEntry["fields"] = rootOnDisk["fields"];
+        legacyEntry["components"] =
+            rootOnDisk.contains("components") ? rootOnDisk["components"] : nlohmann::json::array();
+        legacyEntry["issue_type_meta"] =
+            rootOnDisk.contains("issue_type_meta") ? rootOnDisk["issue_type_meta"] : nlohmann::json::array();
+        out["Jira_legacy_v1"] = std::move(legacyEntry);
+        appendIndexEntry("Jira_legacy_v1", std::string(), "Jira", std::string(), now);
+    }
+
+    out["entries"] = std::move(indexArr);
+    return out;
+}
+
+// Load the on-disk JSON, migrate to v3 in memory. On parse failure returns a fresh empty v3 root
+// and logs a WARN — matches the corrupt-cache wipe pattern described in PR 3 deliverable §1.
+nlohmann::json LoadAndMigrateRootLocked() {
+    const std::string path = FieldCatalogCachePath();
+    nlohmann::json rootOnDisk = nlohmann::json::object();
+    std::ifstream inf(path, std::ios::binary);
+    if (inf) {
+        std::string text((std::istreambuf_iterator<char>(inf)), std::istreambuf_iterator<char>());
+        if (!text.empty()) {
+            try {
+                rootOnDisk = nlohmann::json::parse(text);
+            } catch (const std::exception& ex) {
+                LOG_WARN("FieldCatalogCache: ignoring unreadable cache, wiping to fresh v%d: %s",
+                         kFieldCatalogCacheSchemaVersion, ex.what());
+                rootOnDisk = nlohmann::json::object();
+            }
+        }
+    }
+    return MigrateOnDiskRootToV3(rootOnDisk);
+}
+
+// Locate the index array entry for `cacheKey`. Returns end() if not found.
+nlohmann::json::iterator FindIndexEntry(nlohmann::json& indexArr, const std::string& cacheKey) {
+    for (auto it = indexArr.begin(); it != indexArr.end(); ++it) {
+        if (it->is_object() && it->value("cacheKey", std::string()) == cacheKey) {
+            return it;
+        }
+    }
+    return indexArr.end();
+}
+
+// Sort the index array by lastUsedUnix descending and drop everything past `cap-1`, also freeing
+// the per-cacheKey blobs at root. cap is clamped to a minimum of 1.
+void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap) {
+    if (cap < 1) cap = 1;
+    if (!root.contains("entries") || !root["entries"].is_array()) return;
+    nlohmann::json& indexArr = root["entries"];
+    std::sort(indexArr.begin(), indexArr.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+        return a.value("lastUsedUnix", std::int64_t{0}) > b.value("lastUsedUnix", std::int64_t{0});
+    });
+    while (static_cast<int>(indexArr.size()) > cap) {
+        const nlohmann::json& victim = indexArr.back();
+        const std::string victimKey = victim.value("cacheKey", std::string());
+        const std::string victimProject = victim.value("projectKey", std::string());
+        const std::int64_t victimLast = victim.value("lastUsedUnix", std::int64_t{0});
+        if (!victimKey.empty() && root.contains(victimKey)) {
+            root.erase(victimKey);
+        }
+        LOG_INFO("FieldCatalogCache LRU evicted project='%s' (cap=%d, lastUsed=%lld)",
+                 victimProject.c_str(), cap, static_cast<long long>(victimLast));
+        indexArr.erase(indexArr.end() - 1);
+    }
+}
+
+bool PersistRootLocked(const nlohmann::json& root, std::string& outError) {
+    try {
+        const std::string path = FieldCatalogCachePath();
+        const std::string text = root.dump();
+        if (!ConfigManager::AtomicWriteTextFile(path, text)) {
+            outError = "Failed to write field catalog cache file.";
+            return false;
+        }
+        return true;
+    } catch (const std::exception& ex) {
+        outError = ex.what();
+        return false;
+    } catch (...) {
+        outError = "Unknown error while persisting field catalog cache.";
+        return false;
+    }
+}
+
 } // namespace
 
 namespace FieldCatalogCache {
@@ -268,54 +438,44 @@ std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::strin
     return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + projectKey;
 }
 
-bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::vector<TrackerField>& fields,
+bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& backend, const std::string& endpoint,
+                              const std::string& projectKey, int maxProjects,
+                              const std::vector<TrackerField>& fields,
                               const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError) {
     outError.clear();
     try {
-        const std::string path = FieldCatalogCachePath();
-        nlohmann::json rootOnDisk = nlohmann::json::object();
-        {
-            std::ifstream inf(path, std::ios::binary);
-            if (inf) {
-                std::string text((std::istreambuf_iterator<char>(inf)), std::istreambuf_iterator<char>());
-                if (!text.empty()) {
-                    try {
-                        rootOnDisk = nlohmann::json::parse(text);
-                    } catch (const std::exception& ex) {
-                        LOG_WARN("FieldCatalogCache::SaveFieldCatalogSnapshot: ignoring unreadable cache: %s",
-                                 ex.what());
-                        rootOnDisk = nlohmann::json::object();
-                    }
-                }
-            }
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        nlohmann::json root = LoadAndMigrateRootLocked();
+        root[cacheKey] = BuildEntryJson(fields, components, issueTypeMeta);
+
+        // Upsert the index entry — backfills (backend, endpoint, projectKey) for entries that came
+        // from v2/v1 migration with empty metadata.
+        if (!root.contains("entries") || !root["entries"].is_array()) {
+            root["entries"] = nlohmann::json::array();
+        }
+        nlohmann::json& indexArr = root["entries"];
+        const std::int64_t now = NowUnixSeconds();
+        auto it = FindIndexEntry(indexArr, cacheKey);
+        if (it == indexArr.end()) {
+            nlohmann::json e = nlohmann::json::object();
+            e["cacheKey"] = cacheKey;
+            e["projectKey"] = projectKey;
+            e["backend"] = backend;
+            e["endpoint"] = endpoint;
+            e["lastUsedUnix"] = now;
+            indexArr.push_back(std::move(e));
+        } else {
+            (*it)["projectKey"] = projectKey;
+            (*it)["backend"] = backend;
+            (*it)["endpoint"] = endpoint;
+            (*it)["lastUsedUnix"] = now;
         }
 
-        nlohmann::json out = nlohmann::json::object();
-        out["schema_version"] = 2;
-        nlohmann::json entries = nlohmann::json::object();
+        const int cap = maxProjects > 0 ? maxProjects : kDefaultMaxCachedProjects;
+        EvictLeastRecentlyUsedIfOverCap(root, cap);
 
-        const int oldVer = rootOnDisk.value("schema_version", 0);
-        if (oldVer == 2 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_object()) {
-            entries = rootOnDisk["entries"];
-        } else if (rootOnDisk.contains("fields") && rootOnDisk["fields"].is_array()) {
-            nlohmann::json legacyEntry = nlohmann::json::object();
-            legacyEntry["fields"] = rootOnDisk["fields"];
-            legacyEntry["components"] =
-                rootOnDisk.contains("components") ? rootOnDisk["components"] : nlohmann::json::array();
-            legacyEntry["issue_type_meta"] =
-                rootOnDisk.contains("issue_type_meta") ? rootOnDisk["issue_type_meta"] : nlohmann::json::array();
-            entries["Jira_legacy_v1"] = std::move(legacyEntry);
-        }
-
-        entries[cacheKey] = BuildEntryJson(fields, components, issueTypeMeta);
-        out["entries"] = std::move(entries);
-        const std::string text = out.dump();
-        if (!ConfigManager::AtomicWriteTextFile(path, text)) {
-            outError = "Failed to write field catalog cache file.";
-            return false;
-        }
-        return true;
+        return PersistRootLocked(root, outError);
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::SaveFieldCatalogSnapshot failed: %s", ex.what());
@@ -334,45 +494,43 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
     outFields.clear();
     outComponents.clear();
     outIssueTypeMeta.clear();
-    const std::string path = FieldCatalogCachePath();
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        outError = "Field catalog cache file not found.";
-        return false;
-    }
-    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (text.empty()) {
-        outError = "Field catalog cache file is empty.";
-        return false;
-    }
     try {
-        const nlohmann::json root = nlohmann::json::parse(text);
-        const int ver = root.value("schema_version", 0);
-        if (ver == 2 && root.contains("entries") && root["entries"].is_object()) {
-            const nlohmann::json& entries = root["entries"];
-            nlohmann::json::const_iterator it = entries.find(cacheKey);
-            if (it == entries.end() && cacheKey.rfind("Jira|", 0) == 0) {
-                it = entries.find("Jira_legacy_v1");
-            }
-            if (it == entries.end() || !it->is_object()) {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        nlohmann::json root = LoadAndMigrateRootLocked();
+
+        // Resolve the blob: prefer exact cacheKey match; fall back to "Jira_legacy_v1" for Jira keys
+        // (mirrors the previous v2 behavior so a fresh upgrade keeps reading the v1 snapshot).
+        std::string resolvedKey = cacheKey;
+        if (!root.contains(resolvedKey) || !root[resolvedKey].is_object()) {
+            if (cacheKey.rfind("Jira|", 0) == 0 && root.contains("Jira_legacy_v1") &&
+                root["Jira_legacy_v1"].is_object()) {
+                resolvedKey = "Jira_legacy_v1";
+            } else {
                 outError = "No field catalog cache entry for this tracker context.";
                 return false;
             }
-            return ParseCatalogEntryObject(*it, outFields, outComponents, outIssueTypeMeta, outError);
         }
-        if (root.contains("fields") && root["fields"].is_array()) {
-            if (cacheKey.rfind("Plane|", 0) == 0) {
-                outError = "Legacy field catalog cache is Jira-only; Plane snapshot not available.";
-                return false;
-            }
-            if (cacheKey.rfind("Jira|", 0) != 0) {
-                outError = "Unsupported cache key for legacy field catalog file.";
-                return false;
-            }
-            return ParseCatalogEntryObject(root, outFields, outComponents, outIssueTypeMeta, outError);
+        const bool ok =
+            ParseCatalogEntryObject(root[resolvedKey], outFields, outComponents, outIssueTypeMeta, outError);
+        if (!ok) {
+            return false;
         }
-        outError = "Unsupported or empty field catalog cache format.";
-        return false;
+
+        // Touch lastUsedUnix on the index entry (under the resolved key, so legacy reads also bump
+        // the Jira_legacy_v1 entry's timestamp). Best-effort: a write failure here is logged but the
+        // caller still gets the loaded data — the cache is a snapshot, not the source of truth.
+        if (root.contains("entries") && root["entries"].is_array()) {
+            auto it = FindIndexEntry(root["entries"], resolvedKey);
+            if (it != root["entries"].end()) {
+                (*it)["lastUsedUnix"] = NowUnixSeconds();
+                std::string writeErr;
+                if (!PersistRootLocked(root, writeErr)) {
+                    LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",
+                             writeErr.c_str());
+                }
+            }
+        }
+        return true;
     } catch (const std::exception& ex) {
         outError = ex.what();
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: %s", ex.what());
@@ -380,6 +538,78 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
     } catch (...) {
         outError = "Unknown parse error for field catalog cache.";
         LOG_ERROR("FieldCatalogCache::TryLoadFieldCatalogSnapshot parse failed: unknown exception");
+        return false;
+    }
+}
+
+std::vector<CachedProjectEntry> ListCachedProjects() {
+    std::vector<CachedProjectEntry> out;
+    try {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        nlohmann::json root = LoadAndMigrateRootLocked();
+        if (!root.contains("entries") || !root["entries"].is_array()) {
+            return out;
+        }
+        for (const auto& e : root["entries"]) {
+            if (!e.is_object()) continue;
+            CachedProjectEntry cpe;
+            cpe.projectKey = e.value("projectKey", std::string());
+            cpe.backend = e.value("backend", std::string());
+            cpe.endpoint = e.value("endpoint", std::string());
+            cpe.lastUsedUnix = e.value("lastUsedUnix", std::int64_t{0});
+            out.push_back(std::move(cpe));
+        }
+        std::sort(out.begin(), out.end(),
+                  [](const CachedProjectEntry& a, const CachedProjectEntry& b) {
+                      return a.lastUsedUnix > b.lastUsedUnix;
+                  });
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldCatalogCache::ListCachedProjects failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("FieldCatalogCache::ListCachedProjects failed: unknown exception");
+    }
+    return out;
+}
+
+bool ForgetProject(const std::string& projectKey, const std::string& backend, const std::string& endpoint) {
+    try {
+        std::lock_guard<std::mutex> lk(FieldCatalogCacheFileMutex());
+        nlohmann::json root = LoadAndMigrateRootLocked();
+        if (!root.contains("entries") || !root["entries"].is_array()) {
+            return true;
+        }
+        nlohmann::json& indexArr = root["entries"];
+        bool removed = false;
+        for (auto it = indexArr.begin(); it != indexArr.end();) {
+            const bool matches = it->is_object() &&
+                                 it->value("projectKey", std::string()) == projectKey &&
+                                 it->value("backend", std::string()) == backend &&
+                                 it->value("endpoint", std::string()) == endpoint;
+            if (matches) {
+                const std::string victimKey = it->value("cacheKey", std::string());
+                if (!victimKey.empty() && root.contains(victimKey)) {
+                    root.erase(victimKey);
+                }
+                it = indexArr.erase(it);
+                removed = true;
+            } else {
+                ++it;
+            }
+        }
+        if (!removed) {
+            return true; // Not-found is success — caller doesn't need to distinguish.
+        }
+        std::string writeErr;
+        const bool ok = PersistRootLocked(root, writeErr);
+        if (!ok) {
+            LOG_WARN("FieldCatalogCache::ForgetProject: persist failed: %s", writeErr.c_str());
+        }
+        return ok;
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldCatalogCache::ForgetProject failed: %s", ex.what());
+        return false;
+    } catch (...) {
+        LOG_WARN("FieldCatalogCache::ForgetProject failed: unknown exception");
         return false;
     }
 }

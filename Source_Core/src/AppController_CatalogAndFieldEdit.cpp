@@ -231,7 +231,12 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     requestDeferredLiveTrackerBackendSuccessNotify_();
     {
         std::string snapErr;
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, AvailableFields, AvailableComponents,
+        const std::string saveBackend = catalogPlane ? std::string("Plane") : std::string("Jira");
+        const std::string saveEndpoint =
+            catalogPlane ? (cfgSnap.PlaneUrl + std::string("|") + cfgSnap.PlaneWorkspaceSlug) : cfgSnap.Domain;
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, saveBackend, saveEndpoint,
+                                                         projectKeyForCache, cfgSnap.FieldCatalogCacheMaxProjects,
+                                                         AvailableFields, AvailableComponents,
                                                          AvailableIssueTypeMeta, snapErr)) {
             LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
         }
