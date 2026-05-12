@@ -21,6 +21,13 @@ namespace SmatchetImageTextureCache {
 void TickPendingDestroys();
 
 /**
+ * Cache-only lookup: returns true and populates `out` on hit (and touches LRU). Performs no I/O.
+ * Intended as a fast path for hot per-frame call sites (grid icon cells) so they skip disk reads
+ * and decode work when the texture is already resident.
+ */
+bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out);
+
+/**
  * Decode image bytes (PNG/JPEG/WebP/etc. via stb) and return a registered ImTextureData.
  * @param cacheKey stable key (e.g. `file:` + path or `url:` + url) for LRU.
  */
