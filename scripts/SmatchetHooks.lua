@@ -198,9 +198,9 @@ end
 -- customisation (different icons, additional decoration, click handler, etc.).
 -- Enable by uncommenting the register_field_display line below.
 --
-register_field_display("priority", render_priority_cell)
+-- register_field_display("priority", render_priority_cell)
 
-log_info("SmatchetHooks.lua: priority Lua renderer ENABLED")
+log_info("SmatchetHooks.lua: priority Lua handler available but DISABLED (see perf note above — C++ path is ~50-60× faster)")
 
 -- =============================================================================
 
