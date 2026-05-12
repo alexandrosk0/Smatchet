@@ -38,23 +38,86 @@ void RenderFooCell(...) {
 }
 ```
 
-### 2. Build & hand off
+### 2. Build & measure
 
-Build with:
+Build first:
 
 ```
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 ```
 
-Then ask the user to:
+Then pick the appropriate measurement path:
+
+---
+
+#### Path A — CLI (preferred)
+
+Requires the command system from `backlog/COMMAND_SYSTEM_PLAN.md` to be implemented. Check availability first:
+
+```
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd commands.list
+```
+
+Exit 0 → CLI available. Any other exit or unrecognised output → fall back to **Path B**.
+
+**A1 — Named scenario (fully automated, no user needed):**
+
+Use this when the slow scenario has a registered entry in `ScenarioRunner` (e.g. `priority-grid-scroll`):
+
+```bash
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.run \
+  --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --spawn --yes
+```
+
+Then read the result directly — no user paste required:
+
+```python
+Read("perf_before.json")
+# data.rows[] sorted by lastTotalMs descending — pick temp:* entries
+```
+
+**A2 — App already running, ad-hoc scenario:**
+
+Use this when the user is already navigated to the slow screen and you just need to capture a snapshot:
+
+```bash
+# Reset accumulated data from previous frames
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.reset
+
+# (user reproduces the bad scenario for ~5 s — the only manual step on this path)
+
+# Read rows directly into context — no panel, no paste
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot --pretty
+```
+
+Parse `data.rows` from the JSON output. The rows are pre-sorted by `lastTotalMs` descending.
+Filter to `temp:*` entries:
+
+```bash
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
+  | jq '[.data.rows[] | select(.name | startswith("temp:"))]'
+```
+
+Also capture the top non-temp rows for context (they show the overall frame budget):
+
+```bash
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.snapshot \
+  | jq '.data.rows[:10]'
+```
+
+---
+
+#### Path B — Manual (fallback when CLI is not yet built)
+
+Ask the user to:
 
 1. Run the rebuilt exe (`build/ninja-iter-msys2/SmatchetStandalone.exe`).
 2. Open the Perf panel: **menu `Inspect > Performance Monitor...`**.
 3. Reproduce the bad scenario as concretely as possible (e.g. "open a view that includes the priority column, scroll continuously for 5 s") so the panel's per-frame numbers reflect the loaded state, not the idle desktop.
-4. Paste back the rows whose `name` starts with `temp:` — and the dominant pre-existing rows so I see what they're competing against.
+4. Paste back the rows whose `name` starts with `temp:` — and the top ~10 rows overall so I see what they're competing against.
 5. Optionally: also report the user-visible FPS reading before/after, so I can sanity-check the marker totals against the actual frame budget gap.
 
-**Do not attempt to read FPS yourself.** There is no headless export, and Claude can't observe the GUI. Wait for the user's numbers before making code changes.
+**Do not attempt to read FPS yourself on Path B.** There is no headless export and Claude can't observe the GUI. Wait for the user's numbers before making code changes.
 
 ### 3. Diagnose from the numbers
 
@@ -64,19 +127,40 @@ Then ask the user to:
 
 ### 4. Change, rebuild, re-measure
 
-Apply the targeted fix. Rebuild. Ask the user to repeat the **same** scenario (same view, same scroll pattern, same row count) and paste the new `temp:*` rows.
+Apply the targeted fix. Rebuild (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`). Then re-measure using the **same path (A1/A2/B) you used in step 2**:
+
+- **A1** — rerun `cmd scenario.run` with `--outPath=perf_after.json`. Read both files and compare `rows[].lastTotalMs` on the target scope.
+- **A2** — `cmd perf.reset`, user reproduces, `cmd perf.snapshot`.
+- **B** — ask the user to repeat the same scenario and paste the new `temp:*` rows.
+
+Same view, same scroll pattern, same row count as the baseline — otherwise the comparison is noise.
 
 ### 5. Validate
 
-Compare before/after on the dominant row(s):
+Compare before/after on the dominant row(s).
 
-- If `lastTotalMs` on the target row dropped materially (rule of thumb: ≥30% on the dominant row, OR a clear FPS recovery the user reports), the fix worked.
-- If it didn't drop, or another row now dominates, **iterate** — don't claim success on a build pass or on intuition.
-- If FPS recovered but no marker shows the win, your markers don't cover the path the fix actually changed. Add more, re-measure, then trust the numbers.
+**CLI path (A1)** — diff the two JSON files directly:
+```bash
+jq -s '
+  [ .[0].data.rows[] | select(.name | startswith("temp:")) ] as $before |
+  [ .[1].data.rows[] | select(.name | startswith("temp:")) ] as $after |
+  $before[] as $b | $after[] | select(.name == $b.name) |
+  { name, before: $b.lastTotalMs, after: .lastTotalMs,
+    drop_pct: ((($b.lastTotalMs - .lastTotalMs) / $b.lastTotalMs * 100) | round) }
+' perf_before.json perf_after.json
+```
+
+**All paths** — ruling:
+- ≥30% drop on the dominant `temp:*` row **and** user confirms the FPS gap closed → fix worked.
+- Drop <30% or another row now dominates → **iterate**, don't declare victory.
+- FPS recovered but no `temp:*` row shows the win → markers don't cover the path the fix changed; add finer scopes and re-measure.
 
 ### 6. Clean up
 
-Once the user confirms the FPS improvement is real, strip every `temp:` marker. Verify with the Grep tool (per project rules — do not use bash `grep`):
+Once the user confirms the FPS improvement is real:
+
+1. Strip every `temp:` marker from source.
+2. Verify with the Grep tool (per project rules — do not use bash `grep`):
 
 ```
 Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("temp:',
@@ -84,6 +168,13 @@ Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("temp:',
 ```
 
 Plus the same check against `Plugins/` and `Target_Standalone/`. All three must return zero matches before the PR commit. Pre-existing non-`temp:` scopes stay untouched.
+
+3. **CLI path** — reset accumulated data so stale temp: rows don't persist in the monitor between sessions:
+```bash
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd perf.reset
+```
+
+4. Delete any `perf_before.json` / `perf_after.json` scratch files written during step 2/4 (they live in the working directory or `<userData>/perf/`; not committed).
 
 ## Skip clause
 
@@ -93,5 +184,12 @@ Fixes whose cost is obvious from the code alone (e.g. removing a confirmed per-f
 
 - Macro: `SMATCHET_UI_PERF_SCOPE(name)` — `Source_Core/include/UiPerfMonitor.h`
 - Aggregator: `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source_Core/src/UiPerfMonitor.cpp`
-- UI panel: `Source_Core/src/SmatchetPerfUi.cpp`
+- UI panel: `Source_Core/src/SmatchetPerfUi.cpp` (menu `Inspect > Performance Monitor...`)
 - BeginFrame call site: `Source_Core/src/SmatchetUI.cpp` (`UiPerfMonitor::Instance().BeginFrame()`)
+
+**CLI commands (requires `backlog/COMMAND_SYSTEM_PLAN.md` to be implemented):**
+- `cmd perf.snapshot [--pretty]` — returns all current frame rows as JSON inline.
+- `cmd perf.dump [--outPath=<path>]` — writes rows to disk, returns `{file, count}`.
+- `cmd perf.reset` — clears accumulated data.
+- `cmd scenario.run --name=<id> --frames=<n> [--outPath=<path>] [--spawn] --yes` — drives a named scenario end-to-end and dumps perf JSON.
+- `cmd scenario.list` — lists registered scenario names.
