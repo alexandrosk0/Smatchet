@@ -803,6 +803,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) {
                 commandPalette_.Open();
             }
+            if (ImGui::MenuItem("Open View...", "Ctrl+Shift+V")) {
+                commandPalette_.Open();
+                commandPalette_.SetFilterText("view.toggle.");
+            }
             ImGui::Separator();
             if (ImGui::BeginMenu("Appearance")) {
                 if (ImGui::BeginMenu("Theme")) {

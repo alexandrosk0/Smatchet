@@ -11,6 +11,7 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/ViewToggleCommands.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -1652,6 +1653,8 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                 });
         reg.Register(std::move(c));
     }
+
+    RegisterViewToggleCommands(reg, app);
 
     LOG_INFO("CommandRegistry: registered %zu built-in commands", reg.All().size());
 }
