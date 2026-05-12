@@ -284,7 +284,8 @@ class AppController {
     std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
     std::string ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args, std::string& outError);
-    std::string ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args, std::string& outError);
+    std::string ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args,
+                                       std::string& outError);
     void DrawLuaWindows();
 #endif
 
@@ -313,7 +314,7 @@ class AppController {
      * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
      */
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
-                                                  const ViewsStore* viewsOverride = nullptr);
+                                                   const ViewsStore* viewsOverride = nullptr);
 
     /** Merges fetch results into the local cache and updates connectivity banners. */
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
@@ -337,7 +338,8 @@ class AppController {
     std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const TrackerConfig& cfg);
-    bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
+    bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
+                           std::string& outError) const;
 
     /** Resolve a raw tracker value (e.g. accountId, label UUID) to a display name. */
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
@@ -348,6 +350,9 @@ class AppController {
 
     const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
+    /// Last-fetched user catalog. May be empty before the first catalog fetch completes
+    /// or when the active backend doesn't surface a users endpoint.
+    const std::vector<TrackerUser>& GetAvailableUsers() const { return AvailableUsers; }
     const std::string& GetFieldCatalogError() const { return LastTrackerFieldCatalogError; }
     const std::string& GetFieldCatalogWarning() const { return LastTrackerFieldCatalogWarning; }
     /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets. */
@@ -358,7 +363,8 @@ class AppController {
      * (e.g. Views dashboard users-fetch warning). Prefer this over separate `GetFieldCatalogWarning` /
      * `GetLastTicketSyncWarning` lines in headers.
      */
-    TrackerConnectivityBannerForUi GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
+    TrackerConnectivityBannerForUi
+    GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
 
     /** Last outcome of periodic tracker probe (UI thread). */
     enum class TrackerConnectivityState {
@@ -395,8 +401,14 @@ class AppController {
                          const std::string& error);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+    /// Replace the cached user list (e.g. after a successful `FetchUsers`). Surfaces to
+    /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
+    /// Idempotent; safe to call with an empty vector to clear the cache.
+    void SetAvailableUsers(std::vector<TrackerUser> users);
 
-    const std::vector<TrackerIssueTypeCreateMeta>& GetTrackerIssueTypeCreateMeta() const { return AvailableIssueTypeMeta; }
+    const std::vector<TrackerIssueTypeCreateMeta>& GetTrackerIssueTypeCreateMeta() const {
+        return AvailableIssueTypeMeta;
+    }
 
     // ---- Create issue flow -------------------------------------------------
 
@@ -481,8 +493,7 @@ class AppController {
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
-                                  const std::string& richKind);
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown, const std::string& richKind);
 
     struct PendingFieldEditDeleteSummary {
         int Deleted = 0;
@@ -515,7 +526,8 @@ class AppController {
      * (Jira omits it inconsistently).
      *
      * Returns true when editmeta is not loaded yet (optimistic) or for
-     * non-Jira backends (e.g. Plane). After a failed editmeta fetch for an issue, returns false for fields not in the bypass list.
+     * non-Jira backends (e.g. Plane). After a failed editmeta fetch for an issue, returns false for fields not in the
+     * bypass list.
      * @param fieldMeta optional catalog row for fieldId (avoids lookup; same as nullptr + catalog).
      */
     bool CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
@@ -547,30 +559,30 @@ class AppController {
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const;
 
-    bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
-                         std::string& outError, int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
+    bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
+                         int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
                          bool* outVotersInResponse = nullptr) const;
 
     bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
 
     bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 
-    bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
-                       const std::string& timeRemaining, const std::string& adjustEstimate,
-                       const std::string& workDescription, const std::string& startedDate,
-                       std::string& outError);
+    bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
+                       const std::string& adjustEstimate, const std::string& workDescription,
+                       const std::string& startedDate, std::string& outError);
 
     bool AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
-                                         const std::string& functionName, const std::string& filePath, int lineNumber,
-                                         const std::string& changelist, const std::string& date, bool approximated,
-                                         const std::string& codeSnippet, std::string& outError);
+                                     const std::string& functionName, const std::string& filePath, int lineNumber,
+                                     const std::string& changelist, const std::string& date, bool approximated,
+                                     const std::string& codeSnippet, std::string& outError);
 
     bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
-                                 std::string& outError) const;
+                             std::string& outError) const;
 
   private:
     std::unique_ptr<LocalCacheManager> Cache;
-    std::unique_ptr<ITrackerBackendFactory> backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
+    std::unique_ptr<ITrackerBackendFactory>
+        backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     std::unique_ptr<ITrackerClient> Backend;
     /// Owns the offline-create / offline-field-edit replay queues and their dead-letter management.
     /// Constructed lazily in `Initialize`. Public AppController methods (`QueueCreateOffline`,
@@ -596,6 +608,11 @@ class AppController {
     std::vector<TrackerField> AvailableFields;
     std::vector<TrackerComponent> AvailableComponents;
     std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
+    /// Last-fetched user catalog (full payload from `/rest/api/3/users/search` for Jira).
+    /// Surfaced to JQL autocomplete to suggest assignees / reporters by display name; the
+    /// engine filters out non-human accounts (AccountType == "app" / "customer") at query
+    /// time so the raw list stays pristine for other callers.
+    std::vector<TrackerUser> AvailableUsers;
     std::string LastTrackerFieldCatalogError;
     std::string LastTrackerFieldCatalogWarning;
     std::string LastTrackerTicketSyncWarning;
@@ -650,7 +667,8 @@ class AppController {
                               const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
-    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside worker). */
+    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
+     * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
     void EnsureCatalogHistoryField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
@@ -706,12 +724,7 @@ class AppController {
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     struct AutomationJob {
-        enum class Type {
-            RunAutoScript,
-            TicketAction,
-            GlobalAction,
-            RunFlatScript
-        };
+        enum class Type { RunAutoScript, TicketAction, GlobalAction, RunFlatScript };
         Type type;
         std::string scriptPathOrActionName;
         std::vector<std::string> selectedIds;
@@ -748,7 +761,3 @@ class AppController {
 };
 
 #endif
-
-
-
-

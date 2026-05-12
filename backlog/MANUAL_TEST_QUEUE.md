@@ -241,6 +241,27 @@ These are regression-only smokes — the PR is pure cleanup, so the contract is 
   - **Action**: Wait several seconds without clicking Save or Discard, then kill the process (Task Manager) without a clean exit.
   - **Expected**: On next launch the original layout is restored (debounced save was skipped because `viewsDirty == true`). Pre-fix this would have silently saved within ~300 ms.
 
+- ⏳ **V21 — JQL function suggestions surface by field family.**
+  - **Setup**: Jira active, Views editor → Filter tab, JQL input focused.
+  - **Action**: Try each token below; observe the autocomplete popup:
+    1. `assignee = cu` → `currentUser()` + `membersOf("…")` appear (user functions).
+    2. `created > st` → `startOfDay()` / `startOfWeek()` / `startOfMonth()` / `startOfYear()` appear (date functions).
+    3. `created < no` → `now()` appears.
+    4. `fixVersion in un` → `unreleasedVersions()` appears (version functions).
+    5. `sprint in op` → `openSprints()` appears (sprint functions).
+    6. Accept `membersOf` from the popup (Tab or Enter) → text becomes `membersOf("")` and the caret lands BETWEEN the quotes ready to type the group name.
+    7. Accept `now` → text becomes `now()` and caret lands after the `)`.
+  - **Expected**: Each function appears only on a value token for a field of the matching family. Non-matching fields (e.g. `summary = cu`) do NOT show function suggestions.
+  - **Plane fallback**: Switch tracker to Plane → confirm Plane filter input shows no function suggestions (Plane engine unchanged).
+  - **Pre-fix behaviour**: only `currentUser()` and `membersOf()` were ever suggested, and only for user fields. `now()`, version, and sprint functions had to be typed by hand.
+
+- ⏳ **V22 — Non-system users from the catalog appear in user-field suggestions.**
+  - **Setup**: Jira active; let the field-catalog fetch complete (users come in alongside fields).
+  - **Action**: In the JQL input, type `assignee = <first letter of a teammate's display name>`.
+  - **Expected**: The popup lists matching non-system users (humans). Each row shows `Display Name (email@domain)` and inserts a quoted `"Display Name"` value on accept. Atlassian Connect / Forge app accounts (`accountType == "app"`) and Jira Service Management portal accounts (`accountType == "customer"`) do NOT appear.
+  - **Cross-check**: Type `reporter in (` — same user list (reporter is also a user-type field).
+  - **Pre-fix behaviour**: only the async-debounced live user search ever returned anything; the catalog fetch's user list was discarded after the fetch completed, so offline / cached suggestions never showed.
+
 ---
 
 ## Lower priority / one-shot validations

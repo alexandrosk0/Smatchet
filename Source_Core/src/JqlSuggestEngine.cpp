@@ -18,9 +18,8 @@ static bool JqlValueNeedsQuotes(const std::string& s) {
     if (s.empty()) {
         return true;
     }
-    return std::any_of(s.begin(), s.end(), [](char ch) {
-        return !IsJqlIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\';
-    });
+    return std::any_of(s.begin(), s.end(),
+                       [](char ch) { return !IsJqlIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\'; });
 }
 
 static std::string JqlQuotedValue(const std::string& s) {
@@ -85,9 +84,8 @@ static const TrackerField* FindTrackerFieldForJqlToken(const AppController& app,
     }
     const std::string key = ToLowerAsciiCopy(token);
     const auto& fields = app.GetAvailableFields();
-    auto idIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
-        return AsciiEqualsIgnoreCaseToLowered(f.Id, key);
-    });
+    auto idIt = std::find_if(fields.begin(), fields.end(),
+                             [&](const auto& f) { return AsciiEqualsIgnoreCaseToLowered(f.Id, key); });
     if (idIt != fields.end()) {
         return &(*idIt);
     }
@@ -158,6 +156,152 @@ static bool IsJqlUserField(const TrackerField& field) {
            field.Family == TrackerFieldFamily::UserMulti;
 }
 
+static bool IsJqlDateField(const TrackerField& field) {
+    return field.Family == TrackerFieldFamily::Date || field.Family == TrackerFieldFamily::DateTime;
+}
+
+static bool IsJqlVersionField(const TrackerField& field) {
+    return field.Type == "version" || field.ItemsType == "version";
+}
+
+static bool IsJqlSprintField(const TrackerField& field) {
+    return field.Family == TrackerFieldFamily::Sprint || field.Type == "sprint" || field.ItemsType == "sprint";
+}
+
+namespace JqlFnMask {
+constexpr unsigned User = 1u << 0;
+constexpr unsigned Date = 1u << 1;
+constexpr unsigned Version = 1u << 2;
+constexpr unsigned Sprint = 1u << 3;
+} // namespace JqlFnMask
+
+struct JqlFunctionSpec {
+    const char* Label;   // popup display (e.g. `membersOf("…")`)
+    const char* Insert;  // text actually inserted; "\x7F" marks the post-insert caret
+    unsigned FamilyMask; // which field families this function applies to
+};
+
+// Static catalog. Keep alphabetical within each family for popup readability.
+static const JqlFunctionSpec kJqlFunctions[] = {
+    // User-field functions.
+    {"currentUser()", "currentUser()", JqlFnMask::User},
+    {"membersOf(\"…\")", "membersOf(\"\x7F\")", JqlFnMask::User},
+    // Date-field functions.
+    {"endOfDay()", "endOfDay()", JqlFnMask::Date},
+    {"endOfMonth()", "endOfMonth()", JqlFnMask::Date},
+    {"endOfWeek()", "endOfWeek()", JqlFnMask::Date},
+    {"endOfYear()", "endOfYear()", JqlFnMask::Date},
+    {"now()", "now()", JqlFnMask::Date},
+    {"startOfDay()", "startOfDay()", JqlFnMask::Date},
+    {"startOfMonth()", "startOfMonth()", JqlFnMask::Date},
+    {"startOfWeek()", "startOfWeek()", JqlFnMask::Date},
+    {"startOfYear()", "startOfYear()", JqlFnMask::Date},
+    // Version-field functions.
+    {"earliestUnreleasedVersion()", "earliestUnreleasedVersion()", JqlFnMask::Version},
+    {"latestReleasedVersion()", "latestReleasedVersion()", JqlFnMask::Version},
+    {"releasedVersions()", "releasedVersions()", JqlFnMask::Version},
+    {"unreleasedVersions()", "unreleasedVersions()", JqlFnMask::Version},
+    // Sprint-field functions.
+    {"closedSprints()", "closedSprints()", JqlFnMask::Sprint},
+    {"futureSprints()", "futureSprints()", JqlFnMask::Sprint},
+    {"openSprints()", "openSprints()", JqlFnMask::Sprint},
+};
+
+static unsigned JqlFieldFamilyMask(const TrackerField& field) {
+    unsigned mask = 0;
+    if (IsJqlUserField(field)) {
+        mask |= JqlFnMask::User;
+    }
+    if (IsJqlDateField(field)) {
+        mask |= JqlFnMask::Date;
+    }
+    if (IsJqlVersionField(field)) {
+        mask |= JqlFnMask::Version;
+    }
+    if (IsJqlSprintField(field)) {
+        mask |= JqlFnMask::Sprint;
+    }
+    return mask;
+}
+
+static void AppendJqlFunctionSuggestions(const TrackerField& field, const std::string& prefix,
+                                         std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    const unsigned fieldMask = JqlFieldFamilyMask(field);
+    if (fieldMask == 0) {
+        return;
+    }
+    const std::string pre = ToLowerAsciiCopy(prefix);
+    for (const JqlFunctionSpec& spec : kJqlFunctions) {
+        if ((spec.FamilyMask & fieldMask) == 0) {
+            continue;
+        }
+        // Prefix-match against the label (which mirrors the function name without the
+        // caret sentinel) so users can type "memb" and see `membersOf("…")`.
+        if (!AsciiStartsWithIgnoreCase(spec.Label, pre)) {
+            continue;
+        }
+        AddSuggestionUnique(out, seen, std::string(spec.Label), std::string(spec.Insert));
+    }
+}
+
+/// True when `user` is a real human account (not a Jira Cloud Connect/Forge app or a JSM
+/// portal customer). AccountType is empty when the backend didn't surface it — treat that
+/// as "include" (older Jira API responses + non-Jira backends).
+static bool IsNonSystemTrackerUser(const TrackerUser& user) {
+    if (!user.Active) {
+        return false;
+    }
+    if (user.AccountType.empty()) {
+        return true;
+    }
+    return user.AccountType != "app" && user.AccountType != "customer";
+}
+
+/// Build the JQL value-token for a user. Display names are quoted; if they contain a
+/// double-quote, fall back to the accountId form which JQL also accepts.
+static std::string BuildJqlUserInsert(const TrackerUser& user) {
+    if (!user.DisplayName.empty() && user.DisplayName.find('"') == std::string::npos) {
+        std::string out;
+        out.reserve(user.DisplayName.size() + 2);
+        out.push_back('"');
+        out.append(user.DisplayName);
+        out.push_back('"');
+        return out;
+    }
+    if (!user.AccountId.empty()) {
+        return "\"" + user.AccountId + "\"";
+    }
+    return user.DisplayName;
+}
+
+/// Emit non-system users from the cached catalog as JQL value suggestions, prefix-filtered
+/// against display name + email. Capped at a generous limit so the popup stays responsive
+/// on tenants with thousands of users.
+static void AppendJqlUserCatalogSuggestions(const AppController& app, const std::string& prefix,
+                                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    const std::string pre = ToLowerAsciiCopy(prefix);
+    constexpr int kMaxUsers = 50;
+    int added = 0;
+    for (const auto& user : app.GetAvailableUsers()) {
+        if (!IsNonSystemTrackerUser(user)) {
+            continue;
+        }
+        const bool nameMatch = AsciiStartsWithIgnoreCase(user.DisplayName, pre);
+        const bool emailMatch = !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);
+        if (!nameMatch && !emailMatch) {
+            continue;
+        }
+        std::string label = user.DisplayName;
+        if (!user.EmailAddress.empty()) {
+            label += " (" + user.EmailAddress + ")";
+        }
+        AddSuggestionUnique(out, seen, std::move(label), BuildJqlUserInsert(user));
+        if (++added >= kMaxUsers) {
+            break;
+        }
+    }
+}
+
 static void AppendValueSuggestions(const TrackerField& field, const std::string& prefix,
                                    std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     const std::string pre = ToLowerAsciiCopy(prefix);
@@ -185,7 +329,8 @@ static void AppendValueSuggestions(const TrackerField& field, const std::string&
             const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
             const std::string accountId = opt.Id;
             if (!accountId.empty() && matchesPrefix(accountId, display)) {
-                AddSuggestionUnique(out, seen, display.empty() ? accountId : display, JqlInsertForValueToken(accountId));
+                AddSuggestionUnique(out, seen, display.empty() ? accountId : display,
+                                    JqlInsertForValueToken(accountId));
             }
             if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
                 AddSuggestionUnique(out, seen, display + " (display name) -> " + JqlInsertForValueToken(display),
@@ -451,10 +596,15 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
         if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
             AppendValueSuggestions(*valueField, prefix, out.Items, seen);
         }
+        if (valueField != nullptr) {
+            AppendJqlFunctionSuggestions(*valueField, prefix, out.Items, seen);
+        }
+        // For user fields, also surface the cached non-system users from the catalog fetch.
+        // The async live-user search (driven via metaOut->UserValueToken below) still runs
+        // and merges results when the prefix is long enough — this just makes the offline
+        // catalog list available immediately without any network round-trip.
         if (valueField != nullptr && IsJqlUserField(*valueField)) {
-            static const char* kValueFunctions[] = {"currentUser()", "membersOf()"};
-            AppendJqlTerms(prefix, kValueFunctions,
-                           static_cast<int>(sizeof(kValueFunctions) / sizeof(kValueFunctions[0])), out.Items, seen);
+            AppendJqlUserCatalogSuggestions(app, prefix, out.Items, seen);
         }
         if (metaOut != nullptr && valueField != nullptr && IsJqlUserField(*valueField)) {
             metaOut->UserValueToken = true;
@@ -467,8 +617,7 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
     } else if (mode == JqlSuggestMode::Logical) {
         if (!prefix.empty()) {
             static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
-            AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items,
-                           seen);
+            AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
         }
     } else if (mode == JqlSuggestMode::OrderByKeyword) {
         static const char* kOrderByTail[] = {"BY"};
