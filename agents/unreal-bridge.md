@@ -30,7 +30,7 @@ Unreal / dual-target specialist.
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `unreal-bridge` · complexity: `low` · `read-edit`
+> **Active agent**: `unreal-bridge` · model: `sonnet` · effort: `low` · complexity: `low` · `read-edit`
 
 **Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 

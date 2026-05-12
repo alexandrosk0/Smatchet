@@ -32,7 +32,7 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `perf-detective` · complexity: `high` · `read-only`
+> **Active agent**: `perf-detective` · model: `opus` · effort: `high` · complexity: `high` · `read-only`
 
 **First action, always**: read `docs/PERF_WORKFLOW.md` and follow it. Don't improvise.
 

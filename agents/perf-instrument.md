@@ -27,7 +27,7 @@ Mechanical perf-marker editor for Smatchet.
 
 **Begin every response with this validation marker** so the user can confirm routing:
 
-> **Active agent**: `perf-instrument` · complexity: `low` · `read-edit`
+> **Active agent**: `perf-instrument` · model: `haiku` · effort: `low` · complexity: `low` · `read-edit`
 
 **Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
 
