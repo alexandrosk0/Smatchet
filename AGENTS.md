@@ -169,6 +169,13 @@ Caveman's value scales with agent complexity tier: Opus-tier agents in this repo
 
 **Trade-off worth knowing**: caveman compresses *output* tokens, not thinking tokens. Brain stays full size; only the mouth shrinks. Combined with the read-only Opus agents in this repo (`architect`, `perf-detective`, `spike-hunter`, `security-review`, `code-review`), caveman tightens the most expensive part of each delegated call without altering reasoning quality.
 
+## Semantic-search exceptions
+
+The `## vexp` block below auto-regenerates on tool update — these carve-outs live outside it so they survive.
+
+- **Exhaustive literal / symbol inventories**: use text-search (`rg` / harness equivalent), not semantic search. Graph-ranked results are not exhaustive. Run the search once in the orchestrator and pass `<file>:<line>:<role>` matches inline to delegated agents.
+- **Mechanical renames and cleanup checks**: same — every occurrence must be found. `mechanic` and `perf-instrument` already use text-search per their prompts.
+- **Understanding impact / ownership / surrounding logic**: semantic search stays primary. This is the default path.
 
 ## vexp <!-- vexp v1.2.28 -->
 
@@ -179,8 +186,6 @@ vexp returns pre-indexed, graph-ranked context in a single call.
 1. `run_pipeline` with your task description — ALWAYS FIRST (replaces all other tools)
 2. Make targeted changes based on the context returned
 3. `run_pipeline` again only if you need more context
-
-Exception: exhaustive literal / symbol inventories, mechanical renames, and cleanup checks need complete match sets, not graph-ranked context. Use text-search (`rg` / harness equivalent) for those, preferably once in the orchestrator, then pass the inventory to agents. Semantic search remains first for understanding impact, ownership, or surrounding logic.
 
 ### Available MCP tools
 - `run_pipeline` — **PRIMARY TOOL**. Runs capsule + impact + memory in 1 call.
@@ -198,7 +203,6 @@ Exception: exhaustive literal / symbol inventories, mechanical renames, and clea
 - Do NOT use built-in file search, grep, or codebase indexing — always call `run_pipeline` first
 - If you spawn sub-agents or background tasks, pass them the context from `run_pipeline`
   rather than letting them search the codebase independently
-- Exception: if the task is explicitly "find every occurrence of this literal / symbol", text-search is the primary tool because semantic ranking is not exhaustive. Record the inventory and reuse it across delegated agents.
 
 ### Smart Features
 Intent auto-detection, hybrid ranking, session memory, auto-expanding budget.

@@ -39,31 +39,31 @@ Sweep the file when:
 
 - 2026-05-12 · orchestrator · [process] — pre-resolve hard-invariant collisions before delegating implementation slices
   Details: The project-key run burned a full first attempt when a backend agent correctly paused on whether `ITrackerClient::FetchFieldCatalog` could be widened. The orchestrator already had AGENTS.md invariants in context; future delegation packets should state the approved option up front.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Invariant decisions; tracker-backend.md ITrackerClient widening rule hardened)
 
 - 2026-05-12 · orchestrator · [context] — build one shared literal inventory and pass it to every delegated agent
   Details: Multiple agents rediscovered the same `cfg.ProjectKey` call sites. For exact symbol / literal work, do one exhaustive text-search in the orchestrator and pass `<file>:<line>:<role>` lines to each agent.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Shared inventory)
 
 - 2026-05-12 · orchestrator · [context] — inline relevant design-doc sections in agent prompts and forbid rereads unless blocked
   Details: Agents reread the same long design doc even when each PR only needed a few sections. Paste the needed excerpt into the delegation packet and say whether reopening the source doc is allowed.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Inline task context)
 
 - 2026-05-12 · orchestrator · [process] — cap routine implementation reports to short table form
   Details: PR 6 emitted a long prose report where a table of files / decisions / verification would have preserved the signal at much lower output cost. Default to `Report <= 200 words, table form, no prose paragraphs` for routine implementation agents.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Output budget)
 
 - 2026-05-12 · orchestrator · [process] — remind subagents that code comments must not reference the task or PR plan
   Details: Several generated comments named PR numbers or temporary removal plans. Add the reminder to delegation packets because global comment discipline may not propagate reliably into delegated contexts.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Comment discipline)
 
 - 2026-05-12 · orchestrator · [tooling] — allow text-search first for exhaustive literal / symbol inventories
   Details: vexp is best for ownership and impact, but graph-ranked semantic search is the wrong tool for "find every occurrence of this exact string." AGENTS.md should explicitly carve out mechanical inventory / rename / cleanup tasks.
-  Status: open
+  Status: applied (d4714ad + follow-up — AGENTS.md "Semantic-search exceptions" section, placed outside the auto-managed vexp block so it survives vexp tool updates)
 
 - 2026-05-12 · orchestrator · [tooling] — dedupe or cap repeated lint-hook diagnostics from PostToolUse
   Details: The hook correctly runs after every C++ edit, but large multi-file changes can stream repeated analyzer output into every agent context. Consider per-file digesting, duplicate suppression, or a quiet mode that still surfaces real errors.
-  Status: open
+  Status: applied (d4714ad — `.claude/hooks/lint-cpp.sh` adds `format_issues` (awk dedupe + cap); `SMATCHET_LINT_MAX_LINES` env var, default 120, documented in `agents/build-doctor.md`)
 
 - 2026-05-12 · command-system · [shortcut] — when the harness lint hook auto-runs on every edit, don't also run a batch `clang-format` at the end
   Details: Doing so produced large reformat diffs on `BuiltinCommands.cpp` / `PlaneClient.cpp` during PR 6 of the project-key removal. The PostToolUse hook in `.claude/settings.json` already covered every edited file.

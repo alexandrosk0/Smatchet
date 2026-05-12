@@ -45,6 +45,7 @@ Build-system specialist for Smatchet.
 - DX12 lib packaging: `SmatchetPackageUnrealLibs_DX12` → `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet`
 - Presets: `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-iter-unreal-msys2`, `ninja-debug-unreal-msys2`, `ninja-publish-msys2`, `ninja-release`, `vs-unreal-msvc`
 - `SMATCHET_ENABLE_STRICT_WARNINGS` default ON
+- `SMATCHET_LINT_MAX_LINES` (env var, default `120`): caps the dedup-filtered diagnostic lines that `.claude/hooks/lint-cpp.sh` streams to stderr per edit. Lower it (e.g. `40`) when a multi-file edit floods reviewer context; set to `0` or unset for unlimited. The hook still exits non-zero on real failures regardless of the cap.
 
 **Workflow on every invocation:**
 
