@@ -188,7 +188,7 @@ bool CoerceJsonValue(const nlohmann::json& in, ParamType type, nlohmann::json& o
 
 CommandResult CommandRegistry::Dispatch(const std::string& name,
                                         const nlohmann::json& args,
-                                        CommandContext& ctx) {
+                                        const CommandContext& ctx) {
     // (1) resolve + copy under lock so handler reentrancy is safe.
     Command snapshot;
     bool found = false;

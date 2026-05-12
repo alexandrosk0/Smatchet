@@ -58,7 +58,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "List all configured ticket-grid views.";
         c.Params = {[]{ ParamSpec p; p.Name="limit"; p.Type=ParamType::Int; p.Default=50; return p; }(),
                     []{ ParamSpec p; p.Name="offset"; p.Type=ParamType::Int; p.Default=0; return p; }()};
-        c.Handler = [&views](const nlohmann::json& args, CommandContext&) {
+        c.Handler = [&views](const nlohmann::json& args, const CommandContext&) {
             const ViewsStore& store = views.GetStore();
             return CommandResult::Success(
                 PaginateViewDefs(store.Views,
@@ -74,7 +74,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "Get definition of a single view by id.";
         c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
                         p.Required=true; p.Description="View id."; return p; }()};
-        c.Handler = [&views](const nlohmann::json& args, CommandContext&) {
+        c.Handler = [&views](const nlohmann::json& args, const CommandContext&) {
             const std::string id = args.value("id", std::string());
             const ViewsStore& store = views.GetStore();
             for (const ViewDefinition& v : store.Views) {
@@ -90,7 +90,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
         Command c;
         c.Name = "view.current"; c.Category = "view";
         c.Summary = "Get the currently active view.";
-        c.Handler = [&views](const nlohmann::json&, CommandContext&) {
+        c.Handler = [&views](const nlohmann::json&, const CommandContext&) {
             const ViewDefinition* active = views.GetActiveView();
             if (!active) {
                 return CommandResult::Failure(ErrorCode::NotFound,
@@ -107,7 +107,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
         c.Summary = "Switch the active view by id.";
         c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
                         p.Required=true; p.Description="View id from view.list."; return p; }()};
-        c.Handler = [&views, &app](const nlohmann::json& args, CommandContext&) {
+        c.Handler = [&views, &app](const nlohmann::json& args, const CommandContext&) {
             const std::string id = args.value("id", std::string());
             if (!views.Activate(id)) {
                 return CommandResult::Failure(ErrorCode::NotFound,
@@ -125,7 +125,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
         Command c;
         c.Name = "view.refresh_active"; c.Category = "view";
         c.Summary = "Re-sync tickets for the active view from the tracker.";
-        c.Handler = [&app, &views](const nlohmann::json&, CommandContext&) {
+        c.Handler = [&app, &views](const nlohmann::json&, const CommandContext&) {
             app.SyncWithBackend(nullptr, &views.GetStore());
             return CommandResult::Success({{"triggered", true}});
         };
@@ -158,7 +158,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="triggerSync"; p.Type=ParamType::Bool; p.Default=false;
                 p.Description="If true, also sync from tracker immediately after create."; return p; }(),
         };
-        c.Handler = [&app, &views](const nlohmann::json& args, CommandContext& ctx) {
+        c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
             const std::string name = args.value("name", std::string());
             const std::string jql  = args.value("jql",  std::string());
             const bool triggerSync = args.value("triggerSync", false);
@@ -223,7 +223,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="fields"; p.Type=ParamType::Json;
                 p.Description="Replacement JSON array of field ids."; return p; }(),
         };
-        c.Handler = [&views](const nlohmann::json& args, CommandContext& ctx) {
+        c.Handler = [&views](const nlohmann::json& args, const CommandContext& ctx) {
             const ViewDefinition* active = views.GetActiveView();
             if (!active) {
                 return CommandResult::Failure(ErrorCode::NotFound,
@@ -279,7 +279,7 @@ void RegisterViewCommands(AppController& app, Views& views) {
             []{ ParamSpec p; p.Name="id"; p.Type=ParamType::String; p.Required=true;
                 p.Description="View id to delete."; return p; }(),
         };
-        c.Handler = [&views](const nlohmann::json& args, CommandContext& ctx) {
+        c.Handler = [&views](const nlohmann::json& args, const CommandContext& ctx) {
             const std::string id = args.value("id", std::string());
             // Find the view first so we can report what would be deleted.
             const ViewsStore& store = views.GetStore();

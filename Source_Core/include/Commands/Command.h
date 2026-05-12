@@ -121,7 +121,10 @@ struct Command {
     /// Back-compat names. e.g. "list_active_tickets" -> "tickets.list_active".
     std::vector<std::string> Aliases;
 
-    std::function<CommandResult(const nlohmann::json&, CommandContext&)> Handler;
+    /// Handler takes ctx by const reference: no built-in command mutates ctx, and the
+    /// const signature lets handlers be declared `(const json&, const CommandContext&)`
+    /// to satisfy cppcheck's constParameterReference rule without per-handler suppressions.
+    std::function<CommandResult(const nlohmann::json&, const CommandContext&)> Handler;
 
     /// Build a JSON Schema object suitable for MCP `inputSchema`.
     nlohmann::json BuildJsonSchema() const;

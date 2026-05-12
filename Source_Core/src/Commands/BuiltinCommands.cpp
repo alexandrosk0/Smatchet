@@ -137,7 +137,7 @@ nlohmann::json ObservedSmatchetEnv() {
 
 Command MakeCommand(std::string name,
                     std::string summary,
-                    std::function<CommandResult(const nlohmann::json&, CommandContext&)> handler) {
+                    std::function<CommandResult(const nlohmann::json&, const CommandContext&)> handler) {
     Command c;
     c.Name = std::move(name);
     c.Category = CategoryFromName(c.Name);
@@ -173,7 +173,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "commands.list",
             "List registered commands, optionally filtered by category.",
-            [&reg](const nlohmann::json& args, CommandContext& /*ctx*/) {
+            [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                 const std::string category = args.value("category", std::string());
                 // Default 500 (not 50) so agents don't silently miss commands when the
                 // catalog grows past the previous default. Use --limit=N to narrow.
@@ -237,7 +237,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "commands.help",
             "Return the full schema (params, flags, examples) for one command.",
-            [&reg](const nlohmann::json& args, CommandContext& /*ctx*/) {
+            [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                 const std::string name = args.value("name", std::string());
                 std::vector<Command> all = reg.All();
                 for (const Command& cm : all) {
@@ -273,7 +273,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "commands.search",
             "Fuzzy-match command names by query.",
-            [&reg](const nlohmann::json& args, CommandContext& /*ctx*/) {
+            [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                 const std::string q = args.value("query", std::string());
                 const int limit = args.value("limit", 10);
                 std::vector<std::string> matches = reg.FuzzyMatch(q, static_cast<size_t>(std::max(1, limit)));
@@ -290,7 +290,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "commands.recents",
             "Most recently dispatched command names.",
-            [&reg](const nlohmann::json& args, CommandContext& /*ctx*/) {
+            [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                 const int limit = args.value("limit", 16);
                 std::vector<std::string> r = reg.Recents(static_cast<size_t>(std::max(1, limit)));
                 return CommandResult::Success(PaginateString(r, limit, 0));
@@ -308,7 +308,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "app.version",
             "Application version + build metadata.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 nlohmann::json out;
                 out["version"] = app.GetAppVersion();
                 out["releaseRepo"] = app.GetGitHubReleaseRepo();
@@ -321,7 +321,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "app.quit",
             "Request graceful shutdown of the running instance.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 app.RequestAppQuit();
                 nlohmann::json out;
                 out["requested"] = true;
@@ -338,7 +338,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "config.path",
             "Paths + observed SMATCHET_* env vars (tokens redacted).",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 nlohmann::json out;
                 out["userData"] = ConfigManager::GetUserDataDirectory();
                 out["runtimeAssets"] = ConfigManager::GetRuntimeAssetDirectory();
@@ -357,7 +357,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "perf.snapshot",
             "Per-scope UI perf rows from the last drawn frame.",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
                 nlohmann::json arr = nlohmann::json::array();
                 for (const UiPerfRow& r : rows) {
@@ -383,7 +383,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "perf.frame_count",
             "Total count of profiled scope entries in the last frame.",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
                 nlohmann::json out;
                 out["scopeCount"] = rows.size();
@@ -401,7 +401,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "tickets.list_active",
             "Tickets currently loaded in the active project grid.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const int limit = args.value("limit", 50);
                 const int offset = args.value("offset", 0);
                 auto snapshot = app.GetActiveTicketsSnapshot();
@@ -434,7 +434,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "tickets.search_active",
             "Case-insensitive substring search across active-view tickets (id + field values).",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string query = args.value("query", std::string());
                 const int limit = args.value("limit", 50);
                 const int offset = args.value("offset", 0);
@@ -476,7 +476,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "tickets.get",
             "Full field map for a single active-view ticket.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string id = args.value("id", std::string());
                 auto snapshot = app.GetActiveTicketsSnapshot();
                 if (snapshot) {
@@ -506,7 +506,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "tickets.exists",
             "Whether a ticket id is present in the active view.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string id = args.value("id", std::string());
                 auto snapshot = app.GetActiveTicketsSnapshot();
                 bool exists = false;
@@ -530,7 +530,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "debug.log",
             "Emit a one-shot Logger entry (info/warn/error). For agent breadcrumbs.",
-            [](const nlohmann::json& args, CommandContext&) {
+            [](const nlohmann::json& args, const CommandContext&) {
                 const std::string level = ToLowerAscii(args.value("level", std::string("info")));
                 const std::string msg = args.value("message", std::string());
                 if (level == "trace")      LOG_TRACE("[cmd] %s", msg.c_str());
@@ -558,7 +558,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "sync.incremental",
             "Delta sync from tracker (last-fetched timestamp onward).",
-            [&app](const nlohmann::json&, CommandContext& ctx) {
+            [&app](const nlohmann::json&, const CommandContext& ctx) {
                 if (ctx.DryRun) {
                     nlohmann::json out;
                     out["wouldDo"] = "incremental sync from last-fetched cursor";
@@ -580,7 +580,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "sync.full",
             "Full sync: wipe local cache and re-fetch all tickets from tracker.",
-            [&app](const nlohmann::json&, CommandContext& ctx) {
+            [&app](const nlohmann::json&, const CommandContext& ctx) {
                 if (ctx.DryRun) {
                     return CommandResult::Success({{"wouldDo", "wipe local cache + full re-fetch"}});
                 }
@@ -603,7 +603,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "sync.refresh_local",
             "Rebuild in-memory ticket list from the local SQLite cache (no network).",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 app.RefreshLocalData();
                 return CommandResult::Success({{"triggered", true}});
             });
@@ -614,7 +614,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "sync.tracker_status",
             "Last connectivity state and diagnostic from the tracker reachability probe.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 using S = AppController::TrackerConnectivityState;
                 const S s = app.GetLastTrackerConnectivityState();
                 const char* stateStr = "unknown";
@@ -640,7 +640,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.set_field",
             "Update a single field on a ticket.",
-            [&app](const nlohmann::json& args, CommandContext& ctx) {
+            [&app](const nlohmann::json& args, const CommandContext& ctx) {
                 const std::string id    = args.value("id",    std::string());
                 const std::string field = args.value("field", std::string());
                 const std::string value = args.value("value", std::string());
@@ -688,7 +688,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.add_comment",
             "Post a plain-text comment on a ticket.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string id   = args.value("id",   std::string());
                 const std::string body = args.value("body", std::string());
                 std::string err;
@@ -712,7 +712,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.add_worklog",
             "Log time worked on a ticket.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const int seconds = args.value("seconds", 0);
                 const std::string id      = args.value("id",      std::string());
                 const std::string comment = args.value("comment", std::string());
@@ -752,7 +752,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.transition",
             "Transition a ticket to a new status.",
-            [&app](const nlohmann::json& args, CommandContext& ctx) {
+            [&app](const nlohmann::json& args, const CommandContext& ctx) {
                 const std::string id       = args.value("id",       std::string());
                 const std::string toStatus = args.value("toStatus", std::string());
                 if (ctx.DryRun) {
@@ -787,7 +787,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "fields.list_available",
             "List tracker fields from the local catalog.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const int limit  = args.value("limit",  50);
                 const int offset = args.value("offset", 0);
                 const std::vector<TrackerField>& fields = app.GetAvailableFields();
@@ -812,7 +812,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "fields.get",
             "Get metadata for a single field by id.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string id = args.value("id", std::string());
                 const TrackerField* f = app.FindFieldById(id);
                 if (!f) {
@@ -834,7 +834,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "fields.refresh_catalog",
             "Re-fetch the tracker field catalog from the backend.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 const TrackerConfig cfg = ConfigManager::Load();
                 const bool ok = app.RefreshFieldCatalog(cfg);
                 nlohmann::json out;
@@ -853,7 +853,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "users.search",
             "Search tracker users by display-name substring.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string query = args.value("query", std::string());
                 const int limit         = args.value("limit", 20);
                 std::vector<TrackerUser> users;
@@ -880,7 +880,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "users.watchers",
             "List watchers for a ticket.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string ticketId = args.value("ticketId", std::string());
                 std::vector<TrackerUser> watchers;
                 std::string err;
@@ -905,7 +905,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "users.votes",
             "List voters (and vote count) for a ticket.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string ticketId = args.value("ticketId", std::string());
                 std::vector<TrackerUser> voters;
                 std::string err;
@@ -936,7 +936,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "offline.list_pending",
             "List pending (queued) offline creates and field edits.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const int limit  = args.value("limit",  50);
                 const int offset = args.value("offset", 0);
                 nlohmann::json creates = nlohmann::json::array();
@@ -972,7 +972,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "offline.replay_now",
             "Immediately attempt to replay all queued offline creates and field edits.",
-            [&app](const nlohmann::json&, CommandContext& ctx) {
+            [&app](const nlohmann::json&, const CommandContext& ctx) {
                 if (ctx.DryRun) {
                     const size_t createCount = app.GetPendingCreateCount();
                     const size_t editCount   = app.GetPendingFieldEdits().size();
@@ -994,7 +994,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "offline.prune_dead",
             "Permanently delete all dead-letter offline creates and field edits.",
-            [&app](const nlohmann::json&, CommandContext& ctx) {
+            [&app](const nlohmann::json&, const CommandContext& ctx) {
                 const auto deadCreates = app.GetDeadPendingCreates();
                 const auto deadEdits   = app.GetDeadPendingFieldEdits();
                 if (ctx.DryRun) {
@@ -1023,7 +1023,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "config.get",
             "Get one or all keys from the loaded config.",
-            [](const nlohmann::json& args, CommandContext&) {
+            [](const nlohmann::json& args, const CommandContext&) {
                 const TrackerConfig cfg = ConfigManager::Load();
                 const std::string key = args.value("key", std::string());
                 // Build a full projection of commonly-queried fields.
@@ -1062,7 +1062,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "config.reload",
             "Reload config from disk (picks up manual edits to smatchet_config.json).",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 ConfigManager::Load();   // no-op cache flush in current impl; triggers disk read
                 return CommandResult::Success({{"triggered", true}});
             });
@@ -1075,8 +1075,8 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "perf.dump",
             "Write perf snapshot to a JSON file and return {file, count}.",
-            [](const nlohmann::json& args, CommandContext&) {
-                const std::string userDataDir = ConfigManager::GetUserDataDirectory();
+            [](const nlohmann::json& args, const CommandContext&) {
+                const std::string& userDataDir = ConfigManager::GetUserDataDirectory();
                 std::string outPath = args.value("outPath", std::string());
                 if (outPath.empty()) {
                     std::time_t t = std::time(nullptr);
@@ -1118,7 +1118,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "app.check_updates",
             "Check GitHub for a newer Smatchet release.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 const AppUpdateInfo info = app.CheckForAppUpdate(false);
                 nlohmann::json out;
                 out["ok"]              = info.Ok;
@@ -1139,7 +1139,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "debug.mcp_status",
             "MCP server reachability and last-client-activity timestamp.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 nlohmann::json out;
 #if defined(SMATCHET_WITH_MCP)
                 out["mcpEnabled"] = true;
@@ -1166,7 +1166,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.set_fields",
             "Update multiple fields on a ticket in one call.",
-            [&app](const nlohmann::json& args, CommandContext& ctx) {
+            [&app](const nlohmann::json& args, const CommandContext& ctx) {
                 const std::string id = args.value("id", std::string());
                 const nlohmann::json fieldsMap = args.value("fields", nlohmann::json::object());
                 if (!fieldsMap.is_object()) {
@@ -1207,7 +1207,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "ticket.create",
             "Create a new ticket (live or queued offline).",
-            [&app](const nlohmann::json& args, CommandContext& ctx) {
+            [&app](const nlohmann::json& args, const CommandContext& ctx) {
                 const bool offline = args.value("offline", false);
                 const std::string projectKey   = args.value("projectKey",   std::string());
                 const std::string issueTypeName= args.value("issueType",    std::string("Task"));
@@ -1259,7 +1259,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "sync.fetch_active_view",
             "Fetch tickets for the active view from the tracker without caching (returns inline JSON).",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 TrackerIssueFetchPack pack = app.FetchIssuesForActiveView();
                 nlohmann::json items = nlohmann::json::array();
                 for (const CachedTicket& t : pack.Tickets) {
@@ -1287,7 +1287,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "attach.open",
             "Open a ticket attachment (downloads then launches viewer).",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string url      = args.value("url",      std::string());
                 const std::string filename = args.value("filename", std::string());
                 const std::string mime     = args.value("mimeType", std::string());
@@ -1307,7 +1307,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "attach.download_preview",
             "Download an attachment to a local temp file for preview.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string url      = args.value("url",      std::string());
                 const std::string filename = args.value("filename", std::string());
                 const std::string mime     = args.value("mimeType", std::string());
@@ -1334,7 +1334,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "fields.icon_for",
             "Resolve the icon asset path/URL for a field+value pair.",
-            [&app](const nlohmann::json& args, CommandContext&) {
+            [&app](const nlohmann::json& args, const CommandContext&) {
                 const std::string fieldId  = args.value("field", std::string());
                 const std::string rawValue = args.value("value", std::string());
                 const TrackerField* f = app.FindFieldById(fieldId);
@@ -1391,7 +1391,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "config.set",
             "Persist one config key to smatchet_config.json (allowlisted; env vars override).",
-            [](const nlohmann::json& args, CommandContext& ctx) {
+            [](const nlohmann::json& args, const CommandContext& ctx) {
                 const std::string key = args.value("key", std::string());
                 // Parse the string value as JSON first (handles true/false/integers).
                 // Fall back to a plain JSON string so bare values like `debug` work.
@@ -1457,7 +1457,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "perf.reset",
             "Clear all accumulated UI perf measurements (use before a benchmark run).",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 UiPerfMonitor::Instance().Reset();
                 return CommandResult::Success({{"reset", true}});
             });
@@ -1470,7 +1470,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "app.set_readonly",
             "Enable or disable read-only mode (persists to config).",
-            [](const nlohmann::json& args, CommandContext& ctx) {
+            [](const nlohmann::json& args, const CommandContext& ctx) {
                 const bool on = args.value("on", false);
                 if (ctx.DryRun) {
                     return CommandResult::Success({{"wouldDo", {{"readOnlyMode", on}}}});
@@ -1496,7 +1496,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "perf.toggle_panel",
             "Show or hide the Performance Monitor panel (persists to config).",
-            [](const nlohmann::json& args, CommandContext& ctx) {
+            [](const nlohmann::json& args, const CommandContext& ctx) {
                 // Read current value to compute toggle if `open` not supplied.
                 TrackerConfig cfg = ConfigManager::Load();
                 const bool currentlyOpen = cfg.ShowPerformanceWindow;
@@ -1523,7 +1523,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "debug.thread_dump",
             "Return basic thread count and state information.",
-            [](const nlohmann::json&, CommandContext&) {
+            [](const nlohmann::json&, const CommandContext&) {
                 // C++14 doesn't expose thread IDs without platform headers.
                 // Return what we can without OS-specific code in Source_Core.
                 nlohmann::json out;
@@ -1542,10 +1542,11 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "debug.lua_eval",
             "Evaluate a Lua code snippet and return the result summary.",
-            [&app](const nlohmann::json& args, CommandContext&) {
-                const std::string code = args.value("code", std::string());
-                std::string outError, outResult;
+            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+                const std::string code = args.value("code", std::string());
+                std::string outError;
+                std::string outResult;
                 const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
                 if (!ok) {
                     return CommandResult::Failure(ErrorCode::HandlerError,
@@ -1554,6 +1555,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                 return CommandResult::Success({{"result", outResult}});
 #else
                 (void)app;
+                (void)args;
                 return CommandResult::Failure(ErrorCode::HandlerError,
                     "Lua automation is not enabled in this build.");
 #endif
@@ -1584,7 +1586,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "scenario.list",
             "List registered scenario names.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 const std::vector<std::string> names = app.Scenarios().ListNames();
                 return CommandResult::Success(PaginateString(names, 500, 0));
             });
@@ -1595,7 +1597,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "scenario.run",
             "Run a named automation scenario (perf measurement, scroll driver, etc.).",
-            [&app](const nlohmann::json& args, CommandContext& ctx) {
+            [&app](const nlohmann::json& args, const CommandContext& ctx) {
                 const std::string name = args.value("name", std::string());
                 return app.Scenarios().Start(name, args, ctx);
             });
@@ -1615,7 +1617,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         Command c = MakeCommand(
             "scenario.cancel",
             "Abort the active running scenario.",
-            [&app](const nlohmann::json&, CommandContext&) {
+            [&app](const nlohmann::json&, const CommandContext&) {
                 const bool was = app.Scenarios().Active();
                 app.Scenarios().Cancel();
                 return CommandResult::Success({{"wasCancelled", was}});

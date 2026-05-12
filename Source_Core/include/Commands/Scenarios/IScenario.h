@@ -58,7 +58,7 @@ public:
     void RegisterFactory(const std::string& name, Factory f);
 
     /// Start a named scenario. Returns error result immediately if not found or start fails.
-    CommandResult Start(const std::string& name, const nlohmann::json& args, CommandContext& ctx);
+    CommandResult Start(const std::string& name, const nlohmann::json& args, const CommandContext& ctx);
 
     /// Called once per frame from SmatchetUI::Draw.
     void Tick(AppController& app, bool& outScrollActiveOut, int& outScrollTargetOut);

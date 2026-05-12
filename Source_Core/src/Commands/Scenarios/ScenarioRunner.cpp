@@ -26,7 +26,7 @@ void ScenarioRunner::RegisterFactory(const std::string& name, Factory f) {
 }
 
 CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::json& args,
-                                    CommandContext& ctx) {
+                                    const CommandContext& ctx) {
     auto it = factories_.find(name);
     if (it == factories_.end()) {
         std::vector<std::string> available;
@@ -47,7 +47,7 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     // Build output path for results.
     std::string outPath = args.value("outPath", std::string());
     if (outPath.empty()) {
-        const std::string userDataDir = ConfigManager::GetUserDataDirectory();
+        const std::string& userDataDir = ConfigManager::GetUserDataDirectory();
         std::error_code ec;
         fs::create_directories(fs::path(userDataDir + "perf"), ec);
         char ts[64] = {};

@@ -55,7 +55,7 @@ public:
     /// matches so agents can self-correct typos.
     CommandResult Dispatch(const std::string& name,
                            const nlohmann::json& args,
-                           CommandContext& ctx);
+                           const CommandContext& ctx);
 
     /// Push a recent-name onto the bounded ring (front). Drops duplicates by name.
     void RecordRecent(const std::string& name);

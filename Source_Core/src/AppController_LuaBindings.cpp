@@ -851,7 +851,7 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
             const std::string cbName = callbackFuncName;
             AppController* appPtr = this;
             c.Handler = [appPtr, cbName](const nlohmann::json& /*args*/,
-                                         smatchet::cmd::CommandContext& /*ctx*/) {
+                                         const smatchet::cmd::CommandContext& /*ctx*/) {
                 appPtr->ExecuteLuaGlobalAction(cbName);
                 return smatchet::cmd::CommandResult::Success(nlohmann::json::object());
             };
