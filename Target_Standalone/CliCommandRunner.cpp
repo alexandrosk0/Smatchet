@@ -16,15 +16,21 @@
 #include "ConfigManager.h"
 #include "SmatchetDefaults.h"
 
+#include <ghc/filesystem.hpp>
+
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #if !defined(_WIN32)
 #include <signal.h>
 #include <unistd.h>
 #endif
+
+namespace fs = ghc::filesystem;
 
 namespace smatchet {
 namespace cli {
@@ -65,11 +71,144 @@ struct ParsedArgs {
     bool yes = false;
     bool dryRun = false;         ///< --dry-run → inject __dry_run:true
     bool tokens = false;         ///< --tokens → estimate output size, print to stderr, no stdout
+    bool spawn = false;          ///< --spawn → launch app subprocess if no instance reachable
     int  timeoutMs = 0;          ///< --timeout=<ms> → passed as __timeout_ms; 0=no cap
     std::string mcpHost;         ///< empty -> default
     int mcpPort = 0;             ///< 0 -> resolve from env / default
     nlohmann::json args = nlohmann::json::object();  ///< collected --key=value arguments
 };
+
+/// Return the path to the running executable (for relaunching as a spawned instance).
+std::string GetExePath() {
+#if defined(_WIN32)
+    char buf[4096] = {};
+    DWORD n = GetModuleFileNameA(nullptr, buf, static_cast<DWORD>(sizeof(buf)));
+    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
+#elif defined(__linux__)
+    char buf[4096] = {};
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    return (n > 0) ? std::string(buf, static_cast<size_t>(n)) : std::string();
+#elif defined(__APPLE__)
+    char buf[4096] = {};
+    uint32_t sz = sizeof(buf);
+    return (_NSGetExecutablePath(buf, &sz) == 0) ? std::string(buf) : std::string();
+#else
+    return std::string();
+#endif
+}
+
+/// Bind to port 0, read back the OS-assigned port, close the socket.
+/// Small TOCTOU race is acceptable for ephemeral test scenarios.
+int FindFreePort() {
+#if defined(_WIN32)
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s); return 0;
+    }
+    int len = sizeof(addr);
+    if (getsockname(s, reinterpret_cast<struct sockaddr*>(&addr), &len) == SOCKET_ERROR) {
+        closesocket(s); return 0;
+    }
+    int port = ntohs(addr.sin_port);
+    closesocket(s);
+    return port;
+#else
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return 0;
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        close(s); return 0;
+    }
+    socklen_t len = sizeof(addr);
+    if (getsockname(s, reinterpret_cast<struct sockaddr*>(&addr), &len) < 0) {
+        close(s); return 0;
+    }
+    int port = ntohs(addr.sin_port);
+    close(s);
+    return port;
+#endif
+}
+
+/// Launch the exe as a hidden/minimized background process with --ephemeral --mcp-port=<port>.
+/// Propagates SMATCHET_USER_DATA so the spawned instance shares the same data dir.
+/// Returns false on launch failure.
+bool LaunchEphemeralInstance(const std::string& exePath, int port) {
+    if (exePath.empty()) return false;
+    const std::string portStr = std::to_string(port);
+    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+#if defined(_WIN32)
+    // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
+    std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr,
+                             FALSE, 0, nullptr, nullptr, &si, &pi);
+    if (ok) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    return ok != FALSE;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        setsid();
+        const char* args[] = {
+            exePath.c_str(), "--ephemeral",
+            "--mcp-port", portStr.c_str(),
+            nullptr
+        };
+        execv(exePath.c_str(), const_cast<char* const*>(args));
+        _exit(1);
+    }
+    return true;
+#endif
+}
+
+/// Poll until the MCP endpoint at host:port becomes reachable or timeoutMs elapses.
+bool WaitForMcpReady(const std::string& host, int port, int timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        httplib::Client cli(host, port);
+        cli.set_connection_timeout(0, 200000);  // 200 ms
+        cli.set_read_timeout(1, 0);
+        nlohmann::json body;
+        body["name"] = "app.version";
+        body["arguments"] = nlohmann::json::object();
+        auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+        if (res && res->status >= 200 && res->status < 300) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    return false;
+}
+
+/// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
+bool WaitForFile(const std::string& outPath, int timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::error_code ec;
+        if (fs::exists(fs::path(outPath), ec) &&
+            fs::file_size(fs::path(outPath), ec) > 0) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    return false;
+}
 
 std::string EnvOr(const char* name, std::string fallback) {
     const char* v = std::getenv(name);
@@ -195,6 +334,7 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
         if (a == "--yes")                       { out.yes      = true; continue; }
         if (a == "--dry-run")                   { out.dryRun   = true; continue; }
         if (a == "--tokens")                    { out.tokens   = true; continue; }
+        if (a == "--spawn")                     { out.spawn    = true; continue; }
         if (a.rfind("--mcp-host=", 0) == 0) { out.mcpHost = a.substr(11); continue; }
         if (a.rfind("--mcp-port=", 0) == 0) {
             try { out.mcpPort = std::stoi(a.substr(11)); }
@@ -300,11 +440,197 @@ nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
     return *result;
 }
 
+/// Normalize a relative outPath argument to an absolute path resolved against the CLI's CWD,
+/// since the spawned instance may have a different working directory. Pass-through for absolute paths.
+nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
+    nlohmann::json out = argsToSend;
+    if (!out.contains("outPath") || !out["outPath"].is_string()) return out;
+    const std::string p = out["outPath"].get<std::string>();
+    if (p.empty()) return out;
+    fs::path path(p);
+    if (path.is_absolute()) return out;
+    std::error_code ec;
+    fs::path abs = fs::absolute(path, ec);
+    if (!ec) {
+        out["outPath"] = abs.string();
+    }
+    return out;
+}
+
+/// Full spawn-attach-run flow invoked when --spawn is set and no instance is reachable.
+/// Launches a hidden ephemeral app instance, sends the command, waits for results, quits the app.
+int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName,
+                const nlohmann::json& argsToSendRaw) {
+    // Normalize outPath: relative paths must be made absolute so both processes agree on location.
+    const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+    const std::string exePath = GetExePath();
+    if (exePath.empty()) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: could not determine exe path to relaunch."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    const int port = FindFreePort();
+    if (port == 0) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: could not bind a free TCP port."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n", port);
+    if (!LaunchEphemeralInstance(exePath, port)) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","not-connected"},
+                        {"message","--spawn: failed to launch subprocess."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    const std::string host = "127.0.0.1";
+    const int readyTimeoutMs = 15000;
+    std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
+                 readyTimeoutMs / 1000);
+    if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","timeout"},
+                        {"message","--spawn: ephemeral instance did not become reachable in time."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    // Send the actual command.
+    nlohmann::json body;
+    body["name"] = commandName;
+    body["arguments"] = argsToSend;
+
+    // For scenario.run, compute a wait timeout from the frames param.
+    // ParseArgs stores --key=value pairs as strings; coerce defensively.
+    int frames = 600;
+    if (argsToSend.contains("frames")) {
+        const auto& v = argsToSend["frames"];
+        if (v.is_number()) {
+            frames = v.get<int>();
+        } else if (v.is_string()) {
+            try { frames = std::stoi(v.get<std::string>()); } catch (...) {}
+        }
+    }
+    const int scenarioWaitMs = (frames / 60 + 30) * 1000;
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(2, 0);
+    cli.set_read_timeout(30, 0);
+    auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+    if (!res || res->status < 200 || res->status >= 300) {
+        nlohmann::json env;
+        env["ok"] = false; env["command"] = commandName;
+        env["error"] = {{"code","transport"},
+                        {"message","--spawn: command dispatch failed after launch."}};
+        EmitErrorToStderr(env);
+        return kExitTransport;
+    }
+
+    const nlohmann::json envelope = ExtractEnvelopeFromMcpResult(
+        nlohmann::json::parse(res->body));
+
+    // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
+    if (envelope.value("ok", false) &&
+        envelope["data"].value("running", false) &&
+        envelope["data"].contains("outPath")) {
+
+        const std::string outPath = envelope["data"]["outPath"].get<std::string>();
+        std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n",
+                     frames, frames / 60);
+        const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
+        // Small delay to ensure fwrite+fclose has fully flushed before we read.
+        // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
+        // but kernel write buffers can briefly show a partial file on some filesystems.
+        if (fileReady) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        if (!fileReady) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false; errEnv["command"] = commandName;
+            errEnv["error"] = {{"code","timeout"},
+                               {"message","--spawn: scenario did not finish within expected time."},
+                               {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
+            EmitErrorToStderr(errEnv);
+            // Still try to quit the spawned app.
+            nlohmann::json quitBody;
+            quitBody["name"] = "app.quit";
+            quitBody["arguments"] = {{"__confirm", true}};  // app.quit is Destructive
+            cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+            return 8;
+        }
+
+        // Read the result file and build an envelope around it.
+        std::FILE* f = std::fopen(outPath.c_str(), "rb");
+        if (!f) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false; errEnv["command"] = commandName;
+            errEnv["error"] = {{"code","handler-error"},
+                               {"message","--spawn: could not read result file: " + outPath}};
+            EmitErrorToStderr(errEnv);
+        } else {
+            std::string content;
+            char buf[4096]; size_t n;
+            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) content.append(buf, n);
+            std::fclose(f);
+            try {
+                const nlohmann::json fileData = nlohmann::json::parse(content);
+                nlohmann::json resultEnv;
+                resultEnv["ok"] = true;
+                resultEnv["command"] = commandName;
+                resultEnv["data"] = fileData;
+                EmitEnvelope(resultEnv, pa.pretty, pa.quiet);
+            } catch (...) {
+                nlohmann::json errEnv;
+                errEnv["ok"] = false; errEnv["command"] = commandName;
+                errEnv["error"] = {{"code","handler-error"},
+                                   {"message","--spawn: result file is not valid JSON: " + outPath}};
+                EmitErrorToStderr(errEnv);
+            }
+        }
+    } else {
+        // Non-async command: emit envelope directly.
+        EmitEnvelope(envelope, pa.pretty, pa.quiet);
+        if (!envelope.value("ok", false)) {
+            const std::string code = envelope.value("error",
+                nlohmann::json::object()).value("code", "");
+            nlohmann::json quitBody;
+            quitBody["name"] = "app.quit";
+            quitBody["arguments"] = {{"__confirm", true}};  // app.quit is Destructive
+            cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+            return ExitCodeForErrorCode(code);
+        }
+    }
+
+    // Quit the spawned instance (app.quit is Destructive → __confirm:true).
+    std::fprintf(stderr, "[spawn] sending app.quit ...\n");
+    nlohmann::json quitBody;
+    quitBody["name"] = "app.quit";
+    quitBody["arguments"] = {{"__confirm", true}};
+    cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+    return kExitOk;
+}
+
 }  // namespace
 
 bool ArgvHasCmdSubcommand(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "cmd") == 0) return true;
+    }
+    return false;
+}
+
+bool IsEphemeralMode(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--ephemeral") == 0) return true;
     }
     return false;
 }
@@ -402,14 +728,17 @@ int RunCmdAttach(int argc, char** argv) {
 
     auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
     if (!res) {
+        // --spawn: launch an ephemeral instance and retry in-process.
+        if (pa.spawn) {
+            return SpawnAndRun(pa, toolName, argsToSend);
+        }
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = toolName;
         env["error"] = {
             {"code", "not-connected"},
             {"message", "Could not reach Smatchet MCP at " + host + ":" + std::to_string(port) + "."},
-            {"hint", "Start Smatchet (with MCP enabled) or pass --mcp-host / --mcp-port. "
-                     "See backlog/COMMAND_SYSTEM_PLAN.md."},
+            {"hint", "Start Smatchet (with MCP enabled), or pass --spawn to launch automatically."},
         };
         EmitErrorToStderr(env);
         return kExitNotConnected;

@@ -1186,11 +1186,16 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
                               bool tooltipsEnabled) {
+    SMATCHET_UI_PERF_SCOPE("perf_temp:RSSE");
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     SmatchetLoadedIconTexture overlayIcon{};
     std::string overlayLoadErr;
-    const bool haveOverlayIcon =
-        SmatchetFieldIconRender::TryGetInlineFieldIconTexture(app, field, currentValue, overlayIcon, overlayLoadErr);
+    bool haveOverlayIcon;
+    {
+        SMATCHET_UI_PERF_SCOPE("perf_temp:RSSE.iconLookup");
+        haveOverlayIcon = SmatchetFieldIconRender::TryGetInlineFieldIconTexture(
+            app, field, currentValue, overlayIcon, overlayLoadErr);
+    }
     (void)overlayLoadErr;
 
     // Hot path: ResolveOptionId + ResolveDisplayValue both parse / linear-scan against the raw JSON
@@ -1207,10 +1212,16 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
-    ImGui::SetNextItemWidth(cellAvail);
-    const bool comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
-    const ImVec2 comboMin = ImGui::GetItemRectMin();
-    const ImVec2 comboMax = ImGui::GetItemRectMax();
+    ImVec2 comboMin;
+    ImVec2 comboMax;
+    bool comboOpened;
+    {
+        SMATCHET_UI_PERF_SCOPE("perf_temp:RSSE.beginCombo");
+        ImGui::SetNextItemWidth(cellAvail);
+        comboOpened = ImGui::BeginCombo("##singleselect", previewCStr, ImGuiComboFlags_NoArrowButton);
+        comboMin = ImGui::GetItemRectMin();
+        comboMax = ImGui::GetItemRectMax();
+    }
     if (comboOpened) {
         const std::string currentId = ResolveOptionId(field, currentValue);
         const bool selectedNone = currentId.empty();
@@ -1228,6 +1239,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
 
     if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
+        SMATCHET_UI_PERF_SCOPE("perf_temp:RSSE.iconOverlay");
         const float maxEdge = ImGui::GetFrameHeight();
         const float iw = static_cast<float>(overlayIcon.Width);
         const float ih = static_cast<float>(overlayIcon.Height);
@@ -1242,19 +1254,22 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
     // Tooltip only fires when the combo is actually hovered — defer the clip-test text measurement
     // (and resolve the preview lazily for the icon-overlay branch where preview was skipped).
-    if (tooltipsEnabled && ImGui::IsItemHovered()) {
-        if (haveOverlayIcon && preview.empty()) {
-            preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
-            previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
-        }
-        const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
-        const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
-        if (previewClipped) {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-            ImGui::TextUnformatted(previewCStr);
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
+    {
+        SMATCHET_UI_PERF_SCOPE("perf_temp:RSSE.tooltipPath");
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            if (haveOverlayIcon && preview.empty()) {
+                preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
+            }
+            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+            const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(previewCStr);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
         }
     }
 }
