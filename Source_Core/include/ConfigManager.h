@@ -163,6 +163,9 @@ struct TrackerConfig {
 
     // Font setting
     std::string SelectedFontName = "Segoe UI";
+    // Font size in points, used by View > Appearance > Zoom In/Out/Reset.
+    // Clamped to [8, 32] at load. 16 matches the legacy hardcoded value.
+    int FontSizePt = 16;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.

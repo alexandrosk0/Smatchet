@@ -26,6 +26,11 @@ public:
     void Close();
     bool IsOpen() const { return open_; }
 
+    /// Replace the filter text without changing open/closed state.
+    /// Used by the inline Command Palette input field in the menu bar
+    /// so typing into the bar opens + pre-filters the palette.
+    void SetFilterText(const char* query);
+
     /// Call once per frame from SmatchetUI::Draw. Handles Ctrl+Shift+P detection,
     /// renders the BeginPopupModal, and dispatches the selected command.
     void Draw(AppController& app);

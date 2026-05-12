@@ -369,7 +369,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Combo("Application Font", &currentFontIdx, fonts, 10)) {
                 d.cfg.SelectedFontName = fonts[currentFontIdx];
                 ConfigManager::Save(d.cfg);
-                SmatchetRequestFontReload(d.cfg.SelectedFontName, 16.0f);
+                SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
             }
             ImGui::SetItemTooltip(
                 "Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");

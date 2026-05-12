@@ -595,7 +595,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
 
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
     ImplData->FrameActive.store(true, std::memory_order_relaxed);
     ImplData->BuildingFrame.store(false, std::memory_order_release);
 #else

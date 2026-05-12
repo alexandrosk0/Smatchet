@@ -409,6 +409,12 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
     "Collapsed=0\n"
     "DockId=0x00000008,0\n"
     "\n"
+    "[Window][Source Blame###BlameAnalysisModal]\n"
+    "Pos=1613,22\n"
+    "Size=307,535\n"
+    "Collapsed=0\n"
+    "DockId=0x00000004,1\n"
+    "\n"
     "[Window][Performance]\n"
     "Pos=0,427\n"
     "Size=924,293\n"
@@ -860,6 +866,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["views_sidebar_width"] = config.ViewsSidebarWidth;
     j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
     j["selected_font_name"] = config.SelectedFontName;
+    j["font_size_pt"] = config.FontSizePt;
     j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
     j["update_check_enabled"] = config.UpdateCheckEnabled;
     j["update_include_prerelease"] = config.UpdateIncludePrerelease;
@@ -1134,6 +1141,9 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ViewsSidebarWidth = j.value("views_sidebar_width", cfg.ViewsSidebarWidth);
             cfg.ViewsFieldsSplitRatio = j.value("views_fields_split_ratio", cfg.ViewsFieldsSplitRatio);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
+            cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
+            if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
+            if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
             cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
             cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);

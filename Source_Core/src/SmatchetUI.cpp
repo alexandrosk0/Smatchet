@@ -375,6 +375,10 @@ void SmatchetUI::Draw(AppController& app) {
             SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
         }
     }
+
+    // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
+    ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
@@ -731,57 +735,123 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         const bool hasSelection = d.gridState.RectSel.HasAnySelection();
         const bool hasTickets = !tickets.empty();
 
-        if (ImGui::BeginMenu("Workspace")) {
-            if (ImGui::MenuItem("Grid")) {
-                d.requestActiveProjectFocus = true;
+        auto selectAllRows = [&]() {
+            auto& sel = d.gridState.RectSel;
+            sel.ClearAll();
+            const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
+            for (size_t row = 0; row < rowCount; ++row) {
+                sel.Rows.insert(static_cast<int>(row));
             }
-            if (ImGui::MenuItem("Views & Queries...")) {
+            if (rowCount > 0) {
+                sel.PrimaryRow = 0;
+                sel.SortSignature =
+                    ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
+                const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
+                if (firstTicketIndex < tickets.size()) {
+                    d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
+                }
+            }
+        };
+
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Open Project View...", "Ctrl+O")) {
                 d.showViewsDashboard = true;
                 d.requestViewsDashboardFocus = true;
             }
-            if (ImGui::MenuItem("Reset Workspace Layout")) {
-                resetWindowLayoutToDefault(d);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Selection")) {
-            if (ImGui::MenuItem("Select All", nullptr, false, hasTickets)) {
-                auto& sel = d.gridState.RectSel;
-                sel.ClearAll();
-                const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
-                for (size_t row = 0; row < rowCount; ++row) {
-                    sel.Rows.insert(static_cast<int>(row));
-                }
-                if (rowCount > 0) {
-                    sel.PrimaryRow = 0;
-                    sel.SortSignature =
-                        ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
-                    const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
-                    if (firstTicketIndex < tickets.size()) {
-                        d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
-                    }
-                }
-            }
-            if (ImGui::MenuItem("Clear Selection", nullptr, false, hasSelection)) {
-                d.gridState.RectSel.ClearAll();
-            }
-            if (ImGui::MenuItem("Copy Selection", nullptr, false, hasSelection && !columns.empty())) {
-                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Issues")) {
+            ImGui::Separator();
             if (ImGui::MenuItem("Import Issues...")) {
                 d.showBulkImport = true;
             }
             if (ImGui::MenuItem("Export Issues...")) {
                 d.showBulkExport = true;
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Read-only Mode", nullptr, d.cfg.ReadOnlyMode, true)) {
+                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
+                ConfigManager::Save(d.cfg);
+            }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Automation")) {
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection && !columns.empty())) {
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Selection")) {
+            if (ImGui::MenuItem("Select All", "Ctrl+A", false, hasTickets)) {
+                selectAllRows();
+            }
+            if (ImGui::MenuItem("Clear Selection", "Ctrl+Shift+A", false, hasSelection)) {
+                d.gridState.RectSel.ClearAll();
+            }
+            if (ImGui::MenuItem("Copy Selection", "Ctrl+Shift+C", false, hasSelection && !columns.empty())) {
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) {
+                commandPalette_.Open();
+            }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Appearance")) {
+                if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {
+                    d.cfg.FontSizePt = (d.cfg.FontSizePt < 32) ? (d.cfg.FontSizePt + 1) : 32;
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Zoom Out", "Ctrl+-", false, d.cfg.FontSizePt > 8)) {
+                    d.cfg.FontSizePt = (d.cfg.FontSizePt > 8) ? (d.cfg.FontSizePt - 1) : 8;
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Reset Zoom", "Ctrl+0", false, d.cfg.FontSizePt != 16)) {
+                    d.cfg.FontSizePt = 16;
+                    ConfigManager::Save(d.cfg);
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
+                d.showViewsDashboard = !d.showViewsDashboard;
+                if (d.showViewsDashboard) {
+                    d.requestViewsDashboardFocus = true;
+                }
+            }
+            if (ImGui::MenuItem("Source Blame", "Ctrl+Shift+B", d.showBlameAnalysis)) {
+                d.showBlameAnalysis = !d.showBlameAnalysis;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
+                d.showLogWindow = !d.showLogWindow;
+            }
+            if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
+                d.showAuditTrail = !d.showAuditTrail;
+                if (d.showAuditTrail) {
+                    d.requestAuditTrailFocus = true;
+                }
+            }
+            if (ImGui::MenuItem("Performance", nullptr, d.showPerformance)) {
+                d.showPerformance = !d.showPerformance;
+            }
+            if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
+                d.showBulkImport = !d.showBulkImport;
+            }
+            if (ImGui::MenuItem("Bulk Export", nullptr, d.showBulkExport)) {
+                d.showBulkExport = !d.showBulkExport;
+            }
+            if (ImGui::MenuItem("Preferences", nullptr, d.showPreferences)) {
+                d.showPreferences = !d.showPreferences;
+            }
+#if defined(SMATCHET_WITH_MCP)
+            if (ImGui::MenuItem("MCP Server", nullptr, d.showMcpServerWindow)) {
+                d.showMcpServerWindow = !d.showMcpServerWindow;
+                if (d.showMcpServerWindow) {
+                    d.requestMcpServerFocus = true;
+                }
+            }
+#endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            if (ImGui::MenuItem("Scripts & Actions...", nullptr, false, true)) {
+            if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
                 d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
                 if (d.showLuaAutomationWindow) {
                     d.requestLuaAutomationFocus = true;
@@ -789,42 +859,61 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
             }
 #endif
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset Layout")) {
+                resetWindowLayoutToDefault(d);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Go")) {
+            if (ImGui::MenuItem("Active Project Grid", "Ctrl+Alt+1")) {
+                d.requestActiveProjectFocus = true;
+            }
+            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Alt+2")) {
+                d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
+            }
+            if (ImGui::MenuItem("Log", "Ctrl+Alt+3")) {
+                d.showLogWindow = true;
+            }
+            if (ImGui::MenuItem("Backend Audit", "Ctrl+Alt+4")) {
+                d.showAuditTrail = true;
+                d.requestAuditTrailFocus = true;
+            }
+            if (ImGui::MenuItem("Performance", "Ctrl+Alt+5")) {
+                d.showPerformance = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Source Blame...")) {
+                d.showBlameAnalysis = true;
+            }
+            ImGui::EndMenu();
+        }
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        if (ImGui::BeginMenu("Run")) {
+            if (ImGui::MenuItem("Scripts & Actions...")) {
+                d.showLuaAutomationWindow = true;
+                d.requestLuaAutomationFocus = true;
+                d.requestScriptingEditorTabFocus = true;
+            }
+            ImGui::EndMenu();
+        }
+#endif
+        if (ImGui::BeginMenu("Tools")) {
+            if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
+                d.showPreferences = true;
+            }
 #if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("Agent Bridge (MCP)...", nullptr, false, true)) {
-                d.showMcpServerWindow = !d.showMcpServerWindow;
-                if (d.showMcpServerWindow) {
-                    d.requestMcpServerFocus = true;
-                }
+            if (ImGui::MenuItem("MCP Server...")) {
+                d.showMcpServerWindow = true;
+                d.requestMcpServerFocus = true;
             }
 #endif
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Inspect")) {
-            if (ImGui::MenuItem("Source Blame...")) {
-                d.showBlameAnalysis = true;
-            }
-            if (ImGui::MenuItem("Sync Audit...")) {
-                d.showAuditTrail = true;
-                d.requestAuditTrailFocus = true;
-            }
-            if (ImGui::MenuItem("Runtime Log", nullptr, false, true)) {
-                d.showLogWindow = !d.showLogWindow;
-            }
-            if (ImGui::MenuItem("Performance Monitor...")) {
-                d.showPerformance = true;
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Settings")) {
-            if (ImGui::MenuItem("Preferences...")) {
-                d.showPreferences = true;
-            }
+        if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
                 StartAppUpdateCheck(d, app, true);
-            }
-            if (ImGui::MenuItem("Read-only Mode", nullptr, false, true)) {
-                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
-                ConfigManager::Save(d.cfg);
             }
             ImGui::EndMenu();
         }
@@ -837,6 +926,41 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
         }
 #endif
+
+        // Inline Command Palette input — VS Code Quick Input.
+        // Typing pre-fills + opens the existing palette modal; Enter does the same.
+        {
+            constexpr float kInlineMaxWidthPx  = 640.0f;
+            constexpr float kInlineMinWidthPx  = 200.0f;
+            constexpr float kRightReservedPx   = 140.0f;
+            const float menuRightEdge = ImGui::GetCursorPosX();
+            const float rightLimit    = ImGui::GetWindowContentRegionMax().x - kRightReservedPx;
+            const float availW        = (std::max)(0.0f, rightLimit - menuRightEdge);
+
+            if (availW >= kInlineMinWidthPx) {
+                const float inputW = (std::min)(kInlineMaxWidthPx, availW * 0.55f);
+                const float xPad   = (availW - inputW) * 0.5f;
+                ImGui::SetCursorPosX(menuRightEdge + xPad);
+                ImGui::SetNextItemWidth(inputW);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+                const bool committed = ImGui::InputTextWithHint(
+                    "##cmd-palette-input",
+                    "Search commands (Ctrl+Shift+P)",
+                    d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopStyleVar();
+                if ((ImGui::IsItemActivated() || committed) && d.paletteInlineBuf[0] != '\0') {
+                    if (!commandPalette_.IsOpen()) {
+                        commandPalette_.Open();
+                    }
+                    commandPalette_.SetFilterText(d.paletteInlineBuf);
+                }
+                if (!commandPalette_.IsOpen() && !ImGui::IsItemActive() && d.paletteInlineBuf[0] != '\0') {
+                    d.paletteInlineBuf[0] = '\0';
+                }
+            }
+        }
+
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
             const char* closeLabel = "Close";

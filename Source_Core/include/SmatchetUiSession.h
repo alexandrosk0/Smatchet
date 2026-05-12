@@ -114,6 +114,10 @@ struct UiDrawSession {
     /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
     std::vector<char> conflictResolveBuf;
 
+    /// Inline Command Palette input field rendered in the main menu-bar strip.
+    /// Mirrors VS Code Quick Input — typing pre-fills the existing palette modal.
+    char paletteInlineBuf[256] = {};
+
     bool showPreferences = false;
     bool showViewsDashboard = true;
     bool requestActiveProjectFocus = false;
