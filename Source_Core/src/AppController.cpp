@@ -17,8 +17,6 @@
 
 #include "AppController.h"
 
-
-
 #include <algorithm>
 #include <array>
 
@@ -53,8 +51,6 @@
 
 #include <vector>
 
-
-
 #include "ConfigManager.h"
 
 #include "Commands/BuiltinCommands.h"
@@ -63,8 +59,6 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "FieldCatalogCache.h"
-
-
 
 #include <ghc/filesystem.hpp>
 
@@ -87,13 +81,9 @@
 
 #include "Views.h"
 
-
-
 #include "SmatchetUI.h"
 
 #include "SmatchetToast.h"
-
-
 
 #if defined(_WIN32)
 
@@ -107,8 +97,6 @@
 
 #endif
 
-
-
 namespace {
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -118,7 +106,6 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
     if (!exe || arg.empty()) {
 
         return false;
-
     }
 
     const pid_t child = fork();
@@ -126,7 +113,6 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
     if (child < 0) {
 
         return false;
-
     }
 
     if (child == 0) {
@@ -134,11 +120,9 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
         execlp(exe, exe, arg.c_str(), static_cast<char*>(nullptr));
 
         _exit(127);
-
     }
 
     return true;
-
 }
 
 #endif
@@ -171,8 +155,7 @@ bool RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, std::string& outErro
 }
 
 std::string TrimAppUpdateText(std::string text) {
-    while (!text.empty() &&
-           (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
+    while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
         text.pop_back();
     }
     while (!text.empty() &&
@@ -205,7 +188,8 @@ SemanticVersion ParseSemanticVersion(const std::string& raw) {
     for (int i = 0; i < 3; ++i) {
         const size_t dot = s.find('.', start);
         const std::string token = (dot == std::string::npos) ? s.substr(start) : s.substr(start, dot - start);
-        if (token.empty() || !std::all_of(token.begin(), token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+        if (token.empty() ||
+            !std::all_of(token.begin(), token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
             return out;
         }
         parts[static_cast<size_t>(i)] = std::atoi(token.c_str());
@@ -252,8 +236,6 @@ std::string FileNameFromUrl(const std::string& url) {
 
 } // namespace
 
-
-
 namespace {
 
 void LogProcessCwdForScriptsDiagnostics() {
@@ -271,7 +253,6 @@ void LogProcessCwdForScriptsDiagnostics() {
     } else {
 
         LOG_WARN("AppController: GetCurrentDirectoryA failed err=%lu", static_cast<unsigned long>(GetLastError()));
-
     }
 
 #elif defined(__APPLE__) || defined(__linux__)
@@ -285,14 +266,10 @@ void LogProcessCwdForScriptsDiagnostics() {
     } else {
 
         LOG_WARN("AppController: getcwd failed errno=%d", errno);
-
     }
 
 #endif
-
 }
-
-
 
 void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 
@@ -301,7 +278,6 @@ void LogLuaScriptFileProbe(const char* label, const std::string& path) {
         LOG_WARN("AppController: Lua script probe %s: path empty (blocked or unresolved)", label);
 
         return;
-
     }
 
     namespace fs = ghc::filesystem;
@@ -313,25 +289,19 @@ void LogLuaScriptFileProbe(const char* label, const std::string& path) {
     LOG_INFO("AppController: Lua script probe %s: path=\"%s\" regular_file=%s ec=%s", label, path.c_str(),
 
              reg ? "yes" : "no", ec ? ec.message().c_str() : "none");
-
 }
 
 } // namespace
 
-
-
 namespace {
 
 std::mutex g_TrackerIssueFetchMutex;
-
-
 
 bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::string& prefix) {
 
     if (prefix.empty() || value.size() < prefix.size()) {
 
         return false;
-
     }
 
     for (size_t i = 0; i < prefix.size(); ++i) {
@@ -343,38 +313,30 @@ bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::stri
         if (a >= 'A' && a <= 'Z') {
 
             a = static_cast<unsigned char>(a - 'A' + 'a');
-
         }
 
         if (b >= 'A' && b <= 'Z') {
 
             b = static_cast<unsigned char>(b - 'A' + 'a');
-
         }
 
         if (a != b) {
 
             return false;
-
         }
-
     }
 
     if (value.size() == prefix.size()) {
 
         return true;
-
     }
 
     const char next = value[prefix.size()];
 
     return next == '/' || next == '\\';
-
 }
 
 } // namespace
-
-
 
 void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory) {
     backendFactory_ = std::move(factory);
@@ -398,7 +360,6 @@ AppController::~AppController() {
         std::lock_guard<std::mutex> lock(automationJobMutex_);
 
         automationWorkerShuttingDown_.store(true);
-
     }
 
     automationJobCv_.notify_all();
@@ -406,7 +367,6 @@ AppController::~AppController() {
     if (automationWorker_.joinable()) {
 
         automationWorker_.join();
-
     }
 
 #endif
@@ -422,10 +382,7 @@ AppController::~AppController() {
     DrainTrackerConnectivityProbeFuture();
 
     JoinBackgroundTasks();
-
 }
-
-
 
 std::shared_ptr<const std::vector<CachedTicket>> AppController::GetActiveTicketsSnapshot() const {
 
@@ -434,14 +391,10 @@ std::shared_ptr<const std::vector<CachedTicket>> AppController::GetActiveTickets
     if (!activeTicketsPublished_) {
 
         activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
-
     }
 
     return activeTicketsPublished_;
-
 }
-
-
 
 std::vector<CachedTicket> AppController::GetActiveTickets() const {
 
@@ -450,21 +403,16 @@ std::vector<CachedTicket> AppController::GetActiveTickets() const {
     if (!activeTicketsPublished_) {
 
         activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
-
     }
 
     return *activeTicketsPublished_;
-
 }
-
-
 
 void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
 
     if (!Cache) {
 
         return;
-
     }
 
     std::vector<std::string> toFetch;
@@ -480,9 +428,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             for (const auto& t : *snap) {
 
                 have.insert(t.id);
-
             }
-
         }
 
         std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
@@ -492,39 +438,30 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             if (k.empty() || (!includeAlreadyActive && have.count(k) > 0)) {
 
                 continue;
-
             }
 
             if (bulkImportPrefetchKeysInFlight_.count(k) > 0) {
 
                 continue;
-
             }
 
             bulkImportPrefetchKeysInFlight_.insert(k);
 
             toFetch.push_back(k);
-
         }
-
     }
 
     if (toFetch.empty()) {
 
         return;
-
     }
 
-
-
     LaunchBackgroundTask([this, toFetch]() {
-
         ITrackerClient* backend = Backend.get();
 
         if (!backend) {
 
             return;
-
         }
 
         TrackerConfig cfg = ConfigManager::Load();
@@ -544,9 +481,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             for (const auto& k : toFetch) {
 
                 bulkImportPrefetchKeysInFlight_.erase(k);
-
             }
-
         }
 
         if (!ok) {
@@ -558,11 +493,9 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
             } else {
 
                 LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
-
             }
 
             return;
-
         }
 
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -570,66 +503,49 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
         if (!Cache) {
 
             return;
-
         }
 
         for (const auto& t : tickets) {
 
             Cache->SaveTicket(t);
-
         }
 
         RefreshLocalData();
-
     });
-
 }
-
-
 
 bool AppController::IsBulkImportPrefetchInFlight(const std::string& issueKey) const {
 
     if (issueKey.empty()) {
 
         return false;
-
     }
 
     std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
 
     return bulkImportPrefetchKeysInFlight_.find(issueKey) != bulkImportPrefetchKeysInFlight_.end();
-
 }
-
-
 
 void AppController::LaunchBackgroundTask(std::function<void()> task) {
 
     if (!task || shuttingDown_.load()) {
 
         return;
-
     }
 
     std::thread worker([this, task = std::move(task)]() mutable {
-
         if (shuttingDown_.load()) {
 
             return;
-
         }
 
         task();
-
     });
 
     std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
 
     backgroundWorkers_.push_back(std::move(worker));
-
 }
-
-
 
 void AppController::JoinBackgroundTasks() {
 
@@ -640,7 +556,6 @@ void AppController::JoinBackgroundTasks() {
         std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
 
         workers = std::move(backgroundWorkers_);
-
     }
 
     const std::thread::id selfId = std::this_thread::get_id();
@@ -650,7 +565,6 @@ void AppController::JoinBackgroundTasks() {
         if (!worker.joinable()) {
 
             continue;
-
         }
 
         if (worker.get_id() == selfId) {
@@ -665,66 +579,44 @@ void AppController::JoinBackgroundTasks() {
         }
 
         worker.join();
-
     }
-
 }
-
-
 
 void AppController::SetOpenUrlHandler(std::function<void(const std::string&)> handler) {
 
     OpenUrlHandler = std::move(handler);
-
 }
-
-
 
 void AppController::SetCloseEmbeddedUiHandler(std::function<void()> handler) {
 
     CloseEmbeddedUiHandler = std::move(handler);
-
 }
-
-
 
 void AppController::CloseEmbeddedUi() {
 
     if (CloseEmbeddedUiHandler) {
 
         CloseEmbeddedUiHandler();
-
     }
-
 }
 
-void AppController::SetRequestAppQuitHandler(std::function<void()> handler) { RequestAppQuitHandler = std::move(handler); }
+void AppController::SetRequestAppQuitHandler(std::function<void()> handler) {
+    RequestAppQuitHandler = std::move(handler);
+}
 
 void AppController::RequestAppQuit() const {
 
     if (RequestAppQuitHandler) {
 
         RequestAppQuitHandler();
-
     }
-
 }
 
-
-
-void AppController::SetRuntimePluginHost(PluginHost* host) {
-
-    runtimePluginHost_ = host;
-
-}
-
-
+void AppController::SetRuntimePluginHost(PluginHost* host) { runtimePluginHost_ = host; }
 
 #if defined(SMATCHET_WITH_MCP)
 
 namespace {
-
-
 
 std::string PrefixMcpActivityLine(const std::string& msg) {
 
@@ -739,7 +631,6 @@ std::string PrefixMcpActivityLine(const std::string& msg) {
     if (localtime_s(&tmBuf, &t) != 0) {
 
         return msg;
-
     }
 
 #else
@@ -747,7 +638,6 @@ std::string PrefixMcpActivityLine(const std::string& msg) {
     if (localtime_r(&t, &tmBuf) == nullptr) {
 
         return msg;
-
     }
 
 #endif
@@ -757,18 +647,12 @@ std::string PrefixMcpActivityLine(const std::string& msg) {
     if (std::strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &tmBuf) == 0) {
 
         return msg;
-
     }
 
     return std::string(timeBuf) + " " + msg;
-
 }
 
-
-
 } // namespace
-
-
 
 void AppController::AppendMcpActivity(const std::string& line) {
 
@@ -779,19 +663,14 @@ void AppController::AppendMcpActivity(const std::string& line) {
     while (mcpActivityLog_.size() > kMcpActivityLogMax) {
 
         mcpActivityLog_.pop_front();
-
     }
-
 }
-
-
 
 std::vector<std::string> AppController::CopyMcpActivityLog() const {
 
     std::lock_guard<std::mutex> lock(mcpActivityMutex_);
 
     return std::vector<std::string>(mcpActivityLog_.begin(), mcpActivityLog_.end());
-
 }
 
 void AppController::NotifyMcpClientHttpActivity() {
@@ -801,7 +680,6 @@ void AppController::NotifyMcpClientHttpActivity() {
     const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 
     mcpLastClientHttpActivityNs_.store(static_cast<std::uint64_t>(ns), std::memory_order_release);
-
 }
 
 bool AppController::TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const {
@@ -811,28 +689,22 @@ bool AppController::TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::t
     if (raw == 0 || out == nullptr) {
 
         return false;
-
     }
 
-    *out = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(static_cast<std::chrono::nanoseconds::rep>(raw)));
+    *out = std::chrono::steady_clock::time_point(
+        std::chrono::nanoseconds(static_cast<std::chrono::nanoseconds::rep>(raw)));
 
     return true;
-
 }
 
 #endif
-
-
 
 void AppController::OpenUrl(const std::string& url) const {
 
     if (url.empty()) {
 
         return;
-
     }
-
-
 
     // Scheme allowlist: avoid handing `javascript:`, `file:`, `vbscript:`, etc.
 
@@ -849,7 +721,6 @@ void AppController::OpenUrl(const std::string& url) const {
             LOG_WARN("AppController::OpenUrl rejected: missing scheme in url=%s", TruncateForLog(url, 200).c_str());
 
             return;
-
         }
 
         schemePrefix.reserve(colonPos);
@@ -857,7 +728,6 @@ void AppController::OpenUrl(const std::string& url) const {
         for (size_t i = 0; i < colonPos; ++i) {
 
             schemePrefix.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(url[i]))));
-
         }
 
         const bool ok = (schemePrefix == "http") || (schemePrefix == "https") || (schemePrefix == "mailto");
@@ -869,22 +739,15 @@ void AppController::OpenUrl(const std::string& url) const {
                      TruncateForLog(url, 200).c_str());
 
             return;
-
         }
-
     }
-
-
 
     if (OpenUrlHandler) {
 
         OpenUrlHandler(url);
 
         return;
-
     }
-
-
 
 #if defined(_WIN32)
 
@@ -893,7 +756,6 @@ void AppController::OpenUrl(const std::string& url) const {
     if (reinterpret_cast<intptr_t>(openResult) <= 32) {
 
         LOG_ERROR("AppController::OpenUrl failed url=%s err=%ld", TruncateForLog(url, 300).c_str(), GetLastError());
-
     }
 
 #elif defined(__APPLE__)
@@ -901,7 +763,6 @@ void AppController::OpenUrl(const std::string& url) const {
     if (!LaunchCommandNoShell("open", url)) {
 
         LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
-
     }
 
 #else
@@ -909,14 +770,10 @@ void AppController::OpenUrl(const std::string& url) const {
     if (!LaunchCommandNoShell("xdg-open", url)) {
 
         LOG_ERROR("AppController::OpenUrl failed to launch url=%s", TruncateForLog(url, 300).c_str());
-
     }
 
 #endif
-
 }
-
-
 
 // AddAutomationLogSink / ClearAutomationLogSinks moved to LuaAutomationHost in Phase 1A of
 // the item 14 extraction. Thin delegators below.
@@ -933,39 +790,25 @@ void AppController::ClearAutomationLogSinks() {
     }
 }
 
-
-
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
 
     AttachmentViewerHandlerCallback = std::move(handler);
-
 }
-
-
 
 void AppController::SetAttachmentPreviewHandler(AttachmentPreviewHandler handler) {
 
     AttachmentPreviewHandlerCallback = std::move(handler);
-
 }
-
-
 
 void AppController::SetAttachmentCollectionHandler(AttachmentCollectionHandler handler) {
 
     AttachmentCollectionHandlerCallback = std::move(handler);
-
 }
-
-
 
 void AppController::SetOpenFilePathsHandler(OpenFilePathsHandler handler) {
 
     OpenFilePathsHandlerCallback = std::move(handler);
-
 }
-
-
 
 void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& initialDirectoryUtf8,
 
@@ -974,7 +817,6 @@ void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& 
     if (!onComplete) {
 
         return;
-
     }
 
     if (OpenFilePathsHandlerCallback) {
@@ -982,11 +824,9 @@ void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& 
         OpenFilePathsHandlerCallback(allowMultiple, initialDirectoryUtf8, std::move(onComplete));
 
         return;
-
     }
 
     onComplete({});
-
 }
 
 std::string AppController::GetAppVersion() const {
@@ -1017,9 +857,10 @@ AppUpdateInfo AppController::CheckForAppUpdate(bool includePrerelease) const {
     }
 
     const std::string url = "https://api.github.com/repos/" + repo + "/releases?per_page=10";
-    cpr::Header headers{{"Accept", "application/vnd.github+json"}, {"User-Agent", "SmatchetUpdater/" + out.CurrentVersion}};
-    cpr::Response response = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true},
-                                      cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+    cpr::Header headers{{"Accept", "application/vnd.github+json"},
+                        {"User-Agent", "SmatchetUpdater/" + out.CurrentVersion}};
+    cpr::Response response =
+        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
     if (response.error.code != cpr::ErrorCode::OK) {
         out.Error = "Update check failed: " + response.error.message;
         return out;
@@ -1128,8 +969,8 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
         ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
         return ofs.good();
     }};
-    cpr::Response resp = cpr::Get(cpr::Url{downloadUrl}, headers, redirect, writeCb,
-                                  cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
+    cpr::Response resp =
+        cpr::Get(cpr::Url{downloadUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
     ofs.close();
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
         std::remove(localPath.c_str());
@@ -1158,8 +999,6 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 #endif
 }
 
-
-
 bool AppController::IsOnUiThread() const {
     // uiThreadId_ is written once in Initialize before any worker is spawned, then never
     // mutated. Reads from worker threads are race-free under publish-once semantics.
@@ -1171,7 +1010,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // background thread is spawned, so this happens-before any worker that could call
     // IsOnUiThread() later. See AppController.h for the full reasoning.
     uiThreadId_ = std::this_thread::get_id();
-
 
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
 
@@ -1213,7 +1051,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                           dropped);
 
             offlineQueue_->legacyPendingStartupBanner_ = buf;
-
         }
 
     } catch (const std::exception& ex) {
@@ -1223,10 +1060,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     } catch (...) {
 
         LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
-
     }
-
-
 
     TrackerConfig cfg = ConfigManager::Load();
 
@@ -1235,10 +1069,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (activeTracker.empty()) {
 
         activeTracker = "Jira";
-
     }
-
-
 
     if (!backendFactory_) {
         backendFactory_ = std::make_unique<DefaultTrackerBackendFactory>();
@@ -1258,8 +1089,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // exactly once per database file; subsequent launches are no-ops.
     if (offlineQueue_) {
         try {
-            offlineQueue_->RunLegacyProjectSweep(cfg.LegacyProjectKey, cfg.LegacyPlaneProjectId,
-                                                 activeTrackerType);
+            offlineQueue_->RunLegacyProjectSweep(cfg.LegacyProjectKey, cfg.LegacyPlaneProjectId, activeTrackerType);
         } catch (const std::exception& ex) {
             LOG_ERROR("AppController::Initialize legacy-project offline sweep failed: %s", ex.what());
         }
@@ -1304,8 +1134,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                         patched["project_id"] = cfg.LegacyPlaneProjectId;
                         view.Jql = patched.dump();
                         dirty = true;
-                        LOG_INFO("Plane view '%s' patched with legacy project_id='%s'",
-                                 view.Name.c_str(), cfg.LegacyPlaneProjectId.c_str());
+                        LOG_INFO("Plane view '%s' patched with legacy project_id='%s'", view.Name.c_str(),
+                                 cfg.LegacyPlaneProjectId.c_str());
                     }
                 }
                 if (dirty) {
@@ -1318,8 +1148,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         }
     }
 
-
-
     const std::string& fileBase = ConfigManager::GetRuntimeAssetDirectory();
 
     if (!fileBase.empty()) {
@@ -1329,7 +1157,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     } else {
 
         luaScriptsDirectory_.clear();
-
     }
 
     LOG_INFO("AppController: ConfigManager files base %s (len=%zu); luaScriptsDirectory=\"%s\"",
@@ -1350,15 +1177,11 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 #endif
 
-
-
     // Defer SyncWithBackend to first SmatchetUI::Draw so active view JQL/fields are
 
     // applied first — avoids fetching issues twice at startup.
 
     RefreshLocalData();
-
-
 
     {
 
@@ -1370,8 +1193,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
         std::string snapErr;
 
-        const std::string projectKeyForCache =
-            ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType) == "Plane" ? cfg.PlaneProjectId : cfg.ProjectKey;
+        // PR 6: legacy global project fields removed. Initial catalog load at startup is now
+        // unscoped (project key = ""); per-project catalogs are populated lazily on demand
+        // through RefreshFieldCatalogForProject() driven by the new-issue draft / picker UI.
+        const std::string projectKeyForCache;
         const std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
 
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
@@ -1399,25 +1224,22 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                 LastTrackerFieldCatalogWarning =
 
                     "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
-
             }
 
             if (activeTrackerType == "Jira") {
 
                 for (auto& field : AvailableFields) {
 
-                    if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
+                    if (field.Id == "comment" || field.Id == "timespent" ||
+                        field.Id == "aggregatetimeoriginalestimate" ||
 
                         field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
 
                         field.ReadOnly = true;
-
                     }
-
                 }
 
                 EnsureCatalogHistoryField();
-
             }
 
             TrackerFieldCatalogRevision.fetch_add(1);
@@ -1425,12 +1247,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
             LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
 
                      AvailableFields.size());
-
         }
-
     }
-
-
 
     TrackerConfig jiraCfgForEditMetaWarmup{};
 
@@ -1439,14 +1257,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         // Load before InitLua(): avoids parsing smatchet_config.json immediately after Lua init on MinGW release.
 
         jiraCfgForEditMetaWarmup = ConfigManager::Load();
-
     }
 
-
-
     InitLua();
-
-
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 
@@ -1456,12 +1269,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 #endif
 
-
-
     if (activeTrackerType == "Jira") {
 
         WarmIssueTypeEditMetaAtStartAsync(std::move(jiraCfgForEditMetaWarmup));
-
     }
 
     // Scenario runner — constructed before the registry so scenario.* commands
@@ -1556,8 +1366,6 @@ const smatchet::cmd::ScenarioRunner& AppController::Scenarios() const {
     return *scenarioRunner_;
 }
 
-
-
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
 
     if (filename.empty() || filename.find("..") != std::string::npos || filename.find(':') != std::string::npos ||
@@ -1567,20 +1375,15 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
         LOG_WARN("ResolveLuaScriptPath: blocked suspicious script path=%s", filename.c_str());
 
         return std::string();
-
     }
 
     if (!luaScriptsDirectory_.empty()) {
 
         return luaScriptsDirectory_ + filename;
-
     }
 
     return std::string("Scripts/") + filename;
-
 }
-
-
 
 std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
@@ -1601,13 +1404,11 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
         } else {
 
             root = fs::path("Scripts");
-
         }
 
         if (!fs::is_directory(root, ec)) {
 
             return out;
-
         }
 
         for (const auto& ent : fs::directory_iterator(root, ec)) {
@@ -1615,13 +1416,11 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
             if (ec) {
 
                 break;
-
             }
 
             if (!ent.is_regular_file(ec)) {
 
                 continue;
-
             }
 
             const std::string fname = ent.path().filename().string();
@@ -1629,25 +1428,20 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
             if (fname.size() < 5) {
 
                 continue;
-
             }
 
             std::string ext = fname.substr(fname.size() - 4);
 
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
-
                 return static_cast<char>(std::tolower(c));
-
             });
 
             if (ext != ".lua") {
 
                 continue;
-
             }
 
             out.push_back(fname);
-
         }
 
         std::sort(out.begin(), out.end());
@@ -1665,14 +1459,10 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
         LOG_WARN("ListLuaScriptFiles: unknown exception (returning empty).");
 
         out.clear();
-
     }
 
     return out;
-
 }
-
-
 
 std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUrl) const {
 
@@ -1683,19 +1473,16 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
     if (t.empty()) {
 
         return std::string();
-
     }
 
     if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
 
         return t;
-
     }
 
     std::error_code ec;
 
     auto isAllowedPath = [&](const fs::path& absPath) -> bool {
-
         const std::string absStr = absPath.string();
 
         if (!luaScriptsDirectory_.empty()) {
@@ -1705,11 +1492,9 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
             if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, scriptsRoot.string())) {
 
                 return true;
-
             }
 
             ec.clear();
-
         }
 
         const std::string base = ConfigManager::GetRuntimeAssetDirectory();
@@ -1721,18 +1506,13 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
             if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, baseRoot.string())) {
 
                 return true;
-
             }
 
             ec.clear();
-
         }
 
         return false;
-
     };
-
-
 
     fs::path inp(t);
 
@@ -1741,7 +1521,6 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
         if (luaScriptsDirectory_.empty()) {
 
             return std::string();
-
         }
 
         std::string rel = t;
@@ -1749,7 +1528,6 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
         if (rel.size() >= 7 && FieldIconHasCaseInsensitivePrefix(rel, "Scripts")) {
 
             rel = rel.size() == 7 ? std::string() : rel.substr(8);
-
         }
 
         const fs::path combined = fs::path(luaScriptsDirectory_) / fs::path(rel);
@@ -1759,11 +1537,9 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
         if (ec || !isAllowedPath(absRel)) {
 
             return std::string();
-
         }
 
         return absRel.string();
-
     }
 
     const fs::path abs = fs::weakly_canonical(inp, ec);
@@ -1771,40 +1547,34 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
     if (ec) {
 
         return std::string();
-
     }
 
     if (isAllowedPath(abs)) {
 
         return abs.string();
-
     }
 
     return std::string();
-
 }
-
-
 
 std::string AppController::GetAutomationScriptContent() {
 
     std::string path = ResolveLuaScriptPath("Automation.lua");
 
-    if (path.empty()) return "";
+    if (path.empty())
+        return "";
 
     std::ifstream ifs(path);
 
-    if (!ifs.is_open()) return "";
+    if (!ifs.is_open())
+        return "";
 
     std::stringstream ss;
 
     ss << ifs.rdbuf();
 
     return ss.str();
-
 }
-
-
 
 bool AppController::SaveAutomationScriptContent(const std::string& content, std::string& outError) {
 
@@ -1815,7 +1585,6 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
         outError = "Invalid path";
 
         return false;
-
     }
 
     std::ofstream ofs(path, std::ios::trunc);
@@ -1825,16 +1594,12 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
         outError = "Could not open file for writing: " + path;
 
         return false;
-
     }
 
     ofs << content;
 
     return true;
-
 }
-
-
 
 std::string AppController::GetResolvedLocalCacheDbPath() const {
     if (localCacheDbPath_.empty()) {
@@ -1917,30 +1682,24 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
 
 void AppController::ClearLastTrackerTicketSyncWarning() { LastTrackerTicketSyncWarning.clear(); }
 
-
-
 TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfig* configOverride,
 
-                                                           const ViewsStore* viewsOverride) {
+                                                              const ViewsStore* viewsOverride) {
 
     TrackerIssueFetchPack pack;
 
     if (!Backend || !Cache) {
 
         return pack;
-
     }
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
-    pack.Tickets = Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError,
-                                        &pack.Warning);
+    pack.Tickets =
+        Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError, &pack.Warning);
 
     return pack;
-
 }
-
-
 
 // ApplyIssueFetchPack / CancelAndJoinActiveStreamingSync: moved to TicketSyncService in
 // Phase 1A of the item 11 extraction. Thin delegators below.
@@ -1969,9 +1728,4 @@ void AppController::SyncWithBackend(const TrackerConfig* configOverride, const V
     }
 }
 
-bool AppController::IsStreamingSyncActive() const {
-    return ticketSync_ && ticketSync_->IsActive();
-}
-
-
-
+bool AppController::IsStreamingSyncActive() const { return ticketSync_ && ticketSync_->IsActive(); }

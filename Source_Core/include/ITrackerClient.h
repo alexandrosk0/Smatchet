@@ -68,11 +68,10 @@ class ITrackerClient {
     using BatchCallback = std::function<void(std::vector<CachedTicket>&&)>;
     using CancelCallback = std::function<bool()>;
 
-    virtual TrackerIssueFetchSummary FetchIssuesStreamed(
-        const BatchCallback& onBatch,
-        const CancelCallback& shouldCancel,
-        const TrackerConfig* configOverride = nullptr,
-        const ViewsStore* viewsOverride = nullptr) {
+    virtual TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch,
+                                                         const CancelCallback& shouldCancel,
+                                                         const TrackerConfig* configOverride = nullptr,
+                                                         const ViewsStore* viewsOverride = nullptr) {
 
         TrackerIssueFetchSummary summary;
         std::string fetchError;
@@ -95,14 +94,20 @@ class ITrackerClient {
                                     std::string& outError) = 0;
 
     // Fetch fields/options for the active tracker. Default impl is unsupported.
-    virtual bool FetchFieldCatalog(const TrackerConfig& /*cfg*/, TrackerFieldCatalogResult& /*outCatalog*/,
-                                   std::string& outError) {
+    // PR 6: `projectKey` is the per-operation project for create-meta enrichment (Jira project
+    // key, or Plane project UUID). Empty means unscoped — backend returns the global field list.
+    // Pre-PR-6 callers used to read this from `cfg.ProjectKey` / `cfg.PlaneProjectId`; those
+    // fields are gone and the project is now passed explicitly.
+    virtual bool FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
+                                   TrackerFieldCatalogResult& /*outCatalog*/, std::string& outError) {
         outError = "FetchFieldCatalog is not supported by this backend.";
         return false;
     }
 
     // Build a web URL for an issue if the backend supports one.
-    virtual std::string BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) const { return {}; }
+    virtual std::string BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) const {
+        return {};
+    }
 
     // Update one or more tracker field values on an issue.
     // `fields` is the backend-specific object payload under the update root.
@@ -161,32 +166,34 @@ class ITrackerClient {
     }
 
     virtual bool FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
-                                    std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/, std::string& outError) {
+                                    std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/,
+                                    std::string& outError) {
         outError = "FetchIssueEditMeta is not supported by this backend.";
         return false;
     }
 
-    virtual bool FetchIssueWatchers(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outWatchers*/,
-                                    std::string& outError) {
+    virtual bool FetchIssueWatchers(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                    std::vector<TrackerUser>& /*outWatchers*/, std::string& outError) {
         outError = "FetchIssueWatchers is not supported by this backend.";
         return false;
     }
 
-    virtual bool FetchIssueVotes(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, std::vector<TrackerUser>& /*outVoters*/,
-                                 std::string& outError, int* /*outVoteCount*/ = nullptr, bool* /*outHasVoted*/ = nullptr,
+    virtual bool FetchIssueVotes(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                 std::vector<TrackerUser>& /*outVoters*/, std::string& outError,
+                                 int* /*outVoteCount*/ = nullptr, bool* /*outHasVoted*/ = nullptr,
                                  bool* /*outVotersInResponse*/ = nullptr) {
         outError = "FetchIssueVotes is not supported by this backend.";
         return false;
     }
 
-    virtual bool SearchUsersByQuery(const TrackerConfig& /*cfg*/, const std::string& /*query*/, std::vector<TrackerUser>& /*outUsers*/,
-                                    std::string& outError) {
+    virtual bool SearchUsersByQuery(const TrackerConfig& /*cfg*/, const std::string& /*query*/,
+                                    std::vector<TrackerUser>& /*outUsers*/, std::string& outError) {
         outError = "SearchUsersByQuery is not supported by this backend.";
         return false;
     }
 
-    virtual bool AddIssueCommentPlain(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*plainText*/,
-                                      std::string& outError) {
+    virtual bool AddIssueCommentPlain(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                      const std::string& /*plainText*/, std::string& outError) {
         outError = "AddIssueCommentPlain is not supported by this backend.";
         return false;
     }
@@ -199,10 +206,12 @@ class ITrackerClient {
         return false;
     }
 
-    virtual bool AddIssueCommentBlameContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*p4User*/,
-                                             const std::string& /*functionName*/, const std::string& /*filePath*/, int /*lineNumber*/,
-                                             const std::string& /*changelist*/, const std::string& /*date*/, bool /*approximated*/,
-                                             const std::string& /*codeSnippet*/, std::string& outError) {
+    virtual bool AddIssueCommentBlameContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                             const std::string& /*p4User*/, const std::string& /*functionName*/,
+                                             const std::string& /*filePath*/, int /*lineNumber*/,
+                                             const std::string& /*changelist*/, const std::string& /*date*/,
+                                             bool /*approximated*/, const std::string& /*codeSnippet*/,
+                                             std::string& outError) {
         outError = "AddIssueCommentBlameContext is not supported by this backend.";
         return false;
     }
@@ -222,9 +231,3 @@ class ITrackerClient {
     // real impls land in PR 4 of the remove-global-project-key rollout.
     virtual std::vector<RemoteProject> ListProjects() { return {}; }
 };
-
-
-
-
-
-

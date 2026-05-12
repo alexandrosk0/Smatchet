@@ -375,17 +375,17 @@ Keys that require a plugin or app restart to take effect are noted.
 | `jqlQuery` | string | `assignee=currentUser()` | JQL for next sync |
 | `domain` | string | — | Tracker domain/URL *(reconnect required)* |
 | `email` | string | — | Tracker email *(reconnect required)* |
-| `projectKey` | string | — | Default project for new issues |
 | `trackerType` | string | `Jira` | `Jira` or `Plane` *(restart required)* |
 | `planeUrl` | string | — | Plane API origin *(reconnect required)* |
 | `planeWorkspaceSlug` | string | — | Plane workspace slug *(reconnect required)* |
-| `planeProjectId` | string | — | Plane project UUID *(reconnect required)* |
 | `mcpEnabled` | bool | `false` | Start MCP plugin *(plugin restart required)* |
 | `mcpPort` | int | `42360` | MCP listen port *(plugin restart required)* |
 | `mcpAllowRemote` | bool | `false` | Bind all interfaces *(plugin restart required)* |
 | `mcpAllowLuaExecution` | bool | `false` | Allow `run_lua` in MCP *(plugin restart required)* |
 
 **Credentials are not in this table** — pass them via environment variables (see below).
+
+> **Project is now per-operation.** Pass `--projectKey` on `ticket.create` (already required); for views and grids, the project is inferred from the view's JQL or chosen via the in-app picker. The legacy `config set project_key …` / `config set plane_project_id …` commands were removed in this release. `config.get_all` still returns `projectKey = ""` / `planeProjectId = ""` for one release so existing scripts don't break on the field access.
 
 ```bash
 # Change the JQL filter, then trigger a sync

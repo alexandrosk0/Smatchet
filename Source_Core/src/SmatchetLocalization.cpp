@@ -73,7 +73,8 @@ const TranslationEntry kEntries[] = {
     {"toast.failed_jira_comment", "Failed to post Jira comment.", u8"Impossible de publier le commentaire Jira."},
     {"toast.tracker_reachable_required",
      "Grid edits and quick comment actions stay disabled until Tracker is reachable.",
-     u8"Les modifications de grille et les commentaires rapides restent désactivés tant que le suivi n'est pas joignable."},
+     u8"Les modifications de grille et les commentaires rapides restent désactivés tant que le suivi n'est pas "
+     u8"joignable."},
 
     {"menu.settings", "Settings", u8"Paramètres"},
     {"menu.workspace", "Workspace", u8"Espace de travail"},
@@ -137,8 +138,7 @@ const TranslationEntry kEntries[] = {
      u8"— pas les identifiants du suivi ni les vues. Une actualisation complète des tickets suit."},
     {"prefs.local_data.file_label", "Cache file:", u8"Fichier de cache :"},
     {"prefs.local_data.recreate", "Recreate database...", u8"Recréer la base..."},
-    {"prefs.local_data.recreate_tooltip",
-     "Permanently delete the local cache file and start with an empty database.",
+    {"prefs.local_data.recreate_tooltip", "Permanently delete the local cache file and start with an empty database.",
      u8"Supprime définitivement le fichier de cache local et repart d'une base vide."},
     {"prefs.local_data.confirm_title", "Delete local database?", u8"Supprimer la base locale ?"},
     {"prefs.local_data.confirm_body",
@@ -160,10 +160,16 @@ const TranslationEntry kEntries[] = {
     {"prefs.domain", "Domain", u8"Domaine"},
     {"prefs.email", "Email", u8"E-mail"},
     {"prefs.api_token", "API Token", u8"Jeton d'API"},
+    // PR 6: deprecated, slated for removal in PR 7 (keys still here for one release per R-9).
     {"prefs.project_key", "Project Key", u8"Clé de projet"},
     {"prefs.url", "URL", u8"URL"},
     {"prefs.workspace_slug", "Workspace Slug", u8"Slug de l'espace de travail"},
+    // PR 6: deprecated, slated for removal in PR 7.
     {"prefs.project_id_uuid", "Project ID (UUID)", u8"ID du projet (UUID)"},
+    // PR 6: new "Recently used projects" section in Preferences (replaces the deleted rows).
+    {"prefs.recentProjects", "Recently used projects", u8"Projets récemment utilisés"},
+    {"prefs.recentProjects.forget", "Forget", u8"Oublier"},
+    {"prefs.recentProjects.empty", "(none yet)", u8"(aucun pour l'instant)"},
     {"prefs.api_key", "API Key", u8"Clé d'API"},
     {"prefs.new_issue_inherit_jira", "New issue: inherit fields from last row (Jira)",
      u8"Nouveau ticket : hériter des champs de la dernière ligne (Jira)"},
@@ -405,8 +411,7 @@ const TranslationEntry kEntries[] = {
     // PR 4b: active-view JQL bar project pill (Jira only).
     {"view.projectPill.single", "Project: %s", u8"Projet : %s"},
     {"view.projectPill.multi", "Project: multi", u8"Projet : multiple"},
-    {"view.projectPill.tooltip.single",
-     "Active view is scoped to a single project. Click to switch project.",
+    {"view.projectPill.tooltip.single", "Active view is scoped to a single project. Click to switch project.",
      u8"La vue active est limitée à un seul projet. Cliquer pour changer de projet."},
     {"view.projectPill.tooltip.multi",
      "Active view spans multiple projects (or has no project clause). Click to pick a single project.",

@@ -166,11 +166,12 @@ struct UiDrawSession {
     char domainBuf[128]{};
     char emailBuf[128]{};
     char tokenBuf[512]{};
-    char projectKeyBuf[64]{};
+    // PR 6: projectKeyBuf / planeProjectBuf removed — project is per-operation, not a saved
+    // preference. The Preferences "Recently used projects" listbox reads
+    // FieldCatalogCache::ListCachedProjects() directly (no edit buffer needed).
     char trackerTypeBuf[32]{};
     char planeUrlBuf[256]{};
     char planeWorkspaceBuf[128]{};
-    char planeProjectBuf[128]{};
     char planeApiKeyBuf[512]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};

@@ -129,22 +129,23 @@ PlaneClient::PlaneClient() : planeProjectId_(""), planeProjectIdentifier_("") {}
 PlaneClient::~PlaneClient() {}
 
 std::unordered_map<std::string, std::string> PlaneClient::BuildPlaneHeaders(const TrackerConfig& cfg) {
-    return {
-        {"Accept", "application/json"},
-        {"Content-Type", "application/json"},
-        {"x-api-key", cfg.PlaneApiKey}
-    };
+    return {{"Accept", "application/json"}, {"Content-Type", "application/json"}, {"x-api-key", cfg.PlaneApiKey}};
 }
 
 namespace {
 /// Safely extract a JSON field as a string regardless of its actual type (int, bool, null, etc.).
 std::string JsonFieldToString(const nlohmann::json& obj, const char* key) {
-    if (!obj.is_object() || !obj.contains(key) || obj[key].is_null()) return {};
+    if (!obj.is_object() || !obj.contains(key) || obj[key].is_null())
+        return {};
     const auto& v = obj[key];
-    if (v.is_string()) return v.get<std::string>();
-    if (v.is_number_integer()) return std::to_string(v.get<int64_t>());
-    if (v.is_number_float()) return std::to_string(v.get<double>());
-    if (v.is_boolean()) return v.get<bool>() ? "true" : "false";
+    if (v.is_string())
+        return v.get<std::string>();
+    if (v.is_number_integer())
+        return std::to_string(v.get<int64_t>());
+    if (v.is_number_float())
+        return std::to_string(v.get<double>());
+    if (v.is_boolean())
+        return v.get<bool>() ? "true" : "false";
     return v.dump(); // fallback: JSON serialization
 }
 
@@ -155,14 +156,17 @@ std::string PlaneWorkItemTitleForDisplay(const nlohmann::json& issue) {
 }
 
 bool LooksLikeUuid(const std::string& s) {
-    if (s.size() != 36) return false;
+    if (s.size() != 36)
+        return false;
     for (size_t i = 0; i < s.size(); ++i) {
         const char c = s[i];
         if (i == 8 || i == 13 || i == 18 || i == 23) {
-            if (c != '-') return false;
+            if (c != '-')
+                return false;
             continue;
         }
-        if (std::isxdigit(static_cast<unsigned char>(c)) == 0) return false;
+        if (std::isxdigit(static_cast<unsigned char>(c)) == 0)
+            return false;
     }
     return true;
 }
@@ -170,32 +174,33 @@ bool LooksLikeUuid(const std::string& s) {
 bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const std::string& projectKey,
                          const cpr::Header& headers, std::string& outId, std::string& outIdentifier,
                          std::string* outError) {
-    const std::string projectsUrl =
-        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
+    const std::string projectsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
     cpr::Parameters params;
     params.Add({"per_page", "100"});
     auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
     if (response.status_code != 200) {
-        const std::string err = "Plane API error " + std::to_string(response.status_code) +
-                                " resolving project '" + projectKey + "': " +
-                                response.text.substr(0, 300);
-        if (outError) *outError = err;
+        const std::string err = "Plane API error " + std::to_string(response.status_code) + " resolving project '" +
+                                projectKey + "': " + response.text.substr(0, 300);
+        if (outError)
+            *outError = err;
         return false;
     }
 
     const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
     if (j.is_discarded()) {
-        const std::string err = "Plane project list returned invalid JSON while resolving project '" +
-                                projectKey + "'.";
-        if (outError) *outError = err;
+        const std::string err =
+            "Plane project list returned invalid JSON while resolving project '" + projectKey + "'.";
+        if (outError)
+            *outError = err;
         return false;
     }
 
     const auto projects = (j.is_object() && j.contains("results")) ? j["results"] : j;
     if (!projects.is_array()) {
-        const std::string err = "Plane project list response has no results array while resolving project '" +
-                                projectKey + "'.";
-        if (outError) *outError = err;
+        const std::string err =
+            "Plane project list response has no results array while resolving project '" + projectKey + "'.";
+        if (outError)
+            *outError = err;
         return false;
     }
 
@@ -210,27 +215,26 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
             return true;
         }
         if (available.size() < 220) {
-            if (!available.empty()) available += ", ";
+            if (!available.empty())
+                available += ", ";
             available += identifier.empty() ? name : identifier;
         }
     }
 
-    const std::string err = "Plane project '" + projectKey +
-                            "' was not found in workspace '" + cfg.PlaneWorkspaceSlug +
+    const std::string err = "Plane project '" + projectKey + "' was not found in workspace '" + cfg.PlaneWorkspaceSlug +
                             "'. Available project identifiers/names: " + available;
-    if (outError) *outError = err;
+    if (outError)
+        *outError = err;
     return false;
 }
 
 std::string ToUpperAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::toupper(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     return s;
 }
 
 void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, std::vector<nlohmann::json>& outRows,
-                         std::string* outWarn) {
+                        std::string* outWarn) {
     std::string cursor;
     for (int page = 0; page < 100; ++page) {
         cpr::Parameters params;
@@ -241,7 +245,8 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         auto response = TrackerGetLogged("PlaneClient", listUrl, headers, params);
         if (response.status_code != 200) {
             if (outWarn && outWarn->size() < 400) {
-                if (!outWarn->empty()) *outWarn += "; ";
+                if (!outWarn->empty())
+                    *outWarn += "; ";
                 *outWarn += "HTTP " + std::to_string(response.status_code) + " on " + listUrl.substr(0, 80);
             }
             return;
@@ -249,7 +254,8 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
         if (j.is_discarded()) {
             if (outWarn && outWarn->size() < 400) {
-                if (!outWarn->empty()) *outWarn += "; ";
+                if (!outWarn->empty())
+                    *outWarn += "; ";
                 *outWarn += "Invalid JSON from " + listUrl.substr(0, 80);
             }
             return;
@@ -258,9 +264,8 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         if (!results.is_array()) {
             return;
         }
-        std::copy_if(results.begin(), results.end(), std::back_inserter(outRows), [](const auto& row) {
-            return row.is_object();
-        });
+        std::copy_if(results.begin(), results.end(), std::back_inserter(outRows),
+                     [](const auto& row) { return row.is_object(); });
         bool more = false;
         if (j.is_object() && j.contains("next_page_results") && j["next_page_results"].is_boolean()) {
             more = j["next_page_results"].get<bool>();
@@ -356,10 +361,8 @@ bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out
 
 } // namespace
 
-std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
-                                                   const TrackerConfig* configOverride,
-                                                   const ViewsStore* viewsOverride,
-                                                   std::string* outFetchError,
+std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
+                                                   const ViewsStore* viewsOverride, std::string* outFetchError,
                                                    std::string* outWarning) {
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
@@ -379,23 +382,24 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted,
     return results;
 }
 
-TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
-    const BatchCallback& onBatch,
-    const CancelCallback& shouldCancel,
-    const TrackerConfig* configOverride,
-    const ViewsStore* /*viewsOverride*/) {
+TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& onBatch,
+                                                          const CancelCallback& shouldCancel,
+                                                          const TrackerConfig* configOverride,
+                                                          const ViewsStore* /*viewsOverride*/) {
 
     TrackerIssueFetchSummary summary;
 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    // PR 2: confine the global Plane project source to a single capture per fetcher (mirrors the
-    // Jira treatment in TrackerFieldCatalog.cpp). PR 4 (picker) / PR 6 (final removal) swap this
-    // one line. See docs/design/remove-global-project-key.md §2.5 / §7 PR 2.
-    const std::string projectKey = cfg.PlaneProjectId;
+    // PR 6: legacy global cfg.PlaneProjectId removed. The active project is extracted from the
+    // active view's query (PR 5 sweep ensures legacy views carry their project in the saved
+    // query). Empty here ≡ "no project scope" — surfaces the same "configure" error as before.
+    // See docs/design/remove-global-project-key.md §2.5 / §7 PR 6.
+    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
-        summary.FetchError = "Plane is not configured. Set URL, Workspace Slug, and Project ID in Preferences.";
+        summary.FetchError = "Plane is not configured or active view has no project scope. "
+                             "Set URL / Workspace Slug in Preferences, and choose a Plane view with a project.";
         return summary;
     }
     if (cfg.PlaneApiKey.empty()) {
@@ -405,9 +409,10 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
 
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     if (planeApi != cfg.PlaneUrl) {
-        LOG_INFO("PlaneClient::FetchIssuesStreamed: REST base %s (configured URL was web app host; use https://api.plane.so "
-                 "in preferences to skip this rewrite).",
-                 planeApi.c_str());
+        LOG_INFO(
+            "PlaneClient::FetchIssuesStreamed: REST base %s (configured URL was web app host; use https://api.plane.so "
+            "in preferences to skip this rewrite).",
+            planeApi.c_str());
     }
 
     cpr::Header headers;
@@ -448,8 +453,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
     try {
         // Fetch states for display value mapping
         {
-            const std::string statesUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
-                                          "/projects/" + planeProjectId + "/states/";
+            const std::string statesUrl =
+                planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/states/";
             auto r = TrackerGetLogged("PlaneClient", statesUrl, headers);
             if (r.status_code == 200) {
                 const std::string statesBody = StripUtf8BomCopy(r.text);
@@ -462,7 +467,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                             CachedState cs;
                             cs.Id = JsonFieldToString(s, "id");
                             cs.Name = JsonFieldToString(s, "name");
-                            if (!cs.Id.empty()) tempCachedStates.push_back(cs);
+                            if (!cs.Id.empty())
+                                tempCachedStates.push_back(cs);
                         }
                     }
                     {
@@ -489,9 +495,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
             }
 
             if (pageCount >= kMaxPlanePages) {
-                const std::string warn =
-                    "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
-                    ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
+                const std::string warn = "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
+                                         ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
                 LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
                 // Soft warning: the issues we did fetch are valid; treat as a partial success
                 // rather than a fetch failure so the UI fires its success notify and the
@@ -501,9 +506,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
             }
             ++pageCount;
 
-            const std::string listBase =
-                planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId +
-                "/work-items/";
+            const std::string listBase = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
+                                         planeProjectId + "/work-items/";
             cpr::Parameters params;
             params.Add({"per_page", std::to_string(pageSize)});
             params.Add({"expand", "assignees,labels,state"});
@@ -523,8 +527,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                         apiDetail = JsonFieldToString(ej, "detail");
                     }
                 }
-                std::string err = "Plane API error " + std::to_string(response.status_code) + " fetching issues (URL: " +
-                                   urlHint + "): " + response.text.substr(0, 300);
+                std::string err = "Plane API error " + std::to_string(response.status_code) +
+                                  " fetching issues (URL: " + urlHint + "): " + response.text.substr(0, 300);
                 if (!apiDetail.empty()) {
                     err += " [detail: " + apiDetail + "]";
                 }
@@ -572,7 +576,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                 std::string keyList;
                 if (j.is_object()) {
                     for (auto it = j.begin(); it != j.end() && keyList.size() < 240; ++it) {
-                        if (!keyList.empty()) keyList += ',';
+                        if (!keyList.empty())
+                            keyList += ',';
                         keyList += it.key();
                     }
                 }
@@ -635,7 +640,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     }
 
                     std::string assigneeName = assigneeId;
-                    if (issue.contains("assignee_details") && issue["assignee_details"].is_array() && !issue["assignee_details"].empty()) {
+                    if (issue.contains("assignee_details") && issue["assignee_details"].is_array() &&
+                        !issue["assignee_details"].empty()) {
                         const auto& first = issue["assignee_details"][0];
                         if (first.is_object() && first.contains("display_name")) {
                             assigneeName = JsonFieldToString(first, "display_name");
@@ -643,9 +649,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     }
 
                     if (assigneeName == assigneeId && !assigneeId.empty()) {
-                        auto uIt = std::find_if(localCachedUsers.begin(), localCachedUsers.end(), [&](const auto& u) {
-                            return u.AccountId == assigneeId;
-                        });
+                        auto uIt = std::find_if(localCachedUsers.begin(), localCachedUsers.end(),
+                                                [&](const auto& u) { return u.AccountId == assigneeId; });
                         if (uIt != localCachedUsers.end()) {
                             assigneeName = uIt->DisplayName;
                         }
@@ -667,17 +672,21 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
                     std::string labelStr;
                     if (issue.contains("label_details") && issue["label_details"].is_array()) {
                         for (const auto& lbl : issue["label_details"]) {
-                            if (!labelStr.empty()) labelStr += ", ";
+                            if (!labelStr.empty())
+                                labelStr += ", ";
                             std::string ln = JsonFieldToString(lbl, "name");
-                            if (ln.empty()) ln = JsonFieldToString(lbl, "id");
+                            if (ln.empty())
+                                ln = JsonFieldToString(lbl, "id");
                             labelStr += ln;
                         }
                     } else if (issue.contains("labels") && issue["labels"].is_array()) {
                         for (const auto& lbl : issue["labels"]) {
-                            if (!labelStr.empty()) labelStr += ", ";
+                            if (!labelStr.empty())
+                                labelStr += ", ";
                             if (lbl.is_object()) {
                                 std::string ln = JsonFieldToString(lbl, "name");
-                                if (ln.empty()) ln = JsonFieldToString(lbl, "id");
+                                if (ln.empty())
+                                    ln = JsonFieldToString(lbl, "id");
                                 labelStr += ln;
                             } else if (lbl.is_string()) {
                                 labelStr += lbl.get<std::string>();
@@ -764,9 +773,6 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(
     return summary;
 }
 
-
-
-
 TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfig& cfg) {
     TrackerReachabilityProbeResult out;
     if (cfg.PlaneUrl.empty() || cfg.PlaneApiKey.empty()) {
@@ -785,8 +791,8 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     // Route through TrackerGetLogged so NetworkUsageTracker + body-trace logging stay in the
     // loop (was a §2.1 P1 bug: raw cpr::Get bypassed both). Classification via TrackerError
     // also fixes the second §2.1 P1: a 404 from a stale base URL was wrongly TransportDown.
-    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs,
-                                                kTrackerProbeOverallTimeoutMs);
+    const cpr::Response resp =
+        TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
     const TrackerHttpResult classified = ClassifyTrackerResponse(resp);
 
     switch (classified.Error.Kind) {
@@ -820,17 +826,20 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     return out;
 }
 
-bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
-                                    std::string& outError) {
+bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKeyArg,
+                                    TrackerFieldCatalogResult& outCatalog, std::string& outError) {
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
     std::vector<std::string> warns;
 
-    // PR 2: single capture of the global Plane project source. See remove-global-project-key.md §2.5.
-    const std::string projectKey = cfg.PlaneProjectId;
+    // PR 6: project is now an explicit per-call argument (legacy cfg.PlaneProjectId removed).
+    // Empty ≡ unscoped: caller didn't pin a project, so refuse rather than silently fetching
+    // a stale catalog. See remove-global-project-key.md §2.5 / §7 PR 6.
+    const std::string projectKey = projectKeyArg;
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
-        outError = "Plane is not configured. Set URL, Workspace Slug, and Project ID in Preferences.";
+        outError = "Plane is not configured or no project was supplied. "
+                   "Set URL / Workspace Slug in Preferences, and pick a project before refreshing the field catalog.";
         return false;
     }
     if (cfg.PlaneApiKey.empty()) {
@@ -846,7 +855,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
 
     std::string resolvedProjectId;
     std::string resolvedProjectIdentifier;
-    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier, &outError)) {
+    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
+                             &outError)) {
         return false;
     }
     const std::string planeProjectId = resolvedProjectId;
@@ -862,7 +872,6 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
         return f;
     };
 
-
     std::vector<TrackerField> fields;
     fields.reserve(32);
     fields.push_back(makeCore("summary", "Name", "string", TrackerFieldFamily::Text, false));
@@ -870,8 +879,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     fields.push_back(makeCore("priority", "Priority", "string", TrackerFieldFamily::Text, false));
 
     std::vector<CachedState> localStates;
-    const std::string statesUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                  planeProjectId + "/states/";
+    const std::string statesUrl =
+        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/states/";
     std::string stateWarn;
     std::vector<nlohmann::json> stateRows;
     AppendPagedResults(statesUrl, headers, stateRows, &stateWarn);
@@ -903,8 +912,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
 
     std::vector<CachedCycle> localCycles;
     TrackerField sprintField = makeCore("sprint", "Cycle", "string", TrackerFieldFamily::Sprint, false);
-    const std::string cyclesUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                   planeProjectId + "/cycles/";
+    const std::string cyclesUrl =
+        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/cycles/";
     std::string cycleWarn;
     std::vector<nlohmann::json> cycleRows;
     AppendPagedResults(cyclesUrl, headers, cycleRows, &cycleWarn);
@@ -930,13 +939,14 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     fields.push_back(std::move(sprintField));
 
     std::vector<TrackerUser> localUsers;
-    const std::string membersUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                    planeProjectId + "/members/";
+    const std::string membersUrl =
+        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/members/";
     std::vector<nlohmann::json> memberRows;
     std::string memberWarn;
     AppendPagedResults(membersUrl, headers, memberRows, &memberWarn);
     for (const auto& m : memberRows) {
-        if (!m.is_object()) continue;
+        if (!m.is_object())
+            continue;
 
         nlohmann::json u = m;
         if (m.contains("member") && m["member"].is_object()) {
@@ -959,7 +969,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
         if (tu.DisplayName.empty()) {
             std::string fn = JsonFieldToString(u, "first_name");
             std::string ln = JsonFieldToString(u, "last_name");
-            if (!fn.empty() || !ln.empty()) tu.DisplayName = fn + (fn.empty() || ln.empty() ? "" : " ") + ln;
+            if (!fn.empty() || !ln.empty())
+                tu.DisplayName = fn + (fn.empty() || ln.empty() ? "" : " ") + ln;
         }
         if (tu.DisplayName.empty() || tu.DisplayName == " ") {
             tu.DisplayName = JsonFieldToString(u, "email");
@@ -967,11 +978,13 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
         tu.EmailAddress = JsonFieldToString(u, "email");
 
         if (tu.AccountId.empty()) {
-             tu.AccountId = JsonFieldToString(m, "id");
+            tu.AccountId = JsonFieldToString(m, "id");
         }
 
-        if (tu.AccountId.empty()) continue;
-        if (tu.DisplayName.empty()) tu.DisplayName = tu.AccountId; // Fallback to ID so it's not empty
+        if (tu.AccountId.empty())
+            continue;
+        if (tu.DisplayName.empty())
+            tu.DisplayName = tu.AccountId; // Fallback to ID so it's not empty
 
         localUsers.push_back(tu);
         outCatalog.Users.push_back(tu);
@@ -982,19 +995,21 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     LOG_INFO("PlaneClient: Fetched %zu project members.", localUsers.size());
 
     std::vector<CachedLabel> localLabels;
-    const std::string labelsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                   planeProjectId + "/labels/";
+    const std::string labelsUrl =
+        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/labels/";
     std::string labelsWarn;
     std::vector<nlohmann::json> labelRows;
     AppendPagedResults(labelsUrl, headers, labelRows, &labelsWarn);
 
     TrackerField labelsField = makeCore("labels", "Labels", "array", TrackerFieldFamily::Labels, false);
     for (const auto& l : labelRows) {
-        if (!l.is_object()) continue;
+        if (!l.is_object())
+            continue;
         CachedLabel cl;
         cl.Id = JsonFieldToString(l, "id");
         cl.Name = JsonFieldToString(l, "name");
-        if (cl.Id.empty()) continue;
+        if (cl.Id.empty())
+            continue;
         localLabels.push_back(cl);
 
         TrackerFieldOption opt;
@@ -1008,15 +1023,11 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     LOG_INFO("PlaneClient: Fetched %zu project labels.", localLabels.size());
     fields.push_back(std::move(labelsField));
 
-
-
-
     fields.push_back(makeCore("created", "Created", "datetime", TrackerFieldFamily::DateTime, true));
     fields.push_back(makeCore("updated", "Updated", "datetime", TrackerFieldFamily::DateTime, true));
 
-
-    const std::string typesUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                 planeProjectId + "/work-item-types/";
+    const std::string typesUrl =
+        planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/work-item-types/";
     std::vector<nlohmann::json> typeRows;
     std::string typeWarn;
     AppendPagedResults(typesUrl, headers, typeRows, &typeWarn);
@@ -1024,7 +1035,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
     if (typeRows.empty()) {
         LOG_WARN("PlaneClient::FetchFieldCatalog: No work-item-types found for project %s. URL: %s. Error: %s",
                  planeProjectId.c_str(), typesUrl.c_str(), typeWarn.c_str());
-        if (!typeWarn.empty()) warns.push_back("work-item-types: " + typeWarn);
+        if (!typeWarn.empty())
+            warns.push_back("work-item-types: " + typeWarn);
     }
 
     std::unordered_map<std::string, TrackerField> customs;
@@ -1036,8 +1048,7 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
         if (!tentry.value("deleted_at", nlohmann::json()).is_null()) {
             continue;
         }
-        if (tentry.contains("is_active") && tentry["is_active"].is_boolean() &&
-            !tentry["is_active"].get<bool>()) {
+        if (tentry.contains("is_active") && tentry["is_active"].is_boolean() && !tentry["is_active"].get<bool>()) {
             continue;
         }
         const std::string typeId = JsonFieldToString(tentry, "id");
@@ -1045,15 +1056,12 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
             continue;
         }
 
-
-
-        const std::string propsUrl =
-            planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId +
-            "/work-item-types/" + typeId + "/work-item-properties/";
+        const std::string propsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
+                                     planeProjectId + "/work-item-types/" + typeId + "/work-item-properties/";
         auto pResp = TrackerGetLogged("PlaneClient", propsUrl, headers);
         if (pResp.status_code != 200) {
-            warns.push_back("work-item-properties HTTP " + std::to_string(pResp.status_code) +
-                            " for type " + typeId.substr(0, 8));
+            warns.push_back("work-item-properties HTTP " + std::to_string(pResp.status_code) + " for type " +
+                            typeId.substr(0, 8));
             continue;
         }
         const nlohmann::json pj = nlohmann::json::parse(StripUtf8BomCopy(pResp.text), nullptr, false);
@@ -1080,10 +1088,8 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
         }
     }
     fields.reserve(fields.size() + customs.size());
-    std::transform(customs.begin(), customs.end(), std::back_inserter(fields), [](auto& kv) {
-        return std::move(kv.second);
-    });
-
+    std::transform(customs.begin(), customs.end(), std::back_inserter(fields),
+                   [](auto& kv) { return std::move(kv.second); });
 
     // Populate user fields with options for the dropdowns
     if (!localUsers.empty()) {
@@ -1101,7 +1107,6 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
             }
         }
     }
-
 
     for (size_t i = 0; i < warns.size(); ++i) {
         if (i != 0) {
@@ -1127,8 +1132,7 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalo
 }
 
 bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
-                                     std::unordered_map<std::string, bool>& outFieldIdCanEdit,
-                                     std::string& outError) {
+                                     std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     outError.clear();
     outFieldIdCanEdit.clear();
     for (const char* fieldId : {"summary", "description", "priority", "status", "assignee", "labels", "sprint"}) {
@@ -1152,8 +1156,10 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
     // the HTTP PATCH so UI thread calls to ResolveDisplayValue / display-name lookups are not
     // blocked for the duration of the round trip.
     TrackerConfig cfg = ConfigManager::Load();
-    // PR 2: single capture of global Plane project source (see remove-global-project-key.md §2.5).
-    const std::string projectKey = cfg.PlaneProjectId;
+    // PR 6: legacy cfg.PlaneProjectId removed. Resolve via the active view query (filled by the
+    // current view; legacy installs swept by PR 5). UpdateIssueFields is invoked from grid edits
+    // which are scoped to the current view → its query carries the project.
+    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
     for (const auto& kv : BuildPlaneHeaders(cfg)) {
@@ -1167,7 +1173,8 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
         if (planeProjectId_.empty()) {
             // First-call HTTP under the lock is acceptable: it runs at most once per process
             // lifetime; the steady-state PATCH path below is the hot one that needed the fix.
-            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_,
+                                &outError);
         }
         if (planeProjectId_.empty()) {
             return false;
@@ -1189,8 +1196,8 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
         }
     }
 
-    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug +
-                            "/projects/" + resolvedProjectId + "/work-items/" + targetUuid + "/";
+    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
+                            resolvedProjectId + "/work-items/" + targetUuid + "/";
 
     auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "PATCH", url, response);
@@ -1199,9 +1206,12 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
         std::string detail;
         try {
             auto j = nlohmann::json::parse(response.text);
-            if (j.is_object() && j.contains("error")) detail = j["error"].dump();
-            else if (j.is_object() && j.contains("detail")) detail = j["detail"].dump();
-            else detail = response.text;
+            if (j.is_object() && j.contains("error"))
+                detail = j["error"].dump();
+            else if (j.is_object() && j.contains("detail"))
+                detail = j["detail"].dump();
+            else
+                detail = response.text;
         } catch (...) {
             detail = response.text;
         }
@@ -1227,9 +1237,10 @@ bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector
             outPayload["description_html"] = std::string();
         } else {
             size_t firstNonWs = 0;
-            while (firstNonWs < md.size() && std::isspace(static_cast<unsigned char>(md[firstNonWs]))) ++firstNonWs;
-            const bool looksLikeRawHtml = firstNonWs < md.size() && md[firstNonWs] == '<' &&
-                                           md.find("</") != std::string::npos;
+            while (firstNonWs < md.size() && std::isspace(static_cast<unsigned char>(md[firstNonWs])))
+                ++firstNonWs;
+            const bool looksLikeRawHtml =
+                firstNonWs < md.size() && md[firstNonWs] == '<' && md.find("</") != std::string::npos;
             outPayload["description_html"] = looksLikeRawHtml ? md : MarkdownConvert::MarkdownToHtml(md);
         }
     } else if (field.Id == "priority") {
@@ -1241,9 +1252,8 @@ bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector
     } else if (field.Id == "labels") {
         std::vector<std::string> labelIds;
         for (const auto& val : values) {
-            auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
-                return l.Name == val;
-            });
+            auto lIt =
+                std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) { return l.Name == val; });
             std::string id = (lIt != cachedLabels_.end()) ? lIt->Id : val;
             labelIds.push_back(id);
         }
@@ -1267,41 +1277,42 @@ bool PlaneClient::UpdateField(const std::string& issueId, const TrackerField& fi
 }
 
 std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
-                                        const std::string& value) const {
+                                             const std::string& value) const {
     std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
     if (fieldId == "status") {
-        auto sIt = std::find_if(cachedStates_.begin(), cachedStates_.end(), [&](const auto& s) {
-            return s.Id == value;
-        });
-        if (sIt != cachedStates_.end()) return sIt->Name;
+        auto sIt =
+            std::find_if(cachedStates_.begin(), cachedStates_.end(), [&](const auto& s) { return s.Id == value; });
+        if (sIt != cachedStates_.end())
+            return sIt->Name;
     }
 
     if (!field) {
         return value;
     }
     if (field->Id == "sprint") {
-        auto cIt = std::find_if(cachedCycles_.begin(), cachedCycles_.end(), [&](const auto& c) {
-            return c.Id == value;
-        });
-        if (cIt != cachedCycles_.end()) return cIt->Name;
+        auto cIt =
+            std::find_if(cachedCycles_.begin(), cachedCycles_.end(), [&](const auto& c) { return c.Id == value; });
+        if (cIt != cachedCycles_.end())
+            return cIt->Name;
     }
     if (field->Id == "issuetype") {
-        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
-            return opt.Id == value;
-        });
-        if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
+        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                  [&](const auto& opt) { return opt.Id == value; });
+        if (optIt != field->AllowedValueOptions.end())
+            return optIt->Value;
     }
     if (field->Id == "assignee" || field->IsUserType) {
-        auto uIt = std::find_if(cachedUsers_.begin(), cachedUsers_.end(), [&](const auto& u) {
-            return u.AccountId == value;
-        });
-        if (uIt != cachedUsers_.end()) return uIt->DisplayName;
+        auto uIt =
+            std::find_if(cachedUsers_.begin(), cachedUsers_.end(), [&](const auto& u) { return u.AccountId == value; });
+        if (uIt != cachedUsers_.end())
+            return uIt->DisplayName;
         // Fallback to searching AllowedValueOptions if not in cachedUsers_
-        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
-            return opt.Id == value;
-        });
-        if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
-        LOG_DEBUG("PlaneClient: Failed to resolve user UUID '%s' for field '%s' (cache size: %zu)", value.c_str(), field->Id.c_str(), cachedUsers_.size());
+        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                  [&](const auto& opt) { return opt.Id == value; });
+        if (optIt != field->AllowedValueOptions.end())
+            return optIt->Value;
+        LOG_DEBUG("PlaneClient: Failed to resolve user UUID '%s' for field '%s' (cache size: %zu)", value.c_str(),
+                  field->Id.c_str(), cachedUsers_.size());
     }
     if (field->Id == "labels") {
         // Multi-select labels might be comma-separated or single UUID
@@ -1309,16 +1320,15 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
             std::vector<std::string> parts = SplitAndTrim(value);
             std::string resolved;
             for (size_t i = 0; i < parts.size(); ++i) {
-                if (i > 0) resolved += ", ";
-                auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
-                    return l.Id == parts[i];
-                });
+                if (i > 0)
+                    resolved += ", ";
+                auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(),
+                                        [&](const auto& l) { return l.Id == parts[i]; });
                 if (lIt != cachedLabels_.end()) {
                     resolved += lIt->Name;
                 } else {
-                    auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
-                        return opt.Id == parts[i];
-                    });
+                    auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                              [&](const auto& opt) { return opt.Id == parts[i]; });
                     if (optIt != field->AllowedValueOptions.end()) {
                         resolved += optIt->Value;
                     } else {
@@ -1328,15 +1338,15 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
             }
             return resolved;
         } else {
-            auto lIt = std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) {
-                return l.Id == value;
-            });
-            if (lIt != cachedLabels_.end()) return lIt->Name;
+            auto lIt =
+                std::find_if(cachedLabels_.begin(), cachedLabels_.end(), [&](const auto& l) { return l.Id == value; });
+            if (lIt != cachedLabels_.end())
+                return lIt->Name;
 
-            auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
-                return opt.Id == value;
-            });
-            if (optIt != field->AllowedValueOptions.end()) return optIt->Value;
+            auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                      [&](const auto& opt) { return opt.Id == value; });
+            if (optIt != field->AllowedValueOptions.end())
+                return optIt->Value;
         }
     }
 
@@ -1360,15 +1370,17 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         TrackerConfig cfg = ConfigManager::Load();
-        // PR 2: single capture of global Plane project source (see remove-global-project-key.md §2.5).
-        const std::string projectKey = cfg.PlaneProjectId;
+        // PR 6: legacy cfg.PlaneProjectId removed (see remove-global-project-key.md §2.5).
+        // Resolve from the active view's query — same pattern as UpdateIssueFields above.
+        const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
         planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
         for (const auto& kv : BuildPlaneHeaders(cfg)) {
             headers.insert({kv.first, kv.second});
         }
         workspaceSlug = cfg.PlaneWorkspaceSlug;
         if (planeProjectId_.empty()) {
-            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_,
+                                &outError);
         }
         if (planeProjectId_.empty()) {
             return "";
@@ -1377,8 +1389,8 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         projectIdentifier = planeProjectIdentifier_;
     }
 
-    const std::string url = planeApi + "/api/v1/workspaces/" + workspaceSlug +
-                            "/projects/" + resolvedProjectId + "/work-items/";
+    const std::string url =
+        planeApi + "/api/v1/workspaces/" + workspaceSlug + "/projects/" + resolvedProjectId + "/work-items/";
 
     auto response = TrackerPostLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "POST", url, response);
@@ -1389,9 +1401,12 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
             auto j = nlohmann::json::parse(response.text);
             // Plane often returns {"error": "..."} or {"detail": "..."} or a dict of field errors
             if (j.is_object()) {
-                if (j.contains("error")) detail = j["error"].dump();
-                else if (j.contains("detail")) detail = j["detail"].dump();
-                else detail = j.dump(); // Show the full object if it's field-level errors
+                if (j.contains("error"))
+                    detail = j["error"].dump();
+                else if (j.contains("detail"))
+                    detail = j["detail"].dump();
+                else
+                    detail = j.dump(); // Show the full object if it's field-level errors
             } else {
                 detail = response.text;
             }
@@ -1422,8 +1437,8 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         }
 
         return visualKey;
-    } catch (...) {}
-
+    } catch (...) {
+    }
 
     return "";
 }
@@ -1435,8 +1450,7 @@ bool PlaneClient::AttachFilesToIssue(const std::string& /*issueKey*/, const std:
     return false;
 }
 
-bool PlaneClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId,
-                                   std::string& outError) {
+bool PlaneClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) {
     nlohmann::json payload;
     payload["cycle"] = sprintId;
     return UpdateIssueFields(issueKey, payload, outError);
@@ -1546,8 +1560,7 @@ namespace {
 constexpr std::int64_t kPlaneListProjectsTtlSeconds = 300; // 5 minutes
 
 std::int64_t PlaneNowUnixSeconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 } // namespace
@@ -1631,13 +1644,3 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
     }
     return projects;
 }
-
-
-
-
-
-
-
-
-
-

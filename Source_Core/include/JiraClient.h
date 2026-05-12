@@ -17,7 +17,6 @@
 /** Jira-style duration (e.g. "2h 30m"); empty if seconds <= 0. */
 std::string FormatWorkDurationFromSeconds(long long seconds);
 
-
 /** Result of GET /rest/api/3/myself with probe timeouts (periodic connectivity monitor). */
 class JiraClient : public ITrackerClient {
   public:
@@ -51,12 +50,12 @@ class JiraClient : public ITrackerClient {
 
     bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) override;
 
-    bool FetchFieldCatalog(const TrackerConfig& cfg, std::vector<TrackerField>& outFields,
-                           std::vector<TrackerComponent>& outComponents,
+    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                           std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
                            std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
 
-    bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
-                           std::string& outError) override;
+    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                           TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
 
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
@@ -68,8 +67,8 @@ class JiraClient : public ITrackerClient {
                             std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
-    bool FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
-                            std::string& outError) override;
+    bool FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey,
+                            std::vector<TrackerUser>& outWatchers, std::string& outError) override;
 
     /**
      * GET /rest/api/3/issue/{issueKey}/votes — fills voter users when `voters` is present.
@@ -86,18 +85,17 @@ class JiraClient : public ITrackerClient {
                                           std::string* outFetchError = nullptr,
                                           std::string* outWarning = nullptr) override;
 
-    TrackerIssueFetchSummary FetchIssuesStreamed(
-        const BatchCallback& onBatch,
-        const CancelCallback& shouldCancel,
-        const TrackerConfig* configOverride = nullptr,
-        const ViewsStore* viewsOverride = nullptr) override;
+    TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
+                                                 const TrackerConfig* configOverride = nullptr,
+                                                 const ViewsStore* viewsOverride = nullptr) override;
 
     /**
      * Search by explicit issue keys (same field selection as FetchIssues for `viewStore`).
      * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.
      */
     bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                             const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets, std::string& outError) override;
+                            const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets,
+                            std::string& outError) override;
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
     bool SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,
@@ -107,10 +105,9 @@ class JiraClient : public ITrackerClient {
     bool AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey, const std::string& plainText,
                               std::string& outError) override;
 
-    bool AddWorklog(const TrackerConfig& cfg, const std::string& issueKey,
-                    const std::string& timeSpent, const std::string& timeRemaining,
-                    const std::string& adjustEstimate, const std::string& workDescription,
-                    const std::string& startedDate, std::string& outError) override;
+    bool AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
+                    const std::string& timeRemaining, const std::string& adjustEstimate,
+                    const std::string& workDescription, const std::string& startedDate, std::string& outError) override;
 
     /** Blame-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
     bool AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey, const std::string& p4User,
@@ -149,9 +146,3 @@ class JiraClient : public ITrackerClient {
 };
 
 #endif
-
-
-
-
-
-

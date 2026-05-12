@@ -39,8 +39,7 @@ const nlohmann::json* ResolveComponentJsonBean(const nlohmann::json& node) {
     return &node;
 }
 
-bool ExtractComponentOption(const nlohmann::json& node, TrackerComponent& outComponent,
-                            TrackerFieldOption& outOption) {
+bool ExtractComponentOption(const nlohmann::json& node, TrackerComponent& outComponent, TrackerFieldOption& outOption) {
     const nlohmann::json* component = ResolveComponentJsonBean(node);
     if (component == nullptr) {
         return false;
@@ -83,18 +82,16 @@ bool ExtractComponentOption(const nlohmann::json& node, TrackerComponent& outCom
 
 void MergeComponentIntoCatalog(std::vector<TrackerField>& fields, std::vector<TrackerComponent>& components,
                                const TrackerComponent& component, const TrackerFieldOption& option) {
-    auto componentIt = std::find_if(components.begin(), components.end(), [&](const TrackerComponent& existing) {
-        return existing.Id == component.Id;
-    });
+    auto componentIt = std::find_if(components.begin(), components.end(),
+                                    [&](const TrackerComponent& existing) { return existing.Id == component.Id; });
     if (componentIt == components.end()) {
         components.push_back(component);
     } else if (componentIt->Name.empty()) {
         componentIt->Name = component.Name;
     }
 
-    auto fieldIt = std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) {
-        return field.Id == "components";
-    });
+    auto fieldIt =
+        std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) { return field.Id == "components"; });
     if (fieldIt == fields.end()) {
         return;
     }
@@ -104,8 +101,7 @@ void MergeComponentIntoCatalog(std::vector<TrackerField>& fields, std::vector<Tr
 
 bool MergeProjectComponentsFromEndpoint(const TrackerConfig& /*cfg*/, const std::string& projectKey,
                                         const std::string& base, const cpr::Header& headers,
-                                        std::vector<TrackerField>& fields,
-                                        std::vector<TrackerComponent>& components) {
+                                        std::vector<TrackerField>& fields, std::vector<TrackerComponent>& components) {
     if (projectKey.empty()) {
         return false;
     }
@@ -164,9 +160,8 @@ void SortComponentCatalog(std::vector<TrackerField>& fields, std::vector<Tracker
         return a.Id < b.Id;
     });
 
-    auto fieldIt = std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) {
-        return field.Id == "components";
-    });
+    auto fieldIt =
+        std::find_if(fields.begin(), fields.end(), [](const TrackerField& field) { return field.Id == "components"; });
     if (fieldIt == fields.end()) {
         return;
     }
@@ -185,13 +180,13 @@ void SortComponentCatalog(std::vector<TrackerField>& fields, std::vector<Tracker
 
 } // namespace
 
-bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
-                                   std::string& outError) {
+bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                                   TrackerFieldCatalogResult& outCatalog, std::string& outError) {
     outCatalog = TrackerFieldCatalogResult{};
     std::vector<TrackerField> fields;
     std::vector<TrackerComponent> components;
     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
-    if (!FetchFieldCatalog(cfg, fields, components, issueTypeMeta, outError)) {
+    if (!FetchFieldCatalog(cfg, projectKey, fields, components, issueTypeMeta, outError)) {
         return false;
     }
 
@@ -227,8 +222,8 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalog
     return true;
 }
 
-bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<TrackerField>& outFields,
-                                   std::vector<TrackerComponent>& outComponents,
+bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                                   std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
                                    std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
     outFields.clear();
     outComponents.clear();
@@ -239,10 +234,9 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
         return false;
     }
 
-    // PR 2: confine the global project source to a single capture per fetcher. PR 4 (picker) and
-    // PR 6 (final removal) will swap this one line for an explicit per-operation projectKey
-    // without touching the body. See docs/design/remove-global-project-key.md §2.6 / §7 PR 2.
-    const std::string projectKey = cfg.ProjectKey;
+    // PR 6: project source is now an explicit per-operation parameter (removed cfg.ProjectKey).
+    // Empty projectKey ≡ unscoped (no create-meta enrichment).
+    // See docs/design/remove-global-project-key.md §2.6 / §7 PR 6.
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     std::vector<std::string> sprintFieldIds;
@@ -283,11 +277,11 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
                     TrackerField.Type = schema["type"].get<std::string>();
                 }
                 TrackerField.SchemaSystem = (schema.contains("system") && schema["system"].is_string())
-                                             ? schema["system"].get<std::string>()
-                                             : std::string();
+                                                ? schema["system"].get<std::string>()
+                                                : std::string();
                 TrackerField.SchemaCustom = (schema.contains("custom") && schema["custom"].is_string())
-                                             ? schema["custom"].get<std::string>()
-                                             : std::string();
+                                                ? schema["custom"].get<std::string>()
+                                                : std::string();
 
                 TrackerField.IsArray = (TrackerField.Type == "array");
                 if (TrackerField.IsArray && schema.contains("items")) {
@@ -300,7 +294,8 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
                 }
                 TrackerField.IsUserType =
                     (TrackerField.Type == "user") || (TrackerField.IsArray && TrackerField.ItemsType == "user");
-                if (!TrackerField.SchemaCustom.empty() && TrackerField.SchemaCustom.find("gh-sprint") != std::string::npos) {
+                if (!TrackerField.SchemaCustom.empty() &&
+                    TrackerField.SchemaCustom.find("gh-sprint") != std::string::npos) {
                     sprintFieldIds.push_back(fieldId);
                 }
             }
@@ -521,9 +516,10 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
                             opts.push_back(std::move(option));
                         }
                         if (!opts.empty()) {
-                            std::sort(opts.begin(), opts.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
-                                return a.Value < b.Value;
-                            });
+                            std::sort(opts.begin(), opts.end(),
+                                      [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
+                                          return a.Value < b.Value;
+                                      });
                             issueTypeField.AllowedValueOptions = std::move(opts);
                             RefreshTrackerAllowedValuesFromOptions(issueTypeField);
                             issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
@@ -615,9 +611,9 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
             const int kMaxBoardPages = 20;
             for (int page = 0; page < kMaxBoardPages; ++page) {
                 const int startAt = page * kBoardsPerPage;
-                const std::string boardsUrl =
-                    base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
-                    "&maxResults=" + std::to_string(kBoardsPerPage) + "&startAt=" + std::to_string(startAt);
+                const std::string boardsUrl = base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
+                                              "&maxResults=" + std::to_string(kBoardsPerPage) +
+                                              "&startAt=" + std::to_string(startAt);
                 auto boardsResp = TrackerGetLogged("JiraClient", boardsUrl, headers);
                 if (boardsResp.status_code != 200) {
                     LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
@@ -703,8 +699,9 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
                         for (const auto& opt : sprintOptions) {
                             MergeTrackerFieldOption(targetField.AllowedValueOptions, opt);
                         }
-                        std::sort(targetField.AllowedValueOptions.begin(), targetField.AllowedValueOptions.end(),
-                                  [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
+                        std::sort(
+                            targetField.AllowedValueOptions.begin(), targetField.AllowedValueOptions.end(),
+                            [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
                     }
                     RefreshTrackerAllowedValuesFromOptions(targetField);
                     targetField.Family = ClassifyTrackerFieldFamily(targetField);
@@ -723,9 +720,3 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, std::vector<Tracker
     SortComponentCatalog(outFields, outComponents);
     return true;
 }
-
-
-
-
-
-

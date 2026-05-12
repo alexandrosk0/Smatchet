@@ -30,8 +30,10 @@
 namespace {
 
 static std::string FormatBytesUi(std::uint64_t bytes) {
-    if (bytes < 1024) return std::to_string(bytes) + " B";
-    if (bytes < 1024 * 1024) return std::to_string(bytes / 1024) + " KB";
+    if (bytes < 1024)
+        return std::to_string(bytes) + " B";
+    if (bytes < 1024 * 1024)
+        return std::to_string(bytes / 1024) + " KB";
     return std::to_string(bytes / (1024 * 1024)) + " MB";
 }
 
@@ -77,12 +79,10 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
     return true;
 }
 
-bool IsLikelyOfflineCreateError(const std::string& error) {
-    return IsTrackerTransportErrorText(error);
-}
+bool IsLikelyOfflineCreateError(const std::string& error) { return IsTrackerTransportErrorText(error); }
 
 std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& fieldId, const std::string& seed,
-                                              size_t minSize = 512) {
+                                      size_t minSize = 512) {
     auto& buf = d.newIssueDraftEditBufs[fieldId];
     if (buf.empty()) {
         buf.resize(std::max(minSize, seed.size() + 64), '\0');
@@ -128,7 +128,7 @@ bool TryAppendStagedFromAbsPath(IssueDraft& draft, const std::string& absUtf8) {
 } // namespace
 
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
-                                    const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
+                            const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
     const auto& catalog = app.GetAvailableFields();
 
     if (d.newIssueCreateInFlight && d.newIssueCreateFuture.valid() &&
@@ -179,12 +179,14 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         ImGui::TableSetColumnIndex(0);
         if (ImGui::SmallButton("+ New issue")) {
             if (lastVisibleTicket) {
-                const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+                const std::vector<std::string>& inheritIds =
+                    (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+                // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
                 const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-                    app.GetTrackerBackend(), cfg.JqlQuery, lastVisibleTicket->id, cfg.ProjectKey);
-                d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
-                    *lastVisibleTicket, app.GetAvailableFields(), resolvedProject, cfg.DefaultIssueTypeId,
-                    cfg.DefaultIssueTypeName, inheritIds);
+                    app.GetTrackerBackend(), cfg.JqlQuery, lastVisibleTicket->id, std::string());
+                d.newIssueDraft =
+                    IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
+                                                        cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
             } else {
                 d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
             }
@@ -211,19 +213,16 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
     // returned create-meta becomes per-project required-fields for the next submit attempt. The
     // refresh writes through SetFieldCatalog → SaveFieldCatalogSnapshot, populating the new cache
     // entry. We use std::async(launch::async) — the UI thread cannot block on HTTP.
-    if (!d.newIssueDraft.ProjectKey.empty() &&
-        d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
+    if (!d.newIssueDraft.ProjectKey.empty() && d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
         d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
-        TrackerConfig refetchCfg = cfg;
-        if (cfg.TrackerType == "Plane") {
-            refetchCfg.PlaneProjectId = d.newIssueDraft.ProjectKey;
-        } else {
-            refetchCfg.ProjectKey = d.newIssueDraft.ProjectKey;
-        }
+        // PR 6: project is plumbed as an explicit per-call argument; legacy cfg.ProjectKey /
+        // cfg.PlaneProjectId have been removed.
+        const TrackerConfig refetchCfg = cfg;
+        const std::string projectKey = d.newIssueDraft.ProjectKey;
         // Detach: fire-and-forget. AppController serializes catalog writes via its own mutex.
-        std::thread([&app, refetchCfg]() {
+        std::thread([&app, refetchCfg, projectKey]() {
             try {
-                app.RefreshFieldCatalog(refetchCfg);
+                app.RefreshFieldCatalog(refetchCfg, projectKey);
             } catch (...) {
                 // Already logged inside RefreshFieldCatalog / SetFieldCatalog; never throw across UI.
             }
@@ -269,7 +268,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                                                              d.newIssueDraft.IssueTypeName));
                 if (!d.newIssueMissingFieldIds.empty()) {
                     d.gridEditSuccess.clear();
-                    std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
+                    std::vector<std::string> names =
+                        IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
                     d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
                 } else {
                     d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
@@ -279,9 +279,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             if (projectMissing) {
                 ImGui::EndDisabled();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("%s",
-                                      SmatchetLocalization::T("draft.project.submit_disabled_tooltip",
-                                                              "Pick a project"));
+                    ImGui::SetTooltip(
+                        "%s", SmatchetLocalization::T("draft.project.submit_disabled_tooltip", "Pick a project"));
                 }
             }
             const bool canOfferFallbackQueue = !disabled && d.newIssueQueueFallbackVisible;
@@ -376,9 +375,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             continue;
         }
 
-        auto catIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
-            return f.Id == fieldId;
-        });
+        auto catIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
         const TrackerField* field = (catIt != catalog.end()) ? &(*catIt) : nullptr;
 
         const bool isMissing = missing.count(fieldId) > 0 || (fieldId == "summary" && missing.count("summary") > 0) ||
@@ -395,9 +392,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
         if (fieldId == "project") {
             const std::string backendKind = (cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
-            const std::string endpoint = (cfg.TrackerType == "Plane")
-                                             ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug)
-                                             : cfg.Domain;
+            const std::string endpoint =
+                (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
             std::string sel = d.newIssueDraft.ProjectKey;
             if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState,
                                             app.GetTrackerBackendMutable(), backendKind, endpoint, sel)) {
@@ -426,9 +422,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             if (fieldId == "issuetype" && preview.empty())
                 preview = d.newIssueDraft.IssueTypeName;
             if (field && !field->AllowedValueOptions.empty()) {
-                auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(), [&](const auto& opt) {
-                    return opt.Id == current || opt.Value == current;
-                });
+                auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                          [&](const auto& opt) { return opt.Id == current || opt.Value == current; });
                 if (optIt != field->AllowedValueOptions.end()) {
                     preview = optIt->Value;
                 }
@@ -464,8 +459,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             constexpr size_t kDescBuf = 64 * 1024;
             auto& buf = EnsureDraftEditBuf(d, fieldId, current, kDescBuf);
             const float descHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
-            if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(),
-                                          ImVec2(-FLT_MIN, descHeight),
+            if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(), ImVec2(-FLT_MIN, descHeight),
                                           ImGuiInputTextFlags_AllowTabInput)) {
                 d.newIssueQueueFallbackVisible = false;
                 d.newIssueQueueFallbackError.clear();

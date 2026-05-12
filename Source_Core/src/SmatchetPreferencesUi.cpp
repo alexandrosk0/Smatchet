@@ -7,6 +7,7 @@
 #include "SmatchetUiSession.h"
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
+#include "FieldCatalogCache.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 
@@ -108,11 +109,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
         CopyStringToBuffer(d.emailBuf, d.cfg.Email);
         CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
-        CopyStringToBuffer(d.projectKeyBuf, d.cfg.ProjectKey);
+        // PR 6: projectKeyBuf / planeProjectBuf removed — see SmatchetUiSession.h.
         CopyStringToBuffer(d.trackerTypeBuf, d.cfg.TrackerType);
         CopyStringToBuffer(d.planeUrlBuf, d.cfg.PlaneUrl);
         CopyStringToBuffer(d.planeWorkspaceBuf, d.cfg.PlaneWorkspaceSlug);
-        CopyStringToBuffer(d.planeProjectBuf, d.cfg.PlaneProjectId);
         CopyStringToBuffer(d.planeApiKeyBuf, d.cfg.PlaneApiKey);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
@@ -135,12 +135,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
                 ConfigManager::Save(d.cfg);
             }
-            ImGui::SetItemTooltip(
-                "Disables tracker-changing actions such as field edits, issue creation, comments, worklogs, and offline "
-                "write replay. Enabled by default on first launch before setup.");
+            ImGui::SetItemTooltip("Disables tracker-changing actions such as field edits, issue creation, comments, "
+                                  "worklogs, and offline "
+                                  "write replay. Enabled by default on first launch before setup.");
             ImGui::Spacing();
 
-            const char* items[] = { "Jira", "Plane" };
+            const char* items[] = {"Jira", "Plane"};
             int currentItem = (std::string(d.trackerTypeBuf) == "Plane") ? 1 : 0;
             if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
                 CopyStringToBuffer(d.trackerTypeBuf, items[currentItem]);
@@ -155,11 +155,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
                 ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
                 ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
-                ImGui::InputText("Project Key", d.projectKeyBuf, sizeof(d.projectKeyBuf),
-                                 ImGuiInputTextFlags_CharsUppercase);
-                ImGui::SetItemTooltip("Used for create meta enrichment, e.g. PROJ");
+                // PR 6: "Project Key" preference row removed. Project is per-operation — picked
+                // via the new-issue draft picker, derived from the active view's JQL, or supplied
+                // on ticket.create. The "Recently used projects" section below surfaces cached
+                // projects for visibility / Forget.
                 ImGui::Spacing();
-                ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf, sizeof(d.newIssueInheritFieldsBuf));
+                ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf,
+                                 sizeof(d.newIssueInheritFieldsBuf));
                 ImGui::SetItemTooltip(
                     "Comma-separated Jira field ids copied from the last grid row when you click + New issue "
                     "(e.g. description, priority, assignee, labels, components).");
@@ -167,14 +169,63 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextUnformatted("Plane Configuration (plane.so)");
                 ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::SetItemTooltip("e.g. https://api.plane.so");
-                ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf), ImGuiInputTextFlags_CharsNoBlank);
-                ImGui::InputText("Project ID (UUID)", d.planeProjectBuf, sizeof(d.planeProjectBuf), ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
+                                 ImGuiInputTextFlags_CharsNoBlank);
+                // PR 6: "Project ID (UUID)" preference row removed. See Jira note above.
                 ImGui::InputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf), ImGuiInputTextFlags_Password);
                 ImGui::Spacing();
-                ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf, sizeof(d.newIssueInheritFieldsPlaneBuf));
+                ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
+                                 sizeof(d.newIssueInheritFieldsPlaneBuf));
                 ImGui::SetItemTooltip(
                     "Comma-separated Plane field ids copied from the last grid row when you click + New issue "
                     "(e.g. description, priority, assignee, labels).");
+            }
+            ImGui::Spacing();
+
+            // PR 6: "Recently used projects" — read-only listbox sourced from FieldCatalogCache,
+            // filtered to the current backend + endpoint. Replaces the deleted "Project Key" /
+            // "Project ID (UUID)" preference rows. Each row has a Forget button.
+            ImGui::Separator();
+            ImGui::TextUnformatted(SmatchetLocalization::T("prefs.recentProjects", "Recently used projects"));
+            {
+                const std::string backendKind = (currentItem == 1) ? std::string("Plane") : std::string("Jira");
+                const std::string endpoint =
+                    (currentItem == 1)
+                        ? (std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf))
+                        : std::string(d.domainBuf);
+                std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+                // Filter to current backend + endpoint.
+                cached.erase(std::remove_if(cached.begin(), cached.end(),
+                                            [&](const FieldCatalogCache::CachedProjectEntry& e) {
+                                                return e.backend != backendKind || e.endpoint != endpoint;
+                                            }),
+                             cached.end());
+                if (cached.empty()) {
+                    ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.recentProjects.empty", "(none yet)"));
+                } else {
+                    const char* forgetLabel = SmatchetLocalization::T("prefs.recentProjects.forget", "Forget");
+                    for (const auto& entry : cached) {
+                        ImGui::PushID(entry.projectKey.c_str());
+                        // Format: KEY — lastUsed timestamp. (CachedProjectEntry has no displayName
+                        // field today; PR 7 may extend the schema with one — for now the key alone
+                        // is enough since the picker UI already resolves display names live.)
+                        char timeBuf[32] = {0};
+                        const std::time_t t = static_cast<std::time_t>(entry.lastUsedUnix);
+                        std::tm tmv{};
+#if defined(_WIN32)
+                        localtime_s(&tmv, &t);
+#else
+                        localtime_r(&t, &tmv);
+#endif
+                        std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", &tmv);
+                        ImGui::Text("%s — %s", entry.projectKey.c_str(), timeBuf);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(forgetLabel)) {
+                            FieldCatalogCache::ForgetProject(entry.projectKey, entry.backend, entry.endpoint);
+                        }
+                        ImGui::PopID();
+                    }
+                }
             }
             ImGui::Spacing();
             ImGui::TextWrapped("Query/JQL and column fields are configured in the Views dashboard.");
@@ -212,9 +263,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             {
                 const std::string tokenBufStr(d.mcpAuthTokenBuf);
                 const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||
-                                     (d.mcpAllowRemote != d.cfg.McpAllowRemote) ||
-                                     (d.mcpAllowLuaExecution != d.cfg.McpAllowLuaExecution) ||
-                                     (tokenBufStr != d.cfg.McpAuthToken);
+                                   (d.mcpAllowRemote != d.cfg.McpAllowRemote) ||
+                                   (d.mcpAllowLuaExecution != d.cfg.McpAllowLuaExecution) ||
+                                   (tokenBufStr != d.cfg.McpAuthToken);
                 if (dirty) {
                     d.cfg.McpEnabled = d.mcpEnabled;
                     d.cfg.McpPort = d.mcpPort;
@@ -222,8 +273,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     d.cfg.McpAllowLuaExecution = d.mcpAllowLuaExecution;
                     d.cfg.McpAuthToken = tokenBufStr;
                     ConfigManager::Save(d.cfg);
-                    LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)", static_cast<int>(d.cfg.McpEnabled),
-                             d.cfg.McpPort);
+                    LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)",
+                             static_cast<int>(d.cfg.McpEnabled), d.cfg.McpPort);
                     app.AppendMcpActivity("MCP: Integrations saved settings to disk; syncing plugin host.");
                     ::PluginHost* ph = app.RuntimePluginHost();
                     if (ph != nullptr) {
@@ -238,7 +289,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "MCP settings saved to disk.");
                 if (app.RuntimePluginHost() != nullptr) {
                     ImGui::TextColored(ImVec4(0.55f, 0.78f, 1.0f, 1.0f),
-                                        "MCP server start/stop applied for this session (standalone / embedded host).");
+                                       "MCP server start/stop applied for this session (standalone / embedded host).");
                 }
             }
             ImGui::TextDisabled(
@@ -266,8 +317,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Button("Recreate database...")) {
                 ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
             }
-            ImGui::SetItemTooltip(
-                "Permanently delete the local cache file and start with an empty database.");
+            ImGui::SetItemTooltip("Permanently delete the local cache file and start with an empty database.");
 
             if (ImGui::BeginPopupModal("Delete local database?###RecreateSqliteDbConfirm", nullptr,
                                        ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -285,13 +335,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         SmatchetToastManager::Instance().Push(
                             std::string(SmatchetLocalization::T("toast.success", "Success")),
                             std::string(SmatchetLocalization::T("toast.local_db_recreated",
-                                                               "Local database recreated; refreshing issues.")),
+                                                                "Local database recreated; refreshing issues.")),
                             ToastType::Success, 4000);
                         app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
                         ImGui::CloseCurrentPopup();
                     } else {
                         const char* detail = SmatchetLocalization::T("toast.local_db_recreate_failed_detail",
-                                                                       "Could not recreate the local database.");
+                                                                     "Could not recreate the local database.");
                         SmatchetToastManager::Instance().Push(
                             std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
                             err.empty() ? std::string(detail) : err, ToastType::Error, 6000);
@@ -307,17 +357,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
 
             const char* fonts[] = {
-                "Segoe UI",
-                "Proggy (Clean/Default)",
-                "Consolas",
-                "Arial",
-                "Courier New",
-                "Georgia",
-                "Lucida Console",
-                "Microsoft Sans Serif",
-                "Trebuchet MS",
-                "Verdana"
-            };
+                "Segoe UI",       "Proggy (Clean/Default)", "Consolas",     "Arial",  "Courier New", "Georgia",
+                "Lucida Console", "Microsoft Sans Serif",   "Trebuchet MS", "Verdana"};
             int currentFontIdx = 0;
             for (int i = 0; i < 10; ++i) {
                 if (d.cfg.SelectedFontName == fonts[i]) {
@@ -330,7 +371,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ConfigManager::Save(d.cfg);
                 SmatchetRequestFontReload(d.cfg.SelectedFontName, 16.0f);
             }
-            ImGui::SetItemTooltip("Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");
+            ImGui::SetItemTooltip(
+                "Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");
 
             const auto& languages = SmatchetLocalization::AvailableLanguages();
             int currentLanguageIdx = 0;
@@ -340,10 +382,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     break;
                 }
             }
-            const char* languageItems[] = {
-                SmatchetLocalization::T("language.en_us", "English"),
-                SmatchetLocalization::T("language.fr_native", u8"Français")
-            };
+            const char* languageItems[] = {SmatchetLocalization::T("language.en_us", "English"),
+                                           SmatchetLocalization::T("language.fr_native", u8"Français")};
             if (ImGui::Combo("Language", &currentLanguageIdx, languageItems, IM_ARRAYSIZE(languageItems))) {
                 if (currentLanguageIdx >= 0 && currentLanguageIdx < static_cast<int>(languages.size())) {
                     d.cfg.UiLanguage = languages[static_cast<size_t>(currentLanguageIdx)].Code;
@@ -351,7 +391,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
                 }
             }
-            ImGui::SetItemTooltip("Select the UI language. App-owned UI text changes immediately; tracker data is shown as-is.");
+            ImGui::SetItemTooltip(
+                "Select the UI language. App-owned UI text changes immediately; tracker data is shown as-is.");
 
             ImGui::Spacing();
             ImGui::TextUnformatted("Grid and field text");
@@ -382,7 +423,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             ImGui::Spacing();
 
-            const char* dateFormats[] = { "Relative / Compact", "Always Relative", "Absolute ISO", "Absolute Friendly" };
+            const char* dateFormats[] = {"Relative / Compact", "Always Relative", "Absolute ISO", "Absolute Friendly"};
             int currentDateFormatIdx = 0;
             if (d.cfg.DateFormatOption == "always_relative") {
                 currentDateFormatIdx = 1;
@@ -412,7 +453,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     d.cfg.DateCompactRelativeThresholdDays = threshold;
                     ConfigManager::Save(d.cfg);
                 }
-                ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) to short absolute (e.g. May 07 '26).");
+                ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) "
+                                      "to short absolute (e.g. May 07 '26).");
             }
 
             ImGui::Spacing();
@@ -455,24 +497,26 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::TextUnformatted("Duration Suggestions");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Customize the default options displayed in the dropdown menus for Original Estimate, Remaining Estimate, and Time Spent fields.");
+                    ImGui::TextDisabled("Customize the default options displayed in the dropdown menus for Original "
+                                        "Estimate, Remaining Estimate, and Time Spent fields.");
                     ImGui::Spacing();
-                    
+
                     static std::vector<std::string> s_suggestionsList;
                     if (!s_suggestionsLoaded) {
                         s_suggestionsList = TrackerFieldValueUtils::LoadDurationSuggestions();
                         s_suggestionsLoaded = true;
                     }
-                    
+
                     // Render list of current suggestions in a premium boxed child frame
                     ImGui::Text("Current Suggestions:");
-                    ImGui::BeginChild("SuggestionsListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImGui::BeginChild("SuggestionsListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
+                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
                     for (size_t i = 0; i < s_suggestionsList.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
-                        
+
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted(s_suggestionsList[i].c_str());
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
                         if (i > 0) {
                             if (ImGui::Button("▲")) {
@@ -505,25 +549,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             --i;
                         }
                         ImGui::PopStyleColor();
-                        
+
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
-                    
+
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-                    
+
                     // Inline add controls
                     static char s_prefNewSuggestionBuf[16] = "";
                     ImGui::Text("Add Custom Suggestion");
                     ImGui::SetNextItemWidth(140.0f);
                     ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf));
                     ImGui::SameLine();
-                    if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+                    if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) ||
+                        (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
                         std::string newVal = s_prefNewSuggestionBuf;
                         if (!newVal.empty()) {
-                            if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
+                            if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) ==
+                                s_suggestionsList.end()) {
                                 s_suggestionsList.push_back(newVal);
                                 TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
                             }
@@ -531,31 +577,33 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
                     }
                     ImGui::SetItemTooltip("Enter duration strings e.g. '15m', '2h', '3.5h', '1d', '2w'");
-                    
+
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("Work Log Templates")) {
                     ImGui::TextUnformatted("Work Log Description Templates");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown next to the Log Work description field.");
+                    ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown "
+                                        "next to the Log Work description field.");
                     ImGui::Spacing();
-                    
+
                     static std::vector<std::string> s_templatesList;
                     if (!s_templatesLoaded) {
                         s_templatesList = TrackerFieldValueUtils::LoadCommentTemplates();
                         s_templatesLoaded = true;
                     }
-                    
+
                     // Render list of current comment templates in a premium boxed child frame
                     ImGui::Text("Current Comment Templates:");
-                    ImGui::BeginChild("TemplatesListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImGui::BeginChild("TemplatesListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
+                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
                     for (size_t i = 0; i < s_templatesList.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
-                        
+
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted(s_templatesList[i].c_str());
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
                         if (i > 0) {
                             if (ImGui::Button("▲")) {
@@ -588,25 +636,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             --i;
                         }
                         ImGui::PopStyleColor();
-                        
+
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
-                    
+
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-                    
+
                     // Inline add controls for templates
                     static char s_prefNewTemplateBuf[128] = "";
                     ImGui::Text("Add Comment Template");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
                     ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf));
                     ImGui::SameLine();
-                    if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+                    if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) ||
+                        (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
                         std::string newVal = s_prefNewTemplateBuf;
                         if (!newVal.empty()) {
-                            if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
+                            if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) ==
+                                s_templatesList.end()) {
                                 s_templatesList.push_back(newVal);
                                 TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
                             }
@@ -614,7 +664,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
                     }
                     ImGui::SetItemTooltip("Enter template text, e.g. 'Investigated and resolved issue #123.'");
-                    
+
                     ImGui::EndTabItem();
                 }
 
@@ -622,9 +672,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::TextUnformatted("Grid Right-Click Quick Comments");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Customize templates displayed when right-clicking issue cells in the grid. Placeholders: {key} (or {issueKey})");
+                    ImGui::TextDisabled("Customize templates displayed when right-clicking issue cells in the grid. "
+                                        "Placeholders: {key} (or {issueKey})");
                     ImGui::Spacing();
-                    
+
                     static std::vector<CommentTemplate> s_quickTemplatesList;
                     if (!s_quickTemplatesLoaded) {
                         s_quickTemplatesList = d.cfg.QuickCommentTemplates;
@@ -634,23 +685,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     if (s_selectedQuickIdx >= static_cast<int>(s_quickTemplatesList.size())) {
                         s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
                     }
-                    
+
                     // Render list of current comment templates on top
-                    ImGui::BeginChild("QuickListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImGui::BeginChild("QuickListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
+                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
                     for (size_t i = 0; i < s_quickTemplatesList.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
                         ImGui::AlignTextToFramePadding();
-                        std::string displayName = s_quickTemplatesList[i].Title + " (" + s_quickTemplatesList[i].Id + ")";
+                        std::string displayName =
+                            s_quickTemplatesList[i].Title + " (" + s_quickTemplatesList[i].Id + ")";
                         if (ImGui::Selectable(displayName.c_str(), s_selectedQuickIdx == static_cast<int>(i))) {
                             s_selectedQuickIdx = static_cast<int>(i);
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
                         if (i > 0) {
                             if (ImGui::Button("▲")) {
                                 std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i - 1]);
-                                if (s_selectedQuickIdx == static_cast<int>(i)) s_selectedQuickIdx = static_cast<int>(i - 1);
-                                else if (s_selectedQuickIdx == static_cast<int>(i - 1)) s_selectedQuickIdx = static_cast<int>(i);
+                                if (s_selectedQuickIdx == static_cast<int>(i))
+                                    s_selectedQuickIdx = static_cast<int>(i - 1);
+                                else if (s_selectedQuickIdx == static_cast<int>(i - 1))
+                                    s_selectedQuickIdx = static_cast<int>(i);
                                 d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                                 ConfigManager::Save(d.cfg);
                             }
@@ -659,13 +714,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             ImGui::Button("▲");
                             ImGui::EndDisabled();
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
                         if (i < s_quickTemplatesList.size() - 1) {
                             if (ImGui::Button("▼")) {
                                 std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i + 1]);
-                                if (s_selectedQuickIdx == static_cast<int>(i)) s_selectedQuickIdx = static_cast<int>(i + 1);
-                                else if (s_selectedQuickIdx == static_cast<int>(i + 1)) s_selectedQuickIdx = static_cast<int>(i);
+                                if (s_selectedQuickIdx == static_cast<int>(i))
+                                    s_selectedQuickIdx = static_cast<int>(i + 1);
+                                else if (s_selectedQuickIdx == static_cast<int>(i + 1))
+                                    s_selectedQuickIdx = static_cast<int>(i);
                                 d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                                 ConfigManager::Save(d.cfg);
                             }
@@ -674,7 +731,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             ImGui::Button("▼");
                             ImGui::EndDisabled();
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                         if (ImGui::Button("✖")) {
@@ -692,27 +749,30 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
-                    
+
                     ImGui::Spacing();
-                    
+
                     // Detail section / Add section
                     if (s_selectedQuickIdx >= 0 && s_selectedQuickIdx < static_cast<int>(s_quickTemplatesList.size())) {
                         auto& t = s_quickTemplatesList[s_selectedQuickIdx];
                         ImGui::TextDisabled("Edit Selected Template details:");
-                        
+
                         static char titleBuf[64] = "";
                         static char idBuf[64] = "";
                         static char textBuf[512] = "";
-                        
+
                         // Copy to buffer if different to avoid typing overwrites
                         static int lastSelectedIdx = -2;
                         if (lastSelectedIdx != s_selectedQuickIdx) {
-                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1); titleBuf[sizeof(titleBuf) - 1] = '\0';
-                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1); idBuf[sizeof(idBuf) - 1] = '\0';
-                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1); textBuf[sizeof(textBuf) - 1] = '\0';
+                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1);
+                            titleBuf[sizeof(titleBuf) - 1] = '\0';
+                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1);
+                            idBuf[sizeof(idBuf) - 1] = '\0';
+                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1);
+                            textBuf[sizeof(textBuf) - 1] = '\0';
                             lastSelectedIdx = s_selectedQuickIdx;
                         }
-                        
+
                         ImGui::TextUnformatted("Title:");
                         ImGui::SameLine(60.0f);
                         ImGui::SetNextItemWidth(200.0f);
@@ -721,7 +781,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                             ConfigManager::Save(d.cfg);
                         }
-                        
+
                         ImGui::SameLine(280.0f);
                         ImGui::TextUnformatted("ID:");
                         ImGui::SameLine(310.0f);
@@ -731,9 +791,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                             ConfigManager::Save(d.cfg);
                         }
-                        
+
                         ImGui::TextUnformatted("Body:");
-                        if (ImGui::InputTextMultiline("##EditQuickText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
+                        if (ImGui::InputTextMultiline("##EditQuickText", textBuf, sizeof(textBuf),
+                                                      ImVec2(-FLT_MIN, 60.0f))) {
                             t.Text = textBuf;
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                             ConfigManager::Save(d.cfg);
@@ -741,11 +802,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     } else {
                         ImGui::TextDisabled("Select a template above to view or edit its details.");
                     }
-                    
+
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-                    
+
                     if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
                         CommentTemplate t;
                         t.Title = "New Template";
@@ -756,7 +817,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         d.cfg.QuickCommentTemplates = s_quickTemplatesList;
                         ConfigManager::Save(d.cfg);
                     }
-                    
+
                     ImGui::EndTabItem();
                 }
 
@@ -764,9 +825,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::TextUnformatted("Blame Analysis Quick Comments");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Customize templates displayed when clicking on the Blame Analysis rows. Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
+                    ImGui::TextDisabled("Customize templates displayed when clicking on the Blame Analysis rows. "
+                                        "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
                     ImGui::Spacing();
-                    
+
                     static std::vector<CommentTemplate> s_blameTemplatesList;
                     if (!s_blameTemplatesLoaded) {
                         s_blameTemplatesList = d.cfg.BlameCommentTemplates;
@@ -776,23 +838,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     if (s_selectedBlameIdx >= static_cast<int>(s_blameTemplatesList.size())) {
                         s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
                     }
-                    
+
                     // Render list of current comment templates on top
-                    ImGui::BeginChild("BlameListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImGui::BeginChild("BlameListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
+                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
                     for (size_t i = 0; i < s_blameTemplatesList.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
                         ImGui::AlignTextToFramePadding();
-                        std::string displayName = s_blameTemplatesList[i].Title + " (" + s_blameTemplatesList[i].Id + ")";
+                        std::string displayName =
+                            s_blameTemplatesList[i].Title + " (" + s_blameTemplatesList[i].Id + ")";
                         if (ImGui::Selectable(displayName.c_str(), s_selectedBlameIdx == static_cast<int>(i))) {
                             s_selectedBlameIdx = static_cast<int>(i);
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
                         if (i > 0) {
                             if (ImGui::Button("▲")) {
                                 std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i - 1]);
-                                if (s_selectedBlameIdx == static_cast<int>(i)) s_selectedBlameIdx = static_cast<int>(i - 1);
-                                else if (s_selectedBlameIdx == static_cast<int>(i - 1)) s_selectedBlameIdx = static_cast<int>(i);
+                                if (s_selectedBlameIdx == static_cast<int>(i))
+                                    s_selectedBlameIdx = static_cast<int>(i - 1);
+                                else if (s_selectedBlameIdx == static_cast<int>(i - 1))
+                                    s_selectedBlameIdx = static_cast<int>(i);
                                 d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                                 ConfigManager::Save(d.cfg);
                             }
@@ -801,13 +867,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             ImGui::Button("▲");
                             ImGui::EndDisabled();
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
                         if (i < s_blameTemplatesList.size() - 1) {
                             if (ImGui::Button("▼")) {
                                 std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i + 1]);
-                                if (s_selectedBlameIdx == static_cast<int>(i)) s_selectedBlameIdx = static_cast<int>(i + 1);
-                                else if (s_selectedBlameIdx == static_cast<int>(i + 1)) s_selectedBlameIdx = static_cast<int>(i);
+                                if (s_selectedBlameIdx == static_cast<int>(i))
+                                    s_selectedBlameIdx = static_cast<int>(i + 1);
+                                else if (s_selectedBlameIdx == static_cast<int>(i + 1))
+                                    s_selectedBlameIdx = static_cast<int>(i);
                                 d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                                 ConfigManager::Save(d.cfg);
                             }
@@ -816,7 +884,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             ImGui::Button("▼");
                             ImGui::EndDisabled();
                         }
-                        
+
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                         if (ImGui::Button("✖")) {
@@ -834,27 +902,30 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
-                    
+
                     ImGui::Spacing();
-                    
+
                     // Detail section / Add section
                     if (s_selectedBlameIdx >= 0 && s_selectedBlameIdx < static_cast<int>(s_blameTemplatesList.size())) {
                         auto& t = s_blameTemplatesList[s_selectedBlameIdx];
                         ImGui::TextDisabled("Edit Selected Template details:");
-                        
+
                         static char titleBuf[64] = "";
                         static char idBuf[64] = "";
                         static char textBuf[512] = "";
-                        
+
                         // Copy to buffer if different to avoid typing overwrites
                         static int lastSelectedIdx = -2;
                         if (lastSelectedIdx != s_selectedBlameIdx) {
-                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1); titleBuf[sizeof(titleBuf) - 1] = '\0';
-                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1); idBuf[sizeof(idBuf) - 1] = '\0';
-                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1); textBuf[sizeof(textBuf) - 1] = '\0';
+                            std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1);
+                            titleBuf[sizeof(titleBuf) - 1] = '\0';
+                            std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1);
+                            idBuf[sizeof(idBuf) - 1] = '\0';
+                            std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1);
+                            textBuf[sizeof(textBuf) - 1] = '\0';
                             lastSelectedIdx = s_selectedBlameIdx;
                         }
-                        
+
                         ImGui::TextUnformatted("Title:");
                         ImGui::SameLine(60.0f);
                         ImGui::SetNextItemWidth(200.0f);
@@ -863,7 +934,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                             ConfigManager::Save(d.cfg);
                         }
-                        
+
                         ImGui::SameLine(280.0f);
                         ImGui::TextUnformatted("ID:");
                         ImGui::SameLine(310.0f);
@@ -873,9 +944,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                             ConfigManager::Save(d.cfg);
                         }
-                        
+
                         ImGui::TextUnformatted("Body:");
-                        if (ImGui::InputTextMultiline("##EditBlameText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
+                        if (ImGui::InputTextMultiline("##EditBlameText", textBuf, sizeof(textBuf),
+                                                      ImVec2(-FLT_MIN, 60.0f))) {
                             t.Text = textBuf;
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                             ConfigManager::Save(d.cfg);
@@ -883,11 +955,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     } else {
                         ImGui::TextDisabled("Select a template above to view or edit its details.");
                     }
-                    
+
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-                    
+
                     if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
                         CommentTemplate t;
                         t.Title = "New Template";
@@ -898,7 +970,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         d.cfg.BlameCommentTemplates = s_blameTemplatesList;
                         ConfigManager::Save(d.cfg);
                     }
-                    
+
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
@@ -917,7 +989,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     ImGui::TextWrapped(
         "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
         "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
-        "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The Blame "
+        "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The "
+        "Blame "
         "Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
@@ -925,11 +998,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.cfg.Domain = d.domainBuf;
         d.cfg.Email = d.emailBuf;
         d.cfg.ApiToken = d.tokenBuf;
-        d.cfg.ProjectKey = d.projectKeyBuf;
+        // PR 6: ProjectKey / PlaneProjectId writebacks removed — project is per-operation.
         d.cfg.TrackerType = d.trackerTypeBuf;
         d.cfg.PlaneUrl = d.planeUrlBuf;
         d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
-        d.cfg.PlaneProjectId = d.planeProjectBuf;
         d.cfg.PlaneApiKey = d.planeApiKeyBuf;
         {
             std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
@@ -975,10 +1047,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         }
 #endif
         if (d.cfg.TrackerType == "Plane") {
-            LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s', Project='%s'", 
-                     d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str(), d.cfg.PlaneProjectId.c_str());
+            LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s' (project is per-operation)",
+                     d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str());
         } else {
-            LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+            LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
+                     d.cfg.Email.c_str());
         }
         d.triggerCatalogRefetch = true;
         const std::string oldBackend = d.lastViewsBackendKey;
@@ -997,4 +1070,3 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-

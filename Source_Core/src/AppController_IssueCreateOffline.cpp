@@ -59,9 +59,11 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     if (!tickets.empty()) {
         lastTicket = tickets.back();
     }
-    const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
-    const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-        Backend.get(), cfg.JqlQuery, lastTicket.id, cfg.ProjectKey);
+    const std::vector<std::string>& inheritIds =
+        (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+    // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+    const std::string resolvedProject =
+        smatchet::ResolveProjectForDraft(Backend.get(), cfg.JqlQuery, lastTicket.id, /*legacyFallback*/ std::string());
     return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
@@ -179,14 +181,12 @@ std::string AppController::TakeLegacyPendingStartupBanner() {
 
 AppController::DeadLetterDeleteSummary
 AppController::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
-    return offlineQueue_ ? offlineQueue_->DeleteDeadPendingCreates(deadIds)
-                         : AppController::DeadLetterDeleteSummary{};
+    return offlineQueue_ ? offlineQueue_->DeleteDeadPendingCreates(deadIds) : AppController::DeadLetterDeleteSummary{};
 }
 
 AppController::PendingQueueDeleteSummary
 AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
-    return offlineQueue_ ? offlineQueue_->DeletePendingCreates(pendingIds)
-                         : AppController::PendingQueueDeleteSummary{};
+    return offlineQueue_ ? offlineQueue_->DeletePendingCreates(pendingIds) : AppController::PendingQueueDeleteSummary{};
 }
 
 std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
@@ -216,8 +216,7 @@ void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string&
 
 AppController::PendingFieldEditDeleteSummary
 AppController::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
-    return offlineQueue_ ? offlineQueue_->DeletePendingFieldEdits(ids)
-                         : AppController::PendingFieldEditDeleteSummary{};
+    return offlineQueue_ ? offlineQueue_->DeletePendingFieldEdits(ids) : AppController::PendingFieldEditDeleteSummary{};
 }
 
 AppController::DeadFieldEditDeleteSummary
@@ -240,9 +239,3 @@ void AppController::TickOfflineFieldEdits() {
         offlineQueue_->TickOfflineFieldEdits();
     }
 }
-
-
-
-
-
-

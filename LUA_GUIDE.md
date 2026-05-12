@@ -84,7 +84,7 @@ Global Smatchet application commands.
 **`smatchet.create_issue(spec)`** — `spec` is a Lua table:
 
 - **Field mapping** matches CSV/JSON import: top-level keys like `summary`, `description`, `priority`, Jira field ids, and display names are resolved against the loaded field catalog. You may nest a `fields = { ... }` table (same semantics as JSON import) **or** use flat keys at the top level.
-- **Defaults** (when omitted): same seed as the grid **new-issue** row: **Settings** project key and default issue type, plus **project / issue type from the last cached row** when the grid has issues and the spec does not override them. If the cache is empty and Settings have no default issue type, Jira requires an explicit `issuetype` (e.g. `issuetype = "Task"`) or `issue_type_id` / `issue_type_name`.
+- **Defaults** (when omitted): same seed as the grid **new-issue** row: **default issue type** from Settings, plus **project / issue type from the last cached row** when the grid has issues and the spec does not override them. Since PR 6, project is **per-operation** — there is no global project preference; pass `projectkey` / `project_key` explicitly in the spec, or rely on the active view's project. If the cache is empty and Settings have no default issue type, Jira requires an explicit `issuetype` (e.g. `issuetype = "Task"`) or `issue_type_id` / `issue_type_name`.
 - **Reserved / meta keys**: `offline` or `queue_offline` (boolean): when truthy, the draft is written to the **offline create queue** (SQLite) instead of calling the live API. Other unknown meta keys are ignored for forward compatibility.
 
 **Returns `(result, preflight_err)`:**

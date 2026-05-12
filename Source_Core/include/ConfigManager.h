@@ -58,14 +58,13 @@ struct TrackerConfig {
     std::string Domain;   // e.g., "yourcompany.atlassian.net"
     std::string Email;    // e.g., "dev@company.com"
     std::string ApiToken; // Your Atlassian API Token
-    // Jira project key used by create meta enrichment calls (e.g. PROJ).
-    // Removed in PR 6 of docs/design/remove-global-project-key.md. Kept here while migration
-    // sweeps (PR 5) drain legacy state.
-    std::string ProjectKey;
 
-    // PR 5 migration carrier: captured from on-disk `project_key` during Load() and consumed
-    // by the offline-queue + Plane-view legacy sweeps. Not persisted by Save(). Distinct from
-    // `ProjectKey` (which other code paths still read as a fallback until PR 6 deletes it).
+    // PR 5/6 migration carriers: captured from on-disk `project_key` / `plane_project_id` during
+    // Load() and consumed by the offline-queue + Plane-view legacy sweeps. Not persisted by Save().
+    // The user-facing `ProjectKey` / `PlaneProjectId` fields were removed in PR 6
+    // (docs/design/remove-global-project-key.md). Project is now per-operation; these carriers
+    // remain for one release so installs upgrading from pre-PR-5 builds can still recover legacy
+    // project scope at startup. Slated for removal in PR 7.
     std::string LegacyProjectKey;
     std::string LegacyPlaneProjectId;
 
@@ -75,7 +74,6 @@ struct TrackerConfig {
     // Plane.so specific configuration
     std::string PlaneUrl;           // API origin: https://api.plane.so (no path); https://app.plane.so normalized
     std::string PlaneWorkspaceSlug; // e.g. "my-workspace"
-    std::string PlaneProjectId;     // UUID of the project
     std::string PlaneApiKey;        // Plane API Key
 
     // JQL used when querying Jira; defaults to issues assigned to the current user.

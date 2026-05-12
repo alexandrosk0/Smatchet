@@ -77,15 +77,25 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
     }
 }
 
-bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) {
+bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) { return RefreshFieldCatalog(cfg, std::string()); }
+
+bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey) {
     if (!Backend) {
+        {
+            std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+            currentCatalogProjectKey_ = projectKey;
+        }
         SetFieldCatalog({}, {}, "Tracker backend is not initialized.");
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+        currentCatalogProjectKey_ = projectKey;
+    }
     TrackerFieldCatalogResult catalog;
     std::string error;
-    const bool ok = Backend->FetchFieldCatalog(cfg, catalog, error);
+    const bool ok = Backend->FetchFieldCatalog(cfg, projectKey, catalog, error);
     if (!ok) {
         SetFieldCatalog({}, {}, error);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
@@ -104,7 +114,9 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    return Backend->FetchFieldCatalog(cfg, outCatalog, outError);
+    // PR 6: project is per-operation. This convenience overload is called by config-time
+    // probes that don't pin a project; backend returns the unscoped catalog.
+    return Backend->FetchFieldCatalog(cfg, std::string(), outCatalog, outError);
 }
 
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
@@ -140,8 +152,13 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
     const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
-    const std::string projectKeyForCache = catalogPlane ? cfgSnap.PlaneProjectId : cfgSnap.ProjectKey;
+    // PR 6: legacy global project fields removed. Saves under the unscoped ("") cache key when
+    // the caller hasn't pinned a project via SetCurrentCatalogProject(). Per-project refetches
+    // (driven by the new-issue draft / picker UI) set that hint so the snapshot lands under
+    // the right per-project entry. PR 7 will replace this with a parameter on the call chain.
+    const std::string projectKeyForCache = currentCatalogProjectKey_;
     const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, projectKeyForCache);
+    (void)catalogPlane;
 
     if (!error.empty()) {
         if (IsTrackerTransportErrorText(error)) {
@@ -234,10 +251,9 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         const std::string saveBackend = catalogPlane ? std::string("Plane") : std::string("Jira");
         const std::string saveEndpoint =
             catalogPlane ? (cfgSnap.PlaneUrl + std::string("|") + cfgSnap.PlaneWorkspaceSlug) : cfgSnap.Domain;
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, saveBackend, saveEndpoint,
-                                                         projectKeyForCache, cfgSnap.FieldCatalogCacheMaxProjects,
-                                                         AvailableFields, AvailableComponents,
-                                                         AvailableIssueTypeMeta, snapErr)) {
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, saveBackend, saveEndpoint, projectKeyForCache,
+                                                         cfgSnap.FieldCatalogCacheMaxProjects, AvailableFields,
+                                                         AvailableComponents, AvailableIssueTypeMeta, snapErr)) {
             LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
         }
     }

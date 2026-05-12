@@ -75,8 +75,16 @@ class OfflineQueueService;
 class TicketSyncService;
 class LuaAutomationHost;
 
-namespace smatchet { namespace cmd { class CommandRegistry; } }
-namespace smatchet { namespace cmd { class ScenarioRunner; } }
+namespace smatchet {
+namespace cmd {
+class CommandRegistry;
+}
+} // namespace smatchet
+namespace smatchet {
+namespace cmd {
+class ScenarioRunner;
+}
+} // namespace smatchet
 
 class AppController {
     /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
@@ -359,6 +367,12 @@ class AppController {
     std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const TrackerConfig& cfg);
+    /** PR 6: refetch the catalog scoped to a specific project. The project key is plumbed to
+     *  the fetcher via a transient capture on the backend cfg snapshot (see TrackerFieldCatalog
+     *  and PlaneClient single-capture sites) and used by SetFieldCatalog to land the snapshot
+     *  under the right per-project cache entry. Empty projectKey ≡ unscoped, identical to the
+     *  no-argument overload. */
+    bool RefreshFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey);
     bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                            std::string& outError) const;
 
@@ -633,7 +647,7 @@ class AppController {
     /// CLI / MCP / Lua / Palette callers. Constructed eagerly in `Initialize` after the tracker
     /// backend so handlers can capture `*this` and safely call AppController methods.
     std::unique_ptr<smatchet::cmd::CommandRegistry> commandRegistry_;
-    std::unique_ptr<smatchet::cmd::ScenarioRunner>  scenarioRunner_;
+    std::unique_ptr<smatchet::cmd::ScenarioRunner> scenarioRunner_;
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
@@ -651,6 +665,10 @@ class AppController {
     std::string LastTrackerFieldCatalogWarning;
     std::string LastTrackerTicketSyncWarning;
     bool fieldCatalogEverLoaded_ = false;
+    /** PR 6: project key for the most-recent in-flight catalog fetch — used by SetFieldCatalog
+     *  to write the snapshot under the right per-project cache entry now that
+     *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
+    std::string currentCatalogProjectKey_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
