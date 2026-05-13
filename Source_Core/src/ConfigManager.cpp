@@ -615,8 +615,8 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
     defaultView.Id = "default_view";
     defaultView.Name = "Default View";
     defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-    defaultView.Fields = {"summary",  "issuetype", "description", "assignee",
-                          "priority", "status",    "created",     "updated"};
+    defaultView.Fields = {"summary",   "assignee",    "priority", "status",
+                          "issuetype", "description", "created",  "updated"};
     defaultView.ColumnOrder = {"id"};
     for (const auto& fieldId : defaultView.Fields) {
         defaultView.ColumnOrder.push_back("field:" + fieldId);
