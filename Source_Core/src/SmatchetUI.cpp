@@ -3,6 +3,7 @@
 #include "SmatchetViewVisibility.h"
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
+#include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
@@ -888,19 +889,23 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
                     SetViewVisible(d.cfg, d.cfg.ShowPrimarySideBar, ViewSlot::PrimarySideBar,
                                    !d.cfg.ShowPrimarySideBar);
+                    recentViews_.Touch("view.toggle.primary-side-bar");
                     ConfigManager::Save(d.cfg);
                 }
                 if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
                     SetViewVisible(d.cfg, d.cfg.ShowSecondarySideBar, ViewSlot::SecondarySideBar,
                                    !d.cfg.ShowSecondarySideBar);
+                    recentViews_.Touch("view.toggle.secondary-side-bar");
                     ConfigManager::Save(d.cfg);
                 }
                 if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
                     d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
+                    recentViews_.Touch("view.toggle.status-bar");
                     ConfigManager::Save(d.cfg);
                 }
                 if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
                     SetViewVisible(d.cfg, d.cfg.ShowPanel, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+                    recentViews_.Touch("view.toggle.panel");
                     ConfigManager::Save(d.cfg);
                 }
                 ImGui::EndMenu();
@@ -911,31 +916,39 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 if (d.showViewsDashboard) {
                     d.requestViewsDashboardFocus = true;
                 }
+                recentViews_.Touch("view.toggle.views-dashboard");
             }
             if (ImGui::MenuItem("Source Blame", "Ctrl+Shift+B", d.showBlameAnalysis)) {
                 d.showBlameAnalysis = !d.showBlameAnalysis;
+                recentViews_.Touch("view.toggle.source-blame");
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
                 d.showLogWindow = !d.showLogWindow;
+                recentViews_.Touch("view.toggle.log");
             }
             if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
                 d.showAuditTrail = !d.showAuditTrail;
                 if (d.showAuditTrail) {
                     d.requestAuditTrailFocus = true;
                 }
+                recentViews_.Touch("view.toggle.backend-audit");
             }
             if (ImGui::MenuItem("Performance", nullptr, d.showPerformance)) {
                 d.showPerformance = !d.showPerformance;
+                recentViews_.Touch("view.toggle.performance");
             }
             if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
                 d.showBulkImport = !d.showBulkImport;
+                recentViews_.Touch("view.toggle.bulk-import");
             }
             if (ImGui::MenuItem("Bulk Export", nullptr, d.showBulkExport)) {
                 d.showBulkExport = !d.showBulkExport;
+                recentViews_.Touch("view.toggle.bulk-export");
             }
             if (ImGui::MenuItem("Preferences", nullptr, d.showPreferences)) {
                 d.showPreferences = !d.showPreferences;
+                recentViews_.Touch("view.toggle.preferences");
             }
 #if defined(SMATCHET_WITH_MCP)
             if (ImGui::MenuItem("MCP Server", nullptr, d.showMcpServerWindow)) {
@@ -943,6 +956,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 if (d.showMcpServerWindow) {
                     d.requestMcpServerFocus = true;
                 }
+                recentViews_.Touch("view.toggle.mcp-server");
             }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -952,9 +966,36 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                     d.requestLuaAutomationFocus = true;
                     d.requestScriptingEditorTabFocus = true;
                 }
+                recentViews_.Touch("view.toggle.scripts-and-actions");
             }
 #endif
             ImGui::Separator();
+            // Recently Used Views submenu: lists the last 5 toggled view ids, oldest first.
+            if (ImGui::BeginMenu("Recently Used Views")) {
+                const std::vector<std::string> recent = recentViews_.Snapshot();
+                if (recent.empty()) {
+                    ImGui::BeginDisabled();
+                    ImGui::MenuItem("(none yet)");
+                    ImGui::EndDisabled();
+                } else {
+                    for (int ri = static_cast<int>(recent.size()) - 1; ri >= 0; --ri) {
+                        const std::string& cmdId = recent[static_cast<size_t>(ri)];
+                        if (ImGui::MenuItem(cmdId.c_str())) {
+                            smatchet::cmd::CommandContext ctx;
+                            ctx.App    = &app;
+                            ctx.Source = smatchet::cmd::CommandSource::Palette;
+                            const nlohmann::json emptyArgs = nlohmann::json::object();
+                            smatchet::cmd::CommandResult r =
+                                app.Commands().Dispatch(cmdId, emptyArgs, ctx);
+                            if (!r.Ok) {
+                                LOG_DEBUG("SmatchetUI: recently used view command not found: %s",
+                                          cmdId.c_str());
+                            }
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("Reset Layout")) {
                 resetWindowLayoutToDefault(d);
             }

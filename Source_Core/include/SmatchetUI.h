@@ -36,6 +36,50 @@ class SmatchetUI {
   public:
     void Draw(AppController& app);
 
+    /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
+    class RecentViewLru {
+      public:
+        static const int kCapacity = 5;
+
+        RecentViewLru() : size_(0) {}
+
+        /// Record a view toggle command id (e.g. "view.toggle.log"). O(N), N <= 5.
+        void Touch(const std::string& commandId) {
+            // Remove existing occurrence to avoid duplicates.
+            for (int i = 0; i < size_; ++i) {
+                if (entries_[i] == commandId) {
+                    for (int j = i; j < size_ - 1; ++j) {
+                        entries_[j] = entries_[j + 1];
+                    }
+                    --size_;
+                    break;
+                }
+            }
+            // Evict oldest if at capacity.
+            if (size_ == kCapacity) {
+                for (int i = 0; i < kCapacity - 1; ++i) {
+                    entries_[i] = entries_[i + 1];
+                }
+                --size_;
+            }
+            entries_[size_++] = commandId;
+        }
+
+        /// Returns up to kCapacity entries, oldest-first (most-recently used last).
+        std::vector<std::string> Snapshot() const {
+            std::vector<std::string> result;
+            result.reserve(static_cast<size_t>(size_));
+            for (int i = 0; i < size_; ++i) {
+                result.push_back(entries_[i]);
+            }
+            return result;
+        }
+
+      private:
+        std::string entries_[5];
+        int size_;
+    };
+
   private:
     Views ViewState;
     BlameAnalysisUi blameAnalysisUi_;
@@ -44,6 +88,7 @@ class SmatchetUI {
     // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
+    RecentViewLru recentViews_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
