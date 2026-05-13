@@ -482,13 +482,11 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
     "Column 4  Width=220\n"
     "\n"
     "[Docking][Data]\n"
-    "DockSpace         ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1920,965 Split=Y Selected=0x51577D15\n"
+    "DockSpace         ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1920,965 Split=Y Selected=0x7EBEC904\n"
     "  DockNode        ID=0x00000009 Parent=0x08BD597D SizeRef=1920,486 Split=X\n"
     "    DockNode      ID=0x00000001 Parent=0x00000009 SizeRef=1045,987 Split=X\n"
-    "      DockNode    ID=0x00000007 Parent=0x00000001 SizeRef=924,698 Split=X\n"
-    "        DockNode  ID=0x00000002 Parent=0x00000007 SizeRef=1028,698 CentralNode=1 Selected=0x7EBEC904\n"
-    "        DockNode  ID=0x00000003 Parent=0x00000007 SizeRef=250,698 Selected=0x51577D15\n"
-    "      DockNode    ID=0x00000008 Parent=0x00000001 SizeRef=354,698 Selected=0x51577D15\n"
+    "      DockNode    ID=0x00000002 Parent=0x00000001 SizeRef=700,987 CentralNode=1 Selected=0x7EBEC904\n"
+    "      DockNode    ID=0x00000008 Parent=0x00000001 SizeRef=354,987 Selected=0x51577D15\n"
     "    DockNode      ID=0x00000004 Parent=0x00000009 SizeRef=873,987 Selected=0x74648FC6\n"
     "  DockNode        ID=0x0000000A Parent=0x08BD597D SizeRef=1920,477 Selected=0x6A4695A4\n";
 
@@ -964,18 +962,24 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["views_sidebar_width"] = config.ViewsSidebarWidth;
     j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
     j["selected_font_name"] = config.SelectedFontName;
-    j["show_primary_side_bar"]   = config.ShowPrimarySideBar;
+    j["show_primary_side_bar"] = config.ShowPrimarySideBar;
     j["show_secondary_side_bar"] = config.ShowSecondarySideBar;
-    j["show_panel"]              = config.ShowPanel;
-    j["show_status_bar"]         = config.ShowStatusBar;
+    j["show_panel"] = config.ShowPanel;
+    j["show_status_bar"] = config.ShowStatusBar;
     j["layout_schema_version"] = config.LayoutSchemaVersion;
     j["font_size_pt"] = config.FontSizePt;
     {
         const char* densityStr = "Normal";
         switch (config.Density) {
-            case TrackerConfig::UiDensity::Compact:     densityStr = "Compact";     break;
-            case TrackerConfig::UiDensity::Comfortable: densityStr = "Comfortable"; break;
-            default:                                    densityStr = "Normal";      break;
+        case TrackerConfig::UiDensity::Compact:
+            densityStr = "Compact";
+            break;
+        case TrackerConfig::UiDensity::Comfortable:
+            densityStr = "Comfortable";
+            break;
+        default:
+            densityStr = "Normal";
+            break;
         }
         j["ui_density"] = densityStr;
     }
@@ -985,12 +989,17 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["primary_side_bar_on_right"] = config.PrimarySideBarOnRight;
     auto themeToString = [](ThemeId t) -> const char* {
         switch (t) {
-            case ThemeId::ModernDark:   return "ModernDark";
-            case ThemeId::Vs2022Dark:   return "Vs2022Dark";
-            case ThemeId::Vs2022Light:  return "Vs2022Light";
-            case ThemeId::HighContrast: return "HighContrast";
-            case ThemeId::SmatchetDark:
-            default:                    return "SmatchetDark";
+        case ThemeId::ModernDark:
+            return "ModernDark";
+        case ThemeId::Vs2022Dark:
+            return "Vs2022Dark";
+        case ThemeId::Vs2022Light:
+            return "Vs2022Light";
+        case ThemeId::HighContrast:
+            return "HighContrast";
+        case ThemeId::SmatchetDark:
+        default:
+            return "SmatchetDark";
         }
     };
     j["theme"] = themeToString(config.Theme);
@@ -1268,34 +1277,48 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
             cfg.ViewsSidebarWidth = j.value("views_sidebar_width", cfg.ViewsSidebarWidth);
             cfg.ViewsFieldsSplitRatio = j.value("views_fields_split_ratio", cfg.ViewsFieldsSplitRatio);
-            cfg.ShowPrimarySideBar   = j.value("show_primary_side_bar",   cfg.ShowPrimarySideBar);
+            cfg.ShowPrimarySideBar = j.value("show_primary_side_bar", cfg.ShowPrimarySideBar);
             cfg.ShowSecondarySideBar = j.value("show_secondary_side_bar", cfg.ShowSecondarySideBar);
-            cfg.ShowPanel            = j.value("show_panel",              cfg.ShowPanel);
-            cfg.ShowStatusBar        = j.value("show_status_bar",         cfg.ShowStatusBar);
+            cfg.ShowPanel = j.value("show_panel", cfg.ShowPanel);
+            cfg.ShowStatusBar = j.value("show_status_bar", cfg.ShowStatusBar);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
             cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
-            if (cfg.LayoutSchemaVersion < 0) { cfg.LayoutSchemaVersion = 0; }
+            if (cfg.LayoutSchemaVersion < 0) {
+                cfg.LayoutSchemaVersion = 0;
+            }
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
-            if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
-            if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }
+            if (cfg.FontSizePt < 8) {
+                cfg.FontSizePt = 8;
+            }
+            if (cfg.FontSizePt > 32) {
+                cfg.FontSizePt = 32;
+            }
             {
                 const std::string densityStr = j.value("ui_density", std::string("Normal"));
-                if (densityStr == "Compact")          cfg.Density = TrackerConfig::UiDensity::Compact;
-                else if (densityStr == "Comfortable") cfg.Density = TrackerConfig::UiDensity::Comfortable;
-                else                                  cfg.Density = TrackerConfig::UiDensity::Normal;
+                if (densityStr == "Compact")
+                    cfg.Density = TrackerConfig::UiDensity::Compact;
+                else if (densityStr == "Comfortable")
+                    cfg.Density = TrackerConfig::UiDensity::Comfortable;
+                else
+                    cfg.Density = TrackerConfig::UiDensity::Normal;
             }
             {
                 const std::string panelPosStr = j.value("panel_position", std::string("Bottom"));
                 cfg.PanelDockSide = (panelPosStr == "Right") ? TrackerConfig::PanelPosition::Right
-                                                              : TrackerConfig::PanelPosition::Bottom;
+                                                             : TrackerConfig::PanelPosition::Bottom;
             }
             cfg.PrimarySideBarOnRight = j.value("primary_side_bar_on_right", cfg.PrimarySideBarOnRight);
             const std::string themeStr = j.value("theme", std::string("SmatchetDark"));
-            if (themeStr == "ModernDark")        cfg.Theme = ThemeId::ModernDark;
-            else if (themeStr == "Vs2022Dark")   cfg.Theme = ThemeId::Vs2022Dark;
-            else if (themeStr == "Vs2022Light")  cfg.Theme = ThemeId::Vs2022Light;
-            else if (themeStr == "HighContrast") cfg.Theme = ThemeId::HighContrast;
-            else                                 cfg.Theme = ThemeId::SmatchetDark;
+            if (themeStr == "ModernDark")
+                cfg.Theme = ThemeId::ModernDark;
+            else if (themeStr == "Vs2022Dark")
+                cfg.Theme = ThemeId::Vs2022Dark;
+            else if (themeStr == "Vs2022Light")
+                cfg.Theme = ThemeId::Vs2022Light;
+            else if (themeStr == "HighContrast")
+                cfg.Theme = ThemeId::HighContrast;
+            else
+                cfg.Theme = ThemeId::SmatchetDark;
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
             cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
             cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);

@@ -167,10 +167,10 @@ struct TrackerConfig {
     float ViewsFieldsSplitRatio = 0.5f;
 
     // VS Code shell: dockspace node visibility (View > Appearance toggles + shortcuts).
-    bool ShowPrimarySideBar   = true;
+    bool ShowPrimarySideBar = true;
     bool ShowSecondarySideBar = false;
-    bool ShowPanel            = true;
-    bool ShowStatusBar        = true;
+    bool ShowPanel = true;
+    bool ShowStatusBar = true;
 
     // UI density: controls ItemSpacing / FramePadding applied each frame.
     enum class UiDensity : int { Compact = 0, Normal = 1, Comfortable = 2 };
@@ -185,7 +185,7 @@ struct TrackerConfig {
 
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
     bool FullScreen = false;
-    bool ZenMode    = false;
+    bool ZenMode = false;
 
     // Bumped to kCurrentLayoutSchemaVersion after the first VS-shell layout migration.
     // On first launch with an old imgui.ini the migration resets the dock layout, then
@@ -311,7 +311,11 @@ class ConfigManager {
     // Schema 3: Performance window DockId changed from 0x7 (invalid Split=X parent node)
     // to 0xA,7 (bottom-panel tab). Node 0x7 is a container, not a leaf — ImGui floats
     // any window docked into a parent node.
-    static const int kCurrentLayoutSchemaVersion = 3;
+    // Bumped to 4: Annotate is now an embedded tab inside Smatchet - Active Project (no
+    // longer a separate docked window). Removed dock nodes 0x7 (intermediate X-split) and
+    // 0x3 (former 250px right pane for Annotate/Source Blame). Node 0x2 (Active Project)
+    // is now a direct child of 0x1 alongside 0x8 (Views), giving the grid more width.
+    static const int kCurrentLayoutSchemaVersion = 4;
 
     struct CliOverrides {
         bool HasDbPath;
@@ -360,8 +364,7 @@ class ConfigManager {
 
     /** Write the explicit preference. Takes effect on next launch — paths are resolved
      *  at startup. Returns true on success; on failure `outError` is populated. */
-    static bool SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref,
-                                     std::string& outError);
+    static bool SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref, std::string& outError);
 
     /** Returns true iff the user has made an explicit choice (marker file exists). */
     static bool HasExplicitStoragePreference(const std::string& runtimeAssetDir);
