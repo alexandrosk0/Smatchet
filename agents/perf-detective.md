@@ -73,6 +73,7 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 - **Never** assume `std::unordered_map` > `std::map`; profile both.
 - **Never** disable a feature ("just don't draw it") as a perf fix unless the user agrees to the trade-off.
 - **Never** skip the re-measure. A "should be faster" change that doesn't move the number gets reverted.
+- **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, worktree builds) make wrong-exe testing common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path. Same when asking the user to re-run a scenario.
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
 

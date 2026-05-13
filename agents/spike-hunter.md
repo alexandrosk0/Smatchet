@@ -109,6 +109,7 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 - **Never move HTTP / SQLite / p4 to the UI thread "for simplicity".** That's the cause of most spikes you'll find.
 - **Don't add new threading primitives.** The existing pattern is: per-subsystem `std::thread` + mutex + atomic shutdown flag + destructor join; `MainThreadDispatcher` for posting back. Mirror it.
 - **`std::async` future captures** must be joined / waited before the captured-by-reference object dies — see `SmatchetUI.h:28` for the existing comment about UiDrawSession futures.
+- **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, worktree builds) make wrong-exe spike repro common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path before asking them to reproduce.
 
 Report: spike source (call site) + measured `maxPerCallMs` before / after + diff summary (or pointer to the implementing agent) + cleanup confirmation.
 
