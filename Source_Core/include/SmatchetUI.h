@@ -45,7 +45,12 @@ class SmatchetUI {
         RecentViewLru() : size_(0) {}
 
         /// Record a view toggle command id (e.g. "view.toggle.log"). O(N), N <= 5.
+        /// Silently ignores ids that do not start with "view.toggle." — only known
+        /// view-toggle commands may enter the LRU, preventing future callers from
+        /// accidentally dispatching arbitrary command names via the Recent Views submenu.
         void Touch(const std::string& commandId) {
+            static const char kPrefix[] = "view.toggle.";
+            if (commandId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) != 0) { return; }
             // Remove existing occurrence to avoid duplicates.
             for (int i = 0; i < size_; ++i) {
                 if (entries_[i] == commandId) {
