@@ -1,5 +1,6 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
+#include "SmatchetViewVisibility.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/ViewCommands.h"
@@ -380,6 +381,23 @@ void SmatchetUI::Draw(AppController& app) {
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
     ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
 
+    // Dockspace node visibility: keep side-bar and panel nodes in sync with cfg flags each frame.
+    // ApplyNodeVisibility is cheap (pointer lookup + bitfield); no-op when node not yet built.
+    {
+        auto syncNode = [](ImGuiID nodeId, bool visible) {
+            ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(nodeId);
+            if (!node) { return; }
+            if (visible) {
+                node->LocalFlags &= ~ImGuiDockNodeFlags_HiddenTabBar;
+            } else {
+                node->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;
+            }
+        };
+        syncNode(0x00000004u, d.cfg.ShowPrimarySideBar);
+        syncNode(0x0000000Au, d.cfg.ShowPanel);
+        syncNode(0x00000010u, d.cfg.ShowSecondarySideBar);
+    }
+
     // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
     // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
     // any user-saved value through this check.
@@ -549,6 +567,27 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
+    }
+    // Keyboard shortcuts for panel visibility toggles (Ctrl+B / Ctrl+J).
+    // ImGui::Shortcut available in docking branch; fall back to GetIO check if absent.
+    {
+        const ImGuiIO& io = ::ImGui::GetIO();
+        const bool ctrlDown = io.KeyCtrl;
+        const bool altDown  = io.KeyAlt;
+        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            SetViewVisible(d.cfg, d.cfg.ShowPrimarySideBar, ViewSlot::PrimarySideBar,
+                           !d.cfg.ShowPrimarySideBar);
+            ConfigManager::Save(d.cfg);
+        }
+        if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            SetViewVisible(d.cfg, d.cfg.ShowSecondarySideBar, ViewSlot::SecondarySideBar,
+                           !d.cfg.ShowSecondarySideBar);
+            ConfigManager::Save(d.cfg);
+        }
+        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+            SetViewVisible(d.cfg, d.cfg.ShowPanel, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+            ConfigManager::Save(d.cfg);
+        }
     }
     DrainAppUpdateCheck(d);
     if (!d.offlineLegacyStartupBannerText.empty()) {
@@ -837,6 +876,25 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
                 if (ImGui::MenuItem("Reset Zoom", "Ctrl+0", false, d.cfg.FontSizePt != 16)) {
                     d.cfg.FontSizePt = 16;
+                    ConfigManager::Save(d.cfg);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
+                    SetViewVisible(d.cfg, d.cfg.ShowPrimarySideBar, ViewSlot::PrimarySideBar,
+                                   !d.cfg.ShowPrimarySideBar);
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
+                    SetViewVisible(d.cfg, d.cfg.ShowSecondarySideBar, ViewSlot::SecondarySideBar,
+                                   !d.cfg.ShowSecondarySideBar);
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
+                    d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
+                    SetViewVisible(d.cfg, d.cfg.ShowPanel, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
                     ConfigManager::Save(d.cfg);
                 }
                 ImGui::EndMenu();

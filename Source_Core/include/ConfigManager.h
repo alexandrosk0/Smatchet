@@ -162,6 +162,12 @@ struct TrackerConfig {
     // Views editor: split between Available (left) and Selected (right) panes inside the Fields tab.
     float ViewsFieldsSplitRatio = 0.5f;
 
+    // VS Code shell: dockspace node visibility (View > Appearance toggles + shortcuts).
+    bool ShowPrimarySideBar   = true;
+    bool ShowSecondarySideBar = false;
+    bool ShowPanel            = true;
+    bool ShowStatusBar        = true;
+
     // Font setting
     std::string SelectedFontName = "Segoe UI";
     // Font size in points, used by View > Appearance > Zoom In/Out/Reset.

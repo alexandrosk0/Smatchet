@@ -866,6 +866,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["views_sidebar_width"] = config.ViewsSidebarWidth;
     j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
     j["selected_font_name"] = config.SelectedFontName;
+    j["show_primary_side_bar"]   = config.ShowPrimarySideBar;
+    j["show_secondary_side_bar"] = config.ShowSecondarySideBar;
+    j["show_panel"]              = config.ShowPanel;
+    j["show_status_bar"]         = config.ShowStatusBar;
     j["font_size_pt"] = config.FontSizePt;
     auto themeToString = [](ThemeId t) -> const char* {
         switch (t) {
@@ -1151,6 +1155,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
             cfg.ViewsSidebarWidth = j.value("views_sidebar_width", cfg.ViewsSidebarWidth);
             cfg.ViewsFieldsSplitRatio = j.value("views_fields_split_ratio", cfg.ViewsFieldsSplitRatio);
+            cfg.ShowPrimarySideBar   = j.value("show_primary_side_bar",   cfg.ShowPrimarySideBar);
+            cfg.ShowSecondarySideBar = j.value("show_secondary_side_bar", cfg.ShowSecondarySideBar);
+            cfg.ShowPanel            = j.value("show_panel",              cfg.ShowPanel);
+            cfg.ShowStatusBar        = j.value("show_status_bar",         cfg.ShowStatusBar);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
             if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
