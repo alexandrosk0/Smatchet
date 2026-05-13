@@ -1269,33 +1269,6 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Go")) {
-            if (ImGui::MenuItem("Active Project Grid", "Ctrl+Alt+1")) {
-                d.requestActiveProjectFocus = true;
-            }
-            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Alt+2")) {
-                d.showViewsDashboard = true;
-                d.requestViewsDashboardFocus = true;
-            }
-            if (ImGui::MenuItem("Log", "Ctrl+Alt+3")) {
-                d.showLogWindow = true;
-            }
-            if (ImGui::MenuItem("Backend Audit", "Ctrl+Alt+4")) {
-                d.showAuditTrail = true;
-                d.requestAuditTrailFocus = true;
-            }
-            if (ImGui::MenuItem("Performance", "Ctrl+Alt+5")) {
-                d.showPerformance = true;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Annotate...")) {
-                d.annotateTabVisible = true;
-                d.activeGridTab = 1;
-                d.activeGridTabForcePending = true;
-                d.requestActiveProjectFocus = true;
-            }
-            ImGui::EndMenu();
-        }
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         if (ImGui::BeginMenu("Run")) {
             if (ImGui::MenuItem("Scripts & Actions...")) {

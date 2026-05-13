@@ -495,20 +495,10 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
             const auto& availableFields = app.GetAvailableFields();
 
-            // Layout: two panes side-by-side. Width split persisted in cfg.
-            const float available = ImGui::GetContentRegionAvail().x;
-            float splitRatio = d.cfg.ViewsFieldsSplitRatio;
-            if (splitRatio < 0.2f || splitRatio > 0.8f) {
-                splitRatio = 0.5f;
-            }
-            float leftW = available * splitRatio - 3.0f;
-            if (leftW < 200.0f) {
-                leftW = 200.0f;
-            }
+            // Single pane: the column-order list lives in the Columns tab.
             const float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
 
-            // -------- Available (left) --------
-            ImGui::BeginChild("ViewsFieldsAvailable", ImVec2(leftW, listHeight), true);
+            ImGui::BeginChild("ViewsFieldsAvailable", ImVec2(0, listHeight), true);
             {
                 ImGui::TextUnformatted("Available");
                 ImGui::SameLine();
@@ -671,78 +661,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
             ImGui::EndChild();
 
-            // Splitter between Available and Selected.
-            ImGui::SameLine(0.0f, 0.0f);
-            float splitWidth = leftW;
-            const float minLeft = 200.0f;
-            const float maxLeft = available - 220.0f;
-            SmatchetViewsDashboardUiDetail::DrawHorizontalSplitter("##ViewsFieldsSplitter", d, &splitWidth, minLeft,
-                                                                   maxLeft);
-            // Keep the ratio in sync so it survives window resizes.
-            if (available > 1.0f) {
-                d.cfg.ViewsFieldsSplitRatio = splitWidth / available;
-            }
-            ImGui::SameLine(0.0f, 0.0f);
-
-            // -------- Selected (right) --------
-            ImGui::BeginChild("ViewsFieldsSelected", ImVec2(0, listHeight), true);
-            {
-                ImGui::TextUnformatted("Selected");
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%zu) — drag the handle or use Alt+↑/↓", selectedFieldSet.size());
-                ImGui::Separator();
-
-                // Reconcile column order against current selection so the Selected list
-                // and column list stay coherent.
-                ReconcileEditingColumnOrder(d);
-
-                ImGui::BeginChild("##SelectedScroll", ImVec2(0, 0), false);
-                if (d.editingColumnOrder.empty()) {
-                    ImGui::TextDisabled("(empty) Drop fields here, or check them in the left pane.");
-                }
-                for (int i = 0; i < static_cast<int>(d.editingColumnOrder.size()); ++i) {
-                    const std::string key = d.editingColumnOrder[static_cast<size_t>(i)];
-                    ImGui::PushID(i);
-                    SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_FIELDS_ROW");
-                    const bool isId = (key == "id");
-                    const std::string label = PrettyColumnLabel(key, availableFields) + (isId ? "  (locked)" : "");
-                    const bool selected = (d.viewsKeyboardReorderRow == i);
-                    if (ImGui::Selectable(label.c_str(), selected,
-                                          ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick)) {
-                        d.viewsKeyboardReorderRow = i;
-                    }
-                    if (SmatchetViewsDashboardUiDetail::HandleRowReorder(
-                            i, d.editingColumnOrder, &d.viewsKeyboardReorderRow, "VIEWS_FIELDS_ROW")) {
-                        d.viewsDirty = true;
-                    }
-                    if (!isId) {
-                        ImGui::SameLine();
-                        const float curX2 = ImGui::GetCursorPosX();
-                        const float avail2 = ImGui::GetContentRegionAvail().x;
-                        const float xW = ImGui::CalcTextSize("X").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-                        if (avail2 > xW) {
-                            ImGui::SetCursorPosX(curX2 + (avail2 - xW));
-                        }
-                        if (ImGui::SmallButton("X")) {
-                            // Remove from column order AND uncheck the matching field.
-                            d.editingColumnOrder.erase(d.editingColumnOrder.begin() + i);
-                            if (key.rfind("field:", 0) == 0) {
-                                const std::string fieldId = key.substr(6);
-                                selectedFieldSet.erase(fieldId);
-                                SyncSelectedFieldsBuffer(d, selectedFieldSet);
-                            }
-                            d.viewsDirty = true;
-                            d.viewsKeyboardReorderRow = -1;
-                            ImGui::PopID();
-                            break;
-                        }
-                    }
-                    ImGui::PopID();
-                }
-                SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
-                ImGui::EndChild();
-            }
-            ImGui::EndChild();
+            // Keep editingColumnOrder coherent with selection so the Columns tab is correct
+            // when the user switches tabs.
+            ReconcileEditingColumnOrder(d);
 
             ImGui::EndTabItem();
         }
