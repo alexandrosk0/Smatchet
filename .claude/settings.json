@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-token-log.py\"",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }

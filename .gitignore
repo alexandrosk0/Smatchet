@@ -65,6 +65,9 @@ smatchet_field_catalog_cache.json
 .agents/
 .claude/skills/
 skills-lock.json
+
+# Per-machine agent token usage log (see docs/AGENT_TOKEN_TRACKING.md)
+.claude/.agent-tokens.jsonl
 *.cppcheck
 *.sln
 *.vcxproj
