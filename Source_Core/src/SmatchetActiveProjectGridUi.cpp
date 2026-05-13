@@ -221,10 +221,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const bool gridSortEnvironmentChanged = viewChanged || gridContextChanged;
 
     // -------- Unsaved layout strip --------
-    // Appears whenever d.viewsDirty is true — fed by grid column reorder (below) OR
-    // by buffer edits made in the Views editor window. Lets the user commit, discard,
-    // or fork the in-memory edits without leaving the grid.
-    if (d.viewsDirty && activeViewForGrid) {
+    // Appears whenever d.viewsDirty OR d.viewSortDirty is true — fed by grid column
+    // reorder, sort changes, OR buffer edits made in the Views editor window. Lets
+    // the user commit, discard, or fork the in-memory edits without leaving the grid.
+    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.27f, 0.10f, 0.35f));
         ImGui::BeginChild("##UnsavedLayoutStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
                           ImGuiWindowFlags_NoScrollbar);
@@ -259,6 +259,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                 d.cfg.SelectedFields = updated.Fields;
                 d.lastSyncedColumnOrder = updated.ColumnOrder;
                 d.viewsDirty = false;
+                d.viewSortDirty = false;
                 d.viewsHasOriginalSnapshot = false;
                 d.pendingViewStateSave = false;
                 ConfigManager::Save(d.cfg);
@@ -287,6 +288,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
             const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(restoreSource->Fields);
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
             d.viewsDirty = false;
+            d.viewSortDirty = false;
             d.viewsHasOriginalSnapshot = false;
             d.pendingViewStateSave = false;
             ViewState.BumpRevision(); // force grid to redraw columns in the stored order
