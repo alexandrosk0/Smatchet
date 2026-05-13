@@ -398,9 +398,8 @@ void SmatchetUI::Draw(AppController& app) {
 
     // Apply density padding — only re-apply when the setting changes.
     {
-        static TrackerConfig::UiDensity lastDensity = TrackerConfig::UiDensity::Normal;
-        if (d.cfg.Density != lastDensity) {
-            lastDensity = d.cfg.Density;
+        if (d.cfg.Density != lastAppliedDensity_) {
+            lastAppliedDensity_ = d.cfg.Density;
             ImGuiStyle& style = ::ImGui::GetStyle();
             switch (d.cfg.Density) {
                 case TrackerConfig::UiDensity::Compact:

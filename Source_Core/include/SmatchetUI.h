@@ -2,6 +2,7 @@
 
 #include "BlameAnalysisUi.h"
 #include "Commands/CommandPaletteUi.h"
+#include "ConfigManager.h"
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
 #include "Views.h"
@@ -88,6 +89,7 @@ class SmatchetUI {
     // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
+    TrackerConfig::UiDensity lastAppliedDensity_ = TrackerConfig::UiDensity::Normal;
     RecentViewLru recentViews_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);

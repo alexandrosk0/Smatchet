@@ -404,7 +404,7 @@ struct UiDrawSession {
     /// -1 = inactive (redundant guard; check scenarioScrollActive).
     int scenarioScrollTarget = -1;
 
-    /// Set by F11 handler in SmatchetUI::Draw; consumed by main.cpp to toggle GLFW fullscreen.
+    /// Transient flag — standalone target toggles OS fullscreen; Unreal target ignores.
     bool requestFullScreenToggle = false;
 
     ~UiDrawSession();

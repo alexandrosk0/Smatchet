@@ -179,9 +179,9 @@ struct TrackerConfig {
     // Side bar orientation: true = right (VS Code default), false = left.
     bool PrimarySideBarOnRight = true;
 
-    // Transient UI state — not persisted to disk.
-    bool FullScreen = false; ///< transient, not serialized
-    bool ZenMode    = false; ///< transient, not serialized
+    // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
+    bool FullScreen = false;
+    bool ZenMode    = false;
 
     // Bumped to kCurrentLayoutSchemaVersion after the first VS-shell layout migration.
     // On first launch with an old imgui.ini the migration resets the dock layout, then

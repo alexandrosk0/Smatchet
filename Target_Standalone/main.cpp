@@ -480,15 +480,18 @@ int main(int argc, char** argv) {
             glfwSwapBuffers(window);
 
             // Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
+            static int s_windowedX = 100, s_windowedY = 100, s_windowedW = 1280, s_windowedH = 720;
             if (g_ui.requestFullScreenToggle) {
                 g_ui.requestFullScreenToggle = false;
                 g_ui.cfg.FullScreen = !g_ui.cfg.FullScreen;
                 if (g_ui.cfg.FullScreen) {
+                    glfwGetWindowPos(window, &s_windowedX, &s_windowedY);
+                    glfwGetWindowSize(window, &s_windowedW, &s_windowedH);
                     GLFWmonitor* mon = glfwGetPrimaryMonitor();
                     const GLFWvidmode* mode = glfwGetVideoMode(mon);
                     glfwSetWindowMonitor(window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
                 } else {
-                    glfwSetWindowMonitor(window, nullptr, 100, 100, 1280, 720, 0);
+                    glfwSetWindowMonitor(window, nullptr, s_windowedX, s_windowedY, s_windowedW, s_windowedH, 0);
                 }
             }
 
