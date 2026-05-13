@@ -68,14 +68,22 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
         ImGui::SetTooltip("Switch active grid view");
     }
 
-    // View Save/Refresh Buttons
+    // View Save/Refresh Buttons — always visible whenever a view is active.
+    // - Refresh View: re-applies the saved view's JQL/fields and triggers a sync.
+    // - Save View: appears alongside Refresh whenever there are sort-order changes
+    //   that haven't been persisted (the unsaved-layout strip handles broader
+    //   column/field edits, but the sort-only fast path lives here).
     if (activeViewForGrid) {
         ImGui::SameLine();
-        // When the full unsaved-layout strip is visible (viewsDirty), it covers Save /
-        // Discard / Save-as-new comprehensively; suppress the old quick "Save View" chip
-        // so both affordances don't compete. When the strip is absent, fall through to
-        // the normal Refresh View button.
+        if (ImGui::Button("Refresh View")) {
+            d.cfg.JqlQuery = activeViewForGrid->Jql;
+            d.cfg.SelectedFields = activeViewForGrid->Fields;
+            SyncWithCurrentView(app, d, viewState.GetStore(), true);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Re-run this view's query and refresh the grid.");
         if (d.viewSortDirty && !d.viewsDirty) {
+            ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.65f, 0.25f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.75f, 0.35f, 1.0f));
             if (ImGui::Button("Save View")) {
@@ -85,12 +93,6 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
             ImGui::PopStyleColor(2);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Save sort order changes to this view.");
-        } else if (!d.viewsDirty) {
-            if (ImGui::Button("Refresh View")) {
-                d.cfg.JqlQuery = activeViewForGrid->Jql;
-                d.cfg.SelectedFields = activeViewForGrid->Fields;
-                SyncWithCurrentView(app, d, viewState.GetStore(), true);
-            }
         }
     }
 
