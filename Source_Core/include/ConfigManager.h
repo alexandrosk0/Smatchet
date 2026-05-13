@@ -308,7 +308,10 @@ class ConfigManager {
     // if cfg.LayoutSchemaVersion < this, WriteDefault + persist, then ImGui auto-loads
     // the fresh ini via io.IniFilename. Pre-first-frame migration (matters because
     // runtime LoadIniSettingsFromDisk does NOT re-parent already-created windows).
-    static const int kCurrentLayoutSchemaVersion = 2;
+    // Schema 3: Performance window DockId changed from 0x7 (invalid Split=X parent node)
+    // to 0xA,7 (bottom-panel tab). Node 0x7 is a container, not a leaf — ImGui floats
+    // any window docked into a parent node.
+    static const int kCurrentLayoutSchemaVersion = 3;
 
     struct CliOverrides {
         bool HasDbPath;
