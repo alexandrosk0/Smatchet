@@ -17,6 +17,10 @@ std::string ToLowerAscii(std::string s) {
 }
 } // namespace
 
+// Out-of-line definition required for ODR-use under C++14 (e.g. when passed by
+// reference to std::chrono::milliseconds() in an unoptimized translation unit).
+constexpr int Logger::kFileSinkErrorBackoffMs;
+
 Logger& Logger::Instance() {
     static Logger instance;
     return instance;

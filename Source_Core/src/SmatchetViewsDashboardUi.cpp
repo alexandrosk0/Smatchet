@@ -381,6 +381,10 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         }
 
+        // Force row break so the action cluster lands below the title row.
+        ImGui::NewLine();
+        ImGui::NewLine();
+        
         // Action buttons on a separate row below the title for a more compact header.
         const bool disableDiscard = !d.viewsDirty;
         if (disableDiscard) {

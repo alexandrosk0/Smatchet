@@ -35,6 +35,11 @@ void AppendLine(std::string& out, const char* fmt, ...) {
     out.push_back('\n');
 }
 
+ImVec4 BlendRgba(const ImVec4& a, const ImVec4& b, float t) {
+    const float u = (std::max)(0.f, (std::min)(1.f, t));
+    return ImVec4(a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, a.z + (b.z - a.z) * u, a.w + (b.w - a.w) * u);
+}
+
 /** Read-only multiline so the user can drag-select and Ctrl+C (plain Text/BulletText is not selectable). */
 void DrawCopyableMultiline(const char* id, const std::string& text, float heightPx, std::vector<char>& scratch) {
     const size_t need = text.size() + 1u;
@@ -151,7 +156,36 @@ void SmatchetDrawMcpServerPanel(const AppController& app, const TrackerConfig& c
     float actH = d.cfg.McpServerActivityPanelHeightPx;
     actH = (std::max)(80.0f, (std::min)(480.0f, actH));
     d.cfg.McpServerActivityPanelHeightPx = actH;
+
+    const std::uint64_t trafficEp = app.GetMcpHttpTrafficEpoch();
+    static std::uint64_t s_lastTrafficEp = 0;
+    static std::chrono::steady_clock::time_point s_activityFlashUntil{};
+    const auto nowFlash = std::chrono::steady_clock::now();
+    if (trafficEp != s_lastTrafficEp) {
+        if (trafficEp != 0) {
+            s_activityFlashUntil = nowFlash + std::chrono::seconds(1);
+        }
+        s_lastTrafficEp = trafficEp;
+    }
+    float flashStrength = 0.f;
+    if (nowFlash < s_activityFlashUntil) {
+        const auto msLeft =
+            std::chrono::duration_cast<std::chrono::milliseconds>(s_activityFlashUntil - nowFlash).count();
+        flashStrength = static_cast<float>(msLeft) / 1000.f;
+    }
+    const int stylePush = (flashStrength > 0.001f) ? 2 : 0;
+    if (stylePush != 0) {
+        const ImVec4 frameBg = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+        const ImVec4 warmFill(0.52f, 0.44f, 0.14f, 1.f);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, BlendRgba(frameBg, warmFill, flashStrength * 0.55f));
+        const ImVec4 border = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+        const ImVec4 warmBorder(0.95f, 0.78f, 0.22f, 1.f);
+        ImGui::PushStyleColor(ImGuiCol_Border, BlendRgba(border, warmBorder, flashStrength * 0.85f));
+    }
     DrawCopyableMultiline("##mcp_activity_log", logText, actH, s_logScratch);
+    if (stylePush != 0) {
+        ImGui::PopStyleColor(stylePush);
+    }
 
     ImGui::Separator();
     ImGui::Spacing();

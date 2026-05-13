@@ -188,6 +188,8 @@ class AppController {
     void NotifyMcpClientHttpActivity();
     /** @return false if no client request has been recorded yet this process. */
     bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const;
+    /** Increments once per MCP HTTP request after the auth pre-hook (distinct from activity-log lines). */
+    std::uint64_t GetMcpHttpTrafficEpoch() const;
 #endif
 
     /**
@@ -778,6 +780,7 @@ class AppController {
     std::deque<std::string> mcpActivityLog_;
     /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
     std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
+    std::atomic<std::uint64_t> mcpHttpTrafficEpoch_{0};
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
