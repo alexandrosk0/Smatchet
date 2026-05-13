@@ -287,19 +287,21 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
 
 void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
-    const LayoutRect rect = DefaultLayoutRectFor(layoutKey, defaultW, defaultH);
-    const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0)
-                               ? ImGuiCond_Always
-                               : (IsSessionUtilityLayoutKey(layoutKey) ? ImGuiCond_Appearing : ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(rect.Pos, cond);
-    ImGui::SetNextWindowSize(rect.Size, cond);
+    // With docking enabled, position is managed by the dock layout (imgui.ini DockId entries).
+    // SetNextWindowPos with ImGuiCond_Appearing or ImGuiCond_Always fights the dock engine:
+    // it forces windows to absolute pixel coordinates, kicking them out of their dock nodes
+    // on every toggle. Only set size on FirstUseEver as a fallback for windows with no ini entry.
+    ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH), ImGuiCond_FirstUseEver);
     if (requestFocus) {
         ImGui::SetNextWindowFocus();
     }
+    (void)layoutKey; // previously used for position lookup — no longer needed with docking
+    (void)d;
 }
 
 void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
-    if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
+    // Docked windows: size and position are fully managed by the dock node. Do not repair.
+    if (ImGui::IsWindowDocked()) {
         return;
     }
     const ImVec2 pos = ImGui::GetWindowPos();
