@@ -18,8 +18,14 @@
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
+#include "SmatchetDockNodeIds.h"
+#include "SmatchetUI.h"
+#include "SmatchetUiSession.h"
 #include "TrackerFieldSchema.h"
 #include "UiPerfMonitor.h"
+
+#include "imgui.h"
+#include "imgui_internal.h"
 
 #include <algorithm>
 #include <cctype>
@@ -38,6 +44,9 @@ namespace fs = ghc::filesystem;
 #include <ghc/filesystem.hpp>
 namespace fs = ghc::filesystem;
 #endif
+
+// Pulled from SmatchetUI.cpp via extern — same singleton pattern used by ViewToggleCommands.cpp.
+extern UiDrawSession g_ui;
 
 namespace smatchet {
 namespace cmd {
@@ -1651,6 +1660,106 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                         return CommandResult::Success({{"wasCancelled", was}});
                                     });
                                 });
+        reg.Register(std::move(c));
+    }
+
+    // === debug — dock diagnostics ============================================
+
+    {
+        // debug.dock.dump logs the state of key dock nodes to the runtime log.
+        // Handler runs on the UI thread because ImGui::DockBuilderGetNode reads
+        // the imgui dock-node table which is owned by the UI thread.
+        Command c = MakeCommand("debug.dock.dump", "Log all dock nodes to the runtime log.",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(app, []() {
+                                        static const ImGuiID kNodes[] = {
+                                            SmatchetDockNodeIds::kPrimarySideBar,
+                                            SmatchetDockNodeIds::kBottomPanel,
+                                            SmatchetDockNodeIds::kSecondarySideBar,
+                                        };
+                                        static const char* const kNames[] = {
+                                            "PrimarySideBar(0x4)",
+                                            "BottomPanel(0xA)",
+                                            "SecondarySideBar(0x10)",
+                                        };
+                                        for (int i = 0; i < 3; ++i) {
+                                            ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+                                            if (!node) {
+                                                LOG_INFO("debug.dock.dump: %s NOT FOUND", kNames[i]);
+                                            } else {
+                                                LOG_INFO(
+                                                    "debug.dock.dump: %s id=0x%08X size=(%.0f,%.0f) "
+                                                    "flags=0x%X tabs=%d empty=%d",
+                                                    kNames[i],
+                                                    static_cast<unsigned int>(node->ID),
+                                                    node->Size.x, node->Size.y,
+                                                    static_cast<int>(node->LocalFlags),
+                                                    node->Windows.Size,
+                                                    static_cast<int>(node->IsEmpty()));
+                                            }
+                                        }
+                                        // Walk the full dockspace tree from the root node.
+                                        const ImGuiID kDockSpaceId = 0x08BD597Du;
+                                        ImGuiDockNode* root = ::ImGui::DockBuilderGetNode(kDockSpaceId);
+                                        if (!root) {
+                                            LOG_INFO("debug.dock.dump: dockspace root (0x%08X) NOT FOUND",
+                                                     static_cast<unsigned int>(kDockSpaceId));
+                                        } else {
+                                            // Iterative depth-first walk (no recursion; C++14 safe).
+                                            struct Frame {
+                                                ImGuiDockNode* node;
+                                                int depth;
+                                            };
+                                            std::vector<Frame> stack;
+                                            stack.push_back({root, 0});
+                                            while (!stack.empty()) {
+                                                Frame frame = stack.back();
+                                                stack.pop_back();
+                                                ImGuiDockNode* n = frame.node;
+                                                if (!n) { continue; }
+                                                // Build depth-indent prefix.
+                                                std::string indent(
+                                                    static_cast<size_t>(frame.depth * 2), ' ');
+                                                LOG_INFO(
+                                                    "debug.dock.dump: %sid=0x%08X size=(%.0f,%.0f) "
+                                                    "flags=0x%X tabs=%d empty=%d",
+                                                    indent.c_str(),
+                                                    static_cast<unsigned int>(n->ID),
+                                                    n->Size.x, n->Size.y,
+                                                    static_cast<int>(n->LocalFlags),
+                                                    n->Windows.Size,
+                                                    static_cast<int>(n->IsEmpty()));
+                                                // Push children (right first so left is processed first).
+                                                if (n->ChildNodes[1]) {
+                                                    stack.push_back({n->ChildNodes[1], frame.depth + 1});
+                                                }
+                                                if (n->ChildNodes[0]) {
+                                                    stack.push_back({n->ChildNodes[0], frame.depth + 1});
+                                                }
+                                            }
+                                        }
+                                        nlohmann::json out;
+                                        out["logged"] = true;
+                                        return CommandResult::Success(std::move(out));
+                                    });
+                                });
+        reg.Register(std::move(c));
+    }
+
+    {
+        // debug.dock.reset forces a full dock layout reset to the VS-shell default.
+        // Must run on the UI thread — SmatchetUI_ResetLayoutToDefault touches ImGui + g_ui.
+        Command c = MakeCommand("debug.dock.reset", "Force reset dock layout to VS shell default.",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(app, []() {
+                                        SmatchetUI_ResetLayoutToDefault(g_ui);
+                                        nlohmann::json out;
+                                        out["reset"] = true;
+                                        return CommandResult::Success(std::move(out));
+                                    });
+                                });
+        c.Destructive = true;
+        c.Idempotent = true;
         reg.Register(std::move(c));
     }
 

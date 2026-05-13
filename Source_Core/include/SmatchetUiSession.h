@@ -407,6 +407,9 @@ struct UiDrawSession {
     /// Transient flag — standalone target toggles OS fullscreen; Unreal target ignores.
     bool requestFullScreenToggle = false;
 
+    /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
+    bool showDockDebug = false;
+
     ~UiDrawSession();
 };
 

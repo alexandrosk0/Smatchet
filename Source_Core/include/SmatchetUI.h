@@ -33,6 +33,13 @@ struct GridFrameContext {
  */
 void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app);
 
+/**
+ * Free-function shim so command handlers (which hold no SmatchetUI*) can trigger a full dock
+ * layout reset. Must be called on the UI thread. Equivalent to the menu Workspace > Reset
+ * Workspace Layout path.
+ */
+void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d);
+
 class SmatchetUI {
   public:
     void Draw(AppController& app);

@@ -357,6 +357,33 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     PersistWindowOpenPreferences(d);
 }
 
+void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
+    // Replicates SmatchetUI::resetWindowLayoutToDefault for callers without a SmatchetUI*.
+    // Must be called on the UI thread (see MainThreadDispatch.h).
+    d.showViewsDashboard = true;
+    d.requestActiveProjectFocus = false;
+    d.requestViewsDashboardFocus = false;
+    d.showPerformance = false;
+    d.showBlameAnalysis = false;
+    d.showBulkImport = false;
+    d.showBulkExport = false;
+    d.showAuditTrail = false;
+    d.showLogWindow = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    d.showLuaAutomationWindow = false;
+    d.requestLuaAutomationFocus = false;
+    d.requestScriptingEditorTabFocus = false;
+#endif
+#if defined(SMATCHET_WITH_MCP)
+    d.showMcpServerWindow = false;
+    d.requestMcpServerFocus = false;
+#endif
+    d.layoutForceDefaultsFrames = 8;
+    ConfigManager::WriteDefaultImGuiSettingsFile();
+    ImGui::LoadIniSettingsFromDisk(ConfigManager::GetImGuiSettingsPath().c_str());
+    PersistWindowOpenPreferences(d);
+}
+
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     if (!g_ui.cfgInitialized) {
@@ -593,6 +620,13 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
+    // Ctrl+Alt+D — toggle dock-node debug overlay.
+    {
+        const ImGuiIO& dbgIo = ::ImGui::GetIO();
+        if (dbgIo.KeyCtrl && dbgIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            d.showDockDebug = !d.showDockDebug;
+        }
+    }
     // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
     if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
         DrawStatusBar(app, d);
@@ -762,6 +796,67 @@ void SmatchetUI::Draw(AppController& app) {
     }
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();
+    }
+    // Dock-node debug overlay — toggled by Ctrl+Alt+D.
+    if (d.showDockDebug) {
+        const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking
+                                         | ImGuiWindowFlags_NoCollapse
+                                         | ImGuiWindowFlags_AlwaysAutoResize
+                                         | ImGuiWindowFlags_NoSavedSettings;
+        ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
+        ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
+        ::ImGui::Separator();
+        static const ImGuiID kNodes[] = {
+            SmatchetDockNodeIds::kPrimarySideBar,
+            SmatchetDockNodeIds::kBottomPanel,
+            SmatchetDockNodeIds::kSecondarySideBar,
+        };
+        static const char* const kNames[] = {
+            "PrimarySideBar(0x4)",
+            "BottomPanel(0xA)",
+            "SecondarySideBar(0x10)",
+        };
+        for (int i = 0; i < 3; ++i) {
+            ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+            if (!node) {
+                ::ImGui::TextDisabled("%s: NOT FOUND", kNames[i]);
+                continue;
+            }
+            ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
+                kNames[i],
+                node->Size.x, node->Size.y,
+                static_cast<int>(node->LocalFlags),
+                node->Windows.Size,
+                static_cast<int>(node->IsEmpty()));
+        }
+        ::ImGui::Separator();
+        ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
+            d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+        ::ImGui::End();
+
+        // Per-frame LOG_DEBUG throttled to every 120 frames.
+        {
+            static int s_dbgLogFrame = 0;
+            ++s_dbgLogFrame;
+            if (s_dbgLogFrame >= 120) {
+                s_dbgLogFrame = 0;
+                for (int i = 0; i < 3; ++i) {
+                    ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+                    if (!node) {
+                        LOG_DEBUG("DockDebug: %s NOT FOUND", kNames[i]);
+                    } else {
+                        LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
+                            kNames[i],
+                            node->Size.x, node->Size.y,
+                            static_cast<int>(node->LocalFlags),
+                            node->Windows.Size,
+                            static_cast<int>(node->IsEmpty()));
+                    }
+                }
+                LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
+                    d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+            }
+        }
     }
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
