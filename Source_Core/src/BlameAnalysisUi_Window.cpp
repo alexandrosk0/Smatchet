@@ -433,7 +433,8 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             } else {
                                 PushBlameLinkTextOnly(theme);
                             }
-                            ImGui::SelectableRaw(userDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw((userDisp + "##user").c_str(), false,
+                                                 ImGuiSelectableFlags_AllowOverlap);
                             if (pending || row.Blame.User.empty() || row.Blame.User == "-") {
                                 ImGui::PopStyleColor();
                             } else {
@@ -473,7 +474,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             } else {
                                 PushBlameLinkTextOnly(theme);
                             }
-                            ImGui::SelectableRaw(clDisp.c_str(), false, ImGuiSelectableFlags_AllowOverlap);
+                            ImGui::SelectableRaw((clDisp + "##cl").c_str(), false, ImGuiSelectableFlags_AllowOverlap);
                             if (pending || row.Blame.Changelist.empty()) {
                                 ImGui::PopStyleColor();
                             } else {
@@ -616,7 +617,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         const float clCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.Changelist.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                            ImGui::SelectableRaw("-##cl", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2(clCellW, annRowHitH));
                             ImGui::PopStyleColor();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -641,7 +642,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         const float userCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.User.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                            ImGui::SelectableRaw("-##user", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2(userCellW, annRowHitH));
                             ImGui::PopStyleColor();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -675,7 +676,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         const float dateCellW = (std::max)(ImGui::GetContentRegionAvail().x, 1.f);
                         if (ln.Date.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
-                            ImGui::SelectableRaw("-", false, ImGuiSelectableFlags_AllowOverlap,
+                            ImGui::SelectableRaw("-##date", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2(dateCellW, annRowHitH));
                             ImGui::PopStyleColor();
                         } else {
