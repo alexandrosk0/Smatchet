@@ -384,6 +384,29 @@ void SmatchetUI::Draw(AppController& app) {
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
     ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
 
+    // Apply density padding — only re-apply when the setting changes.
+    {
+        static TrackerConfig::UiDensity lastDensity = TrackerConfig::UiDensity::Normal;
+        if (d.cfg.Density != lastDensity) {
+            lastDensity = d.cfg.Density;
+            ImGuiStyle& style = ::ImGui::GetStyle();
+            switch (d.cfg.Density) {
+                case TrackerConfig::UiDensity::Compact:
+                    style.ItemSpacing  = ImVec2(4.0f, 2.0f);
+                    style.FramePadding = ImVec2(4.0f, 2.0f);
+                    break;
+                case TrackerConfig::UiDensity::Comfortable:
+                    style.ItemSpacing  = ImVec2(10.0f, 8.0f);
+                    style.FramePadding = ImVec2(8.0f, 6.0f);
+                    break;
+                default: // Normal
+                    style.ItemSpacing  = ImVec2(8.0f, 6.0f);
+                    style.FramePadding = ImVec2(6.0f, 4.0f);
+                    break;
+            }
+        }
+    }
+
     // Dockspace node visibility: keep side-bar and panel nodes in sync with cfg flags each frame.
     // ApplyNodeVisibility is cheap (pointer lookup + bitfield); no-op when node not yet built.
     {
@@ -570,13 +593,78 @@ void SmatchetUI::Draw(AppController& app) {
                                        : std::vector<TicketGridColumn>();
         }
     }
-    {
+    if (!d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
     // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
-    if (d.cfg.ShowStatusBar) {
+    if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
         DrawStatusBar(app, d);
+    }
+
+    // F11 — full screen toggle (standalone only).
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+    if (::ImGui::IsKeyPressed(ImGuiKey_F11, false)) {
+        d.requestFullScreenToggle = true;
+    }
+#endif
+
+    // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit.
+    {
+        struct KeyChord {
+            bool prefixArmed  = false;
+            float timeoutSec  = 0.0f;
+
+            bool Tick(bool prefixKey, bool completionKey, float dt) {
+                static const float kTimeout = 1.0f;
+                if (prefixKey) {
+                    prefixArmed = true;
+                    timeoutSec  = 0.0f;
+                }
+                if (prefixArmed) {
+                    timeoutSec += dt;
+                    if (timeoutSec > kTimeout) {
+                        prefixArmed = false;
+                    }
+                    if (::ImGui::GetIO().WantTextInput) {
+                        prefixArmed = false;
+                    }
+                    if (completionKey && prefixArmed) {
+                        prefixArmed = false;
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+        static KeyChord s_zenChord;
+
+        const ImGuiIO& zcIo  = ::ImGui::GetIO();
+        const bool ctrlM = zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
+                           && ::ImGui::IsKeyPressed(ImGuiKey_M, false);
+        const bool keyZ  = !zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
+                           && ::ImGui::IsKeyPressed(ImGuiKey_Z, false);
+        if (s_zenChord.Tick(ctrlM, keyZ, zcIo.DeltaTime)) {
+            d.cfg.ZenMode = !d.cfg.ZenMode;
+        }
+    }
+    // Esc Esc to exit Zen Mode.
+    if (d.cfg.ZenMode) {
+        static int s_escCount   = 0;
+        static float s_escTimer = 0.0f;
+        s_escTimer += ::ImGui::GetIO().DeltaTime;
+        if (s_escTimer > 0.5f) {
+            s_escCount = 0;
+            s_escTimer = 0.0f;
+        }
+        if (::ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ++s_escCount;
+            s_escTimer = 0.0f;
+            if (s_escCount >= 2) {
+                d.cfg.ZenMode = false;
+                s_escCount    = 0;
+            }
+        }
     }
 
     // Keyboard shortcuts for panel visibility toggles (Ctrl+B / Ctrl+J).
@@ -857,6 +945,15 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::Separator();
             if (ImGui::BeginMenu("Appearance")) {
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+                if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
+                    d.requestFullScreenToggle = true;
+                }
+#endif
+                if (ImGui::MenuItem("Zen Mode", "Ctrl+M, Z", d.cfg.ZenMode)) {
+                    d.cfg.ZenMode = !d.cfg.ZenMode;
+                }
+                ImGui::Separator();
                 if (ImGui::BeginMenu("Theme")) {
                     struct ThemeEntry {
                         ThemeId id;
@@ -876,6 +973,72 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         }
                     }
                     ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Density")) {
+                    struct DensityEntry {
+                        TrackerConfig::UiDensity id;
+                        const char* label;
+                    };
+                    const DensityEntry kDensities[] = {
+                        {TrackerConfig::UiDensity::Compact,     "Compact"},
+                        {TrackerConfig::UiDensity::Normal,      "Normal"},
+                        {TrackerConfig::UiDensity::Comfortable, "Comfortable"},
+                    };
+                    for (const DensityEntry& e : kDensities) {
+                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Density == e.id)) {
+                            d.cfg.Density = e.id;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Font")) {
+                    const char* kFonts[] = {
+                        "Segoe UI", "Consolas", "Calibri", "Arial", "Cascadia Code", "JetBrains Mono",
+                    };
+                    const int kFontCount = static_cast<int>(sizeof(kFonts) / sizeof(kFonts[0]));
+                    for (int fi = 0; fi < kFontCount; ++fi) {
+                        const bool selected = (d.cfg.SelectedFontName == kFonts[fi]);
+                        if (ImGui::MenuItem(kFonts[fi], nullptr, selected)) {
+                            d.cfg.SelectedFontName = kFonts[fi];
+                            ConfigManager::Save(d.cfg);
+                            SmatchetRequestFontReload(d.cfg.SelectedFontName,
+                                                      static_cast<float>(d.cfg.FontSizePt));
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Panel Position")) {
+                    if (ImGui::MenuItem("Bottom", nullptr,
+                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Bottom)) {
+                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Bottom) {
+                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Bottom;
+                            ConfigManager::Save(d.cfg);
+                            // Dock rebuild is complex and fragile; reset layout instead.
+                            // The panel will be repositioned after layout reset on next launch.
+                            resetWindowLayoutToDefault(d);
+                        }
+                    }
+                    if (ImGui::MenuItem("Right", nullptr,
+                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
+                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Right) {
+                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
+                            ConfigManager::Save(d.cfg);
+                            resetWindowLayoutToDefault(d);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                {
+                    const char* swapLabel = d.cfg.PrimarySideBarOnRight
+                                                ? "Move Primary Side Bar Left"
+                                                : "Move Primary Side Bar Right";
+                    if (ImGui::MenuItem(swapLabel)) {
+                        d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
+                        ConfigManager::Save(d.cfg);
+                        resetWindowLayoutToDefault(d);
+                    }
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {

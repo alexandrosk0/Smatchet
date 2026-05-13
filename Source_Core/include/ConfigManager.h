@@ -168,6 +168,21 @@ struct TrackerConfig {
     bool ShowPanel            = true;
     bool ShowStatusBar        = true;
 
+    // UI density: controls ItemSpacing / FramePadding applied each frame.
+    enum class UiDensity : int { Compact = 0, Normal = 1, Comfortable = 2 };
+    UiDensity Density = UiDensity::Normal;
+
+    // Panel dock position: Bottom (default) or docked to the Right side.
+    enum class PanelPosition : int { Bottom = 0, Right = 1 };
+    PanelPosition PanelDockSide = PanelPosition::Bottom;
+
+    // Side bar orientation: true = right (VS Code default), false = left.
+    bool PrimarySideBarOnRight = true;
+
+    // Transient UI state — not persisted to disk.
+    bool FullScreen = false; ///< transient, not serialized
+    bool ZenMode    = false; ///< transient, not serialized
+
     // Font setting
     std::string SelectedFontName = "Segoe UI";
     // Font size in points, used by View > Appearance > Zoom In/Out/Reset.

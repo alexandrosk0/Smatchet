@@ -871,6 +871,19 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["show_panel"]              = config.ShowPanel;
     j["show_status_bar"]         = config.ShowStatusBar;
     j["font_size_pt"] = config.FontSizePt;
+    {
+        const char* densityStr = "Normal";
+        switch (config.Density) {
+            case TrackerConfig::UiDensity::Compact:     densityStr = "Compact";     break;
+            case TrackerConfig::UiDensity::Comfortable: densityStr = "Comfortable"; break;
+            default:                                    densityStr = "Normal";      break;
+        }
+        j["ui_density"] = densityStr;
+    }
+    {
+        j["panel_position"] = (config.PanelDockSide == TrackerConfig::PanelPosition::Right) ? "Right" : "Bottom";
+    }
+    j["primary_side_bar_on_right"] = config.PrimarySideBarOnRight;
     auto themeToString = [](ThemeId t) -> const char* {
         switch (t) {
             case ThemeId::ModernDark:   return "ModernDark";
@@ -1163,6 +1176,18 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
             if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
             if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }
+            {
+                const std::string densityStr = j.value("ui_density", std::string("Normal"));
+                if (densityStr == "Compact")          cfg.Density = TrackerConfig::UiDensity::Compact;
+                else if (densityStr == "Comfortable") cfg.Density = TrackerConfig::UiDensity::Comfortable;
+                else                                  cfg.Density = TrackerConfig::UiDensity::Normal;
+            }
+            {
+                const std::string panelPosStr = j.value("panel_position", std::string("Bottom"));
+                cfg.PanelDockSide = (panelPosStr == "Right") ? TrackerConfig::PanelPosition::Right
+                                                              : TrackerConfig::PanelPosition::Bottom;
+            }
+            cfg.PrimarySideBarOnRight = j.value("primary_side_bar_on_right", cfg.PrimarySideBarOnRight);
             const std::string themeStr = j.value("theme", std::string("SmatchetDark"));
             if (themeStr == "ModernDark")        cfg.Theme = ThemeId::ModernDark;
             else if (themeStr == "Vs2022Dark")   cfg.Theme = ThemeId::Vs2022Dark;
