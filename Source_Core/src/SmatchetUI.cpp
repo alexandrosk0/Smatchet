@@ -741,11 +741,6 @@ void SmatchetUI::Draw(AppController& app) {
         }
         g_perfUi.DrawWindow(&g_ui.showPerformance);
     }
-    blameAnalysisUi_.SetBlamePanelOpen(g_ui.showBlameAnalysis);
-    blameAnalysisUi_.ServiceBackground();
-    if (g_ui.showBlameAnalysis) {
-        blameAnalysisUi_.DrawWindow(app, &g_ui.showBlameAnalysis, g_ui.gridState.ActiveIssueId);
-    }
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
         drawPreferencesWindow(app, d);
@@ -1185,8 +1180,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
                 recentViews_.Touch("view.toggle.views-dashboard");
             }
-            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showBlameAnalysis)) {
-                d.showBlameAnalysis = !d.showBlameAnalysis;
+            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.activeGridTab == 1)) {
+                d.activeGridTab = (d.activeGridTab == 1) ? 0 : 1;
                 recentViews_.Touch("view.toggle.source-blame");
             }
             ImGui::Separator();
@@ -1286,7 +1281,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Annotate...")) {
-                d.showBlameAnalysis = true;
+                d.activeGridTab = 1;
             }
             ImGui::EndMenu();
         }

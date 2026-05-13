@@ -147,6 +147,32 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
     const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
 
+    // Tab bar: 0 = Grid, 1 = Annotate.
+    blameAnalysisUi_.SetBlamePanelOpen(d.activeGridTab == 1);
+    blameAnalysisUi_.ServiceBackground();
+    if (ImGui::BeginTabBar("##active_project_tabs")) {
+        if (ImGui::BeginTabItem("Grid")) {
+            if (d.activeGridTab != 0)
+                d.activeGridTab = 0;
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Annotate")) {
+            if (d.activeGridTab != 1)
+                d.activeGridTab = 1;
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    if (d.activeGridTab == 1) {
+        bool wantClose = false;
+        blameAnalysisUi_.DrawContent(app, &wantClose, d.gridState.ActiveIssueId);
+        if (wantClose)
+            d.activeGridTab = 0;
+        ImGui::End();
+        return;
+    }
+
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");
         DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner);

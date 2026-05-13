@@ -10,7 +10,8 @@ struct SpreadsheetState;
 /** True when the configured (or name-matched "callstack") tracker field has non-empty text on this row. */
 bool BlameRowHasNonEmptyCallstackField(const AppController& app, const CachedTicket& ticket);
 
-/** Select the issue, open Blame Analysis, and hydrate callstack from the tracker field (same as Inspect → Source Blame). */
+/** Select the issue, open Blame Analysis, and hydrate callstack from the tracker field (same as Inspect → Source
+ * Blame). */
 void OpenBlameAnalysisForGridIssue(AppController& app, bool& showBlameAnalysis, SpreadsheetState& gridState,
                                    const std::string& issueKey);
 
@@ -29,6 +30,10 @@ class BlameAnalysisUi {
 
     void DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey);
 
+    /** Draw only the inner content (no ImGui window wrapper). Use when embedding inside a tab.
+     *  Sets *wantClose = true when the user clicks Close. */
+    void DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey);
+
     /** Persisted blame options (same fields as former Blame "Options…"); call from Preferences. */
     void DrawBlamePreferencesTab(const AppController& app);
 
@@ -41,9 +46,3 @@ class BlameAnalysisUi {
     bool blamePanelOpen_ = false;
     bool blameOpenPrev_ = false;
 };
-
-
-
-
-
-

@@ -108,6 +108,7 @@ static void DrawBlameFromCallstackMenuIfAny(AppController* app, UiDrawSession* u
     ImGui::Separator();
     if (ImGui::MenuItem("Annotate...")) {
         OpenBlameAnalysisForGridIssue(*app, ui->showBlameAnalysis, ui->gridState, issueKey);
+        ui->activeGridTab = 1;
     }
 }
 

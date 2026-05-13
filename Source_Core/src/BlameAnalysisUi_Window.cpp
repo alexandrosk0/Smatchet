@@ -21,14 +21,36 @@
 using namespace BlameInternal;
 
 void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey) {
-    if (!pOpen) {
+    if (!pOpen || !*pOpen) {
+        if (pOpen)
+            CloseBlameModal(pOpen);
+        return;
+    }
+    constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Annotate###BlameAnalysisModal", pOpen, kPanelFlags)) {
+        CloseBlameModal(pOpen);
+        ImGui::End();
         return;
     }
     if (!*pOpen) {
         CloseBlameModal(pOpen);
+        ImGui::End();
         return;
     }
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        CloseBlameModal(pOpen);
+        ImGui::End();
+        return;
+    }
+    bool wantClose = false;
+    DrawContent(app, &wantClose, selectedJiraIssueKey);
+    if (wantClose)
+        CloseBlameModal(pOpen);
+    ImGui::End();
+}
 
+void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
     ensureSettingsBuffersLoaded();
 
     MaybeAutoselectCallstackTrackerField(app);
@@ -49,30 +71,6 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     }
 
     const BlameUiThemeColors& theme = State().blameCfg.UiColors;
-
-    // Dockable side-bar View — title "Annotate", stable ID "BlameAnalysisModal".
-    // First-time opens auto-dock into the primary side bar (right column, dock id 0x00000004
-    // in kDefaultImGuiDockLayoutIni). FirstUseEver lets users move/undock manually.
-    constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Annotate###BlameAnalysisModal", pOpen, kPanelFlags)) {
-        CloseBlameModal(pOpen);
-        ImGui::End();
-        return;
-    }
-
-    if (!*pOpen) {
-        CloseBlameModal(pOpen);
-        ImGui::End();
-        return;
-    }
-
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        CloseBlameModal(pOpen);
-        ImGui::End();
-        return;
-    }
 
     const std::string titleIssue =
         selectedJiraIssueKey.empty() ? std::string("(no issue selected)") : selectedJiraIssueKey;
@@ -120,8 +118,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         ImGui::SameLine();
         if (ImGui::Button("Close")) {
             PopBlameLinkButtonColors();
-            CloseBlameModal(pOpen);
-            ImGui::End();
+            if (wantClose)
+                *wantClose = true;
             return;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -928,6 +926,4 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         PopBlameLinkButtonColors();
         ImGui::EndPopup();
     }
-
-    ImGui::End();
 }
