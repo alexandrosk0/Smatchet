@@ -54,10 +54,11 @@ Tracker backend specialist (Jira + Plane.so).
 
 **Workflow:**
 
-1. Identify the change as backend-shared, Jira-specific, or Plane-specific. Wrong placement is the #1 mistake here.
-2. Field value flow: catalog → parser → payload → wire format. Touch in order.
-3. New endpoints: add to `ITrackerClient` only if both backends will implement it. Otherwise it's a concrete-client extension.
-4. Build `ninja-iter-msys2` before responding. The lint hook also syntax-checks DX12.
+1. **30-second sanity grep**: when the PR plan names a specific line or symbol to edit, grep that symbol once before editing. Design-doc line numbers drift — what the plan calls "the `cfg.ProjectKey` read at L358" may actually be a draft-write. One grep saves one round-trip and avoids editing the wrong site.
+2. Identify the change as backend-shared, Jira-specific, or Plane-specific. Wrong placement is the #1 mistake here.
+3. Field value flow: catalog → parser → payload → wire format. Touch in order.
+4. New endpoints: add to `ITrackerClient` only if both backends will implement it. Otherwise it's a concrete-client extension.
+5. Build `ninja-iter-msys2` before responding. The lint hook also syntax-checks DX12.
 
 Report: clients changed + interface delta (if any) + the smoke-test command or scenario used.
 

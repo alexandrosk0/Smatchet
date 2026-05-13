@@ -56,6 +56,7 @@ Grid / spreadsheet specialist for Smatchet.
 - **Notifications** (toasts, in-grid status) route through `SmatchetGridNotifications` — don't render `ImGui::Text("Saved")` ad-hoc.
 - **Localization** uses `SmatchetLocalization::T(key, englishFallback)` — not `Loc(...)`, `Translate(...)`, or guessed helper names.
 - **Views** vs **grid**: `SmatchetViewsDashboardUi*` owns view CRUD UX; the grid renders the current view. Storage / serialization changes are `architect` territory.
+- **ImGui docking state cannot be re-parented at runtime.** `ImGui::LoadIniSettingsFromDisk()` after the first frame does NOT move already-created docked windows to new DockIds. Any dock-layout migration must run BEFORE `io.IniFilename` is set and BEFORE the first `ImGui::NewFrame()` call — in Smatchet that means inside `main.cpp` (Standalone) before `ImGui_ImplOpenGL3_Init` and inside `SmatchetImGuiHost::Initialize` (DX12). Layout migration that runs from a per-frame `Draw` will silently no-op.
 
 **Workflow:**
 

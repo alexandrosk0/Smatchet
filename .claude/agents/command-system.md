@@ -55,12 +55,14 @@ Command-system specialist.
 - Scenarios (`Source_Core/{include,src}/Commands/Scenarios/`) are deterministic — no live HTTP. If the command makes a network call, exclude it from scenarios or stub the client.
 - User-facing command text goes through `SmatchetLocalization::T(key, englishFallback)` — not `Loc(...)`, `Translate(...)`, or ad-hoc wrappers.
 - User-facing commands are documented in `CLI_GUIDE.md`, `LUA_GUIDE.md`, and `MCP_GUIDE.md` — update the relevant one(s).
+- **Don't run a batch `clang-format` pass at the end of a multi-file edit.** The `PostToolUse` hook in `.claude/settings.json` already formats every `.cpp` / `.h` you touched. A batch `clang-format` afterwards inflates the diff with reformat noise on unrelated lines.
 
 **Workflow:**
 
 1. Pick the file: `BuiltinCommands.cpp` for general, `ViewCommands.cpp` for view CRUD, `Scenarios/` for scripted flows.
 2. Define args + result schema first — the MCP surface auto-publishes these, so a wrong schema = a wrong MCP tool description.
-3. Register, document, build, smoke-test from CLI before claiming done.
+3. **30-second sanity grep**: when the PR plan names a specific line or symbol to edit, grep that symbol once before editing. Plans drift — what the plan calls "the Lua config setter at L254" may actually be `LuaApplyIssueCreateKv` (per-operation draft kv). One grep saves one round-trip.
+4. Register, document, build, smoke-test from CLI before claiming done.
 
 Report: file(s) changed + command name + which surfaces it appears on (CLI / palette / MCP / Lua / scenario).
 

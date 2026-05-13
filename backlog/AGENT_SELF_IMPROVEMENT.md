@@ -55,7 +55,7 @@ Sweep the file when:
 
 - 2026-05-13 · spike-hunter / orchestrator · [context] — ImGui docking state cannot be re-parented at runtime
   Details: `ImGui::LoadIniSettingsFromDisk()` after the first frame does NOT move already-created docked windows to new DockIds. A common bug pattern: schema migration runs post-load (in the per-frame Draw), windows stay at old positions. Rule: any dock-layout migration must run BEFORE `io.IniFilename` is set and the first `ImGui::NewFrame` call. In Smatchet this means inside `SmatchetImGuiHost::Initialize` (DX12) and inside `main.cpp` before `ImGui_ImplOpenGL3_Init` (Standalone).
-  Status: open
+  Status: applied (45c14c9 — agents/grid-engine.md + agents/unreal-bridge.md § Hard invariants)
 
 - 2026-05-13 · code-review · [tooling] — lint hook does not run clang-format on newly created `.h` files
   Details: The `PostToolUse` hook via `.claude/hooks/lint-cpp.sh` runs clang-format on `.cpp` edits but not on new header files. New headers consistently arrive at code-review with alignment-padding violations that could have been auto-fixed. Add `*.h` (or `*.{cpp,h}`) to the hook's glob pattern in `.claude/settings.json` or the lint script.
@@ -95,11 +95,11 @@ Sweep the file when:
 
 - 2026-05-12 · command-system · [shortcut] — when the harness lint hook auto-runs on every edit, don't also run a batch `clang-format` at the end
   Details: Doing so produced large reformat diffs on `BuiltinCommands.cpp` / `PlaneClient.cpp` during PR 6 of the project-key removal. The PostToolUse hook in `.claude/settings.json` already covered every edited file.
-  Status: open
+  Status: applied (45c14c9 — agents/command-system.md § Hard invariants, new bullet)
 
 - 2026-05-12 · grid-engine, command-system · [context] — localization accessor is `SmatchetLocalization::T(key, englishFallback)`, not `Loc(...)` / `Translate(...)`
   Details: Both PR 4b and PR 6 agents guessed wrong names and only converged via grep. Add a one-line note to `agents/grid-engine.md` and `agents/command-system.md`.
-  Status: open (≥2 agents mentioned — threshold met for applying)
+  Status: applied (d4714ad — agents/grid-engine.md L55 + agents/command-system.md L54 both carry the `SmatchetLocalization::T(key, englishFallback)` invariant)
 
 - 2026-05-12 · grid-engine · [process / new-agent] — design-doc PRs that span ≥3 subsystems have no clear owner
   Details: PR 4 of the project-key removal touched tracker-backend (`ListProjects`) + grid-engine (draft picker, view pill) + bulk-import + i18n. `grid-engine` paused and asked for a split, which was correct but cost a round-trip. Either add an explicit `pr-driver` meta-agent that splits design-doc PRs into subsystem sub-delegations, or add a note to AGENTS.md instructing the orchestrator to pre-split such PRs before delegating.
@@ -127,4 +127,4 @@ Sweep the file when:
 
 - 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
   Details: Project-key PR 6 plan flagged `AppController_LuaBindings.cpp:~L254` as a "Lua config setter to deprecate" — it was actually `LuaApplyIssueCreateKv` (per-operation draft kv, not a config setter). One round-trip cost. Agent correctly flagged back to orchestrator before editing.
-  Status: open
+  Status: applied (45c14c9 — agents/command-system.md § Workflow step 3 + agents/tracker-backend.md § Workflow step 1)

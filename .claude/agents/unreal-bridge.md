@@ -55,6 +55,7 @@ Unreal / dual-target specialist.
 - `IMGUI_USE_WCHAR32` is PUBLIC on `ImGuiLib` — don't redefine it locally.
 - `*_DX12` targets are `EXCLUDE_FROM_ALL`. Don't touch the `_DX12` target list unless asked.
 - Lib packaging: `SmatchetPackageUnrealLibs_DX12` writes to `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet`. Output changes must match `.uplugin` `AdditionalDependencies` / module setup.
+- **Dock-layout migration must run pre-`NewFrame`.** `ImGui::LoadIniSettingsFromDisk()` after the first frame does NOT re-parent already-created docked windows. In DX12 this means: any layout / schema migration runs inside `SmatchetImGuiHost::Initialize` BEFORE `io.IniFilename` is set and BEFORE the first `ImGui::NewFrame()`. Same constraint on Standalone (handled in `main.cpp` before `ImGui_ImplOpenGL3_Init`).
 
 **Workflow:**
 
