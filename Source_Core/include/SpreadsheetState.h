@@ -115,6 +115,12 @@ struct SpreadsheetState {
     std::string MultiSelectActiveKey;
     char MultiSelectSearchBuf[128] = {};
 
+    /** Per-instance state for the single-select combo quick-filter box.
+     *  Same lifetime pattern as `MultiSelect*`: keyed on `ticket.id + "::" + field.Id` so the
+     *  buffer auto-clears when the user opens a different cell's dropdown. */
+    std::string SingleSelectActiveKey;
+    char SingleSelectSearchBuf[128] = {};
+
   private:
     void CopyToEditBuffer(const std::string& val) {
         std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", val.c_str());

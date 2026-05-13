@@ -1184,8 +1184,8 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
 }
 
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
-                              const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
-                              bool tooltipsEnabled) {
+                              const std::string& currentValue, SpreadsheetState& state,
+                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     SmatchetLoadedIconTexture overlayIcon{};
     std::string overlayLoadErr;
@@ -1212,18 +1212,69 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
+        const std::string editorKey = ticket.id + "::" + field.Id;
+        const bool justOpened = (state.SingleSelectActiveKey != editorKey);
+        if (justOpened) {
+            state.SingleSelectActiveKey = editorKey;
+            state.SingleSelectSearchBuf[0] = '\0';
+        }
+
         const std::string currentId = ResolveOptionId(field, currentValue);
         const bool selectedNone = currentId.empty();
         if (ImGui::Selectable("<clear>", selectedNone)) {
             QueueEdit(ticket.id, field, {}, pendingEdits);
         }
+        ImGui::Separator();
 
+        // Quick-filter input — auto-focused on combo open so the user can start typing
+        // immediately. Enter on a single match commits that option and closes the combo.
+        if (justOpened) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool submitOnEnter = ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options",
+                                                            state.SingleSelectSearchBuf,
+                                                            sizeof(state.SingleSelectSearchBuf),
+                                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Separator();
+
+        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
+        const TrackerFieldOption* firstMatch = nullptr;
+        int matchCount = 0;
+        bool drewAny = false;
         for (const auto& option : field.AllowedValueOptions) {
+            const std::string optionId = option.Id.empty() ? option.Value : option.Id;
+            const bool matchesFilter =
+                filterLower.empty() ||
+                ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
+                ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
+                ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
+            if (!matchesFilter) {
+                continue;
+            }
+            if (firstMatch == nullptr) {
+                firstMatch = &option;
+            }
+            ++matchCount;
+            drewAny = true;
             const bool isSelected = (option.Id == currentId);
+            ImGui::PushID(optionId.c_str());
             if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
                 QueueEdit(ticket.id, field, {option.Id}, pendingEdits);
+                ImGui::CloseCurrentPopup();
             }
+            ImGui::PopID();
         }
+        if (!drewAny) {
+            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+        }
+        // Enter commits when filter narrows to a single match; if multiple match, commit the
+        // top match (least-surprise: matches typeahead behaviour in most pickers).
+        if (submitOnEnter && firstMatch != nullptr) {
+            QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits);
+            ImGui::CloseCurrentPopup();
+        }
+        (void)matchCount;
         ImGui::EndCombo();
     }
 
@@ -1573,7 +1624,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             renderPlainText(true);
             return;
         }
-        RenderSingleSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderSingleSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled);
         return;
     case TicketGridColumn::RenderPlan::DateTimeEditor:
         if (!allowEdits) {
