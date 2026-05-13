@@ -129,6 +129,9 @@ struct UiDrawSession {
     int activeGridTab = 0;
     /** Set true to force-select activeGridTab via ImGuiTabItemFlags_SetSelected next frame. */
     bool activeGridTabForcePending = false;
+    /** When false, the Annotate tab is not rendered (tab bar shows Grid only). Open paths
+     *  set this to true; Close button in Annotate sets it false. */
+    bool annotateTabVisible = false;
     bool showBulkImport = false;
     bool showBulkExport = false;
     bool showAuditTrail = false;

@@ -315,7 +315,10 @@ class ConfigManager {
     // longer a separate docked window). Removed dock nodes 0x7 (intermediate X-split) and
     // 0x3 (former 250px right pane for Annotate/Source Blame). Node 0x2 (Active Project)
     // is now a direct child of 0x1 alongside 0x8 (Views), giving the grid more width.
-    static const int kCurrentLayoutSchemaVersion = 4;
+    // Bumped to 5: added NoTabBar=1 to central node 0x2 so the dock-node tab header
+    // ("Smatchet - Active Project") is suppressed — the in-window Grid / Annotate
+    // tab bar is the only chrome the user sees on the active project panel.
+    static const int kCurrentLayoutSchemaVersion = 5;
 
     struct CliOverrides {
         bool HasDbPath;
