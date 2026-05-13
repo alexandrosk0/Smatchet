@@ -15,6 +15,7 @@
 #include "SmatchetTheme.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
+#include "ProjectResolver.h"
 #include "TicketGridModel.h"
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
@@ -265,13 +266,16 @@ static void PersistWindowOpenPreferences(UiDrawSession& d) {
 }
 
 static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
-                                                                        const TrackerConfig& fetchCfg) {
-    return std::async(std::launch::async, [&app, fetchCfg]() {
+                                                                        const TrackerConfig& fetchCfg,
+                                                                        const std::string& projectKey) {
+    return std::async(std::launch::async, [&app, fetchCfg, projectKey]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string error;
         TrackerFieldCatalogResult catalog;
-        result.Ok = app.FetchFieldCatalog(fetchCfg, catalog, error);
+        // Pass active-view projectKey so Jira createmeta + /status enrichment populates
+        // priority/status AllowedValueOptions (otherwise grid renders those cells as text).
+        result.Ok = app.FetchFieldCatalog(fetchCfg, projectKey, catalog, error);
         if (!result.Ok) {
             result.Error = error;
             return result;
@@ -885,7 +889,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
-        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg);
+        const ViewDefinition* activeView = ViewState.GetActiveView();
+        const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
+        const std::string projectKey =
+            smatchet::ResolveProjectForDraft(app.GetTrackerBackend(), jql, std::string(), std::string());
+        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, projectKey);
     };
 
     if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {
