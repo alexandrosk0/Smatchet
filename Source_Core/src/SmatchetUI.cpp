@@ -273,8 +273,8 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string error;
         TrackerFieldCatalogResult catalog;
-        // PR 6 follow-up: pass active-view projectKey so Jira createmeta + /status enrichment
-        // populates priority/status AllowedValueOptions (otherwise grid renders as text).
+        // Pass active-view projectKey so Jira createmeta + /status enrichment populates
+        // priority/status AllowedValueOptions (otherwise grid renders those cells as text).
         result.Ok = app.FetchFieldCatalog(fetchCfg, projectKey, catalog, error);
         if (!result.Ok) {
             result.Error = error;
@@ -889,8 +889,8 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
-        const ViewDefinition* av = ViewState.GetActiveView();
-        const std::string jql = av ? av->Jql : fetchCfg.JqlQuery;
+        const ViewDefinition* activeView = ViewState.GetActiveView();
+        const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
         const std::string projectKey =
             smatchet::ResolveProjectForDraft(app.GetTrackerBackend(), jql, std::string(), std::string());
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, projectKey);
