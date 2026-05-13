@@ -114,6 +114,10 @@ struct UiDrawSession {
     /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
     std::vector<char> conflictResolveBuf;
 
+    /// Inline Command Palette input field rendered in the main menu-bar strip.
+    /// Mirrors VS Code Quick Input — typing pre-fills the existing palette modal.
+    char paletteInlineBuf[256] = {};
+
     bool showPreferences = false;
     bool showViewsDashboard = true;
     bool requestActiveProjectFocus = false;
@@ -287,6 +291,7 @@ struct UiDrawSession {
     /** 0 none, 1 error, 2 success — mirrors single-slot gridEdit banner before it became toast-only. */
     int lastToastedGridBannerKind = 0;
     std::string lastToastedGridBannerMessage;
+    int cachedPendingFieldEditCount = 0; ///< refreshed by OfflineQueueService tick, read by status bar
     std::deque<PendingFieldEdit> queuedFieldEdits;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;
@@ -398,6 +403,25 @@ struct UiDrawSession {
     /// Pixel Y to set via ImGui::SetScrollY each frame while scenarioScrollActive=true.
     /// -1 = inactive (redundant guard; check scenarioScrollActive).
     int scenarioScrollTarget = -1;
+
+    /// Transient flag — standalone target toggles OS fullscreen; Unreal target ignores.
+    bool requestFullScreenToggle = false;
+
+    /// Transient request from `debug.window.resize` — standalone polls this each frame and,
+    /// when set, calls glfwSetWindowSize(window, requestWindowWidth, requestWindowHeight).
+    /// Lets automated visual tests drive deterministic window dimensions over the MCP CLI.
+    bool requestWindowResize = false;
+    int  requestWindowWidth  = 0;
+    int  requestWindowHeight = 0;
+
+    /// Transient request from `debug.window.screenshot` — standalone polls this each frame and,
+    /// when set, reads the GL framebuffer and writes a PNG/PPM to requestScreenshotPath.
+    /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
+    bool        requestScreenshot = false;
+    std::string requestScreenshotPath;
+
+    /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
+    bool showDockDebug = false;
 
     ~UiDrawSession();
 };

@@ -2,6 +2,8 @@
 
 #include "BlameAnalysisUi.h"
 #include "Commands/CommandPaletteUi.h"
+#include "ConfigManager.h"
+#include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
 #include "Views.h"
 
@@ -31,15 +33,76 @@ struct GridFrameContext {
  */
 void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app);
 
+/**
+ * Free-function shim so command handlers (which hold no SmatchetUI*) can trigger a full dock
+ * layout reset. Must be called on the UI thread. Equivalent to the menu Workspace > Reset
+ * Workspace Layout path.
+ */
+void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d);
+
 class SmatchetUI {
   public:
     void Draw(AppController& app);
+
+    /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
+    class RecentViewLru {
+      public:
+        static const int kCapacity = 5;
+
+        RecentViewLru() : size_(0) {}
+
+        /// Record a view toggle command id (e.g. "view.toggle.log"). O(N), N <= 5.
+        /// Silently ignores ids that do not start with "view.toggle." — only known
+        /// view-toggle commands may enter the LRU, preventing future callers from
+        /// accidentally dispatching arbitrary command names via the Recent Views submenu.
+        void Touch(const std::string& commandId) {
+            static const char kPrefix[] = "view.toggle.";
+            if (commandId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) != 0) { return; }
+            // Remove existing occurrence to avoid duplicates.
+            for (int i = 0; i < size_; ++i) {
+                if (entries_[i] == commandId) {
+                    for (int j = i; j < size_ - 1; ++j) {
+                        entries_[j] = entries_[j + 1];
+                    }
+                    --size_;
+                    break;
+                }
+            }
+            // Evict oldest if at capacity.
+            if (size_ == kCapacity) {
+                for (int i = 0; i < kCapacity - 1; ++i) {
+                    entries_[i] = entries_[i + 1];
+                }
+                --size_;
+            }
+            entries_[size_++] = commandId;
+        }
+
+        /// Returns up to kCapacity entries, oldest-first (most-recently used last).
+        std::vector<std::string> Snapshot() const {
+            std::vector<std::string> result;
+            result.reserve(static_cast<size_t>(size_));
+            for (int i = 0; i < size_; ++i) {
+                result.push_back(entries_[i]);
+            }
+            return result;
+        }
+
+      private:
+        std::string entries_[5];
+        int size_;
+    };
 
   private:
     Views ViewState;
     BlameAnalysisUi blameAnalysisUi_;
     GridFrameContext gridFrameCtx_;
     smatchet::cmd::CommandPaletteUi commandPalette_;
+    // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect
+    // a cfg.Theme change and re-apply once per dirty event (not every frame).
+    ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
+    TrackerConfig::UiDensity lastAppliedDensity_ = TrackerConfig::UiDensity::Normal;
+    RecentViewLru recentViews_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);

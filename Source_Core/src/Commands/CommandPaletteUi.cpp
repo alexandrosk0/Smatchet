@@ -31,6 +31,16 @@ void CommandPaletteUi::Close() {
     argFormBufs_.clear();
 }
 
+void CommandPaletteUi::SetFilterText(const char* query) {
+    if (query == nullptr) {
+        filterBuf_[0] = '\0';
+    } else {
+        std::strncpy(filterBuf_, query, sizeof(filterBuf_) - 1U);
+        filterBuf_[sizeof(filterBuf_) - 1U] = '\0';
+    }
+    selected_ = 0;
+}
+
 void CommandPaletteUi::rebuildFiltered(AppController& app) {
     const std::string q = filterBuf_;
     if (q.empty()) {

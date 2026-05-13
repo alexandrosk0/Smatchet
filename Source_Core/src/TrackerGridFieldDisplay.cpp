@@ -817,7 +817,8 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
     }
 
     ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Watchers", &d.watchersPanelOpen)) {
+    if (ImGui::Begin("Watchers", &d.watchersPanelOpen,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextUnformatted("Issue:");
         ImGui::SameLine();
         ImGui::TextUnformatted(d.watchersPopupIssueKey.c_str());
@@ -893,7 +894,8 @@ void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d)
     }
 
     ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Votes", &d.votesPanelOpen)) {
+    if (ImGui::Begin("Votes", &d.votesPanelOpen,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextUnformatted("Issue:");
         ImGui::SameLine();
         ImGui::TextUnformatted(d.votesPopupIssueKey.c_str());

@@ -1517,14 +1517,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     const BlameUiThemeColors& theme = State().blameCfg.UiColors;
 
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->WorkPos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(vp->WorkSize, ImGuiCond_Always);
-    constexpr ImGuiWindowFlags kModalFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                                             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
-                                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    // Dockable side-bar View — title "Source Blame", stable ID "BlameAnalysisModal".
+    // First-time opens auto-dock into the primary side bar (right column, dock id 0x00000004
+    // in kDefaultImGuiDockLayoutIni). FirstUseEver lets users move/undock manually.
+    constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("###BlameAnalysisModal", pOpen, kModalFlags)) {
+    if (!ImGui::Begin("Source Blame###BlameAnalysisModal", pOpen, kPanelFlags)) {
         CloseBlameModal(pOpen);
         ImGui::End();
         return;

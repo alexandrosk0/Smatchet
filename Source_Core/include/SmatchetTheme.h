@@ -1,10 +1,11 @@
 #pragma once
 
+#include "SmatchetThemeIds.h"
 #include "imgui.h"
 
 namespace SmatchetTheme {
-    /** Apply the custom Smatchet "Modern Dark" style to the current ImGui context. */
-    void ApplyStyle();
+    /** Apply the named style palette to the current ImGui context. */
+    void ApplyStyle(ThemeId theme);
 
     /** Predefined colors for status and priorities. */
     namespace Colors {

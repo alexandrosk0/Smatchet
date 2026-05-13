@@ -14,6 +14,8 @@
 #include <winsock2.h>
 #endif
 
+#include <algorithm>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <exception>
@@ -21,6 +23,7 @@
 #include <cstdlib>
 #include <vector>
 #include <ghc/filesystem.hpp>
+#include "Logger.h"
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
 static bool g_MainWindowShownAfterFirstFrame = false;
@@ -76,6 +79,11 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #ifndef GL_SHADING_LANGUAGE_VERSION
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
 #endif
+
+// UiDrawSession is defined in SmatchetUI.cpp (translation-unit global g_ui).
+// main.cpp reads requestFullScreenToggle and cfg.FullScreen after each frame.
+#include "SmatchetUiSession.h"
+extern UiDrawSession g_ui;
 
 // GLFW Error Callback
 static void glfw_error_callback(int error, const char* description) {
@@ -350,7 +358,19 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
-    ConfigManager::EnsureDefaultImGuiSettingsFile();
+    // Schema migration must run before ImGui auto-loads the ini. If we wait for
+    // SmatchetUI::Draw (post-first-frame) to migrate, windows are already created
+    // at old positions and runtime LoadIniSettingsFromDisk does not re-parent them.
+    {
+        TrackerConfig bootCfg = ConfigManager::Load();
+        if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            ConfigManager::WriteDefaultImGuiSettingsFile();
+            bootCfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(bootCfg);
+        } else {
+            ConfigManager::EnsureDefaultImGuiSettingsFile();
+        }
+    }
     io.IniFilename = s_imguiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
@@ -456,8 +476,8 @@ int main(int argc, char** argv) {
             // THE BRIDGE: Hand control over to your engine-agnostic UI layer
             // ====================================================================
 
-            // Setup a full-screen dockspace for a professional layout
-            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            // Full-screen dockspace — NoUndocking matches SmatchetImGuiHost.cpp (DX12 path).
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
 
             // Draw the main application
             SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
@@ -467,12 +487,91 @@ int main(int argc, char** argv) {
             int display_w, display_h;
             glfwGetFramebufferSize(window, &display_w, &display_h);
             glViewport(0, 0, display_w, display_h);
-            glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w,
-                         clear_color.w);
+            // Clear with the active theme's WindowBg so any dock gaps blend with panel
+            // backgrounds — viewport background should never visibly differ from panels.
+            const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+            glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
             glClear(GL_COLOR_BUFFER_BIT);
+            (void)clear_color;
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             glfwSwapBuffers(window);
+
+            // Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
+            static int s_windowedX = 100, s_windowedY = 100, s_windowedW = 1280, s_windowedH = 720;
+            if (g_ui.requestFullScreenToggle) {
+                g_ui.requestFullScreenToggle = false;
+                g_ui.cfg.FullScreen = !g_ui.cfg.FullScreen;
+                if (g_ui.cfg.FullScreen) {
+                    glfwGetWindowPos(window, &s_windowedX, &s_windowedY);
+                    glfwGetWindowSize(window, &s_windowedW, &s_windowedH);
+                    GLFWmonitor* mon = glfwGetPrimaryMonitor();
+                    const GLFWvidmode* mode = glfwGetVideoMode(mon);
+                    glfwSetWindowMonitor(window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
+                } else {
+                    glfwSetWindowMonitor(window, nullptr, s_windowedX, s_windowedY, s_windowedW, s_windowedH, 0);
+                }
+            }
+
+            // Resize request from `debug.window.resize` (visual-test automation).
+            if (g_ui.requestWindowResize) {
+                g_ui.requestWindowResize = false;
+                const int w = std::max(320, g_ui.requestWindowWidth);
+                const int h = std::max(240, g_ui.requestWindowHeight);
+                glfwSetWindowSize(window, w, h);
+                LOG_INFO("debug.window.resize: %dx%d", w, h);
+            }
+
+            // Screenshot request from `debug.window.screenshot` — read framebuffer + write PPM.
+            // PPM is chosen over PNG because stb_image_write is not linked into the standalone
+            // target; PPM is uncompressed but readable by every image tool and by the harness.
+            if (g_ui.requestScreenshot) {
+                g_ui.requestScreenshot = false;
+                const std::string screenshotPath = g_ui.requestScreenshotPath;
+                int fw = 0, fh = 0;
+                glfwGetFramebufferSize(window, &fw, &fh);
+                if (fw > 0 && fh > 0 && !screenshotPath.empty()) {
+                    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
+                    // Read from the back buffer; we have just SwapBuffers'd, so front == previous frame.
+                    // GL_BACK after swap holds the freshly-presented frame on most drivers; use GL_FRONT
+                    // since we've already swapped — the front buffer is the most recently shown image.
+                    glReadBuffer(GL_FRONT);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    // Flip vertically: OpenGL origin is bottom-left, image files expect top-left.
+                    const size_t rowBytes = static_cast<size_t>(fw) * 4u;
+                    std::vector<unsigned char> flipped(pixels.size());
+                    for (int y = 0; y < fh; ++y) {
+                        std::memcpy(
+                            &flipped[static_cast<size_t>(y) * rowBytes],
+                            &pixels[static_cast<size_t>(fh - 1 - y) * rowBytes],
+                            rowBytes);
+                    }
+                    FILE* fp = std::fopen(screenshotPath.c_str(), "wb");
+                    if (!fp) {
+                        LOG_ERROR("debug.window.screenshot: cannot open %s for writing",
+                                  screenshotPath.c_str());
+                    } else {
+                        std::fprintf(fp, "P6\n%d %d\n255\n", fw, fh);
+                        for (int y = 0; y < fh; ++y) {
+                            for (int x = 0; x < fw; ++x) {
+                                const unsigned char* p =
+                                    &flipped[(static_cast<size_t>(y) * static_cast<size_t>(fw) +
+                                              static_cast<size_t>(x)) *
+                                             4u];
+                                std::fputc(p[0], fp);
+                                std::fputc(p[1], fp);
+                                std::fputc(p[2], fp);
+                            }
+                        }
+                        std::fclose(fp);
+                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PPM)",
+                                 screenshotPath.c_str(), fw, fh);
+                    }
+                } else {
+                    LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
+                }
+            }
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
             if (!g_MainWindowShownAfterFirstFrame) {

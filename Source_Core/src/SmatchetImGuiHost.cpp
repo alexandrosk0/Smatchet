@@ -414,12 +414,27 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     }
     ImGuiIO& io = ImGui::GetIO();
     ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
-    ConfigManager::EnsureDefaultImGuiSettingsFile();
+    // Schema migration MUST run before ImGui auto-loads the ini, otherwise
+    // already-created windows stay docked at the old positions and runtime
+    // LoadIniSettingsFromDisk does not re-parent them. Load cfg, compare schema,
+    // force-write the hardcoded default + persist new schema, then let ImGui
+    // pick up the fresh file via io.IniFilename.
+    {
+        TrackerConfig bootCfg = ConfigManager::Load();
+        if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            ConfigManager::WriteDefaultImGuiSettingsFile();
+            bootCfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(bootCfg);
+        } else {
+            ConfigManager::EnsureDefaultImGuiSettingsFile();
+        }
+    }
     io.IniFilename = ImplData->ImGuiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
-    SmatchetTheme::ApplyStyle();
+    // Initial palette before cfg is loaded; SmatchetUI::Draw re-applies once cfg is available.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
     // Ensure this thread has the correct ImGui context during DX12 init.
@@ -595,7 +610,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
 
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
     ImplData->FrameActive.store(true, std::memory_order_relaxed);
     ImplData->BuildingFrame.store(false, std::memory_order_release);
 #else

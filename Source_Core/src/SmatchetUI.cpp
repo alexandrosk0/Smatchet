@@ -1,6 +1,10 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
+#include "SmatchetViewVisibility.h"
+#include "SmatchetDockNodeIds.h"
+#include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
+#include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
@@ -8,6 +12,7 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
+#include "SmatchetTheme.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
 #include "TicketGridModel.h"
@@ -282,19 +287,21 @@ static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppContr
 
 void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
-    const LayoutRect rect = DefaultLayoutRectFor(layoutKey, defaultW, defaultH);
-    const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0)
-                               ? ImGuiCond_Always
-                               : (IsSessionUtilityLayoutKey(layoutKey) ? ImGuiCond_Appearing : ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(rect.Pos, cond);
-    ImGui::SetNextWindowSize(rect.Size, cond);
+    // With docking enabled, position is managed by the dock layout (imgui.ini DockId entries).
+    // SetNextWindowPos with ImGuiCond_Appearing or ImGuiCond_Always fights the dock engine:
+    // it forces windows to absolute pixel coordinates, kicking them out of their dock nodes
+    // on every toggle. Only set size on FirstUseEver as a fallback for windows with no ini entry.
+    ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH), ImGuiCond_FirstUseEver);
     if (requestFocus) {
         ImGui::SetNextWindowFocus();
     }
+    (void)layoutKey; // previously used for position lookup — no longer needed with docking
+    (void)d;
 }
 
 void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
-    if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
+    // Docked windows: size and position are fully managed by the dock node. Do not repair.
+    if (ImGui::IsWindowDocked()) {
         return;
     }
     const ImVec2 pos = ImGui::GetWindowPos();
@@ -352,6 +359,33 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     PersistWindowOpenPreferences(d);
 }
 
+void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
+    // Replicates SmatchetUI::resetWindowLayoutToDefault for callers without a SmatchetUI*.
+    // Must be called on the UI thread (see MainThreadDispatch.h).
+    d.showViewsDashboard = true;
+    d.requestActiveProjectFocus = false;
+    d.requestViewsDashboardFocus = false;
+    d.showPerformance = false;
+    d.showBlameAnalysis = false;
+    d.showBulkImport = false;
+    d.showBulkExport = false;
+    d.showAuditTrail = false;
+    d.showLogWindow = false;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    d.showLuaAutomationWindow = false;
+    d.requestLuaAutomationFocus = false;
+    d.requestScriptingEditorTabFocus = false;
+#endif
+#if defined(SMATCHET_WITH_MCP)
+    d.showMcpServerWindow = false;
+    d.requestMcpServerFocus = false;
+#endif
+    d.layoutForceDefaultsFrames = 8;
+    ConfigManager::WriteDefaultImGuiSettingsFile();
+    ImGui::LoadIniSettingsFromDisk(ConfigManager::GetImGuiSettingsPath().c_str());
+    PersistWindowOpenPreferences(d);
+}
+
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     if (!g_ui.cfgInitialized) {
@@ -368,6 +402,18 @@ void SmatchetUI::Draw(AppController& app) {
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
+        // Commit-last layout migration: reset dock layout first, then bump version and
+        // persist. If killed between the two steps the next launch re-migrates safely.
+        // ConfigManager::Save uses AtomicWriteTextFile (write-tmp + MoveFileEx rename)
+        // internally via WriteConfigJson — already atomic.
+        if (g_ui.cfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            LOG_INFO("SmatchetUI: LayoutSchemaVersion %d < %d — resetting layout to VS shell default.",
+                     g_ui.cfg.LayoutSchemaVersion, ConfigManager::kCurrentLayoutSchemaVersion);
+            resetWindowLayoutToDefault(g_ui);
+            g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(g_ui.cfg);
+        }
+
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
 
@@ -375,6 +421,44 @@ void SmatchetUI::Draw(AppController& app) {
             SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
         }
     }
+
+    // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
+    ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+
+    // Apply density padding — only re-apply when the setting changes.
+    {
+        if (d.cfg.Density != lastAppliedDensity_) {
+            lastAppliedDensity_ = d.cfg.Density;
+            ImGuiStyle& style = ::ImGui::GetStyle();
+            switch (d.cfg.Density) {
+                case TrackerConfig::UiDensity::Compact:
+                    style.ItemSpacing  = ImVec2(4.0f, 2.0f);
+                    style.FramePadding = ImVec2(4.0f, 2.0f);
+                    break;
+                case TrackerConfig::UiDensity::Comfortable:
+                    style.ItemSpacing  = ImVec2(10.0f, 8.0f);
+                    style.FramePadding = ImVec2(8.0f, 6.0f);
+                    break;
+                default: // Normal
+                    style.ItemSpacing  = ImVec2(8.0f, 6.0f);
+                    style.FramePadding = ImVec2(6.0f, 4.0f);
+                    break;
+            }
+        }
+    }
+
+    // Panel visibility is driven by the d.show* / cfg.Show* flags that gate each ImGui::Begin call.
+    // ImGui collapses empty dock nodes automatically — no per-frame bit-manipulation needed.
+    // (HiddenTabBar fights the layout on resize; removed in favour of the natural empty-node path.)
+
+    // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
+    // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
+    // any user-saved value through this check.
+    if (d.cfg.Theme != lastAppliedTheme_) {
+        SmatchetTheme::ApplyStyle(d.cfg.Theme);
+        lastAppliedTheme_ = d.cfg.Theme;
+    }
+
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
@@ -395,6 +479,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Drain the offline create queue opportunistically (rate-limited internally).
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
+    d.cachedPendingFieldEditCount = static_cast<int>(app.GetPendingFieldEdits().size());
     app.TickStreamingApply();
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath, const std::string& mimeType,
@@ -456,7 +541,7 @@ void SmatchetUI::Draw(AppController& app) {
     // into the session so SmatchetActiveProjectGridUi can honor it.
     {
         bool scenScrollActive = false;
-        int  scenScrollTarget = -1;
+        int scenScrollTarget = -1;
         app.Scenarios().Tick(app, scenScrollActive, scenScrollTarget);
         d.scenarioScrollActive = scenScrollActive;
         d.scenarioScrollTarget = scenScrollTarget;
@@ -533,9 +618,105 @@ void SmatchetUI::Draw(AppController& app) {
                                        : std::vector<TicketGridColumn>();
         }
     }
-    {
+    if (!d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
+    }
+    // Ctrl+Alt+D — toggle dock-node debug overlay.
+    {
+        const ImGuiIO& dbgIo = ::ImGui::GetIO();
+        if (dbgIo.KeyCtrl && dbgIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            d.showDockDebug = !d.showDockDebug;
+        }
+    }
+    // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
+    if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
+        DrawStatusBar(app, d);
+    }
+
+    // F11 — full screen toggle (standalone only).
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+    if (::ImGui::IsKeyPressed(ImGuiKey_F11, false)) {
+        d.requestFullScreenToggle = true;
+    }
+#endif
+
+    // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit.
+    {
+        struct KeyChord {
+            bool prefixArmed  = false;
+            float timeoutSec  = 0.0f;
+
+            bool Tick(bool prefixKey, bool completionKey, float dt) {
+                static const float kTimeout = 1.0f;
+                if (prefixKey) {
+                    prefixArmed = true;
+                    timeoutSec  = 0.0f;
+                }
+                if (prefixArmed) {
+                    timeoutSec += dt;
+                    if (timeoutSec > kTimeout) {
+                        prefixArmed = false;
+                    }
+                    if (::ImGui::GetIO().WantTextInput) {
+                        prefixArmed = false;
+                    }
+                    if (completionKey && prefixArmed) {
+                        prefixArmed = false;
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+        static KeyChord s_zenChord;
+
+        const ImGuiIO& zcIo  = ::ImGui::GetIO();
+        const bool ctrlM = zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
+                           && ::ImGui::IsKeyPressed(ImGuiKey_M, false);
+        const bool keyZ  = !zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
+                           && ::ImGui::IsKeyPressed(ImGuiKey_Z, false);
+        if (s_zenChord.Tick(ctrlM, keyZ, zcIo.DeltaTime)) {
+            d.cfg.ZenMode = !d.cfg.ZenMode;
+        }
+    }
+    // Esc Esc to exit Zen Mode.
+    if (d.cfg.ZenMode) {
+        static int s_escCount   = 0;
+        static float s_escTimer = 0.0f;
+        s_escTimer += ::ImGui::GetIO().DeltaTime;
+        if (s_escTimer > 0.5f) {
+            s_escCount = 0;
+            s_escTimer = 0.0f;
+        }
+        if (::ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ++s_escCount;
+            s_escTimer = 0.0f;
+            if (s_escCount >= 2) {
+                d.cfg.ZenMode = false;
+                s_escCount    = 0;
+            }
+        }
+    }
+
+    // Keyboard shortcuts for panel visibility toggles (Ctrl+B / Ctrl+J).
+    // ImGui::Shortcut available in docking branch; fall back to GetIO check if absent.
+    {
+        const ImGuiIO& io = ::ImGui::GetIO();
+        const bool ctrlDown = io.KeyCtrl;
+        const bool altDown = io.KeyAlt;
+        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
+            ConfigManager::Save(d.cfg);
+        }
+        if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+            SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
+            ConfigManager::Save(d.cfg);
+        }
+        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+            SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+            ConfigManager::Save(d.cfg);
+        }
     }
     DrainAppUpdateCheck(d);
     if (!d.offlineLegacyStartupBannerText.empty()) {
@@ -617,6 +798,67 @@ void SmatchetUI::Draw(AppController& app) {
     }
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();
+    }
+    // Dock-node debug overlay — toggled by Ctrl+Alt+D.
+    if (d.showDockDebug) {
+        const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking
+                                         | ImGuiWindowFlags_NoCollapse
+                                         | ImGuiWindowFlags_AlwaysAutoResize
+                                         | ImGuiWindowFlags_NoSavedSettings;
+        ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
+        ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
+        ::ImGui::Separator();
+        static const ImGuiID kNodes[] = {
+            SmatchetDockNodeIds::kPrimarySideBar,
+            SmatchetDockNodeIds::kBottomPanel,
+            SmatchetDockNodeIds::kSecondarySideBar,
+        };
+        static const char* const kNames[] = {
+            "PrimarySideBar(0x4)",
+            "BottomPanel(0xA)",
+            "SecondarySideBar(0x10)",
+        };
+        for (int i = 0; i < 3; ++i) {
+            ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+            if (!node) {
+                ::ImGui::TextDisabled("%s: NOT FOUND", kNames[i]);
+                continue;
+            }
+            ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
+                kNames[i],
+                node->Size.x, node->Size.y,
+                static_cast<int>(node->LocalFlags),
+                node->Windows.Size,
+                static_cast<int>(node->IsEmpty()));
+        }
+        ::ImGui::Separator();
+        ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
+            d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+        ::ImGui::End();
+
+        // Per-frame LOG_DEBUG throttled to every 120 frames.
+        {
+            static int s_dbgLogFrame = 0;
+            ++s_dbgLogFrame;
+            if (s_dbgLogFrame >= 120) {
+                s_dbgLogFrame = 0;
+                for (int i = 0; i < 3; ++i) {
+                    ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+                    if (!node) {
+                        LOG_DEBUG("DockDebug: %s NOT FOUND", kNames[i]);
+                    } else {
+                        LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
+                            kNames[i],
+                            node->Size.x, node->Size.y,
+                            static_cast<int>(node->LocalFlags),
+                            node->Windows.Size,
+                            static_cast<int>(node->IsEmpty()));
+                    }
+                }
+                LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
+                    d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+            }
+        }
     }
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
@@ -731,100 +973,350 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         const bool hasSelection = d.gridState.RectSel.HasAnySelection();
         const bool hasTickets = !tickets.empty();
 
-        if (ImGui::BeginMenu("Workspace")) {
-            if (ImGui::MenuItem("Grid")) {
-                d.requestActiveProjectFocus = true;
+        auto selectAllRows = [&]() {
+            auto& sel = d.gridState.RectSel;
+            sel.ClearAll();
+            const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
+            for (size_t row = 0; row < rowCount; ++row) {
+                sel.Rows.insert(static_cast<int>(row));
             }
-            if (ImGui::MenuItem("Views & Queries...")) {
+            if (rowCount > 0) {
+                sel.PrimaryRow = 0;
+                sel.SortSignature =
+                    ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
+                const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
+                if (firstTicketIndex < tickets.size()) {
+                    d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
+                }
+            }
+        };
+
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Open Project View...", "Ctrl+O")) {
                 d.showViewsDashboard = true;
                 d.requestViewsDashboardFocus = true;
             }
-            if (ImGui::MenuItem("Reset Workspace Layout")) {
-                resetWindowLayoutToDefault(d);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Selection")) {
-            if (ImGui::MenuItem("Select All", nullptr, false, hasTickets)) {
-                auto& sel = d.gridState.RectSel;
-                sel.ClearAll();
-                const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
-                for (size_t row = 0; row < rowCount; ++row) {
-                    sel.Rows.insert(static_cast<int>(row));
-                }
-                if (rowCount > 0) {
-                    sel.PrimaryRow = 0;
-                    sel.SortSignature =
-                        ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
-                    const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
-                    if (firstTicketIndex < tickets.size()) {
-                        d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
-                    }
-                }
-            }
-            if (ImGui::MenuItem("Clear Selection", nullptr, false, hasSelection)) {
-                d.gridState.RectSel.ClearAll();
-            }
-            if (ImGui::MenuItem("Copy Selection", nullptr, false, hasSelection && !columns.empty())) {
-                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Issues")) {
+            ImGui::Separator();
             if (ImGui::MenuItem("Import Issues...")) {
                 d.showBulkImport = true;
             }
             if (ImGui::MenuItem("Export Issues...")) {
                 d.showBulkExport = true;
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Read-only Mode", nullptr, d.cfg.ReadOnlyMode, true)) {
+                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
+                ConfigManager::Save(d.cfg);
+            }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Automation")) {
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection && !columns.empty())) {
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Selection")) {
+            if (ImGui::MenuItem("Select All", "Ctrl+A", false, hasTickets)) {
+                selectAllRows();
+            }
+            if (ImGui::MenuItem("Clear Selection", "Ctrl+Shift+A", false, hasSelection)) {
+                d.gridState.RectSel.ClearAll();
+            }
+            if (ImGui::MenuItem("Copy Selection", "Ctrl+Shift+C", false, hasSelection && !columns.empty())) {
+                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) {
+                commandPalette_.Open();
+            }
+            if (ImGui::MenuItem("Open View...", "Ctrl+Shift+V")) {
+                commandPalette_.Open();
+                commandPalette_.SetFilterText("view.toggle.");
+            }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Appearance")) {
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+                if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
+                    d.requestFullScreenToggle = true;
+                }
+#endif
+                if (ImGui::MenuItem("Zen Mode", "Ctrl+M, Z", d.cfg.ZenMode)) {
+                    d.cfg.ZenMode = !d.cfg.ZenMode;
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Theme")) {
+                    struct ThemeEntry {
+                        ThemeId id;
+                        const char* label;
+                    };
+                    constexpr ThemeEntry kEntries[] = {
+                        {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
+                        {ThemeId::ModernDark, "Modern Dark"},
+                        {ThemeId::Vs2022Dark, "VS 2022 Dark"},
+                        {ThemeId::Vs2022Light, "VS 2022 Light"},
+                        {ThemeId::HighContrast, "High Contrast"},
+                    };
+                    for (const ThemeEntry& e : kEntries) {
+                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Theme == e.id)) {
+                            d.cfg.Theme = e.id;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Density")) {
+                    struct DensityEntry {
+                        TrackerConfig::UiDensity id;
+                        const char* label;
+                    };
+                    const DensityEntry kDensities[] = {
+                        {TrackerConfig::UiDensity::Compact,     "Compact"},
+                        {TrackerConfig::UiDensity::Normal,      "Normal"},
+                        {TrackerConfig::UiDensity::Comfortable, "Comfortable"},
+                    };
+                    for (const DensityEntry& e : kDensities) {
+                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Density == e.id)) {
+                            d.cfg.Density = e.id;
+                            ConfigManager::Save(d.cfg);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Font")) {
+                    const char* kFonts[] = {
+                        "Segoe UI", "Consolas", "Calibri", "Arial", "Cascadia Code", "JetBrains Mono",
+                    };
+                    const int kFontCount = static_cast<int>(sizeof(kFonts) / sizeof(kFonts[0]));
+                    for (int fi = 0; fi < kFontCount; ++fi) {
+                        const bool selected = (d.cfg.SelectedFontName == kFonts[fi]);
+                        if (ImGui::MenuItem(kFonts[fi], nullptr, selected)) {
+                            d.cfg.SelectedFontName = kFonts[fi];
+                            ConfigManager::Save(d.cfg);
+                            SmatchetRequestFontReload(d.cfg.SelectedFontName,
+                                                      static_cast<float>(d.cfg.FontSizePt));
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Panel Position")) {
+                    if (ImGui::MenuItem("Bottom", nullptr,
+                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Bottom)) {
+                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Bottom) {
+                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Bottom;
+                            ConfigManager::Save(d.cfg);
+                            // Dock rebuild is complex and fragile; reset layout instead.
+                            // The panel will be repositioned after layout reset on next launch.
+                            resetWindowLayoutToDefault(d);
+                        }
+                    }
+                    if (ImGui::MenuItem("Right", nullptr,
+                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
+                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Right) {
+                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
+                            ConfigManager::Save(d.cfg);
+                            resetWindowLayoutToDefault(d);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                {
+                    const char* swapLabel = d.cfg.PrimarySideBarOnRight
+                                                ? "Move Primary Side Bar Left"
+                                                : "Move Primary Side Bar Right";
+                    if (ImGui::MenuItem(swapLabel)) {
+                        d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
+                        ConfigManager::Save(d.cfg);
+                        resetWindowLayoutToDefault(d);
+                    }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {
+                    d.cfg.FontSizePt = (d.cfg.FontSizePt < 32) ? (d.cfg.FontSizePt + 1) : 32;
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Zoom Out", "Ctrl+-", false, d.cfg.FontSizePt > 8)) {
+                    d.cfg.FontSizePt = (d.cfg.FontSizePt > 8) ? (d.cfg.FontSizePt - 1) : 8;
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Reset Zoom", "Ctrl+0", false, d.cfg.FontSizePt != 16)) {
+                    d.cfg.FontSizePt = 16;
+                    ConfigManager::Save(d.cfg);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
+                    SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
+                    recentViews_.Touch("view.toggle.primary-side-bar");
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
+                    SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
+                    recentViews_.Touch("view.toggle.secondary-side-bar");
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
+                    d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
+                    recentViews_.Touch("view.toggle.status-bar");
+                    ConfigManager::Save(d.cfg);
+                }
+                if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
+                    SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+                    recentViews_.Touch("view.toggle.panel");
+                    ConfigManager::Save(d.cfg);
+                }
+                ImGui::EndMenu();
+            }
+#if defined(SMATCHET_ENABLE_EDITOR_LAYOUT)
+            if (ImGui::BeginMenu("Editor Layout")) {
+                if (ImGui::MenuItem("Single"))        { /* TODO: DockBuilderSplitNode single */ }
+                if (ImGui::MenuItem("Two Columns"))   { /* TODO */ }
+                if (ImGui::MenuItem("Three Columns")) { /* TODO */ }
+                if (ImGui::MenuItem("Two Rows"))      { /* TODO */ }
+                if (ImGui::MenuItem("Grid (2x2)"))    { /* TODO */ }
+                ImGui::EndMenu();
+            }
+#endif
+            ImGui::Separator();
+            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
+                d.showViewsDashboard = !d.showViewsDashboard;
+                if (d.showViewsDashboard) {
+                    d.requestViewsDashboardFocus = true;
+                }
+                recentViews_.Touch("view.toggle.views-dashboard");
+            }
+            if (ImGui::MenuItem("Source Blame", "Ctrl+Shift+B", d.showBlameAnalysis)) {
+                d.showBlameAnalysis = !d.showBlameAnalysis;
+                recentViews_.Touch("view.toggle.source-blame");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
+                d.showLogWindow = !d.showLogWindow;
+                recentViews_.Touch("view.toggle.log");
+            }
+            if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
+                d.showAuditTrail = !d.showAuditTrail;
+                if (d.showAuditTrail) {
+                    d.requestAuditTrailFocus = true;
+                }
+                recentViews_.Touch("view.toggle.backend-audit");
+            }
+            if (ImGui::MenuItem("Performance", nullptr, d.showPerformance)) {
+                d.showPerformance = !d.showPerformance;
+                recentViews_.Touch("view.toggle.performance");
+            }
+            if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
+                d.showBulkImport = !d.showBulkImport;
+                recentViews_.Touch("view.toggle.bulk-import");
+            }
+            if (ImGui::MenuItem("Bulk Export", nullptr, d.showBulkExport)) {
+                d.showBulkExport = !d.showBulkExport;
+                recentViews_.Touch("view.toggle.bulk-export");
+            }
+            if (ImGui::MenuItem("Preferences", nullptr, d.showPreferences)) {
+                d.showPreferences = !d.showPreferences;
+                recentViews_.Touch("view.toggle.preferences");
+            }
+#if defined(SMATCHET_WITH_MCP)
+            if (ImGui::MenuItem("MCP Server", nullptr, d.showMcpServerWindow)) {
+                d.showMcpServerWindow = !d.showMcpServerWindow;
+                if (d.showMcpServerWindow) {
+                    d.requestMcpServerFocus = true;
+                }
+                recentViews_.Touch("view.toggle.mcp-server");
+            }
+#endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            if (ImGui::MenuItem("Scripts & Actions...", nullptr, false, true)) {
+            if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
                 d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
                 if (d.showLuaAutomationWindow) {
                     d.requestLuaAutomationFocus = true;
                     d.requestScriptingEditorTabFocus = true;
                 }
+                recentViews_.Touch("view.toggle.scripts-and-actions");
             }
 #endif
-#if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("Agent Bridge (MCP)...", nullptr, false, true)) {
-                d.showMcpServerWindow = !d.showMcpServerWindow;
-                if (d.showMcpServerWindow) {
-                    d.requestMcpServerFocus = true;
+            ImGui::Separator();
+            // Recently Used Views submenu: lists the last 5 toggled view ids, oldest first.
+            if (ImGui::BeginMenu("Recently Used Views")) {
+                const std::vector<std::string> recent = recentViews_.Snapshot();
+                if (recent.empty()) {
+                    ImGui::BeginDisabled();
+                    ImGui::MenuItem("(none yet)");
+                    ImGui::EndDisabled();
+                } else {
+                    for (int ri = static_cast<int>(recent.size()) - 1; ri >= 0; --ri) {
+                        const std::string& cmdId = recent[static_cast<size_t>(ri)];
+                        if (ImGui::MenuItem(cmdId.c_str())) {
+                            smatchet::cmd::CommandContext ctx;
+                            ctx.App = &app;
+                            ctx.Source = smatchet::cmd::CommandSource::Palette;
+                            const nlohmann::json emptyArgs = nlohmann::json::object();
+                            smatchet::cmd::CommandResult r = app.Commands().Dispatch(cmdId, emptyArgs, ctx);
+                            if (!r.Ok) {
+                                LOG_DEBUG("SmatchetUI: recently used view command not found: %s", cmdId.c_str());
+                            }
+                        }
+                    }
                 }
+                ImGui::EndMenu();
             }
-#endif
+            if (ImGui::MenuItem("Reset Layout")) {
+                resetWindowLayoutToDefault(d);
+            }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Inspect")) {
-            if (ImGui::MenuItem("Source Blame...")) {
-                d.showBlameAnalysis = true;
+        if (ImGui::BeginMenu("Go")) {
+            if (ImGui::MenuItem("Active Project Grid", "Ctrl+Alt+1")) {
+                d.requestActiveProjectFocus = true;
             }
-            if (ImGui::MenuItem("Sync Audit...")) {
+            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Alt+2")) {
+                d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
+            }
+            if (ImGui::MenuItem("Log", "Ctrl+Alt+3")) {
+                d.showLogWindow = true;
+            }
+            if (ImGui::MenuItem("Backend Audit", "Ctrl+Alt+4")) {
                 d.showAuditTrail = true;
                 d.requestAuditTrailFocus = true;
             }
-            if (ImGui::MenuItem("Runtime Log", nullptr, false, true)) {
-                d.showLogWindow = !d.showLogWindow;
-            }
-            if (ImGui::MenuItem("Performance Monitor...")) {
+            if (ImGui::MenuItem("Performance", "Ctrl+Alt+5")) {
                 d.showPerformance = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Source Blame...")) {
+                d.showBlameAnalysis = true;
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Settings")) {
-            if (ImGui::MenuItem("Preferences...")) {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        if (ImGui::BeginMenu("Run")) {
+            if (ImGui::MenuItem("Scripts & Actions...")) {
+                d.showLuaAutomationWindow = true;
+                d.requestLuaAutomationFocus = true;
+                d.requestScriptingEditorTabFocus = true;
+            }
+            ImGui::EndMenu();
+        }
+#endif
+        if (ImGui::BeginMenu("Tools")) {
+            if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
                 d.showPreferences = true;
             }
+#if defined(SMATCHET_WITH_MCP)
+            if (ImGui::MenuItem("MCP Server...")) {
+                d.showMcpServerWindow = true;
+                d.requestMcpServerFocus = true;
+            }
+#endif
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
                 StartAppUpdateCheck(d, app, true);
-            }
-            if (ImGui::MenuItem("Read-only Mode", nullptr, false, true)) {
-                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
-                ConfigManager::Save(d.cfg);
             }
             ImGui::EndMenu();
         }
@@ -837,6 +1329,39 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
         }
 #endif
+
+        // Inline Command Palette input — VS Code Quick Input.
+        // Typing pre-fills + opens the existing palette modal; Enter does the same.
+        {
+            constexpr float kInlineMaxWidthPx = 640.0f;
+            constexpr float kInlineMinWidthPx = 200.0f;
+            constexpr float kRightReservedPx = 140.0f;
+            const float menuRightEdge = ImGui::GetCursorPosX();
+            const float rightLimit = ImGui::GetWindowContentRegionMax().x - kRightReservedPx;
+            const float availW = (std::max)(0.0f, rightLimit - menuRightEdge);
+
+            if (availW >= kInlineMinWidthPx) {
+                const float inputW = (std::min)(kInlineMaxWidthPx, availW * 0.55f);
+                const float xPad = (availW - inputW) * 0.5f;
+                ImGui::SetCursorPosX(menuRightEdge + xPad);
+                ImGui::SetNextItemWidth(inputW);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+                const bool committed = ImGui::InputTextWithHint("##cmd-palette-input", "Search commands (Ctrl+Shift+P)",
+                                                                d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
+                                                                ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::PopStyleVar();
+                if ((ImGui::IsItemActivated() || committed) && d.paletteInlineBuf[0] != '\0') {
+                    if (!commandPalette_.IsOpen()) {
+                        commandPalette_.Open();
+                    }
+                    commandPalette_.SetFilterText(d.paletteInlineBuf);
+                }
+                if (!commandPalette_.IsOpen() && !ImGui::IsItemActive() && d.paletteInlineBuf[0] != '\0') {
+                    d.paletteInlineBuf[0] = '\0';
+                }
+            }
+        }
+
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
             const char* closeLabel = "Close";

@@ -21,6 +21,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "SmatchetDefaults.h"
+#include "SmatchetThemeIds.h"
 
 struct CommentTemplate {
     std::string Id;
@@ -161,8 +162,40 @@ struct TrackerConfig {
     // Views editor: split between Available (left) and Selected (right) panes inside the Fields tab.
     float ViewsFieldsSplitRatio = 0.5f;
 
+    // VS Code shell: dockspace node visibility (View > Appearance toggles + shortcuts).
+    bool ShowPrimarySideBar   = true;
+    bool ShowSecondarySideBar = false;
+    bool ShowPanel            = true;
+    bool ShowStatusBar        = true;
+
+    // UI density: controls ItemSpacing / FramePadding applied each frame.
+    enum class UiDensity : int { Compact = 0, Normal = 1, Comfortable = 2 };
+    UiDensity Density = UiDensity::Normal;
+
+    // Panel dock position: Bottom (default) or docked to the Right side.
+    enum class PanelPosition : int { Bottom = 0, Right = 1 };
+    PanelPosition PanelDockSide = PanelPosition::Bottom;
+
+    // Side bar orientation: true = right (VS Code default), false = left.
+    bool PrimarySideBarOnRight = true;
+
+    // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
+    bool FullScreen = false;
+    bool ZenMode    = false;
+
+    // Bumped to kCurrentLayoutSchemaVersion after the first VS-shell layout migration.
+    // On first launch with an old imgui.ini the migration resets the dock layout, then
+    // writes this field so subsequent launches skip the reset.
+    int LayoutSchemaVersion = 0;
+
     // Font setting
     std::string SelectedFontName = "Segoe UI";
+    // Font size in points, used by View > Appearance > Zoom In/Out/Reset.
+    // Clamped to [8, 32] at load. 16 matches the legacy hardcoded value.
+    int FontSizePt = 16;
+    // Active ImGui style palette, applied per-frame from View > Appearance > Theme.
+    // Default keeps the legacy palette bit-identical for existing users.
+    ThemeId Theme = ThemeId::SmatchetDark;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.
@@ -258,6 +291,21 @@ struct BlameAnalysisConfig {
 
 class ConfigManager {
   public:
+    // Bump when the default dock layout changes incompatibly. SmatchetUI::Draw
+    // detects LayoutSchemaVersion < kCurrentLayoutSchemaVersion on first launch
+    // after upgrade, resets imgui.ini, then persists the new version so the
+    // migration runs exactly once.
+    // Bumped to 2: schema-1 imgui.ini was corrupted by the old prepareTopLevelWindow bug
+    // (SetNextWindowPos kicked panels out of dock nodes). Forces a one-shot reset so the
+    // fixed layout + SetNextWindowDockID fallbacks pick up correctly.
+    // Bumped to 3: rewrote default dock ini to a clean VS-shell tree (top split with
+    // central + primary side bar + reserved secondary, bottom panel hosting Log/Audit/etc.).
+    // Schema 2 is the milestone version. Boot path: Load cfg, compare schema,
+    // if cfg.LayoutSchemaVersion < this, WriteDefault + persist, then ImGui auto-loads
+    // the fresh ini via io.IniFilename. Pre-first-frame migration (matters because
+    // runtime LoadIniSettingsFromDisk does NOT re-parent already-created windows).
+    static const int kCurrentLayoutSchemaVersion = 2;
+
     struct CliOverrides {
         bool HasDbPath;
         std::string DbPath;

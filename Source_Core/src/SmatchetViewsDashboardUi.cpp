@@ -10,6 +10,7 @@
 #include "TrackerFieldSchema.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
