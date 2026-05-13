@@ -428,29 +428,79 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                     preview = optIt->Value;
                 }
             }
-            if (ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str())) {
+            const bool comboOpened = ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str());
+            if (comboOpened) {
+                const bool justOpened = (d.newIssueDraftComboSearchActiveField != fieldId);
+                if (justOpened) {
+                    d.newIssueDraftComboSearchActiveField = fieldId;
+                    d.newIssueDraftComboSearchBufs[fieldId].fill('\0');
+                }
+                auto& searchBuf = d.newIssueDraftComboSearchBufs[fieldId];
+
+                if (justOpened) {
+                    ImGui::SetKeyboardFocusHere();
+                }
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                const bool submitOnEnter = ImGui::InputTextWithHint(
+                    "##NewIssueComboSearch", "Filter options", searchBuf.data(), searchBuf.size(),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::Separator();
+
+                const std::string filterLower = ToLowerAsciiCopy(TrimCopy(std::string(searchBuf.data())));
+                const TrackerFieldOption* firstMatch = nullptr;
+                bool drewAny = false;
+
+                auto applySelection = [&](const TrackerFieldOption& opt) {
+                    d.newIssueQueueFallbackVisible = false;
+                    d.newIssueQueueFallbackError.clear();
+                    if (fieldId == "issuetype") {
+                        d.newIssueDraft.IssueTypeId = opt.Id;
+                        d.newIssueDraft.IssueTypeName = opt.Value;
+                        // Keep FieldValues in sync: combo preview/selection read `current` from here.
+                        d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
+                    } else if (fieldId == "project") {
+                        d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
+                        d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
+                    } else {
+                        // Store option id (e.g. accountId for users) so create payload matches grid edits.
+                        d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
+                    }
+                };
+
                 if (field) {
                     for (const auto& opt : field->AllowedValueOptions) {
-                        const bool selected = (opt.Id == current || opt.Value == current);
-                        if (ImGui::Selectable(opt.Value.c_str(), selected)) {
-                            d.newIssueQueueFallbackVisible = false;
-                            d.newIssueQueueFallbackError.clear();
-                            if (fieldId == "issuetype") {
-                                d.newIssueDraft.IssueTypeId = opt.Id;
-                                d.newIssueDraft.IssueTypeName = opt.Value;
-                                // Keep FieldValues in sync: combo preview/selection read `current` from here.
-                                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-                            } else if (fieldId == "project") {
-                                d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
-                                d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
-                            } else {
-                                // Store option id (e.g. accountId for users) so create payload matches grid edits.
-                                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-                            }
+                        const std::string optId = opt.Id.empty() ? opt.Value : opt.Id;
+                        const bool matchesFilter =
+                            filterLower.empty() ||
+                            ToLowerAsciiCopy(opt.Value).find(filterLower) != std::string::npos ||
+                            ToLowerAsciiCopy(opt.SecondaryValue).find(filterLower) != std::string::npos ||
+                            ToLowerAsciiCopy(optId).find(filterLower) != std::string::npos;
+                        if (!matchesFilter) {
+                            continue;
                         }
+                        if (firstMatch == nullptr) {
+                            firstMatch = &opt;
+                        }
+                        drewAny = true;
+                        const bool selected = (opt.Id == current || opt.Value == current);
+                        ImGui::PushID(optId.c_str());
+                        if (ImGui::Selectable(opt.Value.c_str(), selected)) {
+                            applySelection(opt);
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::PopID();
                     }
                 }
+                if (!drewAny) {
+                    ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+                }
+                if (submitOnEnter && firstMatch != nullptr) {
+                    applySelection(*firstMatch);
+                    ImGui::CloseCurrentPopup();
+                }
                 ImGui::EndCombo();
+            } else if (d.newIssueDraftComboSearchActiveField == fieldId) {
+                d.newIssueDraftComboSearchActiveField.clear();
             }
         } else if (fieldId == "description") {
             // Description uses a multiline editor so users can write rich content using
