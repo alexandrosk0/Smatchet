@@ -701,47 +701,90 @@ std::string ConfigManager::GetDefaultSettingsPath() {
     return base + "default_settings.json";
 }
 
-std::string ConfigManager::GetPortableFlagPath(const std::string& runtimeAssetDir) {
+std::string ConfigManager::GetStoragePreferenceFlagPath(const std::string& runtimeAssetDir) {
     const std::string normalized = NormalizeDirectoryPath(runtimeAssetDir);
     if (normalized.empty()) {
-        return "smatchet_portable.flag";
+        return "smatchet_storage_mode.txt";
     }
-    return normalized + "smatchet_portable.flag";
+    return normalized + "smatchet_storage_mode.txt";
 }
 
-bool ConfigManager::IsPortableModeFlagSet(const std::string& runtimeAssetDir) {
-    return FileExists(GetPortableFlagPath(runtimeAssetDir));
+bool ConfigManager::HasExplicitStoragePreference(const std::string& runtimeAssetDir) {
+    return FileExists(GetStoragePreferenceFlagPath(runtimeAssetDir));
 }
 
-bool ConfigManager::SetPortableModeFlag(const std::string& runtimeAssetDir, bool enabled, std::string& outError) {
-    outError.clear();
-    const std::string path = GetPortableFlagPath(runtimeAssetDir);
-    if (enabled) {
-        EnsureParentDirectoryForFile(path);
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        if (!file.is_open()) {
-            outError = "Could not create portable marker file: " + path;
-            return false;
-        }
-        file << "Smatchet portable-mode marker. Delete this file to revert to OS user-data directory.\n";
-        return file.good();
-    }
+ConfigManager::StoragePreference ConfigManager::GetStoragePreference(const std::string& runtimeAssetDir,
+                                                                     StoragePreference defaultIfMissing) {
+    const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);
     if (!FileExists(path)) {
-        return true;
+        return defaultIfMissing;
     }
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        return defaultIfMissing;
+    }
+    std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::string firstToken;
+    for (char c : contents) {
+        if (c == '\r' || c == '\n' || c == ' ' || c == '\t' || c == '#') {
+            if (!firstToken.empty() || c == '#') {
+                break;
+            }
+            continue;
+        }
+        firstToken.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (firstToken == "portable") {
+        return StoragePreference::Portable;
+    }
+    if (firstToken == "shared") {
+        return StoragePreference::Shared;
+    }
+    return defaultIfMissing;
+}
+
+bool ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref,
+                                         std::string& outError) {
+    outError.clear();
+    const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);
+    EnsureParentDirectoryForFile(path);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        outError = "Could not write storage-mode marker file: " + path;
+        return false;
+    }
+    file << (pref == StoragePreference::Portable ? "portable" : "shared") << '\n'
+         << "# Smatchet storage-mode marker. Authoritative across launches. Change via\n"
+         << "# Preferences -> Local data, or by editing the first non-comment line.\n";
+    return file.good();
+}
+
+std::string ConfigManager::GetPlatformSharedUserDataDirectory() {
 #if defined(_WIN32)
-    const std::wstring wPath = Utf8ToWide(path);
-    if (wPath.empty() || ::DeleteFileW(wPath.c_str()) == 0) {
-        outError = "Could not remove portable marker file: " + path;
-        return false;
+    char buf[MAX_PATH] = {};
+    DWORD n = ::GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return NormalizeDirectoryPath(std::string(buf) + "\\Smatchet");
     }
+    n = ::GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return NormalizeDirectoryPath(std::string(buf) + "\\Smatchet");
+    }
+    return std::string();
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME")) {
+        return NormalizeDirectoryPath(std::string(home) + "/Library/Application Support/Smatchet");
+    }
+    return std::string();
 #else
-    if (std::remove(path.c_str()) != 0) {
-        outError = std::string("Could not remove portable marker file: ") + std::strerror(errno);
-        return false;
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
+        return NormalizeDirectoryPath(std::string(xdg) + "/Smatchet");
     }
+    if (const char* home = std::getenv("HOME")) {
+        return NormalizeDirectoryPath(std::string(home) + "/.config/Smatchet");
+    }
+    return std::string();
 #endif
-    return true;
 }
 
 nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {

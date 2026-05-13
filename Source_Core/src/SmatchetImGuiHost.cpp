@@ -375,7 +375,21 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     if (ConfigManager::GetFilesBaseDirectory().empty()) {
         const std::string baseFromDbPath = SmatchetDirectoryFromFilePath(options.DbPath);
         if (!baseFromDbPath.empty()) {
-            ConfigManager::SetBaseDirectoryForFiles(baseFromDbPath);
+            ConfigManager::SetRuntimeAssetDirectory(baseFromDbPath);
+            // Plugin defaults to Portable (per-Unreal-project) to preserve historical
+            // <Project>/Saved/smatchet_config.json behaviour. The user can opt into Shared
+            // mode via Preferences -> Local data when the project dir isn't writable
+            // (UE source control, network share, sandboxed CI runner, etc.).
+            const ConfigManager::StoragePreference pref =
+                ConfigManager::GetStoragePreference(baseFromDbPath, ConfigManager::StoragePreference::Portable);
+            std::string userDataDir = baseFromDbPath;
+            if (pref == ConfigManager::StoragePreference::Shared) {
+                const std::string shared = ConfigManager::GetPlatformSharedUserDataDirectory();
+                if (!shared.empty()) {
+                    userDataDir = shared;
+                }
+            }
+            ConfigManager::SetUserDataDirectory(userDataDir);
         }
     }
 

@@ -294,17 +294,19 @@ int main(int argc, char** argv) {
     glfwSwapInterval(1); // Enable vsync
 
     // Separate shipped runtime assets (next to the exe) from writable user data.
-    // Helper: resolve userDataDir given the exe dir. Honors portable-mode marker file
-    // (`smatchet_portable.flag` co-located with the exe) — when present, writable files
-    // live next to the exe instead of in the OS user-data dir. Marker is authoritative;
-    // the preferences toggle just writes / removes it and the next launch picks up the
-    // matching path.
+    // Helper: resolve userDataDir given the exe dir. Honors `smatchet_storage_mode.txt`
+    // alongside the exe. Standalone defaults to `Shared` (OS user-data dir) when no
+    // explicit marker exists. The marker is authoritative across launches; the
+    // preferences toggle just writes the new value and the next launch picks it up.
     const auto resolveStandaloneUserDataDir = [](const std::string& exeDir) -> std::string {
-        if (!ConfigManager::IsPortableModeFlagSet(exeDir)) {
-            std::string osDir = SmatchetGetStandaloneUserDataDirectory();
-            if (!osDir.empty()) {
-                return osDir;
-            }
+        const ConfigManager::StoragePreference pref =
+            ConfigManager::GetStoragePreference(exeDir, ConfigManager::StoragePreference::Shared);
+        if (pref == ConfigManager::StoragePreference::Portable) {
+            return exeDir;
+        }
+        std::string osDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+        if (!osDir.empty()) {
+            return osDir;
         }
         return exeDir;
     };

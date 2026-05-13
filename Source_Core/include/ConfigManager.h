@@ -336,16 +336,37 @@ class ConfigManager {
     static const std::string& GetUserDataDirectory();
     static std::string GetDefaultSettingsPath();
 
-    /** Portable-mode marker file (`smatchet_portable.flag`) co-located with the runtime
-     *  assets. When present, the standalone bootstrap and the Unreal plugin route writable
-     *  files (config / views / SQLite cache / imgui.ini) to `runtimeAssetDir` instead of
-     *  the OS user-data dir. Authoritative across launches — pref-toggle just writes / removes
-     *  this file and the next launch picks the matching path. */
-    static std::string GetPortableFlagPath(const std::string& runtimeAssetDir);
-    static bool IsPortableModeFlagSet(const std::string& runtimeAssetDir);
-    /** Create or remove the portable marker file. Returns true on success; on failure
-     *  `outError` is populated. Takes effect on next launch. */
-    static bool SetPortableModeFlag(const std::string& runtimeAssetDir, bool enabled, std::string& outError);
+    /** Where writable files (config / views / SQLite cache / imgui.ini) live.
+     *   - `Portable`  → next to the runtime assets (exe dir for standalone,
+     *                   `<UnrealProject>/Saved/` for the plugin).
+     *   - `Shared`    → OS user-data dir (`%LOCALAPPDATA%\Smatchet` on Windows,
+     *                   `~/Library/Application Support/Smatchet` on macOS,
+     *                   `$XDG_CONFIG_HOME/Smatchet` on Linux). */
+    enum class StoragePreference { Portable, Shared };
+
+    /** Persisted marker file storing the user's explicit choice. Lives alongside the
+     *  runtime assets so it survives reinstalls of the OS-level user data. Absent file
+     *  means "no explicit choice — caller's default applies" — standalone defaults to
+     *  `Shared`, Unreal plugin defaults to `Portable` (preserves legacy per-project storage). */
+    static std::string GetStoragePreferenceFlagPath(const std::string& runtimeAssetDir);
+
+    /** Read explicit user preference from the marker file. When absent or malformed,
+     *  return `defaultIfMissing`. Cheap (one stat + one short read). */
+    static StoragePreference GetStoragePreference(const std::string& runtimeAssetDir,
+                                                  StoragePreference defaultIfMissing);
+
+    /** Write the explicit preference. Takes effect on next launch — paths are resolved
+     *  at startup. Returns true on success; on failure `outError` is populated. */
+    static bool SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref,
+                                     std::string& outError);
+
+    /** Returns true iff the user has made an explicit choice (marker file exists). */
+    static bool HasExplicitStoragePreference(const std::string& runtimeAssetDir);
+
+    /** Platform-resolved shared user-data directory (trailing separator). Empty when the
+     *  OS doesn't expose the expected env vars (degraded — caller should fall back to
+     *  the runtime asset dir). Cross-platform: %LOCALAPPDATA% \ macOS Library \ XDG. */
+    static std::string GetPlatformSharedUserDataDirectory();
 
     static nlohmann::json LoadJsonFile(const std::string& path);
     static nlohmann::json LoadMergedConfigJson();
