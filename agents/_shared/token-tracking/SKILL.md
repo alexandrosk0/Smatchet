@@ -1,6 +1,4 @@
 ---
-# AUTO-GENERATED MIRROR of ../../../agents/_shared/token-tracking/SKILL.md — DO NOT EDIT.
-# Run scripts/sync-agents.sh to regenerate.
 name: agent-tokens
 description: Report per-agent token usage for the current Claude Code session (default), all sessions (--all), or a time window (--since <N>{h|d|w}). Reads .claude/.agent-tokens.jsonl produced by the SubagentStop hook and prints a fixed-width table with dollar estimates per Anthropic public pricing.
 ---

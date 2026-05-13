@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/agent-token-log.py — DO NOT EDIT.
-# Run scripts/sync-agents.sh to regenerate.
 """SubagentStop hook — append one JSONL line of usage stats per subagent call.
 
 Schema: see docs/AGENT_TOKEN_TRACKING.md § Layer B.

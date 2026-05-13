@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/agents-statusline.py — DO NOT EDIT.
-# Run scripts/sync-agents.sh to regenerate.
 """Statusline badge — appends a per-session agent-token summary to whatever
 the existing caveman statusline emits.
 

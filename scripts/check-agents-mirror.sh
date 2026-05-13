@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Verify .claude/agents/*.md is in sync with agents/*.md.
+# Verify .claude/ mirror is in sync with canonical sources under agents/.
 # Exit 0 on match, non-zero on drift. CI / pre-commit friendly.
+#
+# Covers both sync targets:
+#   agents/*.md                              -> .claude/agents/*.md
+#   agents/_shared/token-tracking/*.py       -> .claude/hooks/agent-token-log.py
+#                                            -> .claude/hooks/agents-statusline.py
+#   agents/_shared/token-tracking/SKILL.md   -> .claude/skills/agent-tokens/SKILL.md
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -9,40 +15,63 @@ ROOT="$(pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Generate a fresh mirror in tempdir using the same logic as sync-agents.sh,
-# then diff against the committed mirror.
-mkdir -p "$TMP/.claude/agents"
-mkdir -p "$TMP/agents"
-cp "$ROOT/agents/"*.md "$TMP/agents/"
+# Stage a minimal copy: canonical sources + the sync script. Run the script
+# inside the tempdir; diff its mirror output against the committed mirror.
+mkdir -p "$TMP/agents" "$TMP/scripts"
+cp -r "$ROOT/agents/." "$TMP/agents/"
+cp "$ROOT/scripts/sync-agents.sh" "$TMP/scripts/sync-agents.sh"
 
-# Run sync logic against the temp copy.
 (
   cd "$TMP"
-  for src in agents/*.md; do
-    name="$(basename "$src")"
-    dst=".claude/agents/$name"
-    awk -v name="$name" '
-      NR == 1 && $0 == "---" {
-        print "---"
-        print "# AUTO-GENERATED MIRROR of ../../agents/" name " — DO NOT EDIT."
-        print "# Run scripts/sync-agents.sh to regenerate."
-        next
-      }
-      { print }
-    ' "$src" > "$dst"
-  done
+  bash scripts/sync-agents.sh >/dev/null
 )
 
-# Diff the temp mirror against the committed mirror.
-# README.md is intentional documentation, not a mirrored agent — exclude from drift check.
-if diff -q -r --exclude=README.md "$TMP/.claude/agents" "$ROOT/.claude/agents" > /dev/null; then
-  echo "agents mirror is in sync"
-  exit 0
-else
-  echo "agents mirror is OUT OF SYNC with canonical agents/" >&2
-  echo "diff:" >&2
+DRIFT=0
+
+# 1) agents/*.md mirror.  README.md is intentional + ignored.
+if ! diff -q -r --exclude=README.md "$TMP/.claude/agents" "$ROOT/.claude/agents" >/dev/null; then
+  echo "agents mirror OUT OF SYNC (.claude/agents/)" >&2
   diff -r --exclude=README.md "$TMP/.claude/agents" "$ROOT/.claude/agents" >&2 || true
+  DRIFT=1
+fi
+
+# 2) token-tracking hook mirrors.  Compare only the files we manage; other
+#    files under .claude/hooks/ (lint-cpp.sh, vexp-guard.sh, ...) are
+#    intentionally out of scope.
+for stem in agent-token-log agents-statusline; do
+  exp="$TMP/.claude/hooks/${stem}.py"
+  act="$ROOT/.claude/hooks/${stem}.py"
+  if [[ -f "$exp" && -f "$act" ]]; then
+    if ! diff -q "$exp" "$act" >/dev/null; then
+      echo ".claude/hooks/${stem}.py OUT OF SYNC" >&2
+      diff "$exp" "$act" >&2 || true
+      DRIFT=1
+    fi
+  elif [[ -f "$exp" && ! -f "$act" ]]; then
+    echo ".claude/hooks/${stem}.py MISSING (run scripts/sync-agents.sh)" >&2
+    DRIFT=1
+  fi
+done
+
+# 3) token-tracking SKILL.md mirror.
+exp="$TMP/.claude/skills/agent-tokens/SKILL.md"
+act="$ROOT/.claude/skills/agent-tokens/SKILL.md"
+if [[ -f "$exp" && -f "$act" ]]; then
+  if ! diff -q "$exp" "$act" >/dev/null; then
+    echo ".claude/skills/agent-tokens/SKILL.md OUT OF SYNC" >&2
+    diff "$exp" "$act" >&2 || true
+    DRIFT=1
+  fi
+elif [[ -f "$exp" && ! -f "$act" ]]; then
+  echo ".claude/skills/agent-tokens/SKILL.md MISSING (run scripts/sync-agents.sh)" >&2
+  DRIFT=1
+fi
+
+if [[ $DRIFT -ne 0 ]]; then
   echo >&2
   echo "fix: run scripts/sync-agents.sh and commit the result" >&2
   exit 1
 fi
+
+echo "agents + token-tracking mirrors in sync"
+exit 0

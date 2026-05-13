@@ -130,15 +130,19 @@ Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the
 ## Files added
 
 - `docs/AGENT_TOKEN_TRACKING.md` — this doc.
-- `.claude/hooks/agent-token-log.sh` — hook.
-- `.claude/hooks/agents-statusline.sh` (+ `.ps1`) — combined statusline.
-- `.claude/skills/agent-tokens/SKILL.md` — slash skill.
-- `scripts/agent-tokens-report.sh` — report generator.
+- `agents/_shared/token-tracking/agent-token-log.py` — canonical hook source (Python; mirror at `.claude/hooks/agent-token-log.py`).
+- `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (mirror at `.claude/hooks/agents-statusline.py`).
+- `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (mirror at `.claude/skills/agent-tokens/SKILL.md`).
+- `agents/_shared/token-tracking/README.md` — README for the canonical dir.
+- `scripts/agent-tokens-report.py` — harness-agnostic CLI report. No mirror.
 
 ## Files modified
 
-- `.claude/settings.json` — add `SubagentStop` hook entry.
+- `.claude/settings.json` — `SubagentStop` hook entry pointing at the mirror at `.claude/hooks/agent-token-log.py`.
 - `.gitignore` — ignore `.claude/.agent-tokens.jsonl`.
+- `scripts/sync-agents.sh` + `scripts/sync-agents.ps1` — extended to mirror the `agents/_shared/token-tracking/` tree into `.claude/hooks/` + `.claude/skills/agent-tokens/`.
+- `scripts/check-agents-mirror.sh` — drift check now covers the token-tracking mirror paths too.
+- `AGENTS.md` — § Agent file locations documents the dual-location convention for both `agents/*.md` and `agents/_shared/`.
 
 ## Migration / commit order
 

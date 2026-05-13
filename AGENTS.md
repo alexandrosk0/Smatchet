@@ -50,14 +50,24 @@ Under Claude Code this maps to `mcp__vexp__run_pipeline` (semantic search) and `
 
 ## Agent file locations
 
-Agent definitions are **dual-located**:
+Agent definitions and shared agent tooling are **dual-located**:
 
-- **Canonical**: `agents/<name>.md` at repo root. This is where humans edit and where the agnostic Agents.md spec ([agents.md](https://agents.md/)) places them.
-- **Mirror**: `.claude/agents/<name>.md` — auto-generated copy for Claude Code's hardcoded discovery path. **Do not edit the mirror directly** — your changes will be silently overwritten on the next sync. Each mirror file starts with a YAML-comment warning to that effect.
+- **Canonical (harness-agnostic)**:
+  - `agents/<name>.md` — one file per delegated agent. Where humans edit and where the agnostic [agents.md spec](https://agents.md/) places them.
+  - `agents/_shared/token-tracking/` — shared scripts that any agent harness can wire up: SubagentStop-style hook + statusline renderer + slash-skill definition. See [`agents/_shared/token-tracking/README.md`](agents/_shared/token-tracking/README.md).
+- **Mirror (Claude Code-specific)**:
+  - `.claude/agents/<name>.md` — auto-generated copy for Claude Code's hardcoded agent-discovery path.
+  - `.claude/hooks/agent-token-log.py` — auto-generated copy wired as a `SubagentStop` hook in `.claude/settings.json`.
+  - `.claude/hooks/agents-statusline.py` — auto-generated copy invoked from the user's `~/.claude/settings.json` `statusLine.command`.
+  - `.claude/skills/agent-tokens/SKILL.md` — auto-generated copy for Claude Code's slash-skill path.
 
-After editing any file under `agents/`, run `bash scripts/sync-agents.sh` (or `scripts/sync-agents.ps1` on PowerShell-only Windows boxes) to refresh the mirror. The drift check `scripts/check-agents-mirror.sh` verifies they match (CI-friendly).
+**Do not edit the mirror directly.** Each mirror file carries an `AUTO-GENERATED MIRROR ... DO NOT EDIT` banner at the top; edits get overwritten on the next sync.
 
-Harnesses other than Claude Code should read from `agents/` and ignore the `.claude/` mirror.
+After editing any canonical file under `agents/`, run `bash scripts/sync-agents.sh` (or `scripts/sync-agents.ps1` on PowerShell-only Windows boxes) to refresh the mirror. The drift check `scripts/check-agents-mirror.sh` verifies all mirrored paths (`.claude/agents/`, `.claude/hooks/agent-token-log.py`, `.claude/hooks/agents-statusline.py`, `.claude/skills/agent-tokens/SKILL.md`) match canonical; CI-friendly.
+
+`scripts/agent-tokens-report.py` is **already harness-agnostic** (pure CLI reading the JSONL) and stays at `scripts/` with no mirror — every harness invokes it the same way.
+
+Harnesses other than Claude Code should read from `agents/` and ignore the `.claude/` mirror. The contract for the token-tracking hook is documented in `agents/_shared/token-tracking/README.md` § Wiring for other harnesses.
 
 ## Delegation
 

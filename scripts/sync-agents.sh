@@ -1,16 +1,34 @@
 #!/usr/bin/env bash
-# Sync canonical agent definitions at agents/*.md into the Claude Code
-# auto-discovery mirror at .claude/agents/*.md.
+# Sync canonical agent + agent-tooling sources into the Claude Code
+# auto-discovery / hook mirror under .claude/.
 #
-# Canonical: edit files under agents/ only. Run this script after any
-# canonical edit. The mirror gets a YAML-comment banner warning humans
-# not to edit it directly.
+# Two source trees are mirrored:
+#
+#   agents/*.md
+#     -> .claude/agents/*.md
+#     YAML-comment banner injected inside the `---` frontmatter so
+#     Claude Code's parser still sees valid YAML.
+#
+#   agents/_shared/token-tracking/{*.py, SKILL.md}
+#     -> .claude/hooks/agent-token-log.py
+#     -> .claude/hooks/agents-statusline.py
+#     -> .claude/skills/agent-tokens/SKILL.md
+#     Python files get a `#`-comment banner injected right after the
+#     shebang. SKILL.md gets the same YAML-comment banner used by
+#     agents/*.md.
+#
+# Canonical: edit files under agents/ only. Mirror is auto-generated and
+# never to be edited by hand.
 #
 # Idempotent — running twice produces no diff.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+
+# -----------------------------------------------------------------------------
+# Section 1 — agents/*.md  ->  .claude/agents/*.md
+# -----------------------------------------------------------------------------
 
 CANONICAL_DIR="$ROOT/agents"
 MIRROR_DIR="$ROOT/.claude/agents"
@@ -25,6 +43,7 @@ mkdir -p "$MIRROR_DIR"
 # Write each mirror file: inject a YAML-comment warning right after the
 # opening `---` so frontmatter parsers (Claude Code) still see valid YAML.
 for src in "$CANONICAL_DIR"/*.md; do
+  [[ -e "$src" ]] || continue
   name="$(basename "$src")"
   dst="$MIRROR_DIR/$name"
 
@@ -37,11 +56,6 @@ for src in "$CANONICAL_DIR"/*.md; do
       next
     }
     { print }
-    END {
-      if (!injected) {
-        # File had no opening `---` — unusual but not fatal. Mirror as-is.
-      }
-    }
   ' "$src" > "$dst"
 done
 
@@ -57,4 +71,60 @@ for dst in "$MIRROR_DIR"/*.md; do
   fi
 done
 
-echo "synced $(ls "$CANONICAL_DIR"/*.md | wc -l | tr -d ' ') agents to $MIRROR_DIR/"
+AGENTS_COUNT=$(ls "$CANONICAL_DIR"/*.md 2>/dev/null | wc -l | tr -d ' ')
+
+# -----------------------------------------------------------------------------
+# Section 2 — agents/_shared/token-tracking/  ->  .claude/{hooks,skills}/
+# -----------------------------------------------------------------------------
+
+TT_DIR="$ROOT/agents/_shared/token-tracking"
+HOOKS_DIR="$ROOT/.claude/hooks"
+SKILLS_DIR="$ROOT/.claude/skills/agent-tokens"
+
+TT_COUNT=0
+if [[ -d "$TT_DIR" ]]; then
+  mkdir -p "$HOOKS_DIR" "$SKILLS_DIR"
+
+  # Python files: inject a `#`-comment banner after the shebang. If no
+  # shebang, prepend the banner at the top.
+  for stem in agent-token-log agents-statusline; do
+    src="$TT_DIR/${stem}.py"
+    [[ -f "$src" ]] || continue
+    dst="$HOOKS_DIR/${stem}.py"
+    awk -v name="${stem}.py" '
+      NR == 1 && /^#!/ {
+        print
+        print "# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/" name " — DO NOT EDIT."
+        print "# Run scripts/sync-agents.sh to regenerate."
+        injected = 1
+        next
+      }
+      NR == 1 && !injected {
+        print "# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/" name " — DO NOT EDIT."
+        print "# Run scripts/sync-agents.sh to regenerate."
+        injected = 1
+      }
+      { print }
+    ' "$src" > "$dst"
+    TT_COUNT=$((TT_COUNT + 1))
+  done
+
+  # SKILL.md: same YAML-comment banner pattern as agents/*.md.
+  src="$TT_DIR/SKILL.md"
+  if [[ -f "$src" ]]; then
+    dst="$SKILLS_DIR/SKILL.md"
+    awk '
+      NR == 1 && $0 == "---" {
+        print "---"
+        print "# AUTO-GENERATED MIRROR of ../../../agents/_shared/token-tracking/SKILL.md — DO NOT EDIT."
+        print "# Run scripts/sync-agents.sh to regenerate."
+        injected = 1
+        next
+      }
+      { print }
+    ' "$src" > "$dst"
+    TT_COUNT=$((TT_COUNT + 1))
+  fi
+fi
+
+echo "synced $AGENTS_COUNT agents to .claude/agents/ + $TT_COUNT token-tracking files to .claude/hooks/ + .claude/skills/agent-tokens/"
