@@ -95,6 +95,7 @@ Each packet should include:
 | `build-doctor` | high · read-edit | CMake / Ninja / MSYS2 / lld / LTO / `SmatchetPackageUnrealLibs_DX12` failures. Pass the preset name and the failing output verbatim. |
 | `perf-detective` | high · read-only | Steady-state perf — optimize / profile / FPS / sustained lag. Owns hypothesis + diagnose + validate over frame averages. Delegates to `perf-instrument` and `perf-measure`. Wraps `docs/PERF_WORKFLOW.md`. |
 | `spike-hunter` | high · read-only | Intermittent UI-thread stalls — spike / hitch / freeze / stutter / "occasionally slow". Looks at p99 / max outliers + blocking calls reaching the UI thread (HTTP, SQLite, p4, file I/O, locks). Delegates to `perf-instrument` and `perf-measure`. |
+| `debug-detective` | high · read-edit | Behavioural bugs — crash / wrong output / regression / "broken" / "doesn't work". Inserts temporary `LOG_DEBUG` / `LOG_TRACE` markers (prefixed `[temp-debug]`), builds, runs via the unified CLI (`SmatchetStandalone.exe cmd …`), reads logs, proposes the cause; hands the fix to the matching subsystem specialist. Cleans up every `[temp-debug]` before claiming done. NOT for perf — that's `perf-detective` / `spike-hunter`. |
 | `perf-instrument` | low · read-edit | Helper for `perf-detective` / `spike-hunter` — inserts / strips `SMATCHET_UI_PERF_SCOPE("temp:…")` markers per spec, with overhead rules encoded. |
 | `perf-measure` | low · read-only | Helper for `perf-detective` / `spike-hunter` — runs `perf.reset` → `scenario.run` → `perf.snapshot`, returns top-N rows by `lastTotalMs`. Standalone "what's hot right now" check also fine. |
 | `code-review` | medium · read-only | Pre-merge code review. Runs cppcheck / clang-tidy / clang-format over the whole branch diff + Smatchet invariants. Wraps the standard pre-merge review skill. |
@@ -125,6 +126,7 @@ Registering a routine command (follow the `RegisterCommand({...})` pattern with 
 - One symbol across many files → `mechanic`
 - Symptom is "slow" / FPS / sustained lag → `perf-detective`
 - Symptom is "occasional hang" / hitch / spike → `spike-hunter`
+- Symptom is "crash" / "wrong output" / "regression" / "broken" / "doesn't work" → `debug-detective`
 - Build / link / preset / packaging failure → `build-doctor`
 - Change clearly sits inside one subsystem table row → that specialist
 - Else the orchestrator handles it directly
