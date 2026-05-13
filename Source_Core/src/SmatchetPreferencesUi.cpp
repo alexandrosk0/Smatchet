@@ -349,6 +349,61 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::EndPopup();
             }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Settings storage location");
+#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
+            ImGui::TextWrapped(
+                "Plugin default: writable files (config / views / SQLite cache / ImGui layout) live in "
+                "<UnrealProject>/Saved next to the runtime cache. Switch to Shared when the project dir "
+                "is read-only (source-controlled, network share, sandboxed runner) and Smatchet should "
+                "instead use your OS user-data folder. Change takes effect on next launch.");
+#else
+            ImGui::TextWrapped(
+                "Standalone default: writable files live in your OS user-data folder, shared across "
+                "exes / installs. Switch to Portable to keep all writable files next to the executable "
+                "instead — useful when running from a thumb drive or testing parallel builds. Change "
+                "takes effect on next launch.");
+#endif
+            const std::string runtimeAssetDir = ConfigManager::GetRuntimeAssetDirectory();
+#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
+            constexpr ConfigManager::StoragePreference kDefaultPref = ConfigManager::StoragePreference::Portable;
+#else
+            constexpr ConfigManager::StoragePreference kDefaultPref = ConfigManager::StoragePreference::Shared;
+#endif
+            const ConfigManager::StoragePreference currentPref =
+                ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref);
+            int prefIndex = (currentPref == ConfigManager::StoragePreference::Portable) ? 0 : 1;
+            const char* items[] = {"Portable (next to runtime files)", "Shared (OS user-data folder)"};
+            if (ImGui::Combo("Storage mode", &prefIndex, items, IM_ARRAYSIZE(items))) {
+                const ConfigManager::StoragePreference chosen =
+                    (prefIndex == 0) ? ConfigManager::StoragePreference::Portable
+                                     : ConfigManager::StoragePreference::Shared;
+                std::string err;
+                if (ConfigManager::SetStoragePreference(runtimeAssetDir, chosen, err)) {
+                    SmatchetToastManager::Instance().Push(
+                        std::string("Storage"),
+                        std::string(chosen == ConfigManager::StoragePreference::Portable
+                                        ? "Storage mode set to Portable. Restart Smatchet for the new "
+                                          "writable-files location to take effect."
+                                        : "Storage mode set to Shared. Restart Smatchet for the new "
+                                          "writable-files location to take effect."),
+                        ToastType::Info, 6000);
+                } else {
+                    SmatchetToastManager::Instance().Push(std::string("Storage"),
+                                                          err.empty() ? std::string("Could not write storage-mode "
+                                                                                    "marker file.")
+                                                                      : err,
+                                                          ToastType::Error, 6000);
+                }
+            }
+            ImGui::TextDisabled("Current writable directory: %s",
+                                ConfigManager::GetUserDataDirectory().c_str());
+            ImGui::TextDisabled("Marker file: %s",
+                                ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir).c_str());
+
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Appearance")) {

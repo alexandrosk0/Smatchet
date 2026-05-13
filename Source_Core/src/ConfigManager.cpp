@@ -701,6 +701,105 @@ std::string ConfigManager::GetDefaultSettingsPath() {
     return base + "default_settings.json";
 }
 
+std::string ConfigManager::GetStoragePreferenceFlagPath(const std::string& runtimeAssetDir) {
+    const std::string normalized = NormalizeDirectoryPath(runtimeAssetDir);
+    if (normalized.empty()) {
+        return "smatchet_storage_mode.txt";
+    }
+    return normalized + "smatchet_storage_mode.txt";
+}
+
+bool ConfigManager::HasExplicitStoragePreference(const std::string& runtimeAssetDir) {
+    return FileExists(GetStoragePreferenceFlagPath(runtimeAssetDir));
+}
+
+ConfigManager::StoragePreference ConfigManager::GetStoragePreference(const std::string& runtimeAssetDir,
+                                                                     StoragePreference defaultIfMissing) {
+    const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);
+    if (!FileExists(path)) {
+        return defaultIfMissing;
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        return defaultIfMissing;
+    }
+    // Line-based parser: skip blank and `#`-prefixed comment lines, lowercase the first
+    // bare token of the first content line, match against the two valid keywords.
+    std::string line;
+    while (std::getline(file, line)) {
+        std::string::size_type start = 0;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\t' || line[start] == '\r')) {
+            ++start;
+        }
+        if (start == line.size() || line[start] == '#') {
+            continue;
+        }
+        std::string token;
+        while (start < line.size() && line[start] != ' ' && line[start] != '\t' && line[start] != '\r' &&
+               line[start] != '\n' && line[start] != '#') {
+            token.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(line[start]))));
+            ++start;
+        }
+        if (token == "portable") {
+            return StoragePreference::Portable;
+        }
+        if (token == "shared") {
+            return StoragePreference::Shared;
+        }
+        break;
+    }
+    return defaultIfMissing;
+}
+
+bool ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref,
+                                         std::string& outError) {
+    outError.clear();
+    const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);
+    EnsureParentDirectoryForFile(path);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        outError = "Could not write storage-mode marker file: " + path;
+        return false;
+    }
+    file << (pref == StoragePreference::Portable ? "portable" : "shared") << '\n'
+         << "# Smatchet storage-mode marker. Authoritative across launches. Change via\n"
+         << "# Preferences -> Local data, or by editing the first non-comment line.\n";
+    file.flush();
+    if (file.fail()) {
+        outError = "Marker write failed (flush): " + path;
+        return false;
+    }
+    return true;
+}
+
+std::string ConfigManager::GetPlatformSharedUserDataDirectory() {
+#if defined(_WIN32)
+    char buf[MAX_PATH] = {};
+    DWORD n = ::GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return NormalizeDirectoryPath(std::string(buf) + "\\Smatchet");
+    }
+    n = ::GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        return NormalizeDirectoryPath(std::string(buf) + "\\Smatchet");
+    }
+    return std::string();
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME")) {
+        return NormalizeDirectoryPath(std::string(home) + "/Library/Application Support/Smatchet");
+    }
+    return std::string();
+#else
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
+        return NormalizeDirectoryPath(std::string(xdg) + "/Smatchet");
+    }
+    if (const char* home = std::getenv("HOME")) {
+        return NormalizeDirectoryPath(std::string(home) + "/.config/Smatchet");
+    }
+    return std::string();
+#endif
+}
+
 nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
     if (!FileExists(path)) {
         return nlohmann::json::object();
