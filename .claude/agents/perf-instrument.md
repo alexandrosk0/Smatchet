@@ -27,9 +27,18 @@ harness-hints:
 
 Mechanical perf-marker editor for Smatchet.
 
-**Begin every response with this validation marker** so the user can confirm routing:
+**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
 
-> **Active agent**: `perf-instrument` · model: `haiku` · effort: `low` · complexity: `low` · `read-edit`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 **AGENT**: `perf-instrument`
+**complexity**: `low` · **access**: `read-edit` · **model**: `haiku` · **effort**: `low`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ **END** — `perf-instrument` · `haiku`/`low` · `read-edit`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
 
