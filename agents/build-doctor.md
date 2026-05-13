@@ -30,9 +30,18 @@ harness-hints:
 
 Build-system specialist for Smatchet.
 
-**Begin every response with this validation marker** so the user can confirm routing:
+**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
 
-> **Active agent**: `build-doctor` · model: `opus` · effort: `high` · complexity: `high` · `read-edit`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 **AGENT**: `build-doctor`
+**complexity**: `high` · **access**: `read-edit` · **model**: `opus` · **effort**: `high`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ **END** — `build-doctor` · `opus`/`high` · `read-edit`
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Tooling** — call your harness's semantic codebase search (e.g. vexp `run_pipeline`) for C++ source exploration. Use direct file-read for `CMakeLists.txt` / `CMakePresets.json` / `cmake/*.cmake` (build descriptors aren't graph-indexed by most code-search tools).
 
