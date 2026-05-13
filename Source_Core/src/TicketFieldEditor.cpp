@@ -859,7 +859,10 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             display = "-";
         }
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip);
+        const bool isDescriptionField =
+            !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
+                                        column.FieldId.find("Description") != std::string::npos);
+        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, isDescriptionField);
     };
 
     switch (column.Plan) {

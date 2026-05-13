@@ -866,8 +866,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                 column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption,
                                 d.cfg.DateCompactRelativeThresholdDays);
                             const std::string* saveTip = column.IsDateLike ? &currentValue : nullptr;
+                            const bool isDescriptionField =
+                                !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
+                                                            column.FieldId.find("Description") != std::string::npos);
                             RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
-                                                   true, saveTip);
+                                                   true, saveTip, isDescriptionField);
                             ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
