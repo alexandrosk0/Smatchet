@@ -723,22 +723,30 @@ ConfigManager::StoragePreference ConfigManager::GetStoragePreference(const std::
     if (!file.is_open()) {
         return defaultIfMissing;
     }
-    std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::string firstToken;
-    for (char c : contents) {
-        if (c == '\r' || c == '\n' || c == ' ' || c == '\t' || c == '#') {
-            if (!firstToken.empty() || c == '#') {
-                break;
-            }
+    // Line-based parser: skip blank and `#`-prefixed comment lines, lowercase the first
+    // bare token of the first content line, match against the two valid keywords.
+    std::string line;
+    while (std::getline(file, line)) {
+        std::string::size_type start = 0;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\t' || line[start] == '\r')) {
+            ++start;
+        }
+        if (start == line.size() || line[start] == '#') {
             continue;
         }
-        firstToken.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
-    if (firstToken == "portable") {
-        return StoragePreference::Portable;
-    }
-    if (firstToken == "shared") {
-        return StoragePreference::Shared;
+        std::string token;
+        while (start < line.size() && line[start] != ' ' && line[start] != '\t' && line[start] != '\r' &&
+               line[start] != '\n' && line[start] != '#') {
+            token.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(line[start]))));
+            ++start;
+        }
+        if (token == "portable") {
+            return StoragePreference::Portable;
+        }
+        if (token == "shared") {
+            return StoragePreference::Shared;
+        }
+        break;
     }
     return defaultIfMissing;
 }
@@ -756,7 +764,12 @@ bool ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, Sto
     file << (pref == StoragePreference::Portable ? "portable" : "shared") << '\n'
          << "# Smatchet storage-mode marker. Authoritative across launches. Change via\n"
          << "# Preferences -> Local data, or by editing the first non-comment line.\n";
-    return file.good();
+    file.flush();
+    if (file.fail()) {
+        outError = "Marker write failed (flush): " + path;
+        return false;
+    }
+    return true;
 }
 
 std::string ConfigManager::GetPlatformSharedUserDataDirectory() {
