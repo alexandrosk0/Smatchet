@@ -17,6 +17,7 @@
 
 #include "imgui.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <deque>
@@ -345,6 +346,13 @@ struct UiDrawSession {
     bool newIssueScrollDraftRowIntoViewPending = false;
     IssueDraft newIssueDraft;
     std::unordered_map<std::string, std::vector<char>> newIssueDraftEditBufs;
+    /** Per-field quick-filter buffers for new-issue draft single-select combos. Indexed by
+     *  fieldId; cleared whenever `newIssueDraftEditBufs` resets. Mirrors the grid editor's
+     *  `SpreadsheetState::SingleSelectSearchBuf` pattern. */
+    std::unordered_map<std::string, std::array<char, 128>> newIssueDraftComboSearchBufs;
+    /** Last fieldId whose combo was open — when it changes, the new fieldId's search buffer
+     *  is zeroed so the user starts on an empty filter when moving between dropdowns. */
+    std::string newIssueDraftComboSearchActiveField;
     std::future<IssueCreateResult> newIssueCreateFuture;
     bool newIssueCreateInFlight = false;
     std::vector<std::string> newIssueMissingFieldIds;

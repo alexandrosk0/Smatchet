@@ -5,7 +5,7 @@
 
 /** Single source for config defaults and IssueDraftHelpers::DefaultNewIssueInheritFieldIds(). */
 inline std::vector<std::string> DefaultNewIssueInheritFieldIdsList() {
-    return {"description", "priority", "assignee", "labels", "components"};
+    return {"issuetype", "description", "priority", "assignee", "labels", "components"};
 }
 
 

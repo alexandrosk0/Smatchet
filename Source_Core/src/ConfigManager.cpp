@@ -925,6 +925,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
                      std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
         j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
     }
+    j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
@@ -1296,6 +1297,21 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 if (cfg.NewIssueInheritFieldIdsPlane.empty()) {
                     cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
                 }
+            }
+
+            // One-shot migration: inject "issuetype" into the front of both inherit lists if it
+            // is absent. Older configs were persisted with the legacy default list (no issuetype),
+            // so a fresh-install benefit only ships to existing users via this migration.
+            cfg.MigratedInheritIssueTypeV1 = j.value("migrated_inherit_issuetype_v1", false);
+            if (!cfg.MigratedInheritIssueTypeV1) {
+                const auto injectIfMissing = [](std::vector<std::string>& list) {
+                    if (std::find(list.begin(), list.end(), std::string("issuetype")) == list.end()) {
+                        list.insert(list.begin(), "issuetype");
+                    }
+                };
+                injectIfMissing(cfg.NewIssueInheritFieldIds);
+                injectIfMissing(cfg.NewIssueInheritFieldIdsPlane);
+                cfg.MigratedInheritIssueTypeV1 = true;
             }
         } catch (const std::exception& ex) {
             LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
