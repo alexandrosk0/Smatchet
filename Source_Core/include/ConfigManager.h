@@ -298,7 +298,9 @@ class ConfigManager {
     // Bumped to 2: schema-1 imgui.ini was corrupted by the old prepareTopLevelWindow bug
     // (SetNextWindowPos kicked panels out of dock nodes). Forces a one-shot reset so the
     // fixed layout + SetNextWindowDockID fallbacks pick up correctly.
-    static const int kCurrentLayoutSchemaVersion = 2;
+    // Bumped to 3: rewrote default dock ini to a clean VS-shell tree (top split with
+    // central + primary side bar + reserved secondary, bottom panel hosting Log/Audit/etc.).
+    static const int kCurrentLayoutSchemaVersion = 3;
 
     struct CliOverrides {
         bool HasDbPath;
