@@ -26,7 +26,81 @@
 #include "PluginHost.h"
 #endif
 
+#if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#endif
+#endif
+
 namespace {
+
+#if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
+std::string GetCurrentExePath() {
+#if defined(_WIN32)
+    char buf[4096] = {};
+    DWORD n = GetModuleFileNameA(nullptr, buf, static_cast<DWORD>(sizeof(buf)));
+    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
+#elif defined(__linux__)
+    char buf[4096] = {};
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    return (n > 0) ? std::string(buf, static_cast<size_t>(n)) : std::string();
+#elif defined(__APPLE__)
+    char buf[4096] = {};
+    uint32_t sz = sizeof(buf);
+    return (_NSGetExecutablePath(buf, &sz) == 0) ? std::string(buf) : std::string();
+#else
+    return std::string();
+#endif
+}
+
+bool LaunchDetachedSelf() {
+    const std::string exe = GetCurrentExePath();
+    if (exe.empty()) {
+        return false;
+    }
+#if defined(_WIN32)
+    std::string cmdLine = "\"" + exe + "\"";
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    BOOL ok =
+        CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, FALSE, DETACHED_PROCESS, nullptr, nullptr, &si, &pi);
+    if (ok) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    return ok != FALSE;
+#else
+    pid_t pid = fork();
+    if (pid < 0)
+        return false;
+    if (pid == 0) {
+        setsid();
+        pid_t pid2 = fork();
+        if (pid2 < 0)
+            _exit(127);
+        if (pid2 == 0) {
+            execl(exe.c_str(), exe.c_str(), static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        _exit(0);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return true;
+#endif
+}
+#endif // !SMATCHET_EMBEDDED_IN_UNREAL
 
 std::string JoinCsv(const std::vector<std::string>& values) {
     std::string out;
@@ -355,17 +429,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
             ImGui::TextUnformatted("Settings storage location");
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
-            ImGui::TextWrapped(
-                "Plugin default: writable files (config / views / SQLite cache / ImGui layout) live in "
-                "<UnrealProject>/Saved next to the runtime cache. Switch to Shared when the project dir "
-                "is read-only (source-controlled, network share, sandboxed runner) and Smatchet should "
-                "instead use your OS user-data folder. Change takes effect on next launch.");
+            ImGui::TextWrapped("Plugin default: writable files (config / views / SQLite cache / ImGui layout) live in "
+                               "<UnrealProject>/Saved next to the runtime cache. Switch to Shared when the project dir "
+                               "is read-only (source-controlled, network share, sandboxed runner) and Smatchet should "
+                               "instead use your OS user-data folder. Change takes effect on next launch.");
 #else
-            ImGui::TextWrapped(
-                "Standalone default: writable files live in your OS user-data folder, shared across "
-                "exes / installs. Switch to Portable to keep all writable files next to the executable "
-                "instead — useful when running from a thumb drive or testing parallel builds. Change "
-                "takes effect on next launch.");
+            ImGui::TextWrapped("Standalone default: writable files live in your OS user-data folder, shared across "
+                               "exes / installs. Switch to Portable to keep all writable files next to the executable "
+                               "instead — useful when running from a thumb drive or testing parallel builds. Change "
+                               "takes effect on next launch.");
 #endif
             const std::string runtimeAssetDir = ConfigManager::GetRuntimeAssetDirectory();
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
@@ -377,12 +449,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref);
             int prefIndex = (currentPref == ConfigManager::StoragePreference::Portable) ? 0 : 1;
             const char* items[] = {"Portable (next to runtime files)", "Shared (OS user-data folder)"};
+            static bool s_storageModeChanged = false;
             if (ImGui::Combo("Storage mode", &prefIndex, items, IM_ARRAYSIZE(items))) {
-                const ConfigManager::StoragePreference chosen =
-                    (prefIndex == 0) ? ConfigManager::StoragePreference::Portable
-                                     : ConfigManager::StoragePreference::Shared;
+                const ConfigManager::StoragePreference chosen = (prefIndex == 0)
+                                                                    ? ConfigManager::StoragePreference::Portable
+                                                                    : ConfigManager::StoragePreference::Shared;
                 std::string err;
                 if (ConfigManager::SetStoragePreference(runtimeAssetDir, chosen, err)) {
+                    s_storageModeChanged = true;
                     SmatchetToastManager::Instance().Push(
                         std::string("Storage"),
                         std::string(chosen == ConfigManager::StoragePreference::Portable
@@ -399,8 +473,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                           ToastType::Error, 6000);
                 }
             }
-            ImGui::TextDisabled("Current writable directory: %s",
-                                ConfigManager::GetUserDataDirectory().c_str());
+            if (s_storageModeChanged) {
+                ImGui::Spacing();
+#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
+                ImGui::TextWrapped("Restart Unreal Editor for the storage-mode change to take effect.");
+#else
+                if (ImGui::Button("Restart Smatchet now")) {
+                    if (LaunchDetachedSelf()) {
+                        s_storageModeChanged = false;
+                        app.RequestAppQuit();
+                    } else {
+                        SmatchetToastManager::Instance().Push(
+                            std::string("Storage"),
+                            std::string("Could not relaunch Smatchet — exit and restart manually."), ToastType::Error,
+                            6000);
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(spawns a new instance and exits this one)");
+#endif
+            }
+            ImGui::TextDisabled("Current writable directory: %s", ConfigManager::GetUserDataDirectory().c_str());
             ImGui::TextDisabled("Marker file: %s",
                                 ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir).c_str());
 
