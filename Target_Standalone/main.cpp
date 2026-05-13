@@ -461,8 +461,8 @@ int main(int argc, char** argv) {
             // THE BRIDGE: Hand control over to your engine-agnostic UI layer
             // ====================================================================
 
-            // Setup a full-screen dockspace for a professional layout
-            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            // Full-screen dockspace — NoUndocking matches SmatchetImGuiHost.cpp (DX12 path).
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
 
             // Draw the main application
             SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);

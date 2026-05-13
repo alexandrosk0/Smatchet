@@ -418,24 +418,9 @@ void SmatchetUI::Draw(AppController& app) {
         }
     }
 
-    // Dockspace node visibility: keep side-bar and panel nodes in sync with cfg flags each frame.
-    // ApplyNodeVisibility is cheap (pointer lookup + bitfield); no-op when node not yet built.
-    {
-        auto syncNode = [](ImGuiID nodeId, bool visible) {
-            ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(nodeId);
-            if (!node) {
-                return;
-            }
-            if (visible) {
-                node->LocalFlags &= ~ImGuiDockNodeFlags_HiddenTabBar;
-            } else {
-                node->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;
-            }
-        };
-        syncNode(SmatchetDockNodeIds::kPrimarySideBar, d.cfg.ShowPrimarySideBar);
-        syncNode(SmatchetDockNodeIds::kBottomPanel, d.cfg.ShowPanel);
-        syncNode(SmatchetDockNodeIds::kSecondarySideBar, d.cfg.ShowSecondarySideBar);
-    }
+    // Panel visibility is driven by the d.show* / cfg.Show* flags that gate each ImGui::Begin call.
+    // ImGui collapses empty dock nodes automatically — no per-frame bit-manipulation needed.
+    // (HiddenTabBar fights the layout on resize; removed in favour of the natural empty-node path.)
 
     // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
     // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
