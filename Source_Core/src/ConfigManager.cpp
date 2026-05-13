@@ -1175,6 +1175,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ShowStatusBar        = j.value("show_status_bar",         cfg.ShowStatusBar);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
             cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
+            if (cfg.LayoutSchemaVersion < 0) { cfg.LayoutSchemaVersion = 0; }
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
             if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
             if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }

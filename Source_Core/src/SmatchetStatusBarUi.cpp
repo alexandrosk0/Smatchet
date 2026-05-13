@@ -54,7 +54,8 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
     // Left side ---------------------------------------------------------------
 
     // Backend chip: Jira or Plane
-    const std::string& trackerType = d.cfg.TrackerType;
+    const std::string& rawType = d.cfg.TrackerType;
+    const std::string trackerType = rawType.size() > 64u ? rawType.substr(0u, 64u) : rawType;
     const char* backend = trackerType.empty() ? "?" : trackerType.c_str();
     ImGui::TextUnformatted(backend);
 
