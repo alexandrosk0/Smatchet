@@ -37,6 +37,14 @@ Sweep the file when:
 
 <!-- Latest first. Append new entries at the top of this section. -->
 
+- 2026-05-13 · code-review · [tooling] — lint hook does not run clang-format on newly created `.h` files
+  Details: The `PostToolUse` hook via `.claude/hooks/lint-cpp.sh` runs clang-format on `.cpp` edits but not on new header files. New headers consistently arrive at code-review with alignment-padding violations that could have been auto-fixed. Add `*.h` (or `*.{cpp,h}`) to the hook's glob pattern in `.claude/settings.json` or the lint script.
+  Status: open
+
+- 2026-05-13 · architect · [process] — skip architect when prompt already specifies file paths + symbols + commit messages
+  Details: Orchestrator dispatched a fully-specified three-commit implementation task (symbols, file paths, commit messages all pre-specified) to the `architect` agent (read-only design role). Architect cannot edit files or build. Rule of thumb to add to delegation heuristic: if the prompt already specifies file paths + symbols + commit messages, design is resolved — skip architect, go direct to general-purpose or the matching subsystem specialist.
+  Status: open
+
 - 2026-05-12 · orchestrator · [process] — pre-resolve hard-invariant collisions before delegating implementation slices
   Details: The project-key run burned a full first attempt when a backend agent correctly paused on whether `ITrackerClient::FetchFieldCatalog` could be widened. The orchestrator already had AGENTS.md invariants in context; future delegation packets should state the approved option up front.
   Status: applied (d4714ad — AGENTS.md "Orchestrator delegation packet" § Invariant decisions; tracker-backend.md ITrackerClient widening rule hardened)
