@@ -11,15 +11,11 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldPayload.h"
 #include "MarkdownConvert.h"
+#include "MarkdownPreviewRender.h"
 #include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 #include "StringUtil.h"
-#include "SmatchetImGuiFonts.h"
-
-extern "C" {
-#include "md4c.h"
-}
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -175,11 +171,14 @@ static constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
 /// Determine whether a stored rich payload looks like ADF JSON or HTML. Returns LongTextRichKind::None
 /// when the input is empty or unrecognizable (caller falls back to the stripped text).
 static LongTextRichKind ClassifyRichValue(const std::string& rich) {
-    if (rich.empty()) return LongTextRichKind::None;
+    if (rich.empty())
+        return LongTextRichKind::None;
     // Cheap leading-whitespace skip.
     size_t i = 0;
-    while (i < rich.size() && (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r')) ++i;
-    if (i >= rich.size()) return LongTextRichKind::None;
+    while (i < rich.size() && (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r'))
+        ++i;
+    if (i >= rich.size())
+        return LongTextRichKind::None;
     if (rich[i] == '{') {
         try {
             auto parsed = nlohmann::json::parse(rich, nullptr, false);
@@ -196,9 +195,8 @@ static LongTextRichKind ClassifyRichValue(const std::string& rich) {
     return LongTextRichKind::None;
 }
 
-static void OpenLongTextEditor(const std::string& issueId, const TrackerField& field,
-                               const std::string& label, const std::string& currentStrippedValue,
-                               const std::string& currentRichValue) {
+static void OpenLongTextEditor(const std::string& issueId, const TrackerField& field, const std::string& label,
+                               const std::string& currentStrippedValue, const std::string& currentRichValue) {
     s_ActiveLongTextState.IssueId = issueId;
     s_ActiveLongTextState.Field = field;
     s_ActiveLongTextState.FieldLabel = label.empty() ? field.Id : label;
@@ -212,27 +210,27 @@ static void OpenLongTextEditor(const std::string& issueId, const TrackerField& f
     /// stripped text (legacy tickets pre-PR-B, or fields where the backend never returned rich).
     std::string seed;
     switch (s_ActiveLongTextState.RichKind) {
-        case LongTextRichKind::Adf: {
-            try {
-                const auto adf = nlohmann::json::parse(currentRichValue);
-                seed = MarkdownConvert::AdfToMarkdown(adf, &s_ActiveLongTextState.DroppedAdfNodeTypes);
-            } catch (...) {
-                seed = currentStrippedValue;
-            }
-            break;
-        }
-        case LongTextRichKind::Html: {
-            bool fellBack = false;
-            seed = MarkdownConvert::HtmlSubsetToMarkdown(currentRichValue, &fellBack);
-            if (fellBack) {
-                s_ActiveLongTextState.RawMode = true;
-                seed = currentRichValue; // edit the raw HTML directly so nothing is lost.
-            }
-            break;
-        }
-        case LongTextRichKind::None:
+    case LongTextRichKind::Adf: {
+        try {
+            const auto adf = nlohmann::json::parse(currentRichValue);
+            seed = MarkdownConvert::AdfToMarkdown(adf, &s_ActiveLongTextState.DroppedAdfNodeTypes);
+        } catch (...) {
             seed = currentStrippedValue;
-            break;
+        }
+        break;
+    }
+    case LongTextRichKind::Html: {
+        bool fellBack = false;
+        seed = MarkdownConvert::HtmlSubsetToMarkdown(currentRichValue, &fellBack);
+        if (fellBack) {
+            s_ActiveLongTextState.RawMode = true;
+            seed = currentRichValue; // edit the raw HTML directly so nothing is lost.
+        }
+        break;
+    }
+    case LongTextRichKind::None:
+        seed = currentStrippedValue;
+        break;
     }
     s_ActiveLongTextState.OriginalMarkdown = seed;
 
@@ -244,651 +242,7 @@ static void OpenLongTextEditor(const std::string& issueId, const TrackerField& f
     s_ActiveLongTextState.JustOpened = true;
 }
 
-static void CloseLongTextEditor() {
-    s_ActiveLongTextState = ActiveLongTextEditorState{};
-}
-
-// =====================================================================================
-// Markdown preview — walks a Markdown string with md4c and emits ImGui draw calls so the
-// modal can show the rendered output next to the editor. Block-level only; inline marks
-// (bold/em/code/links) collapse to their text content. v2 tradeoff: rendering inline
-// styles inside a paragraph requires per-glyph push/pop fonts which we don't have.
-// =====================================================================================
-namespace {
-
-// Inline mark bits — combined per-run via OR. Bold + Italic together select the
-// BoldItalic font; Code overrides body font with Mono. Link/Strike are visual
-// overlays drawn after the text.
-constexpr uint8_t MARK_BOLD   = 1 << 0;
-constexpr uint8_t MARK_ITALIC = 1 << 1;
-constexpr uint8_t MARK_CODE   = 1 << 2;
-constexpr uint8_t MARK_STRIKE = 1 << 3;
-constexpr uint8_t MARK_LINK   = 1 << 4;
-
-struct StyledRun {
-    std::string text;
-    uint8_t marks = 0;
-    std::string href;
-};
-
-struct TableCellData {
-    std::vector<StyledRun> runs;
-};
-
-struct TableRowData {
-    std::vector<TableCellData> cells;
-    bool isHeader = false;
-};
-
-struct PreviewState {
-    /// Inline runs accumulated for the current block. Flushed by PreviewFlushBlock.
-    std::vector<StyledRun> runs;
-    /// When non-null, run-text appends are redirected here instead of `runs` —
-    /// used to capture inline content per table cell.
-    std::vector<StyledRun>* activeRuns = nullptr;
-    /// Active mark bits, set/cleared as md4c reports span enter/leave.
-    uint8_t currentMarks = 0;
-    /// Active link href while currentMarks has MARK_LINK.
-    std::string currentHref;
-    /// Verbatim accumulator for fenced / indented code blocks (separate from `runs`
-    /// so newlines and whitespace inside code render byte-for-byte).
-    std::string codeBuffer;
-    /// Stack of list kinds: '-' for bullet, '1' for ordered.
-    std::vector<char> listStack;
-    /// Per-ordered-list counter so we render "1. " "2. " ...
-    std::vector<int> orderedCounters;
-    /// Indent level (each list nesting bumps this by one).
-    int listDepth = 0;
-    /// True while inside a fenced code block — append text directly with newlines preserved.
-    int codeDepth = 0;
-    /// True while the block is a heading; flushes with bigger text.
-    int headingLevel = 0;
-    /// Table accumulation. tableDepth>0 means we're inside a table block; nested
-    /// tables aren't standard so we render only the outermost. Cell contents flow
-    /// into `tableCellRuns` while activeRuns points at it.
-    int tableDepth = 0;
-    bool tableInHeader = false;
-    int tableColCount = 0;
-    int tableNextId = 0;
-    std::vector<TableRowData> tableRows;
-    std::vector<StyledRun> tableCellRuns;
-    int imgSpanDepth = 0;
-    std::string imgAltAccum;
-#ifndef NDEBUG
-    bool debugLoggedMdTextHtml = false;
-#endif
-};
-
-/// Append `text` of length `size` as either an extension of the trailing run
-/// (when style matches) or a fresh styled run. Coalescing keeps `runs` short.
-/// Routes to `activeRuns` when set (table-cell capture) else `runs`.
-static void PreviewAppendRunBytes(PreviewState& s, const char* text, size_t size) {
-    if (size == 0) return;
-    std::vector<StyledRun>& target = s.activeRuns ? *s.activeRuns : s.runs;
-    if (!target.empty() && target.back().marks == s.currentMarks &&
-        target.back().href == s.currentHref) {
-        target.back().text.append(text, size);
-        return;
-    }
-    StyledRun r;
-    r.text.assign(text, size);
-    r.marks = s.currentMarks;
-    r.href = s.currentHref;
-    target.push_back(std::move(r));
-}
-
-static void PreviewAppendRunString(PreviewState& s, const std::string& text) {
-    PreviewAppendRunBytes(s, text.data(), text.size());
-}
-
-/// Map mark bits to an ImFont. CODE wins over bold/italic combos because the
-/// monospace font already has its own visual weight and inline `code` spans
-/// rarely care about being bold/italic.
-static ImFont* PreviewPickFont(uint8_t marks) {
-    const SmatchetPreviewFonts& f = SmatchetGetPreviewFonts();
-    if (marks & MARK_CODE) return f.Mono ? f.Mono : f.Regular;
-    const bool bold = (marks & MARK_BOLD) != 0;
-    const bool italic = (marks & MARK_ITALIC) != 0;
-    if (bold && italic) return f.BoldItalic ? f.BoldItalic : (f.Bold ? f.Bold : f.Regular);
-    if (bold)           return f.Bold ? f.Bold : f.Regular;
-    if (italic)         return f.Italic ? f.Italic : f.Regular;
-    return f.Regular;
-}
-
-/// Walks `runs` word by word and emits ImGui text segments with manual word
-/// wrap against `wrapWidth`. Whitespace between words is collapsed to a single
-/// space (matches HTML/Markdown rendering rules); '\n' inside a run forces a
-/// hard line break. Links are rendered with an underline overlay and clickable
-/// hit-rect; strike-through is a half-height line over the word.
-static void PreviewRenderRuns(const std::vector<StyledRun>& runs) {
-    if (runs.empty()) return;
-
-    struct InlineWord {
-        std::string text;          // empty when forceBreak=true
-        uint8_t marks = 0;
-        std::string href;
-        bool forceBreak = false;
-    };
-    std::vector<InlineWord> words;
-    words.reserve(runs.size() * 4);
-    for (const StyledRun& run : runs) {
-        size_t i = 0;
-        const std::string& t = run.text;
-        while (i < t.size()) {
-            unsigned char c = static_cast<unsigned char>(t[i]);
-            if (c == '\n') {
-                InlineWord w;
-                w.forceBreak = true;
-                words.push_back(std::move(w));
-                ++i;
-            } else if (c == ' ' || c == '\t' || c == '\r') {
-                ++i; // collapse runs of whitespace into a single inter-word gap
-            } else {
-                size_t j = i;
-                while (j < t.size()) {
-                    unsigned char d = static_cast<unsigned char>(t[j]);
-                    if (d == ' ' || d == '\t' || d == '\n' || d == '\r') break;
-                    ++j;
-                }
-                InlineWord w;
-                w.text.assign(t.data() + i, j - i);
-                w.marks = run.marks;
-                w.href = run.href;
-                words.push_back(std::move(w));
-                i = j;
-            }
-        }
-    }
-
-    const float wrapWidth = ImGui::GetContentRegionAvail().x;
-    // Space width with the regular font — close enough for inter-word spacing
-    // regardless of which variant the surrounding word uses.
-    ImGui::PushFont(PreviewPickFont(0));
-    const float spaceW = ImGui::CalcTextSize(" ").x;
-    ImGui::PopFont();
-
-    bool firstOnLine = true;
-    float curX = 0.0f;
-    bool prevWasCode = false;
-    // Inline-code background tint — sits behind the text, drawn first so glyphs
-    // overlay it. Same shade for adjacent code words and the inter-word space
-    // between them, so consecutive `inline code` words read as one continuous bar.
-    const ImU32 codeBgCol = IM_COL32(48, 48, 60, 200);
-    const float codeBgRound = 3.0f;
-    const float codeBgPadX = 2.0f;
-
-    for (size_t wi = 0; wi < words.size(); ++wi) {
-        const InlineWord& w = words[wi];
-        if (w.forceBreak) {
-            if (firstOnLine) {
-                // Empty line — emit a zero-width text so cursor advances vertically.
-                ImGui::TextUnformatted("");
-            }
-            firstOnLine = true;
-            curX = 0.0f;
-            prevWasCode = false;
-            continue;
-        }
-
-        ImFont* font = PreviewPickFont(w.marks);
-        ImGui::PushFont(font);
-        const float wordW = ImGui::CalcTextSize(w.text.c_str(),
-                                                w.text.c_str() + w.text.size()).x;
-        ImGui::PopFont();
-
-        // Wrap if adding this word (with leading space if needed) would overflow.
-        const float leadingW = firstOnLine ? 0.0f : spaceW;
-        if (!firstOnLine && curX + leadingW + wordW > wrapWidth) {
-            firstOnLine = true;
-            curX = 0.0f;
-            prevWasCode = false;
-        }
-
-        const bool isCode = (w.marks & MARK_CODE) != 0;
-
-        if (!firstOnLine) {
-            ImGui::SameLine(0.0f, 0.0f);
-            // When both the previous and current word are inline-code, the gap
-            // between them is part of the same `code` span — paint the bg under
-            // the space too so the highlighting reads as continuous.
-            if (prevWasCode && isCode) {
-                const ImVec2 spacePos = ImGui::GetCursorScreenPos();
-                const float lineH = ImGui::GetTextLineHeight();
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(ImVec2(spacePos.x, spacePos.y),
-                                  ImVec2(spacePos.x + spaceW, spacePos.y + lineH),
-                                  codeBgCol, 0.0f);
-            }
-            ImGui::TextUnformatted(" ");
-            ImGui::SameLine(0.0f, 0.0f);
-            curX += spaceW;
-        }
-
-        ImGui::PushFont(font);
-        const bool isLink = (w.marks & MARK_LINK) != 0;
-        if (isLink) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
-        }
-        const ImVec2 wordPos = ImGui::GetCursorScreenPos();
-        const float lineH = ImGui::GetTextLineHeight();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        // Inline-code background — drawn before the text so glyphs render on top.
-        // Padding extends slightly left/right of the word; rounding only on outer
-        // corners (left rounded if no preceding code word, right if no following).
-        if (isCode) {
-            const bool nextIsCode = (wi + 1 < words.size())
-                                        && !words[wi + 1].forceBreak
-                                        && (words[wi + 1].marks & MARK_CODE) != 0;
-            const float rl = prevWasCode ? 0.0f : codeBgRound;
-            const float rr = nextIsCode  ? 0.0f : codeBgRound;
-            const ImVec2 r0(wordPos.x - (prevWasCode ? 0.0f : codeBgPadX), wordPos.y);
-            const ImVec2 r1(wordPos.x + wordW + (nextIsCode ? 0.0f : codeBgPadX),
-                            wordPos.y + lineH);
-            const ImDrawFlags flags = (rl > 0.0f ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersNone)
-                                    | (rr > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
-            dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
-        }
-        ImGui::TextUnformatted(w.text.c_str(), w.text.c_str() + w.text.size());
-        if (isLink) {
-            const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-            dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
-                        ImVec2(wordPos.x + wordW, wordPos.y + lineH - 1.0f), col);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (!w.href.empty()) ImGui::SetTooltip("%s", w.href.c_str());
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
-#if defined(_WIN32)
-                    ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#endif
-                }
-            }
-        }
-        if (w.marks & MARK_STRIKE) {
-            const float midY = wordPos.y + lineH * 0.5f;
-            dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY),
-                        ImGui::GetColorU32(ImGuiCol_Text));
-        }
-        ImGui::PopFont();
-
-        curX += wordW;
-        firstOnLine = false;
-        prevWasCode = isCode;
-    }
-}
-
-static void PreviewFlushBlock(PreviewState& s) {
-    if (s.runs.empty() && s.headingLevel == 0) return;
-    if (s.headingLevel > 0) {
-        // Heading sizing: scale the bitmap font for h1–h3 since we don't bake
-        // separate atlas sizes (Phase 4 budget). Bitmap rescale is mildly blurry
-        // at non-1.0 ratios but cheap; users perceive size differentiation.
-        // Tint only h1/h2 in cyan — at h3+ the size + bold weight already make
-        // the heading stand out, so the color is doing redundant work.
-        float scale = 1.0f;
-        if (s.headingLevel == 1) scale = 1.6f;
-        else if (s.headingLevel == 2) scale = 1.35f;
-        else if (s.headingLevel == 3) scale = 1.15f;
-
-        // Force bold on every run inside the heading. Inline em/code/links keep
-        // their italic/mono/underline overlays via the other mark bits.
-        for (StyledRun& r : s.runs) r.marks |= MARK_BOLD;
-
-        const bool tinted = (s.headingLevel <= 2);
-        const float prevScale = ImGui::GetCurrentWindow()->FontWindowScale;
-        if (scale != 1.0f) ImGui::SetWindowFontScale(scale);
-        if (tinted) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
-        PreviewRenderRuns(s.runs);
-        if (tinted) ImGui::PopStyleColor();
-        if (scale != 1.0f) ImGui::SetWindowFontScale(prevScale);
-        if (s.headingLevel <= 2) ImGui::Separator();
-    } else if (!s.runs.empty()) {
-        PreviewRenderRuns(s.runs);
-    }
-    s.runs.clear();
-    s.headingLevel = 0;
-}
-
-static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
-    // Inside a nested table (rare, non-standard) we ignore everything until the
-    // outer table closes — only the outermost table is rendered.
-    if (s.tableDepth > 1) {
-        if (type == MD_BLOCK_TABLE) ++s.tableDepth;
-        return 0;
-    }
-    switch (type) {
-        case MD_BLOCK_DOC: break;
-        case MD_BLOCK_QUOTE:
-            PreviewFlushBlock(s);
-            ImGui::Indent(16.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 0.7f, 1.0f));
-            break;
-        case MD_BLOCK_UL:
-            PreviewFlushBlock(s);
-            s.listStack.push_back('-');
-            s.orderedCounters.push_back(0);
-            ++s.listDepth;
-            break;
-        case MD_BLOCK_OL: {
-            PreviewFlushBlock(s);
-            auto* d = static_cast<MD_BLOCK_OL_DETAIL*>(detail);
-            s.listStack.push_back('1');
-            s.orderedCounters.push_back(d ? static_cast<int>(d->start) - 1 : 0);
-            ++s.listDepth;
-            break;
-        }
-        case MD_BLOCK_LI: {
-            PreviewFlushBlock(s);
-            for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Indent(16.0f);
-            auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
-            const bool task = lid && lid->is_task;
-            const bool done = task && (lid->task_mark == 'x' || lid->task_mark == 'X');
-            // The marker is unstyled, so push it through the regular-mark code path.
-            // Task markers use Unicode ☑ / ☐ (U+2611 / U+2610) which are already in
-            // the atlas via the Geometric Shapes / Misc Symbols ranges loaded by
-            // SmatchetImGuiFonts; falls back gracefully if a glyph is missing.
-            std::string marker;
-            if (!s.listStack.empty() && s.listStack.back() == '1') {
-                ++s.orderedCounters.back();
-                marker = std::to_string(s.orderedCounters.back());
-                if (task) {
-                    marker += done ? ". \xE2\x98\x91 " : ". \xE2\x98\x90 ";
-                } else {
-                    marker += ". ";
-                }
-            } else {
-                if (task) {
-                    marker = done ? "\xE2\x98\x91 " : "\xE2\x98\x90 ";
-                } else {
-                    marker = "\xE2\x80\xA2 "; // U+2022 bullet
-                }
-            }
-            const uint8_t savedMarks = s.currentMarks;
-            const std::string savedHref = s.currentHref;
-            s.currentMarks = 0;
-            s.currentHref.clear();
-            PreviewAppendRunString(s, marker);
-            s.currentMarks = savedMarks;
-            s.currentHref = savedHref;
-            break;
-        }
-        case MD_BLOCK_TABLE: {
-            // Flush any pending paragraph above the table, then begin collecting
-            // cell runs. Render happens on MD_BLOCK_TABLE leave.
-            PreviewFlushBlock(s);
-            if (s.tableDepth > 0) {
-                ++s.tableDepth;
-                break; // nested table — skipped
-            }
-            ++s.tableDepth;
-            auto* d = static_cast<MD_BLOCK_TABLE_DETAIL*>(detail);
-            s.tableColCount = d ? static_cast<int>(d->col_count) : 0;
-            s.tableInHeader = false;
-            s.tableRows.clear();
-            s.tableCellRuns.clear();
-            break;
-        }
-        case MD_BLOCK_THEAD:
-            if (s.tableDepth == 1) s.tableInHeader = true;
-            break;
-        case MD_BLOCK_TBODY:
-            if (s.tableDepth == 1) s.tableInHeader = false;
-            break;
-        case MD_BLOCK_TR: {
-            if (s.tableDepth == 1) {
-                TableRowData row;
-                row.isHeader = s.tableInHeader;
-                s.tableRows.push_back(std::move(row));
-            }
-            break;
-        }
-        case MD_BLOCK_TH:
-        case MD_BLOCK_TD:
-            if (s.tableDepth == 1) {
-                s.tableCellRuns.clear();
-                s.activeRuns = &s.tableCellRuns;
-                if (type == MD_BLOCK_TH && !s.tableRows.empty()) {
-                    s.tableRows.back().isHeader = true;
-                }
-            }
-            break;
-        case MD_BLOCK_HR:
-            PreviewFlushBlock(s);
-            ImGui::Separator();
-            break;
-        case MD_BLOCK_H: {
-            PreviewFlushBlock(s);
-            auto* d = static_cast<MD_BLOCK_H_DETAIL*>(detail);
-            s.headingLevel = d ? static_cast<int>(d->level) : 1;
-            break;
-        }
-        case MD_BLOCK_CODE:
-            PreviewFlushBlock(s);
-            ++s.codeDepth;
-            break;
-        case MD_BLOCK_P:
-            // Inside a list item the buffer is already primed with the marker; don't flush.
-            if (s.listDepth == 0) PreviewFlushBlock(s);
-            break;
-        default: break;
-    }
-    return 0;
-}
-
-static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
-    if (type == MD_BLOCK_TABLE) {
-        if (s.tableDepth > 1) {
-            --s.tableDepth;
-            return 0; // closing a nested skipped table
-        }
-        // Render the collected table.
-        if (!s.tableRows.empty() && s.tableColCount > 0) {
-            ImGui::PushID(s.tableNextId++);
-            const ImGuiTableFlags flags = ImGuiTableFlags_Borders
-                                        | ImGuiTableFlags_RowBg
-                                        | ImGuiTableFlags_SizingStretchProp
-                                        | ImGuiTableFlags_Resizable;
-            if (ImGui::BeginTable("##mdpreview_tbl", s.tableColCount, flags)) {
-                for (TableRowData& row : s.tableRows) {
-                    ImGui::TableNextRow();
-                    const size_t cellMax = (std::min)(row.cells.size(),
-                                                      static_cast<size_t>(s.tableColCount));
-                    for (size_t ci = 0; ci < cellMax; ++ci) {
-                        ImGui::TableNextColumn();
-                        TableCellData& cell = row.cells[ci];
-                        if (row.isHeader) {
-                            for (StyledRun& r : cell.runs) r.marks |= MARK_BOLD;
-                        }
-                        PreviewRenderRuns(cell.runs);
-                    }
-                }
-                ImGui::EndTable();
-            }
-            ImGui::PopID();
-        }
-        s.tableRows.clear();
-        s.tableCellRuns.clear();
-        s.tableInHeader = false;
-        s.tableColCount = 0;
-        s.tableDepth = 0;
-        s.activeRuns = nullptr;
-        return 0;
-    }
-    // While inside a nested skipped table, ignore everything.
-    if (s.tableDepth > 1) return 0;
-    if (type == MD_BLOCK_TH || type == MD_BLOCK_TD) {
-        if (s.tableDepth == 1) {
-            if (!s.tableRows.empty()) {
-                TableCellData cell;
-                cell.runs = std::move(s.tableCellRuns);
-                s.tableRows.back().cells.push_back(std::move(cell));
-            }
-            s.tableCellRuns.clear();
-            s.activeRuns = nullptr;
-        }
-        return 0;
-    }
-    if (type == MD_BLOCK_TR || type == MD_BLOCK_THEAD || type == MD_BLOCK_TBODY) {
-        return 0;
-    }
-    switch (type) {
-        case MD_BLOCK_DOC: PreviewFlushBlock(s); break;
-        case MD_BLOCK_QUOTE:
-            PreviewFlushBlock(s);
-            ImGui::PopStyleColor();
-            ImGui::Unindent(16.0f);
-            break;
-        case MD_BLOCK_UL:
-        case MD_BLOCK_OL:
-            PreviewFlushBlock(s);
-            if (!s.listStack.empty()) s.listStack.pop_back();
-            if (!s.orderedCounters.empty()) s.orderedCounters.pop_back();
-            if (s.listDepth > 0) --s.listDepth;
-            break;
-        case MD_BLOCK_LI:
-            PreviewFlushBlock(s);
-            for (int i = 0; i < s.listDepth - 1; ++i) ImGui::Unindent(16.0f);
-            break;
-        case MD_BLOCK_CODE: {
-            // Render the accumulated code-block text in a child with monospace styling.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-            const float h = ImGui::GetTextLineHeightWithSpacing() *
-                            static_cast<float>(1 + std::count(s.codeBuffer.begin(), s.codeBuffer.end(), '\n'));
-            ImGui::BeginChild("##mdpreview_code", ImVec2(-FLT_MIN, std::min(h + 12.0f, 240.0f)),
-                              true, ImGuiWindowFlags_HorizontalScrollbar);
-            const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
-            if (fonts.Mono) ImGui::PushFont(fonts.Mono);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-            ImGui::TextUnformatted(s.codeBuffer.c_str());
-            ImGui::PopStyleColor();
-            if (fonts.Mono) ImGui::PopFont();
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-            s.codeBuffer.clear();
-            if (s.codeDepth > 0) --s.codeDepth;
-            break;
-        }
-        case MD_BLOCK_H:
-        case MD_BLOCK_P:
-            PreviewFlushBlock(s);
-            break;
-        default: break;
-    }
-    return 0;
-}
-
-static int PreviewEnterSpan(MD_SPANTYPE type, void* detail, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
-    if (s.tableDepth > 1) return 0;
-    switch (type) {
-        case MD_SPAN_STRONG: s.currentMarks |= MARK_BOLD; break;
-        case MD_SPAN_EM:     s.currentMarks |= MARK_ITALIC; break;
-        case MD_SPAN_CODE:   s.currentMarks |= MARK_CODE; break;
-        case MD_SPAN_DEL:    s.currentMarks |= MARK_STRIKE; break;
-        case MD_SPAN_A: {
-            s.currentMarks |= MARK_LINK;
-            auto* d = static_cast<MD_SPAN_A_DETAIL*>(detail);
-            if (d && d->href.text && d->href.size > 0) {
-                s.currentHref.assign(d->href.text, d->href.size);
-            } else {
-                s.currentHref.clear();
-            }
-            break;
-        }
-        case MD_SPAN_IMG:
-            ++s.imgSpanDepth;
-            s.imgAltAccum.clear();
-            break;
-        default: break;
-    }
-    return 0;
-}
-
-static int PreviewLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
-    if (s.tableDepth > 1) return 0;
-    switch (type) {
-        case MD_SPAN_STRONG: s.currentMarks &= ~MARK_BOLD; break;
-        case MD_SPAN_EM:     s.currentMarks &= ~MARK_ITALIC; break;
-        case MD_SPAN_CODE:   s.currentMarks &= ~MARK_CODE; break;
-        case MD_SPAN_DEL:    s.currentMarks &= ~MARK_STRIKE; break;
-        case MD_SPAN_A:
-            s.currentMarks &= ~MARK_LINK;
-            s.currentHref.clear();
-            break;
-        case MD_SPAN_IMG:
-            if (s.imgSpanDepth > 0) --s.imgSpanDepth;
-            PreviewAppendRunString(s, s.imgAltAccum.empty() ? std::string("[image]") : s.imgAltAccum);
-            s.imgAltAccum.clear();
-            break;
-        default: break;
-    }
-    return 0;
-}
-
-static int PreviewText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
-    if (s.tableDepth > 1) return 0;
-    if (type == MD_TEXT_NULLCHAR) return 0;
-    if (type == MD_TEXT_HTML) {
-#ifndef NDEBUG
-        if (!s.debugLoggedMdTextHtml) {
-            s.debugLoggedMdTextHtml = true;
-            LOG_DEBUG("md4c: unexpected MD_TEXT_HTML under NOHTML (preview, first chunk size=%u)",
-                      static_cast<unsigned>(size));
-        }
-#endif
-        return 0;
-    }
-    if (s.imgSpanDepth > 0) {
-        if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE) {
-            s.imgAltAccum.append(text, size);
-            return 0;
-        }
-        if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) {
-            s.imgAltAccum += ' ';
-            return 0;
-        }
-        return 0;
-    }
-    // Code blocks bypass the styled-run pipeline so whitespace and newlines stay
-    // verbatim. Inline `code` spans (handled via MARK_CODE on currentMarks) still
-    // go through the run path so they wrap with surrounding text.
-    if (s.codeDepth > 0 && (s.currentMarks & MARK_CODE) == 0) {
-        s.codeBuffer.append(text, size);
-        return 0;
-    }
-    if (type == MD_TEXT_BR) {
-        // Hard break — mid-paragraph forced wrap.
-        PreviewAppendRunBytes(s, "\n", 1);
-        return 0;
-    }
-    if (type == MD_TEXT_SOFTBR) {
-        // Soft break — collapse to a space; matches HTML rendering.
-        PreviewAppendRunBytes(s, " ", 1);
-        return 0;
-    }
-    PreviewAppendRunBytes(s, text, size);
-    return 0;
-}
-
-static void RenderMarkdownPreview(const std::string& md) {
-    PreviewState state;
-    MD_PARSER parser{};
-    parser.abi_version = 0;
-    parser.flags = MarkdownConvert::Md4cParserFlags();
-    parser.enter_block = PreviewEnterBlock;
-    parser.leave_block = PreviewLeaveBlock;
-    parser.enter_span  = PreviewEnterSpan;
-    parser.leave_span  = PreviewLeaveSpan;
-    parser.text        = PreviewText;
-    md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &state);
-    PreviewFlushBlock(state);
-}
-
-} // namespace
+static void CloseLongTextEditor() { s_ActiveLongTextState = ActiveLongTextEditorState{}; }
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -908,8 +262,7 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     if (!st->PendingGridInputTextDeselect) {
         return 0;
     }
-    const bool fullRange =
-        data->BufTextLen > 0 && data->SelectionStart == 0 && data->SelectionEnd == data->BufTextLen;
+    const bool fullRange = data->BufTextLen > 0 && data->SelectionStart == 0 && data->SelectionEnd == data->BufTextLen;
     if (!data->EventActivated && !fullRange) {
         return 0;
     }
@@ -927,7 +280,8 @@ struct DurationCallbackWrapperData {
 
 static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
     auto* wrapper = static_cast<DurationCallbackWrapperData*>(data->UserData);
-    if (!wrapper) return 0;
+    if (!wrapper)
+        return 0;
 
     if (wrapper->NeedRepositionAndFocus && *(wrapper->NeedRepositionAndFocus)) {
         if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
@@ -947,12 +301,9 @@ static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
-bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize,
-                                      ImGuiInputTextFlags flags = 0,
-                                      ImGuiInputTextCallback callback = nullptr,
-                                      void* callbackUserData = nullptr,
-                                      bool* outManuallyEdited = nullptr,
-                                      bool forceOpenPopup = false) {
+bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize, ImGuiInputTextFlags flags = 0,
+                                      ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr,
+                                      bool* outManuallyEdited = nullptr, bool forceOpenPopup = false) {
     bool submitted = false;
     ImGui::PushID(label);
 
@@ -986,7 +337,9 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     wrapperData.NeedRepositionAndFocus = &needRepositionAndFocus;
 
     bool deactivated = false;
-    if (ImGui::InputText("##duration_input", buf, bufSize, flags | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways, DurationInputTextCallback, &wrapperData)) {
+    if (ImGui::InputText("##duration_input", buf, bufSize,
+                         flags | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                         DurationInputTextCallback, &wrapperData)) {
         submitted = true;
         if (outManuallyEdited) {
             *outManuallyEdited = true;
@@ -1091,9 +444,8 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
 }
 
 void RenderTextEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
-                      const std::string& currentValue,
-                      SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
-                      float availWidth) {
+                      const std::string& currentValue, SpreadsheetState& state,
+                      std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, float availWidth) {
     // Widget-cell unique ID is provided by the CellIdScope pushed in RenderFieldCell
     // (ticket.id + field.Id on the ImGui ID stack). Literal short labels below stay collision-free.
 
@@ -1128,11 +480,8 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
             }
             EditCbUser cbUser{&state};
             submitted = DrawDurationFieldWithSuggestions(
-                "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer),
-                ImGuiInputTextFlags_CallbackAlways,
-                InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser),
-                nullptr, editJustStarted
-            );
+                "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
+                InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted);
         } else {
             ImGui::SetNextItemWidth(-FLT_MIN);
             if (editJustStarted) {
@@ -1156,8 +505,8 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
     }
 
     const std::string valueForDisplay = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const bool hasNewlineInValue = std::any_of(valueForDisplay.begin(), valueForDisplay.end(),
-                                               [](char c) { return c == '\n' || c == '\r'; });
+    const bool hasNewlineInValue =
+        std::any_of(valueForDisplay.begin(), valueForDisplay.end(), [](char c) { return c == '\n' || c == '\r'; });
     std::string singleLine = valueForDisplay;
     auto nlIt = std::find_if(singleLine.begin(), singleLine.end(), [](char c) { return c == '\n' || c == '\r'; });
     if (nlIt != singleLine.end()) {
@@ -1232,10 +581,9 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
             ImGui::SetKeyboardFocusHere();
         }
         ImGui::SetNextItemWidth(-FLT_MIN);
-        const bool submitOnEnter = ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options",
-                                                            state.SingleSelectSearchBuf,
-                                                            sizeof(state.SingleSelectSearchBuf),
-                                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool submitOnEnter =
+            ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options", state.SingleSelectSearchBuf,
+                                     sizeof(state.SingleSelectSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Separator();
 
         const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
@@ -1244,11 +592,10 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         bool drewAny = false;
         for (const auto& option : field.AllowedValueOptions) {
             const std::string optionId = option.Id.empty() ? option.Value : option.Id;
-            const bool matchesFilter =
-                filterLower.empty() ||
-                ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
-                ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
-                ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
+            const bool matchesFilter = filterLower.empty() ||
+                                       ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
+                                       ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
+                                       ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
             if (!matchesFilter) {
                 continue;
             }
@@ -1333,7 +680,8 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 
         const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf, sizeof(state.MultiSelectSearchBuf));
+        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf,
+                                 sizeof(state.MultiSelectSearchBuf));
         ImGui::Separator();
 
         const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
@@ -1341,11 +689,10 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
         for (const auto& option : field.AllowedValueOptions) {
             const std::string optionId = option.Id.empty() ? option.Value : option.Id;
             bool checked = (selectedSet.find(optionId) != selectedSet.end());
-            const bool matchesFilter =
-                filterLower.empty() ||
-                ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
-                ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
-                ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
+            const bool matchesFilter = filterLower.empty() ||
+                                       ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
+                                       ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
+                                       ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
             if (!checked && !matchesFilter) {
                 continue;
             }
@@ -1397,8 +744,8 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 }
 
 void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
-                                 const std::string& currentValue,
-                                 std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
+                                 const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
+                                 bool tooltipsEnabled) {
     std::string parentId;
     std::string childId;
     TryResolveCascadingSelection(field, currentValue, parentId, childId);
@@ -1484,8 +831,8 @@ struct CellIdScope {
 
 void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                         int columnIndex, const TrackerField* field, const std::string& currentValue,
-                                        float availWidth, bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
-                                        std::vector<PendingFieldEdit>& pendingEdits,
+                                        float availWidth, bool tooltipsEnabled, bool allowEdits,
+                                        SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
                                         TrackerGridFieldAsyncState& trackerGridAsync,
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
@@ -1503,8 +850,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     auto renderPlainText = [&](bool disabled) {
         std::string display;
         if (column.IsDateLike) {
-            display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue,
-                                                     dateFormatOption, thresholdDays);
+            display =
+                DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
         } else {
             display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
         }
@@ -1525,13 +872,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     case TicketGridColumn::RenderPlan::SpecialWatchers:
         if (field == nullptr || TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
             TrackerGridFieldDisplay::RenderWatchersField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
-                                                      trackerGridAsync);
+                                                         trackerGridAsync);
             return;
         }
         break;
     case TicketGridColumn::RenderPlan::SpecialVotes:
         if (field == nullptr || TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
-            TrackerGridFieldDisplay::RenderVotesField(app, ticket.id, currentValue, availWidth, tooltipsEnabled, trackerGridAsync);
+            TrackerGridFieldDisplay::RenderVotesField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
+                                                      trackerGridAsync);
             return;
         }
         break;
@@ -1555,7 +903,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
         // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); // invisible background when normal
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // invisible background when normal
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
@@ -1566,7 +914,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
             s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
             s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
-            std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+            std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
+                         sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
             s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
 
             s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
@@ -1679,11 +1028,13 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             }
 
             std::string loggedLabel = FormatWorkDurationFromSeconds(displaySpentSec);
-            if (loggedLabel.empty()) loggedLabel = "0m";
+            if (loggedLabel.empty())
+                loggedLabel = "0m";
             loggedLabel += " logged";
 
             std::string remainingLabel = FormatWorkDurationFromSeconds(displayRemSec);
-            if (remainingLabel.empty()) remainingLabel = "0m";
+            if (remainingLabel.empty())
+                remainingLabel = "0m";
             remainingLabel += " remaining";
 
             ImGui::TextUnformatted(loggedLabel.c_str());
@@ -1695,7 +1046,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             ImGui::PopStyleColor();
 
             if (!s_ActiveWorklogState.OriginalEstimate.empty()) {
-                ImGui::TextDisabled("The original estimate for this work item was %s.", s_ActiveWorklogState.OriginalEstimate.c_str());
+                ImGui::TextDisabled("The original estimate for this work item was %s.",
+                                    s_ActiveWorklogState.OriginalEstimate.c_str());
             }
 
             ImGui::Spacing();
@@ -1705,17 +1057,22 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             // Inputs
             ImGui::Text("Time spent *");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr, false)) {
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent,
+                                                 sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr,
+                                                 false)) {
                 if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
                     long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
                     long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
                     if (spentVal > 0) {
                         long long newRem = (std::max)(0LL, remVal - spentVal);
                         std::string formattedRem = FormatWorkDurationFromSeconds(newRem);
-                        std::strncpy(s_ActiveWorklogState.TimeRemaining, formattedRem.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                        std::strncpy(s_ActiveWorklogState.TimeRemaining, formattedRem.c_str(),
+                                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
                         s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
                     } else {
-                        std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(), sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                        std::strncpy(s_ActiveWorklogState.TimeRemaining,
+                                     s_ActiveWorklogState.TotalTimeRemaining.c_str(),
+                                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
                         s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
                     }
                 }
@@ -1725,14 +1082,17 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             ImGui::Spacing();
             ImGui::Text("Time remaining");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining, sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr, &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
+            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining,
+                                                 sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr,
+                                                 &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
                 // value changed!
             }
 
             ImGui::Spacing();
             ImGui::Text("Date started *");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
+            TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted",
+                                                                s_ActiveWorklogState.DateStarted, true);
 
             ImGui::Spacing();
             ImGui::Text("Work description");
@@ -1747,14 +1107,18 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 } else {
                     for (const auto& item : templates) {
                         if (ImGui::Selectable(item.c_str())) {
-                            std::strncpy(s_ActiveWorklogState.WorkDescription, item.c_str(), sizeof(s_ActiveWorklogState.WorkDescription) - 1);
-                            s_ActiveWorklogState.WorkDescription[sizeof(s_ActiveWorklogState.WorkDescription) - 1] = '\0';
+                            std::strncpy(s_ActiveWorklogState.WorkDescription, item.c_str(),
+                                         sizeof(s_ActiveWorklogState.WorkDescription) - 1);
+                            s_ActiveWorklogState.WorkDescription[sizeof(s_ActiveWorklogState.WorkDescription) - 1] =
+                                '\0';
                         }
                     }
                 }
                 ImGui::EndPopup();
             }
-            ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription, sizeof(s_ActiveWorklogState.WorkDescription), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+            ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
+                                      sizeof(s_ActiveWorklogState.WorkDescription),
+                                      ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
 
             if (!s_ActiveWorklogState.ErrorMsg.empty()) {
                 ImGui::Spacing();
@@ -1778,12 +1142,9 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                     } else {
                         std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
                         std::string outErr;
-                        if (app.SubmitWorklog(s_ActiveWorklogState.IssueId,
-                                              s_ActiveWorklogState.TimeSpent,
-                                              s_ActiveWorklogState.TimeRemaining,
-                                              adjEst,
-                                              s_ActiveWorklogState.WorkDescription,
-                                              s_ActiveWorklogState.DateStarted,
+                        if (app.SubmitWorklog(s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent,
+                                              s_ActiveWorklogState.TimeRemaining, adjEst,
+                                              s_ActiveWorklogState.WorkDescription, s_ActiveWorklogState.DateStarted,
                                               outErr)) {
                             ImGui::CloseCurrentPopup();
                             s_ActiveWorklogState.Initialized = false;
@@ -1824,9 +1185,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
     }
 
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, nullptr,
-                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(),
-                    s_ActiveLongTextState.IssueId.c_str());
+                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(), s_ActiveLongTextState.IssueId.c_str());
 
         // Format-fidelity banners. RawMode is the strongest signal — fall back to editing
         // the source HTML directly so we don't destroy unrecognized markup. DroppedAdfNodeTypes
@@ -1841,7 +1201,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.4f, 1.0f));
             std::string list;
             for (size_t i = 0; i < s_ActiveLongTextState.DroppedAdfNodeTypes.size() && i < 5; ++i) {
-                if (!list.empty()) list += ", ";
+                if (!list.empty())
+                    list += ", ";
                 list += s_ActiveLongTextState.DroppedAdfNodeTypes[i];
             }
             ImGui::TextWrapped("Note: this document contains constructs not in our Markdown subset (%s) — "
@@ -1868,17 +1229,22 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         // Preview is disabled in raw-HTML mode (the buffer is HTML, not Markdown — md4c would
         // produce nonsense), so we force EditOnly there regardless of the user's last choice.
         using PreviewModeT = ActiveLongTextEditorState::PreviewModeT;
-        const PreviewModeT effectiveMode = s_ActiveLongTextState.RawMode
-            ? PreviewModeT::EditOnly
-            : s_ActiveLongTextState.PreviewMode;
+        const PreviewModeT effectiveMode =
+            s_ActiveLongTextState.RawMode ? PreviewModeT::EditOnly : s_ActiveLongTextState.PreviewMode;
 
         // Ctrl+P cycles Edit -> Split -> Preview -> Edit. Captured here (not in the footer)
         // so it works with focus inside the textarea.
         if (!s_ActiveLongTextState.RawMode && ctrlDown && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
             switch (s_ActiveLongTextState.PreviewMode) {
-                case PreviewModeT::EditOnly:    s_ActiveLongTextState.PreviewMode = PreviewModeT::Split; break;
-                case PreviewModeT::Split:       s_ActiveLongTextState.PreviewMode = PreviewModeT::PreviewOnly; break;
-                case PreviewModeT::PreviewOnly: s_ActiveLongTextState.PreviewMode = PreviewModeT::EditOnly; break;
+            case PreviewModeT::EditOnly:
+                s_ActiveLongTextState.PreviewMode = PreviewModeT::Split;
+                break;
+            case PreviewModeT::Split:
+                s_ActiveLongTextState.PreviewMode = PreviewModeT::PreviewOnly;
+                break;
+            case PreviewModeT::PreviewOnly:
+                s_ActiveLongTextState.PreviewMode = PreviewModeT::EditOnly;
+                break;
             }
         }
 
@@ -1890,9 +1256,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         // explicit pixel widths so the splitter sits between two real columns.
         const float splitterW = 6.0f;
         const float totalW = ImGui::GetContentRegionAvail().x;
-        const float panesW = (effectiveMode == PreviewModeT::Split)
-                                 ? (totalW - splitterW)
-                                 : totalW;
+        const float panesW = (effectiveMode == PreviewModeT::Split) ? (totalW - splitterW) : totalW;
         const float splitEditorW = panesW * s_ActiveLongTextState.SplitterRatio;
         const float splitPreviewW = panesW - splitEditorW;
         const float editorW = (effectiveMode == PreviewModeT::Split) ? splitEditorW : -FLT_MIN;
@@ -1901,10 +1265,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         const ImGuiID editorId = ImGui::GetID("##LongTextEditorBuf");
 
         if (effectiveMode != PreviewModeT::PreviewOnly) {
-            ImGui::InputTextMultiline("##LongTextEditorBuf",
-                                      s_ActiveLongTextState.Buffer.data(),
-                                      s_ActiveLongTextState.Buffer.size(),
-                                      ImVec2(editorW, inputSize.y),
+            ImGui::InputTextMultiline("##LongTextEditorBuf", s_ActiveLongTextState.Buffer.data(),
+                                      s_ActiveLongTextState.Buffer.size(), ImVec2(editorW, inputSize.y),
                                       ImGuiInputTextFlags_AllowTabInput);
         }
 
@@ -1920,25 +1282,26 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 const float dx = ImGui::GetIO().MouseDelta.x;
                 if (panesW > 0.0f) {
                     float r = s_ActiveLongTextState.SplitterRatio + dx / panesW;
-                    if (r < 0.15f) r = 0.15f;
-                    if (r > 0.85f) r = 0.85f;
+                    if (r < 0.15f)
+                        r = 0.15f;
+                    if (r > 0.85f)
+                        r = 0.85f;
                     s_ActiveLongTextState.SplitterRatio = r;
                 }
             }
             // Visual hint for the splitter — a faint vertical bar, brighter on hover/drag.
             const ImVec2 sMin = ImGui::GetItemRectMin();
             const ImVec2 sMax = ImGui::GetItemRectMax();
-            const ImU32 col = ImGui::GetColorU32(splitterActive ? ImGuiCol_SeparatorActive
-                                                  : splitterHover ? ImGuiCol_SeparatorHovered
-                                                                  : ImGuiCol_Separator);
+            const ImU32 col = ImGui::GetColorU32(splitterActive  ? ImGuiCol_SeparatorActive
+                                                 : splitterHover ? ImGuiCol_SeparatorHovered
+                                                                 : ImGuiCol_Separator);
             ImGui::GetWindowDrawList()->AddRectFilled(sMin, sMax, col);
             ImGui::SameLine(0.0f, 0.0f);
         }
 
         if (effectiveMode != PreviewModeT::EditOnly) {
-            ImGui::BeginChild("##LongTextPreview",
-                              ImVec2(previewW, inputSize.y),
-                              true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::BeginChild("##LongTextPreview", ImVec2(previewW, inputSize.y), true,
+                              ImGuiWindowFlags_HorizontalScrollbar);
             // Capture the preview window pointer while it's the current window — child names
             // are munged by BeginChild, so FindWindowByName won't match the literal id we passed.
             ::ImGuiWindow* previewWin = ::ImGui::GetCurrentWindow();
@@ -1992,7 +1355,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
-            RenderMarkdownPreview(s_ActiveLongTextState.LastRoundTripOutput);
+            MarkdownPreviewRender::Render(s_ActiveLongTextState.LastRoundTripOutput);
             const float previewScroll = ImGui::GetScrollY();
             const float previewScrollMax = ImGui::GetScrollMaxY();
             ImGui::EndChild();
@@ -2005,10 +1368,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 const float editorScroll = editorWin ? editorWin->Scroll.y : 0.0f;
                 const float editorScrollMax = editorWin ? editorWin->ScrollMax.y : 0.0f;
 
-                const bool editorChanged =
-                    std::fabs(editorScroll - s_ActiveLongTextState.LastEditorScrollY) > 0.5f;
-                const bool previewChanged =
-                    std::fabs(previewScroll - s_ActiveLongTextState.LastPreviewScrollY) > 0.5f;
+                const bool editorChanged = std::fabs(editorScroll - s_ActiveLongTextState.LastEditorScrollY) > 0.5f;
+                const bool previewChanged = std::fabs(previewScroll - s_ActiveLongTextState.LastPreviewScrollY) > 0.5f;
 
                 if (editorChanged && previewWin && editorScrollMax > 0.0f && previewScrollMax > 0.0f) {
                     const float r = editorScroll / editorScrollMax;
@@ -2031,8 +1392,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         const bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
         const char* footerHint = s_ActiveLongTextState.RawMode
-            ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
-            : "Ctrl+Enter to save · Esc to cancel · Ctrl+P preview mode · Markdown — **bold**, *em*, # heading, - list, ```code```";
+                                     ? "Ctrl+Enter to save · Esc to cancel · raw HTML mode (Markdown disabled)"
+                                     : "Ctrl+Enter to save · Esc to cancel · Ctrl+P preview mode · Markdown — "
+                                       "**bold**, *em*, # heading, - list, ```code```";
         ImGui::TextDisabled("%s", footerHint);
 
         bool save = ctrlEnter;
@@ -2048,7 +1410,8 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         // rendering is meaningless when the buffer is HTML). Ctrl+P cycles modes — see the
         // shortcut handler above the panes.
         ImGui::SameLine();
-        if (s_ActiveLongTextState.RawMode) ImGui::BeginDisabled();
+        if (s_ActiveLongTextState.RawMode)
+            ImGui::BeginDisabled();
         auto segBtn = [](const char* label, ActiveLongTextEditorState::PreviewModeT mode) {
             const bool active = s_ActiveLongTextState.PreviewMode == mode;
             if (active) {
@@ -2069,16 +1432,16 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Ctrl+P to cycle Edit / Split / Preview");
         }
-        if (s_ActiveLongTextState.RawMode) ImGui::EndDisabled();
+        if (s_ActiveLongTextState.RawMode)
+            ImGui::EndDisabled();
 
         if (save) {
             const std::string newValue(s_ActiveLongTextState.Buffer.data());
             // Diff against the seeded markdown (or the raw HTML in RawMode) so we don't queue a
             // null edit that would still re-emit through the payload converter and reshape
             // formatting that hasn't actually changed.
-            const std::string& seed = s_ActiveLongTextState.RawMode
-                                          ? s_ActiveLongTextState.OriginalRichValue
-                                          : s_ActiveLongTextState.OriginalMarkdown;
+            const std::string& seed = s_ActiveLongTextState.RawMode ? s_ActiveLongTextState.OriginalRichValue
+                                                                    : s_ActiveLongTextState.OriginalMarkdown;
             if (newValue != seed) {
                 PendingFieldEdit edit;
                 edit.IssueId = s_ActiveLongTextState.IssueId;
@@ -2102,5 +1465,3 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         CloseLongTextEditor();
     }
 }
-
-

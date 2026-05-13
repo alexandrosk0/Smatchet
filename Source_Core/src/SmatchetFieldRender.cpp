@@ -1,9 +1,11 @@
 #include "SmatchetFieldRender.h"
 
+#include "MarkdownPreviewRender.h"
+
 #include "imgui.h"
 
 void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool tooltipsEnabled, bool disabled,
-                            const std::string* rawForTooltip) {
+                            const std::string* rawForTooltip, bool renderMarkdown) {
     ImGui::AlignTextToFramePadding();
     const std::string& displayValue = rawValue;
 
@@ -27,7 +29,14 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-        ImGui::TextUnformatted(tipSource.c_str());
+        if (renderMarkdown) {
+            MarkdownPreviewRender::Options opts;
+            opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+            opts.clickableLinks = false;
+            MarkdownPreviewRender::Render(tipSource, opts);
+        } else {
+            ImGui::TextUnformatted(tipSource.c_str());
+        }
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
@@ -36,9 +45,3 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
         ImGui::PopStyleColor();
     }
 }
-
-
-
-
-
-
