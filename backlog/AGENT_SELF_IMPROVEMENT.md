@@ -37,6 +37,14 @@ Sweep the file when:
 
 <!-- Latest first. Append new entries at the top of this section. -->
 
+- 2026-05-13 · p4-blame · [process] — multi-file split handoff packet missed transitive call closure
+  Details: When splitting `BlameAnalysisUi.cpp` (2430 → 7 TUs), the orchestrator's handoff packet enumerated modal helpers explicitly but omitted export builders (`BuildAiExport`, `BuildBlameExport{Csv,Json}`, `BuildCallstackRowTsv`, `BuildAnnotatedRowTsv`) that `DrawWindow` calls. Agent had to discover them mid-split. Rule for orchestrator handoff packets on file-split tasks: include an explicit closure rule — "everything `<target-fn>` calls that isn't already in another TU goes to <bucket>" — instead of enumerating from memory.
+  Status: open
+
+- 2026-05-13 · p4-blame · [context] — missing-include after split is silent until build
+  Details: When extracting helpers from a monolithic `.cpp` into separate TUs, includes that were only in the original `.cpp` are not catchable by inspection — only by build. `CompactDateFormat.h` was needed by both `_Config.cpp` and `_Window.cpp` after split but wasn't in the shared internal header. Rule for split-refactor agents: after creating the shared internal header, scan the original `.cpp`'s include list and replicate every non-self include into the internal header to pre-empt this class of failures.
+  Status: open
+
 - 2026-05-13 · orchestrator · [process] — branch-switch wipes untracked plan files
   Details: Working-tree-only files (e.g. a plan doc not yet `git add`-ed) are silently lost on `git checkout <other-branch>` when GitHub Desktop or `git reset --hard` runs. Recovery via `git fsck --lost-found` + content-search on dangling blobs is slow. Rule: as soon as a plan file lands at `docs/design/`, `git add` + commit it immediately, even with a `wip:` prefix, before any other work or branch operation. Never leave a plan file untracked across a session boundary.
   Status: applied (40c0bb2 — AGENTS.md § Project rules § Plan-doc safety)
