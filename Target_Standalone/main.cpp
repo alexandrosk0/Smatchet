@@ -77,6 +77,11 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
 #endif
 
+// UiDrawSession is defined in SmatchetUI.cpp (translation-unit global g_ui).
+// main.cpp reads requestFullScreenToggle and cfg.FullScreen after each frame.
+#include "SmatchetUiSession.h"
+extern UiDrawSession g_ui;
+
 // GLFW Error Callback
 static void glfw_error_callback(int error, const char* description) {
     ::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -473,6 +478,19 @@ int main(int argc, char** argv) {
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             glfwSwapBuffers(window);
+
+            // Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
+            if (g_ui.requestFullScreenToggle) {
+                g_ui.requestFullScreenToggle = false;
+                g_ui.cfg.FullScreen = !g_ui.cfg.FullScreen;
+                if (g_ui.cfg.FullScreen) {
+                    GLFWmonitor* mon = glfwGetPrimaryMonitor();
+                    const GLFWvidmode* mode = glfwGetVideoMode(mon);
+                    glfwSetWindowMonitor(window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
+                } else {
+                    glfwSetWindowMonitor(window, nullptr, 100, 100, 1280, 720, 0);
+                }
+            }
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
             if (!g_MainWindowShownAfterFirstFrame) {
