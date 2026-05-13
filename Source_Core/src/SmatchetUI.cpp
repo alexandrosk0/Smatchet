@@ -1087,6 +1087,16 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::EndMenu();
             }
+#if defined(SMATCHET_ENABLE_EDITOR_LAYOUT)
+            if (ImGui::BeginMenu("Editor Layout")) {
+                if (ImGui::MenuItem("Single"))        { /* TODO: DockBuilderSplitNode single */ }
+                if (ImGui::MenuItem("Two Columns"))   { /* TODO */ }
+                if (ImGui::MenuItem("Three Columns")) { /* TODO */ }
+                if (ImGui::MenuItem("Two Rows"))      { /* TODO */ }
+                if (ImGui::MenuItem("Grid (2x2)"))    { /* TODO */ }
+                ImGui::EndMenu();
+            }
+#endif
             ImGui::Separator();
             if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
                 d.showViewsDashboard = !d.showViewsDashboard;
