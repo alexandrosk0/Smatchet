@@ -108,6 +108,7 @@ Sweep the file when:
 - 2026-05-12 · tracker-backend · [context] — `RemoteProject` POD uses lowerCamelCase (`id`, `key`, `displayName`) while most other DTOs in `Source_Core/include/` use PascalCase (`Id`, `Name`, …)
   Details: Style drift introduced in PR 1. Worth normalizing before more call sites accumulate. Architect call.
   Status: open
+  Defer: C++ rename touching every `RemoteProject` call site (tracker-backend + grid-engine + bulk-import). Architect should scope the rename inside the next PR that legitimately touches `RemoteProject`. Don't open a standalone rename PR — bundle with adjacent work to minimise diff noise.
 
 - 2026-05-12 · tracker-backend · [tooling / new-agent] — no test rig in the repo
   Details: pure-C++14 helpers (`JqlProjectScope`, value parser, JQL surgery) had to invent compile-only test patterns that aren't actually executed. A small `test-rig` agent that wires up a CTest target with doctest/GoogleTest against `Source_Core` would unblock real unit tests. High ROI given how much pure-logic code lives there.
@@ -120,10 +121,12 @@ Sweep the file when:
 - 2026-05-12 · tracker-backend · [tooling] — `mcp__vexp__run_pipeline` rejects `max_tokens` as float when JSON wire format is double
   Details: Surfaced as "floating point, expected usize" — schema should accept integers-as-floats or improve the error message.
   Status: open
+  Defer: External — vexp tool source lives outside this repo. File an issue / PR at the vexp project; not actionable in Smatchet. Workaround: cast to int literal in callers (`max_tokens: 12000` not `max_tokens: 12000.0`).
 
 - 2026-05-12 · offline-sync · [shortcut] — `SaveFieldCatalogSnapshot` accumulated 4 extra primitive args; a `FieldCatalogSaveContext` struct would prevent future drift
   Details: callers already had each arg in scope; bundling them into one struct keeps the call site narrow as more per-axis state lands.
   Status: open
+  Defer: Small C++ refactor — bundle into the next PR that touches `SaveFieldCatalogSnapshot`. Don't open a standalone refactor PR; the win shows up only when adding the next per-axis arg, which is when the bundling decision gets reviewed in context.
 
 - 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
   Details: Project-key PR 6 plan flagged `AppController_LuaBindings.cpp:~L254` as a "Lua config setter to deprecate" — it was actually `LuaApplyIssueCreateKv` (per-operation draft kv, not a config setter). One round-trip cost. Agent correctly flagged back to orchestrator before editing.
