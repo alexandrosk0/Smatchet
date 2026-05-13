@@ -336,6 +336,17 @@ class ConfigManager {
     static const std::string& GetUserDataDirectory();
     static std::string GetDefaultSettingsPath();
 
+    /** Portable-mode marker file (`smatchet_portable.flag`) co-located with the runtime
+     *  assets. When present, the standalone bootstrap and the Unreal plugin route writable
+     *  files (config / views / SQLite cache / imgui.ini) to `runtimeAssetDir` instead of
+     *  the OS user-data dir. Authoritative across launches — pref-toggle just writes / removes
+     *  this file and the next launch picks the matching path. */
+    static std::string GetPortableFlagPath(const std::string& runtimeAssetDir);
+    static bool IsPortableModeFlagSet(const std::string& runtimeAssetDir);
+    /** Create or remove the portable marker file. Returns true on success; on failure
+     *  `outError` is populated. Takes effect on next launch. */
+    static bool SetPortableModeFlag(const std::string& runtimeAssetDir, bool enabled, std::string& outError);
+
     static nlohmann::json LoadJsonFile(const std::string& path);
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);

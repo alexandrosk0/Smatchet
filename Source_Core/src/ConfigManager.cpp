@@ -701,6 +701,49 @@ std::string ConfigManager::GetDefaultSettingsPath() {
     return base + "default_settings.json";
 }
 
+std::string ConfigManager::GetPortableFlagPath(const std::string& runtimeAssetDir) {
+    const std::string normalized = NormalizeDirectoryPath(runtimeAssetDir);
+    if (normalized.empty()) {
+        return "smatchet_portable.flag";
+    }
+    return normalized + "smatchet_portable.flag";
+}
+
+bool ConfigManager::IsPortableModeFlagSet(const std::string& runtimeAssetDir) {
+    return FileExists(GetPortableFlagPath(runtimeAssetDir));
+}
+
+bool ConfigManager::SetPortableModeFlag(const std::string& runtimeAssetDir, bool enabled, std::string& outError) {
+    outError.clear();
+    const std::string path = GetPortableFlagPath(runtimeAssetDir);
+    if (enabled) {
+        EnsureParentDirectoryForFile(path);
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            outError = "Could not create portable marker file: " + path;
+            return false;
+        }
+        file << "Smatchet portable-mode marker. Delete this file to revert to OS user-data directory.\n";
+        return file.good();
+    }
+    if (!FileExists(path)) {
+        return true;
+    }
+#if defined(_WIN32)
+    const std::wstring wPath = Utf8ToWide(path);
+    if (wPath.empty() || ::DeleteFileW(wPath.c_str()) == 0) {
+        outError = "Could not remove portable marker file: " + path;
+        return false;
+    }
+#else
+    if (std::remove(path.c_str()) != 0) {
+        outError = std::string("Could not remove portable marker file: ") + std::strerror(errno);
+        return false;
+    }
+#endif
+    return true;
+}
+
 nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
     if (!FileExists(path)) {
         return nlohmann::json::object();

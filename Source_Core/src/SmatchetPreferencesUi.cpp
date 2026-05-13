@@ -349,6 +349,44 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::EndPopup();
             }
+
+#if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Settings storage location");
+            ImGui::TextWrapped(
+                "By default Smatchet stores config, views, ImGui layout, and the SQLite cache in your "
+                "OS user-data folder (shared across exes / installs). Enable portable mode to keep "
+                "all writable files next to the executable instead — useful when running from a "
+                "thumb drive or testing parallel builds. Change takes effect on next launch.");
+            const std::string runtimeAssetDir = ConfigManager::GetRuntimeAssetDirectory();
+            const bool portableNow = ConfigManager::IsPortableModeFlagSet(runtimeAssetDir);
+            bool portableTarget = portableNow;
+            if (ImGui::Checkbox("Portable mode (keep settings next to the executable)", &portableTarget)) {
+                std::string err;
+                if (ConfigManager::SetPortableModeFlag(runtimeAssetDir, portableTarget, err)) {
+                    SmatchetToastManager::Instance().Push(
+                        std::string("Storage"),
+                        std::string(portableTarget ? "Portable mode enabled. Restart Smatchet for the new "
+                                                     "storage location to take effect."
+                                                   : "Portable mode disabled. Restart Smatchet to switch back "
+                                                     "to the OS user-data folder."),
+                        ToastType::Info, 6000);
+                } else {
+                    SmatchetToastManager::Instance().Push(std::string("Storage"),
+                                                          err.empty() ? std::string("Could not update portable "
+                                                                                    "marker file.")
+                                                                      : err,
+                                                          ToastType::Error, 6000);
+                }
+            }
+            ImGui::TextDisabled("Current writable directory: %s",
+                                ConfigManager::GetUserDataDirectory().c_str());
+            ImGui::TextDisabled("Marker file: %s",
+                                ConfigManager::GetPortableFlagPath(runtimeAssetDir).c_str());
+#endif
+
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Appearance")) {

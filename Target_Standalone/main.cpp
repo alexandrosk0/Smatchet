@@ -294,6 +294,21 @@ int main(int argc, char** argv) {
     glfwSwapInterval(1); // Enable vsync
 
     // Separate shipped runtime assets (next to the exe) from writable user data.
+    // Helper: resolve userDataDir given the exe dir. Honors portable-mode marker file
+    // (`smatchet_portable.flag` co-located with the exe) — when present, writable files
+    // live next to the exe instead of in the OS user-data dir. Marker is authoritative;
+    // the preferences toggle just writes / removes it and the next launch picks up the
+    // matching path.
+    const auto resolveStandaloneUserDataDir = [](const std::string& exeDir) -> std::string {
+        if (!ConfigManager::IsPortableModeFlagSet(exeDir)) {
+            std::string osDir = SmatchetGetStandaloneUserDataDirectory();
+            if (!osDir.empty()) {
+                return osDir;
+            }
+        }
+        return exeDir;
+    };
+
 #if defined(_WIN32)
     {
         char buf[MAX_PATH];
@@ -303,10 +318,7 @@ int main(int argc, char** argv) {
             if (last != std::string::npos) {
                 std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
-                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
-                if (userDataDir.empty()) {
-                    userDataDir = exeDir;
-                }
+                std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
                 SmatchetEnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
@@ -323,10 +335,7 @@ int main(int argc, char** argv) {
             if (last != std::string::npos) {
                 const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
-                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
-                if (userDataDir.empty()) {
-                    userDataDir = exeDir;
-                }
+                std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
                 SmatchetEnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
@@ -342,10 +351,7 @@ int main(int argc, char** argv) {
             if (last != std::string::npos) {
                 const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
-                std::string userDataDir = SmatchetGetStandaloneUserDataDirectory();
-                if (userDataDir.empty()) {
-                    userDataDir = exeDir;
-                }
+                std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
                 SmatchetEnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
