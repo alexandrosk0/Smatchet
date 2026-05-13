@@ -1,6 +1,7 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "SmatchetViewVisibility.h"
+#include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/ViewCommands.h"
@@ -568,6 +569,11 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
+    // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
+    if (d.cfg.ShowStatusBar) {
+        DrawStatusBar(app, d);
+    }
+
     // Keyboard shortcuts for panel visibility toggles (Ctrl+B / Ctrl+J).
     // ImGui::Shortcut available in docking branch; fall back to GetIO check if absent.
     {
