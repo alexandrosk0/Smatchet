@@ -28,6 +28,16 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
+**Plan-doc safety**: as soon as a plan / design doc is written (anywhere — `docs/design/`, `backlog/`, repo root, anywhere), `git add` + commit it immediately with a `wip:` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
+
+**Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
+
+## Debug techniques
+
+**Pink-clear UI gap detection**: for "is the background ever visible behind panels?" / "are dock gaps still leaking?" questions, set the clear color to magenta (`glClearColor(1.0f, 0.0f, 1.0f, 1.0f)` on Standalone, equivalent `ClearRenderTargetView` color on DX12). Any visible pink is a guaranteed dock gap or transparent region. Pair with a screenshot + per-pixel pink scan for objective regression tests.
+
+**Exe staleness check**: after every rebuild, `ls -la` both the patched output and the most-likely-stale exe paths side-by-side, compare mtimes, and name the **exact** path the user should run. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, worktree builds) make wrong-exe testing a common time-sink — orchestrator + perf / build agents all enforce this.
+
 ## Semantic codebase search — use it first
 
 Every agent in this repo expects the orchestrator (or the agent itself) to use **semantic codebase search** before falling back to text-search. In practice that means:
@@ -101,6 +111,7 @@ Registering a routine command (follow the `RegisterCommand({...})` pattern with 
 ### Heuristic
 
 - \>3 files across ≥2 top-level dirs **and** the design isn't obvious → `architect`
+- Prompt already specifies file paths + symbols + commit messages → design is resolved, **skip `architect`**, go direct to the matching subsystem specialist or `mechanic`
 - One symbol across many files → `mechanic`
 - Symptom is "slow" / FPS / sustained lag → `perf-detective`
 - Symptom is "occasional hang" / hitch / spike → `spike-hunter`

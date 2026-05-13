@@ -39,7 +39,7 @@ Sweep the file when:
 
 - 2026-05-13 · orchestrator · [process] — branch-switch wipes untracked plan files
   Details: Working-tree-only files (e.g. a plan doc not yet `git add`-ed) are silently lost on `git checkout <other-branch>` when GitHub Desktop or `git reset --hard` runs. Recovery via `git fsck --lost-found` + content-search on dangling blobs is slow. Rule: as soon as a plan file lands at `docs/design/`, `git add` + commit it immediately, even with a `wip:` prefix, before any other work or branch operation. Never leave a plan file untracked across a session boundary.
-  Status: open
+  Status: applied (40c0bb2 — AGENTS.md § Project rules § Plan-doc safety)
 
 - 2026-05-13 · orchestrator · [process] — wrong-exe testing burns iterations
   Details: When multiple build outputs exist (`build/ninja-release/`, `build/ninja-iter-msys2/`, worktree builds), the user can easily run the OLD exe and report bugs that the new patched exe doesn't have. Wasted ~5 round-trips this session. Rule: after each rebuild, `ls -la` both the patched and the most-likely-stale exe paths, print mtimes side-by-side, and tell the user explicitly which path to run. Same rule applies to subagents diagnosing perf or layout bugs.
@@ -47,11 +47,11 @@ Sweep the file when:
 
 - 2026-05-13 · orchestrator · [process] — schema-version churn
   Details: The `kCurrentLayoutSchemaVersion` constant got bumped seven times in one session (1→2→3→4→5→6→7→8→9, then back to 2). Each bump shipped as its own commit because the user ran each intermediate fix and reported new symptoms. Rule: when a feature requires a config schema bump, hold the version bump until the feature is verified working end-to-end. Do not commit interim version bumps — squash or amend. Final version should be exactly one higher than the previous shipped version.
-  Status: open
+  Status: applied (40c0bb2 — AGENTS.md § Project rules § Schema-version bumps)
 
 - 2026-05-13 · orchestrator · [shortcut] — pink-diagnostic clear color for UI gap detection
   Details: For "is the background ever visible behind panels?" questions: set `glClearColor(1.0f, 0.0f, 1.0f, 1.0f)` (or `ImVec4(1,0,1,1)` on DX12 RTV clear). Pink is rare in normal UI palettes; any visible pink is a guaranteed dock gap or transparent region. Combine with automated screenshot + per-pixel pink scan for objective regression tests (script template in this session's `debug.window.screenshot` PPM pipeline).
-  Status: open
+  Status: applied (40c0bb2 — AGENTS.md § Debug techniques § Pink-clear UI gap detection)
 
 - 2026-05-13 · spike-hunter / orchestrator · [context] — ImGui docking state cannot be re-parented at runtime
   Details: `ImGui::LoadIniSettingsFromDisk()` after the first frame does NOT move already-created docked windows to new DockIds. A common bug pattern: schema migration runs post-load (in the per-frame Draw), windows stay at old positions. Rule: any dock-layout migration must run BEFORE `io.IniFilename` is set and the first `ImGui::NewFrame` call. In Smatchet this means inside `SmatchetImGuiHost::Initialize` (DX12) and inside `main.cpp` before `ImGui_ImplOpenGL3_Init` (Standalone).
@@ -63,7 +63,7 @@ Sweep the file when:
 
 - 2026-05-13 · architect · [process] — skip architect when prompt already specifies file paths + symbols + commit messages
   Details: Orchestrator dispatched a fully-specified three-commit implementation task (symbols, file paths, commit messages all pre-specified) to the `architect` agent (read-only design role). Architect cannot edit files or build. Rule of thumb to add to delegation heuristic: if the prompt already specifies file paths + symbols + commit messages, design is resolved — skip architect, go direct to general-purpose or the matching subsystem specialist.
-  Status: open
+  Status: applied (40c0bb2 — AGENTS.md § Heuristic, new bullet)
 
 - 2026-05-12 · orchestrator · [process] — pre-resolve hard-invariant collisions before delegating implementation slices
   Details: The project-key run burned a full first attempt when a backend agent correctly paused on whether `ITrackerClient::FetchFieldCatalog` could be widened. The orchestrator already had AGENTS.md invariants in context; future delegation packets should state the approved option up front.
@@ -103,7 +103,7 @@ Sweep the file when:
 
 - 2026-05-12 · grid-engine · [process / new-agent] — design-doc PRs that span ≥3 subsystems have no clear owner
   Details: PR 4 of the project-key removal touched tracker-backend (`ListProjects`) + grid-engine (draft picker, view pill) + bulk-import + i18n. `grid-engine` paused and asked for a split, which was correct but cost a round-trip. Either add an explicit `pr-driver` meta-agent that splits design-doc PRs into subsystem sub-delegations, or add a note to AGENTS.md instructing the orchestrator to pre-split such PRs before delegating.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md § Orchestrator delegation packet § Subsystem split bullet covers pre-split rule; `pr-driver` meta-agent not pursued — orchestrator-side discipline is sufficient)
 
 - 2026-05-12 · tracker-backend · [context] — `RemoteProject` POD uses lowerCamelCase (`id`, `key`, `displayName`) while most other DTOs in `Source_Core/include/` use PascalCase (`Id`, `Name`, …)
   Details: Style drift introduced in PR 1. Worth normalizing before more call sites accumulate. Architect call.
@@ -115,7 +115,7 @@ Sweep the file when:
 
 - 2026-05-12 · tracker-backend · [context] — design-doc PR sections that list line numbers should mark each as `(cfg-read)` / `(draft-write)` / `(audit-only)`
   Details: Project-key PR 2 §2.3 listed lines 358, 382, 70, 92, 349 alongside `cfg.ProjectKey`-read sites, but they were draft-writes — required a disambiguation pass.
-  Status: open
+  Status: applied (d4714ad — AGENTS.md § Orchestrator delegation packet § Shared inventory mandates `<file>:<line>:<role>` with the exact role suffixes)
 
 - 2026-05-12 · tracker-backend · [tooling] — `mcp__vexp__run_pipeline` rejects `max_tokens` as float when JSON wire format is double
   Details: Surfaced as "floating point, expected usize" — schema should accept integers-as-floats or improve the error message.
