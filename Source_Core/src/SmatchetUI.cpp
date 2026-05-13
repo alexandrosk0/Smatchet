@@ -265,9 +265,8 @@ static void PersistWindowOpenPreferences(UiDrawSession& d) {
     }
 }
 
-static std::future<FieldCatalogFetchResult> StartFieldCatalogFetchAsync(AppController& app,
-                                                                        const TrackerConfig& fetchCfg,
-                                                                        const std::string& projectKey) {
+static std::future<FieldCatalogFetchResult>
+StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& projectKey) {
     return std::async(std::launch::async, [&app, fetchCfg, projectKey]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
@@ -435,18 +434,18 @@ void SmatchetUI::Draw(AppController& app) {
             lastAppliedDensity_ = d.cfg.Density;
             ImGuiStyle& style = ::ImGui::GetStyle();
             switch (d.cfg.Density) {
-                case TrackerConfig::UiDensity::Compact:
-                    style.ItemSpacing  = ImVec2(4.0f, 2.0f);
-                    style.FramePadding = ImVec2(4.0f, 2.0f);
-                    break;
-                case TrackerConfig::UiDensity::Comfortable:
-                    style.ItemSpacing  = ImVec2(10.0f, 8.0f);
-                    style.FramePadding = ImVec2(8.0f, 6.0f);
-                    break;
-                default: // Normal
-                    style.ItemSpacing  = ImVec2(8.0f, 6.0f);
-                    style.FramePadding = ImVec2(6.0f, 4.0f);
-                    break;
+            case TrackerConfig::UiDensity::Compact:
+                style.ItemSpacing = ImVec2(4.0f, 2.0f);
+                style.FramePadding = ImVec2(4.0f, 2.0f);
+                break;
+            case TrackerConfig::UiDensity::Comfortable:
+                style.ItemSpacing = ImVec2(10.0f, 8.0f);
+                style.FramePadding = ImVec2(8.0f, 6.0f);
+                break;
+            default: // Normal
+                style.ItemSpacing = ImVec2(8.0f, 6.0f);
+                style.FramePadding = ImVec2(6.0f, 4.0f);
+                break;
             }
         }
     }
@@ -648,14 +647,14 @@ void SmatchetUI::Draw(AppController& app) {
     // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit.
     {
         struct KeyChord {
-            bool prefixArmed  = false;
-            float timeoutSec  = 0.0f;
+            bool prefixArmed = false;
+            float timeoutSec = 0.0f;
 
             bool Tick(bool prefixKey, bool completionKey, float dt) {
                 static const float kTimeout = 1.0f;
                 if (prefixKey) {
                     prefixArmed = true;
-                    timeoutSec  = 0.0f;
+                    timeoutSec = 0.0f;
                 }
                 if (prefixArmed) {
                     timeoutSec += dt;
@@ -675,18 +674,16 @@ void SmatchetUI::Draw(AppController& app) {
         };
         static KeyChord s_zenChord;
 
-        const ImGuiIO& zcIo  = ::ImGui::GetIO();
-        const bool ctrlM = zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
-                           && ::ImGui::IsKeyPressed(ImGuiKey_M, false);
-        const bool keyZ  = !zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt
-                           && ::ImGui::IsKeyPressed(ImGuiKey_Z, false);
+        const ImGuiIO& zcIo = ::ImGui::GetIO();
+        const bool ctrlM = zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_M, false);
+        const bool keyZ = !zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_Z, false);
         if (s_zenChord.Tick(ctrlM, keyZ, zcIo.DeltaTime)) {
             d.cfg.ZenMode = !d.cfg.ZenMode;
         }
     }
     // Esc Esc to exit Zen Mode.
     if (d.cfg.ZenMode) {
-        static int s_escCount   = 0;
+        static int s_escCount = 0;
         static float s_escTimer = 0.0f;
         s_escTimer += ::ImGui::GetIO().DeltaTime;
         if (s_escTimer > 0.5f) {
@@ -698,7 +695,7 @@ void SmatchetUI::Draw(AppController& app) {
             s_escTimer = 0.0f;
             if (s_escCount >= 2) {
                 d.cfg.ZenMode = false;
-                s_escCount    = 0;
+                s_escCount = 0;
             }
         }
     }
@@ -805,10 +802,8 @@ void SmatchetUI::Draw(AppController& app) {
     }
     // Dock-node debug overlay — toggled by Ctrl+Alt+D.
     if (d.showDockDebug) {
-        const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking
-                                         | ImGuiWindowFlags_NoCollapse
-                                         | ImGuiWindowFlags_AlwaysAutoResize
-                                         | ImGuiWindowFlags_NoSavedSettings;
+        const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+                                           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
         ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
         ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
         ::ImGui::Separator();
@@ -828,16 +823,12 @@ void SmatchetUI::Draw(AppController& app) {
                 ::ImGui::TextDisabled("%s: NOT FOUND", kNames[i]);
                 continue;
             }
-            ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
-                kNames[i],
-                node->Size.x, node->Size.y,
-                static_cast<int>(node->LocalFlags),
-                node->Windows.Size,
-                static_cast<int>(node->IsEmpty()));
+            ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x, node->Size.y,
+                          static_cast<int>(node->LocalFlags), node->Windows.Size, static_cast<int>(node->IsEmpty()));
         }
         ::ImGui::Separator();
-        ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
-            d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+        ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel,
+                      d.cfg.ShowSecondarySideBar);
         ::ImGui::End();
 
         // Per-frame LOG_DEBUG throttled to every 120 frames.
@@ -851,16 +842,13 @@ void SmatchetUI::Draw(AppController& app) {
                     if (!node) {
                         LOG_DEBUG("DockDebug: %s NOT FOUND", kNames[i]);
                     } else {
-                        LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d",
-                            kNames[i],
-                            node->Size.x, node->Size.y,
-                            static_cast<int>(node->LocalFlags),
-                            node->Windows.Size,
-                            static_cast<int>(node->IsEmpty()));
+                        LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x,
+                                  node->Size.y, static_cast<int>(node->LocalFlags), node->Windows.Size,
+                                  static_cast<int>(node->IsEmpty()));
                     }
                 }
-                LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d",
-                    d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+                LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar,
+                          d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
             }
         }
     }
@@ -1081,8 +1069,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         const char* label;
                     };
                     const DensityEntry kDensities[] = {
-                        {TrackerConfig::UiDensity::Compact,     "Compact"},
-                        {TrackerConfig::UiDensity::Normal,      "Normal"},
+                        {TrackerConfig::UiDensity::Compact, "Compact"},
+                        {TrackerConfig::UiDensity::Normal, "Normal"},
                         {TrackerConfig::UiDensity::Comfortable, "Comfortable"},
                     };
                     for (const DensityEntry& e : kDensities) {
@@ -1103,8 +1091,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         if (ImGui::MenuItem(kFonts[fi], nullptr, selected)) {
                             d.cfg.SelectedFontName = kFonts[fi];
                             ConfigManager::Save(d.cfg);
-                            SmatchetRequestFontReload(d.cfg.SelectedFontName,
-                                                      static_cast<float>(d.cfg.FontSizePt));
+                            SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
                         }
                     }
                     ImGui::EndMenu();
@@ -1121,8 +1108,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                             resetWindowLayoutToDefault(d);
                         }
                     }
-                    if (ImGui::MenuItem("Right", nullptr,
-                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
+                    if (ImGui::MenuItem("Right", nullptr, d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
                         if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Right) {
                             d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
                             ConfigManager::Save(d.cfg);
@@ -1132,9 +1118,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                     ImGui::EndMenu();
                 }
                 {
-                    const char* swapLabel = d.cfg.PrimarySideBarOnRight
-                                                ? "Move Primary Side Bar Left"
-                                                : "Move Primary Side Bar Right";
+                    const char* swapLabel =
+                        d.cfg.PrimarySideBarOnRight ? "Move Primary Side Bar Left" : "Move Primary Side Bar Right";
                     if (ImGui::MenuItem(swapLabel)) {
                         d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
                         ConfigManager::Save(d.cfg);
@@ -1179,11 +1164,16 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
 #if defined(SMATCHET_ENABLE_EDITOR_LAYOUT)
             if (ImGui::BeginMenu("Editor Layout")) {
-                if (ImGui::MenuItem("Single"))        { /* TODO: DockBuilderSplitNode single */ }
-                if (ImGui::MenuItem("Two Columns"))   { /* TODO */ }
-                if (ImGui::MenuItem("Three Columns")) { /* TODO */ }
-                if (ImGui::MenuItem("Two Rows"))      { /* TODO */ }
-                if (ImGui::MenuItem("Grid (2x2)"))    { /* TODO */ }
+                if (ImGui::MenuItem("Single")) { /* TODO: DockBuilderSplitNode single */
+                }
+                if (ImGui::MenuItem("Two Columns")) { /* TODO */
+                }
+                if (ImGui::MenuItem("Three Columns")) { /* TODO */
+                }
+                if (ImGui::MenuItem("Two Rows")) { /* TODO */
+                }
+                if (ImGui::MenuItem("Grid (2x2)")) { /* TODO */
+                }
                 ImGui::EndMenu();
             }
 #endif
@@ -1195,7 +1185,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
                 recentViews_.Touch("view.toggle.views-dashboard");
             }
-            if (ImGui::MenuItem("Source Blame", "Ctrl+Shift+B", d.showBlameAnalysis)) {
+            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showBlameAnalysis)) {
                 d.showBlameAnalysis = !d.showBlameAnalysis;
                 recentViews_.Touch("view.toggle.source-blame");
             }
@@ -1295,7 +1285,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.showPerformance = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Source Blame...")) {
+            if (ImGui::MenuItem("Annotate...")) {
                 d.showBlameAnalysis = true;
             }
             ImGui::EndMenu();

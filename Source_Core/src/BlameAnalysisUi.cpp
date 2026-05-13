@@ -67,8 +67,6 @@ void BlameAnalysisUi::ensureSettingsBuffersLoaded() {
         CopyToBuffer(State().remapFrom, State().blameCfg.PathRemaps[0].FromPrefix);
         CopyToBuffer(State().remapTo, State().blameCfg.PathRemaps[0].ToPrefix);
     }
-    SyncCallstackTrackerFieldBufFromCfg();
-    SyncJiraBlameAuxFieldBufsFromCfg();
     LogBlameP4PathsIfChanged("initial_load");
     cfgLoaded_ = true;
 }
@@ -78,7 +76,7 @@ void BlameAnalysisUi::DrawBlamePreferencesTab(const AppController& app) {
     MaybeAutoselectCallstackTrackerField(app);
     MaybeAutoselectLastFoundClTrackerField(app);
     MaybeAutoselectLastOccurrencesTrackerField(app);
-    ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Blame Analysis (stored in "
+    ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Annotate (stored in "
                        "smatchet_config.json).");
     ImGui::Spacing();
     const BlameUiThemeColors& theme = State().blameCfg.UiColors;

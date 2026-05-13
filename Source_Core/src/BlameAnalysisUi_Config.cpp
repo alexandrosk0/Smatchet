@@ -26,22 +26,11 @@ void LogBlameP4PathsIfChanged(const char* reason) {
     }
 }
 
-void SyncCallstackTrackerFieldBufFromCfg() {
-    CopyToBuffer(State().callstackTrackerFieldBuf, State().blameCfg.CallstackTrackerFieldId);
-}
-
-void SyncJiraBlameAuxFieldBufsFromCfg() {
-    CopyToBuffer(State().lastFoundClFieldBuf, State().blameCfg.LastFoundClTrackerFieldId);
-    CopyToBuffer(State().lastOccurrencesFieldBuf, State().blameCfg.LastOccurrencesTrackerFieldId);
-}
-
 void HydrateBlameCfgDiskOnce() {
     if (State().blameCfgDiskHydrated) {
         return;
     }
     State().blameCfg = ConfigManager::LoadBlameAnalysis();
-    SyncCallstackTrackerFieldBufFromCfg();
-    SyncJiraBlameAuxFieldBufsFromCfg();
     State().blameCfgDiskHydrated = true;
 }
 
@@ -53,12 +42,10 @@ void MaybeAutoselectCallstackTrackerField(const AppController& app) {
     if (fields.empty()) {
         return;
     }
-    auto it = std::find_if(fields.begin(), fields.end(), [](const auto& f) {
-        return ToLowerAsciiCopy(f.Name) == "callstack";
-    });
+    auto it = std::find_if(fields.begin(), fields.end(),
+                           [](const auto& f) { return ToLowerAsciiCopy(f.Name) == "callstack"; });
     if (it != fields.end()) {
         State().blameCfg.CallstackTrackerFieldId = it->Id;
-        SyncCallstackTrackerFieldBufFromCfg();
         ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }
@@ -77,7 +64,6 @@ void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
     });
     if (it != fields.end()) {
         State().blameCfg.LastFoundClTrackerFieldId = it->Id;
-        SyncJiraBlameAuxFieldBufsFromCfg();
         ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }
@@ -96,7 +82,6 @@ void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
     });
     if (it != fields.end()) {
         State().blameCfg.LastOccurrencesTrackerFieldId = it->Id;
-        SyncJiraBlameAuxFieldBufsFromCfg();
         ConfigManager::SaveBlameAnalysis(State().blameCfg);
     }
 }

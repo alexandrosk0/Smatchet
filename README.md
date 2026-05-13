@@ -6,7 +6,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 
 - **Multi-Backend Tracker Support**: Seamlessly switch between **Jira** (Atlassian Cloud) and **Plane.so** from the Preferences panel. Views, field catalogs, and issue data are kept separate per backend.
 - **Full Issue Management**: Search, view, create, and edit issues. Supports offline drafting, custom fields, inline field editing, bulk import/export, and per-backend "new issue inherit" field configuration.
-- **Perforce Blame Analysis**: Native P4 integration for fast file blame analysis directly within the UI, complete with syntax highlighting.
+- **Perforce Annotate**: Native P4 integration for fast file annotation directly within the UI, complete with syntax highlighting.
 - **Fast Local Caching**: Uses SQLite to cache field catalogs, user metadata, and recent issues locally for near-instant load times and offline capabilities.
 - **Engine-Agnostic UI**: Built on Dear ImGui. The core library (`Source_Core`) contains no direct graphics API dependencies.
 - **UI Localization**: Switch the app-owned Dear ImGui UI between built-in English and French, with optional local JSON overrides for teams that want custom wording.

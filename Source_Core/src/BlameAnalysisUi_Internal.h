@@ -116,11 +116,7 @@ struct BlameAnalysisUi::BlameState {
     bool assignHasJiraAccount = false;
     BlameRow assignRow;
 
-    char callstackTrackerFieldBuf[260]{};
-    char lastFoundClFieldBuf[260]{};
-    char lastOccurrencesFieldBuf[260]{};
-
-    /** Opened via grid "Open Source Blame…" with callstack; auto-process + compact UI until raw view. */
+    /** Opened via grid "Annotate…" with callstack; auto-process + compact UI until raw view. */
     bool blameStreamlinedFromGrid = false;
     bool blamePendingAutoProcess = false;
 
@@ -154,8 +150,6 @@ template <size_t N> inline void CopyToBuffer(char (&dst)[N], const std::string& 
 
 // --- Config-side helpers (BlameAnalysisUi_Config.cpp) ---
 void LogBlameP4PathsIfChanged(const char* reason);
-void SyncCallstackTrackerFieldBufFromCfg();
-void SyncJiraBlameAuxFieldBufsFromCfg();
 void HydrateBlameCfgDiskOnce();
 void MaybeAutoselectCallstackTrackerField(const AppController& app);
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app);

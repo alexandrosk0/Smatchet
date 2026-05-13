@@ -50,13 +50,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     const BlameUiThemeColors& theme = State().blameCfg.UiColors;
 
-    // Dockable side-bar View — title "Source Blame", stable ID "BlameAnalysisModal".
+    // Dockable side-bar View — title "Annotate", stable ID "BlameAnalysisModal".
     // First-time opens auto-dock into the primary side bar (right column, dock id 0x00000004
     // in kDefaultImGuiDockLayoutIni). FirstUseEver lets users move/undock manually.
     constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Source Blame###BlameAnalysisModal", pOpen, kPanelFlags)) {
+    if (!ImGui::Begin("Annotate###BlameAnalysisModal", pOpen, kPanelFlags)) {
         CloseBlameModal(pOpen);
         ImGui::End();
         return;
@@ -76,7 +76,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
 
     const std::string titleIssue =
         selectedJiraIssueKey.empty() ? std::string("(no issue selected)") : selectedJiraIssueKey;
-    ImGui::Text("Blame Analysis for: %s", titleIssue.c_str());
+    ImGui::Text("Annotate: %s", titleIssue.c_str());
     ImGui::SameLine();
     {
         const ImGuiStyle& st = ImGui::GetStyle();
@@ -98,25 +98,24 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip(
-                "Copy the full blame export to the clipboard, then open the AI chat URL (if set under Preferences → "
-                "Blame Analysis).");
+            ImGui::SetTooltip("Copy the full annotate export to the clipboard, then open the AI chat URL (if set under "
+                              "Preferences → Annotate).");
         }
         ImGui::SameLine();
         if (ImGui::Button("Export JSON")) {
             ImGui::SetClipboardText(BuildBlameExportJson().c_str());
-            State().lastUiStatus = "Blame JSON export copied to clipboard.";
+            State().lastUiStatus = "Annotate JSON export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Copy structured blame export JSON (entries + nearby lines) to clipboard.");
+            ImGui::SetTooltip("Copy structured annotate export JSON (entries + nearby lines) to clipboard.");
         }
         ImGui::SameLine();
         if (ImGui::Button("Export CSV")) {
             ImGui::SetClipboardText(BuildBlameExportCsv().c_str());
-            State().lastUiStatus = "Blame CSV export copied to clipboard.";
+            State().lastUiStatus = "Annotate CSV export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Copy one-row-per-entry blame export CSV to clipboard.");
+            ImGui::SetTooltip("Copy one-row-per-entry annotate export CSV to clipboard.");
         }
         ImGui::SameLine();
         if (ImGui::Button("Close")) {
@@ -126,7 +125,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             return;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Close Blame Analysis.");
+            ImGui::SetTooltip("Close Annotate.");
         }
         PopBlameLinkButtonColors();
     }
@@ -208,7 +207,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                         ImGui::SetTooltip(
                             "Reveal the callstack text, raw/table toggle, before changelist, and Process controls "
-                            "(compact layout is used when blame is opened from the grid until you click this).");
+                            "(compact layout is used when Annotate is opened from the grid until you click this).");
                     }
                     PopBlameLinkButtonColors();
                 }
@@ -223,13 +222,13 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             if (!streamlinedHide) {
                 ImGui::Spacing();
                 ImGui::TextDisabled(
-                    "Max frames, ignore list, P4 tools, and Jira callstack source: Settings → Preferences → Blame "
-                    "Analysis.");
+                    "Max frames, ignore list, P4 tools, and Jira callstack source: Settings → Preferences → "
+                    "Annotate.");
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted("Before changelist");
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                     ImGui::SetTooltip(
-                        "Optional: run annotate and blame as of this Perforce changelist (each path is passed as "
+                        "Optional: run annotate as of this Perforce changelist (each path is passed as "
                         "`depot/path@CL`).\n\n"
                         "Digits only; leave empty for the current head on each path.\n\n"
                         "The date control on the right resolves a calendar day to the first submitted changelist on "
@@ -275,8 +274,8 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !busy) {
                     ImGui::SetTooltip(
-                        "Parse the callstack buffer and fetch Perforce blame for each frame (options under "
-                        "Preferences → Blame Analysis). If you opened blame from the grid with a callstack field, "
+                        "Parse the callstack buffer and fetch Perforce annotate for each frame (options under "
+                        "Preferences → Annotate). If you opened Annotate from the grid with a callstack field, "
                         "this usually runs once automatically after the buffer fills.");
                 }
                 ImGui::SameLine();
@@ -284,7 +283,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     State().worker.Cancel = true;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && busy) {
-                    ImGui::SetTooltip("Stop the in-progress blame worker.");
+                    ImGui::SetTooltip("Stop the in-progress Annotate worker.");
                 }
                 PopBlameLinkButtonColors();
             } else if (busy) {
@@ -293,7 +292,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                     State().worker.Cancel = true;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                    ImGui::SetTooltip("Stop the in-progress blame worker.");
+                    ImGui::SetTooltip("Stop the in-progress Annotate worker.");
                 }
                 PopBlameLinkButtonColors();
             }
@@ -444,12 +443,12 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             }
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 if (pending) {
-                                    ImGui::SetTooltip("Waiting for blame results for this row.");
+                                    ImGui::SetTooltip("Waiting for Annotate results for this row.");
                                 } else if (userActionable) {
                                     ImGui::SetTooltip("Left-click: look up this Perforce user in Jira.\n"
                                                       "Right-click: open the assign dialog for this row.\n%s",
                                                       row.Blame.Approximate
-                                                          ? "\nApproximate blame (line may not match exact CL)."
+                                                          ? "\nApproximate Annotate (line may not match exact CL)."
                                                           : "");
                                 } else {
                                     ImGui::SetTooltip("No Perforce user on this row.");
@@ -484,7 +483,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                             }
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 if (pending) {
-                                    ImGui::SetTooltip("Waiting for blame results for this row.");
+                                    ImGui::SetTooltip("Waiting for Annotate results for this row.");
                                 } else if (row.Blame.Changelist.empty()) {
                                     ImGui::SetTooltip("No changelist on this row.");
                                 } else {
@@ -793,11 +792,11 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 ImGui::SetTooltip(
                     "Set the Jira assignee on the selected issue to the Jira user matched from the Perforce user on "
-                    "the blame row you used (callstack table or Entry tab row menu).\n"
+                    "the Annotate row you used (callstack table or Entry tab row menu).\n"
                     "Requires a matching Jira account; otherwise an error is shown.");
             }
             ImGui::BeginDisabled(readOnlyMode);
-            if (ImGui::Selectable("Add blame context comment", false)) {
+            if (ImGui::Selectable("Add Annotate context comment", false)) {
                 std::string err;
                 if (app.AddIssueCommentBlameContext(
                         selectedJiraIssueKey, State().assignRow.Blame.User, State().assignRow.Parsed.Function,
@@ -805,7 +804,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                         State().assignRow.Blame.Changelist, State().assignRow.Blame.Date,
                         State().assignRow.Blame.Approximate, State().assignRow.Blame.LineSnippet, err)) {
                     LOG_INFO("Blame UI: posted blame context comment for %s.", selectedJiraIssueKey.c_str());
-                    State().lastUiStatus = "Blame context comment posted.";
+                    State().lastUiStatus = "Annotate context comment posted.";
                     ImGui::CloseCurrentPopup();
                 } else {
                     LOG_ERROR("Blame UI: comment failed: %s", err.c_str());
@@ -848,7 +847,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
                 PushBlameLinkTextOnly(theme);
             }
             ImGui::BeginDisabled(!hasJiraAccount || readOnlyMode);
-            if (ImGui::Selectable("Assign and add blame context", false)) {
+            if (ImGui::Selectable("Assign and add Annotate context", false)) {
                 std::string err;
                 const TrackerField* f = app.FindFieldById("assignee");
                 bool assigned = true;
@@ -878,7 +877,7 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 if (hasJiraAccount) {
-                    ImGui::SetTooltip("Assign the issue, then add a Jira comment summarizing blame context "
+                    ImGui::SetTooltip("Assign the issue, then add a Jira comment summarizing Annotate context "
                                       "(user, function, path, line, CL, date).");
                 } else {
                     ImGui::SetTooltip("Enable this action by matching the Perforce user to a Jira account.");

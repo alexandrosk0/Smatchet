@@ -1,4 +1,4 @@
- #include "JiraClient.h"
+#include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
 #include "TrackerFieldValueParser.h"
@@ -295,8 +295,8 @@ nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
 
 } // namespace
 
-bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey, const std::string& plainText,
-                                      std::string& outError) {
+bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                      const std::string& plainText, std::string& outError) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
     BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp,
@@ -336,28 +336,27 @@ bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::strin
     return true;
 }
 
-bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKey,
-                            const std::string& timeSpent, const std::string& timeRemaining,
-                            const std::string& adjustEstimate, const std::string& workDescription,
-                            const std::string& startedDate, std::string& outError) {
+bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
+                            const std::string& timeRemaining, const std::string& adjustEstimate,
+                            const std::string& workDescription, const std::string& startedDate, std::string& outError) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("worklog");
-    nlohmann::json auditData = nlohmann::json{
-        {"time_spent", timeSpent},
-        {"time_remaining", timeRemaining},
-        {"adjust_estimate", adjustEstimate},
-        {"work_description", workDescription},
-        {"started", startedDate}
-    };
+    nlohmann::json auditData = nlohmann::json{{"time_spent", timeSpent},
+                                              {"time_remaining", timeRemaining},
+                                              {"adjust_estimate", adjustEstimate},
+                                              {"work_description", workDescription},
+                                              {"started", startedDate}};
     BackendAuditTrail::AppendBegin("issue_add_worklog", "jira_client", issueKey, auditOp, auditData);
 
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
         return false;
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
-        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
         return false;
     }
 
@@ -390,11 +389,13 @@ bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKe
             outError += " — " + TruncateForLog(response.text, 1200);
         }
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
-        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError, auditData);
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
+                                        auditData);
         return false;
     }
 
-    BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, true, std::string(), auditData);
+    BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, true, std::string(),
+                                    auditData);
     return true;
 }
 
@@ -436,11 +437,11 @@ bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std
     };
 
     nlohmann::json content = nlohmann::json::array();
-    std::string head = "Blame Analysis — " + p4User + " | " + functionName + " | " + filePath + ":" +
+    std::string head = "Annotate — " + p4User + " | " + functionName + " | " + filePath + ":" +
                        std::to_string(lineNumber) + " | CL " + changelist + " | " + date;
     content.push_back(para(head));
     if (approximated) {
-        content.push_back(para("Note: blame is approximated (exact line not found in annotate)."));
+        content.push_back(para("Note: annotate is approximated (exact line not found in annotate)."));
     }
     std::string blockBody =
         "L" + std::to_string(lineNumber) + "  CL:" + changelist + "  " + p4User + "\n" + codeSnippet;
@@ -463,7 +464,7 @@ bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std
     auto response = TrackerPostLogged("JiraClient", postUrl, headers, bodyStr);
 
     if (response.status_code != 201 && response.status_code != 200) {
-        outError = "Add blame comment failed: HTTP " + std::to_string(response.status_code);
+        outError = "Add Annotate comment failed: HTTP " + std::to_string(response.status_code);
         if (!response.text.empty()) {
             outError += " — ";
             outError += TruncateForLog(response.text, 1200);
@@ -695,8 +696,6 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     return true;
 }
 
-
-
 bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values, std::string& outError) {
     nlohmann::json payload;
@@ -742,21 +741,23 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
 
     for (const auto& kv : draft.FieldValues) {
         const std::string& fieldId = kv.first;
-        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') continue;
+        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_')
+            continue;
         if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
             IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
             fieldId == "parent" || fieldId == "status") {
             continue;
         }
         const std::string raw = kv.second;
-        if (raw.empty()) continue;
+        if (raw.empty())
+            continue;
 
         const TrackerField* field = nullptr;
         auto fIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
         if (fIt != catalog.end()) {
             field = &(*fIt);
         }
-        
+
         TrackerField synthetic;
         if (!field) {
             synthetic.Id = fieldId;
@@ -766,7 +767,8 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
         }
 
         const TrackerField TrackerField = *field;
-        if (TrackerFieldPayload::IsSprintField(TrackerField)) continue;
+        if (TrackerFieldPayload::IsSprintField(TrackerField))
+            continue;
 
         nlohmann::json value;
         std::string err;
@@ -815,14 +817,16 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
 
     for (const auto& kv : draft.FieldValues) {
         const std::string& fieldId = kv.first;
-        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_') continue;
+        if (fieldId.size() >= 2 && fieldId[0] == '_' && fieldId[1] == '_')
+            continue;
         if (fieldId.empty() || IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) ||
             IssueDraftHelpers::IsSpecialDraftFieldId(fieldId) || fieldId == "project" || fieldId == "issuetype" ||
             fieldId == "parent" || fieldId == "status") {
             continue;
         }
         const std::string raw = kv.second;
-        if (raw.empty()) continue;
+        if (raw.empty())
+            continue;
 
         const TrackerField* field = nullptr;
         auto fIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
@@ -839,7 +843,8 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
         }
 
         const TrackerField TrackerField = *field;
-        if (TrackerFieldPayload::IsSprintField(TrackerField)) continue;
+        if (TrackerFieldPayload::IsSprintField(TrackerField))
+            continue;
 
         nlohmann::json value;
         std::string err;
@@ -878,18 +883,10 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
 }
 
 std::string JiraClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
-                                    const std::string& value) const {
+                                            const std::string& value) const {
     (void)fieldId;
     if (!field) {
         return value;
     }
     return TrackerFieldPayload::ResolveDisplayValueForSubmittedSelection(*field, value);
 }
-
-
-
-
-
-
-
-

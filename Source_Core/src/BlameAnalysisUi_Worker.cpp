@@ -128,9 +128,6 @@ void RunBlameProcessFromBuffers() {
     State().blameCfg.TimelapseCommandTemplate = State().timeTpl;
     State().blameCfg.ChangeCommandTemplate = State().changeTpl;
     State().blameCfg.AiChatUrl = State().aiUrl;
-    State().blameCfg.CallstackTrackerFieldId.assign(State().callstackTrackerFieldBuf);
-    State().blameCfg.LastFoundClTrackerFieldId.assign(State().lastFoundClFieldBuf);
-    State().blameCfg.LastOccurrencesTrackerFieldId.assign(State().lastOccurrencesFieldBuf);
     State().blameCfg.PathRemaps.clear();
     if (State().remapFrom[0] != '\0') {
         State().blameCfg.PathRemaps.push_back({State().remapFrom, State().remapTo});
@@ -203,9 +200,9 @@ void PollDetails() {
     for (size_t i = 0; i < State().detachedDetailFuts.size();) {
         if (!State().detachedDetailFuts[i].valid() ||
             State().detachedDetailFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            State().detachedDetailFuts.erase(State().detachedDetailFuts.begin() +
-                                             static_cast<std::vector<std::shared_future<DetailPack>>::difference_type>(
-                                                 i));
+            State().detachedDetailFuts.erase(
+                State().detachedDetailFuts.begin() +
+                static_cast<std::vector<std::shared_future<DetailPack>>::difference_type>(i));
         } else {
             ++i;
         }
@@ -246,7 +243,8 @@ void PollDetails() {
             State().detailData[i].Error = "detail load failed";
         }
         if (!State().detailData[i].Error.empty()) {
-            LOG_WARN("Blame detail: idx=%zu path=%s err=%s", i, pathForLog.c_str(), State().detailData[i].Error.c_str());
+            LOG_WARN("Blame detail: idx=%zu path=%s err=%s", i, pathForLog.c_str(),
+                     State().detailData[i].Error.c_str());
         }
         State().detailPhase[i] = 2;
     }

@@ -22,7 +22,6 @@
 #include <windows.h>
 #endif
 
-
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -61,7 +60,8 @@ static void DrawLuaTicketActionMenuItems(AppController* app, const UiDrawSession
 }
 #endif
 
-static std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder, const std::string& replacement) {
+static std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder,
+                                            const std::string& replacement) {
     size_t pos = 0;
     while ((pos = str.find(placeholder, pos)) != std::string::npos) {
         str.replace(pos, placeholder.length(), replacement);
@@ -78,19 +78,23 @@ static std::string ResolveCommentTemplate(std::string text, const std::string& i
 
 static std::string BuildTemplateCommentBody(const std::string& issueKey, const std::string& templateId,
                                             const std::vector<CommentTemplate>& templates) {
-    auto it = std::find_if(templates.begin(), templates.end(), [&templateId](const auto& t) {
-        return t.Id == templateId;
-    });
+    auto it =
+        std::find_if(templates.begin(), templates.end(), [&templateId](const auto& t) { return t.Id == templateId; });
     if (it != templates.end()) {
         return ResolveCommentTemplate(it->Text, issueKey);
     }
     if (templateId == "need_repro") {
-        return ResolveCommentTemplate("Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual result\n- Branch / CL / build\n- Environment details", issueKey);
+        return ResolveCommentTemplate("Need reproduction details for {key}:\n- Repro steps\n- Expected vs actual "
+                                      "result\n- Branch / CL / build\n- Environment details",
+                                      issueKey);
     }
     if (templateId == "need_logs") {
-        return ResolveCommentTemplate("Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash context\n- Local repro notes", issueKey);
+        return ResolveCommentTemplate("Please attach diagnostic data for {key}:\n- Relevant logs\n- Callstack / crash "
+                                      "context\n- Local repro notes",
+                                      issueKey);
     }
-    return ResolveCommentTemplate("Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:", issueKey);
+    return ResolveCommentTemplate("Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:",
+                                  issueKey);
 }
 
 static void DrawBlameFromCallstackMenuIfAny(AppController* app, UiDrawSession* ui, const CachedTicket* row,
@@ -102,7 +106,7 @@ static void DrawBlameFromCallstackMenuIfAny(AppController* app, UiDrawSession* u
         return;
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Open Source Blame...")) {
+    if (ImGui::MenuItem("Annotate...")) {
         OpenBlameAnalysisForGridIssue(*app, ui->showBlameAnalysis, ui->gridState, issueKey);
     }
 }
@@ -115,9 +119,8 @@ static void DrawBlameFromCallstackMenuIfAny(AppController* app, UiDrawSession* u
  */
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
-                                  const std::string& rawValue, const std::string& richValue,
-                                  AppController* app, UiDrawSession* ui, bool readOnlyMode,
-                                  const CachedTicket* rowForBlameMenu) {
+                                  const std::string& rawValue, const std::string& richValue, AppController* app,
+                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForBlameMenu) {
     ImGui::PushID(imguiStackId.c_str());
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
         ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
@@ -182,11 +185,14 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                 for (const auto& t : ui->cfg.QuickCommentTemplates) {
                     if (ImGui::MenuItem(t.Title.c_str())) {
                         std::string err;
-                        std::string commentBody = BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
+                        std::string commentBody =
+                            BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
                         if (app->AddIssueCommentPlain(issueKey, commentBody, err)) {
-                            SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey, ToastType::Success);
+                            SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey,
+                                                                  ToastType::Success);
                         } else {
-                            SmatchetToastManager::Instance().Push("Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
+                            SmatchetToastManager::Instance().Push(
+                                "Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
                         }
                     }
                 }
@@ -305,7 +311,6 @@ std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn
     }
     return raw;
 }
-
 
 void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
                        const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
@@ -443,9 +448,7 @@ bool ImGuiEffectiveKeyCtrl() { return ImGui::GetIO().KeyCtrl; }
 bool ImGuiEffectiveKeyShift() { return ImGui::GetIO().KeyShift; }
 #endif
 
-std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) {
-    return issueId + "|" + fieldId;
-}
+std::string BuildCellKey(const std::string& issueId, const std::string& fieldId) { return issueId + "|" + fieldId; }
 
 std::string SanitizeClipboardCell(const std::string& value) {
     std::string out;
@@ -466,10 +469,3 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
         d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
     app.SyncWithBackend(&d.cfg, &store);
 }
-
-
-
-
-
-
-

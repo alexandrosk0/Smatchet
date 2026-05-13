@@ -969,11 +969,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("Blame Comments")) {
-                    ImGui::TextUnformatted("Blame Analysis Quick Comments");
+                if (ImGui::BeginTabItem("Annotate Comments")) {
+                    ImGui::TextUnformatted("Annotate Quick Comments");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Customize templates displayed when clicking on the Blame Analysis rows. "
+                    ImGui::TextDisabled("Customize templates displayed when clicking on the Annotate rows. "
                                         "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
                     ImGui::Spacing();
 
@@ -1125,7 +1125,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Blame Analysis")) {
+        if (ImGui::BeginTabItem("Annotate")) {
             blameAnalysisUi_.DrawBlamePreferencesTab(app);
             ImGui::EndTabItem();
         }
