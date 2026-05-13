@@ -12,7 +12,6 @@
 #include "SmatchetToast.h"
 
 #include "imgui.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -100,7 +99,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     }
 
     prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, d.layoutForceDefaultsFrames > 0);
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         ImGui::End();
         return;

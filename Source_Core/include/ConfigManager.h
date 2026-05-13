@@ -300,7 +300,11 @@ class ConfigManager {
     // fixed layout + SetNextWindowDockID fallbacks pick up correctly.
     // Bumped to 3: rewrote default dock ini to a clean VS-shell tree (top split with
     // central + primary side bar + reserved secondary, bottom panel hosting Log/Audit/etc.).
-    static const int kCurrentLayoutSchemaVersion = 3;
+    // Schema 2 is the milestone version. Boot path: Load cfg, compare schema,
+    // if cfg.LayoutSchemaVersion < this, WriteDefault + persist, then ImGui auto-loads
+    // the fresh ini via io.IniFilename. Pre-first-frame migration (matters because
+    // runtime LoadIniSettingsFromDisk does NOT re-parent already-created windows).
+    static const int kCurrentLayoutSchemaVersion = 2;
 
     struct CliOverrides {
         bool HasDbPath;

@@ -13,7 +13,6 @@
 #include "StringUtil.h"
 
 #include "imgui.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -132,7 +131,6 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     d.bulkImportWasOpen = true;
 
     prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f);
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
         ImGui::End();
         return;
@@ -479,7 +477,6 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         return;
 
     prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f);
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
         ImGui::End();
         return;

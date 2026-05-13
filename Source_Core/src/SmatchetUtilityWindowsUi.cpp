@@ -6,8 +6,6 @@
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
-#include "imgui_internal.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -116,7 +114,6 @@ void FillLogViewLinesFromEntries(const std::vector<LogEntry>& entries, std::vect
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     Logger& logger = Logger::Instance();
     prepareTopLevelWindow(d, "log", 900.0f, 320.0f);
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Log", &d.showLogWindow)) {
         ImGui::End();
         return;

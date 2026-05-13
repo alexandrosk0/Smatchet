@@ -1763,6 +1763,60 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         reg.Register(std::move(c));
     }
 
+    {
+        // debug.window.resize — set transient flag; main loop polls and calls glfwSetWindowSize.
+        // Standalone-only; on the Unreal/DX12 build the flag is set but never consumed (harmless).
+        Command c = MakeCommand("debug.window.resize", "Resize the GLFW window (standalone only).",
+                                [](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                                    const int w = static_cast<int>(args.value("width", 0));
+                                    const int h = static_cast<int>(args.value("height", 0));
+                                    if (w <= 0 || h <= 0) {
+                                        return CommandResult::Failure(
+                                            ErrorCode::ValidationError,
+                                            "width and height must be > 0");
+                                    }
+                                    g_ui.requestWindowWidth = w;
+                                    g_ui.requestWindowHeight = h;
+                                    g_ui.requestWindowResize = true;
+                                    nlohmann::json out;
+                                    out["width"] = w;
+                                    out["height"] = h;
+                                    return CommandResult::Success(std::move(out));
+                                });
+        c.Params = {
+            PInt("width", "Window width in pixels.", 0),
+            PInt("height", "Window height in pixels.", 0),
+        };
+        c.Params[0].Required = true;
+        c.Params[1].Required = true;
+        c.Idempotent = true;
+        reg.Register(std::move(c));
+    }
+
+    {
+        // debug.window.screenshot — set transient flag + path; main loop polls and writes PNG/PPM.
+        // Standalone-only; on Unreal/DX12 the flag is set but never consumed.
+        Command c = MakeCommand("debug.window.screenshot", "Save a PNG screenshot of the current viewport.",
+                                [](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                                    const std::string path = args.value("path", std::string());
+                                    if (path.empty()) {
+                                        return CommandResult::Failure(
+                                            ErrorCode::ValidationError,
+                                            "path is required");
+                                    }
+                                    g_ui.requestScreenshotPath = path;
+                                    g_ui.requestScreenshot = true;
+                                    nlohmann::json out;
+                                    out["path"] = path;
+                                    return CommandResult::Success(std::move(out));
+                                });
+        c.Params = {
+            PString("path", "Output file path (PNG if extension is .png, PPM otherwise).", /*required*/ true),
+        };
+        c.Idempotent = false;
+        reg.Register(std::move(c));
+    }
+
     RegisterViewToggleCommands(reg, app);
 
     LOG_INFO("CommandRegistry: registered %zu built-in commands", reg.All().size());

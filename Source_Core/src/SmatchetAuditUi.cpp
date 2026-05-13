@@ -3,7 +3,6 @@
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "imgui.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 #include <algorithm>
@@ -218,7 +217,6 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const bool pollDue = (d.auditLastFilePoll.time_since_epoch().count() == 0) ||
                          (nowPoll - d.auditLastFilePoll >= kAuditFilePollInterval);
     (void)TryCompleteAuditReload(d);
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Backend Audit", &d.showAuditTrail)) {
         if (pollDue) {
             d.auditLastFilePoll = nowPoll;

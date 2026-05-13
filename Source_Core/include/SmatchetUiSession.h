@@ -407,6 +407,19 @@ struct UiDrawSession {
     /// Transient flag — standalone target toggles OS fullscreen; Unreal target ignores.
     bool requestFullScreenToggle = false;
 
+    /// Transient request from `debug.window.resize` — standalone polls this each frame and,
+    /// when set, calls glfwSetWindowSize(window, requestWindowWidth, requestWindowHeight).
+    /// Lets automated visual tests drive deterministic window dimensions over the MCP CLI.
+    bool requestWindowResize = false;
+    int  requestWindowWidth  = 0;
+    int  requestWindowHeight = 0;
+
+    /// Transient request from `debug.window.screenshot` — standalone polls this each frame and,
+    /// when set, reads the GL framebuffer and writes a PNG/PPM to requestScreenshotPath.
+    /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
+    bool        requestScreenshot = false;
+    std::string requestScreenshotPath;
+
     /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
     bool showDockDebug = false;
 

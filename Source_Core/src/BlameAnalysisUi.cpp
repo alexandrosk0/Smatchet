@@ -1521,7 +1521,6 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
     // First-time opens auto-dock into the primary side bar (right column, dock id 0x00000004
     // in kDefaultImGuiDockLayoutIni). FirstUseEver lets users move/undock manually.
     constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
-    ImGui::SetNextWindowDockID(0x00000004u, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Source Blame###BlameAnalysisModal", pOpen, kPanelFlags)) {

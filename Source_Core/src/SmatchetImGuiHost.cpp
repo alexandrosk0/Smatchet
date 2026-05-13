@@ -414,7 +414,21 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     }
     ImGuiIO& io = ImGui::GetIO();
     ImplData->ImGuiIniPath = ConfigManager::GetImGuiSettingsPath();
-    ConfigManager::EnsureDefaultImGuiSettingsFile();
+    // Schema migration MUST run before ImGui auto-loads the ini, otherwise
+    // already-created windows stay docked at the old positions and runtime
+    // LoadIniSettingsFromDisk does not re-parent them. Load cfg, compare schema,
+    // force-write the hardcoded default + persist new schema, then let ImGui
+    // pick up the fresh file via io.IniFilename.
+    {
+        TrackerConfig bootCfg = ConfigManager::Load();
+        if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            ConfigManager::WriteDefaultImGuiSettingsFile();
+            bootCfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(bootCfg);
+        } else {
+            ConfigManager::EnsureDefaultImGuiSettingsFile();
+        }
+    }
     io.IniFilename = ImplData->ImGuiIniPath.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;

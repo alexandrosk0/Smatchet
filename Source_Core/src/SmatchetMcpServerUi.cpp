@@ -9,7 +9,6 @@
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -268,7 +267,6 @@ void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
-    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("MCP Server", &d.showMcpServerWindow)) {
         ImGui::End();
         if (wantFocus) {
