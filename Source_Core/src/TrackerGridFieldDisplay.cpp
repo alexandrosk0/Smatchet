@@ -651,12 +651,12 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
 
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.65f, 1.0f, 1.0f));
     ImGui::TextUnformatted(model.display.c_str());
-    ImGui::PopStyleColor();
 
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", model.tooltip.c_str());
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
+    ImGui::PopStyleColor();
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         app.ShowAttachmentCollection(model.descriptors);

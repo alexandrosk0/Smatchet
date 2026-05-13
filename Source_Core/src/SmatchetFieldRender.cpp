@@ -22,9 +22,6 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     }
     ImGui::TextUnformatted(singleLine.c_str());
-    if (disabled) {
-        ImGui::PopStyleColor();
-    }
 
     const std::string& tipSource = (rawForTooltip && !rawForTooltip->empty()) ? *rawForTooltip : displayValue;
     if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
@@ -33,6 +30,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
         ImGui::TextUnformatted(tipSource.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
+    }
+
+    if (disabled) {
+        ImGui::PopStyleColor();
     }
 }
 
