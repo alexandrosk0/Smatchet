@@ -295,7 +295,10 @@ class ConfigManager {
     // detects LayoutSchemaVersion < kCurrentLayoutSchemaVersion on first launch
     // after upgrade, resets imgui.ini, then persists the new version so the
     // migration runs exactly once.
-    static const int kCurrentLayoutSchemaVersion = 1;
+    // Bumped to 2: schema-1 imgui.ini was corrupted by the old prepareTopLevelWindow bug
+    // (SetNextWindowPos kicked panels out of dock nodes). Forces a one-shot reset so the
+    // fixed layout + SetNextWindowDockID fallbacks pick up correctly.
+    static const int kCurrentLayoutSchemaVersion = 2;
 
     struct CliOverrides {
         bool HasDbPath;

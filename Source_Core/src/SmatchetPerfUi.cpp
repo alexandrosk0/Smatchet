@@ -3,6 +3,7 @@
 #include "NetworkUsageTracker.h"
 #include "UiPerfMonitor.h"
 #include "imgui.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -219,6 +220,7 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen) {
     }
     updateSmoothedFps();
     ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
+    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Performance", pOpen)) {
         const double dt = static_cast<double>(ImGui::GetIO().DeltaTime);
         ImGui::Text("FPS: %.1f    Frame: %.2f ms (smoothed)", smoothFps_, smoothFrameMs_);

@@ -10,6 +10,8 @@
 #include "TrackerFieldSchema.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -132,6 +134,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     std::string viewsWinTitle = SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
     viewsWinTitle += "###SmatchetViewsDashboard";
+    ::ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kPrimarySideBar, ImGuiCond_FirstUseEver);
     ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
     repairTopLevelWindow(d, "views", 520.0f, 320.0f);
     if (bFocusViews) {
