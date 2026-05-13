@@ -9,6 +9,6 @@ enum class ViewSlot {
     BottomPanel,
 };
 
-/// Sets the given panelFlag in cfg to |visible| and marks the corresponding dockspace node so it
-/// collapses / re-expands on the next frame. Must be called from the UI thread inside Draw().
-void SetViewVisible(TrackerConfig& cfg, bool& panelFlag, ViewSlot slot, bool visible);
+/// Sets the visibility of the given panel slot in cfg and marks the corresponding dockspace node
+/// so it collapses / re-expands on the next frame. Must be called from the UI thread inside Draw().
+void SetViewVisible(TrackerConfig& cfg, ViewSlot slot, bool visible);

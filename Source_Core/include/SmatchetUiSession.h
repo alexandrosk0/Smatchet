@@ -291,6 +291,7 @@ struct UiDrawSession {
     /** 0 none, 1 error, 2 success — mirrors single-slot gridEdit banner before it became toast-only. */
     int lastToastedGridBannerKind = 0;
     std::string lastToastedGridBannerMessage;
+    int cachedPendingFieldEditCount = 0; ///< refreshed by OfflineQueueService tick, read by status bar
     std::deque<PendingFieldEdit> queuedFieldEdits;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;

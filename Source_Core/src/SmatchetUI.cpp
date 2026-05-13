@@ -1,6 +1,7 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "SmatchetViewVisibility.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
@@ -388,16 +389,18 @@ void SmatchetUI::Draw(AppController& app) {
     {
         auto syncNode = [](ImGuiID nodeId, bool visible) {
             ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(nodeId);
-            if (!node) { return; }
+            if (!node) {
+                return;
+            }
             if (visible) {
                 node->LocalFlags &= ~ImGuiDockNodeFlags_HiddenTabBar;
             } else {
                 node->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;
             }
         };
-        syncNode(0x00000004u, d.cfg.ShowPrimarySideBar);
-        syncNode(0x0000000Au, d.cfg.ShowPanel);
-        syncNode(0x00000010u, d.cfg.ShowSecondarySideBar);
+        syncNode(SmatchetDockNodeIds::kPrimarySideBar, d.cfg.ShowPrimarySideBar);
+        syncNode(SmatchetDockNodeIds::kBottomPanel, d.cfg.ShowPanel);
+        syncNode(SmatchetDockNodeIds::kSecondarySideBar, d.cfg.ShowSecondarySideBar);
     }
 
     // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
@@ -428,6 +431,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Drain the offline create queue opportunistically (rate-limited internally).
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
+    d.cachedPendingFieldEditCount = static_cast<int>(app.GetPendingFieldEdits().size());
     app.TickStreamingApply();
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath, const std::string& mimeType,
@@ -489,7 +493,7 @@ void SmatchetUI::Draw(AppController& app) {
     // into the session so SmatchetActiveProjectGridUi can honor it.
     {
         bool scenScrollActive = false;
-        int  scenScrollTarget = -1;
+        int scenScrollTarget = -1;
         app.Scenarios().Tick(app, scenScrollActive, scenScrollTarget);
         d.scenarioScrollActive = scenScrollActive;
         d.scenarioScrollTarget = scenScrollTarget;
@@ -580,19 +584,17 @@ void SmatchetUI::Draw(AppController& app) {
     {
         const ImGuiIO& io = ::ImGui::GetIO();
         const bool ctrlDown = io.KeyCtrl;
-        const bool altDown  = io.KeyAlt;
+        const bool altDown = io.KeyAlt;
         if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            SetViewVisible(d.cfg, d.cfg.ShowPrimarySideBar, ViewSlot::PrimarySideBar,
-                           !d.cfg.ShowPrimarySideBar);
+            SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
             ConfigManager::Save(d.cfg);
         }
         if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            SetViewVisible(d.cfg, d.cfg.ShowSecondarySideBar, ViewSlot::SecondarySideBar,
-                           !d.cfg.ShowSecondarySideBar);
+            SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
             ConfigManager::Save(d.cfg);
         }
         if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
-            SetViewVisible(d.cfg, d.cfg.ShowPanel, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+            SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
             ConfigManager::Save(d.cfg);
         }
     }
@@ -856,12 +858,15 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             if (ImGui::BeginMenu("Appearance")) {
                 if (ImGui::BeginMenu("Theme")) {
-                    struct ThemeEntry { ThemeId id; const char* label; };
+                    struct ThemeEntry {
+                        ThemeId id;
+                        const char* label;
+                    };
                     constexpr ThemeEntry kEntries[] = {
                         {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
-                        {ThemeId::ModernDark,   "Modern Dark"},
-                        {ThemeId::Vs2022Dark,   "VS 2022 Dark"},
-                        {ThemeId::Vs2022Light,  "VS 2022 Light"},
+                        {ThemeId::ModernDark, "Modern Dark"},
+                        {ThemeId::Vs2022Dark, "VS 2022 Dark"},
+                        {ThemeId::Vs2022Light, "VS 2022 Light"},
                         {ThemeId::HighContrast, "High Contrast"},
                     };
                     for (const ThemeEntry& e : kEntries) {
@@ -887,14 +892,12 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
-                    SetViewVisible(d.cfg, d.cfg.ShowPrimarySideBar, ViewSlot::PrimarySideBar,
-                                   !d.cfg.ShowPrimarySideBar);
+                    SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
                     recentViews_.Touch("view.toggle.primary-side-bar");
                     ConfigManager::Save(d.cfg);
                 }
                 if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
-                    SetViewVisible(d.cfg, d.cfg.ShowSecondarySideBar, ViewSlot::SecondarySideBar,
-                                   !d.cfg.ShowSecondarySideBar);
+                    SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
                     recentViews_.Touch("view.toggle.secondary-side-bar");
                     ConfigManager::Save(d.cfg);
                 }
@@ -904,7 +907,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                     ConfigManager::Save(d.cfg);
                 }
                 if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
-                    SetViewVisible(d.cfg, d.cfg.ShowPanel, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+                    SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
                     recentViews_.Touch("view.toggle.panel");
                     ConfigManager::Save(d.cfg);
                 }
@@ -982,14 +985,12 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         const std::string& cmdId = recent[static_cast<size_t>(ri)];
                         if (ImGui::MenuItem(cmdId.c_str())) {
                             smatchet::cmd::CommandContext ctx;
-                            ctx.App    = &app;
+                            ctx.App = &app;
                             ctx.Source = smatchet::cmd::CommandSource::Palette;
                             const nlohmann::json emptyArgs = nlohmann::json::object();
-                            smatchet::cmd::CommandResult r =
-                                app.Commands().Dispatch(cmdId, emptyArgs, ctx);
+                            smatchet::cmd::CommandResult r = app.Commands().Dispatch(cmdId, emptyArgs, ctx);
                             if (!r.Ok) {
-                                LOG_DEBUG("SmatchetUI: recently used view command not found: %s",
-                                          cmdId.c_str());
+                                LOG_DEBUG("SmatchetUI: recently used view command not found: %s", cmdId.c_str());
                             }
                         }
                     }
@@ -1066,24 +1067,22 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         // Inline Command Palette input — VS Code Quick Input.
         // Typing pre-fills + opens the existing palette modal; Enter does the same.
         {
-            constexpr float kInlineMaxWidthPx  = 640.0f;
-            constexpr float kInlineMinWidthPx  = 200.0f;
-            constexpr float kRightReservedPx   = 140.0f;
+            constexpr float kInlineMaxWidthPx = 640.0f;
+            constexpr float kInlineMinWidthPx = 200.0f;
+            constexpr float kRightReservedPx = 140.0f;
             const float menuRightEdge = ImGui::GetCursorPosX();
-            const float rightLimit    = ImGui::GetWindowContentRegionMax().x - kRightReservedPx;
-            const float availW        = (std::max)(0.0f, rightLimit - menuRightEdge);
+            const float rightLimit = ImGui::GetWindowContentRegionMax().x - kRightReservedPx;
+            const float availW = (std::max)(0.0f, rightLimit - menuRightEdge);
 
             if (availW >= kInlineMinWidthPx) {
                 const float inputW = (std::min)(kInlineMaxWidthPx, availW * 0.55f);
-                const float xPad   = (availW - inputW) * 0.5f;
+                const float xPad = (availW - inputW) * 0.5f;
                 ImGui::SetCursorPosX(menuRightEdge + xPad);
                 ImGui::SetNextItemWidth(inputW);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-                const bool committed = ImGui::InputTextWithHint(
-                    "##cmd-palette-input",
-                    "Search commands (Ctrl+Shift+P)",
-                    d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
-                    ImGuiInputTextFlags_EnterReturnsTrue);
+                const bool committed = ImGui::InputTextWithHint("##cmd-palette-input", "Search commands (Ctrl+Shift+P)",
+                                                                d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
+                                                                ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::PopStyleVar();
                 if ((ImGui::IsItemActivated() || committed) && d.paletteInlineBuf[0] != '\0') {
                     if (!commandPalette_.IsOpen()) {

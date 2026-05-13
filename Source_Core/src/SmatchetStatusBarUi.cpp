@@ -40,7 +40,7 @@ static const char* ConnectivityLabel(AppController& app) {
 
 } // namespace
 
-void DrawStatusBar(AppController& app, UiDrawSession& d) {
+void DrawStatusBar(AppController& app, const UiDrawSession& d) {
     const float barH = ::ImGui::GetFrameHeight();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
     if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(),
@@ -66,11 +66,12 @@ void DrawStatusBar(AppController& app, UiDrawSession& d) {
     const char* connLabel = ConnectivityLabel(app);
     ImGui::TextUnformatted(connLabel);
 
-    // Queued-ops count (pending creates + pending field edits)
+    // Queued-ops count (pending creates + pending field edits).
+    // Field-edit count comes from d.cachedPendingFieldEditCount (refreshed once per frame
+    // in SmatchetUI after TickOfflineFieldEdits) to avoid a SQLite SELECT on the render thread.
     {
-        const size_t pendingCreates = app.GetPendingCreateCount();
-        const std::vector<PendingFieldEditRecord> pendingEdits = app.GetPendingFieldEdits();
-        const size_t queuedOps = pendingCreates + pendingEdits.size();
+        const size_t queuedOps = app.GetPendingCreateCount() +
+                                 static_cast<size_t>(d.cachedPendingFieldEditCount);
         if (queuedOps > 0) {
             ImGui::SameLine();
             ImGui::TextUnformatted("|");
