@@ -379,6 +379,57 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     }
 
     try {
+        const auto issueTypeFieldIt = fieldIndexById.find("issuetype");
+        if (issueTypeFieldIt != fieldIndexById.end()) {
+            const std::string issueTypeCatalogUrl = base + "/rest/api/3/issuetype";
+            auto issueTypeResp = TrackerGetLogged("JiraClient", issueTypeCatalogUrl, headers);
+            if (issueTypeResp.status_code == 200) {
+                auto issueTypeJson = nlohmann::json::parse(issueTypeResp.text);
+                if (issueTypeJson.is_array()) {
+                    TrackerField& issueTypeField = outFields[issueTypeFieldIt->second];
+                    issueTypeField.AllowedValues.clear();
+                    issueTypeField.AllowedValueOptions.clear();
+                    std::set<std::string> seenIds;
+                    for (const auto& issueTypeObj : issueTypeJson) {
+                        if (!issueTypeObj.is_object()) {
+                            continue;
+                        }
+                        std::string issueTypeId;
+                        if (issueTypeObj.contains("id")) {
+                            if (issueTypeObj["id"].is_string()) {
+                                issueTypeId = issueTypeObj["id"].get<std::string>();
+                            } else if (issueTypeObj["id"].is_number_integer()) {
+                                issueTypeId = std::to_string(issueTypeObj["id"].get<long long>());
+                            } else if (issueTypeObj["id"].is_number_unsigned()) {
+                                issueTypeId = std::to_string(issueTypeObj["id"].get<unsigned long long>());
+                            }
+                        }
+                        const std::string issueTypeName = issueTypeObj.value("name", std::string());
+                        if (issueTypeId.empty() || issueTypeName.empty() || !seenIds.insert(issueTypeId).second) {
+                            continue;
+                        }
+                        issueTypeField.AllowedValues.push_back(issueTypeName);
+                        TrackerFieldOption option;
+                        option.Id = issueTypeId;
+                        option.Value = issueTypeName;
+                        try {
+                            option.PayloadJson = issueTypeObj.dump();
+                        } catch (...) {
+                            option.PayloadJson.clear();
+                        }
+                        issueTypeField.AllowedValueOptions.push_back(std::move(option));
+                    }
+                    issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
+                }
+            } else {
+                LOG_WARN("JiraClient: issuetype catalog enrichment failed. HTTP %d", issueTypeResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: issuetype catalog parse failed: %s", ex.what());
+    }
+
+    try {
         const auto statusFieldIt = fieldIndexById.find("status");
         if (statusFieldIt != fieldIndexById.end()) {
             const std::string statusCatalogUrl = base + "/rest/api/3/status";
@@ -638,7 +689,10 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
                 LOG_WARN("JiraClient: project issueTypes parse failed: %s", ex.what());
             }
 
-            if (!filledFromProject && !uniqueIssueTypes.empty()) {
+            // Only fall back to the createmeta name-only list if we have no options at all
+            // (e.g. /rest/api/3/issuetype + /project/{key} issueTypes both failed). The name-only
+            // fallback loses real IDs needed for PUT, so prefer the richer global enrichment.
+            if (!filledFromProject && !uniqueIssueTypes.empty() && issueTypeField.AllowedValueOptions.empty()) {
                 issueTypeField.AllowedValues.assign(uniqueIssueTypes.begin(), uniqueIssueTypes.end());
                 std::sort(issueTypeField.AllowedValues.begin(), issueTypeField.AllowedValues.end());
                 issueTypeField.AllowedValueOptions.clear();
