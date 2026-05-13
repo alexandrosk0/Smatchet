@@ -373,6 +373,18 @@ void SmatchetUI::Draw(AppController& app) {
 #if defined(SMATCHET_WITH_MCP)
         g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
+        // Commit-last layout migration: reset dock layout first, then bump version and
+        // persist. If killed between the two steps the next launch re-migrates safely.
+        // ConfigManager::Save uses AtomicWriteTextFile (write-tmp + MoveFileEx rename)
+        // internally via WriteConfigJson — already atomic.
+        if (g_ui.cfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            LOG_INFO("SmatchetUI: LayoutSchemaVersion %d < %d — resetting layout to VS shell default.",
+                     g_ui.cfg.LayoutSchemaVersion, ConfigManager::kCurrentLayoutSchemaVersion);
+            resetWindowLayoutToDefault(g_ui);
+            g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(g_ui.cfg);
+        }
+
         g_ui.cfgInitialized = true;
         ApplyLoggingSettingsFromConfig(g_ui.cfg);
 

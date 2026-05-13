@@ -183,6 +183,11 @@ struct TrackerConfig {
     bool FullScreen = false; ///< transient, not serialized
     bool ZenMode    = false; ///< transient, not serialized
 
+    // Bumped to kCurrentLayoutSchemaVersion after the first VS-shell layout migration.
+    // On first launch with an old imgui.ini the migration resets the dock layout, then
+    // writes this field so subsequent launches skip the reset.
+    int LayoutSchemaVersion = 0;
+
     // Font setting
     std::string SelectedFontName = "Segoe UI";
     // Font size in points, used by View > Appearance > Zoom In/Out/Reset.
@@ -286,6 +291,12 @@ struct BlameAnalysisConfig {
 
 class ConfigManager {
   public:
+    // Bump when the default dock layout changes incompatibly. SmatchetUI::Draw
+    // detects LayoutSchemaVersion < kCurrentLayoutSchemaVersion on first launch
+    // after upgrade, resets imgui.ini, then persists the new version so the
+    // migration runs exactly once.
+    static const int kCurrentLayoutSchemaVersion = 1;
+
     struct CliOverrides {
         bool HasDbPath;
         std::string DbPath;

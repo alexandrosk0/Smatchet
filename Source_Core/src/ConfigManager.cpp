@@ -870,6 +870,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["show_secondary_side_bar"] = config.ShowSecondarySideBar;
     j["show_panel"]              = config.ShowPanel;
     j["show_status_bar"]         = config.ShowStatusBar;
+    j["layout_schema_version"] = config.LayoutSchemaVersion;
     j["font_size_pt"] = config.FontSizePt;
     {
         const char* densityStr = "Normal";
@@ -1173,6 +1174,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.ShowPanel            = j.value("show_panel",              cfg.ShowPanel);
             cfg.ShowStatusBar        = j.value("show_status_bar",         cfg.ShowStatusBar);
             cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
+            cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
             cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
             if (cfg.FontSizePt < 8) { cfg.FontSizePt = 8; }
             if (cfg.FontSizePt > 32) { cfg.FontSizePt = 32; }
