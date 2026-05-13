@@ -2,7 +2,7 @@
     Build and package Smatchet release artifacts, then optionally publish assets to GitHub releases.
 
     Artifacts:
-    - Standalone zip (SmatchetStandalone.exe + runtime files)
+    - Standalone zip (Smatchet.exe + runtime files)
     - Unreal plugin zip (UnrealPlugins/SmatchetImGuiPlugin packaged tree)
     - Source zip (git archive, filtered to exclude internal workflow folders)
 
@@ -425,19 +425,19 @@ function Get-StandaloneExePath {
         [Parameter(Mandatory = $true)][string]$BuildDir
     )
     $candidates = @(
-        (Join-Path $BuildDir "SmatchetStandalone.exe"),
-        (Join-Path $BuildDir "Release/SmatchetStandalone.exe")
+        (Join-Path $BuildDir "Smatchet.exe"),
+        (Join-Path $BuildDir "Release/Smatchet.exe")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             return $candidate
         }
     }
-    $found = Get-ChildItem -Path $BuildDir -Filter "SmatchetStandalone.exe" -Recurse -File -ErrorAction SilentlyContinue |
+    $found = Get-ChildItem -Path $BuildDir -Filter "Smatchet.exe" -Recurse -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if (-not $found) {
-        throw "Could not find SmatchetStandalone.exe under $BuildDir"
+        throw "Could not find Smatchet.exe under $BuildDir"
     }
     return $found.FullName
 }
@@ -655,7 +655,7 @@ if (-not $SkipStandalone) {
     Write-Stage "Staging standalone artifact"
     New-CleanDirectory -Path $standaloneStage | Out-Null
     $exePath = Get-StandaloneExePath -BuildDir $standaloneBuildDir
-    Copy-Item -LiteralPath $exePath -Destination (Join-Path $standaloneStage "SmatchetStandalone.exe")
+    Copy-Item -LiteralPath $exePath -Destination (Join-Path $standaloneStage "Smatchet.exe")
 
     $exeDir = Split-Path -Parent $exePath
     $dlls = Get-ChildItem -Path $exeDir -Filter "*.dll" -File -ErrorAction SilentlyContinue

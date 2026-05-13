@@ -929,7 +929,13 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["jql"] = config.JqlQuery;
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["read_only_mode"] = config.ReadOnlyMode;
+    j["backend_has_been_reachable"] = config.BackendHasBeenReachable;
     j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
+    j["window_x"] = config.WindowX;
+    j["window_y"] = config.WindowY;
+    j["window_w"] = config.WindowWidth;
+    j["window_h"] = config.WindowHeight;
+    j["window_maximized"] = config.WindowMaximized;
     j["field_catalog_cache_max_projects"] = config.FieldCatalogCacheMaxProjects;
     j["show_preferences_window"] = config.ShowPreferencesWindow;
     j["show_views_dashboard_window"] = config.ShowViewsDashboardWindow;
@@ -1220,8 +1226,14 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
             cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
+            cfg.BackendHasBeenReachable = j.value("backend_has_been_reachable", cfg.BackendHasBeenReachable);
             cfg.GridEndWheelSwallowsBeforeHorizontal =
                 j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
+            cfg.WindowX = j.value("window_x", cfg.WindowX);
+            cfg.WindowY = j.value("window_y", cfg.WindowY);
+            cfg.WindowWidth = j.value("window_w", cfg.WindowWidth);
+            cfg.WindowHeight = j.value("window_h", cfg.WindowHeight);
+            cfg.WindowMaximized = j.value("window_maximized", cfg.WindowMaximized);
             cfg.FieldCatalogCacheMaxProjects =
                 j.value("field_catalog_cache_max_projects", cfg.FieldCatalogCacheMaxProjects);
             cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);

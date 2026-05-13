@@ -1,5 +1,5 @@
 #define MyAppName "Smatchet"
-#define MyAppExeName "SmatchetStandalone.exe"
+#define MyAppExeName "Smatchet.exe"
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"

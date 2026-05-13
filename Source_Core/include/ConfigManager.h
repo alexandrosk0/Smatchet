@@ -77,9 +77,18 @@ struct TrackerConfig {
     bool EnableFieldOverflowTooltips = true;
     // When true, tracker-changing actions are disabled. Defaults on only for first launch with no setup config.
     bool ReadOnlyMode = false;
+    // True after at least one AuthenticatedReachable probe / live request has been observed.
+    // Until then, the main UI is locked to Preferences -> Tracker so the user can finish setup.
+    bool BackendHasBeenReachable = false;
     // Wheel ticks at top/bottom before vertical wheel reroutes to horizontal grid scroll.
     // Exposed in UI as Settings -> Preferences -> Appearance.
     int GridEndWheelSwallowsBeforeHorizontal = 15;
+    // Main window state restored at launch. X/Y == -1 means "unset; use OS default centring".
+    int WindowX = -1;
+    int WindowY = -1;
+    int WindowWidth = 1280;
+    int WindowHeight = 720;
+    bool WindowMaximized = false;
     // PR 3: max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
     // 0/negative falls back to the in-cache default (16).
     int FieldCatalogCacheMaxProjects = 16;

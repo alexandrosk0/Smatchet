@@ -176,7 +176,12 @@ if (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
 }
 
 if (-not $ExeName) {
-    $ExeName = "$Target.exe"
+    # CMake target SmatchetStandalone now emits Smatchet.exe (OUTPUT_NAME override).
+    if ($Target -eq "SmatchetStandalone") {
+        $ExeName = "Smatchet.exe"
+    } else {
+        $ExeName = "$Target.exe"
+    }
 }
 elseif ([System.IO.Path]::GetExtension($ExeName) -eq "") {
     $ExeName = "$ExeName.exe"

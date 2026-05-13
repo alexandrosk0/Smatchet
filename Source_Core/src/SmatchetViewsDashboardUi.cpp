@@ -381,18 +381,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             }
         }
 
-        // Right-aligned action cluster on the same baseline as the title.
-        const float applyW = ImGui::CalcTextSize("Apply & Sync").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
-        const float deleteW = ImGui::CalcTextSize("Delete view").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
-        const float discardW = ImGui::CalcTextSize("Discard").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float rightCluster = applyW + discardW + deleteW + spacing * 2.0f;
-        ImGui::SameLine();
-        const float curX = ImGui::GetCursorPosX();
-        const float avail = ImGui::GetContentRegionAvail().x;
-        if (avail > rightCluster) {
-            ImGui::SetCursorPosX(curX + (avail - rightCluster));
-        }
+        // Action buttons on a separate row below the title for a more compact header.
         const bool disableDiscard = !d.viewsDirty;
         if (disableDiscard) {
             ImGui::BeginDisabled();

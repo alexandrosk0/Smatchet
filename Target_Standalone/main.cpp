@@ -259,45 +259,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Decide GL+GLSL versions
-#if defined(__APPLE__)
-    const char* glsl_version = "#version 150";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#else
-    const char* glsl_version = "#version 130";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-#endif
-
-#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-#endif
-    if (ephemeralMode) {
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    }
-
-    // Create window with graphics context
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Smatchet - Standalone", NULL, NULL);
-    if (window == NULL) {
-        return 1;
-    }
-
-#if defined(_WIN32)
-    SmatchetApplyWindowIcon(window);
-#endif
-
-    glfwMakeContextCurrent(window);
-
-    glfwSwapInterval(1); // Enable vsync
-
-    // Separate shipped runtime assets (next to the exe) from writable user data.
-    // Helper: resolve userDataDir given the exe dir. Honors `smatchet_storage_mode.txt`
-    // alongside the exe. Standalone defaults to `Shared` (OS user-data dir) when no
-    // explicit marker exists. The marker is authoritative across launches; the
-    // preferences toggle just writes the new value and the next launch picks it up.
+    // Resolve user-data dir BEFORE creating the GLFW window so the saved window
+    // pos/size/maximized state in config can drive the initial window hints.
     const auto resolveStandaloneUserDataDir = [](const std::string& exeDir) -> std::string {
         const ConfigManager::StoragePreference pref =
             ConfigManager::GetStoragePreference(exeDir, ConfigManager::StoragePreference::Shared);
@@ -360,6 +323,73 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+
+    // Peek window state from saved config so we can hint MAXIMIZED + initial size.
+    const TrackerConfig windowStateCfg = ConfigManager::Load();
+    const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
+    const int initialWindowH = std::max(240, windowStateCfg.WindowHeight);
+    const bool restoreMaximized = windowStateCfg.WindowMaximized;
+    const bool havePosHint = (windowStateCfg.WindowX != -1 && windowStateCfg.WindowY != -1);
+
+    // Decide GL+GLSL versions
+#if defined(__APPLE__)
+    const char* glsl_version = "#version 150";
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#else
+    const char* glsl_version = "#version 130";
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
+
+#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+#endif
+    if (ephemeralMode) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
+    if (restoreMaximized && !ephemeralMode) {
+        glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+    }
+
+    // Create window with graphics context
+    GLFWwindow* window = glfwCreateWindow(initialWindowW, initialWindowH, "Smatchet - Standalone", NULL, NULL);
+    if (window == NULL) {
+        return 1;
+    }
+
+    // Restore saved position if it still overlaps a connected monitor.
+    // Skip when maximized — glfwSetWindowPos would un-maximize the window.
+    if (havePosHint && !ephemeralMode && !restoreMaximized) {
+        auto rectOverlapsAnyMonitor = [](int x, int y, int w, int h) -> bool {
+            int count = 0;
+            GLFWmonitor** mons = glfwGetMonitors(&count);
+            for (int i = 0; i < count; ++i) {
+                int mx, my, mw, mh;
+                glfwGetMonitorWorkarea(mons[i], &mx, &my, &mw, &mh);
+                const int ix = std::max(x, mx);
+                const int iy = std::max(y, my);
+                const int ax = std::min(x + w, mx + mw);
+                const int ay = std::min(y + h, my + mh);
+                if (ax - ix >= 100 && ay - iy >= 100) return true;
+            }
+            return false;
+        };
+        if (rectOverlapsAnyMonitor(windowStateCfg.WindowX, windowStateCfg.WindowY,
+                                   initialWindowW, initialWindowH)) {
+            glfwSetWindowPos(window, windowStateCfg.WindowX, windowStateCfg.WindowY);
+        }
+    }
+
+#if defined(_WIN32)
+    SmatchetApplyWindowIcon(window);
+#endif
+
+    glfwMakeContextCurrent(window);
+
+    glfwSwapInterval(1); // Enable vsync
 
     // 2. Setup Dear ImGui Context
     IMGUI_CHECKVERSION();
@@ -466,6 +496,14 @@ int main(int argc, char** argv) {
         // 4. The Main Render Loop
         ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
 
+        // Live-tracked windowed bounds (non-maximized, non-fullscreen) — saved on exit
+        // to restore on next launch. Seeded from saved config so an immediate maximize +
+        // close still preserves a sensible windowed-restore rect.
+        int s_persistWindowedX = (windowStateCfg.WindowX != -1) ? windowStateCfg.WindowX : 100;
+        int s_persistWindowedY = (windowStateCfg.WindowY != -1) ? windowStateCfg.WindowY : 100;
+        int s_persistWindowedW = initialWindowW;
+        int s_persistWindowedH = initialWindowH;
+
         while (!glfwWindowShouldClose(window)) {
             // Poll and handle events (inputs, window resize, etc.)
             glfwPollEvents();
@@ -504,6 +542,13 @@ int main(int argc, char** argv) {
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             glfwSwapBuffers(window);
+
+            // Snapshot windowed bounds whenever the window is in a normal (non-maximized,
+            // non-fullscreen) state so we can persist them on exit.
+            if (!g_ui.cfg.FullScreen && glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == 0) {
+                glfwGetWindowPos(window, &s_persistWindowedX, &s_persistWindowedY);
+                glfwGetWindowSize(window, &s_persistWindowedW, &s_persistWindowedH);
+            }
 
             // Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
             static int s_windowedX = 100, s_windowedY = 100, s_windowedW = 1280, s_windowedH = 720;
@@ -584,9 +629,29 @@ int main(int argc, char** argv) {
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
             if (!g_MainWindowShownAfterFirstFrame) {
                 glfwShowWindow(window);
+                // GLFW_MAXIMIZED hint can be lost across the hidden->shown transition on
+                // some Windows configs; re-apply explicitly so saved-maximized restores.
+                if (restoreMaximized && glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == 0) {
+                    glfwMaximizeWindow(window);
+                }
                 g_MainWindowShownAfterFirstFrame = true;
             }
 #endif
+        }
+
+        // Persist window state for next launch. Read maximized attrib directly; use the
+        // live-tracked windowed bounds so an exit-while-maximized still restores a sane
+        // windowed rect after un-maximize.
+        {
+            const bool maximized =
+                (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0) || g_ui.cfg.FullScreen;
+            TrackerConfig saveCfg = ConfigManager::Load();
+            saveCfg.WindowX = s_persistWindowedX;
+            saveCfg.WindowY = s_persistWindowedY;
+            saveCfg.WindowWidth = s_persistWindowedW;
+            saveCfg.WindowHeight = s_persistWindowedH;
+            saveCfg.WindowMaximized = maximized;
+            ConfigManager::Save(saveCfg);
         }
 
         smatchetApp.ClearAutomationLogSinks();

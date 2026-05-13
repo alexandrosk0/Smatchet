@@ -86,7 +86,7 @@ if ($CheckSignatures) {
 
 Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
 
-$installedExe = Join-Path $installDir 'SmatchetStandalone.exe'
+$installedExe = Join-Path $installDir 'Smatchet.exe'
 $installedUninstaller = Join-Path $installDir 'unins000.exe'
 $startMenuLinkExistsAfterInstall = Test-Path -LiteralPath $startMenuLink
 if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {

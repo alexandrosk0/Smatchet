@@ -48,7 +48,7 @@ Expand-Archive -LiteralPath $pluginZip -DestinationPath $pluginExtractDir
 Expand-Archive -LiteralPath $fabZip -DestinationPath $fabExtractDir
 Expand-Archive -LiteralPath $sourceZip -DestinationPath $sourceExtractDir
 
-$portableExe = Join-Path $portableExtractDir "SmatchetStandalone.exe"
+$portableExe = Join-Path $portableExtractDir "Smatchet.exe"
 $portableVersionJson = & powershell -NoProfile -File (Join-Path $PSScriptRoot 'test_windows_version_info.ps1') `
     -Path $portableExe `
     -ExpectedVersion $ExpectedVersion

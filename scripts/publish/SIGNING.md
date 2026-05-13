@@ -4,7 +4,7 @@ Smatchet's release script can sign the standalone payload and the generated Inno
 
 What gets signed:
 
-- `SmatchetStandalone.exe`
+- `Smatchet.exe`
 - any staged runtime `.dll` files
 - the outer installer `.exe`
 - the Inno-generated uninstaller `unins000.exe` through Inno Setup's `SignTool` hook

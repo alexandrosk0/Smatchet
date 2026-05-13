@@ -812,6 +812,7 @@ if(WIN32)
 endif()
 
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
+set_target_properties(SmatchetStandalone PROPERTIES OUTPUT_NAME "Smatchet")
 if(WIN32)
     set_target_properties(SmatchetStandalone PROPERTIES WIN32_EXECUTABLE TRUE)
     # WIN32_EXECUTABLE -> /SUBSYSTEM:WINDOWS, whose default entry is WinMain. Standalone uses int main().

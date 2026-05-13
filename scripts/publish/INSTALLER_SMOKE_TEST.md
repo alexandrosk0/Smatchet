@@ -8,7 +8,7 @@ This guide documents the Windows installer smoke test used for Smatchet release 
 - portable Windows ZIP contains the expected standalone exe
 - Windows version metadata is readable from the packaged exe
 - installer runs silently
-- installed `SmatchetStandalone.exe` exists and launches
+- installed `Smatchet.exe` exists and launches
 - uninstall registration is created
 - installed uninstaller exists
 - install directory is removed on uninstall
@@ -62,7 +62,7 @@ Validate one exe's Windows version resource:
 
 ```powershell
 .\scripts\publish\test_windows_version_info.ps1 `
-  -Path .\build\ninja-publish-msys2\SmatchetStandalone.exe `
+  -Path .\build\ninja-publish-msys2\Smatchet.exe `
   -ExpectedVersion 0.6.7
 ```
 
