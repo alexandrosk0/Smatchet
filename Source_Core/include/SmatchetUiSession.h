@@ -127,6 +127,8 @@ struct UiDrawSession {
     bool showBlameAnalysis = false;
     /** 0 = Grid tab, 1 = Annotate tab. */
     int activeGridTab = 0;
+    /** Set true to force-select activeGridTab via ImGuiTabItemFlags_SetSelected next frame. */
+    bool activeGridTabForcePending = false;
     bool showBulkImport = false;
     bool showBulkExport = false;
     bool showAuditTrail = false;

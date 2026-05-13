@@ -1182,6 +1182,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.activeGridTab == 1)) {
                 d.activeGridTab = (d.activeGridTab == 1) ? 0 : 1;
+                d.activeGridTabForcePending = true;
+                d.requestActiveProjectFocus = true;
                 recentViews_.Touch("view.toggle.source-blame");
             }
             ImGui::Separator();
@@ -1282,6 +1284,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             if (ImGui::MenuItem("Annotate...")) {
                 d.activeGridTab = 1;
+                d.activeGridTabForcePending = true;
+                d.requestActiveProjectFocus = true;
             }
             ImGui::EndMenu();
         }

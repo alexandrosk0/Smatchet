@@ -126,7 +126,8 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestActiveProjectFocus;
     prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
-    if (!ImGui::Begin("Smatchet - Active Project", nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin("Smatchet - Active Project", nullptr,
+                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::End();
         return;
     }
@@ -151,14 +152,17 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     blameAnalysisUi_.SetBlamePanelOpen(d.activeGridTab == 1);
     blameAnalysisUi_.ServiceBackground();
     if (ImGui::BeginTabBar("##active_project_tabs")) {
-        if (ImGui::BeginTabItem("Grid")) {
-            if (d.activeGridTab != 0)
-                d.activeGridTab = 0;
+        const bool forceSwitch = d.activeGridTabForcePending;
+        d.activeGridTabForcePending = false;
+        const ImGuiTabItemFlags gridFlags = (d.activeGridTab == 0 && forceSwitch) ? ImGuiTabItemFlags_SetSelected : 0;
+        const ImGuiTabItemFlags annotateFlags =
+            (d.activeGridTab == 1 && forceSwitch) ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Grid", nullptr, gridFlags)) {
+            d.activeGridTab = 0;
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Annotate")) {
-            if (d.activeGridTab != 1)
-                d.activeGridTab = 1;
+        if (ImGui::BeginTabItem("Annotate", nullptr, annotateFlags)) {
+            d.activeGridTab = 1;
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -167,8 +171,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     if (d.activeGridTab == 1) {
         bool wantClose = false;
         blameAnalysisUi_.DrawContent(app, &wantClose, d.gridState.ActiveIssueId);
-        if (wantClose)
+        if (wantClose) {
             d.activeGridTab = 0;
+            d.activeGridTabForcePending = true;
+        }
         ImGui::End();
         return;
     }
