@@ -37,6 +37,26 @@ Sweep the file when:
 
 <!-- Latest first. Append new entries at the top of this section. -->
 
+- 2026-05-13 · orchestrator · [process] — branch-switch wipes untracked plan files
+  Details: Working-tree-only files (e.g. a plan doc not yet `git add`-ed) are silently lost on `git checkout <other-branch>` when GitHub Desktop or `git reset --hard` runs. Recovery via `git fsck --lost-found` + content-search on dangling blobs is slow. Rule: as soon as a plan file lands at `docs/design/`, `git add` + commit it immediately, even with a `wip:` prefix, before any other work or branch operation. Never leave a plan file untracked across a session boundary.
+  Status: open
+
+- 2026-05-13 · orchestrator · [process] — wrong-exe testing burns iterations
+  Details: When multiple build outputs exist (`build/ninja-release/`, `build/ninja-iter-msys2/`, worktree builds), the user can easily run the OLD exe and report bugs that the new patched exe doesn't have. Wasted ~5 round-trips this session. Rule: after each rebuild, `ls -la` both the patched and the most-likely-stale exe paths, print mtimes side-by-side, and tell the user explicitly which path to run. Same rule applies to subagents diagnosing perf or layout bugs.
+  Status: open
+
+- 2026-05-13 · orchestrator · [process] — schema-version churn
+  Details: The `kCurrentLayoutSchemaVersion` constant got bumped seven times in one session (1→2→3→4→5→6→7→8→9, then back to 2). Each bump shipped as its own commit because the user ran each intermediate fix and reported new symptoms. Rule: when a feature requires a config schema bump, hold the version bump until the feature is verified working end-to-end. Do not commit interim version bumps — squash or amend. Final version should be exactly one higher than the previous shipped version.
+  Status: open
+
+- 2026-05-13 · orchestrator · [shortcut] — pink-diagnostic clear color for UI gap detection
+  Details: For "is the background ever visible behind panels?" questions: set `glClearColor(1.0f, 0.0f, 1.0f, 1.0f)` (or `ImVec4(1,0,1,1)` on DX12 RTV clear). Pink is rare in normal UI palettes; any visible pink is a guaranteed dock gap or transparent region. Combine with automated screenshot + per-pixel pink scan for objective regression tests (script template in this session's `debug.window.screenshot` PPM pipeline).
+  Status: open
+
+- 2026-05-13 · spike-hunter / orchestrator · [context] — ImGui docking state cannot be re-parented at runtime
+  Details: `ImGui::LoadIniSettingsFromDisk()` after the first frame does NOT move already-created docked windows to new DockIds. A common bug pattern: schema migration runs post-load (in the per-frame Draw), windows stay at old positions. Rule: any dock-layout migration must run BEFORE `io.IniFilename` is set and the first `ImGui::NewFrame` call. In Smatchet this means inside `SmatchetImGuiHost::Initialize` (DX12) and inside `main.cpp` before `ImGui_ImplOpenGL3_Init` (Standalone).
+  Status: open
+
 - 2026-05-13 · code-review · [tooling] — lint hook does not run clang-format on newly created `.h` files
   Details: The `PostToolUse` hook via `.claude/hooks/lint-cpp.sh` runs clang-format on `.cpp` edits but not on new header files. New headers consistently arrive at code-review with alignment-padding violations that could have been auto-fixed. Add `*.h` (or `*.{cpp,h}`) to the hook's glob pattern in `.claude/settings.json` or the lint script.
   Status: open
