@@ -375,6 +375,12 @@ class AppController {
     bool RefreshFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey);
     bool FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                            std::string& outError) const;
+    /** PR 6 follow-up: scoped fetch overload. Used by the startup / view-switch catalog
+     *  refresh in SmatchetUI to plumb the active view's project key into createmeta + status
+     *  enrichment so priority/status dropdowns render with their option lists. Empty projectKey
+     *  ≡ unscoped, identical to the 2-arg overload. */
+    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                           TrackerFieldCatalogResult& outCatalog, std::string& outError) const;
 
     /** Resolve a raw tracker value (e.g. accountId, label UUID) to a display name. */
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,

@@ -119,6 +119,17 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
     return Backend->FetchFieldCatalog(cfg, std::string(), outCatalog, outError);
 }
 
+bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                                      TrackerFieldCatalogResult& outCatalog, std::string& outError) const {
+    outCatalog = TrackerFieldCatalogResult{};
+    outError.clear();
+    if (!Backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
+    return Backend->FetchFieldCatalog(cfg, projectKey, outCatalog, outError);
+}
+
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     return Backend ? Backend->BuildBrowseUrl(cfg, issueKey) : std::string();
 }
