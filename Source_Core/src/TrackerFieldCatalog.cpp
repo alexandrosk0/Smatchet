@@ -319,14 +319,119 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
         return false;
     }
 
-    if (projectKey.empty()) {
-        LOG_INFO("JiraClient: skipping createmeta enrichment because project key is empty.");
-        return true;
-    }
-
     std::unordered_map<std::string, size_t> fieldIndexById;
     for (size_t i = 0; i < outFields.size(); ++i) {
         fieldIndexById[outFields[i].Id] = i;
+    }
+
+    // Project-agnostic enrichment: priority + status options come from global endpoints, so
+    // run them even without a projectKey. Without this the grid renders priority/status as
+    // text instead of a combo dropdown until the user opens a project-scoped view.
+    try {
+        const auto priorityFieldIt = fieldIndexById.find("priority");
+        if (priorityFieldIt != fieldIndexById.end()) {
+            const std::string priorityCatalogUrl = base + "/rest/api/3/priority";
+            auto priorityResp = TrackerGetLogged("JiraClient", priorityCatalogUrl, headers);
+            if (priorityResp.status_code == 200) {
+                auto priorityJson = nlohmann::json::parse(priorityResp.text);
+                if (priorityJson.is_array()) {
+                    TrackerField& priorityField = outFields[priorityFieldIt->second];
+                    priorityField.AllowedValues.clear();
+                    priorityField.AllowedValueOptions.clear();
+                    std::set<std::string> seenIds;
+                    for (const auto& priorityObj : priorityJson) {
+                        if (!priorityObj.is_object()) {
+                            continue;
+                        }
+                        std::string priorityId;
+                        if (priorityObj.contains("id")) {
+                            if (priorityObj["id"].is_string()) {
+                                priorityId = priorityObj["id"].get<std::string>();
+                            } else if (priorityObj["id"].is_number_integer()) {
+                                priorityId = std::to_string(priorityObj["id"].get<long long>());
+                            } else if (priorityObj["id"].is_number_unsigned()) {
+                                priorityId = std::to_string(priorityObj["id"].get<unsigned long long>());
+                            }
+                        }
+                        const std::string priorityName = priorityObj.value("name", std::string());
+                        if (priorityId.empty() || priorityName.empty() || !seenIds.insert(priorityId).second) {
+                            continue;
+                        }
+                        priorityField.AllowedValues.push_back(priorityName);
+                        TrackerFieldOption option;
+                        option.Id = priorityId;
+                        option.Value = priorityName;
+                        try {
+                            option.PayloadJson = priorityObj.dump();
+                        } catch (...) {
+                            option.PayloadJson.clear();
+                        }
+                        priorityField.AllowedValueOptions.push_back(std::move(option));
+                    }
+                    priorityField.Family = ClassifyTrackerFieldFamily(priorityField);
+                }
+            } else {
+                LOG_WARN("JiraClient: priority catalog enrichment failed. HTTP %d", priorityResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: priority catalog parse failed: %s", ex.what());
+    }
+
+    try {
+        const auto statusFieldIt = fieldIndexById.find("status");
+        if (statusFieldIt != fieldIndexById.end()) {
+            const std::string statusCatalogUrl = base + "/rest/api/3/status";
+            auto statusResp = TrackerGetLogged("JiraClient", statusCatalogUrl, headers);
+            if (statusResp.status_code == 200) {
+                auto statusJson = nlohmann::json::parse(statusResp.text);
+                if (statusJson.is_array()) {
+                    TrackerField& statusField = outFields[statusFieldIt->second];
+                    statusField.AllowedValues.clear();
+                    statusField.AllowedValueOptions.clear();
+                    std::set<std::string> seenIds;
+                    for (const auto& statusObj : statusJson) {
+                        if (!statusObj.is_object()) {
+                            continue;
+                        }
+                        std::string statusId;
+                        if (statusObj.contains("id")) {
+                            if (statusObj["id"].is_string()) {
+                                statusId = statusObj["id"].get<std::string>();
+                            } else if (statusObj["id"].is_number_integer()) {
+                                statusId = std::to_string(statusObj["id"].get<long long>());
+                            } else if (statusObj["id"].is_number_unsigned()) {
+                                statusId = std::to_string(statusObj["id"].get<unsigned long long>());
+                            }
+                        }
+                        const std::string statusName = statusObj.value("name", std::string());
+                        if (statusId.empty() || statusName.empty() || !seenIds.insert(statusId).second) {
+                            continue;
+                        }
+                        statusField.AllowedValues.push_back(statusName);
+                        TrackerFieldOption option;
+                        option.Id = statusId;
+                        option.Value = statusName;
+                        try {
+                            option.PayloadJson = statusObj.dump();
+                        } catch (...) {
+                            option.PayloadJson.clear();
+                        }
+                        statusField.AllowedValueOptions.push_back(std::move(option));
+                    }
+                    statusField.Family = ClassifyTrackerFieldFamily(statusField);
+                }
+            } else {
+                LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: status catalog parse failed: %s", ex.what());
+    }
+
+    if (projectKey.empty()) {
+        LOG_INFO("JiraClient: skipping createmeta enrichment because project key is empty.");
+        return true;
     }
 
     const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(projectKey) +
@@ -546,60 +651,6 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
                 issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
             }
         }
-    }
-
-    // Enrich status options so the UI renders a dropdown.
-    try {
-        const auto statusFieldIt = fieldIndexById.find("status");
-        if (statusFieldIt != fieldIndexById.end()) {
-            const std::string statusCatalogUrl = base + "/rest/api/3/status";
-            auto statusResp = TrackerGetLogged("JiraClient", statusCatalogUrl, headers);
-            if (statusResp.status_code == 200) {
-                auto statusJson = nlohmann::json::parse(statusResp.text);
-                if (statusJson.is_array()) {
-                    TrackerField& statusField = outFields[statusFieldIt->second];
-                    statusField.AllowedValues.clear();
-                    statusField.AllowedValueOptions.clear();
-                    std::set<std::string> seenIds;
-                    for (const auto& statusObj : statusJson) {
-                        if (!statusObj.is_object()) {
-                            continue;
-                        }
-
-                        std::string statusId;
-                        if (statusObj.contains("id")) {
-                            if (statusObj["id"].is_string()) {
-                                statusId = statusObj["id"].get<std::string>();
-                            } else if (statusObj["id"].is_number_integer()) {
-                                statusId = std::to_string(statusObj["id"].get<long long>());
-                            } else if (statusObj["id"].is_number_unsigned()) {
-                                statusId = std::to_string(statusObj["id"].get<unsigned long long>());
-                            }
-                        }
-                        const std::string statusName = statusObj.value("name", std::string());
-                        if (statusId.empty() || statusName.empty() || !seenIds.insert(statusId).second) {
-                            continue;
-                        }
-
-                        statusField.AllowedValues.push_back(statusName);
-                        TrackerFieldOption option;
-                        option.Id = statusId;
-                        option.Value = statusName;
-                        try {
-                            option.PayloadJson = statusObj.dump();
-                        } catch (...) {
-                            option.PayloadJson.clear();
-                        }
-                        statusField.AllowedValueOptions.push_back(std::move(option));
-                    }
-                    statusField.Family = ClassifyTrackerFieldFamily(statusField);
-                }
-            } else {
-                LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
-            }
-        }
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: status catalog parse failed: %s", ex.what());
     }
 
     // Enrich sprint custom fields with selectable sprint options (active/future) from Jira Agile.
