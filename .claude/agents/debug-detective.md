@@ -436,12 +436,19 @@ Collect:
 If appropriate, suggest or run:
 
 - Debug / RelWithDebInfo build.
-- AddressSanitizer for lifetime and bounds bugs.
-- UndefinedBehaviorSanitizer for UB.
-- ThreadSanitizer for data races, if supported by the platform/toolchain.
-- Windows minidump or debugger backtrace when sanitizer is unavailable.
+- AddressSanitizer + UndefinedBehaviorSanitizer for lifetime, bounds, and UB bugs → `ninja-debug-msys2-asan` (GCC; ASan implies LSan).
+- ThreadSanitizer for data races → `ninja-debug-msys2-tsan` (GCC; MinGW support partial — if symptoms surface, hand off to `build-doctor`).
+- MemorySanitizer for uninit-read bugs → `ninja-debug-msys2-msan` (Clang-only; needs `clang`/`clang++` on PATH).
+- Windows minidump or debugger backtrace when no sanitizer applies.
 
-Smatchet does not currently ship a CMake preset with sanitizer flags wired in (`CMakePresets.json` lists `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-publish-msys2`, etc., none of which enable ASan / UBSan / TSan by default). If a sanitizer is the right tool, **delegate to `build-doctor`** to add a preset rather than hand-patching CMakeLists.txt yourself.
+Pick **one** sanitizer per investigation — they cannot coexist at link/runtime. Configure + build:
+
+```bash
+cmake --preset ninja-debug-msys2-asan
+cmake --build --preset ninja-debug-msys2-asan --target SmatchetStandalone
+```
+
+Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan preset errors `requires Clang`, install `mingw-w64-clang-x86_64-clang` in MSYS2. Wiring lives in `cmake/Sanitizers.cmake` — preset failures or new sanitizer requests go to `build-doctor`.
 
 Do not treat the final crash frame as the root cause without checking ownership and earlier mutation paths.
 
