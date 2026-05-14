@@ -1,17 +1,6 @@
 # Lua recorded ImGui command list — cached cell + window bindings
 
-> **Post-implementation revision reminder**: after the feature ships and the
-> first round of perf validation is in, return to this doc and:
-> 1. Replace approximate `file:line` refs with the **actual** post-merge line
->    numbers (the file as it lives on `develop`, not the pre-merge target).
-> 2. Strike risks that did not materialize; add risks discovered during
->    implementation or QA.
-> 3. Replace the "expected perf" numbers in the Verification section with the
->    **measured** numbers (`perf.snapshot` output, frame-time deltas).
-> 4. If the post-impl review surfaces a v2 follow-up (e.g. animation hooks,
->    `combo` / `checkbox` recorder ops, per-window dirty predicates), file it
->    under a new design doc and link it from this one.
-> Remove this banner once revised.
+> **Status**: shipped on `develop` via PR #66 (squash `5b740e9`). See `## Implementation log`, `## Deviations from plan`, and `## Verification` near the bottom of this doc.
 
 ## Context
 
