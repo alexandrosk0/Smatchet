@@ -28,18 +28,7 @@ harness-hints:
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 **AGENT**: `code-review`
-**complexity**: `medium` · **access**: `read-only` · **model**: `sonnet` · **effort**: `high`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ **END** — `code-review` · `sonnet`/`high` · `read-only`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only`.
 
 ## Process
 

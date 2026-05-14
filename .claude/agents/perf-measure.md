@@ -23,18 +23,7 @@ harness-hints:
 
 Smatchet perf-measurement runner.
 
-**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 **AGENT**: `perf-measure`
-**complexity**: `low` · **access**: `read-only` · **model**: `sonnet` · **effort**: `low`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ **END** — `perf-measure` · `sonnet`/`low` · `read-only`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only`.
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 

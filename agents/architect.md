@@ -25,22 +25,9 @@ harness-hints:
 
 Read-only architecture specialist. Output is a design doc; the orchestrator implements.
 
-**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
+**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only`.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 **AGENT**: `architect`
-**complexity**: `high` · **access**: `read-only` · **model**: `opus` · **effort**: `high`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ **END** — `architect` · `opus`/`high` · `read-only`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**Semantic search first** — when your harness provides indexed codebase search (e.g. vexp `run_pipeline` under Claude Code), use it before text-search. Prefer compact file-skeleton views (e.g. vexp `get_skeleton`) over full file reads for context files — typically 70–90% token savings. Fall back to text-search + full reads if no semantic search is available.
-
-Project rules already in `AGENTS.md` (layout, banned C++14 features, dual-target macros, json / logging conventions). Don't restate them.
+Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
 **Every response, in this order:**
 

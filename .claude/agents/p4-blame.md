@@ -29,20 +29,8 @@ harness-hints:
 
 Perforce blame specialist.
 
-**Begin every response with this banner — first thing in the output, before anything else. Use the horizontal rules; they make routing visible amid the rest of the text.**
+**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit`.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 **AGENT**: `p4-blame`
-**complexity**: `low` · **access**: `read-edit` · **model**: `sonnet` · **effort**: `low`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**End every response with the matching closing banner immediately before the `## Self-improvement` section:**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ **END** — `p4-blame` · `sonnet`/`low` · `read-edit`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**Semantic search first** — call your harness's semantic codebase search (e.g. vexp `run_pipeline` under Claude Code) for any codebase exploration; prefer compact file-skeleton views over full reads for context files. Fall back to text-search if no semantic search is available.
 
 **Hard invariants:**
 
