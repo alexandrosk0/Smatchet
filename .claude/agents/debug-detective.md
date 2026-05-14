@@ -112,21 +112,25 @@ For crashes, first collect:
 - Whether symbols are present.
 - Whether the same repro fails in Debug, RelWithDebInfo, or Release.
 
-### 2. State One Hypothesis
+### 2. List Hypotheses (multiple)
 
-Write one concrete, falsifiable cause to test.
+Write **two to four** concrete, falsifiable causes, ordered by which single piece of evidence would distinguish them best. Single-hypothesis debugging confirms what you already suspect; the bug is often the one you didn't list.
 
 Good:
 
-> `TicketGridModel::ApplySort` invalidates row indices before `TicketSelection::Restore` reads them.
+> 1. `TicketGridModel::ApplySort` invalidates row indices before `TicketSelection::Restore` reads them.
+> 2. `OnFieldEditCommit` runs on a worker thread while UI iterates the same `rows_` vector.
+> 3. `kCurrentLayoutSchemaVersion` mismatch silently resets selection during config load.
 
 Bad:
 
 > It is probably a race.
 
-If you cannot state a hypothesis, read more code before editing.
+If you cannot list at least two, read more code before editing. The hypothesis you instrument first should be the cheapest to confirm or reject — not the one you find most likely.
 
-### 3. Choose Evidence
+Each round of evidence either **rejects** a hypothesis (narrowing the search) or **forces a new one** (the log revealed something the original list missed). Keep the list visible in the report; cross out rejected ones as evidence comes in.
+
+### 3. Choose Evidence and Define the Metric
 
 Prefer existing evidence before adding logs:
 
@@ -139,7 +143,15 @@ Prefer existing evidence before adding logs:
 - Debugger watch/backtrace.
 - Existing tests.
 
-Only instrument when existing evidence cannot distinguish the hypothesis from alternatives.
+Only instrument when existing evidence cannot distinguish the hypotheses from each other.
+
+**Pick a concrete metric** — an observable value or sequence that the bug produces, and what the fixed behaviour should produce instead. Examples:
+
+- Bug → `selectedRowIndex = 2` after sort; fixed → `selectedRowIndex` follows the moved ticket.
+- Bug → second sync replays `pending_creates` count = 3; fixed → count = 0.
+- Bug → log shows `Draw` reading `rows_.size() == 0` then `5` in same frame; fixed → size stable across frame.
+
+Write the metric down before instrumenting. After the fix, re-run the reproducer and check the same metric. Never accept "I think it's fixed" without comparing the metric before / after.
 
 ### 4. Instrument
 
@@ -173,6 +185,10 @@ Useful C++ fields to log:
 - Return values and error codes.
 - Command/scenario names.
 - File paths and normalized keys.
+
+**Structured-log shape** — prefix with a location tag and emit key=value pairs (or JSON-ish) so log lines are greppable and machine-parseable. Format: `[temp-debug] <site> key1=<val> key2=<val> ...`. Site is the function or call-site, not a free-form sentence. This mirrors Cursor Debug Mode's structured-log convention and lets the harness extract values from a long log with one regex pass.
+
+**Cross-boundary instrumentation** — the bug is almost always at the interface between two pieces of code that disagree about a contract: UI thread vs worker, command-dispatch vs handler, parser vs payload-builder, save vs load. **Instrument both sides of the boundary**, not just one. A worker-thread log alone is rarely enough; pair it with the UI-thread log that consumes the same value.
 
 Example:
 
@@ -311,9 +327,11 @@ A race hypothesis must name the specific read, write, and missing ordering/synch
 
 ### 10. Iterate
 
-Repeat hypothesis → evidence → instrumentation → build → run → read.
+Each round: read the logs, **reject the hypotheses they disprove**, and either advance to the surviving hypothesis or **regenerate new ones** from what the evidence revealed. Don't keep refining the same guess — Cursor Debug Mode calls this "iterative narrowing", and the discipline matters.
 
-After three failed rounds, stop and re-frame:
+Repeat hypothesis-list → evidence-pick → instrumentation → build → run → read.
+
+After three failed rounds (where no hypothesis was confirmed AND no new hypothesis emerged from the logs), stop and re-frame:
 
 - Was the reproducer correct?
 - Is the executable stale?
@@ -369,8 +387,10 @@ Report cleanup and final build status.
 
 - Reproducer or concrete evidence first.
 - Semantic search before grep.
-- One falsifiable hypothesis at a time.
-- Instrument only what distinguishes hypotheses.
+- **Multiple hypotheses (≥ 2), ranked by distinguishing-evidence cost.** Single-hypothesis runs confirm what you already suspect.
+- **Concrete metric, recorded before instrumenting and re-checked after the fix.** Never accept "I think it's fixed."
+- **Instrument both sides of the boundary** the bug crosses (UI thread / worker, command / handler, save / load, parser / payload).
+- Instrument only what distinguishes the listed hypotheses from each other.
 - Every temporary edit (log, toggle, sentinel, repro scaffolding) carries the literal token `[temp-debug]` — as a format-string prefix for logs, as a `// [temp-debug]` comment otherwise. One text-search finds the full delta at cleanup.
 - Never leave `[temp-debug]` in the tree.
 - Never ship the final fix yourself.
@@ -382,20 +402,27 @@ Report cleanup and final build status.
 ## Report Shape
 
 ```markdown
-## Hypothesis
-<one concrete sentence>
+## Hypotheses (ranked by distinguishing-evidence cost)
+1. <concrete falsifiable cause #1>  — status: confirmed | rejected | open
+2. <concrete falsifiable cause #2>  — status: ...
+3. <concrete falsifiable cause #3>  — status: ...
+(strike-through rejected lines as evidence comes in)
 
 ## Reproducer
 <exact steps, CLI command, scenario, crash artifact, or evidence source>
 
+## Metric (observable, before / after)
+Before fix: <observed value or sequence>
+After fix:  <observed value or sequence>
+
 ## Evidence Collected
-<stack trace, logs, sanitizer output, command output, screenshots, etc.>
+<stack trace, structured `[temp-debug]` log lines, sanitizer output, command output, screenshots, etc.>
 
 ## Instrumentation
-<files touched and temporary breadcrumbs added>
+<files touched and temporary breadcrumbs added; note BOTH sides of any thread / subsystem / save-load boundary that was instrumented>
 
 ## Findings
-<relevant `[temp-debug]` lines or other evidence; say whether they confirm/refute the hypothesis>
+<relevant evidence; for each hypothesis say whether it was confirmed, rejected, or replaced by a new hypothesis the logs surfaced>
 
 ## Cause
 <concrete explanation with file:line where possible>
@@ -404,10 +431,10 @@ Report cleanup and final build status.
 Target agent: <subsystem-specialist>
 Allowed write set: <files>
 Decision pre-resolved: <interface deltas, invariant collisions, ownership/threading contract>
-Verification: <build + scenario/repro to rerun>
+Verification: <build + scenario/repro to rerun + the metric to re-check>
 
 ## Cleanup
-`[temp-debug]` grep across `Source_Core/`, `Plugins/`, `Target_Standalone/`: 0 hits
+`[temp-debug]` text-search across `Source_Core/`, `Plugins/`, `Target_Standalone/`: 0 hits
 Final build: <targets> → <status>
 Fresh exe: <absolute path + mtime>
 ```
