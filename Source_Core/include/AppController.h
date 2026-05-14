@@ -242,8 +242,10 @@ class AppController {
                                           std::string& outError) const;
 
     void InitLua();
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
     void InitLuaCore(sol::state& state);
     void InitLuaUi(sol::state& state);
+#endif
 
     std::string ResolveLuaScriptPath(const std::string& filename) const;
     /** Basenames of `*.lua` files in the configured scripts directory (non-recursive). */
@@ -287,16 +289,22 @@ class AppController {
     void LuaLogInfoBind(const std::string& msg);
     std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId);
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
-    void LuaRegisterFieldDisplayBind(const std::string& fieldId, sol::function fn);
-    void LuaUnregisterFieldDisplayBind(const std::string& fieldId);
-    void LuaRegisterFieldDisplayByNameBind(const std::string& displayName, sol::function fn);
-    void LuaUnregisterFieldDisplayByNameBind(const std::string& displayName);
+    /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
+    /// the C++ side replays every frame until one of the cache-key inputs changes. See
+    /// docs/design/lua-recorded-cmd-list.md.
+    void LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn);
+    void LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId);
+    void LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn);
+    void LuaUnregisterFieldDisplayCachedByNameBind(const std::string& displayName);
     void LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol::table map, sol::optional<bool> byName);
     void LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName);
     void LuaImGuiTextBind(const std::string& s);
     void LuaImGuiTextUnformattedBind(const std::string& s);
     bool LuaImGuiImageBind(const std::string& path, float w, float h);
+    /// Window register / unregister: thread-safe via mainThreadDispatcher when off the UI
+    /// thread, mid-iteration-safe via pendingLuaWindowOps_ when re-entered from a callback.
     void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
+    void LuaUiUnregisterWindowBind(const std::string& name);
     void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
@@ -321,11 +329,47 @@ class AppController {
 #endif
 
     /**
-     * If a Lua handler was registered for fieldId, invoke it to draw the grid cell.
+     * Recorded-cmd-list cell entry. When a Lua provider is registered for `fieldId` (or for
+     * the display name resolved via `fieldMeta->Name`), invokes it on cache miss to build a
+     * draw recording, then replays the cached recording on every subsequent frame until one
+     * of the cache-key inputs (rawValue, fieldName, intAvailWidth, isReadOnly, providerGen)
+     * changes. The 6th + 7th provider args are `isReadOnly` (combined catalog + editmeta +
+     * grid-level `allowEdits`) and the `draw` recorder.
+     *
+     * Declared outside the SMATCHET_WITH_LUA_AUTOMATION guard so unconditional call sites
+     * (TicketFieldEditor) link in the stub build; stub returns false. See
+     * docs/design/lua-recorded-cmd-list.md § Removal of legacy.
+     *
      * @return true if the handler ran and returned a Lua-truthy value (cell fully handled).
      */
-    bool TryLuaFieldDisplay(const std::string& fieldId, const CachedTicket& ticket, const std::string& rawValue,
-                            float availWidth, const TrackerField* fieldMeta);
+    bool TryRenderCachedLuaField(const std::string& fieldId, const CachedTicket& ticket,
+                                 const std::string& rawValue, float availWidth,
+                                 const TrackerField* fieldMeta, bool allowEdits);
+
+    /**
+     * Bumps `luaWindowDataGen_`. Cached Lua windows whose `cachedDataGen` lags the bump
+     * re-record on their next paint. Stub is empty (no Lua → no windows to dirty).
+     *
+     * Single hook site: `RefreshLocalData()` in `AppController_CatalogAndFieldEdit.cpp`.
+     * `TicketSyncService` coalesces a fetch session's many `ApplyIssueFetchPack` calls into
+     * one bump at session end. See plan §Invalidation strategy.
+     */
+    void NotifyLuaTicketDataChanged();
+
+    /// Lua-driven window dirty bump. Safe from any thread: off-UI hops the dispatcher; on-UI
+    /// mid-iteration enqueues onto pendingLuaWindowOps_ (drained after the loop, same frame).
+    /// Declared unconditionally so non-Lua call sites (future MCP / Unreal hooks) can also
+    /// drive window invalidation; stub is empty in the no-Lua build.
+    void LuaUiInvalidateWindowBind(const std::string& name);
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    /// Drop entries from luaFieldCache_. No-arg = drop all; (ticketId) = drop one ticket's
+    /// entries; (ticketId, fieldId) = drop a single cell. Off-UI hops the dispatcher.
+    /// Lua-only because the sol::optional<std::string> overload threads through sol2.
+    void LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId,
+                                       sol::optional<std::string> fieldId);
+
+#endif
 
     /**
      * Sync issues from the tracker into the local cache.
@@ -685,14 +729,92 @@ class AppController {
     AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
     AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
+
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    // Recorder + replay types live in `public` so the anonymous-namespace `LuaDrawList`
+    // class in AppController_LuaBindings.cpp can construct + mutate them. Members holding
+    // these types stay `private` further down. See docs/design/lua-recorded-cmd-list.md.
+  public:
+    struct ImCmd {
+        enum class Op : std::uint8_t {
+            Text, TextUnformatted, Image, ProgressBar,
+            SameLine, Separator, Dummy,
+            PushColor, PopColor, SetTooltip,
+            Button, InputText
+        };
+        Op          op;
+        std::string str;       // text / image path / tooltip / overlay / suffixed label
+        float       f1, f2, f3, f4;
+        int         i1;        // pop count / input max_len
+        sol::protected_function callback;
+        // on_deactivated* attach in-place to the last interactive op at record time — replay
+        // needs IsItemDeactivated* against the same ImGui item, so they can't live as
+        // separate ImCmd entries.
+        sol::protected_function onDeactivated;
+        sol::protected_function onDeactivatedAfterEdit;
+        std::vector<char>       textBuf;
+        ImCmd() : op(Op::Separator), f1(0), f2(0), f3(0), f4(0), i1(0) {}
+    };
+    struct LuaFieldCacheEntry {
+        std::vector<ImCmd> cmds;
+        std::string        rawValue;
+        std::string        fieldName;
+        int                intAvailWidth;
+        bool               isReadOnly;
+        std::uint64_t      providerGen;
+        bool               handled;
+        LuaFieldCacheEntry()
+            : intAvailWidth(0), isReadOnly(false), providerGen(0), handled(false) {}
+    };
+    struct LuaWindowEntry {
+        std::string             name;
+        sol::protected_function drawFn;
+        std::vector<ImCmd>      cmds;
+        std::uint64_t           cachedDataGen;
+        std::uint64_t           cachedProviderGen;
+        bool                    dirty;
+        bool                    hasError;
+        std::string             errorMessage;
+        LuaWindowEntry()
+            : cachedDataGen(0), cachedProviderGen(0), dirty(true), hasError(false) {}
+    };
+    // Mid-iteration safety: ops arriving during DrawLuaWindows are queued and drained after.
+    struct PendingLuaWindowOp {
+        enum class Kind { Register, Unregister, Invalidate };
+        Kind        kind;
+        std::string name;
+        sol::protected_function drawFn;
+    };
+
+    /// UI-thread helper: applies a window register / unregister / invalidate op immediately
+    /// when DrawLuaWindows is not iterating, otherwise enqueues onto pendingLuaWindowOps_
+    /// for in-frame drain. Off-thread callers must hop the dispatcher BEFORE this.
+    void ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op);
+
+  private:
+    // Member-order invariant: `sol::state lua` MUST be declared BEFORE every container that
+    // stores `sol::protected_function`. C++ destroys members in reverse declaration order, so
+    // the containers below tear down first (their Lua-handle members touch a still-alive
+    // state), then `lua` last. Inverting this order is a UAF — see plan §Shutdown ordering.
     sol::state lua;
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlers_;
+    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
     /** Lowercased Jira field display name (from catalog) -> handler. */
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayHandlersByDisplayName_;
+    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProvidersByName_;
+    /// Per-cell cmd-list cache. Key = `ticket.id + '\0' + fieldId`. UI-thread only.
+    std::unordered_map<std::string, LuaFieldCacheEntry>      luaFieldCache_;
+    /// Bumped on provider (un)register. Init to 1 so cached entries with `providerGen=0`
+    /// always miss on first compare.
+    std::atomic<std::uint64_t>                                luaProviderGen_{1};
+    /// Bumped by NotifyLuaTicketDataChanged; cells use per-entry comparison instead.
+    std::atomic<std::uint64_t>                                luaWindowDataGen_{1};
+    std::vector<LuaWindowEntry>                               luaWindows_;
+    std::vector<PendingLuaWindowOp>                           pendingLuaWindowOps_;
+    /// True while inside DrawLuaWindows iteration. Callbacks fired during replay route
+    /// register/unregister/invalidate ops into pendingLuaWindowOps_ instead of mutating
+    /// luaWindows_ directly. Plain bool — UI-thread-only.
+    bool                                                      inDrawLuaWindows_ = false;
     std::vector<McpToolDefinition> luaMcpTools_;
     mutable std::mutex luaMcpToolsMutex_;
-    std::vector<std::pair<std::string, sol::protected_function>> luaWindows_;
     std::vector<std::pair<std::string, std::string>> luaTicketActions_;
     std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
     mutable std::mutex fieldIconMapsMutex_;
@@ -700,6 +822,15 @@ class AppController {
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
 
 #endif
+
+  private:
+    /// Coalesced fetch-session window-dirty signal. TicketSyncService flips this in each
+    /// ApplyIssueFetchPack + stale-deletion + streaming-state-changed scope, then fires
+    /// NotifyLuaTicketDataChanged() once at session end. Plain bool — UI-thread only. Lives
+    /// outside the Lua guard so TicketSyncService (friend) reads/writes it unconditionally;
+    /// NotifyLuaTicketDataChanged is a no-op in the stub build.
+    bool pendingLuaWindowBump_ = false;
+
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
 
