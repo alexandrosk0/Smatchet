@@ -151,4 +151,54 @@ if (Test-Path $TTDir) {
   }
 }
 
-Write-Host "synced $agentsCount agents to $MirrorDir + $ttCount token-tracking files to .claude\hooks\ + .claude\skills\agent-tokens\"
+# -----------------------------------------------------------------------------
+# Section 3 - agents\_shared\skills\grill-with-docs\  ->  .claude\skills\grill-with-docs\
+# -----------------------------------------------------------------------------
+
+$GrillSrc = Join-Path $RepoRoot 'agents\_shared\skills\grill-with-docs'
+$GrillDst = Join-Path $RepoRoot '.claude\skills\grill-with-docs'
+
+$grillCount = 0
+if (Test-Path $GrillSrc) {
+  if (-not (Test-Path $GrillDst)) { New-Item -ItemType Directory -Path $GrillDst | Out-Null }
+
+  foreach ($src in (Get-ChildItem -Path $GrillSrc -Filter '*.md' -File)) {
+    $name = $src.Name
+    $dst  = Join-Path $GrillDst $name
+    $lines = Get-Content -Encoding UTF8 $src.FullName
+    $output = New-Object System.Collections.Generic.List[string]
+
+    if ($lines.Count -gt 0 -and $lines[0] -eq '---') {
+      # YAML-frontmatter (SKILL.md) - inject inside frontmatter.
+      $injected = $false
+      foreach ($line in $lines) {
+        if (-not $injected -and $line -eq '---') {
+          $output.Add('---') | Out-Null
+          $output.Add("# AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/$name $BannerDash DO NOT EDIT.") | Out-Null
+          $output.Add('# Run scripts/sync-agents.sh to regenerate.') | Out-Null
+          $injected = $true
+          continue
+        }
+        $output.Add($line) | Out-Null
+      }
+    } else {
+      # Plain markdown - prepend HTML-comment banner.
+      $output.Add("<!-- AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/$name $BannerDash DO NOT EDIT. -->") | Out-Null
+      $output.Add('<!-- Run scripts/sync-agents.sh to regenerate. -->') | Out-Null
+      foreach ($line in $lines) { $output.Add($line) | Out-Null }
+    }
+
+    Write-Utf8NoBom -Path $dst -Lines $output
+    $grillCount++
+  }
+
+  # Drop stale mirrors that no longer have a canonical source.
+  foreach ($dst in (Get-ChildItem -Path $GrillDst -Filter '*.md' -File)) {
+    if (-not (Test-Path (Join-Path $GrillSrc $dst.Name))) {
+      Write-Host "removing stale mirror: $($dst.FullName)"
+      Remove-Item $dst.FullName -Force
+    }
+  }
+}
+
+Write-Host "synced $agentsCount agents to $MirrorDir + $ttCount token-tracking files to .claude\hooks\ + .claude\skills\agent-tokens\ + $grillCount grill-with-docs files to .claude\skills\grill-with-docs\"

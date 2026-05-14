@@ -127,4 +127,54 @@ if [[ -d "$TT_DIR" ]]; then
   fi
 fi
 
-echo "synced $AGENTS_COUNT agents to .claude/agents/ + $TT_COUNT token-tracking files to .claude/hooks/ + .claude/skills/agent-tokens/"
+# -----------------------------------------------------------------------------
+# Section 3 — agents/_shared/skills/grill-with-docs/  ->  .claude/skills/grill-with-docs/
+# -----------------------------------------------------------------------------
+
+GRILL_SRC="$ROOT/agents/_shared/skills/grill-with-docs"
+GRILL_DST="$ROOT/.claude/skills/grill-with-docs"
+
+GRILL_COUNT=0
+if [[ -d "$GRILL_SRC" ]]; then
+  mkdir -p "$GRILL_DST"
+
+  for src in "$GRILL_SRC"/*.md; do
+    [[ -e "$src" ]] || continue
+    name="$(basename "$src")"
+    dst="$GRILL_DST/$name"
+
+    if head -n 1 "$src" | grep -q '^---$'; then
+      # YAML-frontmatter file (SKILL.md) — inject banner inside frontmatter.
+      awk -v name="$name" '
+        NR == 1 && $0 == "---" {
+          print "---"
+          print "# AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/" name " — DO NOT EDIT."
+          print "# Run scripts/sync-agents.sh to regenerate."
+          injected = 1
+          next
+        }
+        { print }
+      ' "$src" > "$dst"
+    else
+      # Plain markdown — prepend an HTML comment banner.
+      {
+        echo "<!-- AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/$name — DO NOT EDIT. -->"
+        echo "<!-- Run scripts/sync-agents.sh to regenerate. -->"
+        cat "$src"
+      } > "$dst"
+    fi
+    GRILL_COUNT=$((GRILL_COUNT + 1))
+  done
+
+  # Drop stale mirrors that no longer have a canonical source.
+  for dst in "$GRILL_DST"/*.md; do
+    [[ -e "$dst" ]] || continue
+    name="$(basename "$dst")"
+    if [[ ! -f "$GRILL_SRC/$name" ]]; then
+      echo "removing stale mirror: $dst" >&2
+      rm "$dst"
+    fi
+  done
+fi
+
+echo "synced $AGENTS_COUNT agents to .claude/agents/ + $TT_COUNT token-tracking files to .claude/hooks/ + .claude/skills/agent-tokens/ + $GRILL_COUNT grill-with-docs files to .claude/skills/grill-with-docs/"

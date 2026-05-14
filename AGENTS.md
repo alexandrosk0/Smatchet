@@ -40,6 +40,8 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 A plan that ships without revision is a stale plan. Future agents read these docs as truth; drift between plan and shipped reality is the main cost of multi-week feature work.
 
+**Plan stress-test — `grill-with-docs` skill**: before a plan is finalised at `docs/design/<slug>.md`, invoke the `grill-with-docs` skill (canonical at `agents/_shared/skills/grill-with-docs/`; mirrored to `.claude/skills/grill-with-docs/`) to interrogate it against the existing domain glossary (`docs/CONTEXT.md`) and ADRs (`docs/adr/`). Output: refined plan + glossary updates + new ADRs only when the three ADR criteria fire (hard-to-reverse + surprising + real trade-off). See `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md` for the Smatchet-specific file mapping (plans vs ADRs vs glossary kept separate).
+
 **Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
 
 ## Debug techniques

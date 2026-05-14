@@ -7,6 +7,7 @@
 #   agents/_shared/token-tracking/*.py       -> .claude/hooks/agent-token-log.py
 #                                            -> .claude/hooks/agents-statusline.py
 #   agents/_shared/token-tracking/SKILL.md   -> .claude/skills/agent-tokens/SKILL.md
+#   agents/_shared/skills/grill-with-docs/*.md -> .claude/skills/grill-with-docs/*.md
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -67,11 +68,25 @@ elif [[ -f "$exp" && ! -f "$act" ]]; then
   DRIFT=1
 fi
 
+# 4) grill-with-docs skill mirror.
+GRILL_EXP="$TMP/.claude/skills/grill-with-docs"
+GRILL_ACT="$ROOT/.claude/skills/grill-with-docs"
+if [[ -d "$GRILL_EXP" ]]; then
+  if [[ ! -d "$GRILL_ACT" ]]; then
+    echo ".claude/skills/grill-with-docs/ MISSING (run scripts/sync-agents.sh)" >&2
+    DRIFT=1
+  elif ! diff -q -r "$GRILL_EXP" "$GRILL_ACT" >/dev/null; then
+    echo ".claude/skills/grill-with-docs/ OUT OF SYNC" >&2
+    diff -r "$GRILL_EXP" "$GRILL_ACT" >&2 || true
+    DRIFT=1
+  fi
+fi
+
 if [[ $DRIFT -ne 0 ]]; then
   echo >&2
   echo "fix: run scripts/sync-agents.sh and commit the result" >&2
   exit 1
 fi
 
-echo "agents + token-tracking mirrors in sync"
+echo "agents + token-tracking + grill-with-docs mirrors in sync"
 exit 0
