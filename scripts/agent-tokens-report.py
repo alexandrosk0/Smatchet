@@ -30,9 +30,14 @@ from pathlib import Path
 # USD per 1M tokens. Source: Anthropic public pricing, 2026-05. Update here.
 PRICING_CUTOFF = "2026-05"
 PRICING = {
-    "opus":   {"in": 15.00, "cache_create": 18.75, "cache_read": 1.50,  "out": 75.00},
-    "sonnet": {"in":  3.00, "cache_create":  3.75, "cache_read": 0.30,  "out": 15.00},
-    "haiku":  {"in":  0.80, "cache_create":  1.00, "cache_read": 0.08,  "out":  4.00},
+    # Current first-party Claude API rates.
+    "opus":        {"in": 5.00,  "cache_create": 6.25,  "cache_read": 0.50,  "out": 25.00},
+    "sonnet":      {"in": 3.00,  "cache_create": 3.75,  "cache_read": 0.30,  "out": 15.00},
+    "haiku":       {"in": 1.00,  "cache_create": 1.25,  "cache_read": 0.10,  "out": 5.00},
+    # Older models whose rates differ from the current family defaults.
+    "opus_legacy": {"in": 15.00, "cache_create": 18.75, "cache_read": 1.50,  "out": 75.00},
+    "haiku_3_5":   {"in": 0.80,  "cache_create": 1.00,  "cache_read": 0.08,  "out": 4.00},
+    "haiku_3":     {"in": 0.25,  "cache_create": 0.30,  "cache_read": 0.03,  "out": 1.25},
 }
 
 
@@ -62,9 +67,42 @@ def _load_rows(path: Path) -> list[dict]:
     return rows
 
 
+def _normalized_model_name(row: dict) -> str:
+    raw = str(row.get("model_full") or row.get("model") or "unknown").lower()
+    return re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+
+
+def _pricing_key(row: dict) -> str:
+    name = _normalized_model_name(row)
+    family = str(row.get("model") or "").lower()
+
+    if "opus" in name or family == "opus":
+        # Opus 4.5+ uses the current Opus rate. Opus 4.1 / 4 / 3 keep the
+        # older rate, so prefer the full model id when the transcript has it.
+        if (
+            re.search(r"opus-4-1(?:-|$)", name)
+            or re.search(r"opus-4-2025", name)
+            or re.search(r"opus-4$", name)
+            or re.search(r"(?:opus-3|3-opus)(?:-|$)", name)
+        ):
+            return "opus_legacy"
+        return "opus"
+
+    if "sonnet" in name or family == "sonnet":
+        return "sonnet"
+
+    if "haiku" in name or family == "haiku":
+        if re.search(r"(?:haiku-3-5|3-5-haiku)(?:-|$)", name):
+            return "haiku_3_5"
+        if re.search(r"(?:haiku-3|3-haiku)(?:-|$)", name):
+            return "haiku_3"
+        return "haiku"
+
+    return family or "unknown"
+
+
 def _row_cost(row: dict) -> float:
-    model = row.get("model", "unknown")
-    pricing = PRICING.get(model)
+    pricing = PRICING.get(_pricing_key(row))
     if not pricing:
         return 0.0
     return (

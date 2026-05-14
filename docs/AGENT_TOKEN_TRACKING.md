@@ -2,7 +2,7 @@
 
 ## Context
 
-Smatchet's 17-agent system delegates work across Opus / Sonnet / Haiku tiers. Cost visibility today: zero. Caveman reports compression savings, vexp reports semantic-search hits, but per-agent token spend per session is invisible. Need a way to see which agents burned the most tokens, what the session cost, and whether the delegation routing actually saves money vs running everything in the orchestrator.
+Smatchet's 18-agent system delegates work across Opus / Sonnet / Haiku tiers. Cost visibility today: zero. Caveman reports compression savings, vexp reports semantic-search hits, but per-agent token spend per session is invisible. Need a way to see which agents burned the most tokens, what the session cost, and whether the delegation routing actually saves money vs running everything in the orchestrator.
 
 Three layers, smallest viable subset first:
 
@@ -21,21 +21,22 @@ Skip **A** (agent self-report) — agents guess ±30%; B's transcript-derived nu
 Schema (one line per subagent completion):
 
 ```json
-{"ts":"2026-05-13T22:34:56Z","session":"<id>","agent":"perf-detective","model":"opus","in":12340,"out":2103,"cache_create":4200,"cache_read":18200,"duration_ms":42118}
+{"ts":"2026-05-13T22:34:56Z","session":"<id>","agent":"perf-detective","model":"opus","model_full":"claude-opus-4-7-20260501","in":12340,"out":2103,"cache_create":4200,"cache_read":18200,"duration_ms":42118}
 ```
 
 Fields:
 - `ts` — ISO-8601 UTC; the moment the subagent stopped.
 - `session` — Claude Code session id (groups calls within one user session).
 - `agent` — subagent `name` field (e.g. `perf-detective`). Falls back to `unknown` if Claude Code does not pass it.
-- `model` — model the subagent ran on (parsed from transcript `usage.model` or first assistant message).
+- `model` — model family (`opus`, `sonnet`, `haiku`, or `unknown`) parsed from the full transcript model id.
+- `model_full` — full model id from the first assistant message when available; used for version-specific pricing.
 - `in` / `out` — total `input_tokens` / `output_tokens` summed across all assistant messages in the subagent transcript.
 - `cache_create` / `cache_read` — `cache_creation_input_tokens` / `cache_read_input_tokens`. Zero if absent.
 - `duration_ms` — subagent wall-clock duration if exposed; null otherwise.
 
 ### Hook
 
-`.claude/hooks/agent-token-log.sh` (Bash; runs under MSYS2 / Git Bash on Windows).
+`agents/_shared/token-tracking/agent-token-log.py` is the canonical Python hook source. `scripts/sync-agents.sh` / `.ps1` mirror it to `.claude/hooks/agent-token-log.py`.
 
 Wired to `SubagentStop` event with `matcher: ""` (all subagents) in `.claude/settings.json`:
 
@@ -44,7 +45,7 @@ Wired to `SubagentStop` event with `matcher: ""` (all subagents) in `.claude/set
   {
     "matcher": "",
     "hooks": [
-      { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-token-log.sh", "timeout": 5000 }
+      { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-token-log.py\"", "timeout": 5000 }
     ]
   }
 ]
@@ -53,12 +54,12 @@ Wired to `SubagentStop` event with `matcher: ""` (all subagents) in `.claude/set
 Hook responsibilities:
 
 1. Read stdin JSON from Claude Code.
-2. Extract `session_id`, `transcript_path`, and whatever subagent-identifying field Claude Code provides (`subagent_type`, `agent_name`, or fall back to parsing the transcript's first message).
+2. Extract `session_id`, `transcript_path`, and whatever subagent-identifying field Claude Code provides (`subagent_type`, `subagent_name`, `agent`, `agent_name`, or `tool_input.subagent_type`).
 3. Read the transcript file (JSONL of message objects). Sum `usage.input_tokens`, `usage.output_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens` across assistant messages.
 4. Append one JSONL line to `$CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl`.
 5. Silent on success; stderr on parse failure (don't block the user).
 
-Safety: file locked via short-lived `>>` append (Linux/MSYS2 single-write append is atomic for short lines). Skip + warn on stale transcript path. Capped at one log line per call.
+Safety: append one short JSON line per hook invocation; warn but do not fail on stale transcript paths. Missing transcripts produce a zero-token row with `note:"no-transcript"` so hook problems are visible without blocking the user.
 
 ### Gitignore
 
@@ -70,11 +71,11 @@ Add `.claude/.agent-tokens.jsonl` — per-machine usage data, not for the repo.
 
 `.claude/skills/agent-tokens/SKILL.md` — Claude Code project-scoped skill.
 
-When the user types `/agent-tokens` (optionally `/agent-tokens --all` or `/agent-tokens --since 7d`), the skill runs `scripts/agent-tokens-report.sh` and emits its stdout into chat.
+When the user types `/agent-tokens` (optionally `/agent-tokens --all` or `/agent-tokens --since 7d`), the skill runs `scripts/agent-tokens-report.py` and emits its stdout into chat.
 
 ### Report script
 
-`scripts/agent-tokens-report.sh` — pure Bash + `jq`. Inputs:
+`scripts/agent-tokens-report.py` — pure Python, no `jq` dependency. Inputs:
 
 - `--all` — lifetime (default: current session only, matched by latest `session` id in the JSONL).
 - `--since <N>{h|d|w}` — time-bounded window (e.g. `--since 24h`).
@@ -84,15 +85,18 @@ Logic:
 1. Detect current session id (read most-recent `session` from JSONL, OR pull from environment if Claude Code exposes it).
 2. Filter rows: session-only by default, lifetime with `--all`, time-window with `--since`.
 3. Group by `agent` + `model`. Sum `in` / `out` / `cache_*` / call count.
-4. Multiply by hardcoded pricing table (per million tokens):
+4. Resolve pricing from `model_full` when present, falling back to the `model` family, then multiply by the hardcoded pricing table (per million tokens):
 
-   | Model | input | cache_create | cache_read | output |
-   |---|---|---|---|---|
-   | opus | $15 | $18.75 | $1.50 | $75 |
-   | sonnet | $3 | $3.75 | $0.30 | $15 |
-   | haiku | $0.80 | $1.00 | $0.08 | $4 |
+   | Pricing key | Applies to | input | cache_create | cache_read | output |
+   |---|---|---|---|---|---|
+   | `opus` | Opus 4.5+ | $5 | $6.25 | $0.50 | $25 |
+   | `opus_legacy` | Opus 4.1 / 4 / 3 | $15 | $18.75 | $1.50 | $75 |
+   | `sonnet` | Sonnet 4.x / 3.7 | $3 | $3.75 | $0.30 | $15 |
+   | `haiku` | Haiku 4.5+ | $1 | $1.25 | $0.10 | $5 |
+   | `haiku_3_5` | Haiku 3.5 | $0.80 | $1.00 | $0.08 | $4 |
+   | `haiku_3` | Haiku 3 | $0.25 | $0.30 | $0.03 | $1.25 |
 
-   Pricing as of 2026-05; update in one place: top of the script. Document review cadence quarterly.
+   Pricing as of 2026-05; update both `scripts/agent-tokens-report.py` and `agents/_shared/token-tracking/agents-statusline.py`. Document review cadence quarterly.
 5. Emit a fixed-width table:
 
    ```
@@ -113,17 +117,17 @@ Logic:
 
 ## Layer C — statusline badge
 
-The existing caveman statusline already runs `~/.claude/hooks/caveman-statusline.{sh,ps1}` per refresh. Replace it with a wrapper that emits both badges. New file:
+The existing caveman statusline may provide `~/.claude/hooks/caveman-statusline.{sh,ps1}`. The Smatchet wrapper invokes it best-effort first, then appends the agent-token badge. Canonical file:
 
-`.claude/hooks/agents-statusline.sh` (and `.ps1`):
+`agents/_shared/token-tracking/agents-statusline.py` (mirror at `.claude/hooks/agents-statusline.py`):
 
-1. Read the last N (e.g. 50) lines of `$CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl`.
+1. Read the last N lines (`MAX_TAIL_LINES`, currently 200) of `$CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl`.
 2. Filter to current session (by id).
 3. Sum tokens per agent; pick the top 2-3 by spend.
-4. Emit: `[AGENTS] 🤖 perf-detective 14k · spike-hunter 8k · total 28k`.
+4. Emit: `[AGENTS] <top agents> · total <tokens> · <cost>`.
 5. Concat with caveman's existing output (which the wrapper invokes first).
 
-Update `~/.claude/settings.json` (user-scope) to point `statusLine.command` at the new wrapper. The repo's `.claude/settings.json` is project-scope and doesn't carry `statusLine` — keep it that way; statusline is per-user.
+Update `~/.claude/settings.json` (user-scope) to point `statusLine.command` at `python "<repo>/.claude/hooks/agents-statusline.py"`. The repo's `.claude/settings.json` is project-scope and doesn't carry `statusLine` — keep it that way; statusline is per-user.
 
 Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the JSONL, don't full-scan. Skip silently if the JSONL is missing.
 
@@ -161,9 +165,9 @@ cat .claude/.agent-tokens.jsonl | jq .   # well-formed JSON per line
 wc -l .claude/.agent-tokens.jsonl        # ≥ 1 after first subagent call
 
 # D
-bash scripts/agent-tokens-report.sh                 # session report
-bash scripts/agent-tokens-report.sh --all           # lifetime report
-bash scripts/agent-tokens-report.sh --since 24h     # time window
+python scripts/agent-tokens-report.py                 # session report
+python scripts/agent-tokens-report.py --all           # lifetime report
+python scripts/agent-tokens-report.py --since 24h     # time window
 
 # C
 # (visual — restart Claude Code or trigger a refresh)
@@ -173,9 +177,9 @@ End-to-end check: invoke `code-review` once. Confirm a JSONL row appears, `/agen
 
 ## Open assumptions
 
-- `SubagentStop` hook receives `transcript_path` in stdin. If absent → fallback to walking `~/.claude/projects/<sanitized-cwd>/transcripts/` for the newest transcript. Add this fallback only if commit 2 testing reveals the field is missing.
-- Subagent name is in stdin as `subagent_type`. If not, parse from transcript metadata or stash agent name in the transcript filename. Decide during commit 2.
-- Pricing accuracy: prices change. Skill prints a `Pricing: 2026-05` banner so reports note the cutoff. Quarterly review.
+- `SubagentStop` usually receives `transcript_path` in stdin. If future runs produce many `note:"no-transcript"` rows, add a fallback that walks `~/.claude/projects/<sanitized-cwd>/transcripts/` for the newest transcript.
+- Subagent name usually appears as `subagent_type`, `subagent_name`, `agent`, `agent_name`, or `tool_input.subagent_type`; otherwise the hook records `unknown`.
+- Pricing accuracy: prices change. Reports print a `Pricing cutoff: 2026-05` banner so stale prices are visible. Quarterly review.
 
 ## Out of scope
 

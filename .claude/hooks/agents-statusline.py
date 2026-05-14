@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,12 +39,15 @@ try:
 except (AttributeError, OSError):
     pass
 
-# Reuse the pricing table by reading scripts/agent-tokens-report.py constants
-# inline (no import — keep this standalone fast).
+# Keep this pricing resolver in sync with scripts/agent-tokens-report.py.
+# USD per 1M tokens. Source: Anthropic public pricing, 2026-05.
 PRICING = {
-    "opus":   {"in": 15.00, "cache_create": 18.75, "cache_read": 1.50, "out": 75.00},
-    "sonnet": {"in":  3.00, "cache_create":  3.75, "cache_read": 0.30, "out": 15.00},
-    "haiku":  {"in":  0.80, "cache_create":  1.00, "cache_read": 0.08, "out":  4.00},
+    "opus":        {"in": 5.00,  "cache_create": 6.25,  "cache_read": 0.50, "out": 25.00},
+    "sonnet":      {"in": 3.00,  "cache_create": 3.75,  "cache_read": 0.30, "out": 15.00},
+    "haiku":       {"in": 1.00,  "cache_create": 1.25,  "cache_read": 0.10, "out": 5.00},
+    "opus_legacy": {"in": 15.00, "cache_create": 18.75, "cache_read": 1.50, "out": 75.00},
+    "haiku_3_5":   {"in": 0.80,  "cache_create": 1.00,  "cache_read": 0.08, "out": 4.00},
+    "haiku_3":     {"in": 0.25,  "cache_create": 0.30,  "cache_read": 0.03, "out": 1.25},
 }
 
 MAX_TAIL_LINES = 200  # cap statusline scan; older rows just don't count for this session
@@ -56,9 +60,37 @@ def _fmt_k(n: int) -> str:
     return str(n)
 
 
+def _normalized_model_name(row: dict) -> str:
+    raw = str(row.get("model_full") or row.get("model") or "unknown").lower()
+    return re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+
+
+def _pricing_key(row: dict) -> str:
+    name = _normalized_model_name(row)
+    family = str(row.get("model") or "").lower()
+
+    if "opus" in name or family == "opus":
+        if (
+            re.search(r"opus-4-1(?:-|$)", name)
+            or re.search(r"opus-4-2025", name)
+            or re.search(r"opus-4$", name)
+            or re.search(r"(?:opus-3|3-opus)(?:-|$)", name)
+        ):
+            return "opus_legacy"
+        return "opus"
+    if "sonnet" in name or family == "sonnet":
+        return "sonnet"
+    if "haiku" in name or family == "haiku":
+        if re.search(r"(?:haiku-3-5|3-5-haiku)(?:-|$)", name):
+            return "haiku_3_5"
+        if re.search(r"(?:haiku-3|3-haiku)(?:-|$)", name):
+            return "haiku_3"
+        return "haiku"
+    return family or "unknown"
+
+
 def _row_cost(row: dict) -> float:
-    model = row.get("model", "unknown")
-    p = PRICING.get(model)
+    p = PRICING.get(_pricing_key(row))
     if not p:
         return 0.0
     return (
@@ -105,13 +137,7 @@ def _agents_badge() -> str:
     if not log_path.exists():
         return ""
 
-    # Tail only the last MAX_TAIL_LINES rows for speed.
-    try:
-        with log_path.open("r", encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except OSError:
-        return ""
-    lines = lines[-MAX_TAIL_LINES:]
+    lines = _tail_lines(log_path, MAX_TAIL_LINES)
 
     rows: list[dict] = []
     for line in lines:
@@ -151,6 +177,30 @@ def _agents_badge() -> str:
     total_cost = sum(b["cost"] for b in by_agent.values())
 
     return f"[AGENTS] 🤖 " + " · ".join(parts) + f" · total {_fmt_k(total_tokens)} · ${total_cost:.2f}"
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[str]:
+    """Read at most the last max_lines without scanning the whole JSONL."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            pos = handle.tell()
+            chunks: list[bytes] = []
+            newline_count = 0
+            block_size = 8192
+
+            while pos > 0 and newline_count <= max_lines:
+                read_size = min(block_size, pos)
+                pos -= read_size
+                handle.seek(pos)
+                chunk = handle.read(read_size)
+                chunks.append(chunk)
+                newline_count += chunk.count(b"\n")
+
+        data = b"".join(reversed(chunks))
+        return data.decode("utf-8", errors="ignore").splitlines()[-max_lines:]
+    except OSError:
+        return []
 
 
 def main() -> int:

@@ -19,13 +19,19 @@
 # Canonical: edit files under agents\ only. Mirror is auto-generated
 # and never to be edited by hand.
 #
-# Idempotent — running twice produces no diff.
+# Idempotent - running twice produces no diff.
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$BannerDash = [char]0x2014
+
+function Write-Utf8NoBom($Path, $Lines) {
+  $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), $encoding)
+}
 
 # -----------------------------------------------------------------------------
-# Section 1 — agents\*.md  ->  .claude\agents\*.md
+# Section 1 - agents\*.md  ->  .claude\agents\*.md
 # -----------------------------------------------------------------------------
 
 $CanonicalDir = Join-Path $RepoRoot 'agents'
@@ -44,7 +50,7 @@ $canonicalFiles = Get-ChildItem -Path $CanonicalDir -Filter '*.md' -File
 
 foreach ($src in $canonicalFiles) {
   $dst   = Join-Path $MirrorDir $src.Name
-  $lines = Get-Content $src.FullName
+  $lines = Get-Content -Encoding UTF8 $src.FullName
 
   $output   = New-Object System.Collections.Generic.List[string]
   $injected = $false
@@ -52,19 +58,19 @@ foreach ($src in $canonicalFiles) {
   foreach ($line in $lines) {
     if (-not $injected -and $line -eq '---') {
       $output.Add('---') | Out-Null
-      $output.Add("# AUTO-GENERATED MIRROR of ../../agents/$($src.Name) — DO NOT EDIT.") | Out-Null
-      $output.Add('# Run scripts/sync-agents.sh (or sync-agents.ps1) to regenerate.') | Out-Null
+      $output.Add("# AUTO-GENERATED MIRROR of ../../agents/$($src.Name) $BannerDash DO NOT EDIT.") | Out-Null
+      $output.Add('# Run scripts/sync-agents.sh to regenerate.') | Out-Null
       $injected = $true
       continue
     }
     $output.Add($line) | Out-Null
   }
 
-  Set-Content -Path $dst -Value $output -Encoding utf8
+  Write-Utf8NoBom -Path $dst -Lines $output
 }
 
 # Drop stale mirrors that no longer have a canonical source.
-# README.md is intentional documentation about the mirror itself — never managed by sync.
+# README.md is intentional documentation about the mirror itself - never managed by sync.
 $mirrorFiles = Get-ChildItem -Path $MirrorDir -Filter '*.md' -File
 foreach ($dst in $mirrorFiles) {
   if ($dst.Name -eq 'README.md') { continue }
@@ -78,7 +84,7 @@ foreach ($dst in $mirrorFiles) {
 $agentsCount = $canonicalFiles.Count
 
 # -----------------------------------------------------------------------------
-# Section 2 — agents\_shared\token-tracking\  ->  .claude\{hooks,skills}\
+# Section 2 - agents\_shared\token-tracking\  ->  .claude\{hooks,skills}\
 # -----------------------------------------------------------------------------
 
 $TTDir     = Join-Path $RepoRoot 'agents\_shared\token-tracking'
@@ -91,15 +97,15 @@ if (Test-Path $TTDir) {
   if (-not (Test-Path $SkillsDir)) { New-Item -ItemType Directory -Path $SkillsDir | Out-Null }
 
   function Sync-PyMirror($src, $dst, $relName) {
-    $lines    = Get-Content $src
+    $lines    = Get-Content -Encoding UTF8 $src
     $output   = New-Object System.Collections.Generic.List[string]
     $injected = $false
 
     foreach ($line in $lines) {
       if (-not $injected -and $line.StartsWith('#!')) {
         $output.Add($line) | Out-Null
-        $output.Add("# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/$relName — DO NOT EDIT.") | Out-Null
-        $output.Add('# Run scripts/sync-agents.sh (or sync-agents.ps1) to regenerate.') | Out-Null
+        $output.Add("# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/$relName $BannerDash DO NOT EDIT.") | Out-Null
+        $output.Add('# Run scripts/sync-agents.sh to regenerate.') | Out-Null
         $injected = $true
         continue
       }
@@ -107,12 +113,12 @@ if (Test-Path $TTDir) {
     }
 
     if (-not $injected) {
-      # No shebang — prepend banner before everything.
-      $output.Insert(0, '# Run scripts/sync-agents.sh (or sync-agents.ps1) to regenerate.')
-      $output.Insert(0, "# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/$relName — DO NOT EDIT.")
+      # No shebang - prepend banner before everything.
+      $output.Insert(0, '# Run scripts/sync-agents.sh to regenerate.')
+      $output.Insert(0, "# AUTO-GENERATED MIRROR of ../../agents/_shared/token-tracking/$relName $BannerDash DO NOT EDIT.")
     }
 
-    Set-Content -Path $dst -Value $output -Encoding utf8
+    Write-Utf8NoBom -Path $dst -Lines $output
   }
 
   foreach ($stem in @('agent-token-log','agents-statusline')) {
@@ -127,20 +133,20 @@ if (Test-Path $TTDir) {
   $skillSrc = Join-Path $TTDir 'SKILL.md'
   if (Test-Path $skillSrc) {
     $skillDst = Join-Path $SkillsDir 'SKILL.md'
-    $lines    = Get-Content $skillSrc
+    $lines    = Get-Content -Encoding UTF8 $skillSrc
     $output   = New-Object System.Collections.Generic.List[string]
     $injected = $false
     foreach ($line in $lines) {
       if (-not $injected -and $line -eq '---') {
         $output.Add('---') | Out-Null
-        $output.Add('# AUTO-GENERATED MIRROR of ../../../agents/_shared/token-tracking/SKILL.md — DO NOT EDIT.') | Out-Null
-        $output.Add('# Run scripts/sync-agents.sh (or sync-agents.ps1) to regenerate.') | Out-Null
+        $output.Add("# AUTO-GENERATED MIRROR of ../../../agents/_shared/token-tracking/SKILL.md $BannerDash DO NOT EDIT.") | Out-Null
+        $output.Add('# Run scripts/sync-agents.sh to regenerate.') | Out-Null
         $injected = $true
         continue
       }
       $output.Add($line) | Out-Null
     }
-    Set-Content -Path $skillDst -Value $output -Encoding utf8
+    Write-Utf8NoBom -Path $skillDst -Lines $output
     $ttCount++
   }
 }
