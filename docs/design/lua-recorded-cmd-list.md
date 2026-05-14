@@ -1043,6 +1043,8 @@ Cleanup: remove Lua-side `log_info` instrumentation after verification. `SMATCHE
 
 ## Out-of-scope (v2 candidates)
 
+Each item below is tracked in the [v2 stub plan](lua-recorded-cmd-list-v2.md) with open questions + triage priority. Flesh out into a dedicated `docs/design/<slug>.md` when work starts on a specific item.
+
 - Recorder ops: `combo`, `drag_int`, `drag_float`, `slider_*`, `checkbox`, `radio`, `tree_node`. Same callback pattern as `button` / `input_text`.
 - Per-window dirty predicates (e.g. window only re-records when ticket id `X` changes).
 - `draw:button(label, on_click, { invalidate=false })` for chrome buttons that shouldn't force re-record.
