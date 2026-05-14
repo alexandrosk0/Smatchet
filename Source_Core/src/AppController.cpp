@@ -1268,6 +1268,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario();
         return MakePriorityGridScrollScenario();
     });
+    scenarioRunner_->RegisterFactory("lua-recorder-fuzz", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario();
+        return MakeLuaRecorderFuzzScenario();
+    });
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,

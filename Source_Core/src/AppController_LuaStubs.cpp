@@ -49,6 +49,14 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*field
     return false;
 }
 
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
+                                                      const std::string& /*luaFnName*/,
+                                                      const std::vector<std::string>& /*extraScripts*/,
+                                                      std::string& outError) {
+    outError = "Lua automation disabled";
+    return false;
+}
+
 void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& /*fieldId*/) {}
 
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}

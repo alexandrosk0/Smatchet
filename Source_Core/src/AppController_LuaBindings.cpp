@@ -1879,6 +1879,14 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
 bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
                                                       const std::string& luaFnName,
                                                       std::string& outError) {
+    return ScenarioRegisterLuaCachedProvider(fieldId, luaFnName, std::vector<std::string>{},
+                                             outError);
+}
+
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
+                                                      const std::string& luaFnName,
+                                                      const std::vector<std::string>& extraScripts,
+                                                      std::string& outError) {
     namespace fs = ghc::filesystem;
     outError.clear();
     if (fieldId.empty() || luaFnName.empty()) {
@@ -1897,41 +1905,52 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
     sol::protected_function fn = lookup();
 
     if (!fn.valid()) {
-        // The function may live in SmatchetHooks.lua which the ephemeral / headless launcher
-        // hasn't loaded yet (the userData/Scripts dir is empty on a fresh install). Try a
-        // candidate-path probe — CWD-relative scripts/ wins on a dev build, the configured
-        // luaScriptsDirectory_ wins on a deployed build. `lua.script_file` runs in the global
-        // env so non-`local` `function` declarations become visible at `_G[name]`.
-        std::vector<std::string> candidates;
-        if (!luaScriptsDirectory_.empty()) {
-            candidates.push_back(luaScriptsDirectory_ + "SmatchetHooks.lua");
+        // Function may live in a script the ephemeral / headless launcher hasn't loaded yet
+        // (userData/Scripts is empty on a fresh install). Probe a candidate-path list and
+        // load the first hit in the global env via `lua.script_file` so subsequent `_G[name]`
+        // lookup succeeds. Non-`local` `function` declarations become globally visible.
+        std::vector<std::string> filenames;
+        filenames.emplace_back("SmatchetHooks.lua");
+        for (const std::string& extra : extraScripts) {
+            filenames.push_back(extra);
         }
-        candidates.emplace_back("Scripts/SmatchetHooks.lua");
-        candidates.emplace_back("scripts/SmatchetHooks.lua");
-        candidates.emplace_back("../scripts/SmatchetHooks.lua");
-        candidates.emplace_back("../../scripts/SmatchetHooks.lua");
-        candidates.emplace_back("../../../scripts/SmatchetHooks.lua");
+
+        std::vector<std::string> roots;
+        if (!luaScriptsDirectory_.empty()) {
+            roots.push_back(luaScriptsDirectory_);
+        }
+        roots.emplace_back("Scripts/");
+        roots.emplace_back("scripts/");
+        roots.emplace_back("../scripts/");
+        roots.emplace_back("../../scripts/");
+        roots.emplace_back("../../../scripts/");
 
         std::string loadErr;
-        for (const std::string& path : candidates) {
-            std::error_code ec;
-            if (!fs::is_regular_file(fs::path(path), ec)) {
-                continue;
-            }
-            try {
-                sol::protected_function_result r = lua.script_file(path);
-                if (!r.valid()) {
-                    sol::error e = r;
-                    loadErr = std::string(path) + ": " + e.what();
+        for (const std::string& fname : filenames) {
+            for (const std::string& root : roots) {
+                const std::string path = root + fname;
+                std::error_code ec;
+                if (!fs::is_regular_file(fs::path(path), ec)) {
                     continue;
                 }
-                LOG_INFO("ScenarioRegisterLuaCachedProvider: auto-loaded %s", path.c_str());
-                fn = lookup();
-                if (fn.valid()) {
-                    break;
+                try {
+                    sol::protected_function_result r = lua.script_file(path);
+                    if (!r.valid()) {
+                        sol::error e = r;
+                        loadErr = path + ": " + e.what();
+                        continue;
+                    }
+                    LOG_INFO("ScenarioRegisterLuaCachedProvider: auto-loaded %s", path.c_str());
+                    fn = lookup();
+                    if (fn.valid()) {
+                        break;
+                    }
+                } catch (const std::exception& ex) {
+                    loadErr = path + ": " + ex.what();
                 }
-            } catch (const std::exception& ex) {
-                loadErr = std::string(path) + ": " + ex.what();
+            }
+            if (fn.valid()) {
+                break;
             }
         }
 

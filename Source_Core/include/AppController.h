@@ -364,10 +364,18 @@ class AppController {
 
     /// Scenario hook: register a globally-visible Lua function as a cached field-display
     /// provider for `fieldId`. Looks up `_G[luaFnName]` and binds it equivalently to
-    /// `register_field_display_cached(fieldId, luaFnName)`. Used by perf scenarios that need
-    /// to exercise a Lua-driven render path without requiring manual script edits. Returns
-    /// false if Lua is disabled, the function is missing, or it is not callable; on failure,
-    /// `outError` is populated. No-op stub in the no-Lua build.
+    /// `register_field_display_cached(fieldId, luaFnName)`. Used by perf / fuzz scenarios
+    /// that need to exercise a Lua-driven render path without requiring manual script edits.
+    /// If the function is missing, probes candidate paths (luaScriptsDirectory_, CWD-relative
+    /// scripts/, walk up 3 levels) for `SmatchetHooks.lua` plus every name in `extraScripts`,
+    /// then `lua.script_file`s the first hit in the global env so subsequent `_G[name]`
+    /// lookup succeeds. Returns false on missing-fn / not-callable / Lua-disabled; populates
+    /// `outError`. No-op stub in the no-Lua build.
+    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
+                                           const std::string& luaFnName,
+                                           const std::vector<std::string>& extraScripts,
+                                           std::string& outError);
+    /// Convenience overload — equivalent to passing an empty `extraScripts`.
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
                                            const std::string& luaFnName,
                                            std::string& outError);
