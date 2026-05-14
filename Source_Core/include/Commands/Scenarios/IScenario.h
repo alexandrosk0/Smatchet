@@ -47,6 +47,18 @@ public:
 
     /// Called after the final frame. Return the result payload (written to disk + returned to caller).
     virtual nlohmann::json OnFinish(AppController& app) = 0;
+
+    /// Called by ScenarioRunner::Cancel when the user aborts the scenario mid-run. Default
+    /// no-op. Scenarios that mutate persistent app state in OnStart (e.g. registering a
+    /// transient Lua provider) must override this to unwind that state — Cancel does NOT
+    /// invoke OnFinish, so cleanup needs its own hook. The runner passes the same
+    /// `AppController&` it stashed at Start time.
+    virtual void OnCancel(AppController& /*app*/) {}
+
+    /// Optional: return the scroll-Y target the runner should propagate to the grid this
+    /// frame. Return -1 (default) to leave the grid alone. Scenarios that drive scroll
+    /// override this; the runner reads it after each OnFrame call.
+    virtual int CurrentScrollY() const { return -1; }
 };
 
 /// Owns the active scenario instance, drives it from SmatchetUI::Draw, and
@@ -72,6 +84,11 @@ private:
     int frame_ = 0;
     std::string outPath_;
     std::unordered_map<std::string, Factory> factories_;
+    /// Stashed AppController pointer captured at Start() time so Cancel() can drive the
+    /// active scenario's OnCancel hook even though Cancel() takes no args. Cleared on
+    /// scenario finish / cancel. Lifetime: AppController owns the runner, so the pointer is
+    /// always valid while `active_` is set.
+    AppController* app_ = nullptr;
 };
 
 }  // namespace cmd

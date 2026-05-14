@@ -49,6 +49,16 @@ public:
         return frameIndex >= frames_;
     }
 
+    void OnCancel(AppController& app) override {
+        // Unwind transient state so cancelling a perf run never leaves a scenario-installed
+        // provider clobbering the user's actual `priority` renderer for the rest of the
+        // session. ScenarioUnregisterLuaCachedProvider restores the prior provider.
+        if (registeredLuaPriority_) {
+            app.ScenarioUnregisterLuaCachedProvider(luaProviderField_);
+            registeredLuaPriority_ = false;
+        }
+    }
+
     nlohmann::json OnFinish(AppController& app) override {
         if (registeredLuaPriority_) {
             app.ScenarioUnregisterLuaCachedProvider(luaProviderField_);
@@ -72,9 +82,10 @@ public:
         return out;
     }
 
-    /// Called by ScenarioRunner::Tick before OnFrame so SmatchetActiveProjectGridUi
-    /// can read the driven scroll position. Returns the pixel Y to set.
-    int CurrentScrollY() const { return scrollY_; }
+    /// Called by ScenarioRunner::Tick each frame; the runner propagates the value into
+    /// `outScrollTarget` so SmatchetActiveProjectGridUi can honour the driven scroll. The
+    /// IScenario default returns -1 (no scroll); this override returns the accumulated Y.
+    int CurrentScrollY() const override { return scrollY_; }
 
 private:
     int         frames_                = 600;

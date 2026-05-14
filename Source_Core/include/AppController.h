@@ -379,9 +379,17 @@ class AppController {
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
                                            const std::string& luaFnName,
                                            std::string& outError);
-    /// Inverse of `ScenarioRegisterLuaCachedProvider`. Drops the provider plus every cache
-    /// entry for that field. No-op if not registered or in the no-Lua build.
+    /// Inverse of `ScenarioRegisterLuaCachedProvider`. Restores the user-side provider that
+    /// was displaced at register time (if any), or erases the entry if no prior existed. Also
+    /// drops every cache entry for that field so the restored provider re-records cleanly.
+    /// No-op if not registered via the scenario surface, or in the no-Lua build.
     void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId);
+
+    /// Scenario hook: clear every `luaFieldCache_` entry so subsequent cells re-record. Used
+    /// by fuzz scenarios that need to exercise the recorder path each frame (otherwise the
+    /// cache hit-rate becomes 100% after first paint and only the initial visible cells are
+    /// fuzzed). No-op stub in the no-Lua build.
+    void ScenarioInvalidateLuaFieldCache();
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /// Drop entries from luaFieldCache_. No-arg = drop all; (ticketId) = drop one ticket's
@@ -830,6 +838,14 @@ class AppController {
     std::atomic<std::uint64_t>                                luaWindowDataGen_{1};
     std::vector<LuaWindowEntry>                               luaWindows_;
     std::vector<PendingLuaWindowOp>                           pendingLuaWindowOps_;
+    /// Snapshot of user-side providers displaced by a scenario register call. Keyed by
+    /// fieldId; the value is the *prior* provider (may be empty if the field had none).
+    /// `ScenarioUnregisterLuaCachedProvider` restores from this map so a scenario run never
+    /// silently destroys a user-side provider for the session.
+    std::unordered_map<std::string, sol::protected_function> scenarioPriorFieldProviders_;
+    /// Set membership tracks fields whose prior was *empty* (no provider) — distinguishes
+    /// "had nothing, restore to nothing" from "field absent in scenario map → leave alone".
+    std::unordered_set<std::string>                          scenarioPriorEmptyFields_;
     /// True while inside DrawLuaWindows iteration. Callbacks fired during replay route
     /// register/unregister/invalidate ops into pendingLuaWindowOps_ instead of mutating
     /// luaWindows_ directly. Plain bool — UI-thread-only.

@@ -1689,7 +1689,8 @@ void InvokeLuaCallbackSandboxed3(sol::state& lua, sol::protected_function& fn,
 }
 
 std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppController& app,
-                           sol::state& lua, const std::string& cbArg1, const std::string& cbArg2) {
+                           sol::state& lua, const std::string& cbArg1, const std::string& cbArg2,
+                           bool isReadOnly) {
     SMATCHET_UI_PERF_SCOPE("LuaDrawList::Replay");
     int          pushed = 0;
     std::uint8_t fired  = 0;
@@ -1727,35 +1728,55 @@ std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppControlle
                 case Op::SetTooltip:
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", c.str.c_str());
                     break;
-                case Op::Button:
-                    if (ImGui::Button(c.str.c_str()) && c.callback) {
-                        InvokeLuaCallbackSandboxed(lua, c.callback, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Click);
-                    }
-                    if (c.onDeactivated && ImGui::IsItemDeactivated()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                    if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
+                case Op::Button: {
+                    // Read-only cells get visually disabled + no callback firing. Wrap the
+                    // call in BeginDisabled so click events are suppressed at the ImGui layer
+                    // (no input routing, no hover-active styling) and we don't have to
+                    // double-check IsItemDeactivated* — the disabled item still reports
+                    // deactivation when focus moves on, so explicit isReadOnly guards remain.
+                    if (isReadOnly) ImGui::BeginDisabled();
+                    const bool clicked = ImGui::Button(c.str.c_str());
+                    if (isReadOnly) ImGui::EndDisabled();
+                    if (!isReadOnly) {
+                        if (clicked && c.callback) {
+                            InvokeLuaCallbackSandboxed(lua, c.callback, cbArg1, cbArg2);
+                            fired |= static_cast<std::uint8_t>(K::Click);
+                        }
+                        if (c.onDeactivated && ImGui::IsItemDeactivated()) {
+                            InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
+                            fired |= static_cast<std::uint8_t>(K::Deactivated);
+                        }
+                        if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
+                            InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
+                            fired |= static_cast<std::uint8_t>(K::Deactivated);
+                        }
                     }
                     break;
+                }
                 case Op::InputText: {
                     if (c.textBuf.empty()) break;
-                    ImGui::InputText(c.str.c_str(), c.textBuf.data(), c.textBuf.size());
-                    if (ImGui::IsItemDeactivatedAfterEdit() && c.callback) {
-                        InvokeLuaCallbackSandboxed3(lua, c.callback, cbArg1, cbArg2,
-                                                    std::string(c.textBuf.data()));
-                        fired |= static_cast<std::uint8_t>(K::Commit);
-                    }
-                    if (c.onDeactivated && ImGui::IsItemDeactivated()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                    if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
+                    // Encode read_only into the ImGui call directly (input is rejected at the
+                    // text widget layer, no need to skip-render). Callbacks are still gated:
+                    // a ReadOnly InputText never fires IsItemDeactivatedAfterEdit-with-commit
+                    // in practice, but the explicit guard keeps the invariant tight even if
+                    // a future ImGui revision changes that behaviour.
+                    const ImGuiInputTextFlags flags =
+                        isReadOnly ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None;
+                    ImGui::InputText(c.str.c_str(), c.textBuf.data(), c.textBuf.size(), flags);
+                    if (!isReadOnly) {
+                        if (ImGui::IsItemDeactivatedAfterEdit() && c.callback) {
+                            InvokeLuaCallbackSandboxed3(lua, c.callback, cbArg1, cbArg2,
+                                                        std::string(c.textBuf.data()));
+                            fired |= static_cast<std::uint8_t>(K::Commit);
+                        }
+                        if (c.onDeactivated && ImGui::IsItemDeactivated()) {
+                            InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
+                            fired |= static_cast<std::uint8_t>(K::Deactivated);
+                        }
+                        if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
+                            InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
+                            fired |= static_cast<std::uint8_t>(K::Deactivated);
+                        }
                     }
                     break;
                 }
@@ -1813,7 +1834,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
             entry.providerGen == curProviderGen;
         if (inputsMatch) {
             if (!entry.handled) return false;
-            ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId);
+            ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly);
             return true;
         }
     }
@@ -1870,7 +1891,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     const bool handled = entry.handled;
     if (handled) {
         // Replay the freshly-recorded list immediately so this frame paints.
-        ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId);
+        ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly);
     }
     luaFieldCache_[key] = std::move(entry);
     return handled;
@@ -1963,6 +1984,18 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
         }
     }
 
+    // Stash any pre-existing user-side provider so Unregister can restore it. Tracked
+    // separately for "had a provider" vs "had nothing" so we never accidentally synthesise
+    // an empty entry on restore.
+    auto existing = fieldDisplayCachedProviders_.find(fieldId);
+    if (existing != fieldDisplayCachedProviders_.end()) {
+        scenarioPriorFieldProviders_[fieldId] = existing->second;
+        scenarioPriorEmptyFields_.erase(fieldId);
+    } else {
+        scenarioPriorFieldProviders_.erase(fieldId);
+        scenarioPriorEmptyFields_.insert(fieldId);
+    }
+
     fieldDisplayCachedProviders_[fieldId] = std::move(fn);
     luaProviderGen_.fetch_add(1);
     LOG_INFO("ScenarioRegisterLuaCachedProvider: bound field=%s fn=%s", fieldId.c_str(),
@@ -1971,19 +2004,39 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
 }
 
 void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& fieldId) {
-    if (fieldDisplayCachedProviders_.erase(fieldId) > 0) {
-        luaProviderGen_.fetch_add(1);
-        for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
-            const std::string& key = it->first;
-            const std::size_t nul = key.find('\0');
-            if (nul != std::string::npos && key.compare(nul + 1, std::string::npos, fieldId) == 0) {
-                it = luaFieldCache_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-        LOG_INFO("ScenarioUnregisterLuaCachedProvider: dropped field=%s", fieldId.c_str());
+    // Restore the user-side provider that Register displaced, or erase if there was none.
+    auto priorIt    = scenarioPriorFieldProviders_.find(fieldId);
+    const bool hadPrior     = (priorIt != scenarioPriorFieldProviders_.end());
+    const bool hadEmptyPrior = scenarioPriorEmptyFields_.count(fieldId) > 0;
+    if (!hadPrior && !hadEmptyPrior) {
+        // Field was never registered through the scenario surface — leave alone.
+        return;
     }
+
+    if (hadPrior) {
+        fieldDisplayCachedProviders_[fieldId] = std::move(priorIt->second);
+        scenarioPriorFieldProviders_.erase(priorIt);
+    } else {
+        fieldDisplayCachedProviders_.erase(fieldId);
+    }
+    scenarioPriorEmptyFields_.erase(fieldId);
+    luaProviderGen_.fetch_add(1);
+
+    for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
+        const std::string& key = it->first;
+        const std::size_t nul = key.find('\0');
+        if (nul != std::string::npos && key.compare(nul + 1, std::string::npos, fieldId) == 0) {
+            it = luaFieldCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    LOG_INFO("ScenarioUnregisterLuaCachedProvider: field=%s restored=%s", fieldId.c_str(),
+             hadPrior ? "user-provider" : "(none)");
+}
+
+void AppController::ScenarioInvalidateLuaFieldCache() {
+    luaFieldCache_.clear();
 }
 
 bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field,
@@ -2357,7 +2410,8 @@ void AppController::DrawLuaWindows() {
                 std::uint8_t fired;
                 {
                     SMATCHET_UI_PERF_SCOPE("LuaWindow::Replay");
-                    fired = ReplayCmdList(w.cmds, *this, lua, w.name, std::string());
+                    fired = ReplayCmdList(w.cmds, *this, lua, w.name, std::string(),
+                                          /*isReadOnly=*/false);
                 }
                 const std::uint8_t dirtyMask =
                     static_cast<std::uint8_t>(K::Click) | static_cast<std::uint8_t>(K::Commit);

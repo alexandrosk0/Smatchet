@@ -42,12 +42,25 @@ public:
         scrollY_    = 0;
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(AppController& app, int /*frameIndex*/) override {
         scrollY_ += pixPerFrame_;
+        // Drop every cell cache entry so the next paint re-records via the fuzz provider.
+        // Without this the cache hit-rate becomes 100% after first paint and the recorder
+        // path itself is no longer exercised — defeating the point of fuzzing.
+        app.ScenarioInvalidateLuaFieldCache();
     }
 
     bool IsDone(int frameIndex) const override {
         return frameIndex >= frames_;
+    }
+
+    int CurrentScrollY() const override { return scrollY_; }
+
+    void OnCancel(AppController& app) override {
+        if (!boundField_.empty()) {
+            app.ScenarioUnregisterLuaCachedProvider(boundField_);
+            boundField_.clear();
+        }
     }
 
     nlohmann::json OnFinish(AppController& app) override {
@@ -72,8 +85,6 @@ public:
         out["rows"]   = std::move(rowsJson);
         return out;
     }
-
-    int CurrentScrollY() const { return scrollY_; }
 
 private:
     int         frames_      = 600;

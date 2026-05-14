@@ -59,5 +59,7 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*field
 
 void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& /*fieldId*/) {}
 
+void AppController::ScenarioInvalidateLuaFieldCache() {}
+
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
 void AppController::RunFlatScriptAsync(const std::string& /*scriptPath*/) {}
