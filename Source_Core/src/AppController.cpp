@@ -1268,6 +1268,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario();
         return MakePriorityGridScrollScenario();
     });
+    scenarioRunner_->RegisterFactory("lua-recorder-fuzz", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario();
+        return MakeLuaRecorderFuzzScenario();
+    });
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
@@ -1449,6 +1453,13 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
 
     namespace fs = ghc::filesystem;
 
+    {
+        auto cit = fieldIconAssetPathCache_.find(pathOrUrl);
+        if (cit != fieldIconAssetPathCache_.end()) {
+            return cit->second;
+        }
+    }
+
     const std::string t = TrimCopyAsciiWhitespace(pathOrUrl);
 
     if (t.empty()) {
@@ -1458,6 +1469,10 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
 
     if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
 
+        if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+            fieldIconAssetPathCache_.clear();
+        }
+        fieldIconAssetPathCache_.emplace(pathOrUrl, t);
         return t;
     }
 
@@ -1515,27 +1530,28 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
 
         const fs::path absRel = fs::weakly_canonical(combined, ec);
 
-        if (ec || !isAllowedPath(absRel)) {
-
-            return std::string();
+        std::string out;
+        if (!ec && isAllowedPath(absRel)) {
+            out = absRel.string();
         }
-
-        return absRel.string();
+        if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+            fieldIconAssetPathCache_.clear();
+        }
+        fieldIconAssetPathCache_.emplace(pathOrUrl, out);
+        return out;
     }
 
     const fs::path abs = fs::weakly_canonical(inp, ec);
 
-    if (ec) {
-
-        return std::string();
+    std::string out;
+    if (!ec && isAllowedPath(abs)) {
+        out = abs.string();
     }
-
-    if (isAllowedPath(abs)) {
-
-        return abs.string();
+    if (fieldIconAssetPathCache_.size() >= kFieldIconAssetPathCacheCap) {
+        fieldIconAssetPathCache_.clear();
     }
-
-    return std::string();
+    fieldIconAssetPathCache_.emplace(pathOrUrl, out);
+    return out;
 }
 
 std::string AppController::GetAutomationScriptContent() {

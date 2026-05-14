@@ -37,6 +37,22 @@ Sweep the file when:
 
 <!-- Latest first. Append new entries at the top of this section. -->
 
+- 2026-05-14 · lua-binder · [context] — sol2 v2.20.6 API limitations not in plan
+  Details: Plans wrote `sol::this_state` first-param on usertype member functions and `sol::no_constructor` as a positional sentinel in `new_usertype(...)`. Both fail to compile with sol2 v2.20.6 (template `make_string_view` rejection on usertype-method signatures; no-constructor sentinel signature mismatch). Burned ~15 min of iteration. Add a hard invariant to `agents/lua-binder.md`: "sol2 v2.20.6 — recorder/usertype methods take plain args (no `sol::this_state` first param); `new_usertype` takes only `name` + method-name/ptr pairs, no constructor sentinel."
+  Status: open
+
+- 2026-05-14 · lua-binder · [context] — Lua-as-C++ needs more than `LANGUAGE CXX`
+  Details: Lua 5.3's `lua.h` lacks `extern "C"` guards, so flipping the source language to CXX mangles every Lua API symbol and the entire host fails to link. The plan for `lua-recorded-cmd-list` named only `set_source_files_properties(... LANGUAGE CXX)`; agent had to discover the second-step `luaconf.h` patch (or wrap host includes in `extern "C"`) the hard way. Add to `agents/lua-binder.md` hard invariants: "Compiling Lua 5.3 as C++ requires patching `luaconf.h` (or wrapping host-side `#include <lua.hpp>` blocks) with `extern \"C\"` — `LANGUAGE CXX` alone is insufficient."
+  Status: open
+
+- 2026-05-14 · architect · [tooling] — `mcp__vexp__get_skeleton` empty result on indexed files
+  Details: During plan-validation pass, `get_skeleton` returned "no skeleton data" for three files known to be in the vexp index. Forced fallback to `Read` for line-confirmation, adding 4 tool calls. Worth a pre-flight `index_status` health check before any read-only validation pass, or a guard in `agents/architect.md` to fall back automatically when skeleton returns empty for an indexed file.
+  Status: open
+
+- 2026-05-14 · architect · [process] — `TodoWrite` reminder noise during read-only tasks
+  Details: System injected three `TodoWrite` reminders into a read-only validation run. Read-only agents (architect, code-review, security-review, perf-measure) rarely benefit from a todo list; the reminder hook could be muted for them based on the agent banner or `tools:` frontmatter (no `Write`/`Edit`).
+  Status: open
+
 - 2026-05-13 · p4-blame · [process] — multi-file split handoff packet missed transitive call closure
   Details: When splitting `BlameAnalysisUi.cpp` (2430 → 7 TUs), the orchestrator's handoff packet enumerated modal helpers explicitly but omitted export builders (`BuildAiExport`, `BuildBlameExport{Csv,Json}`, `BuildCallstackRowTsv`, `BuildAnnotatedRowTsv`) that `DrawWindow` calls. Agent had to discover them mid-split. Rule for orchestrator handoff packets on file-split tasks: include an explicit closure rule — "everything `<target-fn>` calls that isn't already in another TU goes to <bucket>" — instead of enumerating from memory.
   Status: open

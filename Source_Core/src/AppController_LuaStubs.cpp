@@ -2,9 +2,9 @@
 
 void AppController::InitLua() {}
 
-std::vector<std::string> AppController::ListLuaScriptFiles() const {
-    return {};
-}
+// `ListLuaScriptFiles` is defined unconditionally in AppController.cpp; do NOT redeclare it
+// here or the linker reports a multiple-definition error in the no-Lua build (pre-existing
+// quirk; the Scripts/ enumeration does not actually depend on Lua being compiled in).
 
 void AppController::RunLuaSetupScript(const std::string& /*scriptPath*/) {}
 
@@ -32,17 +32,34 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& /*fieldId*/, con
     return false;
 }
 
-bool AppController::TryLuaFieldDisplay(const std::string& /*fieldId*/, const CachedTicket& /*ticket*/,
-                                       const std::string& /*rawValue*/, float /*availWidth*/,
-                                       const TrackerField* /*fieldMeta*/) {
+bool AppController::TryRenderCachedLuaField(const std::string& /*fieldId*/, const CachedTicket& /*ticket*/,
+                                            const std::string& /*rawValue*/, float /*availWidth*/,
+                                            const TrackerField* /*fieldMeta*/, bool /*allowEdits*/) {
     return false;
 }
 
+void AppController::NotifyLuaTicketDataChanged() {}
+
+void AppController::LuaUiInvalidateWindowBind(const std::string& /*name*/) {}
+
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
+                                                      const std::string& /*luaFnName*/,
+                                                      std::string& outError) {
+    outError = "Lua automation disabled";
+    return false;
+}
+
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
+                                                      const std::string& /*luaFnName*/,
+                                                      const std::vector<std::string>& /*extraScripts*/,
+                                                      std::string& outError) {
+    outError = "Lua automation disabled";
+    return false;
+}
+
+void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& /*fieldId*/) {}
+
+void AppController::ScenarioInvalidateLuaFieldCache() {}
+
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
 void AppController::RunFlatScriptAsync(const std::string& /*scriptPath*/) {}
-
-
-
-
-
-

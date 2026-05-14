@@ -60,6 +60,11 @@ void AppController::RefreshLocalData() {
         }
         PruneEditMetaCacheToActiveTickets();
         ActiveTicketsRevision.fetch_add(1);
+        // Single hook site for Lua window dirty-bump on ticket data change. UpdateTicket
+        // already chains here through `RefreshLocalData()` at the end of its body, so a
+        // duplicate bump from UpdateTicket would double-fire per single edit. Stub build
+        // turns this into a no-op.
+        NotifyLuaTicketDataChanged();
     }
 }
 

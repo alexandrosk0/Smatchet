@@ -72,6 +72,7 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
             "Scenario '" + name + "' failed to start: " + startErr);
     }
 
+    app_    = appPtr;
     active_ = std::move(scenario);
     LOG_INFO("ScenarioRunner: started '%s' → %s", name.c_str(), outPath_.c_str());
     return CommandResult::Success({{"running", true}, {"outPath", outPath_}});
@@ -83,6 +84,13 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
     if (!active_) return;
 
     active_->OnFrame(app, frame_);
+
+    const int scrollY = active_->CurrentScrollY();
+    if (scrollY >= 0) {
+        outScrollActive = true;
+        outScrollTarget = scrollY;
+    }
+
     ++frame_;
 
     if (active_->IsDone(frame_)) {
@@ -103,14 +111,28 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
             }
         }
         active_.reset();
+        app_   = nullptr;
         frame_ = 0;
     }
 }
 
 void ScenarioRunner::Cancel() {
     if (active_) {
+        // Drive OnCancel so scenarios can unwind transient state (e.g. unregister scenario-
+        // installed Lua providers). OnFinish is NOT called on cancel — cleanup needs its own
+        // hook. The app_ pointer was stashed in Start.
+        if (app_) {
+            try {
+                active_->OnCancel(*app_);
+            } catch (const std::exception& ex) {
+                LOG_WARN("ScenarioRunner::Cancel: OnCancel threw: %s", ex.what());
+            } catch (...) {
+                LOG_WARN("ScenarioRunner::Cancel: OnCancel threw unknown exception");
+            }
+        }
         LOG_INFO("ScenarioRunner: cancelled '%s' at frame %d", active_->Name().c_str(), frame_);
         active_.reset();
+        app_   = nullptr;
         frame_ = 0;
     }
 }
