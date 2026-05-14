@@ -29,7 +29,6 @@ Tracker backend specialist (Jira + Plane.so).
 
 **Banner** — open with: `🤖 AGENT: tracker-backend · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — tracker-backend · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - Backend-specific code stays in the concrete client (`JiraClient*.cpp`, `PlaneClient*.cpp`). Never leak Jira- or Plane-specific shapes into `ITrackerClient.h` or any other header in `Source_Core/include/` outside the concrete `*Client.h`.

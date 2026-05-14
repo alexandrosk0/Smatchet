@@ -28,7 +28,6 @@ Perforce blame specialist.
 
 **Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - **P4 CLI is the transport.** Blame goes through the local `p4` executable (`p4 annotate`, `p4 describe`) — there's no library. Failures from the CLI come back via `P4ErrorUtil`. Don't swallow them; surface enough detail for the user to fix login / workspace / depot-path issues.

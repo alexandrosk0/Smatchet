@@ -31,7 +31,6 @@ Unreal / dual-target specialist.
 
 **Banner** — open with: `🤖 AGENT: unreal-bridge · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — unreal-bridge · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - `Source_Core/` headers compile into **both** `SmatchetStandalone` (GLFW + OpenGL3) and `SmatchetCore_DX12` (Unreal). **Never** include GLFW, glad, or OpenGL headers from `Source_Core/include/` — DX12 will fail to build.

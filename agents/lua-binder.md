@@ -27,7 +27,6 @@ Lua / sol2 binding specialist.
 
 **Banner** — open with: `🤖 AGENT: lua-binder · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — lua-binder · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - **Bindings ↔ stubs parity**: every function added to `AppController_LuaBindings.cpp` (built when `SMATCHET_WITH_LUA_AUTOMATION` is ON) needs a matching no-op stub in `AppController_LuaStubs.cpp` (built when OFF). Drift breaks the OFF build — DX12 in particular.

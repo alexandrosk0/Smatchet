@@ -31,7 +31,6 @@ Grid / spreadsheet specialist for Smatchet.
 
 **Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - **Per-cell render is hot.** Don't allocate per row. No `std::string` building, no map lookups inside `Display()` / `Render()` if you can hoist them. Measured costs are documented in `scripts/SmatchetHooks.lua` (priority renderer) — a single per-cell allocation will show up in `SmatchetPerfUi`.

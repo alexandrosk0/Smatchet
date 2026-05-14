@@ -30,7 +30,6 @@ MCP plugin specialist for Smatchet.
 
 **Banner** — open with: `🤖 AGENT: mcp-toolsmith · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — mcp-toolsmith · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - **Standalone only**: `SMATCHET_WITH_MCP=1` on the Standalone build, OFF on Unreal / DX12 (`SMATCHET_WITH_MCP_UNREAL=0`). Anything in `Plugins/Mcp/` must be gated so the OFF build links cleanly.

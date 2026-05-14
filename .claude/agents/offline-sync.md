@@ -33,7 +33,6 @@ Offline-sync / cache specialist for Smatchet.
 
 **Banner** — open with: `🤖 AGENT: offline-sync · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — offline-sync · sonnet/low · read-edit`.
 
-
 **Hard invariants:**
 
 - **Schema changes additive only.** Add columns with defaults; never drop or rename existing columns. SQLite migration logic in `LocalCacheManager` is forward-only. Non-additive changes → `architect`.

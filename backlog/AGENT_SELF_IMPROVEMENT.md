@@ -140,3 +140,12 @@ Sweep the file when:
 - 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
   Details: Project-key PR 6 plan flagged `AppController_LuaBindings.cpp:~L254` as a "Lua config setter to deprecate" — it was actually `LuaApplyIssueCreateKv` (per-operation draft kv, not a config setter). One round-trip cost. Agent correctly flagged back to orchestrator before editing.
   Status: applied (45c14c9 — agents/command-system.md § Workflow step 3 + agents/tracker-backend.md § Workflow step 1)
+
+- 2026-05-13 · orchestrator · [process] — vexp `<!-- vexp -->` block auto-regenerates inside `AGENTS.md`; should land in `.claude/CLAUDE.md` instead
+  Details: AGENTS.md is the harness-agnostic root per the agents.md spec. The vexp tool injects ~30 lines of Claude-Code-specific MCP guidance (`run_pipeline`, `get_skeleton`, MCP tool list) directly into AGENTS.md, which other harnesses load and ignore. Editing the block in-place fights the regenerator. Upstream fix: vexp tool emits to `.claude/CLAUDE.md` only; the `@`-import in `.claude/CLAUDE.md` then pulls AGENTS.md without the vexp section.
+  Status: open
+  Defer: External — vexp tool source lives outside this repo. File an issue / PR at the vexp project. Workaround in the meantime: leave the block alone; the ~250 input-token cost per session is small relative to the auto-regen friction of fighting it.
+
+- 2026-05-13 · orchestrator · [tooling] — token-efficiency phase pass left structural wins audited but not all applied
+  Details: Phase 1 (banner shrink + sem-search dedup + caveman split) shipped 94d5836; Phase 2 (debug helper template extract + AGENTS clarifications) shipped d79a8fc; Phase 3a (drop `harness-hints.claude-code.tools:` redundant list) shipped d6ba897. Cumulative −489 lines across 78 files. Remaining backlog items now deferred / external — see vexp entry above and the "no further wins" note in `docs/CAVEMAN.md`'s migration commit log.
+  Status: applied (94d5836 + d79a8fc + d6ba897)
