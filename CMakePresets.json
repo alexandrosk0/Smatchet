@@ -91,6 +91,50 @@
             }
         },
         {
+            "name": "ninja-debug-msys2-asan",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Debug + AddressSanitizer + UBSan (MSYS2 UCRT64)",
+            "description": "Debug build with -fsanitize=address,undefined for lifetime / bounds / UB bugs. ASan implies LSan on most platforms. Runtime overhead ~2-3x; libasan + libubsan must be on PATH at launch.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-msys2-asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "asan"
+            }
+        },
+        {
+            "name": "ninja-debug-msys2-tsan",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Debug + ThreadSanitizer (MSYS2 UCRT64)",
+            "description": "Debug build with -fsanitize=thread for data-race detection. MinGW-w64 GCC TSan support is partial / version-dependent on Windows; if symptoms surface, escalate to build-doctor. libtsan must be on PATH at launch.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-msys2-tsan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "tsan"
+            }
+        },
+        {
+            "name": "ninja-debug-msys2-msan",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Debug + MemorySanitizer — Clang required (MSYS2)",
+            "description": "Debug build with -fsanitize=memory for uninit-read detection. MSan is Clang-only; MSYS2 GCC does NOT ship libmsan. Compilers are clang/clang++ resolved off PATH (no hardcoded paths). Install mingw-w64-clang-x86_64-clang in MSYS2 if missing. cmake/Sanitizers.cmake hard-fails at configure if the active compiler is not Clang.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-msys2-msan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "msan",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
             "name": "ninja-iter-unreal-msys2",
             "inherits": [
                 "_smatchet-msys2-base"
@@ -159,6 +203,30 @@
         {
             "name": "ninja-release",
             "configurePreset": "ninja-release",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-msys2-asan",
+            "configurePreset": "ninja-debug-msys2-asan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-msys2-tsan",
+            "configurePreset": "ninja-debug-msys2-tsan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-msys2-msan",
+            "configurePreset": "ninja-debug-msys2-msan",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"

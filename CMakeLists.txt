@@ -206,6 +206,7 @@ endif()
 
 include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
+include(cmake/Sanitizers.cmake)
 
 option(SMATCHET_FETCHCONTENT_VERBOSE "Log each third-party dependency during configure" OFF)
 function(smatchet_fetch_status _msg)
@@ -1055,4 +1056,13 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
     if(TARGET SmatchetImGuiHost_DX12)
         set_property(TARGET SmatchetImGuiHost_DX12 PROPERTY JOB_POOL_LINK smatchet_link_pool)
     endif()
+endif()
+
+# Sanitizer hookup. Applies SMATCHET_SANITIZER (asan / tsan / msan) flags to
+# the main app targets when a sanitizer preset is active. PRIVATE keeps the
+# flags off vendored FetchContent deps. No-op when SMATCHET_SANITIZER is
+# unset / "off". See cmake/Sanitizers.cmake + AGENTS.md § Debug techniques.
+smatchet_apply_sanitizers(SmatchetStandalone)
+if(TARGET SmatchetCore_DX12)
+    smatchet_apply_sanitizers(SmatchetCore_DX12)
 endif()
