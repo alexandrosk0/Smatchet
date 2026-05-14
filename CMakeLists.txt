@@ -330,7 +330,47 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
     list(REMOVE_ITEM LUA_SOURCES "${LUA_SRC_DIR}/src/lua.c" "${LUA_SRC_DIR}/src/luac.c")
 
+    # Build Lua 5.3 as C++ so LUAI_THROW expands to `throw` instead of `longjmp`. With
+    # longjmp, a luaL_error inside a sol2 protected_function skips C++ destructors between
+    # the error site and the pcall setjmp frame — the recorder + sol2 marshalling layer
+    # both own std::vector / std::string temporaries that would leak (or corrupt sol2
+    # internals). With C++ exceptions, the host-side try / catch around protected_function
+    # catches cleanly and destructors run. See docs/design/lua-recorded-cmd-list.md
+    # § Lua build mode.
+    set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)
+
+    # Lua 5.3's lua.h has no `extern "C"` guards. When compiled as C++, every API function
+    # gets C++ name mangling — link errors against sol2 which includes the headers via
+    # `lua.hpp` (which DOES wrap in `extern "C"`). Patch luaconf.h once at configure time
+    # so LUA_API / LUALIB_API / LUAMOD_API resolve to `extern "C"` under __cplusplus.
+    set(_luaconf_h "${LUA_SRC_DIR}/src/luaconf.h")
+    if(EXISTS "${_luaconf_h}")
+        file(READ "${_luaconf_h}" _luaconf_contents)
+        string(FIND "${_luaconf_contents}" "SMATCHET_LUA_EXTERN_C_PATCH" _patched_idx)
+        if(_patched_idx EQUAL -1)
+            string(REPLACE "#define LUA_API\t\textern"
+                "/* SMATCHET_LUA_EXTERN_C_PATCH: Lua 5.3 lacks extern \"C\" guards; force them when compiled as C++ so symbol names match the sol2 caller side that includes via lua.hpp. */\n#if defined(__cplusplus)\n#define LUA_API\t\textern \"C\"\n#else\n#define LUA_API\t\textern\n#endif"
+                _luaconf_patched "${_luaconf_contents}")
+            file(WRITE "${_luaconf_h}" "${_luaconf_patched}")
+            message(STATUS "Patched luaconf.h with extern \"C\" guards for Lua-as-C++ build.")
+        endif()
+    endif()
+
     add_library(Smatchet_Lua_Internal STATIC ${LUA_SOURCES})
+
+    # Belt-and-suspenders: fail the configure step if a future contributor strips LANGUAGE
+    # CXX off a Lua source. Header-side __cplusplus checks can't see this target's TUs.
+    get_target_property(_lua_sources Smatchet_Lua_Internal SOURCES)
+    foreach(_src IN LISTS _lua_sources)
+        get_source_file_property(_lang "${_src}" LANGUAGE)
+        if(NOT _lang STREQUAL "CXX")
+            message(FATAL_ERROR
+                "Smatchet_Lua_Internal source ${_src} has LANGUAGE=${_lang}, expected CXX. "
+                "luaL_error must use C++ exceptions for crash-safe unwinding through the "
+                "recorder (see docs/design/lua-recorded-cmd-list.md § Lua build mode).")
+        endif()
+    endforeach()
+
     target_include_directories(Smatchet_Lua_Internal PUBLIC "$<BUILD_INTERFACE:${LUA_SRC_DIR}/src>")
 
     set(LUA_INCLUDE_DIR "${LUA_SRC_DIR}/src" CACHE PATH "" FORCE)
