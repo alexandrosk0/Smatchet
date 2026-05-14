@@ -146,6 +146,22 @@ Sweep the file when:
   Status: open
   Defer: External — vexp tool source lives outside this repo. File an issue / PR at the vexp project. Workaround in the meantime: leave the block alone; the ~250 input-token cost per session is small relative to the auto-regen friction of fighting it.
 
-- 2026-05-13 · orchestrator · [tooling] — token-efficiency phase pass left structural wins audited but not all applied
-  Details: Phase 1 (banner shrink + sem-search dedup + caveman split) shipped 94d5836; Phase 2 (debug helper template extract + AGENTS clarifications) shipped d79a8fc; Phase 3a (drop `harness-hints.claude-code.tools:` redundant list) shipped d6ba897. Cumulative −489 lines across 78 files. Remaining backlog items now deferred / external — see vexp entry above and the "no further wins" note in `docs/CAVEMAN.md`'s migration commit log.
-  Status: applied (94d5836 + d79a8fc + d6ba897)
+- 2026-05-13 · orchestrator · [process] — ASCII em-dash banner bars (`━━━`) at agent open / close burn input + output tokens per call with no routing value
+  Details: Every agent carried 4 `━` rules (open instr + open banner + close instr + close banner) plus the instruction prose ("Begin every response with this banner ... Use the horizontal rules"). ~9 lines × 18 agents = 162 lines of pure ceremony; emit cost is ~24 output tokens per subagent call. Banner content is per-agent unique only by `name` + `model/complexity/access`. Replaced with one-line banner spec: `**Banner** — open: \`🤖 AGENT: name · model/complexity · access\`. Close (before \`## Self-improvement\`): \`✅ END — name · model/complexity · access\`.`
+  Status: applied (94d5836)
+
+- 2026-05-13 · orchestrator · [context] — generic "Semantic search first" preamble duplicated across 11 agents; covered by AGENTS.md § Semantic codebase search
+  Details: 11 of 18 agents carried near-identical `**Semantic search first** — call your harness's semantic codebase search ...` boilerplate. ~45 words × 11 = ~500 redundant input tokens permanently in agent corpus. Dropped from agents with no agent-specific guidance; kept on agents that add real twists (build-doctor's CMake file-read note, perf-detective / spike-hunter's `preset: debug` hint, perf-instrument / mechanic's exhaustive-text-search rule, code-review / security-review's process sections, perf-measure's CLI focus, debug-detective's Search Order). AGENTS.md § Semantic codebase search owns the canonical rule.
+  Status: applied (94d5836)
+
+- 2026-05-13 · debug-detective · [tooling] — NDJSON helper C++ template embedded inline in agent prompt (~85 lines)
+  Details: Section 4a wrote the full `SmatchetAgentDebug.h` body inside the agent prompt, so every debug-detective invocation pulled the helper into the system prompt even when no instrumentation was needed. Externalized to `agents/_shared/templates/SmatchetAgentDebug.h.tmpl` with a one-line `sed`-based copy in the prompt. debug-detective.md shrunk 633 → 547 lines (−86); per-invocation input savings are larger since the helper body now loads only when materialised.
+  Status: applied (d79a8fc)
+
+- 2026-05-13 · orchestrator · [process] — `delegates-to:` frontmatter present on 8 of 18 agents with no documented rule
+  Details: code-review, debug-detective, grid-engine, mcp-toolsmith, offline-sync, perf-detective, spike-hunter, unreal-bridge listed it; others omitted it. Field is informational (Claude Code does not consume it; orchestrators may). Audit showed allocation is intentional — agents that **directly call** another agent list targets; terminal agents (mechanic, perf-instrument, perf-measure, build-doctor, command-system, p4-blame) and orchestrator-hand-back agents (architect, security-review, tracker-backend, lua-binder) omit it. Documented in AGENTS.md § `delegates-to:` frontmatter — absence ≠ "never delegates" but "via orchestrator, not direct."
+  Status: applied (d79a8fc)
+
+- 2026-05-13 · orchestrator · [tooling] — `harness-hints.claude-code.tools:` line duplicates `capabilities:` list and goes unread by Claude Code (which parses top-level `tools:`)
+  Details: ~104 chars per `tools:` line × 18 agents = ~470 tokens. Top-level `tools:` is what Claude Code actually consumes for permission restriction; the nested hint is informational only. AGENTS.md § Harness adapter is the canonical capability → tool mapping. Dropped the line everywhere; kept `model:` + `effort:` (real routing knobs).
+  Status: applied (d6ba897)
