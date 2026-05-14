@@ -380,10 +380,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "  unsaved");
             }
         }
-
-        // Force row break so the action cluster lands below the title row.
-        ImGui::NewLine();
-        ImGui::NewLine();
         
         // Action buttons on a separate row below the title for a more compact header.
         const bool disableDiscard = !d.viewsDirty;
