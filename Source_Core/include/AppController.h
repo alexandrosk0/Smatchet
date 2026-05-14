@@ -834,6 +834,14 @@ class AppController {
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
 
+    /// Memoised result of `ResolveFieldIconAssetPath` keyed on the raw path-or-url input.
+    /// Resolution does 2-3 `fs::weakly_canonical` syscalls on identical inputs hot-path-per-frame
+    /// from `LuaDrawList::Replay`. Both base directories (`luaScriptsDirectory_`,
+    /// `ConfigManager::GetRuntimeAssetDirectory`) are set once at startup and never re-assigned,
+    /// so the function is pure w.r.t. its input string for the process lifetime. UI-thread only.
+    static constexpr std::size_t kFieldIconAssetPathCacheCap = 256;
+    mutable std::unordered_map<std::string, std::string> fieldIconAssetPathCache_;
+
     struct IssueEditMetaCache {
         bool loaded = false;
         /** Field id -> backend allows an update operation (set/add/remove). */
