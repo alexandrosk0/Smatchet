@@ -69,6 +69,11 @@ skills-lock.json
 
 # Per-machine agent token usage log (see docs/AGENT_TOKEN_TRACKING.md)
 .claude/.agent-tokens.jsonl
+
+# Per-investigation debug-detective artifacts (see agents/debug-detective.md)
+debug-*.log
+Smatchet-debug-*.log
+tests/_debug/
 *.cppcheck
 *.sln
 *.vcxproj
