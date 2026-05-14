@@ -837,7 +837,13 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         const std::string& dateFormatOption, int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
-    const bool handledByLua = app.TryLuaFieldDisplay(column.FieldId, ticket, currentValue, availWidth, field);
+    // Cached recorded-cmd-list dispatch: cache hit replays in ~5 µs / cell; miss invokes
+    // the Lua provider on a recorder which builds an opcode list we cache. See
+    // docs/design/lua-recorded-cmd-list.md and AppController::TryRenderCachedLuaField.
+    // Passing `allowEdits` through means draw:input_text can't bypass grid-level edit-
+    // disabled states — read-only folds catalog + editmeta + allowEdits.
+    const bool handledByLua =
+        app.TryRenderCachedLuaField(column.FieldId, ticket, currentValue, availWidth, field, allowEdits);
     if (handledByLua) {
         return;
     }

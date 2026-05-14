@@ -97,6 +97,12 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 
     LOG_INFO("TicketSyncService::ApplyIssueFetchPack finished fetched=%zu saved=%zu deleted=%zu fullSync=%d",
              freshTickets.size(), saved, deleted, fullSyncCompleted ? 1 : 0);
+
+    // Coalesce Lua window dirty-bumps to once-per-session: many ApplyIssueFetchPack calls
+    // can run during a single streaming fetch. NotifyLuaTicketDataChanged fires once at
+    // session end (TickStreamingApply finalisation). Invariant: every ActiveTickets-
+    // mutating path flips this flag in the same scope.
+    app_.pendingLuaWindowBump_ = true;
 }
 
 void TicketSyncService::TickStreamingApply() {
@@ -193,6 +199,10 @@ void TicketSyncService::TickStreamingApply() {
             std::lock_guard<std::mutex> lock(app_.activeTicketsMutex_);
             app_.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(app_.ActiveTickets);
             app_.ActiveTicketsRevision.fetch_add(1);
+            // Stale-deletion shrinks visible state — windows that show ticket lists / counts
+            // must re-record. Coalesced via pendingLuaWindowBump_ so a 200-id prune fires one
+            // bump, not 200.
+            app_.pendingLuaWindowBump_ = true;
         }
 
         if (staleIdsToDelete_.empty()) {
@@ -201,6 +211,13 @@ void TicketSyncService::TickStreamingApply() {
                      totalStaleToDelete_);
             // Trigger editmeta warmup after cleanup completes
             app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+            // Flush coalesced Lua window bump now that stale deletion finished. The session-
+            // end flush above can't see this because stale-deletion runs across many frames
+            // after the session-end block has already fired.
+            if (app_.pendingLuaWindowBump_) {
+                app_.NotifyLuaTicketDataChanged();
+                app_.pendingLuaWindowBump_ = false;
+            }
         }
         return;
     }
@@ -280,6 +297,8 @@ void TicketSyncService::TickStreamingApply() {
         }
         app_.PruneEditMetaCacheToActiveTickets();
         app_.ActiveTicketsRevision.fetch_add(1);
+        // Streaming-batch end-of-batch — flip the coalesced bump; session-end emits once.
+        app_.pendingLuaWindowBump_ = true;
     }
 
     bool isWorkerFinished = !activeStreamingSync_.Active.load();
@@ -352,6 +371,14 @@ void TicketSyncService::TickStreamingApply() {
 
         if (!isDeletingStale_.load()) {
             app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+        }
+
+        // Session-end Lua window bump: emit exactly once if any apply-pack, stale-deletion,
+        // or streaming-batch scope set the flag during this session. Skipping when no flag
+        // was set avoids needless re-records when nothing actually changed.
+        if (app_.pendingLuaWindowBump_) {
+            app_.NotifyLuaTicketDataChanged();
+            app_.pendingLuaWindowBump_ = false;
         }
     }
 }
