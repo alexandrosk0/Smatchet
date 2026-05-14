@@ -75,22 +75,6 @@
             }
         },
         {
-            "name": "ninja-release",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Ninja Release",
-            "description": "Legacy release preset that uses gcc/g++ from the current PATH and writes to build/ninja-release.",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-release",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CMAKE_C_COMPILER": "gcc",
-                "CMAKE_CXX_COMPILER": "g++"
-            }
-        },
-        {
             "name": "ninja-debug-msys2-asan",
             "inherits": [
                 "_smatchet-msys2-base"
@@ -132,6 +116,22 @@
                 "SMATCHET_SANITIZER": "msan",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "ninja-release",
+            "inherits": [
+                "_smatchet-native-features"
+            ],
+            "displayName": "Ninja Release",
+            "description": "Legacy release preset that uses gcc/g++ from the current PATH and writes to build/ninja-release.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
             }
         },
         {
@@ -201,14 +201,6 @@
             ]
         },
         {
-            "name": "ninja-release",
-            "configurePreset": "ninja-release",
-            "inheritConfigureEnvironment": true,
-            "targets": [
-                "SmatchetStandalone"
-            ]
-        },
-        {
             "name": "ninja-debug-msys2-asan",
             "configurePreset": "ninja-debug-msys2-asan",
             "inheritConfigureEnvironment": true,
@@ -227,6 +219,14 @@
         {
             "name": "ninja-debug-msys2-msan",
             "configurePreset": "ninja-debug-msys2-msan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-release",
+            "configurePreset": "ninja-release",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"
