@@ -38,23 +38,39 @@ Smatchet perf-measurement runner.
 
 ## Prerequisites
 
-A running Smatchet instance with `mcp_enabled: true` in config. If not running, **ask the user to start it** — do not try to start it yourself (no headless mode; can't observe the GUI).
+Config must have `mcp_enabled: true`. **No running instance required** — `--spawn` (Path A1 in `docs/PERF_WORKFLOW.md`) launches a hidden ephemeral app on a free port and tears it down at exit. Fall back to asking the user to start Smatchet only if `--spawn` fails (no MCP socket reachable, scenario needs human-driven nav).
 
-## Standard loop
+## Standard loop (Path A1 — fully automated, no user)
 
 ```bash
 # 1. Build (skip if perf-detective already built this round).
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 
-# 2. Reset stale measurements.
-SmatchetStandalone.exe cmd perf.reset
+# 2. Run scenario end-to-end. --spawn handles launch + MCP wait + result file + app.quit.
+build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.run \
+  --name=<scenario> --frames=<N> --outPath=perf_<round>.json --spawn --yes
 
-# 3. Run the requested scenario.
-SmatchetStandalone.exe cmd scenario.run --name=<scenario> --frames=<N> --yes
+# 3. Read the result file directly — perf.snapshot rows are already inside .data.rows.
+#    (No need for a separate perf.snapshot call: scenario.run already wrote the snapshot.)
+```
 
-# 4. Snapshot results — both human and machine forms.
+Filter / sort in-process:
+
+```python
+Read("perf_<round>.json")
+# rows = json.data.rows sorted by -lastTotalMs; filter startswith("perf_temp:")
+```
+
+## Standard loop (Path A2 — ad-hoc, running app, manual nav)
+
+Use only when no scenario exists yet or the path needs human-driven navigation. Prefer A3 (register a scenario) over repeated A2.
+
+```bash
+SmatchetStandalone.exe cmd perf.reset                          # against the running instance
+# ← user reproduces the slow path for ~5 s
 SmatchetStandalone.exe cmd perf.snapshot --pretty
-SmatchetStandalone.exe cmd perf.snapshot | jq '.data.rows | sort_by(-.lastTotalMs) | .[0:5]'
+SmatchetStandalone.exe cmd perf.snapshot \
+  | jq '[.data.rows[] | select(.name | startswith("perf_temp:"))]'
 ```
 
 ## Sorting rule
@@ -69,17 +85,17 @@ Top rows by lastTotalMs:
 1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<µs>
 2. ...
 
-temp:* rows: <list>  (markers the caller is tracking this round)
-Pre-existing dominant rows: <list>  (context — what temp markers are competing against)
+perf_temp:* rows: <list>  (markers the caller is tracking this round)
+Pre-existing dominant rows: <list>  (context — what perf_temp: markers are competing against)
 ```
 
 ## Fallback — CLI unavailable
 
-If `mcp_enabled: false`, the running exe has no CLI socket, or `perf.snapshot` errors out, tell the user to:
+If `mcp_enabled: false`, `--spawn` can't reach the MCP socket within 15 s, or `perf.snapshot` errors out, tell the user to:
 
 1. Open the Perf panel: `Inspect > Performance Monitor...`
 2. Reproduce the same scenario manually (same view, same scroll pattern, same row count).
-3. Paste back the `temp:*` rows and the dominant pre-existing rows.
+3. Paste back the `perf_temp:*` rows and the dominant pre-existing rows.
 
 Do **not** attempt to read FPS visually — you can't observe the GUI. Wait for the user's numbers before reporting.
 
@@ -87,6 +103,6 @@ Do **not** attempt to read FPS visually — you can't observe the GUI. Wait for 
 
 For a before / after comparison, run the **same** scenario, same `--frames` value. Numbers from different scenarios are not comparable.
 
-Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
+Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `perf_temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
 
 End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

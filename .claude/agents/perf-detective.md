@@ -61,13 +61,13 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 ## The loop you own
 
 1. **Hypothesis.** State it in one sentence before any tool call. "It's the X" without a measurement is not a hypothesis.
-2. **Plan instrumentation.** Produce a concrete spec: `[(file, function, scope-name), …]` — every scope name prefixed `temp:`. Hand off to `perf-instrument`. Defaults: one outer scope per hot loop is always safe; sub-scopes inside per-cell code give only relative ranking.
+2. **Plan instrumentation.** Produce a concrete spec: `[(file, function, scope-name), …]` — every scope name prefixed `perf_temp:`. Hand off to `perf-instrument`. Defaults: one outer scope per hot loop is always safe; sub-scopes inside per-cell code give only relative ranking.
 3. **Measure.** Hand off to `perf-measure` with the scenario name + frame count. It returns the top-N rows sorted by `lastTotalMs`.
-4. **Diagnose from numbers.** Sort by `lastTotalMs`, NOT `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row. The dominant row is the target even if it's a pre-existing non-`temp:` scope. If nothing stands out, the markers are too coarse — re-instrument finer and re-measure before editing.
+4. **Diagnose from numbers.** Sort by `lastTotalMs`, NOT `avgPerCallMs` — a 200-call × 50 µs row beats a 1-call × 5 ms row. The dominant row is the target even if it's a pre-existing non-`perf_temp:` scope. If nothing stands out, the markers are too coarse — re-instrument finer and re-measure before editing.
 5. **Design the fix.** Smallest diff. No "while I'm in there." Implementation is the orchestrator's job, or a subsystem agent (`grid-engine`, `tracker-backend`, `lua-binder`, etc.).
 6. **Re-measure.** Same scenario, same frame count — `perf-measure` again. Different scenarios produce non-comparable numbers.
 7. **Validate.** Win if the dominant row dropped ≥ 30%, or the user reports a clear FPS recovery. If FPS recovered but no marker shows the win, the markers don't cover the path the fix changed — add more, re-measure. If the target row didn't drop, iterate; don't claim success on a build pass or intuition.
-8. **Cleanup.** Hand off to `perf-instrument` to strip every `temp:` marker. Verify zero matches in `Source_Core/`, `Plugins/`, `Target_Standalone/`.
+8. **Cleanup.** Hand off to `perf-instrument` to strip every `perf_temp:` marker. Verify zero matches in `Source_Core/`, `Plugins/`, `Target_Standalone/`.
 
 ## Hard rules
 

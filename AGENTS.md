@@ -96,7 +96,7 @@ Each packet should include:
 | `perf-detective` | high · read-only | Steady-state perf — optimize / profile / FPS / sustained lag. Owns hypothesis + diagnose + validate over frame averages. Delegates to `perf-instrument` and `perf-measure`. Wraps `docs/PERF_WORKFLOW.md`. |
 | `spike-hunter` | high · read-only | Intermittent UI-thread stalls — spike / hitch / freeze / stutter / "occasionally slow". Looks at p99 / max outliers + blocking calls reaching the UI thread (HTTP, SQLite, p4, file I/O, locks). Delegates to `perf-instrument` and `perf-measure`. |
 | `debug-detective` | high · read-edit | Behavioural bugs — crash / wrong output / regression / "broken" / "doesn't work". Inserts temporary `LOG_DEBUG` / `LOG_TRACE` markers (prefixed `[temp-debug]`), builds, runs via the unified CLI (`SmatchetStandalone.exe cmd …`), reads logs, proposes the cause; hands the fix to the matching subsystem specialist. Cleans up every `[temp-debug]` before claiming done. NOT for perf — that's `perf-detective` / `spike-hunter`. |
-| `perf-instrument` | low · read-edit | Helper for `perf-detective` / `spike-hunter` — inserts / strips `SMATCHET_UI_PERF_SCOPE("temp:…")` markers per spec, with overhead rules encoded. |
+| `perf-instrument` | low · read-edit | Helper for `perf-detective` / `spike-hunter` — inserts / strips `SMATCHET_UI_PERF_SCOPE("perf_temp:…")` markers per spec, with overhead rules encoded. |
 | `perf-measure` | low · read-only | Helper for `perf-detective` / `spike-hunter` — runs `perf.reset` → `scenario.run` → `perf.snapshot`, returns top-N rows by `lastTotalMs`. Standalone "what's hot right now" check also fine. |
 | `code-review` | medium · read-only | Pre-merge code review. Runs cppcheck / clang-tidy / clang-format over the whole branch diff + Smatchet invariants. Wraps the standard pre-merge review skill. |
 | `security-review` | high · read-only | Pre-merge security review. Runs flawfinder / semgrep / gitleaks (when available) + Smatchet attack-surface map. Wraps the standard pre-merge security skill. |
@@ -174,7 +174,7 @@ Each agent declares a closed set of **capability tags**. The orchestrator (and t
 
 ## Recommended companion — caveman
 
-[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill (also Codex / Gemini / Cursor / Windsurf / Cline / Copilot / 30+ more) that compresses agent output by ~65% with no loss of technical accuracy. It preserves code, paths, URLs, and structural elements **byte-for-byte** — validation markers, severity-tagged punch lists, `file:line` references, and the `## Self-improvement` section convention used throughout this repo all survive intact. Only surrounding prose gets compressed.
+[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill (also Codex / Gemini / Cursor / Windsurf / Cline / Copilot / 30+ more) that compresses agent output while preserving technical accuracy; the linked README currently advertises ~75% output-token cuts and a 65% benchmark average. It preserves code, paths, URLs, and structural elements **byte-for-byte** — validation markers, severity-tagged punch lists, `file:line` references, and the `## Self-improvement` section convention used throughout this repo all survive intact. Only surrounding prose gets compressed.
 
 **Install** (per-user, system-wide — safe to re-run):
 

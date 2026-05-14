@@ -86,10 +86,10 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 2. **Code scan** for the 12 sources above, scoped to the area implicated by the symptom. Use semantic search first.
 3. **Hypothesis.** Name the specific blocking call you suspect, and which thread it's on today.
 4. **Instrument** — hand off a spec to `perf-instrument`:
-   - One outer scope `temp:Draw` at the top of `SmatchetUI::Draw`
-   - `temp:Drain` around `MainThreadDispatcher::Drain()`
+   - One outer scope `perf_temp:Draw` at the top of `SmatchetUI::Draw`
+   - `perf_temp:Drain` around `MainThreadDispatcher::Drain()`
    - Sub-scope each suspect lambda body
-   - Scope every suspected blocking call site (`temp:HttpGet`, `temp:SqlExec`, `temp:P4Annotate`, etc.)
+   - Scope every suspected blocking call site (`perf_temp:HttpGet`, `perf_temp:SqlExec`, `perf_temp:P4Annotate`, etc.)
 5. **Measure** — hand off to `perf-measure` with a **long** scenario (`--frames=3000` or higher) or a live capture during natural use. Look at:
    - `maxPerCallMs` per row if exposed in `perf.snapshot` — the actual spike size
    - `callCount` of the suspect — was it called even once during the capture?
