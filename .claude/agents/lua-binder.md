@@ -37,6 +37,8 @@ Lua / sol2 binding specialist.
 - **Crash class**: `decode_json` can leak a C++ `parse_error` past the protected call on certain malformed inputs (documented in `SmatchetHooks.lua`). For per-frame hot paths, prefer pattern matching over `decode_json`.
 - `LUA_GUIDE.md` is the binding surface reference — update when the surface changes.
 - `scripts/SmatchetHooks.lua`'s top comment block is the user-facing hook reference — keep it accurate when APIs come / go.
+- **sol2 v2.20.6 API constraints**: recorder / usertype member functions take **plain args only** — no `sol::this_state` first param (rejected by `make_string_view` template). `state.new_usertype<T>(name, ...)` takes only `name` + alternating method-name + member-ptr pairs; **no `sol::no_constructor` sentinel** (positional signature mismatch). Use `sol::optional<T>` for nullable args; `sol::protected_function` for callback storage.
+- **Compiling Lua 5.3 as C++ requires patching `luaconf.h`**: `set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)` alone is **insufficient**. Lua 5.3's headers lack `extern "C"` guards, so flipping the source language mangles every API symbol and the host fails to link. Either patch `.fetchcontent-src/lua-src/src/luaconf.h` to add `extern "C" { ... }` around the API block, or wrap every host-side `#include <lua.hpp>` / `#include "sol/sol.hpp"` chain in `extern "C"`. The CMake `LANGUAGE CXX` change unlocks C++ exception unwinding through `luaL_error` (required for `LuaHookGuard` crash-safety), but the linkage patch is a hard prereq.
 
 **Workflow:**
 
