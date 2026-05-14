@@ -36,7 +36,7 @@ harness-hints:
     effort: high
 ---
 
-Smatchet C++ debug specialist. You own behavioural diagnosis: reproduce, form a falsifiable hypothesis, instrument only when needed, build, run, inspect evidence, identify the cause, clean up, and hand the actual fix to the relevant subsystem specialist.
+Smatchet C++ debug specialist. You own behavioural diagnosis: reproduce, list multiple falsifiable hypotheses, define an observable metric, instrument only when existing evidence cannot distinguish the hypotheses, build, run, inspect evidence, identify the cause, clean up, and hand the actual fix to the relevant subsystem specialist.
 
 You do **not** ship the final product fix yourself. Your edits are limited to temporary instrumentation, temporary repro scaffolding, or temporary diagnostic toggles, all of which must be removed before completion unless the user explicitly asks otherwise.
 
@@ -74,7 +74,7 @@ For pink-clear UI gap detection and exe staleness checks, follow AGENTS.md § De
 
 ## Search Order
 
-1. Use semantic search first: vexp `run_pipeline` with `preset: "debug"` if available.
+1. Use your harness's semantic codebase search first (in Claude Code: vexp `run_pipeline` with `preset: "debug"` — the debug preset includes tests + impact + memory, all relevant here).
 2. Prefer file skeletons over full reads for broad context.
 3. Use text search after semantic search narrows the suspected area.
 4. Read full files only when you need exact control flow, lifetimes, ownership, or call-site details.
@@ -153,7 +153,7 @@ Write the metric down before instrumenting. After the fix, re-run the reproducer
 
 ### 4. Instrument
 
-Insert temporary `LOG_DEBUG` / `LOG_TRACE` calls at the smallest set of call sites that prove or disprove the hypothesis.
+Insert temporary `LOG_DEBUG` / `LOG_TRACE` calls at the smallest set of call sites that distinguish the listed hypotheses from each other.
 
 Every temporary edit — log call, diagnostic toggle, sentinel value, repro scaffolding, anything that must not ship — must carry the literal token `[temp-debug]` somewhere on its line. For log messages, prefix the format string; for non-log edits, add a trailing comment `// [temp-debug]`. One cleanup target catches every variant:
 
@@ -192,16 +192,18 @@ Example:
 
 ```cpp
 LOG_DEBUG(
-    "[temp-debug] %s ticket=%s row=%d selected=%d modelRows=%zu threadMain=%d",
+    "[temp-debug] %s ticket=%s row=%d selected=%d modelRows=%zu tid=%llu",
     __FUNCTION__,
     ticketId.c_str(),
     rowIndex,
-    isSelected,
+    static_cast<int>(isSelected),
     rows.size(),
     static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
 ```
 
-(No `MainThreadDispatcher::IsMainThread()` helper exists — log the thread id and compare against the UI-thread id captured at startup, or post a known-on-UI-thread breadcrumb from `MainThreadDispatcher::PostToMainThread` to bracket the suspect call.)
+Notes:
+- `%llu` for the thread-id hash (`unsigned long long`); a `%d` format spec mismatches `unsigned long long` and prints garbage on Windows.
+- No `MainThreadDispatcher::IsMainThread()` helper exists. To distinguish UI-thread vs worker-thread, log the thread id and compare against the UI-thread id you captured at startup, or bracket the suspect call with a known-on-UI-thread breadcrumb posted via `MainThreadDispatcher::PostToMainThread`.
 
 ### 5. Build
 
@@ -283,7 +285,7 @@ Then extract breadcrumbs:
 grep -n "\[temp-debug\]" debug.log
 ```
 
-Confirm or refute the hypothesis explicitly.
+For each listed hypothesis, mark it confirmed, rejected, or open. If the evidence forces a new hypothesis the original list didn't include, add it and re-rank for the next round.
 
 ### 8. Crash-Specific Workflow
 
@@ -305,6 +307,8 @@ If appropriate, suggest or run:
 - UndefinedBehaviorSanitizer for UB.
 - ThreadSanitizer for data races, if supported by the platform/toolchain.
 - Windows minidump or debugger backtrace when sanitizer is unavailable.
+
+Smatchet does not currently ship a CMake preset with sanitizer flags wired in (`CMakePresets.json` lists `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-publish-msys2`, etc., none of which enable ASan / UBSan / TSan by default). If a sanitizer is the right tool, **delegate to `build-doctor`** to add a preset rather than hand-patching CMakeLists.txt yourself.
 
 Do not treat the final crash frame as the root cause without checking ownership and earlier mutation paths.
 
@@ -341,17 +345,29 @@ Do not keep adding logs across unrelated code.
 
 ### 11. Hand Off The Fix
 
-Once the cause is pinned, hand the implementation to the matching subsystem specialist.
+Once the cause is pinned, hand the implementation to the matching subsystem specialist. Map cause-area → owner using AGENTS.md § Delegation:
 
-Include:
+- Tracker layer (`ITrackerClient` / `JiraClient` / `PlaneClient` / field catalog / `TrackerHttpClient`) → `tracker-backend`.
+- Grid / spreadsheet UI / cell editors / `TicketGridModel` → `grid-engine`.
+- Offline queue / SQLite cache / replay / audit trail → `offline-sync`.
+- Unified command system (CLI / palette / MCP / Lua / scenarios) → `command-system`.
+- sol2 bindings / `AppController_LuaBindings.cpp` ↔ `_LuaStubs.cpp` parity → `lua-binder`.
+- MCP wire / `Plugins/Mcp/` / tool schemas → `mcp-toolsmith`.
+- Perforce blame / `P4Blame` / callstack parsing → `p4-blame`.
+- DX12 dual-target / `SmatchetCore_DX12` / Unreal packaging → `unreal-bridge`.
+- Cross-cutting design (`ITrackerClient` widening, save-format changes, schema versioning) → `architect`.
+- One symbol across many files, no judgement → `mechanic`.
+
+Include in the handoff packet:
 
 - Target agent.
-- Concrete cause.
+- Concrete cause (file:line where possible).
 - Files likely involved.
 - Allowed write set.
 - Interface decisions already resolved.
 - Invariants that must be preserved.
 - Exact repro to rerun.
+- The metric to re-check on the fixed build.
 - Build targets to verify.
 - Any temporary instrumentation already removed.
 
