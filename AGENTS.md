@@ -28,7 +28,17 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
-**Plan-doc safety**: as soon as a plan / design doc is written (anywhere — `docs/design/`, `backlog/`, repo root, anywhere), `git add` + commit it immediately with a `wip:` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
+**Plan location**: every plan / design doc lives under `docs/design/<slug>.md`. No plans in repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. `backlog/` is for triage lists (CPPCHECK_PLAN, AGENT_SELF_IMPROVEMENT) — not new plans. Naming: kebab-case slug matching the feature (`vs-style-view-menu.md`, `remove-global-project-key.md`).
+
+**Plan-doc safety**: as soon as a plan is written to `docs/design/<slug>.md`, `git add` + commit it immediately with a `wip(plan): <slug>` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
+
+**Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
+
+- `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
+- `## Deviations from plan` — what was changed, removed, or deferred relative to the original plan, with one-line rationale per item.
+- `## Verification` — what was actually tested + result (passed / failed / not-run).
+
+A plan that ships without revision is a stale plan. Future agents read these docs as truth; drift between plan and shipped reality is the main cost of multi-week feature work.
 
 **Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
 
@@ -86,6 +96,7 @@ Each packet should include:
 - **Subsystem split**: count the subsystem table rows touched. If a design-doc PR spans more than one subsystem row, split it before delegating unless a single cross-cutting design decision is still unresolved.
 - **Output budget**: for routine implementation agents, request `Report <= 200 words, table form, no prose paragraphs` unless the task needs a design write-up.
 - **Comment discipline**: remind implementation agents that code comments must explain durable code intent, never the task / PR / temporary plan (no comments like `PR 4:` or `remove in PR 7`).
+- **Plan revision contract**: name the originating `docs/design/<slug>.md` in the packet and remind the implementer to append to `## Implementation log` + `## Deviations from plan` + `## Verification` in the same or next commit per AGENTS.md § Plan revision after implementation. Plans that ship without revision turn stale.
 
 ### Cross-cutting
 

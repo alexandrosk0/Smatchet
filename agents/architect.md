@@ -39,6 +39,16 @@ Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
 No implementation code unless genuinely trivial. A 30-line design doc that prevents an hour of rework is the win.
 
+**Always write the plan to `docs/design/<slug>.md`** — kebab-case slug matching the feature. Never to repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. Commit immediately with `wip(plan): <slug>` per AGENTS.md § Plan-doc safety. See `docs/design/vs-style-view-menu.md` and `docs/design/remove-global-project-key.md` for shape.
+
+**Revise the plan as implementation lands.** When a slice from the plan ships, the orchestrator (or the implementing subsystem agent) edits the same `docs/design/<slug>.md` to append:
+
+- `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
+- `## Deviations from plan` — what changed, was removed, or deferred relative to the original plan, with one-line rationale.
+- `## Verification` — what was tested + result (passed / failed / not-run).
+
+The architect itself does not edit the revision sections — that work belongs to the agent that shipped the slice. But the architect references the AGENTS.md § Plan revision after implementation rule in the plan so the implementer knows the contract.
+
 When unsure about an existing convention, inspect the header in `Source_Core/include/` — don't infer from naming. Command system, view storage, and tracker abstraction all have established shapes.
 
 End every response with `## Self-improvement` — agent / prompt / process friction you hit this round (shortcuts, missing context, redundant steps, new-agent candidates). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`. See AGENTS.md → "Self-improvement loop".
