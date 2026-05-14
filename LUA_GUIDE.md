@@ -24,34 +24,75 @@ Lua scripts are loaded from the `Scripts/` directory relative to the Smatchet ex
 | :--- | :--- |
 | `log_info(msg)` | Logs a message to the internal Lua console. |
 | `decode_json(json_str)` | Parses a JSON string. Returns two values: `(table_or_value, error_message)`. If successful, `error_message` is empty. |
-| `register_field_display(field_id, fn)` | Registers a custom render function for a specific Jira `field_id` (e.g. `customfield_12345`). |
-| `unregister_field_display(field_id)` | Removes the custom render function. |
-| `register_field_display_by_name(name, fn)` | Registers a custom render function based on the case-insensitive display name of the field (e.g., `"Progress"`). |
-| `unregister_field_display_by_name(name)` | Removes the custom render function by name. |
+| `register_field_display_cached(field_id, fn)` | Registers a cached cell renderer for a Jira `field_id`. The provider runs only on cache miss (when raw / avail_width / read_only / provider-gen changes); a recorded draw list is replayed on every other frame. See **Recorder API** below. |
+| `unregister_field_display_cached(field_id)` | Removes the cached renderer for `field_id`. |
+| `register_field_display_cached_by_name(name, fn)` | Same as `register_field_display_cached`, keyed on case-insensitive field display name (e.g. `"Progress"`). |
+| `unregister_field_display_cached_by_name(name)` | Removes the cached renderer by display name. |
+
+### Cached cell renderer — provider signature
+
+```lua
+register_field_display_cached("priority", function(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
+    -- record the cell into `draw`; the recording is cached and replayed each frame
+    draw:image("Scripts/art/priority/high.png", 18, 18)
+    return true   -- truthy → "I handled it"; false / nil → fall through to C++
+end)
+```
+
+The 7th argument `draw` is a recorder. **You may not call `imgui.*` directly inside the provider** — Smatchet's `LuaImmediateModeGuard` raises `imgui.* not allowed inside cached provider / window — use draw:* instead` if you do. The recorder is required so C++ can replay the same operations between provider calls.
+
+### `draw` recorder API
+
+| Lua | Replays as |
+| :--- | :--- |
+| `draw:text(s)` | `ImGui::Text("%s", s)` |
+| `draw:text_unformatted(s)` | `ImGui::TextUnformatted(s)` |
+| `draw:image(path_or_url, w, h)` | `SmatchetFieldIconRender::DrawImagePathOrUrl` (texture cache + `ImGui::Image`) |
+| `draw:progress_bar(frac, w, h, overlay?)` | `ImGui::ProgressBar` |
+| `draw:same_line(offset?, spacing?)` | `ImGui::SameLine` |
+| `draw:separator()` | `ImGui::Separator` |
+| `draw:dummy(w, h)` | `ImGui::Dummy({w,h})` |
+| `draw:push_color(col_idx, r, g, b, a)` | `ImGui::PushStyleColor` |
+| `draw:pop_color(count?)` | `ImGui::PopStyleColor` |
+| `draw:set_tooltip(s)` | `if hovered ImGui::SetTooltip("%s", s)` |
+| `draw:button(label, fn(ticket_id, field_id))` | `ImGui::Button(label##idx)` — `fn` fires on click |
+| `draw:input_text(label, initial, max_len, fn(ticket_id, field_id, new_value))` | `ImGui::InputText` — `fn` fires on commit (`IsItemDeactivatedAfterEdit`) |
+| `draw:on_deactivated(fn)` | Attach to last interactive op; fires on `IsItemDeactivated` |
+| `draw:on_deactivated_after_edit(fn)` | Attach to last interactive op; fires on `IsItemDeactivatedAfterEdit` |
+
+The recorder auto-suffixes interactive widget labels with `##op<index>` so duplicate labels still get unique ImGui IDs.
+
+If your provider reads Lua-global state outside the 6 documented args (theme tables, user prefs, action-mutated state), the strict cache-key comparison can't detect the change. Call one of these from the mutating callback:
+
+- `ui.invalidate_field_cache()` — drop every cached cell.
+- `ui.invalidate_field_cache_for(ticket_id)` — drop one ticket's cells.
+- `ui.invalidate_field_cache_for(ticket_id, field_id)` — drop one cell.
 
 ### `imgui` Module
 
-Smatchet exposes a subset of Dear ImGui functions to allow you to draw custom UI components inside grid cells:
+Available **only inside event-time callbacks** (`register_ticket_action`, `register_global_action`, MCP tools). Direct calls from inside a cached provider or a cached window draw fn raise `luaL_error` — use the `draw:*` recorder methods instead.
 
 | Function | Description |
 | :--- | :--- |
 | `imgui.text(str)` | Renders text. |
-| `imgui.text_unformatted(str)` | Renders text exactly as-is (best for raw strings). |
-| `imgui.progress_bar(fraction, w, h)` | Renders a progress bar. `fraction` is `0.0` to `1.0`. `w` and `h` set the size. Pass `0` for default height. |
-| `imgui.get_content_region_avail()` | Returns two numbers `(width, height)` representing the available space in the current cell. |
-| `imgui.button("label")` | Renders a clickable button. Returns `true` if clicked this frame. |
-| `imgui.same_line()` | Places the next widget on the same line as the previous one. |
-| `imgui.separator()` | Draws a horizontal dividing line. |
+| `imgui.text_unformatted(str)` | Renders text exactly as-is. |
+| `imgui.progress_bar(fraction, w, h)` | Renders a progress bar. |
+| `imgui.get_content_region_avail()` | Returns `(width, height)`. |
+| `imgui.button("label")` | Returns `true` on click. |
+| `imgui.same_line()` / `imgui.separator()` / `imgui.image(path, w, h)` | Layout helpers. |
 
 ### `ui` Module
 
-You can construct completely custom dialogs and floating windows directly from Lua.
+You can construct completely custom dialogs and floating windows directly from Lua. Window draw functions follow the same recorder shape as cached cell renderers.
 
 | Function | Description |
 | :--- | :--- |
-| `ui.register_window(name, fn)` | Registers a custom floating ImGui window titled `name`. Smatchet will call `fn()` every frame while the window is open. Use the `imgui` module inside `fn` to draw the contents. |
-| `ui.register_ticket_action(name, callback_func_name)` | Registers a row context-menu action. `name` is the menu label; registering again with the same `name` replaces the callback. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will be executed on a background thread when triggered. `my_callback(ticket)` receives the row's `Ticket`. See §3. |
-| `ui.register_global_action(name, callback_func_name)` | Registers a quick action shown on the **Tools & Actions** tab in the **Scripts & Actions** window. Same replace-by-`name` semantics. `callback_func_name` is the string name of a top-level global function (e.g., `"my_callback"`) that will run on a background thread. See §3. |
+| `ui.register_window(name, fn)` | Registers a custom floating ImGui window titled `name`. `fn(draw)` is called only when the window is dirty (first paint, after `ui.invalidate_window`, after a `Click` / `Commit` callback fires, or after `NotifyLuaTicketDataChanged` / provider-gen bumps). The recording is replayed each frame between record events. |
+| `ui.unregister_window(name)` | Removes the window. |
+| `ui.invalidate_window(name)` | Forces the window to re-record on its next paint. Safe from any thread. |
+| `ui.invalidate_field_cache()` / `ui.invalidate_field_cache_for(ticket_id [, field_id])` | Drops cached cell entries — see above. |
+| `ui.register_ticket_action(name, callback_func_name)` | Row context-menu action. `name` is the menu label; registering again with the same `name` replaces the callback. `callback_func_name` is a top-level global function name; runs on a background thread. `my_callback(ticket)` receives the row's `Ticket`. See §3. |
+| `ui.register_global_action(name, callback_func_name)` | Quick action on the **Tools & Actions** tab. Same replace-by-`name` semantics. See §3. |
 
 ### `mcp` Module
 
@@ -143,31 +184,33 @@ The function you register will receive the following positional arguments:
 ```lua
 -- SmatchetHooks.lua
 
--- Define our render handler
-local function render_progress_bar(issue_id, field_id, raw, avail_width, read_only, field_name)
+-- Define our cached render handler. The 7th arg `draw` records ops; Smatchet replays the
+-- recording each frame until raw / avail_width / read_only changes — Lua runs at most once
+-- per cell per refresh.
+local function render_progress_bar(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
     -- Attempt to parse the raw Jira JSON data
     local data, err = decode_json(raw)
-    
+
     if not data or err ~= "" then
         return false -- Let Smatchet render the fallback error text
     end
-    
+
     local current = tonumber(data.progress) or 0
     local total = tonumber(data.total) or 0
     local fraction = 0
-    
+
     if total > 0 then
         fraction = current / total
     end
-    
-    -- Draw an ImGui progress bar
-    imgui.progress_bar(fraction, avail_width, 0)
-    
+
+    -- Record a progress-bar op. Replayed in C++ on every subsequent frame.
+    draw:progress_bar(fraction, avail_width, 0)
+
     return true -- Tell Smatchet we handled the drawing
 end
 
 -- Register the handler to trigger for any field named "Progress"
-register_field_display_by_name("Progress", render_progress_bar)
+register_field_display_cached_by_name("Progress", render_progress_bar)
 ```
 
 ### Context menu and menu bar actions (`SmatchetHooks.lua`)

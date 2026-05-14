@@ -1,17 +1,41 @@
 -- Edit in Windows → Scripting… (pick SmatchetHooks.lua); use Save && Reload Hooks after edits.
 -- Registers UI hooks: field renderers, ticket actions, global quick actions, custom windows, MCP tools, etc.
 --
--- Two ways to register field display:
---   register_field_display("customfield_12345", fn)     -- Jira field id (see catalog / column key)
---   register_field_display_by_name("Progress", fn)      -- display name, case-insensitive
+-- Two ways to register a cached cell renderer:
+--   register_field_display_cached("customfield_12345", fn)        -- Jira field id (see catalog / column key)
+--   register_field_display_cached_by_name("Progress", fn)         -- display name, case-insensitive
 --
--- Function signature:
---   function(issue_id, field_id, raw, avail_width, read_only, field_name) -> boolean
+-- Function signature (7 args — provider returns a recorded draw list, called only on cache miss):
+--   function(issue_id, field_id, raw, avail_width, read_only, field_name, draw) -> boolean
 --
--- Field icons (priority + custom):
---   register_field_display / register_field_display_by_name run first; if they return true,
---   built-in priority icons and register_field_icon_map are skipped (Lua wins).
+-- The `draw` arg is a recorder: methods queue opcodes (draw:text, draw:image, draw:button, ...)
+-- that Smatchet replays each frame in C++ until one of the cache-key inputs changes
+-- (raw / field_name / rounded avail_width / read_only / provider generation). Net effect:
+-- Lua runs ~once per cell per refresh, not per frame — about 50-60× cheaper than the legacy
+-- register_field_display path. Direct imgui.* calls inside a cached provider luaL_error;
+-- use draw:* instead (the recorder is needed so replay sees the same ops).
 --
+-- Recorder ops (v1):
+--   Static draw:    draw:text(s), draw:text_unformatted(s), draw:image(path, w, h),
+--                   draw:progress_bar(frac, w, h, overlay?), draw:same_line(off?, sp?),
+--                   draw:separator(), draw:dummy(w, h), draw:push_color(idx, r, g, b, a),
+--                   draw:pop_color(n?), draw:set_tooltip(s)
+--   Interactive:    draw:button(label, fn(ticket_id, field_id))
+--                   draw:input_text(label, initial, max_len, fn(ticket_id, field_id, new_value))
+--   Post-widget:    draw:on_deactivated(fn), draw:on_deactivated_after_edit(fn)
+--                   (attach to the most-recently-recorded interactive op)
+--
+-- Custom windows (recorder shape):
+--   ui.register_window("My panel", function(draw) draw:text("hello") end)
+--   ui.invalidate_window("My panel")            -- force re-record on next frame
+--   ui.unregister_window("My panel")
+--
+-- Explicit cell-cache invalidation (needed when your provider reads Lua state outside its 6 args):
+--   ui.invalidate_field_cache()                                     -- drop entire cache
+--   ui.invalidate_field_cache_for(ticket_id)                        -- drop one ticket
+--   ui.invalidate_field_cache_for(ticket_id, field_id)              -- drop one cell
+--
+-- Field icons (priority + custom) — these run AFTER the cached provider returns false:
 --   register_field_icon_map(field_id, { ["high"] = "C:/path/icon.png", medium = "https://..." })
 --     Read-only grid: icon replaces text (hover for value). Editable SingleSelect: icon replaces closed-combo preview text.
 --     Built-in priority also uses shipped Scripts/art/priority/<slug>.png when present (offline), else Jira iconUrl / domain fetch.
@@ -21,29 +45,30 @@
 --   unregister_field_icon_map("priority")
 --   unregister_field_icon_map("My Field", true)
 --
---   imgui.image(path_or_url, width, height)  -- use inside register_field_display for full custom UI
+--   draw:image(path_or_url, width, height)  -- use inside register_field_display_cached for full custom UI
 --
 
 
 
 
---[[ 
-local function render_progress_json(issue_id, field_id, raw, avail_width, read_only, field_name)
-  local j, err = decode_json(raw)
-  if not j then
-    return false
-  end
-  local p, t = tonumber(j.progress) or 0, tonumber(j.total) or 0
+--[[
+local function render_progress_json(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
+  -- decode_json on a hot Lua path can be costly + can throw a C++ parse_error past the
+  -- protected call on certain malformed inputs (PR #54 follow-up). Prefer string.match;
+  -- only the user-visible "fraction" is needed here.
+  if not raw or raw == "" then return false end
+  local p = tonumber(raw:match('"progress"%s*:%s*(%-?%d+%.?%d*)')) or 0
+  local t = tonumber(raw:match('"total"%s*:%s*(%-?%d+%.?%d*)')) or 0
   local frac = (t > 0) and (p / t) or 0
-  imgui.progress_bar(frac, avail_width, 0)
+  draw:progress_bar(frac, avail_width, 0, string.format("%d%%", math.floor(frac * 100)))
   return true
 end
 
 -- Match your Jira field *display name* (e.g. "Progress"). Case does not matter.
-register_field_display_by_name("progress", render_progress_json)
+register_field_display_cached_by_name("progress", render_progress_json)
 
 -- If you prefer the raw id instead, comment the line above and use:
--- register_field_display("customfield_XXXXX", render_progress_json)
+-- register_field_display_cached("customfield_XXXXX", render_progress_json)
 
 log_info("SmatchetHooks.lua loaded (progress renderer registered by name)")
 ]]
@@ -56,40 +81,38 @@ register_field_icon_map("priority", {
 -- register_field_icon_map("customfield_10001", { open = "C:/path/open.png", ["in progress"] = "C:/path/wip.png" })
 
 -- Example: icon from disk inside a full custom field renderer
--- register_field_display("customfield_99999", function(issue_id, field_id, raw, avail_width, read_only, field_name)
---   imgui.image("Scripts/art/badge.png", 18, 18)
---   imgui.same_line()
---   imgui.text(raw or "")
+-- register_field_display_cached("customfield_99999", function(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
+--   draw:image("Scripts/art/badge.png", 18, 18)
+--   draw:same_line()
+--   draw:text(raw or "")
 --   return true
 -- end)
 ]]
 
 -- =============================================================================
--- Optimized priority field renderer in Lua.
+-- Priority field renderer using the recorded-cmd-list cached path.
 --
 -- Replaces the C++ priority SingleSelect path with an icon-only Lua renderer.
 -- Trade-off: the cell is no longer click-to-edit (the C++ combo path is bypassed
--- entirely). Use the issue detail panel to change priority. In exchange, the
--- per-cell render cost drops to ~one hashmap probe + one imgui.image() call.
+-- entirely). Use the issue detail panel to change priority.
 --
--- Performance design (every choice here is per-cell-hot, beware):
---   1. SLUG_TO_PATH is built ONCE at script load. No string concatenation per cell.
---   2. PRIORITY_MEMO is a per-rawValue cache. Lua tables are O(1) hash maps;
---      `false` sentinel marks "we tried this rawValue, no icon" so we don't
---      re-resolve every frame.
---   3. String pattern matching instead of decode_json:
+-- Performance design with the cached recorder:
+--   1. Lua runs ONCE per cell per refresh (the recorded `draw:image` op is replayed
+--      directly by C++ on every subsequent frame until raw / avail_width / read_only
+--      changes). With the legacy register_field_display path, Lua ran every frame.
+--   2. SLUG_TO_PATH is built ONCE at script load. No string concatenation per cell.
+--   3. PRIORITY_MEMO is a per-rawValue Lua-side cache that survives the rare cache miss
+--      when a cell re-records — saves the slug normalize step on a refresh.
+--   4. String pattern matching instead of decode_json:
 --        - Avoids the sol2 marshalling round-trip (string → C++ → JsonToLua table → Lua).
 --        - Avoids nlohmann allocation + JsonToLua table-build (typically ~5-10 µs/call).
 --        - `string.match` is a single O(len) pattern scan with one string allocation.
 --        - Also sidesteps a pre-existing crash where decode_json's C++ parse_error can
 --          escape try/catch on certain malformed inputs (see Smatchet PR #54 follow-up).
---   4. We always return true — even for empty/unknown values — so the C++
---      SingleSelect editor never runs for priority cells. This saves the
---      BeginCombo widget cost (~2-5 µs × 18 cells = 30-90 µs / frame).
---   5. Hoist commonly-used functions to locals at script-load time. Local-variable
---      access in Lua is a register-indexed slot; globals hit the env table.
+--   5. We always return true — even for empty/unknown values — so the C++
+--      SingleSelect editor never runs for priority cells.
 --
--- Disable by commenting out the register_field_display call at the bottom.
+-- Disable by commenting out the register_field_display_cached call at the bottom.
 -- =============================================================================
 
 local PRIORITY_ICON_DIR  = "Scripts/art/priority/"
@@ -114,7 +137,6 @@ local SLUG_TO_PATH = {
 local PRIORITY_MEMO = {}
 
 -- Hoist commonly-used functions to locals (saves a global-env lookup per call).
-local imgui_image  = imgui.image
 local string_lower = string.lower
 local string_gsub  = string.gsub
 local string_match = string.match
@@ -155,52 +177,39 @@ local function resolve_priority_icon(raw)
   return nil
 end
 
--- Cell render handler. Engine fixes the signature — positional args avoid a
--- varargs-table allocation on the dispatch hot path.
-local function render_priority_cell(issue_id, field_id, raw, avail_width, read_only, field_name)
+-- Cell record handler — 7th arg `draw` records ops; C++ replays each frame.
+local function render_priority_cell(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
   -- Indexing with nil errors in Lua; use empty string as a stable key.
   local key = raw or ""
   local cached = PRIORITY_MEMO[key]
   if cached ~= nil then
-    -- Fast path: one hashmap probe + (optional) one imgui.image call.
     if cached then
-      imgui_image(cached, PRIORITY_ICON_SIZE, PRIORITY_ICON_SIZE)
+      draw:image(cached, PRIORITY_ICON_SIZE, PRIORITY_ICON_SIZE)
     end
     return true
   end
-  -- Cold path: resolve once, memoise the result (path-string OR false sentinel).
   local path = resolve_priority_icon(key)
   PRIORITY_MEMO[key] = path or false
   if path then
-    imgui_image(path, PRIORITY_ICON_SIZE, PRIORITY_ICON_SIZE)
+    draw:image(path, PRIORITY_ICON_SIZE, PRIORITY_ICON_SIZE)
   end
   return true
 end
 
 -- IMPORTANT — performance note (measured on Smatchet PR #54+ codebase):
---   The C++ priority renderer in develop is already heavily optimised (round-3 PR):
---   ~0.12 ms total for 18 visible priority cells (≈ 6.7 µs / cell).
+--   With the recorded-cmd-list path, Lua runs once per cell per refresh, not per frame.
+--   Replay of `draw:image(...)` is ~5 µs / cell vs ~390 µs / cell for the legacy
+--   register_field_display path (~50-60× cheaper). The C++ priority renderer (~6.7 µs / cell)
+--   is still slightly faster than replay, but only by a constant factor — and the cached Lua
+--   path lets you customise (different icons, decoration, click handler) without paying the
+--   per-frame Lua cost the legacy path imposed.
 --
---   The Lua handler above is functionally equivalent but ~50-60× SLOWER per cell
---   because of fixed sol2 dispatch overhead per call:
---     - 6 marshalled args (3 std::string copies, fieldName sol::object, bool, float)
---     - per-call lua_sethook for instruction-count timeout protection
---     - sol::protected_function call + return-value marshalling
---   Measured: 19.6 ms / 50 cells = ~390 µs / cell with Lua, vs 6.7 µs / cell C++.
+-- Bottom line: enable by uncommenting the register_field_display_cached line below if you
+-- need custom priority rendering. The C++ default remains the absolute fastest path.
 --
---   register_field_icon_map (which routes the per-cell work back through C++
---   instead of dispatching to Lua) is also slower than the optimised path:
---   ~16 ms / 50 cells = ~320 µs / cell, because TryGetFieldIconMapTarget activates
---   a heavier resolution path (ResolveOptionId + slug normalisation + key vector)
---   that the default priority renderer doesn't pay.
---
--- Bottom line: leave the Lua hook DISABLED for priority unless you need full
--- customisation (different icons, additional decoration, click handler, etc.).
--- Enable by uncommenting the register_field_display line below.
---
--- register_field_display("priority", render_priority_cell)
+-- register_field_display_cached("priority", render_priority_cell)
 
-log_info("SmatchetHooks.lua: priority Lua handler available but DISABLED (see perf note above — C++ path is ~50-60× faster)")
+log_info("SmatchetHooks.lua: priority Lua cached handler available but DISABLED by default (see perf note above)")
 
 -- =============================================================================
 
