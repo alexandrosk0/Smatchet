@@ -362,6 +362,19 @@ class AppController {
     /// drive window invalidation; stub is empty in the no-Lua build.
     void LuaUiInvalidateWindowBind(const std::string& name);
 
+    /// Scenario hook: register a globally-visible Lua function as a cached field-display
+    /// provider for `fieldId`. Looks up `_G[luaFnName]` and binds it equivalently to
+    /// `register_field_display_cached(fieldId, luaFnName)`. Used by perf scenarios that need
+    /// to exercise a Lua-driven render path without requiring manual script edits. Returns
+    /// false if Lua is disabled, the function is missing, or it is not callable; on failure,
+    /// `outError` is populated. No-op stub in the no-Lua build.
+    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
+                                           const std::string& luaFnName,
+                                           std::string& outError);
+    /// Inverse of `ScenarioRegisterLuaCachedProvider`. Drops the provider plus every cache
+    /// entry for that field. No-op if not registered or in the no-Lua build.
+    void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId);
+
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /// Drop entries from luaFieldCache_. No-arg = drop all; (ticketId) = drop one ticket's
     /// entries; (ticketId, fieldId) = drop a single cell. Off-UI hops the dispatcher.

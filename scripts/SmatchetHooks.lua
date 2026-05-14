@@ -178,7 +178,10 @@ local function resolve_priority_icon(raw)
 end
 
 -- Cell record handler — 7th arg `draw` records ops; C++ replays each frame.
-local function render_priority_cell(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
+-- Declared globally (no `local`) so the `priority-grid-scroll` scenario's
+-- `registerLuaProvider` arg can bind it via `_G.render_priority_cell` for
+-- automated perf measurement without manual script edits.
+function render_priority_cell(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
   -- Indexing with nil errors in Lua; use empty string as a stable key.
   local key = raw or ""
   local cached = PRIORITY_MEMO[key]

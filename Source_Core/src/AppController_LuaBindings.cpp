@@ -16,6 +16,7 @@
 #include <cmath>
 #include <exception>
 #include <future>
+#include <ghc/filesystem.hpp>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -1873,6 +1874,97 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     }
     luaFieldCache_[key] = std::move(entry);
     return handled;
+}
+
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
+                                                      const std::string& luaFnName,
+                                                      std::string& outError) {
+    namespace fs = ghc::filesystem;
+    outError.clear();
+    if (fieldId.empty() || luaFnName.empty()) {
+        outError = "fieldId and luaFnName required";
+        return false;
+    }
+
+    auto lookup = [&]() -> sol::protected_function {
+        sol::object slot = lua[luaFnName];
+        if (slot.valid() && slot.get_type() == sol::type::function) {
+            return slot.as<sol::protected_function>();
+        }
+        return sol::protected_function();
+    };
+
+    sol::protected_function fn = lookup();
+
+    if (!fn.valid()) {
+        // The function may live in SmatchetHooks.lua which the ephemeral / headless launcher
+        // hasn't loaded yet (the userData/Scripts dir is empty on a fresh install). Try a
+        // candidate-path probe — CWD-relative scripts/ wins on a dev build, the configured
+        // luaScriptsDirectory_ wins on a deployed build. `lua.script_file` runs in the global
+        // env so non-`local` `function` declarations become visible at `_G[name]`.
+        std::vector<std::string> candidates;
+        if (!luaScriptsDirectory_.empty()) {
+            candidates.push_back(luaScriptsDirectory_ + "SmatchetHooks.lua");
+        }
+        candidates.emplace_back("Scripts/SmatchetHooks.lua");
+        candidates.emplace_back("scripts/SmatchetHooks.lua");
+        candidates.emplace_back("../scripts/SmatchetHooks.lua");
+        candidates.emplace_back("../../scripts/SmatchetHooks.lua");
+        candidates.emplace_back("../../../scripts/SmatchetHooks.lua");
+
+        std::string loadErr;
+        for (const std::string& path : candidates) {
+            std::error_code ec;
+            if (!fs::is_regular_file(fs::path(path), ec)) {
+                continue;
+            }
+            try {
+                sol::protected_function_result r = lua.script_file(path);
+                if (!r.valid()) {
+                    sol::error e = r;
+                    loadErr = std::string(path) + ": " + e.what();
+                    continue;
+                }
+                LOG_INFO("ScenarioRegisterLuaCachedProvider: auto-loaded %s", path.c_str());
+                fn = lookup();
+                if (fn.valid()) {
+                    break;
+                }
+            } catch (const std::exception& ex) {
+                loadErr = std::string(path) + ": " + ex.what();
+            }
+        }
+
+        if (!fn.valid()) {
+            outError = "Lua function not found or not callable: " + luaFnName;
+            if (!loadErr.empty()) {
+                outError += " (auto-load tried: " + loadErr + ")";
+            }
+            return false;
+        }
+    }
+
+    fieldDisplayCachedProviders_[fieldId] = std::move(fn);
+    luaProviderGen_.fetch_add(1);
+    LOG_INFO("ScenarioRegisterLuaCachedProvider: bound field=%s fn=%s", fieldId.c_str(),
+             luaFnName.c_str());
+    return true;
+}
+
+void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& fieldId) {
+    if (fieldDisplayCachedProviders_.erase(fieldId) > 0) {
+        luaProviderGen_.fetch_add(1);
+        for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
+            const std::string& key = it->first;
+            const std::size_t nul = key.find('\0');
+            if (nul != std::string::npos && key.compare(nul + 1, std::string::npos, fieldId) == 0) {
+                it = luaFieldCache_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        LOG_INFO("ScenarioUnregisterLuaCachedProvider: dropped field=%s", fieldId.c_str());
+    }
 }
 
 bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field,

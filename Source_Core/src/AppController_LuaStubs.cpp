@@ -42,5 +42,14 @@ void AppController::NotifyLuaTicketDataChanged() {}
 
 void AppController::LuaUiInvalidateWindowBind(const std::string& /*name*/) {}
 
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
+                                                      const std::string& /*luaFnName*/,
+                                                      std::string& outError) {
+    outError = "Lua automation disabled";
+    return false;
+}
+
+void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& /*fieldId*/) {}
+
 void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
 void AppController::RunFlatScriptAsync(const std::string& /*scriptPath*/) {}
