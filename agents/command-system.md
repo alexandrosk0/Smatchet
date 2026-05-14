@@ -19,7 +19,6 @@ triggers:
   - register-command
 harness-hints:
   claude-code:
-    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob, Bash
     model: sonnet
     effort: low
 ---

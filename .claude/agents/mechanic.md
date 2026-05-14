@@ -21,7 +21,6 @@ triggers:
   - find-and-replace
 harness-hints:
   claude-code:
-    tools: mcp__vexp__run_pipeline, mcp__vexp__get_skeleton, mcp__vexp__index_status, Read, Edit, Grep, Glob
     model: haiku
     effort: low
 ---
