@@ -117,7 +117,13 @@ Each packet should include:
 
 ### Stay in the orchestrator for
 
-Registering a routine command (follow the `RegisterCommand({...})` pattern with `command-system` only for non-trivial cases), routine ImGui panels in `Source_Core`, view-column additions, field-catalog tweaks, `Locales/*.json` strings, Perforce blame UI tweaks, additive SQLite schema changes.
+- Routine command registration (follow `RegisterCommand({...})` pattern; delegate to `command-system` only for non-trivial cases)
+- Routine ImGui panels in `Source_Core`
+- View-column additions
+- Field-catalog tweaks
+- `Locales/*.json` strings
+- Perforce blame UI tweaks
+- Additive SQLite schema changes
 
 ### Heuristic
 
@@ -130,6 +136,10 @@ Registering a routine command (follow the `RegisterCommand({...})` pattern with 
 - Build / link / preset / packaging failure → `build-doctor`
 - Change clearly sits inside one subsystem table row → that specialist
 - Else the orchestrator handles it directly
+
+### `delegates-to:` frontmatter
+
+Optional. Agents that **directly call** another agent (helper-driven workflows like `perf-detective` → `perf-instrument` / `perf-measure`, or perf hand-offs from `code-review` / `grid-engine`) list those targets. Terminal agents (`mechanic`, `perf-instrument`, `perf-measure`, `build-doctor`, `command-system`, `p4-blame`) and agents that hand back to the orchestrator (`architect`, `security-review`, `tracker-backend`, `lua-binder`) omit the field. Absence ≠ "never delegates"; it means "delegation goes through the orchestrator, not direct."
 
 ### Why split
 
