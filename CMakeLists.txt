@@ -1102,6 +1102,7 @@ endif()
 # the main app targets when a sanitizer preset is active. PRIVATE keeps the
 # flags off vendored FetchContent deps. No-op when SMATCHET_SANITIZER is
 # unset / "off". See cmake/Sanitizers.cmake + AGENTS.md § Debug techniques.
+smatchet_verify_mingw_gcc_sanitizer_runtimes()
 smatchet_apply_sanitizers(SmatchetStandalone)
 if(TARGET SmatchetCore_DX12)
     smatchet_apply_sanitizers(SmatchetCore_DX12)
