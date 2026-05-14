@@ -62,6 +62,10 @@ The 7th argument `draw` is a recorder. **You may not call `imgui.*` directly ins
 
 The recorder auto-suffixes interactive widget labels with `##op<index>` so duplicate labels still get unique ImGui IDs.
 
+**Callback fire-order**: `draw:on_deactivated` / `draw:on_deactivated_after_edit` are independent attachments — they do **not** replace the primary callback on `button(...)` / `input_text(...)`. On a click that also loses focus the same frame, both the button's click callback and the attached `on_deactivated*` callback fire. Same for `input_text`: the `on_commit` arg and an attached `:on_deactivated_after_edit(...)` both fire on `IsItemDeactivatedAfterEdit`. Author intent: opt-in additional hooks; if you don't want the double-fire, only use one of the two.
+
+`draw:set_tooltip(s)` must follow an interactive op (`button` / `input_text`) — ImGui's `IsItemHovered()` checks the previously emitted widget; chaining `set_tooltip` after a non-interactive op (`text`, `separator`, `dummy`) is undefined and may render against an unrelated item.
+
 If your provider reads Lua-global state outside the 6 documented args (theme tables, user prefs, action-mutated state), the strict cache-key comparison can't detect the change. Call one of these from the mutating callback:
 
 - `ui.invalidate_field_cache()` — drop every cached cell.

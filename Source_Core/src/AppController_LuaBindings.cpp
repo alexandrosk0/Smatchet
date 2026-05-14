@@ -1687,8 +1687,8 @@ void InvokeLuaCallbackSandboxed3(sol::state& lua, sol::protected_function& fn,
     }
 }
 
-std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, sol::state& lua,
-                           const std::string& cbArg1, const std::string& cbArg2) {
+std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppController& app,
+                           sol::state& lua, const std::string& cbArg1, const std::string& cbArg2) {
     SMATCHET_UI_PERF_SCOPE("LuaDrawList::Replay");
     int          pushed = 0;
     std::uint8_t fired  = 0;
@@ -1699,13 +1699,9 @@ std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, sol::state& 
             switch (c.op) {
                 case Op::Text:            ImGui::Text("%s", c.str.c_str()); break;
                 case Op::TextUnformatted: ImGui::TextUnformatted(c.str.c_str()); break;
-                case Op::Image: {
-                    AppController* app = lua["__smatchet_app"].get_or<AppController*>(nullptr);
-                    if (app) {
-                        SmatchetFieldIconRender::DrawImagePathOrUrl(*app, c.str, c.f1, c.f2);
-                    }
+                case Op::Image:
+                    SmatchetFieldIconRender::DrawImagePathOrUrl(app, c.str, c.f1, c.f2);
                     break;
-                }
                 case Op::ProgressBar: {
                     ImVec2 sz(c.f2, c.f3);
                     if (c.f2 < 0.0f)  sz.x = ImGui::GetContentRegionAvail().x;
@@ -1816,7 +1812,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
             entry.providerGen == curProviderGen;
         if (inputsMatch) {
             if (!entry.handled) return false;
-            ReplayCmdList(entry.cmds, lua, ticket.id, fieldId);
+            ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId);
             return true;
         }
     }
@@ -1873,7 +1869,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     const bool handled = entry.handled;
     if (handled) {
         // Replay the freshly-recorded list immediately so this frame paints.
-        ReplayCmdList(entry.cmds, lua, ticket.id, fieldId);
+        ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId);
     }
     luaFieldCache_[key] = std::move(entry);
     return handled;
@@ -2250,7 +2246,7 @@ void AppController::DrawLuaWindows() {
                 std::uint8_t fired;
                 {
                     SMATCHET_UI_PERF_SCOPE("LuaWindow::Replay");
-                    fired = ReplayCmdList(w.cmds, lua, w.name, std::string());
+                    fired = ReplayCmdList(w.cmds, *this, lua, w.name, std::string());
                 }
                 const std::uint8_t dirtyMask =
                     static_cast<std::uint8_t>(K::Click) | static_cast<std::uint8_t>(K::Commit);
