@@ -375,8 +375,8 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             if (ImGui::SmallButton("Rename")) {
                 d.viewsTitleEditing = true;
             }
-            ImGui::SameLine();
             if (d.viewsDirty) {
+                ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "  unsaved");
             }
         }
