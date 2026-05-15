@@ -66,6 +66,10 @@ if command -v clang-format >/dev/null 2>&1; then
 fi
 
 # --- 2) cppcheck (report only) ---------------------------------------------
+# Force --language=c++ so cppcheck doesn't guess C for .h files and choke on
+# `std::string` etc. when an included header is parsed bare. Everything under
+# Source_Core / Plugins / Target_Standalone / tests is C++ regardless of
+# extension.
 if command -v cppcheck >/dev/null 2>&1; then
     CPPCHECK_OUT="$(cppcheck \
         --enable=warning,style,performance,portability \
@@ -73,6 +77,8 @@ if command -v cppcheck >/dev/null 2>&1; then
         --inline-suppr \
         --suppress=missingIncludeSystem \
         --suppress=unusedFunction \
+        --suppress=unusedStructMember \
+        --language=c++ \
         --std=c++14 \
         --quiet \
         --template='cppcheck: {file}:{line}: [{severity}] {id}: {message}' \

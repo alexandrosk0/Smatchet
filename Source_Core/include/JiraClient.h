@@ -14,9 +14,6 @@
 #include <utility>
 #include <vector>
 
-/** Jira-style duration (e.g. "2h 30m"); empty if seconds <= 0. */
-std::string FormatWorkDurationFromSeconds(long long seconds);
-
 /** Result of GET /rest/api/3/myself with probe timeouts (periodic connectivity monitor). */
 class JiraClient : public ITrackerClient {
   public:

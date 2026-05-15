@@ -14,8 +14,13 @@ add_executable(SmatchetTests
     Source_Core/JqlProjectScope.test.cpp
     Source_Core/TextMerge.test.cpp
     Source_Core/JsonParseUtil.test.cpp
+    Source_Core/TrackerFieldValueParser.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
@@ -26,6 +31,12 @@ target_link_libraries(SmatchetTests PRIVATE
     doctest::doctest
     nlohmann_json::nlohmann_json
 )
+
+# ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
+# Linked here because the test exe pulls ConfigManager via TrackerFieldValueUtils.
+if(WIN32)
+    target_link_libraries(SmatchetTests PRIVATE crypt32)
+endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
 

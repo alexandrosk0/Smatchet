@@ -3,11 +3,11 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 
-
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "StringUtil.h"
+#include "TrackerFieldValueParser.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -521,7 +521,8 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
         if (col1 != std::string::npos && col2 != std::string::npos) {
             auto parse_num = [&](size_t colonIdx) -> int {
                 size_t i = colonIdx + 1;
-                while (i < trimmed.size() && (std::isspace(static_cast<unsigned char>(trimmed[i])) || trimmed[i] == '"')) {
+                while (i < trimmed.size() &&
+                       (std::isspace(static_cast<unsigned char>(trimmed[i])) || trimmed[i] == '"')) {
                     i++;
                 }
                 int val = 0;
@@ -589,9 +590,8 @@ bool TrackerGridFieldDisplay::TryRenderProgressJsonField(const std::string& curr
     SMATCHET_UI_PERF_SCOPE("TryRenderProgressJsonField");
 
     // Zero-overhead shortcut for empty cells (no hashing, no map lookups)
-    const bool isEmpty = !std::any_of(currentValue.begin(), currentValue.end(), [](char c) {
-        return !std::isspace(static_cast<unsigned char>(c));
-    });
+    const bool isEmpty = !std::any_of(currentValue.begin(), currentValue.end(),
+                                      [](char c) { return !std::isspace(static_cast<unsigned char>(c)); });
     if (isEmpty) {
         ImGui::ProgressBar(0.0f, ImVec2(std::max(1.0f, availWidth), ImGui::GetFrameHeight()));
         return true;
@@ -622,7 +622,7 @@ bool TrackerGridFieldDisplay::IsIssueRestrictionField(const TrackerField* field)
 }
 
 bool TrackerGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& currentValue, float availWidth,
-                                                          bool tooltipsEnabled) {
+                                                             bool tooltipsEnabled) {
     SMATCHET_UI_PERF_SCOPE("TryRenderIssueRestrictionField");
     static thread_local std::unordered_map<std::string, IssueRestrictionRenderModel> cache;
     const IssueRestrictionRenderModel& model =
@@ -634,8 +634,8 @@ bool TrackerGridFieldDisplay::TryRenderIssueRestrictionField(const std::string& 
     return model.rendered;
 }
 
-void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
-                                                  bool tooltipsEnabled) {
+void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const std::string& currentValue,
+                                                     float availWidth, bool tooltipsEnabled) {
     SMATCHET_UI_PERF_SCOPE("RenderAttachmentsField");
     static thread_local std::unordered_map<std::string, AttachmentRenderModel> cache;
     const AttachmentRenderModel& model =
@@ -663,8 +663,9 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
     }
 }
 
-void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue,
-                                               float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
+void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey,
+                                                  const std::string& currentValue, float availWidth,
+                                                  bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
     SMATCHET_UI_PERF_SCOPE("RenderWatchersField");
     static thread_local std::unordered_map<std::string, WatchersRenderModel> cache;
     const WatchersRenderModel& model =
@@ -713,8 +714,9 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
     }
 }
 
-void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
-                                            float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
+void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::string& issueKey,
+                                               const std::string& currentValue, float availWidth, bool tooltipsEnabled,
+                                               TrackerGridFieldAsyncState& async) {
     SMATCHET_UI_PERF_SCOPE("RenderVotesField");
     static thread_local std::unordered_map<std::string, VotesRenderModel> cache;
     const VotesRenderModel& model =
@@ -748,8 +750,7 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
             VotesLoadResult r;
             std::string err;
             std::vector<TrackerUser> voters;
-            if (app.FetchIssueVotes(issueKey, voters, err, &r.VoteCount, &r.HasVoted,
-                                    &r.VotersArrayInResponse)) {
+            if (app.FetchIssueVotes(issueKey, voters, err, &r.VoteCount, &r.HasVoted, &r.VotersArrayInResponse)) {
                 r.Voters = voters;
                 r.Ok = true;
             } else {
@@ -767,7 +768,8 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
     }
 }
 
-void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled) {
+void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth,
+                                                 bool tooltipsEnabled) {
     SMATCHET_UI_PERF_SCOPE("RenderWorklogField");
     static thread_local std::unordered_map<std::string, WorklogRenderModel> cache;
     const WorklogRenderModel& model =
@@ -817,8 +819,7 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
     }
 
     ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Watchers", &d.watchersPanelOpen,
-                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Watchers", &d.watchersPanelOpen, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextUnformatted("Issue:");
         ImGui::SameLine();
         ImGui::TextUnformatted(d.watchersPopupIssueKey.c_str());
@@ -874,8 +875,8 @@ void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d)
                 d.votesLoadedVoteCount = 0;
                 d.votesLoadedHasVoted = false;
                 d.votesLoadedVotersArrayInResponse = false;
-                LOG_ERROR("TrackerGridFieldDisplay: votes future exception issue=%s err=%s", d.votesPopupIssueKey.c_str(),
-                          ex.what());
+                LOG_ERROR("TrackerGridFieldDisplay: votes future exception issue=%s err=%s",
+                          d.votesPopupIssueKey.c_str(), ex.what());
             } catch (...) {
                 d.votesLoadInProgress = false;
                 d.votesLoadedList.clear();
@@ -894,8 +895,7 @@ void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d)
     }
 
     ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Votes", &d.votesPanelOpen,
-                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Votes", &d.votesPanelOpen, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextUnformatted("Issue:");
         ImGui::SameLine();
         ImGui::TextUnformatted(d.votesPopupIssueKey.c_str());
@@ -939,12 +939,3 @@ void TrackerGridFieldDisplay::DrawVotesListWindow(TrackerGridFieldAsyncState& d)
     }
     ImGui::End();
 }
-
-
-
-
-
-
-
-
-
