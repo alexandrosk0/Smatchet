@@ -178,3 +178,14 @@ bash scripts/check-agents-mirror.sh
 Iter preset unaffected: `build/ninja-iter-msys2/CMakeCache.txt` has no `SMATCHET_BUILD_TESTS` entry (option remains OFF default), so `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` still produces a test-free Standalone binary with no link of test code.
 
 Manual residue: none. All five commits ship with deterministic CLI verification.
+
+## Follow-on commits (post plan revision)
+
+The two deferred test units flagged in § Deviations from plan landed as separate follow-on commits closing the surfaced backlog items:
+
+- `03576ff` · `refactor(tracker): split JiraClient.h cascade off TrackerFieldValueParser.h + add value-parser tests`. Removes the `JiraClient.h` cascade from `Source_Core/include/TrackerFieldValueParser.h`, moves `FormatWorkDurationFromSeconds` declaration to pair with `ParseWorkDurationToSeconds` in the value-parser header (was in `JiraClient.h:18`), updates `Source_Core/src/TrackerGridFieldDisplay.cpp` so the call site still resolves, and adds `tests/Source_Core/TrackerFieldValueParser.test.cpp` with 10 cases / 38 assertions (parse + format + round-trip on whole-unit durations). Test exe links pick up `TrackerFieldValueParser.cpp` + `TrackerFieldValueUtils.cpp` + `Logger.cpp` + `ConfigManager.cpp` (the last forces a `target_link_libraries(... crypt32)` on Windows because `ConfigManager` calls `CryptProtectData`). Closes backlog `2026-05-15 · test-rig · JiraClient.h cascade`.
+- `86895de` · `refactor(offline-sync): lift replay-cap decision to OfflineQueueReplayPolicy + add tests`. New `Source_Core/include/OfflineQueueReplayPolicy.h` declares `kMaxReplayAttempts = 5` + inline `ShouldArchive(int currentAttempts, int maxAttempts = kMaxReplayAttempts)` — zero banned includes. `LocalCacheManager.h` aliases the existing `OfflineCreateQueue::kMaxReplayAttempts` + `OfflineFieldEditQueue::kMaxReplayAttempts` to the policy constant. `OfflineQueueService.cpp` updated at four decision sites (two pre-attempt + two post-failure gates across both tick loops) to call `OfflineQueueReplayPolicy::ShouldArchive(...)`. `tests/Source_Core/OfflineQueueReplayPolicy.test.cpp` ships 5 cases / 26 assertions. Closes backlog `2026-05-15 · test-rig · OfflineCreateQueue::kMaxReplayAttempts`.
+
+Hook tuning rolled into `03576ff` as a prerequisite: `.claude/hooks/lint-cpp.sh` gained `--language=c++` (cppcheck was guessing C when scanning a bare `.h` and rejecting `std::string`) and `--suppress=unusedStructMember` (same cross-TU false-positive class as the existing `unusedFunction` suppression — verified against `JiraClient::cachedProjects_` which is used in `JiraClient.cpp`).
+
+Aggregate rig state after these two follow-ons: **35 test cases / 133 assertions**; `ctest --output-on-failure` 1/1 green on `ninja-test-msys2`. Dual-target Standalone + DX12 build verified clean.
