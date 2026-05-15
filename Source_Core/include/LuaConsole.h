@@ -9,11 +9,23 @@
 class LuaConsole {
   public:
     std::vector<std::string> Items;
+    /// Persistent error log — not cleared by ClearLog(). Accumulates Lua automation errors
+    /// across the session so they remain visible even after the normal output is cleared.
+    std::vector<std::string> ErrorItems;
     bool AutoScroll = true;
 
     void ClearLog() { Items.clear(); }
+    void ClearErrors() { ErrorItems.clear(); }
 
     void AddLog(const std::string& log) { Items.push_back(log); }
+
+    /// Add a Lua error to both the scrolling log (red, for immediate visibility) and the
+    /// persistent error list (survives ClearLog). `msg` should be plain text without a
+    /// colour-triggering prefix — AddError prepends "[ERROR]" for the scrolling log.
+    void AddError(const std::string& msg) {
+        Items.push_back(std::string("[ERROR] ") + msg);
+        ErrorItems.push_back(msg);
+    }
 
     /**
      * @param showToolbar Clear / Copy / Auto-scroll row.
@@ -48,6 +60,29 @@ class LuaConsole {
                                 &AutoScroll);
                 ImGui::Separator();
             }
+        }
+
+        // Persistent error panel — survives ClearLog; stays visible until ClearErrors().
+        if (!ErrorItems.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.55f, 0.1f, 0.1f, 0.7f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.65f, 0.15f, 0.15f, 0.85f));
+            const bool errOpen = ImGui::CollapsingHeader(
+                SmatchetLocalization::Label("lua.errors_header", "Lua Errors", "LuaConsoleErrors"),
+                ImGuiTreeNodeFlags_DefaultOpen);
+            ImGui::PopStyleColor(2);
+            if (errOpen) {
+                if (ImGui::SmallButton(SmatchetLocalization::Label("lua.clear_errors", "Clear Errors", "LuaConsoleClearErrors"))) {
+                    ClearErrors();
+                }
+                if (!ErrorItems.empty()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    for (const auto& err : ErrorItems) {
+                        ImGui::TextUnformatted(err.c_str());
+                    }
+                    ImGui::PopStyleColor();
+                }
+            }
+            ImGui::Separator();
         }
 
         float scroll_h = explicitScrollHeight;

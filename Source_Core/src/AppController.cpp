@@ -797,6 +797,14 @@ void AppController::ClearAutomationLogSinks() {
     }
 }
 
+void AppController::AddAutomationErrorSink(std::function<void(const std::string&)> sink) {
+    errorSinks_.push_back(std::move(sink));
+}
+
+bool AppController::ConsumeScriptingWindowRequest() {
+    return scriptingWindowOpenRequested_.exchange(false);
+}
+
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
 
     AttachmentViewerHandlerCallback = std::move(handler);

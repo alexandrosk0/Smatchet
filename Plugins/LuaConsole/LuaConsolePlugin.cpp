@@ -294,6 +294,8 @@ void LuaConsolePlugin::DrawAutocompletePopup() {
 void LuaConsolePlugin::OnEarlyInit(AppController& app) {
     EnsureLuaLanguageDef();
     app.AddAutomationLogSink([this](const std::string& msg) { console_.AddLog(std::string("[LUA] ") + msg); });
+    // Dedicated error sink: adds to the persistent error panel and auto-scrolls.
+    app.AddAutomationErrorSink([this](const std::string& msg) { console_.AddError(msg); });
     const std::string autoPath = app.ResolveLuaScriptPath("Automation.lua");
     const std::string hooksPath = app.ResolveLuaScriptPath("SmatchetHooks.lua");
     const auto fileReadable = [](const std::string& p) -> bool {
@@ -327,6 +329,13 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
 }
 
 void LuaConsolePlugin::OnDraw(AppController& app) {
+    // Auto-open + focus the Scripting window when the background automation worker signals
+    // a Lua error (set via scriptingWindowOpenRequested_ in AppController).
+    if (app.ConsumeScriptingWindowRequest()) {
+        g_ui.showLuaAutomationWindow = true;
+        g_ui.requestLuaAutomationFocus = true;
+    }
+
     if (!g_ui.showLuaAutomationWindow) {
         onScriptsTabLastFrame_ = false;
         app.DrawLuaWindows();
