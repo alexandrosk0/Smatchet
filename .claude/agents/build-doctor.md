@@ -41,7 +41,8 @@ Build-system specialist for Smatchet.
 - MSYS2 UCRT64: gcc / g++ — **lld for iter presets**, **BFD for publish**
 - FetchContent for every third-party dep (ImGui, SQLiteCpp, cpr, nlohmann/json, sol2, cpp-httplib, md4c, GLFW, Lua, ghc::filesystem)
 - DX12 lib packaging: `SmatchetPackageUnrealLibs_DX12` → `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet`
-- Presets: `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-iter-unreal-msys2`, `ninja-debug-unreal-msys2`, `ninja-publish-msys2`, `ninja-release`, `vs-unreal-msvc`
+- Presets: `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-test-msys2`, `ninja-iter-unreal-msys2`, `ninja-debug-unreal-msys2`, `ninja-publish-msys2`, `ninja-release`, `vs-unreal-msvc`
+- Test rig: `SMATCHET_BUILD_TESTS` option (OFF default; ON on `ninja-test-msys2` + `ninja-debug-msys2` + `ninja-publish-msys2`) gates the doctest target `SmatchetTests` under `tests/`. ctest run from `build/<preset>/` (no CTest preset wired). Owned by `test-rig`.
 - Sanitizer presets (debug-detective uses): `ninja-debug-msys2-asan` (GCC; ASan+UBSan), `ninja-debug-msys2-tsan` (GCC; MinGW support partial), `ninja-debug-msys2-msan` (Clang-only; selects `clang`/`clang++` off PATH). Plumbing: `cmake/Sanitizers.cmake` reads `SMATCHET_SANITIZER` and adds flags PRIVATE to `SmatchetStandalone` / `SmatchetCore_DX12`.
 - `SMATCHET_ENABLE_STRICT_WARNINGS` default ON
 - `SMATCHET_LINT_MAX_LINES` (env var, default `120`): caps the dedup-filtered diagnostic lines that `.claude/hooks/lint-cpp.sh` streams to stderr per edit. Lower it (e.g. `40`) when a multi-file edit floods reviewer context; set to `0` or unset for unlimited. The hook still exits non-zero on real failures regardless of the cap.
@@ -67,6 +68,7 @@ Build-system specialist for Smatchet.
 - MSan preset fails configure with `requires Clang` — `ninja-debug-msys2-msan` needs `clang` / `clang++` on PATH. Install `mingw-w64-clang-x86_64-clang` in MSYS2 (or use the Clang env). No hardcoded compiler paths — fix PATH, don't patch the preset.
 - TSan flake on MSYS2 GCC — `ninja-debug-msys2-tsan` may produce missing libtsan symbols or false positives depending on GCC version. Linux gcc/clang reliable; on Windows, escalate to switching that investigation to ASan or moving to a Linux box.
 - Sanitizer runtime DLL missing at launch — `libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll` must be on `PATH` when launching the sanitized exe. "DLL not found" at startup of a sanitized build is usually this, not a build break.
+- doctest FetchContent cache mismatch — `_deps/doctest-src/` carrying a different `GIT_TAG` than the current `FetchContent_Declare` pin (e.g. after bumping `v2.4.11` → `v2.4.12`) causes `<doctest/doctest.h>` to come from the stale checkout, manifesting as missing macros or unexpected ABI mismatches. Fix: `rm -rf build/<preset>/_deps/doctest-* build/<preset>/_deps/doctest-build` and reconfigure. Don't `git pull` the doctest submodule manually — FetchContent owns it.
 
 **Never** disable warnings as a fix. Never lower `SMATCHET_ENABLE_STRICT_WARNINGS`. If `-Wall -Wextra` flags real code, escalate to the orchestrator for a code fix.
 

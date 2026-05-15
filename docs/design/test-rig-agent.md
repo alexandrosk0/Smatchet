@@ -137,3 +137,44 @@ bash scripts/check-agents-mirror.sh   # exits 0
 - Integration / UI / HTTP tests — not this rig's job.
 - CI wiring (GitHub Actions) — separate plan; manual `ctest` invocation suffices initially.
 - Coverage reporting (gcov / lcov) — add only if the rig sees real use.
+
+## Implementation log
+
+- `97ab7f1` · commit 1 — rig bootstrap. `tests/CMakeLists.txt` (doctest v2.4.11 FetchContent + `add_executable(SmatchetTests …)` + per-cpp linkage + `-static-libgcc -static-libstdc++ -static`), `tests/test_main.cpp` shim, `tests/Source_Core/JqlProjectScope.test.cpp` (6 cases / 23 assertions), root `CMakeLists.txt` `option(SMATCHET_BUILD_TESTS OFF)` + `add_subdirectory(tests)` gate, `CMakePresets.json` new `ninja-test-msys2` configure + build preset + flip ON for `ninja-debug-msys2` + `ninja-publish-msys2`.
+- `3b47ff0` · commit 2 — agent definition. `agents/test-rig.md` (complexity low · sonnet/low · v1, full hard invariants + workflow + reporting contract), `.claude/agents/test-rig.md` mirror via `scripts/sync-agents.sh`, `AGENTS.md` row in § Subsystem specialists + negative bullet in § Stay in the orchestrator for + § Trigger auto-activation row.
+- `7f024fc` · commit 3 — second + third tests. `tests/Source_Core/TextMerge.test.cpp` (6 cases / 16 assertions over `TextMerge::ThreeWayMerge`), `tests/Source_Core/JsonParseUtil.test.cpp` (8 cases / ~30 assertions across header-only loose JSON parsers), `tests/CMakeLists.txt` updated to link `nlohmann_json::nlohmann_json` and pull in `Source_Core/src/TextMerge.cpp`.
+- `1f2ad93` · commit 4 — lint hook. `.claude/hooks/lint-cpp.sh` case-glob filter now includes `tests/*.{cpp,h}` + `tests/**/*.{cpp,h}`; clang-tidy compile_commands lookup routes test files to `build/ninja-test-msys2/`; dual-target DX12 syntax probe skipped on `tests/**`.
+- commit 5 (this) — `agents/build-doctor.md` adds `ninja-test-msys2` to the preset list + new "doctest FetchContent cache mismatch" common-cause; `backlog/AGENT_SELF_IMPROVEMENT.md` entry 12 (`no test rig`) flipped to `applied`; two new backlog items filed (split `JiraClient.h` for `TrackerFieldValueParser` testability; lift offline-queue replay-cap into a free function); this plan revision.
+
+## Deviations from plan
+
+- **Commit 1 first-test was `JqlProjectScope`, not `TrackerFieldValueParser`** as the plan's commit-1 row suggested. Reason — `JqlProjectScope.cpp` is zero-dep pure stdlib (`<cctype>` / `<string>` / `<vector>`), so the rig boots with a one-file `target_sources` list. `TrackerFieldValueParser.h` pulls `JiraClient.h` → `ITrackerClient.h` + `ConfigManager.h` + HTTP / cpr cascade; linking it would force the entire tracker / HTTP / config stack into `SmatchetTests`, violating the pure-logic invariant the rig is supposed to enforce. Filed as backlog `2026-05-15 · test-rig · [context]` — needs `JiraClient.h` split before the parser becomes testable.
+- **Commit 3 seeded `TextMerge` + `JsonParseUtil`, not `TrackerFieldValueParser` + `OfflineQueueReplay`.** Reason — see above for `TrackerFieldValueParser`. `OfflineCreateQueue::kMaxReplayAttempts` lives in `Source_Core/include/LocalCacheManager.h`, which `#include <SQLiteCpp/SQLiteCpp.h>` for the queue POD types that share the file. The doctest rig bans SQLite includes; and the cap value alone (`CHECK(... == 5)`) is barely informative compared to testing the cap-decision logic, which lives inline in `OfflineQueueService.cpp` and can't be reached without constructing the full SQLite-backed queue. Filed as backlog `2026-05-15 · test-rig · [context]` — needs the replay-cap decision lifted into a free function before it becomes testable. `TextMerge` (offline-edit 3-way merge — real bug-history per RICH_TEXT_EDITING_V2_PLAN) and `JsonParseUtil` (loose JSON int parsers — feeds JQL parsing + payload normalisation) are both genuinely zero-banned-include pure logic with real bug-history; they replaced the originally-planned units 1:1.
+- **CTest preset (`testPresets` array)** was not added. Reason — `ctest --preset` is a CMake 3.20+ feature gated on a top-level `testPresets` array in `CMakePresets.json`. The plan didn't call for it and `cd build/<preset> && ctest --output-on-failure` works identically. Document this in `agents/test-rig.md` § Workflow step 5 ("CTest preset is wired by build dir, not test preset") so future agents don't try to `ctest --preset ninja-test-msys2` and fail with `No such test preset`.
+- **`-static-libgcc -static-libstdc++ -static`** added to `SmatchetTests` link options. Not in the plan. Reason — without static-linking the C++ + GCC runtime, `ctest` invoking `SmatchetTests.exe` from outside the MSYS2 shell fails with exit code `0xc0000139` (STATUS_ENTRYPOINT_NOT_FOUND) because the MSYS2 UCRT64 runtime DLLs aren't on `PATH`. Mirrors the same fix the publish preset applies via `SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME` for `SmatchetStandalone`.
+
+## Verification
+
+```bash
+cmake --preset ninja-test-msys2
+# → configure passes (doctest v2.4.11 FetchContent'd successfully)
+
+cmake --build --preset ninja-test-msys2 --target SmatchetTests
+# → [10/10] Linking CXX executable tests\SmatchetTests.exe
+
+cd build/ninja-test-msys2 && ctest --output-on-failure
+# → 1/1 Test #1: smatchet_tests ... Passed (0.01 sec)
+#   100% tests passed, 0 tests failed out of 1
+
+tests/SmatchetTests.exe
+# → [doctest] test cases: 20 | 20 passed | 0 failed | 0 skipped
+#   [doctest] assertions: 69 | 69 passed | 0 failed |
+#   [doctest] Status: SUCCESS!
+
+bash scripts/check-agents-mirror.sh
+# → agents + token-tracking + shared skills mirrors in sync (exit 0)
+```
+
+Iter preset unaffected: `build/ninja-iter-msys2/CMakeCache.txt` has no `SMATCHET_BUILD_TESTS` entry (option remains OFF default), so `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` still produces a test-free Standalone binary with no link of test code.
+
+Manual residue: none. All five commits ship with deterministic CLI verification.
