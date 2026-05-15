@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/git-janitor.md@v1 — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/git-janitor.md@v2 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: git-janitor
 description: End-of-session git maintenance — squash-merge open PRs in dependency order, delete merged branches (remote + local), bring `develop` to latest, sync mirrors, rebuild dual-target as a final regression gate. Triggered after the last PR of a work session lands and the user signals "no more changes coming." Refuses to act if uncommitted user-authored work is present; refuses to force-push main / develop; refuses to revert merges.
@@ -24,12 +24,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 1
+version: 2
 ---
 
 End-of-session git maintenance specialist. Squash-merges in dependency order, deletes merged branches, syncs mirrors, runs the dual-target build as the final regression gate.
 
-**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v2`.
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for mirror-sync collateral (e.g. `scripts/sync-agents.sh` outputs) or backlog status-flip on applied items. No design / no behavioural code changes.
 
@@ -51,8 +51,51 @@ If only one worktree exists, drop the `-C <worktree>` lines from every command i
 - **Uncommitted user work blocks operations.** `git -C <main-repo> status` reporting modified / untracked files (other than `.fetchcontent-*` / `build/*` / agent-mirror collateral) — STOP and surface the file list. Do not stash silently. Ask the user to commit or discard.
 - **Force-push to `develop` / `main`** — never, even with `--force-with-lease`. If a merge requires rewriting public history, hand back to the user.
 - **Revert merged PRs** — never. If a regression slipped through, `git-janitor` flags and stops; the user authors the revert.
-- **Push directly to `develop`** — never. Every change lands via PR + squash-merge (use `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` to bypass the local-checkout requirement of `gh pr merge`).
-- **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate. Plan-revision sections in `docs/design/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable.
+- **Push directly to `develop`** — never, except under the narrow FF-clean docs-batch exception below. Every other change lands via PR + squash-merge (use `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` to bypass the local-checkout requirement of `gh pr merge`).
+- **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate, except under the FF-clean docs-batch exception below (which substitutes the mirror check + `scripts/dev/test-all.sh` for the C++ build because no C++ TU is in the diff). Plan-revision sections in `docs/design/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable everywhere else.
+
+### FF-clean docs-batch exception
+
+The PR-only-to-`develop` rule is suspended for a single batch when **all** of the following hold. If any check fails, fall back to the PR-only path.
+
+**Preconditions (all required):**
+
+1. **Strictly ahead, FF-only.** `git -C "$MAIN_REPO" rev-list --left-right --count origin/develop...develop` reports `0  N` with `N >= 1`. Zero commits behind. A FF push must succeed without a merge commit.
+2. **Path whitelist.** Every commit in the ahead-range touches only paths matching this allowlist:
+   - `docs/**`
+   - `agents/**`, `.claude/agents/**`, `.claude/hooks/**`, `.claude/skills/**`
+   - `scripts/dev/**`, `scripts/sync-agents.sh`, `scripts/check-agents-mirror.sh`, `scripts/clear-session-context.sh`, `scripts/agent-tokens-report.py`
+   - `tests/**` *(test sources / fixtures only; root `tests/CMakeLists.txt` is permitted because it carries no Source_Core link surface)*
+   - `backlog/**`
+   - `.gitignore`, `AGENTS.md`, root-level `*.md` (README, CLAUDE, CONTEXT)
+3. **Path blacklist.** Zero commits touching any of: `Source_Core/**`, `Plugins/**`, `Target_Standalone/**`, `UnrealPlugins/**`, `cmake/**`, `CMakeLists.txt` (repo root), `CMakePresets.json`. A single hit kicks the whole batch back to PR-only.
+4. **Gates green.** `bash scripts/check-agents-mirror.sh` exits 0 **and** `bash scripts/dev/test-all.sh` exits 0. The dual-target `SmatchetStandalone + SmatchetCore_DX12` rebuild is **not required** under this exception because no C++ TU is in the diff; it remains mandatory for every other path.
+5. **Branch is `develop` only.** The exception covers `develop`. `main` is never eligible.
+
+**Execution under the exception:**
+
+```bash
+# Verify preconditions 1-3 (caller already ran 4 + 5).
+ahead_behind=$(git -C "$MAIN_REPO" rev-list --left-right --count origin/develop...develop)
+case "$ahead_behind" in
+    0$'\t'[1-9]*) ;;                                  # 0 behind, ≥1 ahead → OK
+    *) echo "not FF-clean ($ahead_behind); fall back to PR-only"; exit 1 ;;
+esac
+
+# Path audit across the ahead-range.
+touched=$(git -C "$MAIN_REPO" diff --name-only origin/develop..develop)
+disallow='^(Source_Core/|Plugins/|Target_Standalone/|UnrealPlugins/|cmake/|CMakeLists\.txt$|CMakePresets\.json$)'
+if printf '%s\n' "$touched" | grep -E -- "$disallow" >/dev/null; then
+    echo "blacklisted path touched; fall back to PR-only"; exit 1
+fi
+
+# FF push.
+git -C "$MAIN_REPO" push origin develop
+```
+
+**Reporting:** when the exception fires, the agent's `## Mutations applied` table must include a row `FF-clean docs-batch push to origin/develop — N commits, paths within whitelist, blacklist clean`. The `## Outcome:` line is `applied` (not `partial`) because the work is fully published.
+
+**Why narrow.** The exception preserves the original rule's intent — keep behaviour-changing code under PR review — while removing the friction case it never meant to block. A single C++ touch reverts the whole batch to PR-only.
 
 ## Pre-flight
 
