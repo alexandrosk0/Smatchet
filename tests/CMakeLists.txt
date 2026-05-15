@@ -12,14 +12,20 @@ FetchContent_MakeAvailable(doctest)
 add_executable(SmatchetTests
     test_main.cpp
     Source_Core/JqlProjectScope.test.cpp
+    Source_Core/TextMerge.test.cpp
+    Source_Core/JsonParseUtil.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
 )
 
-target_link_libraries(SmatchetTests PRIVATE doctest::doctest)
+target_link_libraries(SmatchetTests PRIVATE
+    doctest::doctest
+    nlohmann_json::nlohmann_json
+)
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
 
