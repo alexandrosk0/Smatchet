@@ -66,6 +66,7 @@ smatchet_field_catalog_cache.json
 .claude/skills/*
 !.claude/skills/agent-tokens/
 !.claude/skills/grill-with-docs/
+!.claude/skills/scratchpad-recall/
 skills-lock.json
 
 # Per-machine agent token usage log (see docs/AGENT_TOKEN_TRACKING.md)
@@ -73,6 +74,7 @@ skills-lock.json
 
 # Per-session orchestrator scratchpad (see AGENTS.md § Session scratchpad protocol)
 .session-context.md
+.session-context.archive/
 
 # Per-investigation debug-detective artifacts (see agents/debug-detective.md)
 debug-*.log

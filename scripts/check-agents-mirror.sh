@@ -2,12 +2,12 @@
 # Verify .claude/ mirror is in sync with canonical sources under agents/.
 # Exit 0 on match, non-zero on drift. CI / pre-commit friendly.
 #
-# Covers both sync targets:
+# Covers all sync targets:
 #   agents/*.md                              -> .claude/agents/*.md
 #   agents/_shared/token-tracking/*.py       -> .claude/hooks/agent-token-log.py
 #                                            -> .claude/hooks/agents-statusline.py
 #   agents/_shared/token-tracking/SKILL.md   -> .claude/skills/agent-tokens/SKILL.md
-#   agents/_shared/skills/grill-with-docs/*.md -> .claude/skills/grill-with-docs/*.md
+#   agents/_shared/skills/<skill>/*.md       -> .claude/skills/<skill>/*.md (every subdir)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -68,18 +68,28 @@ elif [[ -f "$exp" && ! -f "$act" ]]; then
   DRIFT=1
 fi
 
-# 4) grill-with-docs skill mirror.
-GRILL_EXP="$TMP/.claude/skills/grill-with-docs"
-GRILL_ACT="$ROOT/.claude/skills/grill-with-docs"
-if [[ -d "$GRILL_EXP" ]]; then
-  if [[ ! -d "$GRILL_ACT" ]]; then
-    echo ".claude/skills/grill-with-docs/ MISSING (run scripts/sync-agents.sh)" >&2
-    DRIFT=1
-  elif ! diff -q -r "$GRILL_EXP" "$GRILL_ACT" >/dev/null; then
-    echo ".claude/skills/grill-with-docs/ OUT OF SYNC" >&2
-    diff -r "$GRILL_EXP" "$GRILL_ACT" >&2 || true
-    DRIFT=1
-  fi
+# 4) Every shared-skills subdir mirror.
+SHARED_SKILLS_EXP_ROOT="$TMP/.claude/skills"
+SHARED_SKILLS_ACT_ROOT="$ROOT/.claude/skills"
+SHARED_SKILL_NAMES=()
+if [[ -d "$TMP/agents/_shared/skills" ]]; then
+  for skill_dir in "$TMP/agents/_shared/skills"/*/; do
+    [[ -d "$skill_dir" ]] || continue
+    skill_name="$(basename "$skill_dir")"
+    SHARED_SKILL_NAMES+=("$skill_name")
+    exp="$SHARED_SKILLS_EXP_ROOT/$skill_name"
+    act="$SHARED_SKILLS_ACT_ROOT/$skill_name"
+    if [[ -d "$exp" ]]; then
+      if [[ ! -d "$act" ]]; then
+        echo ".claude/skills/${skill_name}/ MISSING (run scripts/sync-agents.sh)" >&2
+        DRIFT=1
+      elif ! diff -q -r "$exp" "$act" >/dev/null; then
+        echo ".claude/skills/${skill_name}/ OUT OF SYNC" >&2
+        diff -r "$exp" "$act" >&2 || true
+        DRIFT=1
+      fi
+    fi
+  done
 fi
 
 if [[ $DRIFT -ne 0 ]]; then
@@ -88,5 +98,10 @@ if [[ $DRIFT -ne 0 ]]; then
   exit 1
 fi
 
-echo "agents + token-tracking + grill-with-docs mirrors in sync"
+if [[ ${#SHARED_SKILL_NAMES[@]} -gt 0 ]]; then
+  SHARED_LIST="$(IFS=,; echo "${SHARED_SKILL_NAMES[*]}")"
+  echo "agents + token-tracking + shared skills ($SHARED_LIST) mirrors in sync"
+else
+  echo "agents + token-tracking mirrors in sync"
+fi
 exit 0

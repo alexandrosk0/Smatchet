@@ -141,53 +141,64 @@ if [[ -d "$TT_DIR" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Section 3 — agents/_shared/skills/grill-with-docs/  ->  .claude/skills/grill-with-docs/
+# Section 3 — agents/_shared/skills/<skill>/  ->  .claude/skills/<skill>/
 # -----------------------------------------------------------------------------
+# Generic loop over every subdirectory of agents/_shared/skills/. Each skill
+# dir is mirrored verbatim into .claude/skills/<skill>/ with the standard
+# auto-generated banner. SKILL.md (YAML-frontmatter) gets the banner injected
+# inside the frontmatter; plain markdown gets an HTML-comment banner prepended.
 
-GRILL_SRC="$ROOT/agents/_shared/skills/grill-with-docs"
-GRILL_DST="$ROOT/.claude/skills/grill-with-docs"
+SKILLS_SRC_ROOT="$ROOT/agents/_shared/skills"
+SKILLS_DST_ROOT="$ROOT/.claude/skills"
 
-GRILL_COUNT=0
-if [[ -d "$GRILL_SRC" ]]; then
-  mkdir -p "$GRILL_DST"
+SKILL_DIR_COUNT=0
+SKILL_FILE_COUNT=0
+if [[ -d "$SKILLS_SRC_ROOT" ]]; then
+  for skill_src in "$SKILLS_SRC_ROOT"/*/; do
+    [[ -d "$skill_src" ]] || continue
+    skill_name="$(basename "$skill_src")"
+    skill_dst="$SKILLS_DST_ROOT/$skill_name"
+    mkdir -p "$skill_dst"
+    SKILL_DIR_COUNT=$((SKILL_DIR_COUNT + 1))
 
-  for src in "$GRILL_SRC"/*.md; do
-    [[ -e "$src" ]] || continue
-    name="$(basename "$src")"
-    dst="$GRILL_DST/$name"
+    for src in "$skill_src"*.md; do
+      [[ -e "$src" ]] || continue
+      name="$(basename "$src")"
+      dst="$skill_dst/$name"
 
-    if head -n 1 "$src" | grep -q '^---$'; then
-      # YAML-frontmatter file (SKILL.md) — inject banner inside frontmatter.
-      awk -v name="$name" '
-        NR == 1 && $0 == "---" {
-          print "---"
-          print "# AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/" name " — DO NOT EDIT."
-          print "# Run scripts/sync-agents.sh to regenerate."
-          injected = 1
-          next
-        }
-        { print }
-      ' "$src" > "$dst"
-    else
-      # Plain markdown — prepend an HTML comment banner.
-      {
-        echo "<!-- AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/grill-with-docs/$name — DO NOT EDIT. -->"
-        echo "<!-- Run scripts/sync-agents.sh to regenerate. -->"
-        cat "$src"
-      } > "$dst"
-    fi
-    GRILL_COUNT=$((GRILL_COUNT + 1))
-  done
+      if head -n 1 "$src" | grep -q '^---$'; then
+        # YAML-frontmatter file (SKILL.md) — inject banner inside frontmatter.
+        awk -v skill="$skill_name" -v name="$name" '
+          NR == 1 && $0 == "---" {
+            print "---"
+            print "# AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/" skill "/" name " — DO NOT EDIT."
+            print "# Run scripts/sync-agents.sh to regenerate."
+            injected = 1
+            next
+          }
+          { print }
+        ' "$src" > "$dst"
+      else
+        # Plain markdown — prepend an HTML comment banner.
+        {
+          echo "<!-- AUTO-GENERATED MIRROR of ../../../agents/_shared/skills/$skill_name/$name — DO NOT EDIT. -->"
+          echo "<!-- Run scripts/sync-agents.sh to regenerate. -->"
+          cat "$src"
+        } > "$dst"
+      fi
+      SKILL_FILE_COUNT=$((SKILL_FILE_COUNT + 1))
+    done
 
-  # Drop stale mirrors that no longer have a canonical source.
-  for dst in "$GRILL_DST"/*.md; do
-    [[ -e "$dst" ]] || continue
-    name="$(basename "$dst")"
-    if [[ ! -f "$GRILL_SRC/$name" ]]; then
-      echo "removing stale mirror: $dst" >&2
-      rm "$dst"
-    fi
+    # Drop stale mirrors that no longer have a canonical source.
+    for dst in "$skill_dst"/*.md; do
+      [[ -e "$dst" ]] || continue
+      name="$(basename "$dst")"
+      if [[ ! -f "$skill_src$name" ]]; then
+        echo "removing stale mirror: $dst" >&2
+        rm "$dst"
+      fi
+    done
   done
 fi
 
-echo "synced $AGENTS_COUNT agents to .claude/agents/ + $TT_COUNT token-tracking files to .claude/hooks/ + .claude/skills/agent-tokens/ + $GRILL_COUNT grill-with-docs files to .claude/skills/grill-with-docs/"
+echo "synced $AGENTS_COUNT agents to .claude/agents/ + $TT_COUNT token-tracking files to .claude/hooks/ + .claude/skills/agent-tokens/ + $SKILL_FILE_COUNT files across $SKILL_DIR_COUNT shared skills to .claude/skills/"
