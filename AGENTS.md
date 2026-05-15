@@ -117,13 +117,14 @@ Run two or more subagents in a **single tool-use block** (multiple `Agent` calls
 
 ### Session scratchpad protocol
 
-A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`scripts/clear-session-context.sh`) truncates it and writes a banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
+A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`scripts/clear-session-context.sh`) archives the prior scratchpad (when it carries any agent-appended `## ` section) to `.session-context.archive/<ts>-<sid8>.md`, then writes a fresh banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
 
 Rules:
 
 - **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the vexp `run_pipeline`-first rule.
 - **Subagents emit `## Session context append`** in their report when there are session-durable facts worth surfacing — repro state, file:line evidence, decisions locked, open questions. Hook captures + appends; agent never writes the file.
 - **Append-only.** Hook never edits prior entries.
+- **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see `agents/_shared/skills/scratchpad-recall/SKILL.md` (mirror: `.claude/skills/scratchpad-recall/SKILL.md`). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
 
 Section shape:
 
@@ -166,6 +167,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | automate testing, manual verification, headless test | `test-author` |
 | end of session, merge open PRs, tidy up, post-merge cleanup | `git-janitor` |
 | stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
+| test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 
 Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific synonyms.
 
@@ -215,6 +217,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 | `mcp-toolsmith` | low · read-edit | `Plugins/Mcp/` + `SmatchetMcpServerUi` — MCP wire protocol, tool schemas (JSON-RPC), server lifecycle, REST envelope shape. |
 | `p4-blame` | low · read-edit | Perforce blame — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `BlameSyntaxHighlight`, `CallstackParser`. `p4 annotate` / `p4 describe`, blame caching, stack-frame symbolication via `PathRemaps`, Jira-comment export. |
 | `unreal-bridge` | low · read-edit | Dual-target divergence — `SmatchetCore_DX12`, `UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, header pollution in `Source_Core/`, packaging output. |
+| `test-rig` | low · read-edit | Pure-logic doctest rig under `tests/` — `tests/CMakeLists.txt`, `tests/Source_Core/<Unit>.test.cpp`, `SMATCHET_BUILD_TESTS`, `ninja-test-msys2` preset. Adding tests for pure C++14 helpers (JQL surgery, value parsers, queue-replay decision math), expanding coverage, fixing wrong assertions. **Refuses** UI / HTTP / SQLite / ImGui / cpr surfaces — those route to bucket-E or stay deferred. |
 
 ### Stay in the orchestrator for
 
@@ -225,6 +228,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 - `Locales/*.json` strings
 - Perforce blame UI tweaks
 - Additive SQLite schema changes
+- Adding a single `CHECK` to an already-tested `tests/Source_Core/<Unit>.test.cpp` (delegate to `test-rig` only when scoping a NEW unit's test surface)
 
 ### Heuristic
 
