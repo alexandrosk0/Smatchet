@@ -1280,8 +1280,14 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
     }, LUA_MASKCOUNT, 50000);
 
     auto logErr = [this](const char* prefix, const std::string& detail) {
-        const std::string msg = std::string(prefix) + detail;
-        LuaLogInfoBind(msg);
+        const std::string bare = std::string(prefix) + detail;
+        // Route through the normal info sink so the console shows it, but also
+        // through dedicated error sinks (persistent error panel + window-open).
+        LuaLogInfoBind(std::string("[ERROR] ") + bare);
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
     };
 
     if (job.type == AutomationJob::Type::RunAutoScript) {
@@ -1389,14 +1395,19 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
 
 void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
-        const std::string msg = std::string(prefix) + detail;
+        const std::string bare = std::string(prefix) + detail;
+        const std::string decorated = std::string("[ERROR] ") + bare;
         if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
             for (const auto& sink : luaHost_->SnapshotLogSinks()) {
-                sink(msg);
+                sink(decorated);
             }
         } else {
-            std::printf("%s\n", msg.c_str());
+            std::printf("%s\n", decorated.c_str());
         }
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
     };
 
     const std::string path = ResolveLuaScriptPath(scriptPath);
