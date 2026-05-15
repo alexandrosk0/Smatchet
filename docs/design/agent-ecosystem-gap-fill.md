@@ -317,3 +317,42 @@ print('missing in trigger table:', missing)
 - Cross-session scratchpad merge / archive. Per-session, cleared at SessionStart, no carry-over.
 - Auto-routing inside Claude Code itself (gap 6). The trigger table is for the orchestrator (main thread), not the harness — Claude Code's `description:` matching stays primary.
 - Skill-level changes to `grill-with-docs` or `agent-tokens`. Skills already align with these gaps.
+
+## Implementation log
+
+- `6df6170` · commit A — infra: agent-token-log.py + clear-session-context.sh + SessionStart hook + report + statusline extensions; .session-context.md gitignored
+- `d206de5` · commit B — policy: AGENTS.md § Parallel dispatch / Session scratchpad / Tool-trace / Output contract / Trigger auto-activation / Skeleton-first / Agent versioning; per-agent version: 1 + banner update; sync-agents.sh / .ps1 emit @v<N> in mirror banner
+
+## Deviations from plan
+
+- **Scratchpad write protocol** — original plan had subagents Edit the file themselves at end of report. Deviated to **hook-writes-from-section**: subagent emits `## Session context append` in its report; SubagentStop hook reads + appends. Eliminates race when parallel subagents would otherwise contend on the same file, and avoids conflicting with the vexp `run_pipeline`-FIRST rule.
+- **Tool-trace generation** — original plan had agents emit a `Tools:` line manually. Deviated to **hook-counts-from-transcript** for the same reason: zero agent burden, fully accurate. The canonical count is the JSONL `tool_trace` field; agents may optionally include their own line for the user's eye but the count source-of-truth is hook-derived.
+- **`outcome` inference** — refined from the plan's three-bullet heuristic to a four-tier priority: explicit `## Outcome: <state>` line wins, then halt-keyword scan, then `## Self-improvement` heading presence, then default applied. Catches more cases cleanly.
+
+## Verification
+
+Static:
+
+- `bash scripts/check-agents-mirror.sh` → exits 0 (drift clean post-sync).
+- `python -m json.tool .claude/settings.json` → valid.
+- `python scripts/agent-tokens-report.py --all` → handles old rows lacking new fields; defaults outcome=applied; no crashes.
+- `python scripts/agent-tokens-report.py` → session view works.
+- `bash scripts/clear-session-context.sh` → writes banner with session-id + timestamp; `.session-context.md` truncated.
+- `git check-ignore -v .session-context.md` → confirms gitignored.
+- All 20 agents have `version: 1` in frontmatter (`grep -L "^version: " agents/*.md` returns empty).
+- Mirror banner reads `@v1` for every agent (`grep "@v1" .claude/agents/architect.md` matches).
+
+End-to-end (fixture-based):
+
+1. Constructed two fake transcripts (applied path + halted path) under a Windows-friendly temp dir.
+2. Invoked `agent-token-log.py` with synthetic SubagentStop stdin JSON pointing at each transcript.
+3. Confirmed for applied path: `outcome=applied`, `tools_used={"Read":1,"Edit":2,"Bash":1}`, `tool_trace="Edit×2, Read×1, Bash×1"`, `agent_version=2` (read from fake frontmatter), `.session-context.md` appended with header block.
+4. Confirmed for halted path: `outcome=halted`, `halt_reason` captured from the BLOCKED line, `agent_version=1` (default when frontmatter lacks the field).
+
+Dynamic (deferred — needs a real Claude Code session restart):
+
+1. Restart Claude Code (loads the new SessionStart hook + AGENTS.md).
+2. Confirm `.session-context.md` shows a fresh banner with the new session id.
+3. Invoke any subagent; the hook should append a row to `.claude/.agent-tokens.jsonl` with the new fields populated.
+4. Run `python scripts/agent-tokens-report.py` and confirm the outcome breakdown shows the new agent call.
+5. Spawn two independent subagents in one tool-use block per § Parallel dispatch; both rows share the session id; scratchpad accumulates two headers.

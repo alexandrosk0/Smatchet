@@ -194,3 +194,31 @@ Sweep the file when:
   Details: Smatchet has no ImGui Test Engine integration today. The first bucket-E item (e.g. "drag column header to position X" verification step) will require wiring imgui_test_engine via FetchContent, a new SmatchetUiTest target gated by SMATCHET_BUILD_UI_TESTS=ON, tests/ui/ directory, and a ui_test.run CLI command. Recipe is encoded in agents/test-author.md § Bucket E; first invocation should land the harness, not just defer.
   Status: open
   Defer: Wait for the first plan whose §Verification contains a click/drag/type that no scenario can drive. At that point the bucket-E deliverable is "wire ImGui Test Engine + the one test that needs it". Until then, premature.
+
+- 2026-05-15 · orchestrator · [process] — sequential subagent dispatch loses wall-clock when delegations are contract-independent
+  Details: Borrowed from Anthropic multi-agent research paper. Orchestrator now parallelises independent delegations in a single tool-use block per AGENTS.md § Parallel dispatch (examples: code-review + security-review for pre-merge gate; perf-detective + debug-detective for "slow AND wrong output").
+  Status: applied (d206de5)
+
+- 2026-05-15 · orchestrator · [tooling] — no session scratchpad; subagent N rediscovered facts subagent N-1 already surfaced
+  Details: Borrowed from Anthropic multi-agent research paper. New `.session-context.md` at repo root (gitignored); SessionStart hook truncates; SubagentStop hook (agent-token-log.py) appends a header block when the subagent's report carries `## Session context append`. Subagents never read or edit the file themselves — orchestrator reads + passes inline. Avoids race when subagents run in parallel and avoids conflicting with the vexp run_pipeline-FIRST rule.
+  Status: applied (6df6170 + d206de5)
+
+- 2026-05-15 · orchestrator · [tooling] — JSONL telemetry only tracked tokens; outcome / halt-reason / version / delegation-chain invisible
+  Details: Borrowed from OpenAI Agents SDK + wshobson telemetry patterns. agent-token-log.py now emits outcome, halt_reason, agent_version, delegation_chain, tools_used, tool_trace per row. Inferred from transcript tail (priority: explicit `## Outcome:` line → halt keywords → `## Self-improvement` heading → default applied). scripts/agent-tokens-report.py surfaces outcome breakdown + top halt reasons + delegation depth + version-drift detection.
+  Status: applied (6df6170)
+
+- 2026-05-15 · orchestrator · [context] — get_skeleton under-used; agents read full files for context-only inspection
+  Details: AGENTS.md § Skeleton-first now codifies as hard rule: get_skeleton for inspection, Read only when editing. Cuts ~70-90% input tokens on the heaviest readers (architect, code-review, security-review, debug-detective).
+  Status: applied (d206de5)
+
+- 2026-05-15 · orchestrator · [process] — agent prompts had no version field; couldn't correlate behaviour drift with prompt edits
+  Details: Borrowed from OpenAI Agents SDK. Every agent now carries `version: <N>` integer in frontmatter; bump on capability / workflow / output-shape change (not on prose / banner / token-efficiency tweaks). Mirror banner emitted by scripts/sync-agents.sh now reads `@v<N>` so drift is visible at a glance. Telemetry (agent_version field) lets the report flag version-drift within a window.
+  Status: applied (d206de5)
+
+- 2026-05-15 · orchestrator · [process] — output-shape drift across agents; downstream agents couldn't reliably parse handoff sections
+  Details: AGENTS.md § Agent output contract codifies four classes (Investigator / Implementer / Helper / Maintenance) each with required minimum sections plus a mandatory `## Outcome: <state>` line so telemetry inference is deterministic. Existing prompts already mostly conformed; this closes drift without forcing rewrites.
+  Status: applied (d206de5)
+
+- 2026-05-15 · orchestrator · [tooling] — trigger keywords lived in per-agent frontmatter but no central routing table
+  Details: AGENTS.md § Trigger auto-activation now publishes the keyword → agent map. Orchestrator consults the table before falling back to the heuristic block. Per-agent triggers: list mirrors the row plus agent-specific synonyms.
+  Status: applied (d206de5)
