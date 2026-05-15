@@ -19,11 +19,11 @@ class LuaConsole {
 
     void AddLog(const std::string& log) { Items.push_back(log); }
 
-    /// Add a Lua error to both the scrolling log (red, for immediate visibility) and the
-    /// persistent error list (survives ClearLog). `msg` should be plain text without a
-    /// colour-triggering prefix — AddError prepends "[ERROR]" for the scrolling log.
+    /// Add a Lua error to the persistent error list (survives ClearLog). The scrolling log
+    /// entry (`Items`) is handled separately by the caller — either via LuaLogInfoBind
+    /// (automation runner) or an explicit AddLog call (console snippet). This avoids double-
+    /// logging when both the info-sink and the error-sink path are active.
     void AddError(const std::string& msg) {
-        Items.push_back(std::string("[ERROR] ") + msg);
         ErrorItems.push_back(msg);
     }
 
@@ -62,6 +62,12 @@ class LuaConsole {
             }
         }
 
+        // Start clipboard capture before any rendered content so both the error panel
+        // and the scrolling log are included in a single "Copy to Clipboard" operation.
+        if (copy_to_clipboard) {
+            ImGui::LogToClipboard();
+        }
+
         // Persistent error panel — survives ClearLog; stays visible until ClearErrors().
         if (!ErrorItems.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.55f, 0.1f, 0.1f, 0.7f));
@@ -71,13 +77,20 @@ class LuaConsole {
                 ImGuiTreeNodeFlags_DefaultOpen);
             ImGui::PopStyleColor(2);
             if (errOpen) {
-                if (ImGui::SmallButton(SmatchetLocalization::Label("lua.clear_errors", "Clear Errors", "LuaConsoleClearErrors"))) {
-                    ClearErrors();
+                if (!copy_to_clipboard) {
+                    // Hide the "Clear Errors" button during clipboard copy so the button
+                    // label itself doesn't land in the clipboard text.
+                    if (ImGui::SmallButton(SmatchetLocalization::Label("lua.clear_errors", "Clear Errors", "LuaConsoleClearErrors"))) {
+                        ClearErrors();
+                    }
                 }
                 if (!ErrorItems.empty()) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-                    for (const auto& err : ErrorItems) {
-                        ImGui::TextUnformatted(err.c_str());
+                    for (std::size_t i = 0; i < ErrorItems.size(); ++i) {
+                        if (i > 0) {
+                            ImGui::Separator();
+                        }
+                        ImGui::TextUnformatted(ErrorItems[i].c_str());
                     }
                     ImGui::PopStyleColor();
                 }
@@ -92,10 +105,6 @@ class LuaConsole {
 
         const ImGuiChildFlags childFlags = ImGuiChildFlags_None;
         if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, scroll_h), childFlags, ImGuiWindowFlags_HorizontalScrollbar)) {
-            if (copy_to_clipboard) {
-                ImGui::LogToClipboard();
-            }
-
             for (const auto& item : Items) {
                 ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
                 if (item.find("[ERROR]") != std::string::npos) {
@@ -109,15 +118,15 @@ class LuaConsole {
                 ImGui::PopStyleColor();
             }
 
-            if (copy_to_clipboard) {
-                ImGui::LogFinish();
-            }
-
             if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
                 ImGui::SetScrollHereY(1.0f);
             }
         }
         ImGui::EndChild();
+
+        if (copy_to_clipboard) {
+            ImGui::LogFinish();
+        }
 
         if (showToolbar && !compactSingleLineToolbar && showBottomHint) {
             ImGui::Separator();
