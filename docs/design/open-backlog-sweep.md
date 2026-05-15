@@ -138,3 +138,31 @@ Dynamic: none — pure documentation pass.
 - Cross-link audits between AGENTS.md and the plan files (the existing `Plan revision after implementation` rule covers it).
 - vexp upstream issues (entries 6 + 8) — external.
 - `RemoteProject` rename + `SaveFieldCatalogSnapshot` struct refactor — bundled with next PR that touches each. Backlog notes already encode the defer rationale.
+
+## Implementation log
+
+- `c7466a8` · wip(plan): open-backlog-sweep — this plan committed first per AGENTS.md § Plan-doc safety
+- `ce603b8` · commit A — AGENTS.md § Orchestrator delegation packet gains File-split closure rule + Post-split include-replication rule; backlog entries 1 + 2 flipped to applied; entry 3 marked needs-reproducer
+- `c39e2c9` · commit B — test-rig plan moved from ~/.claude/plans/ to docs/design/test-rig-agent.md; backlog entry 5 path updated
+- `6042a73` · commit C — docs/design/imgui-test-engine-bucket-e.md scoped (5-commit migration, decisions to lock, trigger condition); backlog entry 9 path updated
+
+## Deviations from plan
+
+- None. Commits A + B + C executed exactly as scoped.
+- Commit D (test-rig execution) and the bucket-E execution remain deferred per the original scope — they are out of scope for this umbrella plan.
+- Source file `~/.claude/plans/test-rig-agent-shy-margulis.md` left in place rather than deleted, as a recovery safety net until the test-rig actually lands. Will be cleaned up by `git-janitor` or manually after test-rig commit D ships.
+
+## Verification
+
+Static (post-A + B + C):
+
+- `grep -c "File-split closure rule" AGENTS.md` → 1 ✓
+- `grep -c "Post-split include-replication rule" AGENTS.md` → 1 ✓
+- `[ -f docs/design/test-rig-agent.md ]` → true ✓
+- `grep -c "docs/design/test-rig-agent.md" backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
+- `[ -f docs/design/imgui-test-engine-bucket-e.md ]` → true ✓
+- `grep -c "docs/design/imgui-test-engine-bucket-e.md" backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
+- Two p4-blame entries flipped from `Status: open` to `Status: applied — see commit at HEAD; AGENTS.md ...` ✓
+- code-review hook entry text updated to `needs reproducer` framing ✓
+
+Dynamic: none — pure documentation pass.
