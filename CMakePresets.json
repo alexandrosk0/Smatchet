@@ -67,11 +67,26 @@
                 "_smatchet-msys2-base"
             ],
             "displayName": "Ninja Debug (MSYS2 UCRT64)",
-            "description": "Full standalone debug build with the MSYS2 UCRT64 toolchain.",
+            "description": "Full standalone debug build with the MSYS2 UCRT64 toolchain. Builds SmatchetTests alongside SmatchetStandalone.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "ninja-test-msys2",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Tests (MSYS2 UCRT64)",
+            "description": "Dedicated preset for the doctest rig under tests/. RelWithDebInfo for fast configure + run; iter preset stays test-free to keep iteration as fast as possible.",
+            "binaryDir": "${sourceDir}/build/ninja-test-msys2",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON"
             }
         },
         {
@@ -168,7 +183,7 @@
                 "_smatchet-msys2-base"
             ],
             "displayName": "Ninja Publish (MSYS2 UCRT64, LTO)",
-            "description": "Distributable standalone plus Unreal packaging build using MSYS2 GCC LTO; forces BFD ld via SMATCHET_NO_LLD=1.",
+            "description": "Distributable standalone plus Unreal packaging build using MSYS2 GCC LTO; forces BFD ld via SMATCHET_NO_LLD=1. Builds SmatchetTests so ctest can gate publish.",
             "binaryDir": "${sourceDir}/build/ninja-publish-msys2",
             "environment": {
                 "SMATCHET_NO_LLD": "1"
@@ -179,7 +194,8 @@
                 "SMATCHET_USE_PCH": "OFF",
                 "SMATCHET_ENABLE_LTO": "ON",
                 "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
-                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet",
+                "SMATCHET_BUILD_TESTS": "ON"
             }
         }
     ],
@@ -198,6 +214,14 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-test-msys2",
+            "configurePreset": "ninja-test-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTests"
             ]
         },
         {

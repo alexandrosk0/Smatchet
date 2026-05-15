@@ -150,6 +150,7 @@ option(SMATCHET_WARNINGS_AS_ERRORS
 
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
+option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -1106,4 +1107,12 @@ smatchet_verify_mingw_gcc_sanitizer_runtimes()
 smatchet_apply_sanitizers(SmatchetStandalone)
 if(TARGET SmatchetCore_DX12)
     smatchet_apply_sanitizers(SmatchetCore_DX12)
+endif()
+
+# Pure-logic doctest rig for Source_Core helpers. Opt-in via SMATCHET_BUILD_TESTS.
+# Standalone + DX12 default builds never link test code. See tests/CMakeLists.txt
+# and agents/test-rig.md.
+if(SMATCHET_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
