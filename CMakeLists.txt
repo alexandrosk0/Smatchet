@@ -151,6 +151,7 @@ option(SMATCHET_WARNINGS_AS_ERRORS
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
+option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -484,10 +485,22 @@ target_include_directories(ImGuiLib PUBLIC
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
         ${glfw_SOURCE_DIR}/include
+        # Source_Core/include hosts SmatchetImConfig.h — the single source of
+        # ImGui compile-time configuration (IMGUI_USE_WCHAR32, optional test
+        # engine hookup). Adding it PUBLIC so every linking target's #include
+        # "imgui.h" → IMGUI_USER_CONFIG path resolves cleanly without a
+        # per-target include-dir tweak.
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include
 )
-# Supplementary-plane Unicode (emoji in Plane/Jira titles). Must match every TU that includes imgui.h
-# (standalone, DX12 host, Unreal plugin — rebuild packaged ThirdParty libs after changing this).
-target_compile_definitions(ImGuiLib PUBLIC IMGUI_USE_WCHAR32=1)
+# Route every TU that includes imgui.h through SmatchetImConfig.h. The file
+# carries IMGUI_USE_WCHAR32 (supplementary-plane Unicode) plus the
+# bucket-E test-engine hooks when SMATCHET_BUILD_UI_TESTS is ON. Consolidated
+# from a previous PUBLIC IMGUI_USE_WCHAR32 define — having both mechanisms
+# split is the easiest way to desync ImWchar across TUs.
+target_compile_definitions(ImGuiLib PUBLIC IMGUI_USER_CONFIG="SmatchetImConfig.h")
+if(SMATCHET_BUILD_UI_TESTS)
+    target_compile_definitions(ImGuiLib PUBLIC SMATCHET_BUILD_UI_TESTS=1)
+endif()
 
 # Dear ImGui variant for Unreal/DX12 embedding (no GLFW/OpenGL dependency).
 # EXCLUDE_FROM_ALL — only used by the (also-excluded) DX12 targets, so a
@@ -499,8 +512,16 @@ if(WIN32)
     target_include_directories(ImGuiLib_DX12 PUBLIC
             ${imgui_SOURCE_DIR}
             ${imgui_SOURCE_DIR}/backends
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include
     )
-    target_compile_definitions(ImGuiLib_DX12 PUBLIC IMGUI_USE_WCHAR32=1)
+    target_compile_definitions(ImGuiLib_DX12 PUBLIC IMGUI_USER_CONFIG="SmatchetImConfig.h")
+    if(SMATCHET_BUILD_UI_TESTS)
+        target_compile_definitions(ImGuiLib_DX12 PUBLIC SMATCHET_BUILD_UI_TESTS=1)
+    endif()
+endif()
+
+if(SMATCHET_BUILD_UI_TESTS)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ImGuiTestEngine.cmake)
 endif()
 
 # ==============================================================================
@@ -1107,6 +1128,22 @@ smatchet_verify_mingw_gcc_sanitizer_runtimes()
 smatchet_apply_sanitizers(SmatchetStandalone)
 if(TARGET SmatchetCore_DX12)
     smatchet_apply_sanitizers(SmatchetCore_DX12)
+endif()
+
+# ImGui Test Engine (bucket E) — linked into SmatchetStandalone (live test
+# runner) and the DX12 stub target (compile tripwire, no runtime invocation).
+# Production builds (gate OFF) skip this block entirely.
+if(SMATCHET_BUILD_UI_TESTS)
+    target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_BUILD_UI_TESTS=1)
+    target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
+    if(TARGET SmatchetCore_DX12 AND TARGET SmatchetImGuiTestEngine_DX12)
+        target_compile_definitions(SmatchetCore_DX12 PRIVATE SMATCHET_BUILD_UI_TESTS=1)
+        target_link_libraries(SmatchetCore_DX12 PRIVATE SmatchetImGuiTestEngine_DX12)
+    endif()
+    enable_testing()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/CMakeLists.txt")
+        add_subdirectory(tests/ui)
+    endif()
 endif()
 
 # Pure-logic doctest rig for Source_Core helpers. Opt-in via SMATCHET_BUILD_TESTS.

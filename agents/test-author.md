@@ -59,18 +59,32 @@ Per AGENTS.md § Verification automation: plan-time / first-round / every-agent-
 
 **Every plan §Verification item maps to A, B, C, D, or E.** If you cannot place an item in one of these buckets, the gap is in the **test infrastructure**, not in the item — flag the missing piece (e.g. "needs new CLI probe `debug.dock.layout_dump`", "needs ImGui Test Engine harness in tests/ui_test_main.cpp"). Treat infrastructure gaps as bucket-E follow-ups, **never** as "manual forever".
 
-### Bucket E — ImGui Test Engine setup (when none exists)
+### Bucket E — ImGui Test Engine (wired)
 
-If Smatchet has no ImGui Test Engine integration yet, the **first time bucket-E shows up the agent's deliverable includes wiring it**, not deferring it. The wire-up:
+**Status**: WIRED (per `docs/design/imgui-test-engine-bucket-e-execution.md`). First test landed at `tests/ui/views_columns_reorder.test.cpp`; bash driver at `scripts/dev/test-ui-views-columns-reorder.sh`. Run via `cmake --build --preset ninja-ui-test-msys2`.
 
-1. FetchContent `imgui_test_engine` (same `ocornut/imgui_test_engine` upstream the docking ImGui tree expects).
-2. New target `SmatchetUiTest` linking `SmatchetCore` + `ImGuiTestEngine`, gated by `SMATCHET_BUILD_UI_TESTS=ON`.
-3. `tests/ui/` directory with `ui_test_main.cpp` (registers tests) + per-feature test files.
-4. New scenario shape: `IScenario::OnFrame` polls `ImGuiTestEngine_Tick()` and finishes when the test queue drains.
-5. New CLI: `ui_test.run --name=<test_name> [--all]` returns pass/fail JSON.
-6. Bash wrapper: `scripts/dev/test-ui-<feature>.sh` invokes the CLI under `--spawn` like every other bash test.
+How the surface works today:
 
-If the user pushes back on the cost, downgrade to a recorded one-shot (mouse / key event log replayed via `ImGuiIO`), but record the recipe so the next bucket-E item is cheap.
+- `imgui_test_engine` fetched + built as `SmatchetImGuiTestEngine` (`cmake/ImGuiTestEngine.cmake`), pinned to a specific upstream SHA.
+- ImGui configuration consolidated in `Source_Core/include/SmatchetImConfig.h` (wired via `IMGUI_USER_CONFIG`). Test-engine hooks gated on `SMATCHET_BUILD_UI_TESTS`.
+- `UiTestScenario` (`Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`) owns the engine lifecycle behind the standard `IScenario` contract. Driven from `Target_Standalone/main.cpp` via the post-`glfwSwapBuffers` hook.
+- CLI: `ui_test.run --name=<filter> [--all]` returns pass/fail JSON. The filter is **substring-match with `^` (anchor-start) / `$` (anchor-end) modifiers** — NOT a glob. `*` does not work; use `ColumnsReorder` to match every `ColumnsReorder_*` test.
+- Tests register via `IM_REGISTER_TEST(engine, category, name)` and add a `RegisterX(engine)` call to `tests/ui/ui_tests_registry.cpp::SmatchetRegisterAllUiTests`.
+
+Adding a new bucket-E test:
+
+1. New `tests/ui/<feature>.test.cpp`. Use a TU-local `Register<Feature>Tests(engine)` entry point + register the test inside.
+2. Append the call to `SmatchetRegisterAllUiTests` in `ui_tests_registry.cpp`.
+3. New bash wrapper at `scripts/dev/test-ui-<feature>.sh` mirroring `test-ui-views-columns-reorder.sh`. Auto-enrolled by `scripts/dev/test-all.sh`.
+
+Gotchas the wire-up hit (record once, save the next agent):
+
+- `IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL` MUST be 1 — `ImGuiTestEngine_Start` asserts on null `CoroutineFuncs`.
+- `IMGUI_TEST_ENGINE_ENABLE_CAPTURE` MUST stay 1 — `imgui_te_engine.cpp` calls `ImGuiCaptureContext::*` unconditionally (no `#if` guards). Disabling capture loses link-time symbols. We never wire a `ScreenCaptureFunc` so the runtime cost is zero.
+- `IMGUI_DEFINE_MATH_OPERATORS` must be defined BEFORE `imgui.h`. Setting it in `SmatchetImConfig.h` (read at `imgui.h` start via `IMGUI_USER_CONFIG`) is the right hook point.
+- The engine's filter language is substring + `^` / `$` / `,` modifiers, NOT shell glob. Don't write `Views/*` — write `Views` or `^Views/`.
+
+If a future bucket-E test needs synthetic input that the existing engine doesn't cover, the fallback is a recorded one-shot (mouse / key event log replayed via `ImGuiIO`) — but record the recipe so the next bucket-E item stays cheap.
 
 ## Authoring patterns
 
@@ -218,7 +232,7 @@ New artifacts:
 - BuiltinCommands.cpp +debug.X    — captures Y state
 
 Residue (with concrete next action — NEVER "manual forever"):
-- Drag/drop column re-order      — bucket E; deferred. Action: wire ImGui Test Engine per § Bucket E setup; estimated 1 day; tracked in docs/backlog/AGENT_SELF_IMPROVEMENT.md 2026-MM-DD entry.
+- Drag/drop column re-order      — bucket E; wired (`tests/ui/views_columns_reorder.test.cpp` + `scripts/dev/test-ui-views-columns-reorder.sh`). Run: `bash scripts/dev/test-ui-views-columns-reorder.sh`.
 
 Run: bash scripts/dev/test-X.sh         →   Passed: N  Failed: 0
 Run: bash scripts/dev/test-all.sh       →   Passed: <total>  Failed: 0

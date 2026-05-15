@@ -1572,37 +1572,40 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         // snippet through ExecuteLuaConsoleSnippet, returns captured lines + the
         // scriptingWindowOpenRequested_ flag state. Sinks persist after the call —
         // intended for ephemeral --spawn instances which exit between assertions.
-        Command c =
-            MakeCommand("debug.lua_log_test", "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, window_requested} for automated validation.",
-                        [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+        Command c = MakeCommand(
+            "debug.lua_log_test",
+            "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, "
+            "window_requested} for automated validation.",
+            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                            const std::string code = args.value("code", std::string());
-                            if (code.empty()) {
-                                return CommandResult::Failure(ErrorCode::ValidationError, "code required");
-                            }
-                            auto logCaptured = std::make_shared<std::vector<std::string>>();
-                            auto errCaptured = std::make_shared<std::vector<std::string>>();
-                            app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
-                            app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
-                            // Consume any prior request so we observe only this snippet's effect.
-                            (void)app.ConsumeScriptingWindowRequest();
-                            std::string outError;
-                            std::string outResult;
-                            const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
-                            const bool windowReq = app.ConsumeScriptingWindowRequest();
-                            nlohmann::json out;
-                            out["ok_snippet"]        = ok;
-                            out["snippet_error"]     = outError;
-                            out["snippet_result"]    = outResult;
-                            out["log_lines"]         = *logCaptured;
-                            out["err_lines"]         = *errCaptured;
-                            out["window_requested"]  = windowReq;
-                            return CommandResult::Success(std::move(out));
+                const std::string code = args.value("code", std::string());
+                if (code.empty()) {
+                    return CommandResult::Failure(ErrorCode::ValidationError, "code required");
+                }
+                auto logCaptured = std::make_shared<std::vector<std::string>>();
+                auto errCaptured = std::make_shared<std::vector<std::string>>();
+                app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
+                app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
+                // Consume any prior request so we observe only this snippet's effect.
+                (void)app.ConsumeScriptingWindowRequest();
+                std::string outError;
+                std::string outResult;
+                const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
+                const bool windowReq = app.ConsumeScriptingWindowRequest();
+                nlohmann::json out;
+                out["ok_snippet"] = ok;
+                out["snippet_error"] = outError;
+                out["snippet_result"] = outResult;
+                out["log_lines"] = *logCaptured;
+                out["err_lines"] = *errCaptured;
+                out["window_requested"] = windowReq;
+                return CommandResult::Success(std::move(out));
 #else
-                            (void)app; (void)args;
-                            return CommandResult::Failure(ErrorCode::HandlerError, "Lua automation is not enabled in this build.");
+                (void)app;
+                (void)args;
+                return CommandResult::Failure(ErrorCode::HandlerError, "Lua automation is not enabled in this build.");
 #endif
-                        });
+            });
         c.Destructive = true;
         c.Idempotent = false;
         c.Params = {PString("code", "Lua code to evaluate (snippet form, sandboxed).", true)};
@@ -1692,6 +1695,42 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
         reg.Register(std::move(c));
     }
 
+    // === ui_test ============================================================
+
+    {
+        // ui_test.run wraps ui-test scenario start. Registered unconditionally
+        // so production builds (SMATCHET_BUILD_UI_TESTS=OFF) still expose the
+        // command and return a clear sentinel rather than "command not found".
+        // The scenario handler internally pivots on the build gate.
+        Command c = MakeCommand("ui_test.run",
+                                "Run ImGui Test Engine UI tests (bucket E). --name=<test> for one; --all for every.",
+                                [&app](const nlohmann::json& args, const CommandContext& ctx) {
+                                    CommandContext ctxCopy = ctx;
+                                    return RunOnUiThreadAsCommandResult(app, [&app, args, ctxCopy]() {
+                                        nlohmann::json injectedArgs = args;
+                                        injectedArgs["name"] = args.value("name", std::string());
+                                        return app.Scenarios().Start("ui-test", injectedArgs, ctxCopy);
+                                    });
+                                });
+        c.Destructive = false;
+        c.Idempotent = false;
+        c.AsyncSafe = false;
+        c.DryRunSupported = true;
+        ParamSpec allParam;
+        allParam.Name = "all";
+        allParam.Description = "Run every registered test (ignores --name).";
+        allParam.Type = ParamType::Bool;
+        allParam.Default = false;
+        c.Params = {
+            PString(
+                "name",
+                "Test filter (wildcard, e.g. 'Views/ColumnsReorder_*'). Empty + all=true runs every registered test."),
+            allParam,
+            PString("outPath", "Output JSON file path (default: auto-generated in <userData>/ui-test/)."),
+        };
+        reg.Register(std::move(c));
+    }
+
     {
         // scenario.cancel resets ScenarioRunner::active_ while Tick() may be reading it.
         // Same race as scenario.run — must run on UI thread.
@@ -1730,15 +1769,11 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                             if (!node) {
                                                 LOG_INFO("debug.dock.dump: %s NOT FOUND", kNames[i]);
                                             } else {
-                                                LOG_INFO(
-                                                    "debug.dock.dump: %s id=0x%08X size=(%.0f,%.0f) "
-                                                    "flags=0x%X tabs=%d empty=%d",
-                                                    kNames[i],
-                                                    static_cast<unsigned int>(node->ID),
-                                                    node->Size.x, node->Size.y,
-                                                    static_cast<int>(node->LocalFlags),
-                                                    node->Windows.Size,
-                                                    static_cast<int>(node->IsEmpty()));
+                                                LOG_INFO("debug.dock.dump: %s id=0x%08X size=(%.0f,%.0f) "
+                                                         "flags=0x%X tabs=%d empty=%d",
+                                                         kNames[i], static_cast<unsigned int>(node->ID), node->Size.x,
+                                                         node->Size.y, static_cast<int>(node->LocalFlags),
+                                                         node->Windows.Size, static_cast<int>(node->IsEmpty()));
                                             }
                                         }
                                         // Walk the full dockspace tree from the root node.
@@ -1759,19 +1794,16 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                                 Frame frame = stack.back();
                                                 stack.pop_back();
                                                 ImGuiDockNode* n = frame.node;
-                                                if (!n) { continue; }
+                                                if (!n) {
+                                                    continue;
+                                                }
                                                 // Build depth-indent prefix.
-                                                std::string indent(
-                                                    static_cast<size_t>(frame.depth * 2), ' ');
-                                                LOG_INFO(
-                                                    "debug.dock.dump: %sid=0x%08X size=(%.0f,%.0f) "
-                                                    "flags=0x%X tabs=%d empty=%d",
-                                                    indent.c_str(),
-                                                    static_cast<unsigned int>(n->ID),
-                                                    n->Size.x, n->Size.y,
-                                                    static_cast<int>(n->LocalFlags),
-                                                    n->Windows.Size,
-                                                    static_cast<int>(n->IsEmpty()));
+                                                std::string indent(static_cast<size_t>(frame.depth * 2), ' ');
+                                                LOG_INFO("debug.dock.dump: %sid=0x%08X size=(%.0f,%.0f) "
+                                                         "flags=0x%X tabs=%d empty=%d",
+                                                         indent.c_str(), static_cast<unsigned int>(n->ID), n->Size.x,
+                                                         n->Size.y, static_cast<int>(n->LocalFlags), n->Windows.Size,
+                                                         static_cast<int>(n->IsEmpty()));
                                                 // Push children (right first so left is processed first).
                                                 if (n->ChildNodes[1]) {
                                                     stack.push_back({n->ChildNodes[1], frame.depth + 1});
@@ -1814,9 +1846,8 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                     const int w = static_cast<int>(args.value("width", 0));
                                     const int h = static_cast<int>(args.value("height", 0));
                                     if (w <= 0 || h <= 0) {
-                                        return CommandResult::Failure(
-                                            ErrorCode::ValidationError,
-                                            "width and height must be > 0");
+                                        return CommandResult::Failure(ErrorCode::ValidationError,
+                                                                      "width and height must be > 0");
                                     }
                                     g_ui.requestWindowWidth = w;
                                     g_ui.requestWindowHeight = h;
@@ -1843,9 +1874,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
                                 [](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                                     const std::string path = args.value("path", std::string());
                                     if (path.empty()) {
-                                        return CommandResult::Failure(
-                                            ErrorCode::ValidationError,
-                                            "path is required");
+                                        return CommandResult::Failure(ErrorCode::ValidationError, "path is required");
                                     }
                                     g_ui.requestScreenshotPath = path;
                                     g_ui.requestScreenshot = true;

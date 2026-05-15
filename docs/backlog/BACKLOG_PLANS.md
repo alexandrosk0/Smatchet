@@ -24,6 +24,7 @@ These plans shipped. Files moved from `docs/design/*.md` (and a few from `backlo
 | [`lua-recorded-cmd-list-v2.md`](../design/applied/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
 | [`agent-ecosystem-gap-fill.md`](../design/applied/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
 | [`imgui-test-engine-bucket-e.md`](../design/applied/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
+| [`imgui-test-engine-bucket-e-execution.md`](../design/imgui-test-engine-bucket-e-execution.md) | 2026-05-15 | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
 | [`open-backlog-sweep.md`](../design/applied/open-backlog-sweep.md) | 2026-05-15 | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
 | [`test-rig-agent.md`](../design/applied/test-rig-agent.md) | 2026-05-15 | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
 
@@ -72,4 +73,4 @@ When an agent's `## Self-improvement` section identifies a codebase-side depende
 |---|---|---|
 | vexp `<!-- vexp -->` block autoregenerates inside `AGENTS.md` instead of `.claude/CLAUDE.md` | vexp tool source lives outside this repo. File upstream issue/PR. Workaround: leave block alone; ~250 input tokens/session is small vs autoregen friction. | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · orchestrator · process` |
 | `mcp__vexp__run_pipeline` rejects `max_tokens` as float | vexp tool source. Workaround: pass int literal. | AGENT_SELF_IMPROVEMENT.md `2026-05-12 · tracker-backend · tooling` |
-| ImGui Test Engine bucket E | Wait for first plan whose §Verification contains a click/drag/type that no scenario can drive. Plan scoped at `docs/design/applied/imgui-test-engine-bucket-e.md`. | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · test-author · new-agent / tooling` |
+| ~~ImGui Test Engine bucket E~~ | Applied 2026-05-15 — see `docs/design/imgui-test-engine-bucket-e-execution.md`. Phase 1 infra shipped; Phase 2 + Phase 3 deferred (debug-detective + grid-engine handoff). | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · test-author · new-agent / tooling` |

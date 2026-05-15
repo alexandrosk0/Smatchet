@@ -43,6 +43,13 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "SmatchetImGuiFonts.h"
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Pulls in the engine API (PostSwap) and the SmatchetActiveUiTestEngine accessor
+// without dragging nlohmann::json into main.cpp (UiTestScenario.h forward-declares
+// the engine struct and keeps json out of the header).
+#include "Commands/Scenarios/UiTestScenario.h"
+#include "imgui_te_engine.h"
+#endif
 #include <GLFW/glfw3.h> // Will drag in system OpenGL headers
 
 #if defined(_WIN32)
@@ -177,11 +184,7 @@ static std::string SmatchetNormalizeDirectory(std::string path) {
     if (path.empty()) {
         return path;
     }
-    for (char& c : path) {
-        if (c == '\\') {
-            c = '/';
-        }
-    }
+    std::replace(path.begin(), path.end(), '\\', '/');
     if (path.back() != '/') {
         path.push_back('/');
     }
@@ -373,12 +376,12 @@ int main(int argc, char** argv) {
                 const int iy = std::max(y, my);
                 const int ax = std::min(x + w, mx + mw);
                 const int ay = std::min(y + h, my + mh);
-                if (ax - ix >= 100 && ay - iy >= 100) return true;
+                if (ax - ix >= 100 && ay - iy >= 100)
+                    return true;
             }
             return false;
         };
-        if (rectOverlapsAnyMonitor(windowStateCfg.WindowX, windowStateCfg.WindowY,
-                                   initialWindowW, initialWindowH)) {
+        if (rectOverlapsAnyMonitor(windowStateCfg.WindowX, windowStateCfg.WindowY, initialWindowW, initialWindowH)) {
             glfwSetWindowPos(window, windowStateCfg.WindowX, windowStateCfg.WindowY);
         }
     }
@@ -452,7 +455,8 @@ int main(int argc, char** argv) {
             try {
                 cli.HasMcpPort = true;
                 cli.McpPort = std::stoi(argv[++i]);
-            } catch (...) {}
+            } catch (...) {
+            }
         } else if (arg == "--mcp-allow-remote") {
             cli.HasMcpAllowRemote = true;
             cli.McpAllowRemote = true;
@@ -543,6 +547,17 @@ int main(int argc, char** argv) {
 
             glfwSwapBuffers(window);
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+            // ImGui Test Engine bucket-E hookup. The engine is created /
+            // destroyed by UiTestScenario, which publishes the active pointer
+            // via SmatchetActiveUiTestEngine(). When no UI test is running the
+            // pointer is null and PostSwap is skipped — zero cost on the
+            // normal frame path. See agents/test-author.md § Bucket E.
+            if (ImGuiTestEngine* uiTestEngine = SmatchetActiveUiTestEngine()) {
+                ImGuiTestEngine_PostSwap(uiTestEngine);
+            }
+#endif
+
             // Snapshot windowed bounds whenever the window is in a normal (non-maximized,
             // non-fullscreen) state so we can persist them on exit.
             if (!g_ui.cfg.FullScreen && glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == 0) {
@@ -595,31 +610,26 @@ int main(int argc, char** argv) {
                     const size_t rowBytes = static_cast<size_t>(fw) * 4u;
                     std::vector<unsigned char> flipped(pixels.size());
                     for (int y = 0; y < fh; ++y) {
-                        std::memcpy(
-                            &flipped[static_cast<size_t>(y) * rowBytes],
-                            &pixels[static_cast<size_t>(fh - 1 - y) * rowBytes],
-                            rowBytes);
+                        std::memcpy(&flipped[static_cast<size_t>(y) * rowBytes],
+                                    &pixels[static_cast<size_t>(fh - 1 - y) * rowBytes], rowBytes);
                     }
                     FILE* fp = std::fopen(screenshotPath.c_str(), "wb");
                     if (!fp) {
-                        LOG_ERROR("debug.window.screenshot: cannot open %s for writing",
-                                  screenshotPath.c_str());
+                        LOG_ERROR("debug.window.screenshot: cannot open %s for writing", screenshotPath.c_str());
                     } else {
                         std::fprintf(fp, "P6\n%d %d\n255\n", fw, fh);
                         for (int y = 0; y < fh; ++y) {
                             for (int x = 0; x < fw; ++x) {
-                                const unsigned char* p =
-                                    &flipped[(static_cast<size_t>(y) * static_cast<size_t>(fw) +
-                                              static_cast<size_t>(x)) *
-                                             4u];
+                                const unsigned char* p = &flipped[(static_cast<size_t>(y) * static_cast<size_t>(fw) +
+                                                                   static_cast<size_t>(x)) *
+                                                                  4u];
                                 std::fputc(p[0], fp);
                                 std::fputc(p[1], fp);
                                 std::fputc(p[2], fp);
                             }
                         }
                         std::fclose(fp);
-                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PPM)",
-                                 screenshotPath.c_str(), fw, fh);
+                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PPM)", screenshotPath.c_str(), fw, fh);
                     }
                 } else {
                     LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
@@ -643,8 +653,7 @@ int main(int argc, char** argv) {
         // live-tracked windowed bounds so an exit-while-maximized still restores a sane
         // windowed rect after un-maximize.
         {
-            const bool maximized =
-                (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0) || g_ui.cfg.FullScreen;
+            const bool maximized = (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0) || g_ui.cfg.FullScreen;
             TrackerConfig saveCfg = ConfigManager::Load();
             saveCfg.WindowX = s_persistWindowedX;
             saveCfg.WindowY = s_persistWindowedY;
@@ -675,5 +684,3 @@ int main(int argc, char** argv) {
 
     return exitCode;
 }
-
-

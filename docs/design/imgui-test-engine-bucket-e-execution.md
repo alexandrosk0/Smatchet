@@ -271,3 +271,60 @@ cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore
 ## Promotion at commit-1 time
 
 The implementer's first `wip(plan):` commit copies this file's content into `docs/design/imgui-test-engine-bucket-e-execution.md` (or merges into the existing `docs/design/applied/imgui-test-engine-bucket-e.md` as a new § Execution log section — implementer's preference) so the plan survives any branch switch / reset / GitHub Desktop interaction per Smatchet's Plan-doc safety rule. `~/.claude/plans/linear-wibbling-lighthouse.md` is the harness scratch only.
+
+## Implementation log
+
+- 2026-05-15 · Phase 0 — C++14 compat probe via `gh api search/code` against `ocornut/imgui_test_engine` for `if constexpr|std::optional|std::variant|std::string_view` → all four `total_count == 0`. HEAD pinned to `8568767ad4c53d6ce02d65f01a09d30fb630bd80`.
+- 2026-05-15 · Phase 1 (single squashed commit, not 5 separate) — `cmake/ImGuiTestEngine.cmake`, `Source_Core/include/SmatchetImConfig.h`, `Source_Core/include/Commands/Scenarios/UiTestScenario.h`, `Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`, `tests/ui/views_columns_reorder.test.cpp`, `scripts/dev/test-ui-views-columns-reorder.sh`, plus `CMakeLists.txt` + `CMakePresets.json` + `Target_Standalone/main.cpp` (PostSwap hook) + `Source_Core/src/AppController.cpp` (scenario factory) + `Source_Core/src/Commands/BuiltinCommands.cpp` (`ui_test.run` command). New `ninja-ui-test-msys2` preset, default presets unchanged.
+
+## Deviations from plan
+
+- **One squashed commit, not 5** — the original 5-commit migration order was bookkeeping convenience; consolidating reduced churn during the build-fix loop (5 sequential commits would have each carried a non-building state because the gotchas surfaced incrementally).
+- **`SmatchetUiTest` separate exe rejected** — Q6 in the locked decisions table chose in-process. Implemented as such. No separate runner exe.
+- **DX12 stub WIRED** — Q7 honoured. `SmatchetImGuiTestEngine_DX12` lib exists, EXCLUDE_FROM_ALL, linked PRIVATE into `SmatchetCore_DX12` when gate ON. Compile tripwire only; never runs.
+- **`IMGUI_TEST_ENGINE_ENABLE_CAPTURE` set to 1, not 0** — the original plan implied capture could be off. In practice `imgui_te_engine.cpp` references `ImGuiCaptureContext::*` unconditionally (no `#if` guards); CAPTURE=0 produces undefined-reference link errors. Compromise: keep CAPTURE=1 (symbol definitions present) but never wire a `ScreenCaptureFunc` (runtime path dormant). Zero PNG / ffmpeg cost. Documented in `SmatchetImConfig.h`.
+- **`IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL` set to 1, not 0** — `ImGuiTestEngine_Start` asserts on null `CoroutineFuncs`; flipping the macro lets the engine wire its own std::thread coroutine, no custom impl needed.
+- **`IMGUI_USER_CONFIG="SmatchetImConfig.h"` for ImGui-config consolidation** — the plan suggested gating `IMGUI_ENABLE_TEST_ENGINE` inside `SmatchetImConfig.h`; doing so cleanly required also moving the existing `IMGUI_USE_WCHAR32=1` define into the same file (one source of ImGui config truth, no PUBLIC/PRIVATE split risk). Also folded `IMGUI_DEFINE_MATH_OPERATORS` in — test-engine headers transitively need it BEFORE `imgui.h`.
+- **`ui_test.run --name=` filter is substring + `^`/`$`, not glob** — bucket-E driver script defaults `FILTER=ColumnsReorder`, NOT `Views/ColumnsReorder_*`. Documented in `agents/test-author.md` § Bucket E and the script header. Plan example using `*` would have always matched zero tests.
+- **Phase 2 (diagnose) + Phase 3 (fix) DEFERRED to `debug-detective` + `grid-engine` follow-up** — first run reports `tested=2 failed=2`. The engine fires the test, the test fires `ItemDragAndDrop`, but the assertion (`order[0] == "status"` after drag) fails. Could be (a) test engine path `$$2/##h/##handle` not resolving correctly under the test window's ID stack, (b) the real drag-target-rect bug from the hot lead. Without further `debug-detective` instrumentation the two are indistinguishable. `--repeat=50` flag from the plan was not wired — the engine's filter language already supports per-test repetition via `--all` runs and the diagnostic baseline of 2/2 fail is enough signal to hand off.
+
+## Verification
+
+```bash
+# Phase 0
+gh api -X GET search/code -f q='repo:ocornut/imgui_test_engine "if constexpr"' --jq '.total_count'
+# → 0  (same for std::optional, std::variant, std::string_view)
+
+# Phase 1 commit 1 — engine + ImConfig + presets
+cmake --preset ninja-ui-test-msys2
+cmake --build --preset ninja-ui-test-msys2 --target SmatchetImGuiTestEngine
+# → 17/17 obj files, libSmatchetImGuiTestEngine.a linked.
+
+# Phase 1 commit 2 — Standalone links + ui_test.run registers
+cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone
+build/ninja-ui-test-msys2/Smatchet.exe cmd commands.list --spawn --yes | grep ui_test.run
+# → present in registry.
+
+# Phase 1 commit 3 — first failing test
+bash scripts/dev/test-ui-views-columns-reorder.sh
+# → Result: passed=0 failed=2 log=ui_test.run: completed
+# → Engine ran. Both NoWidths + WithWidths variants assert-fail.
+# → Diagnostic baseline (Phase 1 ships infra; Phase 2 owns root cause).
+
+# Regression — default iter build stays test-engine-free
+cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+# → exits 0; objdump of build/ninja-iter-msys2/Smatchet.exe shows no
+#   `SmatchetImGuiTestEngine` symbols (not verified by an explicit grep in
+#   this round — relying on conditional CMake gate).
+```
+
+Not run (deferred):
+
+- `bash scripts/dev/test-ui-views-columns-reorder.sh --repeat=50` flake-rate measurement. The plan flag was not wired in this round.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` dual-target gate. Default iter rebuild succeeded for Standalone alone; SmatchetCore_DX12 not re-verified.
+- Phase 2 / Phase 3. `debug-detective` hand-off pending.
+
+## Hand-off
+
+- `debug-detective` — confirm whether the 2/2 failure rate is a test-path-expression bug (test resolves item paths wrongly) or the production drag-target-rect bug from the hot lead. Adding `LOG_DEBUG` markers at `SmatchetViewsDashboardUi_widgets.cpp:122,147,148-153` and `SmatchetViewsDashboardUi.cpp:683-694` per the plan § Phase 2 still applies. Also dump the engine TTY log into the spawned-process stdout (currently swallowed because the ephemeral child has no attached TTY) — easiest path is to redirect `io.ConfigLogToFunc` to `LOG_INFO` instead of TTY.
+- `grid-engine` — once root cause is confirmed, apply the Phase 3 fix (`PushID + BeginGroup` around the row submission OR move the conditional `TextDisabled` before the `Selectable`, smaller-diff one). Re-run `bash scripts/dev/test-ui-views-columns-reorder.sh` — gate is `Passed: 2 Failed: 0`.

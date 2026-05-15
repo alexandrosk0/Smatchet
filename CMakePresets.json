@@ -90,6 +90,20 @@
             }
         },
         {
+            "name": "ninja-ui-test-msys2",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja UI Tests (MSYS2 UCRT64)",
+            "description": "ImGui Test Engine bucket-E surface. RelWithDebInfo, SMATCHET_BUILD_UI_TESTS=ON; builds Standalone + DX12 stub. Default presets stay engine-free.",
+            "binaryDir": "${sourceDir}/build/ninja-ui-test-msys2",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_UI_TESTS": "ON"
+            }
+        },
+        {
             "name": "ninja-debug-msys2-asan",
             "inherits": [
                 "_smatchet-msys2-base"
@@ -222,6 +236,14 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetTests"
+            ]
+        },
+        {
+            "name": "ninja-ui-test-msys2",
+            "configurePreset": "ninja-ui-test-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
             ]
         },
         {
