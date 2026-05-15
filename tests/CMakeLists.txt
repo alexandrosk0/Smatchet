@@ -15,6 +15,7 @@ add_executable(SmatchetTests
     Source_Core/TextMerge.test.cpp
     Source_Core/JsonParseUtil.test.cpp
     Source_Core/TrackerFieldValueParser.test.cpp
+    Source_Core/OfflineQueueReplayPolicy.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"

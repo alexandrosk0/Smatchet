@@ -8,14 +8,20 @@
 #include <unordered_map>
 #include <vector>
 
-/** Max replay attempts for offline `pending_creates` before archive or drop. */
+#include "OfflineQueueReplayPolicy.h"
+
+/** Max replay attempts for offline `pending_creates` before archive or drop.
+ *  Aliases `OfflineQueueReplayPolicy::kMaxReplayAttempts` so the SQLite-free
+ *  policy header stays the single source of truth (tests target the policy
+ *  header without pulling LocalCacheManager + SQLite). */
 namespace OfflineCreateQueue {
-constexpr int kMaxReplayAttempts = 5;
+constexpr int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
 }
 
-/** Max replay attempts for offline `pending_field_edits` before dead-letter archive. */
+/** Max replay attempts for offline `pending_field_edits` before dead-letter archive.
+ *  Aliases `OfflineQueueReplayPolicy::kMaxReplayAttempts` — same rationale. */
 namespace OfflineFieldEditQueue {
-constexpr int kMaxReplayAttempts = 5;
+constexpr int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
 }
 
 struct CachedTicket {
@@ -184,9 +190,3 @@ class LocalCacheManager {
     std::unique_ptr<SQLite::Statement> stmt_get_fields_;
     std::unique_ptr<SQLite::Statement> stmt_get_rich_;
 };
-
-
-
-
-
-
