@@ -42,6 +42,14 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 
 **Plan stress-test — `grill-with-docs` skill**: before a plan is finalised at `docs/design/<slug>.md`, invoke the `grill-with-docs` skill (canonical at `agents/_shared/skills/grill-with-docs/`; mirrored to `.claude/skills/grill-with-docs/`) to interrogate it against the existing domain glossary (`docs/CONTEXT.md`) and ADRs (`docs/adr/`). Output: refined plan + glossary updates + new ADRs only when the three ADR criteria fire (hard-to-reverse + surprising + real trade-off). See `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md` for the Smatchet-specific file mapping (plans vs ADRs vs glossary kept separate).
 
+**Verification automation — every step automated**: testing is the top quality gate, and the goal is **zero manual steps**. The `test-author` agent owns this. Invocation cadence:
+
+1. **At plan time** — when a plan lands at `docs/design/<slug>.md`, `test-author` audits its `## Verification` section and shapes every item into bucket A (CLI probe), B (scenario + perf), C (screenshot diff), D (sanitizer build), or E (ImGui Test Engine). Manual residue at this stage means the plan ships with an automation budget for the implementer to honour.
+2. **After first verification round** — once the feature merges, `test-author` writes the bash + CLI + scenario glue for everything that ran manually that round.
+3. **After every other agent** — when any subsystem agent (`debug-detective`, `grid-engine`, `tracker-backend`, `unreal-bridge`, …) reports a manual verification step in its handoff, the orchestrator immediately invokes `test-author` to convert it. No feature ships with more than one round of manual residue.
+
+Unified runner: `bash scripts/dev/test-all.sh` discovers every `scripts/dev/test-*.sh` and aggregates pass / fail. A new test enrols by following the `test-*.sh` naming convention; no edit to the runner needed. Manual residue without a dated `backlog/AGENT_SELF_IMPROVEMENT.md` entry (category `tooling`) is a fail. "Truly interactive" is never the final answer — it just means bucket E hasn't been wired yet.
+
 **Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
 
 ## Debug techniques
@@ -99,6 +107,7 @@ Each packet should include:
 - **Output budget**: for routine implementation agents, request `Report <= 200 words, table form, no prose paragraphs` unless the task needs a design write-up.
 - **Comment discipline**: remind implementation agents that code comments must explain durable code intent, never the task / PR / temporary plan (no comments like `PR 4:` or `remove in PR 7`).
 - **Plan revision contract**: name the originating `docs/design/<slug>.md` in the packet and remind the implementer to append to `## Implementation log` + `## Deviations from plan` + `## Verification` in the same or next commit per AGENTS.md § Plan revision after implementation. Plans that ship without revision turn stale.
+- **Verification automation handoff**: if the agent's report ends with any manual verification step ("user opens X and observes Y", "click and check"), the orchestrator's next move is **always** to invoke `test-author` to convert it. Implementing agents must explicitly list manual steps in their report so the orchestrator can dispatch automatically; "no manual steps" is also a valid statement.
 
 ### Cross-cutting
 
@@ -113,6 +122,7 @@ Each packet should include:
 | `perf-measure` | low · read-only | Helper for `perf-detective` / `spike-hunter` — runs `perf.reset` → `scenario.run` → `perf.snapshot`, returns top-N rows by `lastTotalMs`. Standalone "what's hot right now" check also fine. |
 | `code-review` | medium · read-only | Pre-merge code review. Runs cppcheck / clang-tidy / clang-format over the whole branch diff + Smatchet invariants. Wraps the standard pre-merge review skill. |
 | `security-review` | high · read-only | Pre-merge security review. Runs flawfinder / semgrep / gitleaks (when available) + Smatchet attack-surface map. Wraps the standard pre-merge security skill. |
+| `test-author` | medium · read-edit | Verification automation — converts every "user opens X and observes Y" plan item into a deterministic CLI / scenario / screenshot / sanitizer / ImGui Test Engine assertion. Invoke at plan time, after first verification round, and after every agent that hands back a manual step. Writes `scripts/dev/test-<feature>.sh`; the unified runner is `scripts/dev/test-all.sh`. Goal is zero manual steps. |
 | `mechanic` | low · read-edit | Fully-specified mechanical work: renames, clang-format passes, doc / comment fixes, copyright bumps, localization key renames. Resolve ambiguity before delegating. |
 
 ### Subsystem specialists

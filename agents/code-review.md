@@ -109,6 +109,8 @@ If the change introduces an intermittent-stall risk, hand off to `spike-hunter` 
 
 If perf risk is the dominant concern, hand off to `perf-detective` for measurement instead of guessing.
 
+**Verification automation gate**: scan the diff's test-plan / PR-body / linked plan `## Verification` for any item that reads "user opens X and observes Y", "click and check", "visually verify", or otherwise needs human eyes. **Flag every such item as Critical** under "Manual verification residue" — the change is not mergeable until `test-author` converts it (per AGENTS.md § Verification automation). Exception: an explicit bucket-E entry already tracked in `backlog/AGENT_SELF_IMPROVEMENT.md`.
+
 ## Output format
 
 ```
