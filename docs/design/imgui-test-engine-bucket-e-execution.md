@@ -329,3 +329,35 @@ Not run (deferred):
 
 - `debug-detective` — confirm whether the 2/2 failure rate is a test-path-expression bug (test resolves item paths wrongly) or the production drag-target-rect bug from the hot lead. Adding `LOG_DEBUG` markers at `SmatchetViewsDashboardUi_widgets.cpp:122,147,148-153` and `SmatchetViewsDashboardUi.cpp:683-694` per the plan § Phase 2 still applies. Also dump the engine TTY log into the spawned-process stdout (currently swallowed because the ephemeral child has no attached TTY) — easiest path is to redirect `io.ConfigLogToFunc` to `LOG_INFO` instead of TTY.
 - `grid-engine` — once root cause is confirmed, apply the Phase 3 fix (`PushID + BeginGroup` around the row submission OR move the conditional `TextDisabled` before the `Selectable`, smaller-diff one). Re-run `bash scripts/dev/test-ui-views-columns-reorder.sh` — gate is `Passed: 2 Failed: 0`.
+
+## Phase 3 — applied (2026-05-15)
+
+User-reported follow-up: handle-to-handle drop missed; handle-to-row-body drop worked (rows turned yellow). Diagnosis: `DrawDragHandle` submits its `InvisibleButton` as drag-source only — no drop target on the handle itself. `HandleRowReorder`'s `BeginDragDropTarget` was binding to the previously-submitted Selectable rect, so dropping over another row's handle missed every time.
+
+Fix shipped in `Source_Core/src/SmatchetViewsDashboardUi.cpp`:
+
+- **Columns tab (`:670-701`)** — wrapped row body in `ImGui::BeginGroup()` / `ImGui::EndGroup()`; moved the conditional `TextDisabled` width hint inside the group; `HandleRowReorder` now called after `EndGroup` so its `BeginDragDropTarget` binds to the group's full-row bounding rect. Mouse drops anywhere on the row (handle, label, width-hint) hit the target.
+- **Sort tab (`:736-770`)** — same group wrapping. The `X` (erase) button early-exit now sets a local `erased` flag, `EndGroup` runs, `PopID` + `break` follow. `HandleRowReorder` after `EndGroup`. Direction (`Asc/Desc`) toggle and erase button moved inside the group so they share the row drop-target rect.
+
+Test surface (`tests/ui/views_columns_reorder.test.cpp`) updated to match new prod shape — earlier comment locking the mirror to pre-fix ordering removed; mirror now uses `BeginGroup`/`EndGroup` and `HandleRowReorder` after `EndGroup`.
+
+### Verification
+
+```bash
+cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone
+bash scripts/dev/test-ui-views-columns-reorder.sh
+# → Result: passed=2 failed=0 log=ui_test.run: completed
+# → both ColumnsReorder_DragRow2_To_Top_NoWidths and _WithWidths green.
+
+cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+# → default iter build stays green; engine gate OFF surface unchanged.
+```
+
+### Deviations from this revision
+
+- Sort-tab erase path now uses a local `erased` flag + post-group break instead of the original `PopID(); break;` directly inside the `if (SmallButton("X"))` block. Required because the group must be closed (`EndGroup`) before exiting the loop iteration.
+- Test mirror at `tests/ui/views_columns_reorder.test.cpp:65-100` no longer characterises the pre-fix ordering — the regression-bisection rationale in the prior comment is obsolete now that prod ships in BeginGroup form. The test now gates the fix end-to-end.
+
+### Hand-off (closed)
+
+`debug-detective` / `grid-engine` hand-off from the prior round resolved by this Phase 3 application. Root cause was the drag-target-rect bug from the hot lead, not the test-path-expression hypothesis — the test mirror was already submitting correct paths but binding the target to a too-small rect (Selectable / TextDisabled), the same bug as production.
