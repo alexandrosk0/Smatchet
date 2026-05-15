@@ -674,26 +674,28 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 char rowBuf[64];
                 std::snprintf(rowBuf, sizeof(rowBuf), "%d.", i + 1);
                 ImGui::TextUnformatted(rowBuf);
-                // Read-only width hint pulled from the active view's saved widths.
-                // Submitted BEFORE the Selectable so the Selectable is always the
-                // last-submitted ImGui item before HandleRowReorder calls
-                // BeginDragDropTarget — keeps the drop-target rect stable across
-                // rows regardless of whether the width hint fires. See plan
-                // `docs/design/imgui-test-engine-bucket-e-execution.md` § Phase 3.
-                auto wit = activeView->ColumnWidths.find(key);
-                if (wit != activeView->ColumnWidths.end() && wit->second > 0.0f) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("  %.0fpx", wit->second);
-                }
                 ImGui::SameLine();
                 const bool selected = (d.viewsKeyboardReorderRow == i);
                 const std::string label = PrettyColumnLabel(key, availableFields);
                 if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
                     d.viewsKeyboardReorderRow = i;
                 }
+                // HandleRowReorder runs immediately after Selectable so its
+                // BeginDragDropTarget always binds to the Selectable's row-wide
+                // rect — never the small TextDisabled width hint that fires
+                // conditionally below. See plan
+                // `docs/design/imgui-test-engine-bucket-e-execution.md` § Phase 3.
                 if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
                                                                      &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
                     d.viewsDirty = true;
+                }
+                // Read-only width hint pulled from the active view's saved widths.
+                // Submitted AFTER HandleRowReorder so its small rect never
+                // becomes the drop-target binding.
+                auto wit = activeView->ColumnWidths.find(key);
+                if (wit != activeView->ColumnWidths.end() && wit->second > 0.0f) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("  %.0fpx", wit->second);
                 }
                 ImGui::PopID();
             }
