@@ -5,7 +5,7 @@
 // exponential backoff. Built on top of the existing TrackerXxxLogged helpers in
 // TrackerHttpUtils so all calls continue to go through NetworkUsageTracker + body-trace logging.
 //
-// Migration plan (CODE_REVIEW.md §2.3 design proposal #1 / §7 item 15):
+// Migration plan (BACKLOG_CODE_REVIEW.md §2.3 design proposal #1 / §7 item 15):
 //   - Phase 2A (this PR): introduce the helper + value type. Migrate PlaneClient::ProbeReachability
 //     as the first call site (also fixes the §2.1 P1: raw cpr::Get bypassing logging + 4xx-
 //     misclassified-as-TransportDown bugs).

@@ -2,7 +2,7 @@
 
 // LuaAutomationHost — will own the Lua sandbox (sol2 state, all Lua bindings, automation
 // job queue + worker thread, field-display/icon-map registries) extracted from
-// `AppController_LuaBindings.cpp` per CODE_REVIEW.md §1.7 / §7 item 14 and §5.2.
+// `AppController_LuaBindings.cpp` per BACKLOG_CODE_REVIEW.md §1.7 / §7 item 14 and §5.2.
 //
 // Phase 1A (this PR): introduces the class skeleton, owned by AppController as a `unique_ptr`
 // member, friend-accesses AppController-private state during the transition, and migrates

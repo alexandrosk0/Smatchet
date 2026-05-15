@@ -6,7 +6,7 @@
 -- bound to a configurable field (default `summary`) for the duration of the
 -- scenario, then unbound at OnFinish.
 --
--- Plan reference: docs/design/lua-recorded-cmd-list.md §Crash-safety hardening
+-- Plan reference: docs/design/applied/lua-recorded-cmd-list.md §Crash-safety hardening
 --   §Fuzz test (verification step 14)
 --
 -- Expected: zero crashes, zero asserts; warn-log churn within rate limits.

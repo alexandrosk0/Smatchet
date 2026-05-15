@@ -1,5 +1,5 @@
 // Ctrl+Shift+P command palette modal.
-// See backlog/COMMAND_SYSTEM_PLAN.md §"Command Palette — Ctrl+Shift+P modal".
+// See docs/design/applied/command-system-plan.md §"Command Palette — Ctrl+Shift+P modal".
 
 #include "Commands/CommandPaletteUi.h"
 

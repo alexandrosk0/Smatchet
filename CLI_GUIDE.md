@@ -1,6 +1,6 @@
 # Smatchet CLI Guide
 
-The Smatchet CLI exposes the full [unified Command System](backlog/COMMAND_SYSTEM_PLAN.md) from the shell. It connects to a running Smatchet instance over its MCP HTTP endpoint and dispatches any registered command — the same catalog that feeds the in-app Command Palette (Ctrl+Shift+P), MCP tools, and Lua automation.
+The Smatchet CLI exposes the full [unified Command System](docs/design/applied/command-system-plan.md) from the shell. It connects to a running Smatchet instance over its MCP HTTP endpoint and dispatches any registered command — the same catalog that feeds the in-app Command Palette (Ctrl+Shift+P), MCP tools, and Lua automation.
 
 ## Contents
 

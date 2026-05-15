@@ -411,7 +411,7 @@ struct UiDrawSession {
     bool offlineQueuePanelStatusHasClearDeadline = false;
     std::chrono::steady_clock::time_point offlineQueuePanelStatusClearAt{};
 
-    // ----- Scenario subsystem (see backlog/COMMAND_SYSTEM_PLAN.md §Scenario) -----
+    // ----- Scenario subsystem (see docs/design/applied/command-system-plan.md §Scenario) -----
     /// When true the active scenario drives the scroll position this frame.
     /// Written by ScenarioRunner::Tick; read by SmatchetActiveProjectGridUi.
     bool scenarioScrollActive = false;

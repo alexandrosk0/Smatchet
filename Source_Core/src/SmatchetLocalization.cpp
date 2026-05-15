@@ -54,7 +54,7 @@ const TranslationEntry kEntries[] = {
     {"toast.comment_failed", "Comment Failed", u8"Échec du commentaire"},
     {"toast.queued_offline", "Queued Offline", u8"Mis en file hors ligne"},
 
-    // PR 5 of docs/design/remove-global-project-key.md: badge for dead-letter rows whose draft
+    // PR 5 of docs/design/applied/remove-global-project-key.md: badge for dead-letter rows whose draft
     // was missing a project after the legacy-project sweep.
     {"offlineQueue.badge.missingProject", "missing project", u8"projet manquant"},
     {"offlineQueue.badge.missingProject.tooltip",

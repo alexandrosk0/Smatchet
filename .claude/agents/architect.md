@@ -44,7 +44,7 @@ Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
 No implementation code unless genuinely trivial. A 30-line design doc that prevents an hour of rework is the win.
 
-**Always write the plan to `docs/design/<slug>.md`** — kebab-case slug matching the feature. Never to repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. Commit immediately with `wip(plan): <slug>` per AGENTS.md § Plan-doc safety. See `docs/design/vs-style-view-menu.md` and `docs/design/remove-global-project-key.md` for shape.
+**Always write the plan to `docs/design/<slug>.md`** — kebab-case slug matching the feature. Never to repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. Commit immediately with `wip(plan): <slug>` per AGENTS.md § Plan-doc safety. See `docs/design/applied/vs-style-view-menu.md` and `docs/design/applied/remove-global-project-key.md` for shape.
 
 **Verification automation in the plan.** Every `## Verification` section the architect drafts must classify each item into a `test-author` bucket (A CLI / B scenario / C screenshot / D sanitizer / E ImGui Test Engine) — never "user opens window and observes". If a planned step is genuinely interactive today, mark it bucket E with the explicit follow-up "test-author wires ImGui Test Engine before / alongside the slice ships". A plan that ships with un-bucketed verification will get bounced for re-draft. See AGENTS.md § Verification automation.
 

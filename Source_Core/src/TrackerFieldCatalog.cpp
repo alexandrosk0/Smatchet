@@ -236,7 +236,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
 
     // PR 6: project source is now an explicit per-operation parameter (removed cfg.ProjectKey).
     // Empty projectKey ≡ unscoped (no create-meta enrichment).
-    // See docs/design/remove-global-project-key.md §2.6 / §7 PR 6.
+    // See docs/design/applied/remove-global-project-key.md §2.6 / §7 PR 6.
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     std::vector<std::string> sprintFieldIds;

@@ -89,16 +89,16 @@ class ScenarioRunner;
 class AppController {
     /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
     /// `AvailableFields`, the offline-replay mutex, etc.) during the extraction transition.
-    /// See CODE_REVIEW.md §1.7 / §7 item 12 — Phase 2 will replace this with a small set of
+    /// See BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12 — Phase 2 will replace this with a small set of
     /// interface bundles so the access is no longer trusted-friendship-based.
     friend class OfflineQueueService;
     /// `TicketSyncService` needs access to `activeStreamingSync_`, `Cache`, `Backend`, the
     /// connectivity-probe state, and various private methods (`requestDeferredLive…`,
     /// `PushOfflineReplayTimersDuringTransportOutage`) during the extraction transition.
-    /// See CODE_REVIEW.md §1.7 / §7 item 11 — Phase 2 will replace this with interface bundles.
+    /// See BACKLOG_CODE_REVIEW.md §1.7 / §7 item 11 — Phase 2 will replace this with interface bundles.
     friend class TicketSyncService;
     /// `LuaAutomationHost` is being extracted to own the sol2 state, all Lua bindings, the
-    /// automation worker thread, and the per-host log sinks. See CODE_REVIEW.md §1.7 / §7
+    /// automation worker thread, and the per-host log sinks. See BACKLOG_CODE_REVIEW.md §1.7 / §7
     /// item 14 — Phase 2 will replace this with a `TrackerActions` interface so the host
     /// stops needing AppController-private access.
     friend class LuaAutomationHost;
@@ -126,7 +126,7 @@ class AppController {
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
     bool IsOnUiThread() const;
 
-    /// Unified Command System registry. See backlog/COMMAND_SYSTEM_PLAN.md.
+    /// Unified Command System registry. See docs/design/applied/command-system-plan.md.
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
     /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
     /// and the in-app Ctrl+Shift+P palette.
@@ -149,7 +149,7 @@ class AppController {
      */
     bool RecreateLocalCacheDatabase(std::string& outError);
 
-    /// Worker-to-UI-thread deferred task queue (CODE_REVIEW.md §6.1). Post lambdas here from any
+    /// Worker-to-UI-thread deferred task queue (BACKLOG_CODE_REVIEW.md §6.1). Post lambdas here from any
     /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
     MainThreadDispatcher mainThreadDispatcher;
 
@@ -303,7 +303,7 @@ class AppController {
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
     /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
     /// the C++ side replays every frame until one of the cache-key inputs changes. See
-    /// docs/design/lua-recorded-cmd-list.md.
+    /// docs/design/applied/lua-recorded-cmd-list.md.
     void LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn);
     void LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId);
     void LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn);
@@ -350,7 +350,7 @@ class AppController {
      *
      * Declared outside the SMATCHET_WITH_LUA_AUTOMATION guard so unconditional call sites
      * (TicketFieldEditor) link in the stub build; stub returns false. See
-     * docs/design/lua-recorded-cmd-list.md § Removal of legacy.
+     * docs/design/applied/lua-recorded-cmd-list.md § Removal of legacy.
      *
      * @return true if the handler ran and returned a Lua-truthy value (cell fully handled).
      */
@@ -723,13 +723,13 @@ class AppController {
     /// Owns the offline-create / offline-field-edit replay queues and their dead-letter management.
     /// Constructed lazily in `Initialize`. Public AppController methods (`QueueCreateOffline`,
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
-    /// CODE_REVIEW.md §1.7 / §7 item 12.
+    /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
     /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel transitions)
     /// and applies fetched batches to the cache. Constructed eagerly in `Initialize` alongside
     /// `offlineQueue_`. Public AppController methods (`ApplyIssueFetchPack`,
     /// `CancelAndJoinActiveStreamingSync`, etc.) are thin delegators that forward here. See
-    /// CODE_REVIEW.md §1.7 / §7 item 11.
+    /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 11.
     std::unique_ptr<TicketSyncService> ticketSync_;
     /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
     /// extraction only routes log-sink methods through it; later phases migrate the Lua
@@ -788,7 +788,7 @@ class AppController {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     // Recorder + replay types live in `public` so the anonymous-namespace `LuaDrawList`
     // class in AppController_LuaBindings.cpp can construct + mutate them. Members holding
-    // these types stay `private` further down. See docs/design/lua-recorded-cmd-list.md.
+    // these types stay `private` further down. See docs/design/applied/lua-recorded-cmd-list.md.
   public:
     struct ImCmd {
         enum class Op : std::uint8_t {

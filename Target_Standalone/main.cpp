@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
     // SMATCHET_USER_DATA — override the writable user data directory.
     // Applied here, before ConfigManager::Load(), so the config file, SQLite DB,
     // views, recents, and instance.json all resolve under the overridden path.
-    // Stable API: see backlog/COMMAND_SYSTEM_PLAN.md §"Environment contract".
+    // Stable API: see docs/design/applied/command-system-plan.md §"Environment contract".
     {
         const char* envUserData = std::getenv("SMATCHET_USER_DATA");
         if (envUserData && envUserData[0] != '\0') {
@@ -242,7 +242,7 @@ int main(int argc, char** argv) {
     // Unified Command System — when the first non-flag positional after the
     // program name is `cmd`, short-circuit the GUI boot and run as an HTTP
     // client to a running Smatchet instance. This is the agent-friendly path
-    // (see backlog/COMMAND_SYSTEM_PLAN.md §CLI). All output is structured JSON
+    // (see docs/design/applied/command-system-plan.md §CLI). All output is structured JSON
     // on stdout / errors on stderr; no GLFW / ImGui init happens in this mode.
     if (smatchet::cli::ArgvHasCmdSubcommand(argc, argv)) {
         return smatchet::cli::RunCmdAttach(argc, argv);

@@ -2,7 +2,7 @@
 
 // OfflineQueueService — owns the offline-create / offline-field-edit replay queues and the
 // dead-letter management around them. Extracted from `AppController_IssueCreateOffline.cpp`
-// per CODE_REVIEW.md §1.7 / §7 item 12.
+// per BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
 //
 // Phase 1A scope (this PR): class skeleton, owned by AppController as a `unique_ptr` member,
 // holds the `legacyPendingStartupBanner_` state and a small first batch of read-only
@@ -114,7 +114,7 @@ class OfflineQueueService {
     /// Reset to empty by `TakeLegacyPendingStartupBanner`. Read/write only on the UI thread.
     std::string legacyPendingStartupBanner_;
 
-    /// PR 5 of docs/design/remove-global-project-key.md: one-shot startup sweep that fills in
+    /// PR 5 of docs/design/applied/remove-global-project-key.md: one-shot startup sweep that fills in
     /// `IssueDraft::ProjectKey` on legacy `pending_creates` rows whose draft was authored
     /// against the now-removed global project. Recovery order per row:
     ///   1. parent key prefix from `draft.ExistingIssueKey` (Jira `PROJ-123` -> `PROJ`)

@@ -63,7 +63,7 @@ bool LuaTruthy(const sol::object& o) {
 // Thread-local: false during cached cell / window recording. The imgui.* glue checks this
 // and luaL_errors if Lua tries to draw immediate-mode UI while a cached recording is active —
 // otherwise the script would draw once on cache miss and silently vanish on the next replay.
-// Per docs/design/lua-recorded-cmd-list.md decision #5 + finding #6.
+// Per docs/design/applied/lua-recorded-cmd-list.md decision #5 + finding #6.
 thread_local bool g_luaImmediateModeAllowed = true;
 
 struct LuaImmediateModeGuard {
@@ -1561,7 +1561,7 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
 }
 
 // LuaDrawList method definitions — class declared in the anonymous namespace at the top of
-// this TU. See docs/design/lua-recorded-cmd-list.md § Crash-safety hardening for per-method
+// this TU. See docs/design/applied/lua-recorded-cmd-list.md § Crash-safety hardening for per-method
 // input bounds; out-of-line so the class is complete-typed before InitLuaUi registers it.
 
 namespace {

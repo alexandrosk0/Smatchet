@@ -1110,7 +1110,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     const std::string activeTrackerType = Backend ? Backend->GetTrackerType() : "Unknown";
 
-    // PR 5 of docs/design/remove-global-project-key.md: one-shot legacy-project sweeps.
+    // PR 5 of docs/design/applied/remove-global-project-key.md: one-shot legacy-project sweeps.
     // Drain legacy global project state into per-entity carriers (offline-queue payloads,
     // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
     // exactly once per database file; subsequent launches are no-ops.
@@ -1295,7 +1295,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
-    // Lua host, offline queue, etc.). See backlog/COMMAND_SYSTEM_PLAN.md.
+    // Lua host, offline queue, etc.). See docs/design/applied/command-system-plan.md.
     try {
         commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
         commandRegistry_->LoadRecents();

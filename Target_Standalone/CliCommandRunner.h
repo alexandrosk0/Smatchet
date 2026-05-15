@@ -9,7 +9,7 @@
 // port). The full GUI / windowed paths are taken only in normal (non-`cmd`)
 // invocations.
 //
-// Exit codes (stable contract — see backlog/COMMAND_SYSTEM_PLAN.md §CLI):
+// Exit codes (stable contract — see docs/design/applied/command-system-plan.md §CLI):
 //   0  ok
 //   2  unknown-command
 //   3  missing-required-arg / validation-error

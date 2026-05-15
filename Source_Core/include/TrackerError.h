@@ -1,6 +1,6 @@
 #pragma once
 
-// TrackerError — small value type for tracker / HTTP errors. Introduced per CODE_REVIEW.md
+// TrackerError — small value type for tracker / HTTP errors. Introduced per BACKLOG_CODE_REVIEW.md
 // §2.3 / §6.2 / §7 item 15 to replace the ~80+ `bool foo(..., std::string& outError)` signatures
 // scattered across `ITrackerClient`, `JiraClient`, `PlaneClient`, `LocalCacheManager`,
 // `IssueCreatePipeline`, `TextMerge`, etc.

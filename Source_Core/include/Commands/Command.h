@@ -1,7 +1,7 @@
 #ifndef SMATCHET_COMMANDS_COMMAND_H
 #define SMATCHET_COMMANDS_COMMAND_H
 
-// Unified Command System core types — see backlog/COMMAND_SYSTEM_PLAN.md.
+// Unified Command System core types — see docs/design/applied/command-system-plan.md.
 //
 // One Command struct = one operation. The same struct feeds four frontends:
 //   - CLI subcommand (Target_Standalone/CliCommandRunner)

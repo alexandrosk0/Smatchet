@@ -1,5 +1,5 @@
 // Built-in commands registered by AppController::Initialize.
-// See backlog/COMMAND_SYSTEM_PLAN.md for the full catalogue spec.
+// See docs/design/applied/command-system-plan.md for the full catalogue spec.
 //
 // All handlers are AsyncSafe=true unless explicitly marked otherwise. Every
 // handler must be reentrant — handlers may call back into the registry via

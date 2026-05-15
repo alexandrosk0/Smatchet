@@ -9,7 +9,7 @@
 /// Bounded, thread-safe queue of tasks drained once per frame on the main (UI) thread.
 ///
 /// Workers post lambdas instead of setting ad-hoc one-shot atomic/bool flags, centralising
-/// the UI-thread-callback contract (CODE_REVIEW.md §6.1). Drain is called at the head of
+/// the UI-thread-callback contract (BACKLOG_CODE_REVIEW.md §6.1). Drain is called at the head of
 /// SmatchetUI::Draw so tasks execute before any window drawing begins that frame.
 ///
 /// Lifetime contract: the dispatcher is typically a member of `AppController`. Callers MUST

@@ -839,7 +839,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
     // Cached recorded-cmd-list dispatch: cache hit replays in ~5 µs / cell; miss invokes
     // the Lua provider on a recorder which builds an opcode list we cache. See
-    // docs/design/lua-recorded-cmd-list.md and AppController::TryRenderCachedLuaField.
+    // docs/design/applied/lua-recorded-cmd-list.md and AppController::TryRenderCachedLuaField.
     // Passing `allowEdits` through means draw:input_text can't bypass grid-level edit-
     // disabled states — read-only folds catalog + editmeta + allowEdits.
     const bool handledByLua =

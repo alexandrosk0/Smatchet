@@ -336,7 +336,7 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     # the error site and the pcall setjmp frame — the recorder + sol2 marshalling layer
     # both own std::vector / std::string temporaries that would leak (or corrupt sol2
     # internals). With C++ exceptions, the host-side try / catch around protected_function
-    # catches cleanly and destructors run. See docs/design/lua-recorded-cmd-list.md
+    # catches cleanly and destructors run. See docs/design/applied/lua-recorded-cmd-list.md
     # § Lua build mode.
     set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)
 
@@ -368,7 +368,7 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
             message(FATAL_ERROR
                 "Smatchet_Lua_Internal source ${_src} has LANGUAGE=${_lang}, expected CXX. "
                 "luaL_error must use C++ exceptions for crash-safe unwinding through the "
-                "recorder (see docs/design/lua-recorded-cmd-list.md § Lua build mode).")
+                "recorder (see docs/design/applied/lua-recorded-cmd-list.md § Lua build mode).")
         endif()
     endforeach()
 
