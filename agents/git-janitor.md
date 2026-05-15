@@ -106,13 +106,25 @@ When a PR squash-merged and further commits landed on the same branch (common in
 After all PRs land:
 
 ```bash
-# Main repo.
+# Re-fetch BEFORE pulling. The `gh api -X PUT pulls/<N>/merge` response returns
+# `merged:true` BEFORE the new sha is necessarily visible to a subsequent `git fetch`
+# (small replication lag on the GitHub side, observed in PR #75 cleanup). If the first
+# `git pull` only fast-forwards by N-1 and the just-merged sha is missing, re-fetch and
+# pull again — DO NOT decide "merge silently dropped my commit" based on the first read.
+git -C <main-repo> fetch origin
+
 git -C <main-repo> checkout develop
 git -C <main-repo> pull --rebase --empty=drop
 # --empty=drop silently skips commits whose patch content is already upstream
 # (typical when local develop had a temp copy of work that landed via squash).
 
+# Replication-lag belt: if origin/develop is now ahead of local, re-fetch + ff-pull.
+if [ "$(git -C <main-repo> rev-parse develop)" != "$(git -C <main-repo> rev-parse origin/develop)" ]; then
+    git -C <main-repo> fetch origin && git -C <main-repo> pull --ff-only
+fi
+
 # Worktree: detach to origin/develop (cannot share a checkout of `develop` across worktrees).
+git -C <worktree> fetch origin
 git -C <worktree> checkout --detach origin/develop
 ```
 
