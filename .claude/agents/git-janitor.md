@@ -32,6 +32,19 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for mirror-sync collateral (e.g. `scripts/sync-agents.sh` outputs) or backlog status-flip on applied items. No design / no behavioural code changes.
 
+## Path resolution — `<main-repo>` / `<worktree>`
+
+Commands below use placeholders. Resolve them at session start:
+
+```bash
+MAIN_REPO="$(git rev-parse --show-toplevel)"          # current repo (the one you're invoked from)
+git worktree list                                     # full list
+# If MAIN_REPO is itself a worktree (output line marked "(bare)" elsewhere), the canonical
+# main repo is the first line whose path does NOT match the current worktree.
+```
+
+If only one worktree exists, drop the `-C <worktree>` lines from every command in this file. If multiple worktrees exist, ask the user to confirm which one is in scope before running cleanup — janitor doesn't guess. `git worktree list` output is required reading; surface it in the final report so the user sees what the agent considered.
+
 ## Hard refusals
 
 - **Uncommitted user work blocks operations.** `git -C <main-repo> status` reporting modified / untracked files (other than `.fetchcontent-*` / `build/*` / agent-mirror collateral) — STOP and surface the file list. Do not stash silently. Ask the user to commit or discard.
@@ -45,17 +58,20 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 Always run in order before any mutation:
 
 ```bash
-# 1. Pull all remote state.
-git -C <main-repo> fetch origin --prune
-git -C <worktree> fetch origin --prune
+# 0. List worktrees so the agent knows what's in scope.
+git worktree list
 
-# 2. Audit uncommitted state in both.
-git -C <main-repo> status --short
-git -C <worktree> status --short
+# 1. Pull all remote state.
+git -C "$MAIN_REPO" fetch origin --prune
+[ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" fetch origin --prune
+
+# 2. Audit uncommitted state in every worktree.
+git -C "$MAIN_REPO" status --short
+[ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" status --short
 
 # 3. Audit local branches with unmerged commits.
-git -C <main-repo> branch --no-merged origin/develop
-git -C <worktree> branch --no-merged origin/develop
+git -C "$MAIN_REPO" branch --no-merged origin/develop
+[ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" branch --no-merged origin/develop
 
 # 4. Audit open PRs.
 gh pr list --base develop --json number,title,headRefName,mergeable,mergeStateStatus
@@ -86,7 +102,11 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    ```
    Commit as `docs(plan): log <slug> #<N>` on a fresh small branch + its own PR (or batch with subsequent cleanup PRs to avoid PR-spam).
 
-5. **Post-merge backlog sweep**: if `agents/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, regenerate the mirror via `scripts/sync-agents.sh`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+5. **Re-check mergeability** of the next PR in the batch. Merging A may have flipped B from `MERGEABLE` to `CONFLICTING` if they touched the same file. `gh pr view <N+1> --json mergeable,mergeStateStatus` again. If `UNKNOWN`, sleep 2s and retry once — GitHub computes mergeability lazily on the first read after a sibling merge.
+
+6. **Post-merge backlog sweep**: if `backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, regenerate the mirror via `scripts/sync-agents.sh`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+
+7. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 ## Diverged branch recovery
 
@@ -113,37 +133,40 @@ After all PRs land:
 # (small replication lag on the GitHub side, observed in PR #75 cleanup). If the first
 # `git pull` only fast-forwards by N-1 and the just-merged sha is missing, re-fetch and
 # pull again — DO NOT decide "merge silently dropped my commit" based on the first read.
-git -C <main-repo> fetch origin
+git -C "$MAIN_REPO" fetch origin
 
-git -C <main-repo> checkout develop
-git -C <main-repo> pull --rebase --empty=drop
+git -C "$MAIN_REPO" checkout develop
+git -C "$MAIN_REPO" pull --rebase --empty=drop
 # --empty=drop silently skips commits whose patch content is already upstream
 # (typical when local develop had a temp copy of work that landed via squash).
 
 # Replication-lag belt: if origin/develop is now ahead of local, re-fetch + ff-pull.
-if [ "$(git -C <main-repo> rev-parse develop)" != "$(git -C <main-repo> rev-parse origin/develop)" ]; then
-    git -C <main-repo> fetch origin && git -C <main-repo> pull --ff-only
+if [ "$(git -C "$MAIN_REPO" rev-parse develop)" != "$(git -C "$MAIN_REPO" rev-parse origin/develop)" ]; then
+    git -C "$MAIN_REPO" fetch origin && git -C "$MAIN_REPO" pull --ff-only
 fi
 
 # Worktree: detach to origin/develop (cannot share a checkout of `develop` across worktrees).
-git -C <worktree> fetch origin
-git -C <worktree> checkout --detach origin/develop
+if [ -n "${WORKTREE:-}" ]; then
+    git -C "$WORKTREE" fetch origin
+    git -C "$WORKTREE" checkout --detach origin/develop
+fi
 ```
 
-Delete stale local branches in both repos:
+Delete stale local branches in every worktree:
 
 ```bash
-# Skip refusal — these branches' commits are merged via squash (different sha) so plain
-# `branch -d` rejects them. Confirm the branch's content is on develop via the diff stat
-# (file-restore section above) before forcing.
-git -C <main-repo>   branch -D <branch-name>
-git -C <worktree>    branch -D <branch-name>
+# Use `branch -D` (force) not `branch -d`. Squash-merge produces a different sha than
+# the local feature branch's HEAD, so `branch -d` (safe) rejects it as "not fully merged".
+# Before forcing, confirm the branch's content is on develop via the file-restore diff stat
+# in the previous section.
+git -C "$MAIN_REPO" branch -D <branch-name>
+[ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" branch -D <branch-name>
 ```
 
 **Worktree directory itself** — DO NOT `git worktree remove` from inside the worktree (operation rejects). If the user wants the worktree directory gone, surface the exact command for them to run from the main repo:
 
-```
-git -C <main-repo> worktree remove <worktree-path>
+```bash
+git -C "$MAIN_REPO" worktree remove "$WORKTREE"
 ```
 
 ## Mirror sync
@@ -151,11 +174,14 @@ git -C <main-repo> worktree remove <worktree-path>
 If any PR in the round touched `agents/*.md`, the `.claude/agents/` mirror needs regenerating:
 
 ```bash
-cd <main-repo> && bash scripts/sync-agents.sh
-git status --short  # confirm .claude/agents/ diff matches agents/ diff
+cd "$MAIN_REPO" && bash scripts/sync-agents.sh
+bash scripts/check-agents-mirror.sh            # MUST exit 0 — drift = sync-script bug
+git status --short                              # confirm .claude/agents/ diff matches agents/ diff
 ```
 
 If the diff is non-empty, that itself is a small PR (`docs(agents): re-sync .claude/agents mirror`). Do NOT push the sync commit directly to develop — same PR-only rule.
+
+If `check-agents-mirror.sh` fails after a successful sync, the sync script itself has a bug — surface stderr and HALT. Do not commit a half-synced mirror.
 
 ## Regression gate (final, mandatory)
 
@@ -166,18 +192,20 @@ After all merges + cleanup but before declaring done:
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12
 
-# Lua-off variant catches stub-build drift.
-cmake -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja  # only if missing
+# Lua-off variant catches stub-build drift. cmake -B is idempotent — safe to always run.
+cmake -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja
 cmake --build build/lua-off-check --target SmatchetStandalone
 ```
 
 A failure here means a squash-merge produced a non-buildable develop. HALT and surface — the user / build-doctor authors the fix.
 
-If `scripts/dev/test-*.sh` exists for any feature shipped in this round, run those too:
+Run the unified test runner (auto-discovers every `scripts/dev/test-*.sh` shipped by `test-author`):
 
 ```bash
-for t in scripts/dev/test-*.sh; do bash "$t" || { echo "REGRESSION: $t"; exit 1; }; done
+bash scripts/dev/test-all.sh
 ```
+
+Exit code 0 = all pass. Exit code 1 = one or more assertion failures (regression). Exit code 2 = missing binary (build problem upstream — HALT and surface). Any non-zero = HALT.
 
 ## Final report
 
@@ -209,8 +237,27 @@ Regression gate:
 develop now at:  <sha-short>  <title>
 
 Residue requiring user action:
-  - git -C <main-repo> worktree remove <worktree-path>   (if you want this worktree gone)
+  - git -C "$MAIN_REPO" worktree remove "$WORKTREE"   (if you want this worktree gone)
+  - test-author follow-up: PR #<N> shipped manual verification step — flagged in backlog/AGENT_SELF_IMPROVEMENT.md
   - <other manual items>
+
+Worktrees in scope: <git worktree list output>
 ```
+
+## Dry-run mode
+
+When a large PR batch is queued, run with the agent's prompt declaring `DRY RUN` at the top. In dry-run mode the agent:
+
+1. Performs every pre-flight + audit step.
+2. Prints the exact mutation command per PR (`gh api -X PUT ...`, `gh api -X DELETE ...`, plan-revision text, backlog appends, branch deletes).
+3. Skips every mutation.
+4. Reports the same final summary except marked `[DRY RUN — no changes applied]`.
+
+Use it when:
+- ≥ 3 PRs in the batch
+- Any PR touches `Source_Core/` or build files
+- Cleanup follows a multi-day session and the dependency order isn't trivially obvious from the PR list
+
+The user then says "go" and the agent re-runs without the dry-run flag.
 
 End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.

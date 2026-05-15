@@ -123,6 +123,7 @@ Each packet should include:
 | `code-review` | medium · read-only | Pre-merge code review. Runs cppcheck / clang-tidy / clang-format over the whole branch diff + Smatchet invariants. Wraps the standard pre-merge review skill. |
 | `security-review` | high · read-only | Pre-merge security review. Runs flawfinder / semgrep / gitleaks (when available) + Smatchet attack-surface map. Wraps the standard pre-merge security skill. |
 | `test-author` | medium · read-edit | Verification automation — converts every "user opens X and observes Y" plan item into a deterministic CLI / scenario / screenshot / sanitizer / ImGui Test Engine assertion. Invoke at plan time, after first verification round, and after every agent that hands back a manual step. Writes `scripts/dev/test-<feature>.sh`; the unified runner is `scripts/dev/test-all.sh`. Goal is zero manual steps. |
+| `git-janitor` | medium · read-edit | End-of-session git maintenance — squash-merge open PRs in dependency order, delete merged branches, sync mirrors, run regression build + `scripts/dev/test-all.sh` as the final gate. Refuses on uncommitted user work, force-push to develop/main, revert authoring, direct push to develop. Invoke after the last PR of a session lands and the user signals "no more changes coming". |
 | `mechanic` | low · read-edit | Fully-specified mechanical work: renames, clang-format passes, doc / comment fixes, copyright bumps, localization key renames. Resolve ambiguity before delegating. |
 
 ### Subsystem specialists
