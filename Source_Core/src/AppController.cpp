@@ -788,6 +788,12 @@ void AppController::OpenUrl(const std::string& url) const {
 void AppController::AddAutomationLogSink(std::function<void(const std::string&)> sink) {
     if (luaHost_) {
         luaHost_->AddAutomationLogSink(std::move(sink));
+    } else {
+        // OnEarlyInit fires before Initialize constructs luaHost_. Buffer the sink;
+        // Initialize drains pendingLogSinks_ into luaHost_ immediately after construction.
+        if (sink) {
+            pendingLogSinks_.push_back(std::move(sink));
+        }
     }
 }
 
@@ -795,6 +801,14 @@ void AppController::ClearAutomationLogSinks() {
     if (luaHost_) {
         luaHost_->ClearAutomationLogSinks();
     }
+}
+
+void AppController::AddAutomationErrorSink(std::function<void(const std::string&)> sink) {
+    errorSinks_.push_back(std::move(sink));
+}
+
+bool AppController::ConsumeScriptingWindowRequest() {
+    return scriptingWindowOpenRequested_.exchange(false);
 }
 
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
@@ -1040,6 +1054,12 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (!luaHost_) {
         luaHost_ = std::make_unique<LuaAutomationHost>(*this);
     }
+    // Drain sinks buffered by AddAutomationLogSink calls during OnEarlyInit (which runs
+    // before Initialize). From this point forward AddAutomationLogSink forwards directly.
+    for (auto& s : pendingLogSinks_) {
+        luaHost_->AddAutomationLogSink(std::move(s));
+    }
+    pendingLogSinks_.clear();
 
     try {
 

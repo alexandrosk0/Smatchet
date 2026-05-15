@@ -724,6 +724,30 @@ void AppController::InitLuaCore(sol::state& state) {
     state.set_function("log_info", &smatchet_lua_init_detail::LuaLogInfoGlue);
     state.set_function("decode_json", &smatchet_lua_init_detail::LuaDecodeJsonGlue);
 
+    // UI-mutating bindings (cached renderers, icon maps, ui.* table) live in InitLuaUi for
+    // the main state. Background automation states re-run setup scripts in this minimal
+    // Core state to define helper functions/tables — so the UI registrations need to be
+    // present as no-ops here, otherwise SmatchetHooks.lua throws "attempt to call nil"
+    // every time the worker spins up. The registrations are intentionally inert: the bgState
+    // is destroyed at the end of each job, so any registration on it would be discarded
+    // regardless. The real registrations happen against the main `lua` state via OnEarlyInit.
+    auto noop = []() {};
+    state.set_function("register_field_display_cached",         noop);
+    state.set_function("unregister_field_display_cached",       noop);
+    state.set_function("register_field_display_cached_by_name", noop);
+    state.set_function("unregister_field_display_cached_by_name", noop);
+    state.set_function("register_field_icon_map",               noop);
+    state.set_function("unregister_field_icon_map",             noop);
+    sol::table uiNoop = state.create_table();
+    uiNoop.set_function("register_window",            noop);
+    uiNoop.set_function("unregister_window",          noop);
+    uiNoop.set_function("invalidate_window",          noop);
+    uiNoop.set_function("invalidate_field_cache",     noop);
+    uiNoop.set_function("invalidate_field_cache_for", noop);
+    uiNoop.set_function("register_ticket_action",     noop);
+    uiNoop.set_function("register_global_action",     noop);
+    state["ui"] = uiNoop;
+
     sol::table mcp = state.create_table();
     mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
     state["mcp"] = mcp;
@@ -1247,13 +1271,31 @@ void AppController::AutomationWorkerLoop() {
             // and persisting the state across jobs would lose the isolation guarantee.
             for (const auto& path : setupScriptsSnapshot) {
                 std::string resolved = ResolveLuaScriptPath(path);
-                if (!resolved.empty()) {
-                    auto script = bgState.load_file(resolved);
-                    if (script.valid()) {
-                        sol::protected_function func = script;
-                        sandbox.set_on(func);
-                        func();
+                if (resolved.empty()) {
+                    continue;
+                }
+                auto script = bgState.load_file(resolved);
+                if (!script.valid()) {
+                    sol::error err = script;
+                    const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
+                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
+                    for (const auto& sink : errorSinks_) {
+                        sink(bare);
                     }
+                    scriptingWindowOpenRequested_.store(true);
+                    continue;
+                }
+                sol::protected_function func = script;
+                sandbox.set_on(func);
+                sol::protected_function_result res = func();
+                if (!res.valid()) {
+                    sol::error err = res;
+                    const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
+                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
+                    for (const auto& sink : errorSinks_) {
+                        sink(bare);
+                    }
+                    scriptingWindowOpenRequested_.store(true);
                 }
             }
 
@@ -1280,8 +1322,14 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
     }, LUA_MASKCOUNT, 50000);
 
     auto logErr = [this](const char* prefix, const std::string& detail) {
-        const std::string msg = std::string(prefix) + detail;
-        LuaLogInfoBind(msg);
+        const std::string bare = std::string(prefix) + detail;
+        // Route through the normal info sink so the console shows it, but also
+        // through dedicated error sinks (persistent error panel + window-open).
+        LuaLogInfoBind(std::string("[ERROR] ") + bare);
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
     };
 
     if (job.type == AutomationJob::Type::RunAutoScript) {
@@ -1389,14 +1437,19 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
 
 void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
-        const std::string msg = std::string(prefix) + detail;
+        const std::string bare = std::string(prefix) + detail;
+        const std::string decorated = std::string("[ERROR] ") + bare;
         if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
             for (const auto& sink : luaHost_->SnapshotLogSinks()) {
-                sink(msg);
+                sink(decorated);
             }
         } else {
-            std::printf("%s\n", msg.c_str());
+            std::printf("%s\n", decorated.c_str());
         }
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
     };
 
     const std::string path = ResolveLuaScriptPath(scriptPath);
@@ -2235,6 +2288,11 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         sol::error err = script;
         outError = err.what();
         LOG_TRACE("ExecuteLuaConsoleSnippet: load_error %s", TruncateForTrace(outError).c_str());
+        LuaLogInfoBind(std::string("[ERROR] ") + outError);
+        for (const auto& sink : errorSinks_) {
+            sink(outError);
+        }
+        scriptingWindowOpenRequested_.store(true);
         return false;
     }
 
@@ -2253,6 +2311,12 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         sol::error e = result;
         outError = e.what();
         LOG_TRACE("ExecuteLuaConsoleSnippet: runtime_error %s", TruncateForTrace(outError).c_str());
+        // Red scrolling-log entry + persistent error panel + auto-open window.
+        LuaLogInfoBind(std::string("[ERROR] ") + outError);
+        for (const auto& sink : errorSinks_) {
+            sink(outError);
+        }
+        scriptingWindowOpenRequested_.store(true);
         return false;
     }
 

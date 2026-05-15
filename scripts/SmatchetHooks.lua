@@ -51,7 +51,7 @@
 
 
 
---[[
+
 local function render_progress_json(issue_id, field_id, raw, avail_width, read_only, field_name, draw)
   -- decode_json on a hot Lua path can be costly + can throw a C++ parse_error past the
   -- protected call on certain malformed inputs (PR #54 follow-up). Prefer string.match;
@@ -71,7 +71,7 @@ register_field_display_cached_by_name("progress", render_progress_json)
 -- register_field_display_cached("customfield_XXXXX", render_progress_json)
 
 log_info("SmatchetHooks.lua loaded (progress renderer registered by name)")
-]]
+
 
 --[[ Field icons — remove the surrounding --[[ and  to try this (or paste into an uncommented section).
 register_field_icon_map("priority", {
@@ -245,3 +245,4 @@ end
 ui.register_global_action("Migrate to Active Backend", "migrate_to_active_backend")
 
 log_info("SmatchetHooks.lua: Migration tool registered.")
+

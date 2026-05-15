@@ -158,6 +158,18 @@ class AppController {
     /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
+    /// Register a sink that receives Lua error messages (automation runner + setup script
+    /// failures). Called with a clean message string — no `[LUA]` / `[ERROR]` prefix; sink
+    /// is responsible for presentation. Safe to call from any thread (the background
+    /// automation worker may invoke it); sinks themselves are expected to be UI-thread-safe
+    /// (e.g. via mainThreadDispatcher). Call from OnEarlyInit only.
+    void AddAutomationErrorSink(std::function<void(const std::string&)> sink);
+
+    /// Atomically reads and clears the "open Scripting window" request that the background
+    /// automation worker sets on a Lua error. UI-thread: call once per frame in OnDraw.
+    /// Returns true if the plugin should bring the Scripting window to the foreground.
+    bool ConsumeScriptingWindowRequest();
+
     /**
      * Optional host callback for launching URLs.
      * Use this when embedding in Unreal (avoids OS-level `system("start")` calls).
@@ -751,6 +763,20 @@ class AppController {
      *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
     std::string currentCatalogProjectKey_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
+    /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
+    /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once
+    /// Initialize constructs it; cleared immediately after.
+    std::vector<std::function<void(const std::string&)>> pendingLogSinks_;
+
+    /// Error sinks registered via AddAutomationErrorSink — called on any Lua error in
+    /// the automation runner or setup path. Unconditional (no Lua guard) so the plugin can
+    /// register regardless of build config. Accessed on the UI thread (registration in
+    /// OnEarlyInit) and on the background automation worker thread (call time) — the
+    /// sinks themselves must be UI-thread-safe (e.g. post via mainThreadDispatcher).
+    std::vector<std::function<void(const std::string&)>> errorSinks_;
+    /// Atomically set by the background automation worker on Lua error; consumed once per
+    /// frame by LuaConsolePlugin::OnDraw to open + focus the Scripting window.
+    std::atomic<bool> scriptingWindowOpenRequested_{false};
     std::function<void(const std::string&)> OpenUrlHandler;
     std::function<void()> CloseEmbeddedUiHandler;
     std::function<void()> RequestAppQuitHandler;

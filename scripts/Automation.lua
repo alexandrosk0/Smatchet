@@ -2,5 +2,11 @@
 -- The host calls `process_ticket(ticket)`.
 
 function process_ticket(ticket)
-    log_info("Automation.lua stub for ticket " .. tostring(ticket.id))
+ --   error("deliberate test throw: " .. tostring(ticket.id))
+log_info("SmatchetHooks.lua loaded (progress renderer registered by name)")
 end
+
+
+
+
+
