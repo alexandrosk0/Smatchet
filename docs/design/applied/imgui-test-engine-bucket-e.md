@@ -12,7 +12,7 @@
 | D | Sanitizer build |
 | E | ImGui Test Engine (drives the actual widget tree — clicks, types, drags) |
 
-Buckets A–D ship today. **Bucket E does not** — `agents/test-author.md` § Bucket E documents the recipe but flags it as "deferred, with concrete next-action plan" so no manual residue ships unflagged. `backlog/AGENT_SELF_IMPROVEMENT.md` row `2026-05-13 · test-author · [new-agent / tooling]` tracks the deferral.
+Buckets A–D ship today. **Bucket E does not** — `agents/test-author.md` § Bucket E documents the recipe but flags it as "deferred, with concrete next-action plan" so no manual residue ships unflagged. `docs/backlog/AGENT_SELF_IMPROVEMENT.md` row `2026-05-13 · test-author · [new-agent / tooling]` tracks the deferral.
 
 This plan **does not execute**. It scopes the work so when the first concrete bucket-E item arrives (e.g. "drag a grid column header to position X and observe the order persists across reopen"), execution is mechanical.
 

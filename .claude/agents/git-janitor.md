@@ -189,9 +189,9 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 5. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
 
-6. **Post-merge backlog sweep**: if `backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, regenerate the mirror via `scripts/sync-agents.sh`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+6. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, regenerate the mirror via `scripts/sync-agents.sh`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
-7. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+7. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 ## Diverged branch recovery
 
@@ -311,7 +311,7 @@ develop now at:  <sha-short>  <title>
 
 Residue requiring user action:
   - git -C "$MAIN_REPO" worktree remove "$WORKTREE"   (if you want this worktree gone)
-  - test-author follow-up: PR #<N> shipped manual verification step — flagged in backlog/AGENT_SELF_IMPROVEMENT.md
+  - test-author follow-up: PR #<N> shipped manual verification step — flagged in docs/backlog/AGENT_SELF_IMPROVEMENT.md
   - <other manual items>
 
 Worktrees in scope: <git worktree list output>
@@ -323,4 +323,4 @@ When the prompt declares `DRY RUN`: do pre-flight + audit, print each intended m
 
 Trigger automatically when ≥3 PRs in batch, any PR touches `Source_Core/` or build files, or dependency order isn't obvious. User then says "go" for real run.
 
-End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

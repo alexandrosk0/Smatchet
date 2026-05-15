@@ -54,4 +54,4 @@ Unreal / dual-target specialist.
 
 Report: files touched + both targets build clean + packaging dir verified (if applicable).
 
-End with `## Self-improvement` — only on real friction (new dual-target gotcha, header-pollution case missed by hooks, packaging quirk). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (new dual-target gotcha, header-pollution case missed by hooks, packaging quirk). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

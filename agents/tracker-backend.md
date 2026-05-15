@@ -49,4 +49,4 @@ Tracker backend specialist (Jira + Plane.so).
 
 Report: clients changed + interface delta (if any) + the smoke-test command or scenario used.
 
-End with `## Self-improvement` — only if you hit real friction (missing invariant, ambiguous backend split, tooling gap). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if you hit real friction (missing invariant, ambiguous backend split, tooling gap). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -48,4 +48,4 @@ Perforce blame specialist.
 
 Report: files touched + `p4` commands invoked (if new) + cache discipline confirmed.
 
-End with `## Self-improvement` — only on real friction (new `p4` quirk, callstack format the parser doesn't handle, PathRemaps edge case). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (new `p4` quirk, callstack format the parser doesn't handle, PathRemaps edge case). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

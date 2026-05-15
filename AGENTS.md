@@ -42,7 +42,7 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 
 **Plan stress-test — `grill-with-docs` skill**: before finalising `docs/design/<slug>.md`, invoke the skill to grill the plan against `docs/CONTEXT.md` (glossary) and `docs/adr/` (ADRs). Outputs: refined plan + glossary updates + new ADRs only when hard-to-reverse + surprising + real-trade-off all fire. Smatchet file mapping in `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md`.
 
-**Verification automation — zero manual steps**: `test-author` converts every manual verification step into a deterministic CLI / scenario / screenshot / sanitizer / ImGui-Test-Engine assertion. Three invocation points: (1) plan-time audit of `docs/design/<slug>.md` § Verification, (2) post-first-round sweep, (3) every agent handoff that mentions a manual step. Unified runner: `bash scripts/dev/test-all.sh` (auto-enrols `scripts/dev/test-*.sh`). Manual residue without a `backlog/AGENT_SELF_IMPROVEMENT.md` entry (category `tooling`) is a fail. "Truly interactive" is never the final answer — bucket E (ImGui Test Engine) hasn't been wired yet. Bucket details in `agents/test-author.md`.
+**Verification automation — zero manual steps**: `test-author` converts every manual verification step into a deterministic CLI / scenario / screenshot / sanitizer / ImGui-Test-Engine assertion. Three invocation points: (1) plan-time audit of `docs/design/<slug>.md` § Verification, (2) post-first-round sweep, (3) every agent handoff that mentions a manual step. Unified runner: `bash scripts/dev/test-all.sh` (auto-enrols `scripts/dev/test-*.sh`). Manual residue without a `docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry (category `tooling`) is a fail. "Truly interactive" is never the final answer — bucket E (ImGui Test Engine) hasn't been wired yet. Bucket details in `agents/test-author.md`.
 
 **Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
 
@@ -256,11 +256,9 @@ Each delegated agent gets a fresh context window — `tracker-backend` work does
 
 ## Self-improvement loop
 
-Every delegated agent ends its report with a `## Self-improvement` section listing observations about the agent ecosystem itself — shortcuts, missing context that wasted a tool call, redundant steps, new-agent candidates, tooling gaps. **Empty is the common case and explicitly fine** — agents only flag real friction, never make up suggestions.
+Every delegated agent ends its report with a `## Self-improvement` section. **Empty is the common case and explicitly fine** — agents only flag real friction, never make up suggestions.
 
-The orchestrator reads each agent's section, dedupes against [`backlog/AGENT_SELF_IMPROVEMENT.md`](backlog/AGENT_SELF_IMPROVEMENT.md), and appends new entries with date + source agent + category (`shortcut` / `process` / `tooling` / `context` / `new-agent`). See the backlog file for format and triage rules.
-
-Apply entries when one has been mentioned by ≥ 2 agents or has blocked the same workflow ≥ 3 times. The goal is a self-tightening loop — agents notice friction, the orchestrator accumulates evidence, prompts get patched, friction drops.
+Operational rules — format, categories, workflow steps, apply threshold, triage cadence — live in [`docs/agents/self-improvement.md`](docs/agents/self-improvement.md). Live entries: [`docs/docs/backlog/AGENT_SELF_IMPROVEMENT.md`](docs/docs/backlog/AGENT_SELF_IMPROVEMENT.md). The goal is a self-tightening loop — agents notice friction, the orchestrator accumulates evidence, prompts get patched, friction drops.
 
 ## Harness adapter
 

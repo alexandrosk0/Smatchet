@@ -2,7 +2,7 @@
 
 ## Context
 
-`backlog/AGENT_SELF_IMPROVEMENT.md` holds 9 entries with `Status: open`. Some are doc-only and applied trivially; some have existing dedicated plans; some are externally blocked and stay deferred. This plan triages each and routes to a concrete next action.
+`docs/backlog/AGENT_SELF_IMPROVEMENT.md` holds 9 entries with `Status: open`. Some are doc-only and applied trivially; some have existing dedicated plans; some are externally blocked and stay deferred. This plan triages each and routes to a concrete next action.
 
 ## Triage table
 
@@ -36,7 +36,7 @@ Add two bullets under the existing delegation-packet list:
 - **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 ```
 
-### File `backlog/AGENT_SELF_IMPROVEMENT.md`
+### File `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
 
 - Mark items 1 + 2 as `Status: applied (<sha>)` after the commit lands.
 - Update item 3 status: `Status: open · needs reproducer (lint-cpp.sh filter is correct on inspection; root cause requires observing a fresh failure)`.
@@ -58,13 +58,13 @@ git mv ~/.claude/plans/test-rig-agent-shy-margulis.md docs/design/test-rig-agent
 
 The plan body is already complete (139 lines, 5-commit migration order, locked scope decisions). One small edit: update the plan-cross-link text at the top to reflect its new path. No content changes.
 
-After the move, update `backlog/AGENT_SELF_IMPROVEMENT.md` entry #5 from `plan scoped at ~/.claude/plans/...` to `plan at docs/design/test-rig-agent.md`.
+After the move, update `docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry #5 from `plan scoped at ~/.claude/plans/...` to `plan at docs/design/test-rig-agent.md`.
 
 ### Verification (commit B)
 
 - `[ -f docs/design/test-rig-agent.md ]` → true
 - `grep -c "Add a \`test-rig\` agent" docs/design/test-rig-agent.md` → 1
-- `grep "test-rig-agent.md" backlog/AGENT_SELF_IMPROVEMENT.md` → at least 1 hit
+- `grep "test-rig-agent.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md` → at least 1 hit
 
 ## Commit C — scope ImGui Test Engine plan (item 9)
 
@@ -75,12 +75,12 @@ Write a **new** `docs/design/imgui-test-engine-bucket-e.md` covering:
 - **Sketch of FetchContent + target shape** (mirroring test-rig's CMake additions; the two test surfaces share `tests/CMakeLists.txt`).
 - **Migration order**: zero commits until the first concrete bucket-E item arrives. This file is **scope-only**, not execution-ready.
 
-After writing, update `backlog/AGENT_SELF_IMPROVEMENT.md` entry #9 from `Status: open` to `Status: open · plan at docs/design/imgui-test-engine-bucket-e.md`.
+After writing, update `docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry #9 from `Status: open` to `Status: open · plan at docs/design/imgui-test-engine-bucket-e.md`.
 
 ### Verification (commit C)
 
 - `[ -f docs/design/imgui-test-engine-bucket-e.md ]` → true
-- `grep "imgui-test-engine-bucket-e.md" backlog/AGENT_SELF_IMPROVEMENT.md` → at least 1 hit
+- `grep "imgui-test-engine-bucket-e.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md` → at least 1 hit
 
 ## Commit D (separate session) — execute test-rig
 
@@ -96,7 +96,7 @@ Per the migration order in `docs/design/test-rig-agent.md` — five sub-commits 
 ## Reused patterns
 
 - **Plan revision discipline** — every plan gets `## Implementation log` / `## Deviations from plan` / `## Verification` appended after it ships, per AGENTS.md § Plan revision after implementation.
-- **Backlog status format** — `Status: open | applied (<sha>) | rejected (...)` per the format in `backlog/AGENT_SELF_IMPROVEMENT.md` header.
+- **Backlog status format** — `Status: open | applied (<sha>) | rejected (...)` per the format in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` header.
 - **Orchestrator delegation packet bullets** — pattern established at AGENTS.md lines ~96–104. Two new bullets slot in alongside the existing ones.
 
 ## Migration order
@@ -118,14 +118,14 @@ grep -c "Post-split include-replication rule" AGENTS.md           # = 1
 
 # Commit B
 [ -f docs/design/test-rig-agent.md ] && echo "test-rig plan moved"
-grep -c "docs/design/test-rig-agent.md" backlog/AGENT_SELF_IMPROVEMENT.md  # ≥ 1
+grep -c "docs/design/test-rig-agent.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md  # ≥ 1
 
 # Commit C
 [ -f docs/design/imgui-test-engine-bucket-e.md ] && echo "imgui-test plan scoped"
-grep -c "docs/design/imgui-test-engine-bucket-e.md" backlog/AGENT_SELF_IMPROVEMENT.md  # ≥ 1
+grep -c "docs/design/imgui-test-engine-bucket-e.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md  # ≥ 1
 
 # Status flips
-grep -c "Status: applied (.\+)" backlog/AGENT_SELF_IMPROVEMENT.md  # at least +3 vs before
+grep -c "Status: applied (.\+)" docs/backlog/AGENT_SELF_IMPROVEMENT.md  # at least +3 vs before
 ```
 
 Dynamic: none — pure documentation pass.
@@ -159,9 +159,9 @@ Static (post-A + B + C):
 - `grep -c "File-split closure rule" AGENTS.md` → 1 ✓
 - `grep -c "Post-split include-replication rule" AGENTS.md` → 1 ✓
 - `[ -f docs/design/test-rig-agent.md ]` → true ✓
-- `grep -c "docs/design/test-rig-agent.md" backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
+- `grep -c "docs/design/test-rig-agent.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
 - `[ -f docs/design/imgui-test-engine-bucket-e.md ]` → true ✓
-- `grep -c "docs/design/imgui-test-engine-bucket-e.md" backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
+- `grep -c "docs/design/imgui-test-engine-bucket-e.md" docs/backlog/AGENT_SELF_IMPROVEMENT.md` → 1 ✓
 - Two p4-blame entries flipped from `Status: open` to `Status: applied — see commit at HEAD; AGENTS.md ...` ✓
 - code-review hook entry text updated to `needs reproducer` framing ✓
 

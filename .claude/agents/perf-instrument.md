@@ -69,4 +69,4 @@ Mechanical perf-marker editor for Smatchet.
 
 Report: files touched + scope names added (or removed) + final `perf_temp:` search result (must be zero across all three directories after cleanup).
 
-End with `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

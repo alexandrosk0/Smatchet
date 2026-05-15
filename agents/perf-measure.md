@@ -94,4 +94,4 @@ For a before / after comparison, run the **same** scenario, same `--frames` valu
 
 Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `perf_temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
 
-End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

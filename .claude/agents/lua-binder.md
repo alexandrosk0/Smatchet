@@ -51,4 +51,4 @@ Lua / sol2 binding specialist.
 
 Report: binding name + signature + stub parity confirmed + guide entry added.
 
-End with `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -72,4 +72,4 @@ Build-system specialist for Smatchet.
 
 **Always name the exact exe path after each rebuild.** Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, `build/ninja-publish-msys2/`, worktree builds) make wrong-exe testing a common time sink. After every build that completes successfully: `ls -la` both the patched output and the most-likely-stale path side-by-side, print mtimes, and tell the user the absolute path to run. Apply the same rule when handing back to perf / spike agents for re-measurement.
 
-End every response with `## Self-improvement` — agent / prompt / process friction (preset confusion, missing common-cause entries, tooling gaps). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Self-improvement` — agent / prompt / process friction (preset confusion, missing common-cause entries, tooling gaps). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

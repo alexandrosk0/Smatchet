@@ -2,7 +2,7 @@
 
 ## Context
 
-`backlog/AGENT_SELF_IMPROVEMENT.md` entry **2026-05-12 · tracker-backend · [tooling / new-agent] — no test rig in the repo** (open, deferred to its own plan). Pure-C++14 helpers like `JqlProjectScope`, `TrackerFieldValueParser`, JQL surgery utilities, and offline-queue replay decision logic have been written with compile-only "test patterns" that aren't actually executed. High ROI given how much pure-logic code lives in `Source_Core/`.
+`docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry **2026-05-12 · tracker-backend · [tooling / new-agent] — no test rig in the repo** (open, deferred to its own plan). Pure-C++14 helpers like `JqlProjectScope`, `TrackerFieldValueParser`, JQL surgery utilities, and offline-queue replay decision logic have been written with compile-only "test patterns" that aren't actually executed. High ROI given how much pure-logic code lives in `Source_Core/`.
 
 This plan scopes the work needed to:
 
@@ -80,7 +80,7 @@ Body sections:
 - Add `test-rig` row to the subsystem specialists table.
 - Mention test-rig in the "Stay in the orchestrator for" list (negative): tests for individual pure functions stay routine, delegate only when scoping a NEW unit's test surface.
 
-### Modify: `backlog/AGENT_SELF_IMPROVEMENT.md`
+### Modify: `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
 
 - Update entry 12 (`no test rig`) with `Status: open · plan: ~/.claude/plans/test-rig-agent-shy-margulis.md`. Close to `applied` only after the rig actually lands.
 
@@ -108,7 +108,7 @@ Body sections:
 - `agents/build-doctor.md`
 - `AGENTS.md`
 - `.claude/hooks/lint-cpp.sh`
-- `backlog/AGENT_SELF_IMPROVEMENT.md`
+- `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
 
 ## Verification
 
@@ -144,7 +144,7 @@ bash scripts/check-agents-mirror.sh   # exits 0
 - `3b47ff0` · commit 2 — agent definition. `agents/test-rig.md` (complexity low · sonnet/low · v1, full hard invariants + workflow + reporting contract), `.claude/agents/test-rig.md` mirror via `scripts/sync-agents.sh`, `AGENTS.md` row in § Subsystem specialists + negative bullet in § Stay in the orchestrator for + § Trigger auto-activation row.
 - `7f024fc` · commit 3 — second + third tests. `tests/Source_Core/TextMerge.test.cpp` (6 cases / 16 assertions over `TextMerge::ThreeWayMerge`), `tests/Source_Core/JsonParseUtil.test.cpp` (8 cases / ~30 assertions across header-only loose JSON parsers), `tests/CMakeLists.txt` updated to link `nlohmann_json::nlohmann_json` and pull in `Source_Core/src/TextMerge.cpp`.
 - `1f2ad93` · commit 4 — lint hook. `.claude/hooks/lint-cpp.sh` case-glob filter now includes `tests/*.{cpp,h}` + `tests/**/*.{cpp,h}`; clang-tidy compile_commands lookup routes test files to `build/ninja-test-msys2/`; dual-target DX12 syntax probe skipped on `tests/**`.
-- commit 5 (this) — `agents/build-doctor.md` adds `ninja-test-msys2` to the preset list + new "doctest FetchContent cache mismatch" common-cause; `backlog/AGENT_SELF_IMPROVEMENT.md` entry 12 (`no test rig`) flipped to `applied`; two new backlog items filed (split `JiraClient.h` for `TrackerFieldValueParser` testability; lift offline-queue replay-cap into a free function); this plan revision.
+- commit 5 (this) — `agents/build-doctor.md` adds `ninja-test-msys2` to the preset list + new "doctest FetchContent cache mismatch" common-cause; `docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry 12 (`no test rig`) flipped to `applied`; two new backlog items filed (split `JiraClient.h` for `TrackerFieldValueParser` testability; lift offline-queue replay-cap into a free function); this plan revision.
 
 ## Deviations from plan
 

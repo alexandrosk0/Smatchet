@@ -50,4 +50,4 @@ Offline-sync / cache specialist for Smatchet.
 
 Report: files touched + schema delta (if any) + queue + audit wiring confirmed on every new write path.
 
-End with `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -47,4 +47,4 @@ Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the m
 
 Report: files changed + occurrence count per file. No prose summary.
 
-End with `## Self-improvement` — only if the rename hit a scope this prompt doesn't cover (new file type, new dir to scan). Empty is the norm. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if the rename hit a scope this prompt doesn't cover (new file type, new dir to scan). Empty is the norm. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

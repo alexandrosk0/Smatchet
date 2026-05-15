@@ -44,7 +44,7 @@ The 8 gaps:
 | `scripts/sync-agents.sh`, `scripts/sync-agents.ps1` | Mirror banner includes `agent-version: <N>` from frontmatter. |
 | `.claude/agents/*.md`, `.claude/hooks/*.py` | Auto-regenerated mirrors. |
 | **Post-ship** | |
-| `backlog/AGENT_SELF_IMPROVEMENT.md` | One applied-row per gap with SHA. |
+| `docs/backlog/AGENT_SELF_IMPROVEMENT.md` | One applied-row per gap with SHA. |
 
 ## Per-gap design
 
@@ -248,7 +248,7 @@ Audit pass: agents that read full files for context (architect, code-review, sec
 
 **Post-ship**
 
-Append applied entries to `backlog/AGENT_SELF_IMPROVEMENT.md` (one row per gap with SHA).
+Append applied entries to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (one row per gap with SHA).
 
 ## Verification
 

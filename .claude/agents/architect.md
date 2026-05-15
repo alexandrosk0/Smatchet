@@ -58,4 +58,4 @@ The architect itself does not edit the revision sections — that work belongs t
 
 When unsure about an existing convention, inspect the header in `Source_Core/include/` — don't infer from naming. Command system, view storage, and tracker abstraction all have established shapes.
 
-End every response with `## Self-improvement` — agent / prompt / process friction you hit this round (shortcuts, missing context, redundant steps, new-agent candidates). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`. See AGENTS.md → "Self-improvement loop".
+End every response with `## Self-improvement` — agent / prompt / process friction you hit this round (shortcuts, missing context, redundant steps, new-agent candidates). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`. See AGENTS.md → "Self-improvement loop".

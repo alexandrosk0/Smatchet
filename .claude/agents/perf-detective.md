@@ -68,4 +68,4 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
 
-End with `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

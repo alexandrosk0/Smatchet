@@ -52,4 +52,4 @@ Grid / spreadsheet specialist for Smatchet.
 
 Report: files touched + new column / editor name + which pipeline stage it plugs into + per-cell allocation check (yes / no).
 
-End with `## Self-improvement` — only on real friction (new hot-path concern, missing pipeline stage, virtualization edge case). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (new hot-path concern, missing pipeline stage, virtualization edge case). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

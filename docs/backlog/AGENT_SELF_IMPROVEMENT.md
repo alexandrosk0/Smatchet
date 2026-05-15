@@ -1,41 +1,8 @@
-# Agent self-improvement backlog
+# Agent self-improvement — entries
 
-Suggestions emitted by delegated agents (canonical at `agents/`, mirrored to `.claude/agents/` for Claude Code auto-discovery) for improving the agent ecosystem itself — prompt tweaks, missing context, redundant steps, new-subagent candidates, tooling gaps.
+> Format / categories / workflow / triage cadence: see [`../agents/self-improvement.md`](../agents/self-improvement.md).
 
-The main thread appends new entries here (dedupe against existing). Periodically triage and apply real wins to agent prompts; close out items that landed by deleting them from this file (git history preserves them).
-
-## Format
-
-```
-- YYYY-MM-DD · <agent-name> · [shortcut|process|tooling|context|new-agent] — one-line description
-  Details: (optional, single paragraph or short bullet list — context that explains why this would help)
-  Status: open | applied | rejected (with reason)
-```
-
-Categories:
-
-- **shortcut** — a step the agent finds itself doing manually that could be encoded in its prompt as a default
-- **process** — workflow friction: redundant steps, wrong order, missing handoff between agents
-- **tooling** — missing CLI / static-analyzer / vexp invocation that would speed things up
-- **context** — context the agent had to discover during the task that should be pre-loaded in its prompt
-- **new-agent** — subsystem / task pattern that recurs and would warrant its own subagent
-
-## Workflow
-
-1. Delegated agents end every report with a `## Self-improvement` section. Empty is the common case and explicitly fine — agents only flag real friction.
-2. The orchestrator reads the section, dedupes against this file, appends new entries with date + source agent + category.
-3. When an entry has gathered enough evidence (mentioned by ≥ 2 agents, or blocks the same workflow ≥ 3 times), apply it: edit the relevant agent prompt(s) in `agents/`, regenerate the mirror via `scripts/sync-agents.sh`, and close out the entry.
-
-## Triage cadence
-
-Sweep the file when:
-
-- Opening any PR that touches `agents/`
-- The list exceeds ~20 open items
-
-## Entries
-
-<!-- Latest first. Append new entries at the top of this section. -->
+<!-- Latest first. Append new entries at the top. -->
 
 - 2026-05-15 · git-janitor · [process] — PR-only-to-`develop` rule has no FF-clean docs-only escape valve
   Details: On a solo-dev repo, the realistic end-of-session state is a clean local `develop` strictly ahead of `origin/develop` with docs / scripts / tests commits and no C++ behavior changes. `git-janitor` contract bans direct pushes to `develop`, so it has to halt with `partial` and hand the push back to the user every session, even when (a) local is strictly ahead (FF-clean), (b) all commits touch only docs/scripts/tests, (c) regression gates pass. This session: 7 commits queued (`67a6b3b`..`6400ed2`), all docs/scripts/tests, mirror + `scripts/dev/test-all.sh` both green, user had to issue `git push origin develop` by hand. Proposal: define an explicit "FF-clean docs batch" escape valve in `agents/git-janitor.md` — when (FF-clean) ∧ (no path under `Source_Core/`, `Plugins/`, `Target_Standalone/`, `UnrealPlugins/`, `CMakeLists.txt`, `cmake/`) ∧ (all gates pass), the agent may push `origin develop` directly. Anything that touches build / C++ / packaging still falls back to PR-only.

@@ -131,4 +131,4 @@ Always provide exploit reasoning, not rule citation. "Could be tainted" is not a
 
 If the diff has no security surface (docs-only, UI cosmetic), say so and stop.
 
-End every review with `## Self-improvement` — attack-surface entries to add, a check that should be encoded, a tool to wire in (semgrep ruleset, etc.). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every review with `## Self-improvement` — attack-surface entries to add, a check that should be encoded, a tool to wire in (semgrep ruleset, etc.). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

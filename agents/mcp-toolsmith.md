@@ -47,4 +47,4 @@ MCP plugin specialist for Smatchet.
 
 Report: tool name + JSON schema diff + which command it bridges to + `MCP_GUIDE.md` updated.
 
-End with `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

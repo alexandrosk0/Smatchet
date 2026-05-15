@@ -53,4 +53,4 @@ Command-system specialist.
 
 Report: file(s) changed + command name + which surfaces it appears on (CLI / palette / MCP / Lua / scenario).
 
-End with `## Self-improvement` — only if a pattern this prompt doesn't cover came up. Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only if a pattern this prompt doesn't cover came up. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

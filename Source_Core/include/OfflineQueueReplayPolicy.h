@@ -3,7 +3,7 @@
 // Cap-decision logic for the offline queue replay loop. Lives in its own header
 // with zero banned includes (no SQLite, no cpr, no ImGui) so the doctest rig
 // under tests/ can exercise the boundary without dragging the full
-// LocalCacheManager.h / SQLite cascade. See backlog/AGENT_SELF_IMPROVEMENT.md
+// LocalCacheManager.h / SQLite cascade. See docs/backlog/AGENT_SELF_IMPROVEMENT.md
 // entry "2026-05-15 · test-rig · OfflineCreateQueue::kMaxReplayAttempts".
 //
 // Source of truth for the replay-attempt cap. LocalCacheManager.h's
