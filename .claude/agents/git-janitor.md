@@ -79,11 +79,52 @@ gh pr list --base develop --json number,title,headRefName,mergeable,mergeStateSt
 
 If step 2 reports uncommitted modifications outside the safe-ignore set (`build/`, `.fetchcontent-*/`, `.claude/agents/*` *if* `scripts/sync-agents.sh` will re-generate them), HALT and surface the file list.
 
+## Poll-until-stable helper
+
+GitHub computes `mergeable` + `mergeStateStatus` lazily — the first read after a sibling merge often returns `UNKNOWN`. One-shot retry races; poll until stable instead. Call this before any merge decision:
+
+```bash
+pr_state() {
+    local n="$1"
+    local tries=0 max=10        # 10 × 2s = 20s ceiling
+    local m s
+    while [ "$tries" -lt "$max" ]; do
+        read -r m s < <(gh pr view "$n" --json mergeable,mergeStateStatus \
+            --jq '"\(.mergeable) \(.mergeStateStatus)"')
+        case "$s" in
+            CLEAN|DIRTY|BLOCKED|BEHIND|HAS_HOOKS|UNSTABLE) echo "$m $s"; return 0 ;;
+            UNKNOWN|"")                                    sleep 2; tries=$((tries+1)) ;;
+            *)                                             echo "$m $s"; return 0 ;;
+        esac
+    done
+    echo "$m $s"; return 1       # caller sees still-UNKNOWN + non-zero exit
+}
+```
+
+Caller pattern. `read < <()` does NOT propagate the function's exit code (it reflects `read`'s own success), so capture stdout to a variable first, branch on the function's exit, then split:
+
+```bash
+if ! PR_OUT=$(pr_state "$N"); then
+    echo "PR #$N stuck UNKNOWN after 20s — HALT, surface to user" >&2
+    exit 1
+fi
+read -r MERGEABLE STATE <<< "$PR_OUT"
+case "$MERGEABLE/$STATE" in
+    MERGEABLE/CLEAN)                ;;                                                              # ready
+    MERGEABLE/UNSTABLE|*/HAS_HOOKS)  echo "PR #$N: $STATE, proceed-with-caution" >&2 ;;
+    MERGEABLE/BLOCKED)               echo "PR #$N: BLOCKED (required check failing) — HALT" >&2; exit 1 ;;
+    CONFLICTING/*)                   echo "PR #$N: CONFLICTING — user must resolve" >&2; exit 1 ;;
+    *)                               echo "PR #$N: $MERGEABLE/$STATE — HALT" >&2; exit 1 ;;
+esac
+```
+
+`UNKNOWN` after 20s is itself a halt-worthy signal — GitHub's mergeability computation usually settles within a few seconds; sustained `UNKNOWN` indicates an upstream problem (repo migration, abuse rate-limit, replication outage). Don't merge through it.
+
 ## Standard cleanup loop
 
 For each open PR targeting `develop`, in **dependency order** (oldest unmerged first; if two PRs touch the same file, the older one merges first):
 
-1. **Verify merge state**: `gh pr view <N> --json mergeable,mergeStateStatus` → require `MERGEABLE` + `CLEAN`. If `CONFLICTING`, halt — the user resolves; janitor doesn't author resolution commits.
+1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
 2. **Squash-merge via API** (works regardless of which branch is checked out anywhere on disk):
    ```bash
@@ -102,7 +143,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    ```
    Commit as `docs(plan): log <slug> #<N>` on a fresh small branch + its own PR (or batch with subsequent cleanup PRs to avoid PR-spam).
 
-5. **Re-check mergeability** of the next PR in the batch. Merging A may have flipped B from `MERGEABLE` to `CONFLICTING` if they touched the same file. `gh pr view <N+1> --json mergeable,mergeStateStatus` again. If `UNKNOWN`, sleep 2s and retry once — GitHub computes mergeability lazily on the first read after a sibling merge.
+5. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
 
 6. **Post-merge backlog sweep**: if `backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, regenerate the mirror via `scripts/sync-agents.sh`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
@@ -125,45 +166,33 @@ When a PR squash-merged and further commits landed on the same branch (common in
 
 ## Bringing `develop` to latest
 
-After all PRs land:
+After all PRs land. `gh api ... merge` returns `merged:true` before the new sha replicates — the replication-lag belt re-fetches when local diverges.
 
 ```bash
-# Re-fetch BEFORE pulling. The `gh api -X PUT pulls/<N>/merge` response returns
-# `merged:true` BEFORE the new sha is necessarily visible to a subsequent `git fetch`
-# (small replication lag on the GitHub side, observed in PR #75 cleanup). If the first
-# `git pull` only fast-forwards by N-1 and the just-merged sha is missing, re-fetch and
-# pull again — DO NOT decide "merge silently dropped my commit" based on the first read.
 git -C "$MAIN_REPO" fetch origin
-
 git -C "$MAIN_REPO" checkout develop
-git -C "$MAIN_REPO" pull --rebase --empty=drop
-# --empty=drop silently skips commits whose patch content is already upstream
-# (typical when local develop had a temp copy of work that landed via squash).
+git -C "$MAIN_REPO" pull --rebase --empty=drop      # drops local commits whose patch is already upstream
 
-# Replication-lag belt: if origin/develop is now ahead of local, re-fetch + ff-pull.
+# Replication-lag belt.
 if [ "$(git -C "$MAIN_REPO" rev-parse develop)" != "$(git -C "$MAIN_REPO" rev-parse origin/develop)" ]; then
     git -C "$MAIN_REPO" fetch origin && git -C "$MAIN_REPO" pull --ff-only
 fi
 
-# Worktree: detach to origin/develop (cannot share a checkout of `develop` across worktrees).
+# Worktree: detach to origin/develop (can't share develop checkout across worktrees).
 if [ -n "${WORKTREE:-}" ]; then
     git -C "$WORKTREE" fetch origin
     git -C "$WORKTREE" checkout --detach origin/develop
 fi
 ```
 
-Delete stale local branches in every worktree:
+Delete stale local branches. Use `branch -D` (force) — squash creates a different sha than the feature branch's HEAD, so `branch -d` (safe) rejects. Confirm content is on develop via the file-restore diff stat first.
 
 ```bash
-# Use `branch -D` (force) not `branch -d`. Squash-merge produces a different sha than
-# the local feature branch's HEAD, so `branch -d` (safe) rejects it as "not fully merged".
-# Before forcing, confirm the branch's content is on develop via the file-restore diff stat
-# in the previous section.
 git -C "$MAIN_REPO" branch -D <branch-name>
 [ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" branch -D <branch-name>
 ```
 
-**Worktree directory itself** — DO NOT `git worktree remove` from inside the worktree (operation rejects). If the user wants the worktree directory gone, surface the exact command for them to run from the main repo:
+**Worktree directory itself**: `git worktree remove` from inside the worktree rejects. Surface this command for the user to run from main:
 
 ```bash
 git -C "$MAIN_REPO" worktree remove "$WORKTREE"
@@ -246,18 +275,8 @@ Worktrees in scope: <git worktree list output>
 
 ## Dry-run mode
 
-When a large PR batch is queued, run with the agent's prompt declaring `DRY RUN` at the top. In dry-run mode the agent:
+When the prompt declares `DRY RUN`: do pre-flight + audit, print each intended mutation command verbatim (`gh api -X PUT`, `gh api -X DELETE`, plan-revision text, backlog appends, branch deletes), skip every mutation, mark report `[DRY RUN — no changes applied]`.
 
-1. Performs every pre-flight + audit step.
-2. Prints the exact mutation command per PR (`gh api -X PUT ...`, `gh api -X DELETE ...`, plan-revision text, backlog appends, branch deletes).
-3. Skips every mutation.
-4. Reports the same final summary except marked `[DRY RUN — no changes applied]`.
-
-Use it when:
-- ≥ 3 PRs in the batch
-- Any PR touches `Source_Core/` or build files
-- Cleanup follows a multi-day session and the dependency order isn't trivially obvious from the PR list
-
-The user then says "go" and the agent re-runs without the dry-run flag.
+Trigger automatically when ≥3 PRs in batch, any PR touches `Source_Core/` or build files, or dependency order isn't obvious. User then says "go" for real run.
 
 End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `backlog/AGENT_SELF_IMPROVEMENT.md`.
