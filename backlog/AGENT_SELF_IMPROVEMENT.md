@@ -181,3 +181,16 @@ Sweep the file when:
 - 2026-05-13 · orchestrator · [tooling] — `harness-hints.claude-code.tools:` line duplicates `capabilities:` list and goes unread by Claude Code (which parses top-level `tools:`)
   Details: ~104 chars per `tools:` line × 18 agents = ~470 tokens. Top-level `tools:` is what Claude Code actually consumes for permission restriction; the nested hint is informational only. AGENTS.md § Harness adapter is the canonical capability → tool mapping. Dropped the line everywhere; kept `model:` + `effort:` (real routing knobs).
   Status: applied (d6ba897)
+
+- 2026-05-13 · test-author · [process] — verification-automation cadence not project-wide; manual residue could ship indefinitely
+  Details: Original test-author description said "use after a feature lands its first verification round" — too reactive. No project rule made the orchestrator dispatch test-author automatically when an agent reported a manual step; no per-plan rule made architect classify §Verification items into automation buckets up front; no code-review gate blocked merge on manual-residue language. Optimized agent + AGENTS.md § Verification automation makes the cadence project-wide: plan-time + first-round + every-agent-handoff. architect.md mandates bucket-A/B/C/D/E classification of every §Verification item; code-review.md flags manual residue as Critical.
+  Status: applied (a18f985)
+
+- 2026-05-13 · test-author · [tooling] — no unified test runner; each scripts/dev/test-*.sh ran in isolation
+  Details: Adding a new feature test required the dev to remember its script name; CI / pre-merge could only run one script at a time. Added scripts/dev/test-all.sh that globs scripts/dev/test-*.sh (excluding self), runs each, aggregates Passed/Failed. New tests auto-enrol by naming convention. Forwards SMATCHET_EXE / SMATCHET_TEST_PORT / PYTHON envs to children. Optional --filter for targeted runs.
+  Status: applied (a18f985)
+
+- 2026-05-13 · test-author · [new-agent / tooling] — bucket E (ImGui Test Engine) not wired; bucket-E items currently flagged as manual residue with a deferred-automation note
+  Details: Smatchet has no ImGui Test Engine integration today. The first bucket-E item (e.g. "drag column header to position X" verification step) will require wiring imgui_test_engine via FetchContent, a new SmatchetUiTest target gated by SMATCHET_BUILD_UI_TESTS=ON, tests/ui/ directory, and a ui_test.run CLI command. Recipe is encoded in agents/test-author.md § Bucket E; first invocation should land the harness, not just defer.
+  Status: open
+  Defer: Wait for the first plan whose §Verification contains a click/drag/type that no scenario can drive. At that point the bucket-E deliverable is "wire ImGui Test Engine + the one test that needs it". Until then, premature.
