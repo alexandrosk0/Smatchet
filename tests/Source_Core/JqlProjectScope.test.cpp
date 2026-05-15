@@ -39,10 +39,8 @@ TEST_CASE("JqlProjectScope::SetProjectClause replaces existing scope") {
     using JqlProjectScope::SetProjectClause;
 
     CHECK(SetProjectClause("project = OLD", "NEW") == "project = NEW");
-    CHECK(SetProjectClause("project = OLD AND status = Open", "NEW")
-          == "project = NEW AND status = Open");
-    CHECK(SetProjectClause("status = Open AND project = OLD", "NEW")
-          == "status = Open AND project = NEW");
+    CHECK(SetProjectClause("project = OLD AND status = Open", "NEW") == "project = NEW AND status = Open");
+    CHECK(SetProjectClause("status = Open AND project = OLD", "NEW") == "status = Open AND project = NEW");
     CHECK(SetProjectClause("project in (FOO, BAR)", "NEW") == "project = NEW");
 }
 
@@ -56,7 +54,6 @@ TEST_CASE("JqlProjectScope::SetProjectClause prepends when no scope exists") {
 TEST_CASE("JqlProjectScope::SetProjectClause returns input when projectKey is empty") {
     using JqlProjectScope::SetProjectClause;
 
-    CHECK(SetProjectClause("project = FOO AND status = Open", "")
-          == "project = FOO AND status = Open");
+    CHECK(SetProjectClause("project = FOO AND status = Open", "") == "project = FOO AND status = Open");
     CHECK(SetProjectClause("status = Open", "") == "status = Open");
 }

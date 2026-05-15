@@ -38,6 +38,7 @@ case "$REL" in
     Source_Core/*.cpp|Source_Core/*.h|Source_Core/**/*.cpp|Source_Core/**/*.h) ;;
     Plugins/*.cpp|Plugins/*.h|Plugins/**/*.cpp|Plugins/**/*.h) ;;
     Target_Standalone/*.cpp|Target_Standalone/*.h|Target_Standalone/**/*.cpp|Target_Standalone/**/*.h) ;;
+    tests/*.cpp|tests/*.h|tests/**/*.cpp|tests/**/*.h) ;;
     *) exit 0 ;;
 esac
 
@@ -80,7 +81,14 @@ if command -v cppcheck >/dev/null 2>&1; then
 fi
 
 # --- 3) clang-tidy (report only, needs compile_commands.json) --------------
-BUILD_DIR="$NORM_PROJ/build/ninja-iter-msys2"
+# tests/** are not part of the iter compile_commands.json (iter preset stays
+# test-free for speed). Prefer the ninja-test-msys2 build dir for test files
+# and fall back to the iter dir for everything else.
+if [[ "$REL" == tests/* ]]; then
+    BUILD_DIR="$NORM_PROJ/build/ninja-test-msys2"
+else
+    BUILD_DIR="$NORM_PROJ/build/ninja-iter-msys2"
+fi
 if [[ -f "$BUILD_DIR/compile_commands.json" ]] && command -v clang-tidy >/dev/null 2>&1; then
     TIDY_OUT="$(clang-tidy -p "$BUILD_DIR" --quiet "$ABS_FILE" 2>/dev/null || true)"
     # Strip clang-tidy's "N warnings generated." footer noise when there are no actual diagnostics.
@@ -90,8 +98,9 @@ fi
 
 # --- 4) Both-target syntax check (catches DX12 regressions instantly) ------
 # Runs only for .cpp files; needs python + compile_commands.json. Header edits
-# are validated via dependent .cpp edits.
-if [[ "$REL" == *.cpp ]] && command -v python >/dev/null 2>&1; then
+# are validated via dependent .cpp edits. tests/** are pure-logic doctest sources
+# that don't compile against DX12 by design — skip the dual-target probe there.
+if [[ "$REL" == *.cpp && "$REL" != tests/* ]] && command -v python >/dev/null 2>&1; then
     SYNTAX_OUT="$(python "$NORM_PROJ/.claude/hooks/lint-syntax-both.py" "$ABS_FILE" 2>&1 || true)"
     [[ -n "$SYNTAX_OUT" ]] && add_issues "$SYNTAX_OUT"
 fi
