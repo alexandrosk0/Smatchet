@@ -62,13 +62,14 @@ void ResetState(ColumnsReorderState& s, bool seedWidths) {
     s.reorderHappened = false;
 }
 
-// Faithful replica of SmatchetViewsDashboardUi.cpp:673-697. Any divergence
-// here invalidates the test — keep this loop body in lock-step with the
-// production Columns-tab body.
+// Faithful replica of the production Columns-tab loop body in
+// SmatchetViewsDashboardUi.cpp. Any divergence here invalidates the test —
+// keep this loop in lock-step with the production body.
 void DrawColumnsTabBody(ColumnsReorderState& s) {
     for (int i = 0; i < static_cast<int>(s.order.size()); ++i) {
         const std::string key = s.order[static_cast<size_t>(i)];
         ImGui::PushID(i);
+        ImGui::BeginGroup();
         SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_COLUMNS_ROW");
         char rowBuf[64];
         std::snprintf(rowBuf, sizeof(rowBuf), "%d.", i + 1);
@@ -78,20 +79,12 @@ void DrawColumnsTabBody(ColumnsReorderState& s) {
         if (ImGui::Selectable(key.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
             s.keyboardFocusRow = i;
         }
-        // Read-only width hint — only emitted when widths[key] > 0.
-        //
-        // NOTE: This test mirror INTENTIONALLY keeps the *pre-fix* ordering
-        // (Selectable first, TextDisabled second) so that running it against
-        // the fixed production code lets us bisect: if production Columns-tab
-        // now behaves while this test still flakes, the bug was in the call
-        // site rather than the helper. Phase 3 fix went into
-        // SmatchetViewsDashboardUi.cpp:680-697; this mirror is intentionally
-        // left as the regression characterisation.
         auto wit = s.widths.find(key);
         if (wit != s.widths.end() && wit->second > 0.0f) {
             ImGui::SameLine();
             ImGui::TextDisabled("  %.0fpx", wit->second);
         }
+        ImGui::EndGroup();
         if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, s.order, &s.keyboardFocusRow, "VIEWS_COLUMNS_ROW")) {
             s.reorderHappened = true;
         }

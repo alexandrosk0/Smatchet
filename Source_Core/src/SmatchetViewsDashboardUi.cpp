@@ -670,6 +670,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
             for (int i = 0; i < static_cast<int>(d.editingColumnOrder.size()); ++i) {
                 const std::string key = d.editingColumnOrder[static_cast<size_t>(i)];
                 ImGui::PushID(i);
+                ImGui::BeginGroup();
                 SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_COLUMNS_ROW");
                 char rowBuf[64];
                 std::snprintf(rowBuf, sizeof(rowBuf), "%d.", i + 1);
@@ -680,22 +681,18 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
                     d.viewsKeyboardReorderRow = i;
                 }
-                // HandleRowReorder runs immediately after Selectable so its
-                // BeginDragDropTarget always binds to the Selectable's row-wide
-                // rect — never the small TextDisabled width hint that fires
-                // conditionally below. See plan
-                // `docs/design/imgui-test-engine-bucket-e-execution.md` § Phase 3.
-                if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
-                                                                     &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
-                    d.viewsDirty = true;
-                }
-                // Read-only width hint pulled from the active view's saved widths.
-                // Submitted AFTER HandleRowReorder so its small rect never
-                // becomes the drop-target binding.
                 auto wit = activeView->ColumnWidths.find(key);
                 if (wit != activeView->ColumnWidths.end() && wit->second > 0.0f) {
                     ImGui::SameLine();
                     ImGui::TextDisabled("  %.0fpx", wit->second);
+                }
+                ImGui::EndGroup();
+                // BeginDragDropTarget inside HandleRowReorder binds to the
+                // group's full-row rect — entire row (handle + label + width
+                // hint) accepts drops, including over another row's handle.
+                if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
+                                                                     &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
+                    d.viewsDirty = true;
                 }
                 ImGui::PopID();
             }
@@ -736,15 +733,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 for (int i = 0; i < static_cast<int>(keyOrder.size()); ++i) {
                     const std::string key = keyOrder[static_cast<size_t>(i)];
                     ImGui::PushID(i);
+                    ImGui::BeginGroup();
                     SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_SORT_ROW");
                     const bool selected = (d.viewsKeyboardReorderRow == i);
                     const std::string label = PrettyColumnLabel(key, availableFields);
                     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
                         d.viewsKeyboardReorderRow = i;
-                    }
-                    if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, keyOrder, &d.viewsKeyboardReorderRow,
-                                                                         "VIEWS_SORT_ROW")) {
-                        reordered = true;
                     }
                     ImGui::SameLine();
                     int dir = mutableActive->SortSpecs[static_cast<size_t>(i)].Direction;
@@ -757,14 +751,27 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                         d.viewsDirty = true;
                     }
                     ImGui::SameLine();
+                    bool erased = false;
                     if (ImGui::SmallButton("X")) {
                         SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
                         mutableActive->SortSpecs.erase(mutableActive->SortSpecs.begin() + i);
                         keyOrder.erase(keyOrder.begin() + i);
                         ViewState.BumpRevision();
                         d.viewsDirty = true;
+                        erased = true;
+                    }
+                    ImGui::EndGroup();
+                    if (erased) {
                         ImGui::PopID();
                         break;
+                    }
+                    // BeginDragDropTarget inside HandleRowReorder binds to the
+                    // group's full-row rect — entire Sort row (handle + label
+                    // + direction button + X) accepts drops, including over
+                    // another row's handle.
+                    if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, keyOrder, &d.viewsKeyboardReorderRow,
+                                                                         "VIEWS_SORT_ROW")) {
+                        reordered = true;
                     }
                     ImGui::PopID();
                 }
