@@ -192,7 +192,7 @@ Sweep the file when:
 
 - 2026-05-13 · test-author · [new-agent / tooling] — bucket E (ImGui Test Engine) not wired; bucket-E items currently flagged as manual residue with a deferred-automation note
   Details: Smatchet has no ImGui Test Engine integration today. The first bucket-E item (e.g. "drag column header to position X" verification step) will require wiring imgui_test_engine via FetchContent, a new SmatchetUiTest target gated by SMATCHET_BUILD_UI_TESTS=ON, tests/ui/ directory, and a ui_test.run CLI command. Recipe is encoded in agents/test-author.md § Bucket E; first invocation should land the harness, not just defer.
-  Status: open
+  Status: open · plan at `docs/design/imgui-test-engine-bucket-e.md` — scope-only; FetchContent + SmatchetUiTest target + tests/ui/ + ui_test.run CLI scoped in 5-commit migration order. Locked decisions table at top of plan.
   Defer: Wait for the first plan whose §Verification contains a click/drag/type that no scenario can drive. At that point the bucket-E deliverable is "wire ImGui Test Engine + the one test that needs it". Until then, premature.
 
 - 2026-05-15 · orchestrator · [process] — sequential subagent dispatch loses wall-clock when delegations are contract-independent
