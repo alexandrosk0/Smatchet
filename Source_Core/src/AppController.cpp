@@ -807,9 +807,7 @@ void AppController::AddAutomationErrorSink(std::function<void(const std::string&
     errorSinks_.push_back(std::move(sink));
 }
 
-bool AppController::ConsumeScriptingWindowRequest() {
-    return scriptingWindowOpenRequested_.exchange(false);
-}
+bool AppController::ConsumeScriptingWindowRequest() { return scriptingWindowOpenRequested_.exchange(false); }
 
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
 
@@ -1292,6 +1290,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario();
         return MakeLuaRecorderFuzzScenario();
     });
+    scenarioRunner_->RegisterFactory("ui-test", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario();
+        return MakeUiTestScenario();
+    });
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
@@ -1437,9 +1439,8 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
             std::string ext = fname.substr(fname.size() - 4);
 
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
             if (ext != ".lua") {
 

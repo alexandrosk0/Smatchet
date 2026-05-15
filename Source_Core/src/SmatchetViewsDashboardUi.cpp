@@ -112,10 +112,9 @@ std::string PrettyColumnLabel(const std::string& key, const std::vector<TrackerF
     }
     if (key.rfind("field:", 0) == 0) {
         const std::string fieldId = key.substr(6);
-        for (const auto& f : fields) {
-            if (f.Id == fieldId) {
-                return f.Name + " (" + f.Id + ")";
-            }
+        auto it = std::find_if(fields.begin(), fields.end(), [&](const TrackerField& f) { return f.Id == fieldId; });
+        if (it != fields.end()) {
+            return it->Name + " (" + it->Id + ")";
         }
         return fieldId;
     }
@@ -380,7 +379,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "  unsaved");
             }
         }
-        
+
         // Action buttons on a separate row below the title for a more compact header.
         const bool disableDiscard = !d.viewsDirty;
         if (disableDiscard) {
@@ -561,12 +560,10 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                     if (fields.empty()) {
                         return;
                     }
-                    size_t selectedInGroup = 0;
-                    for (const TrackerField* f : fields) {
-                        if (f && selectedFieldSet.count(f->Id)) {
-                            ++selectedInGroup;
-                        }
-                    }
+                    const size_t selectedInGroup =
+                        static_cast<size_t>(std::count_if(fields.begin(), fields.end(), [&](const TrackerField* f) {
+                            return f && selectedFieldSet.count(f->Id);
+                        }));
                     const std::string label = std::string(groupName) + " (" + std::to_string(selectedInGroup) + "/" +
                                               std::to_string(fields.size()) + ")###grp_" + groupName;
                     if (!ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -598,12 +595,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                     const bool hasVisibleId =
                         SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
                     if (!basicFields.empty() || hasVisibleId) {
-                        size_t selectedInGroup = 1; // ID counts
-                        for (const TrackerField* f : basicFields) {
-                            if (f && selectedFieldSet.count(f->Id)) {
-                                ++selectedInGroup;
-                            }
-                        }
+                        // ID counts as 1; plus the selected fields in this group.
+                        const size_t selectedInGroup =
+                            1 + static_cast<size_t>(
+                                    std::count_if(basicFields.begin(), basicFields.end(), [&](const TrackerField* f) {
+                                        return f && selectedFieldSet.count(f->Id);
+                                    }));
                         const size_t total = basicFields.size() + 1;
                         const std::string label = std::string("Basic fields (") + std::to_string(selectedInGroup) +
                                                   "/" + std::to_string(total) + ")###grp_basic";
@@ -683,15 +680,22 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                 if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
                     d.viewsKeyboardReorderRow = i;
                 }
+                // HandleRowReorder runs immediately after Selectable so its
+                // BeginDragDropTarget always binds to the Selectable's row-wide
+                // rect — never the small TextDisabled width hint that fires
+                // conditionally below. See plan
+                // `docs/design/imgui-test-engine-bucket-e-execution.md` § Phase 3.
+                if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
+                                                                     &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
+                    d.viewsDirty = true;
+                }
                 // Read-only width hint pulled from the active view's saved widths.
+                // Submitted AFTER HandleRowReorder so its small rect never
+                // becomes the drop-target binding.
                 auto wit = activeView->ColumnWidths.find(key);
                 if (wit != activeView->ColumnWidths.end() && wit->second > 0.0f) {
                     ImGui::SameLine();
                     ImGui::TextDisabled("  %.0fpx", wit->second);
-                }
-                if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
-                                                                     &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
-                    d.viewsDirty = true;
                 }
                 ImGui::PopID();
             }
