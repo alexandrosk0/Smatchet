@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
@@ -390,17 +391,50 @@ static void LuaMergeIssueCreateSpec(IssueDraft& draft, sol::table spec, const st
 }
 
 sol::environment CreateSandboxEnvironment(sol::state& lua) {
+    // Lua semantics gotcha: `sandbox["X"] = nil` is equivalent to `rawset(sandbox, "X", nil)`
+    // which REMOVES the key, allowing the metatable `__index = lua.globals()` fallback to
+    // resolve to the *real* function. So nilling doesn't block — it merely unbinds locally.
+    // Use `false` (a non-nil-but-non-callable sentinel) so direct lookups hit it AND any
+    // `something()` call errors with "attempt to call a boolean value".
     sol::environment sandbox(lua, sol::create, lua.globals());
-    sandbox["dofile"] = sol::lua_nil;
-    sandbox["loadfile"] = sol::lua_nil;
-    sandbox["load"] = sol::lua_nil;
-    sandbox["loadstring"] = sol::lua_nil;
-    sandbox["require"] = sol::lua_nil;
-    sandbox["collectgarbage"] = sol::lua_nil;
-    sandbox["os"] = sol::lua_nil;
-    sandbox["io"] = sol::lua_nil;
-    sandbox["package"] = sol::lua_nil;
-    sandbox["debug"] = sol::lua_nil;
+    const auto block = [&](const char* name) { sandbox[name] = false; };
+    // Sandbox escapes — primitives that load / execute external code.
+    block("dofile");
+    block("loadfile");
+    block("load");
+    block("loadstring");
+    block("require");
+    block("collectgarbage");
+    block("io");        // file / process I/O
+    block("package");   // module loader (could load shared libs)
+    block("debug");     // bytecode / locals introspection
+    // Bytecode dump is mostly inert without `load`, but strip as defense-in-depth.
+    sandbox["string"] = lua.globals()["string"];     // shadow + then patch the local copy
+    // Cannot mutate the shared global `string` table (would leak to non-sandboxed paths
+    // and break Lua-internal users of string.dump). Build a per-sandbox copy with the
+    // dangerous fns blocked. Cheap — string is a small table of function refs.
+    sol::table stringSafe = lua.create_table();
+    sol::table stringGlobal = lua.globals()["string"];
+    if (stringGlobal.valid()) {
+        for (auto& kv : stringGlobal) {
+            const std::string key = kv.first.as<std::string>();
+            if (key == "dump") continue;             // strip bytecode dumper
+            stringSafe[key] = kv.second;
+        }
+    }
+    sandbox["string"] = stringSafe;
+    // Strict mode (defense-in-depth): metatable + raw-table accessors. A script with
+    // these can hijack the sandbox env's bindings — `rawset(_G, "log_info", fake)` would
+    // replace the log binding. Hook patterns don't need these.
+    block("setmetatable");
+    block("getmetatable");
+    block("rawset");
+    block("rawget");
+    block("rawequal");
+    block("rawlen");
+    // `os` is intentionally NOT blocked — InitLuaCore replaced the standard lib with a
+    // whitelist of safe time/date functions (time, clock, difftime, date). The global
+    // `os` table is the safe one; the sandbox metatable falls through to it naturally.
     return sandbox;
 }
 
@@ -692,6 +726,33 @@ void AppController::InitLuaCore(sol::state& state) {
     state.open_libraries(sol::lib::base);
     state.open_libraries(sol::lib::string);
     state.open_libraries(sol::lib::table);
+    // math is common in cell providers (math.floor for percent formatting). Without it,
+    // scripts hit "attempt to index a nil value (global 'math')" — non-obvious if you
+    // assume a standard Lua env.
+    state.open_libraries(sol::lib::math);
+    // os: do NOT open the standard lib — it ships with `os.execute`, `os.remove`,
+    // `os.rename`, `os.exit`, `os.getenv`, `os.setlocale`, `os.tmpname`, which let a
+    // script shell out, delete arbitrary files, read process env, or terminate the host.
+    // Expose only the safe time/date subset as a whitelist. A future Lua version
+    // adding a new dangerous os.* fn won't silently leak in (blacklist would).
+    sol::table osSafe = state.create_table();
+    osSafe.set_function("time",      []() -> std::time_t { return std::time(nullptr); });
+    osSafe.set_function("clock",     []() -> double      { return static_cast<double>(std::clock()) / CLOCKS_PER_SEC; });
+    osSafe.set_function("difftime",  [](std::time_t a, std::time_t b) -> double { return std::difftime(a, b); });
+    osSafe.set_function("date",      [](sol::optional<std::string> fmt, sol::optional<std::time_t> t) -> std::string {
+        const std::time_t when = t.value_or(std::time(nullptr));
+        const std::string format = fmt.value_or(std::string("%c"));
+        std::tm tmbuf{};
+#if defined(_WIN32)
+        localtime_s(&tmbuf, &when);
+#else
+        localtime_r(&when, &tmbuf);
+#endif
+        char out[256] = {};
+        std::strftime(out, sizeof(out), format.c_str(), &tmbuf);
+        return std::string(out);
+    });
+    state["os"] = osSafe;
 
     // Store AppController* per-state so glue functions resolve it via sol::this_state without a
     // process-wide pointer. Each state (main or background) holds its own entry — no cross-state
@@ -1899,6 +1960,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     sol::object fieldNameObj = fieldMeta ? sol::make_object(lua, fieldMeta->Name)
                                          : sol::make_object(lua, sol::nil);
     bool callOk = true;
+    std::string cxxExceptionMsg;
     sol::protected_function_result res;
     try {
         LuaHookGuard hook(lua);
@@ -1906,9 +1968,11 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
         res = providerCopy(ticket.id, fieldId, rawValue, availWidth, isReadOnly, fieldNameObj, rec);
     } catch (const std::exception& ex) {
         callOk = false;
+        cxxExceptionMsg = ex.what();
         LOG_WARN("TryRenderCachedLuaField: exception field=%s err=%s", fieldId.c_str(), ex.what());
     } catch (...) {
         callOk = false;
+        cxxExceptionMsg = "unknown C++ exception";
         LOG_WARN("TryRenderCachedLuaField: unknown exception field=%s", fieldId.c_str());
     }
     rec->Deactivate();
@@ -1920,11 +1984,25 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     entry.isReadOnly    = isReadOnly;
     entry.providerGen   = curProviderGen;
     if (!callOk || !res.valid()) {
-        if (callOk && !res.valid()) {
+        // Surface the error in the persistent "Lua Errors" panel + scrolling log + auto-
+        // open Scripting window so the user can debug instead of staring at a silent C++
+        // fallback. Cache-key is populated below, so this error fires once per cell per
+        // (rawValue, fieldName, width, readOnly, providerGen) tuple — never per frame.
+        std::string errMsg;
+        if (!callOk) {
+            errMsg = cxxExceptionMsg;
+        } else {
             sol::error e = res;
+            errMsg = e.what();
             LOG_WARN("TryRenderCachedLuaField: Lua error field=%s err=%s",
                      fieldId.c_str(), e.what());
         }
+        const std::string bare = "[LUA cell] field=" + fieldName + " id=" + ticket.id + ": " + errMsg;
+        LuaLogInfoBind(std::string("[ERROR] ") + bare);
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
         entry.handled = false;
         entry.cmds.clear();
     } else {
@@ -2458,6 +2536,15 @@ void AppController::DrawLuaWindows() {
                         msg = e.what();
                     }
                     LOG_TRACE("DrawLuaWindows: error window=%s %s", w.name.c_str(), msg.c_str());
+                    // Surface in the persistent "Lua Errors" panel + scrolling log +
+                    // auto-open Scripting window. Negative-cache below means this fires
+                    // once per record-event per window, not per frame.
+                    const std::string bare = "[LUA window] " + w.name + ": " + msg;
+                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
+                    for (const auto& sink : errorSinks_) {
+                        sink(bare);
+                    }
+                    scriptingWindowOpenRequested_.store(true);
                     w.cmds.clear();
                     w.hasError = true;
                     w.errorMessage = std::move(msg);
