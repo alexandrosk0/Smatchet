@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + validation. Mechanical edits belong to `perf-instrument`; CLI measurement belongs to `perf-measure`.
 
-**Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only`.
+**Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only · v1`.
 
 **First action, always**: read `docs/PERF_WORKFLOW.md` and follow it. Don't improvise.
 

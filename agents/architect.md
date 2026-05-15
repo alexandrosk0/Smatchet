@@ -20,11 +20,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Read-only architecture specialist. Output is a design doc; the orchestrator implements.
 
-**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only`.
+**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only · v1`.
 
 Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 

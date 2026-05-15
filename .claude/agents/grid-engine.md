@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/grid-engine.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/grid-engine.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: grid-engine
 description: Spreadsheet / ticket-grid work — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*` (`SmatchetGridFieldEditPipeline`, `SmatchetGridHeaderUi`, `SmatchetGridNotifications`, `SmatchetGridUiSupport`), `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `SmatchetFieldIconRender`, `TrackerGridFieldDisplay`. Use for adding / removing columns, cell editors, sorting, drag-reorder, header UX, virtualization, in-place edit flow.
@@ -27,11 +27,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Grid / spreadsheet specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

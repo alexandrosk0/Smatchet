@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/mcp-toolsmith.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/mcp-toolsmith.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: mcp-toolsmith
 description: Work in `Plugins/Mcp/`, `SmatchetMcpServerUi`, `McpServerStatus` — MCP wire protocol, tool schema design (JSON-RPC), server lifecycle, REST envelope shape. Also for exposing existing commands over MCP and editing their JSON schemas.
@@ -24,11 +24,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 MCP plugin specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: mcp-toolsmith · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — mcp-toolsmith · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: mcp-toolsmith · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — mcp-toolsmith · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

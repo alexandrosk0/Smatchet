@@ -52,13 +52,28 @@ foreach ($src in $canonicalFiles) {
   $dst   = Join-Path $MirrorDir $src.Name
   $lines = Get-Content -Encoding UTF8 $src.FullName
 
+  # Extract `version: <N>` from frontmatter so the mirror banner can surface it.
+  $version = '?'
+  $inFm    = $false
+  foreach ($probe in $lines) {
+    if ($probe -eq '---') {
+      if ($inFm) { break }
+      $inFm = $true
+      continue
+    }
+    if ($inFm -and $probe -match '^version:\s*(\d+)\s*$') {
+      $version = $matches[1]
+      break
+    }
+  }
+
   $output   = New-Object System.Collections.Generic.List[string]
   $injected = $false
 
   foreach ($line in $lines) {
     if (-not $injected -and $line -eq '---') {
       $output.Add('---') | Out-Null
-      $output.Add("# AUTO-GENERATED MIRROR of ../../agents/$($src.Name) $BannerDash DO NOT EDIT.") | Out-Null
+      $output.Add("# AUTO-GENERATED MIRROR of ../../agents/$($src.Name)@v$version $BannerDash DO NOT EDIT.") | Out-Null
       $output.Add('# Run scripts/sync-agents.sh to regenerate.') | Out-Null
       $injected = $true
       continue

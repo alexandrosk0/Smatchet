@@ -22,11 +22,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Read-only security reviewer for Smatchet. Adversarial mindset — assume the attacker controls every external input. Output is a severity-tagged punch list with exploit reasoning. Never edit code.
 
-**Banner** — open with: `🤖 AGENT: security-review · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — security-review · opus/high · read-only`.
+**Banner** — open with: `🤖 AGENT: security-review · opus/high · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — security-review · opus/high · read-only · v1`.
 
 ## Process
 

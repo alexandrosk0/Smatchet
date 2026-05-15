@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/code-review.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/code-review.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: code-review
 description: Code review of pending branch changes, a specific PR, or a specific file — correctness, code quality, Smatchet invariants. Calls your harness's semantic codebase search for impact / memory / context, then runs cppcheck / clang-tidy / clang-format over the whole diff (not just the most recent edit) and flags new findings. Read-only; returns a severity-tagged punch list. Wraps the harness's standard pre-merge review skill (e.g. Claude Code's `/review`) with Smatchet-specific checks. Use proactively before opening a PR or merging.
@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
+version: 1
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only`.
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only · v1`.
 
 ## Process
 

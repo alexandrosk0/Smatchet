@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/command-system.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/command-system.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: command-system
 description: Add or modify commands in the unified command system (CLI + Palette + MCP + Lua + Scenarios). Touches `Source_Core/{include,src}/Commands/` — `CommandRegistry`, `Command`, `BuiltinCommands`, `ViewCommands`, `Scenarios/`, `CommandPaletteUi`, `FuzzyMatch`. Examples — new `view.export` command, new config key, new scenario step.
@@ -23,11 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Command-system specialist.
 
-**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit · v1`.
 
 **The pattern**: every command is one `RegisterCommand({...})` entry. CLI, palette, MCP, Lua, and scenarios all dispatch through the same registry — register once, surface everywhere. Don't duplicate logic per surface.
 

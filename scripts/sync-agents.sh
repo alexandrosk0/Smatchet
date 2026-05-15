@@ -47,10 +47,23 @@ for src in "$CANONICAL_DIR"/*.md; do
   name="$(basename "$src")"
   dst="$MIRROR_DIR/$name"
 
-  awk -v name="$name" '
+  # Extract the version: <N> line from the source frontmatter (if any) so the
+  # mirror banner can surface it. Default to v? when absent.
+  version="$(awk '
+    /^---$/      { fm++; if (fm > 1) exit; next }
+    fm == 1 && /^version:[[:space:]]*[0-9]+/ {
+      sub(/^version:[[:space:]]*/, "")
+      sub(/[[:space:]].*$/, "")
+      print
+      exit
+    }
+  ' "$src")"
+  [[ -z "$version" ]] && version="?"
+
+  awk -v name="$name" -v ver="$version" '
     NR == 1 && $0 == "---" {
       print "---"
-      print "# AUTO-GENERATED MIRROR of ../../agents/" name " — DO NOT EDIT."
+      print "# AUTO-GENERATED MIRROR of ../../agents/" name "@v" ver " — DO NOT EDIT."
       print "# Run scripts/sync-agents.sh to regenerate."
       injected = 1
       next

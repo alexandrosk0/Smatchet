@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/perf-measure.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/perf-measure.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: perf-measure
 description: Run a Smatchet perf measurement loop — `perf.reset` → `scenario.run` → `perf.snapshot` — parse JSON, return top-N rows by `lastTotalMs`. Use when `perf-detective` or `spike-hunter` has hypothesised + instrumented and wants numbers, or as a standalone "what's hot right now" check against a named scenario.
@@ -18,11 +18,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Smatchet perf-measurement runner.
 
-**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only`.
+**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only · v1`.
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 

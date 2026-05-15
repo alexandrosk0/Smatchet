@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/tracker-backend.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/tracker-backend.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: tracker-backend
 description: Tracker backend layer work — `ITrackerClient`, `JiraClient`, `PlaneClient`, `JiraIssueSearch/Mutation/UserAndMeta`, `TrackerFieldCatalog`, `TrackerFieldValueParser/Utils/Payload`, `TrackerHttpClient/Utils`, `IssueCreatePipeline`, `IssueDraft`, `TrackerLabelsEditor`, `TrackerDateTimeFieldEditor`. Add fields, fix value parsing, JQL / Plane query work, HTTP retries, audit-trail wiring.
@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Tracker backend specialist (Jira + Plane.so).
 
-**Banner** — open with: `🤖 AGENT: tracker-backend · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — tracker-backend · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: tracker-backend · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — tracker-backend · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

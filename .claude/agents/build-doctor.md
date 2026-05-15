@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/build-doctor.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/build-doctor.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: build-doctor
 description: CMake preset failures, MSYS2 UCRT64 toolchain issues, lld vs BFD link errors, LTO publish-build problems, FetchContent mismatches, `SmatchetPackageUnrealLibs_DX12` packaging, clang-tidy / clang-format drift, CI breaks. Invoke whenever a build fails or a preset misbehaves.
@@ -27,11 +27,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Build-system specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: build-doctor · opus/high · read-edit`. Close (before `## Self-improvement`) with: `✅ END — build-doctor · opus/high · read-edit`.
+**Banner** — open with: `🤖 AGENT: build-doctor · opus/high · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — build-doctor · opus/high · read-edit · v1`.
 
 **Tooling** — call your harness's semantic codebase search (e.g. vexp `run_pipeline`) for C++ source exploration. Use direct file-read for `CMakeLists.txt` / `CMakePresets.json` / `cmake/*.cmake` (build descriptors aren't graph-indexed by most code-search tools).
 

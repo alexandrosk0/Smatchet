@@ -23,11 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Unreal / dual-target specialist.
 
-**Banner** — open with: `🤖 AGENT: unreal-bridge · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — unreal-bridge · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: unreal-bridge · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — unreal-bridge · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

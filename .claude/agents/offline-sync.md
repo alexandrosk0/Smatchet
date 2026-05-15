@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/offline-sync.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/offline-sync.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: offline-sync
 description: SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Use for cache schema additions, pending-create / pending-field-edit replay, dead-letter handling, sync diff resolution, audit-log entries.
@@ -27,11 +27,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Offline-sync / cache specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: offline-sync · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — offline-sync · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: offline-sync · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — offline-sync · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

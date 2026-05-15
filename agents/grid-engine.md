@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Grid / spreadsheet specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

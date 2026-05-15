@@ -22,11 +22,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Perforce blame specialist.
 
-**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

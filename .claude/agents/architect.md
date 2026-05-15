@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/architect.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/architect.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: architect
 description: Cross-cutting design for Smatchet — multi-file refactors touching `ITrackerClient`, the command registry, per-backend view storage, MCP schemas, or reasoning across `Source_Core` + `Plugins` + `UnrealPlugins`. Examples — add a third tracker backend, redesign view unsaved-state, plan view-storage migrations.
@@ -22,11 +22,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Read-only architecture specialist. Output is a design doc; the orchestrator implements.
 
-**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only`.
+**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only · v1`.
 
 Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 

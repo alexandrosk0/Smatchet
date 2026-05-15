@@ -21,11 +21,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Command-system specialist.
 
-**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit · v1`.
 
 **The pattern**: every command is one `RegisterCommand({...})` entry. CLI, palette, MCP, Lua, and scenarios all dispatch through the same registry — register once, surface everywhere. Don't duplicate logic per surface.
 

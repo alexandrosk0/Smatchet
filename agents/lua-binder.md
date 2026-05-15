@@ -21,11 +21,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Lua / sol2 binding specialist.
 
-**Banner** — open with: `🤖 AGENT: lua-binder · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — lua-binder · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: lua-binder · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — lua-binder · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

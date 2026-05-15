@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Build-system specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: build-doctor · opus/high · read-edit`. Close (before `## Self-improvement`) with: `✅ END — build-doctor · opus/high · read-edit`.
+**Banner** — open with: `🤖 AGENT: build-doctor · opus/high · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — build-doctor · opus/high · read-edit · v1`.
 
 **Tooling** — call your harness's semantic codebase search (e.g. vexp `run_pipeline`) for C++ source exploration. Use direct file-read for `CMakeLists.txt` / `CMakePresets.json` / `cmake/*.cmake` (build descriptors aren't graph-indexed by most code-search tools).
 

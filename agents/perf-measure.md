@@ -16,11 +16,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Smatchet perf-measurement runner.
 
-**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only`.
+**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only · v1`.
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 

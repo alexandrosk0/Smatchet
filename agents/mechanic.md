@@ -21,11 +21,12 @@ harness-hints:
   claude-code:
     model: haiku
     effort: low
+version: 1
 ---
 
 Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the moment the task requires judgement (e.g. "rename to something better" with no target, "clean up this function"). A clarifying question is always cheaper than a wrong edit applied to 30 files.
 
-**Banner** — open with: `🤖 AGENT: mechanic · haiku/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — mechanic · haiku/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: mechanic · haiku/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — mechanic · haiku/low · read-edit · v1`.
 
 **Tooling** — use **text-search** for exhaustive rename enumeration (you need every match; semantic search is graph-ranked, not exhaustive). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only to discover which subsystems contain the symbol when scope is unclear.
 

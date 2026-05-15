@@ -103,6 +103,87 @@ Each packet should include:
 - **Plan revision contract**: name the originating `docs/design/<slug>.md` in the packet and remind the implementer to append to `## Implementation log` + `## Deviations from plan` + `## Verification` in the same or next commit per AGENTS.md § Plan revision after implementation. Plans that ship without revision turn stale.
 - **Verification automation handoff**: if the agent's report ends with any manual verification step ("user opens X and observes Y", "click and check"), the orchestrator's next move is **always** to invoke `test-author` to convert it. Implementing agents must explicitly list manual steps in their report so the orchestrator can dispatch automatically; "no manual steps" is also a valid statement.
 
+### Parallel dispatch
+
+Run two or more subagents in a **single tool-use block** (multiple `Agent` calls in one message) when their contracts are independent. Examples:
+
+- Symptom "slow AND wrong output" → `perf-detective` + `debug-detective` concurrently.
+- Pre-merge gate → `code-review` + `security-review` concurrently.
+- Multi-subsystem feature with disjoint write sets → multiple subsystem specialists at once.
+
+**Do not parallelise when one delegation feeds another** (`architect` → subsystem agents). Sequential when contract-coupled; parallel otherwise. Wall-clock saved scales linearly with batch width; context isolation preserved per agent.
+
+### Session scratchpad protocol
+
+A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`scripts/clear-session-context.sh`) truncates it and writes a banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
+
+Rules:
+
+- **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the vexp `run_pipeline`-first rule.
+- **Subagents emit `## Session context append`** in their report when there are session-durable facts worth surfacing — repro state, file:line evidence, decisions locked, open questions. Hook captures + appends; agent never writes the file.
+- **Append-only.** Hook never edits prior entries.
+
+Section shape:
+
+```
+## Session context append
+- <fact 1 with file:line>
+- <decision locked>
+- <open question handed back to orchestrator>
+```
+
+### Tool-trace contract
+
+Captured automatically — no agent burden. The `SubagentStop` hook counts `tool_use` blocks in the transcript and emits a `tool_trace` field on each JSONL row (e.g. `"Edit×4, Read×8, Bash×2"`). `scripts/agent-tokens-report.py` surfaces totals; `agents-statusline.py` shows top-agents by tokens. Agents may include an explicit `## Tool trace: ...` line in their report for the user's eye but the canonical count is hook-derived.
+
+### Agent output contract
+
+Agents fall into four classes by report shape. **Required section minimum** (extensions allowed):
+
+| Class | Members | Required sections |
+|---|---|---|
+| **Investigator** (read-only diagnosis) | `architect`, `debug-detective`, `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
+| **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-blame`, `unreal-bridge`, `mechanic` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
+| **Helper** (terminal helper) | `perf-instrument`, `perf-measure` | `## Spec executed` → `## Result` (numbers / inserted-or-stripped count) |
+| **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
+
+All four classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
+
+### Trigger auto-activation
+
+Orchestrator-side routing table — consulted **before** falling back to the heuristic block at the end of § Delegation:
+
+| Keyword(s) in user prompt | Agent |
+|---|---|
+| slow, FPS, lag, profile, optimize | `perf-detective` |
+| spike, hitch, freeze, stutter, intermittent, occasional hang | `spike-hunter` |
+| crash, broken, regression, wrong output, doesn't work, assert | `debug-detective` |
+| review, pre-merge, PR review, /review | `code-review` |
+| security, vuln, secret, injection, audit, CVE | `security-review` |
+| build, cmake, preset, link, packaging, lld, LTO | `build-doctor` |
+| automate testing, manual verification, headless test | `test-author` |
+| end of session, merge open PRs, tidy up, post-merge cleanup | `git-janitor` |
+| stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
+
+Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific synonyms.
+
+### Skeleton-first
+
+**Hard rule.** For files you're **inspecting** (understanding shape, finding the right symbol, scoping a change) use `get_skeleton` (or the harness equivalent — see § Harness adapter). For files you're **editing** use `Read`. Reading a full file for context-only inspection wastes ~70–90% of input tokens.
+
+The split:
+
+- "Where is X declared?" → skeleton
+- "What's the shape of this dir?" → skeleton across all files
+- "What does this function actually do?" → `Read` (but only that function, not the whole file)
+- "I'm about to edit line N" → `Read`
+
+Investigator agents (architect, code-review, security-review, debug-detective) are the heaviest readers and so the highest-ROI consumers of this rule.
+
+### Agent versioning
+
+Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capability tag added/removed, workflow contract changed (new mandatory section, new cleanup discipline), breaking output-shape change (renamed report section a downstream agent reads). **Don't bump on**: prose tweaks, typos, banner reformatting, token-efficiency tightens that preserve semantics. The mirror banner emitted by `scripts/sync-agents.sh` includes `@v<N>` so drift is visible at a glance. Telemetry (`agent_version` field on every JSONL row) lets `scripts/agent-tokens-report.py` flag the case where two versions of the same agent ran in one window — usually a sync-script bug or a mid-flight prompt edit.
+
 ### Cross-cutting
 
 | Agent | Complexity · access | Use when |

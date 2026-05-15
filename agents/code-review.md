@@ -23,11 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
+version: 1
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only`.
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only · v1`.
 
 ## Process
 

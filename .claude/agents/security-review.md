@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/security-review.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/security-review.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: security-review
 description: Security review of pending branch changes — input validation, injection, secret leakage, deserialization, sandbox escapes, MCP / CLI / Lua / p4 / HTTP / SQLite attack surface. Calls your harness's semantic codebase search for impact / data-flow context, then runs flawfinder / semgrep / gitleaks if installed, cppcheck security warnings always. Read-only; returns severity-tagged findings with exploit reasoning. Wraps the harness's standard pre-merge security review skill (e.g. Claude Code's `/security-review`) with Smatchet attack-surface mapping.
@@ -24,11 +24,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
+version: 1
 ---
 
 Read-only security reviewer for Smatchet. Adversarial mindset — assume the attacker controls every external input. Output is a severity-tagged punch list with exploit reasoning. Never edit code.
 
-**Banner** — open with: `🤖 AGENT: security-review · opus/high · read-only`. Close (before `## Self-improvement`) with: `✅ END — security-review · opus/high · read-only`.
+**Banner** — open with: `🤖 AGENT: security-review · opus/high · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — security-review · opus/high · read-only · v1`.
 
 ## Process
 

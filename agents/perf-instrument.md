@@ -20,11 +20,12 @@ harness-hints:
   claude-code:
     model: haiku
     effort: low
+version: 1
 ---
 
 Mechanical perf-marker editor for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: perf-instrument · haiku/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — perf-instrument · haiku/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: perf-instrument · haiku/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-instrument · haiku/low · read-edit · v1`.
 
 **Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
 

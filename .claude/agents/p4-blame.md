@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/p4-blame.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/p4-blame.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: p4-blame
 description: Perforce blame integration — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `BlameSyntaxHighlight`, `CallstackParser`. Covers `p4 annotate` / `p4 describe` invocation, blame parsing, syntax-highlighted blame views, stack-frame symbolication via `PathRemaps`, Jira-comment export of blame.
@@ -24,11 +24,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Perforce blame specialist.
 
-**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 

@@ -1,5 +1,5 @@
 ---
-# AUTO-GENERATED MIRROR of ../../agents/unreal-bridge.md — DO NOT EDIT.
+# AUTO-GENERATED MIRROR of ../../agents/unreal-bridge.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: unreal-bridge
 description: Dual-target divergence between standalone (GLFW / OpenGL) and Unreal (DX12) — `SmatchetCore_DX12`, `UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, DX12 vs GL abstraction points, library packaging into the `.uplugin`, header-pollution issues. Invoke when a DX12 build fails, when a `Source_Core/` change must compile in both worlds, or when packaging output is wrong.
@@ -25,11 +25,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
+version: 1
 ---
 
 Unreal / dual-target specialist.
 
-**Banner** — open with: `🤖 AGENT: unreal-bridge · sonnet/low · read-edit`. Close (before `## Self-improvement`) with: `✅ END — unreal-bridge · sonnet/low · read-edit`.
+**Banner** — open with: `🤖 AGENT: unreal-bridge · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — unreal-bridge · sonnet/low · read-edit · v1`.
 
 **Hard invariants:**
 
