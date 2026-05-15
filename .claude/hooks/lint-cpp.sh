@@ -24,6 +24,13 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 # Convert Windows backslashes for matching.
 NORM_FILE="${FILE_PATH//\\//}"
 NORM_PROJ="${PROJECT_DIR//\\//}"
+# Under MSYS2 / Cygwin, PROJECT_DIR arrives as /c/... while FILE_PATH arrives
+# as C:/... — normalise both to mixed-Windows form (C:/...) so the prefix
+# strip matches. cygpath -m is idempotent across /c/..., C:/..., and C:\... .
+if command -v cygpath >/dev/null 2>&1; then
+    NORM_PROJ="$(cygpath -m "$NORM_PROJ" 2>/dev/null || printf '%s' "$NORM_PROJ")"
+    NORM_FILE="$(cygpath -m "$NORM_FILE" 2>/dev/null || printf '%s' "$NORM_FILE")"
+fi
 REL="${NORM_FILE#$NORM_PROJ/}"
 
 # --- Filter: first-party C/C++ only ----------------------------------------
