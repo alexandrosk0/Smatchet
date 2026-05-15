@@ -687,12 +687,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
                     ImGui::TextDisabled("  %.0fpx", wit->second);
                 }
                 ImGui::EndGroup();
-                // HandleRowReorder runs after EndGroup so BeginDragDropTarget
-                // binds to the group's full-row rect. Entire row (handle +
-                // label + width hint) accepts drops, including over the drag
-                // handle of another row. Without the group the drop target
-                // was just the Selectable rect, so dropping over another
-                // row's handle missed.
+                // BeginDragDropTarget inside HandleRowReorder binds to the
+                // group's full-row rect — entire row (handle + label + width
+                // hint) accepts drops, including over another row's handle.
                 if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder,
                                                                      &d.viewsKeyboardReorderRow, "VIEWS_COLUMNS_ROW")) {
                     d.viewsDirty = true;
