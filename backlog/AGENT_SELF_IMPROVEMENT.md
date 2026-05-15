@@ -137,7 +137,7 @@ Sweep the file when:
 
 - 2026-05-12 · tracker-backend · [tooling / new-agent] — no test rig in the repo
   Details: pure-C++14 helpers (`JqlProjectScope`, value parser, JQL surgery) had to invent compile-only test patterns that aren't actually executed. A small `test-rig` agent that wires up a CTest target with doctest/GoogleTest against `Source_Core` would unblock real unit tests. High ROI given how much pure-logic code lives there.
-  Status: open · plan scoped at `~/.claude/plans/test-rig-agent-shy-margulis.md` — covers doctest + CTest target + `agents/test-rig.md` design, locked scope decisions, and a 5-commit migration order. Close to `applied (<sha>)` once the rig actually lands.
+  Status: open · plan at `docs/design/test-rig-agent.md` — covers doctest + CTest target + `agents/test-rig.md` design, locked scope decisions, and a 5-commit migration order. Close to `applied (<sha>)` once the rig actually lands.
 
 - 2026-05-12 · tracker-backend · [context] — design-doc PR sections that list line numbers should mark each as `(cfg-read)` / `(draft-write)` / `(audit-only)`
   Details: Project-key PR 2 §2.3 listed lines 358, 382, 70, 92, 349 alongside `cfg.ProjectKey`-read sites, but they were draft-writes — required a disambiguation pass.
