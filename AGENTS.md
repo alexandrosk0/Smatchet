@@ -102,6 +102,8 @@ Each packet should include:
 - **Comment discipline**: remind implementation agents that code comments must explain durable code intent, never the task / PR / temporary plan (no comments like `PR 4:` or `remove in PR 7`).
 - **Plan revision contract**: name the originating `docs/design/<slug>.md` in the packet and remind the implementer to append to `## Implementation log` + `## Deviations from plan` + `## Verification` in the same or next commit per AGENTS.md § Plan revision after implementation. Plans that ship without revision turn stale.
 - **Verification automation handoff**: if the agent's report ends with any manual verification step ("user opens X and observes Y", "click and check"), the orchestrator's next move is **always** to invoke `test-author` to convert it. Implementing agents must explicitly list manual steps in their report so the orchestrator can dispatch automatically; "no manual steps" is also a valid statement.
+- **File-split closure rule**: when delegating a multi-file split of a monolithic `.cpp` (`BlameAnalysisUi.cpp` shape), the packet must state the *closure rule* — "everything `<target-fn>` calls that isn't already in another TU goes to `<bucket>`" — not enumerate symbols from memory. Enumeration misses transitive callees (export builders, modal helpers); a closure rule does not.
+- **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 
 ### Parallel dispatch
 

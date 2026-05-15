@@ -55,11 +55,11 @@ Sweep the file when:
 
 - 2026-05-13 · p4-blame · [process] — multi-file split handoff packet missed transitive call closure
   Details: When splitting `BlameAnalysisUi.cpp` (2430 → 7 TUs), the orchestrator's handoff packet enumerated modal helpers explicitly but omitted export builders (`BuildAiExport`, `BuildBlameExport{Csv,Json}`, `BuildCallstackRowTsv`, `BuildAnnotatedRowTsv`) that `DrawWindow` calls. Agent had to discover them mid-split. Rule for orchestrator handoff packets on file-split tasks: include an explicit closure rule — "everything `<target-fn>` calls that isn't already in another TU goes to <bucket>" — instead of enumerating from memory.
-  Status: open
+  Status: applied — see commit at HEAD; AGENTS.md § Orchestrator delegation packet § File-split closure rule.
 
 - 2026-05-13 · p4-blame · [context] — missing-include after split is silent until build
   Details: When extracting helpers from a monolithic `.cpp` into separate TUs, includes that were only in the original `.cpp` are not catchable by inspection — only by build. `CompactDateFormat.h` was needed by both `_Config.cpp` and `_Window.cpp` after split but wasn't in the shared internal header. Rule for split-refactor agents: after creating the shared internal header, scan the original `.cpp`'s include list and replicate every non-self include into the internal header to pre-empt this class of failures.
-  Status: open
+  Status: applied — see commit at HEAD; AGENTS.md § Orchestrator delegation packet § Post-split include-replication rule.
 
 - 2026-05-13 · orchestrator · [process] — branch-switch wipes untracked plan files
   Details: Working-tree-only files (e.g. a plan doc not yet `git add`-ed) are silently lost on `git checkout <other-branch>` when GitHub Desktop or `git reset --hard` runs. Recovery via `git fsck --lost-found` + content-search on dangling blobs is slow. Rule: as soon as a plan file lands at `docs/design/`, `git add` + commit it immediately, even with a `wip:` prefix, before any other work or branch operation. Never leave a plan file untracked across a session boundary.
@@ -83,7 +83,7 @@ Sweep the file when:
 
 - 2026-05-13 · code-review · [tooling] — lint hook does not run clang-format on newly created `.h` files
   Details: The `PostToolUse` hook via `.claude/hooks/lint-cpp.sh` runs clang-format on `.cpp` edits but not on new header files. New headers consistently arrive at code-review with alignment-padding violations that could have been auto-fixed. Add `*.h` (or `*.{cpp,h}`) to the hook's glob pattern in `.claude/settings.json` or the lint script.
-  Status: open · investigation done, root cause NOT the filter
+  Status: open · needs reproducer (lint-cpp.sh filter + clang-format invocation verified correct on inspection; root cause likely Claude Code harness-side PostToolUse matcher behaviour for `.h` paths — needs a fresh repro to confirm + file upstream).
   Investigation (2026-05-13 session): repro confirmed by `Write`-ing a deliberately misformatted `.h` at `Source_Core/include/_lint_hook_probe.h`, then `Edit`-ing it; file stayed misformatted both times. Manual `bash .claude/hooks/lint-cpp.sh < <synthetic stdin>` invocation correctly formatted the file AND surfaced cppcheck output, so the hook script itself works. Filter at `.claude/hooks/lint-cpp.sh` L31-34 already includes `.h` files; `clang-format -i` runs unconditionally at L57. Real bug is upstream: Claude Code's `PostToolUse` matcher fires for `.cpp` files in this session but NOT for `.h` files via `Write`/`Edit` — or fires silently and the stderr does not surface. Backlog entry's proposed fix ("add `*.h` to glob") is therefore wrong — the glob is already correct. Next steps: (a) instrument the hook with a sentinel log file write to confirm whether it fires for `.h` Write/Edit, (b) check Claude Code's hook-discovery behaviour for `.h` paths (path filter, MIME / extension assumption?), (c) file upstream if confirmed harness-side. Not blocking; manual clang-format on touched `.h` files works.
 
 - 2026-05-13 · architect · [process] — skip architect when prompt already specifies file paths + symbols + commit messages
