@@ -763,6 +763,11 @@ class AppController {
      *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
     std::string currentCatalogProjectKey_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
+    /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
+    /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once
+    /// Initialize constructs it; cleared immediately after.
+    std::vector<std::function<void(const std::string&)>> pendingLogSinks_;
+
     /// Error sinks registered via AddAutomationErrorSink — called on any Lua error in
     /// the automation runner or setup path. Unconditional (no Lua guard) so the plugin can
     /// register regardless of build config. Accessed on the UI thread (registration in
