@@ -181,6 +181,60 @@ def _render(rows: list[dict], header: str) -> str:
         f"{'Total':<20} {'':<8} {total['calls']:>6}  {_fmt_k(total['in']):>8}  {_fmt_k(total['out']):>8}  {_fmt_k(total_cache):>8}  ${total['cost']:>7.4f}"
     )
     lines.append("")
+
+    # Outcome breakdown (new in 2026-05; older rows lack the field and count
+    # as "applied" since that was the default behaviour).
+    outcomes: dict[str, int] = {}
+    halt_reasons: dict[str, int] = {}
+    versions: dict[str, set[int]] = {}
+    chain_depths: list[int] = []
+    for r in rows:
+        outcome = str(r.get("outcome") or "applied")
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        reason = r.get("halt_reason")
+        if reason:
+            halt_reasons[str(reason)] = halt_reasons.get(str(reason), 0) + 1
+        ver = r.get("agent_version")
+        if ver is not None:
+            agent = r.get("agent", "unknown")
+            versions.setdefault(agent, set()).add(int(ver))
+        chain = r.get("delegation_chain") or []
+        if isinstance(chain, list):
+            chain_depths.append(len(chain))
+
+    if outcomes:
+        lines.append("Outcomes:")
+        for k in ("applied", "halted", "failed", "partial", "aborted"):
+            if outcomes.get(k):
+                lines.append(f"  {k:<10} {outcomes[k]:>4}")
+        # Surface anything unexpected.
+        for k, v in outcomes.items():
+            if k not in {"applied", "halted", "failed", "partial", "aborted"}:
+                lines.append(f"  {k:<10} {v:>4}")
+        lines.append("")
+
+    if halt_reasons:
+        lines.append("Top halt reasons:")
+        for reason, count in sorted(halt_reasons.items(), key=lambda kv: -kv[1])[:5]:
+            short = reason if len(reason) <= 70 else reason[:67] + "..."
+            lines.append(f"  ({count}) {short}")
+        lines.append("")
+
+    if chain_depths:
+        max_depth = max(chain_depths)
+        if max_depth > 0:
+            avg = sum(chain_depths) / len(chain_depths)
+            lines.append(f"Delegation depth — max {max_depth}, avg {avg:.1f} (length of prior-agents chain).")
+            lines.append("")
+
+    # Surface prompt-version drift — same agent running on two versions in one window.
+    drift = {a: sorted(vs) for a, vs in versions.items() if len(vs) > 1}
+    if drift:
+        lines.append("Agent-version drift in window:")
+        for agent, vs in drift.items():
+            lines.append(f"  {agent}: versions {vs}")
+        lines.append("")
+
     lines.append(f"Pricing cutoff: {PRICING_CUTOFF} (update in scripts/agent-tokens-report.py).")
     return "\n".join(lines)
 

@@ -176,7 +176,11 @@ def _agents_badge() -> str:
     total_tokens = sum(b["tokens"] for b in by_agent.values())
     total_cost = sum(b["cost"] for b in by_agent.values())
 
-    return f"[AGENTS] 🤖 " + " · ".join(parts) + f" · total {_fmt_k(total_tokens)} · ${total_cost:.2f}"
+    # Halt count this session — visible only when >0 so the badge stays quiet on clean runs.
+    halts = sum(1 for r in session_rows if str(r.get("outcome") or "applied") != "applied")
+    halt_segment = f" · halted: {halts}" if halts else ""
+
+    return f"[AGENTS] 🤖 " + " · ".join(parts) + f" · total {_fmt_k(total_tokens)} · ${total_cost:.2f}{halt_segment}"
 
 
 def _tail_lines(path: Path, max_lines: int) -> list[str]:

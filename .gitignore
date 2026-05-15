@@ -71,6 +71,9 @@ skills-lock.json
 # Per-machine agent token usage log (see docs/AGENT_TOKEN_TRACKING.md)
 .claude/.agent-tokens.jsonl
 
+# Per-session orchestrator scratchpad (see AGENTS.md § Session scratchpad protocol)
+.session-context.md
+
 # Per-investigation debug-detective artifacts (see agents/debug-detective.md)
 debug-*.log
 Smatchet-debug-*.log
