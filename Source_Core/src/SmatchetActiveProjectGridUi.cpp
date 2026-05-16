@@ -840,10 +840,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
                         if (column.ColumnKind == TicketGridColumn::Kind::Id) {
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(
-                                cellOriginForSel,
-                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
-                                true);
                             if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected,
                                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                                 if (!ImGuiEffectiveKeyCtrl()) {
@@ -854,7 +850,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                     app.OpenUrl(url);
                                 }
                             }
-                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -902,10 +897,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             badgeText = "...";
                             badgeTooltip = "Saving...";
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(
-                                cellOriginForSel,
-                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
-                                true);
                             const std::string saveDisplay = DisplayValueForTrackerDateField(
                                 column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption,
                                 d.cfg.DateCompactRelativeThresholdDays);
@@ -915,7 +906,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                                             column.FieldId.find("Description") != std::string::npos);
                             RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
                                                    true, saveTip, isDescriptionField, &column.FieldId);
-                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
@@ -927,15 +917,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                 !readOnlyMode && column.NeedsAllowEditsCheck &&
                                 app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
                             ImGui::BeginGroup();
-                            ImGui::PushClipRect(
-                                cellOriginForSel,
-                                ImVec2(cellOriginForSel.x + cellWidthForSel, cellOriginForSel.y + kTicketGridRowH),
-                                true);
                             TicketFieldEditor::RenderFieldCell(
                                 app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
                                 d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState, pendingEdits,
                                 d.trackerGridAsync, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays);
-                            ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
