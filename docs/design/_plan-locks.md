@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### backend-audit-trail-per-event-path · status: in-flight
+### backend-audit-trail-per-event-path · status: shipped
 
 - **Branch**: `feat/audit-trail-per-event-path`
 - **Owner agent**: orchestrator
@@ -61,7 +61,53 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip)
 - **Read-only adjacency**: `Source_Core/include/BackendAuditTrail.h`, `Source_Core/include/ConfigManager.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — production fix landed in working tree, building tests next.
+- **Last update**: 2026-05-16 — merged via PR #108 at sha 98ed9ea.
+- **Cleared by**: PR `#108` merged at `98ed9ea`.
+
+### cached-ticket-types-header-split · status: in-flight
+
+- **Branch**: `feat/cached-ticket-types-header-split`
+- **Owner agent**: orchestrator
+- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Claimed write set**:
+  - `Source_Core/include/CachedTicketTypes.h` (NEW)
+  - `Source_Core/include/LocalCacheManager.h`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+- **Read-only adjacency**: 20 callers of `LocalCacheManager.h` (no code edit — re-include keeps API)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — PR #109 opened, awaiting merge.
+- **Cleared by**: pending merge of [#109](https://github.com/alexandrosk0/Smatchet/pull/109).
+
+### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: claimed
+
+- **Branch**: `feat/test-callstack-adversarial`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-over A
+- **Claimed write set**:
+  - `tests/Source_Core/CallstackParser.test.cpp`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
+- **Read-only adjacency**: `Source_Core/src/CallstackParser.cpp`, `Source_Core/include/CallstackParser.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: claimed
+
+- **Branch**: `feat/p4blame-parse-tu-split`
+- **Owner agent**: `test-rig` (TU-split pre-authorised per AGENTS.md applied rule)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-over B
+- **Claimed write set**:
+  - `Source_Core/include/P4BlameParse.h` (NEW)
+  - `Source_Core/src/P4BlameParse.cpp` (NEW)
+  - `Source_Core/src/P4Blame.cpp` (call-site rewire of the four lifted helpers only — no semantic change)
+  - `tests/Source_Core/P4BlameParse.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
+- **Read-only adjacency**: `Source_Core/include/P4Blame.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
 - **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion · phase 1 · status: in-flight
