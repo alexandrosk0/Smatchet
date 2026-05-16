@@ -260,7 +260,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated). Parallel sibling: PR F (disjoint test file; shared `tests/CMakeLists.txt` append).
 - **Cleared by**: TBD PR against `develop`.
 
-### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: claimed
+### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: in-flight
 
 - **Branch**: `feat/ticket-sync-service-tests`
 - **Owner agent**: `test-rig`
@@ -272,7 +272,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/ITicketSyncDeps.h`, `Source_Core/src/TicketSyncService.cpp`, `tests/support/FakeTicketSyncDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated). Parallel sibling: PR E.
+- **Last update**: 2026-05-16 — first commit in worktree; status flipped `claimed` → `in-flight`. Parallel sibling: PR E.
 - **Cleared by**: TBD PR against `develop`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
