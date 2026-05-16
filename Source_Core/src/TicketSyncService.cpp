@@ -79,7 +79,11 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     }
 
     size_t deleted = 0;
-    if (fullSyncCompleted) {
+    // Empty-fetch guard: a full-sync that returns zero tickets cannot prove the cache is
+    // stale — treating it as authoritative would wipe every row silently (e.g. a 200-with-
+    // empty-body network glitch). Genuinely-empty projects re-converge on the next non-
+    // empty fetch.
+    if (fullSyncCompleted && !freshTickets.empty()) {
         std::unordered_set<std::string> keepIds;
         keepIds.reserve(freshTickets.size());
         for (const auto& t : freshTickets) {
@@ -110,8 +114,7 @@ void TicketSyncService::TickStreamingApply() {
     // 1. If we have a pending sync request and the previous session (worker + apply queue +
     //    stale cleanup) is fully drained, start it safely now.
     bool isWorkerActive = activeStreamingSync_.Active.load();
-    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning ||
-                         isDeletingStale_.load();
+    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
 
     if (activeStreamingSync_.Superseded.load()) {
         {
@@ -179,18 +182,17 @@ void TicketSyncService::TickStreamingApply() {
             }
             {
                 std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-                deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(),
-                                                        deps_.ActiveTickets().end(),
-                                                        [&](const CachedTicket& t) { return t.id == id; }),
-                                          deps_.ActiveTickets().end());
+                deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
+                                                           [&](const CachedTicket& t) { return t.id == id; }),
+                                            deps_.ActiveTickets().end());
             }
             inMemoryChanged = true;
             deletedThisFrame++;
             staleDeletedSoFar_++;
 
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::high_resolution_clock::now() - start)
-                               .count();
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
+                    .count();
             if (elapsed >= 3 || deletedThisFrame >= 10) {
                 break;
             }
@@ -274,9 +276,9 @@ void TicketSyncService::TickStreamingApply() {
                                   std::make_move_iterator(batchToProcess.end()));
         stateChanged = true;
 
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::high_resolution_clock::now() - start)
-                           .count();
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
+                .count();
         if (elapsed >= 3 || ticketsProcessedInFrame >= 20) {
             break;
         }
@@ -325,8 +327,8 @@ void TicketSyncService::TickStreamingApply() {
         bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
 
         if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-            deps_.SetLastTrackerTicketSyncWarning(
-                "Showing cached issues — live refresh did not complete: " + fetchError);
+            deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " +
+                                                  fetchError);
             LOG_WARN("TicketSyncService::TickStreamingApply transport-style fetch issue: %s", fetchError.c_str());
             deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
             const auto nowProbe = std::chrono::steady_clock::now();
@@ -415,8 +417,7 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     ViewsStore viewsCopy = viewsOverride ? *viewsOverride : ConfigManager::LoadViewsOrBootstrap(cfgCopy);
 
     const bool isWorkerActive = activeStreamingSync_.Active.load();
-    const bool isSessionBusy =
-        isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
+    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
 
     if (isSessionBusy) {
         activeStreamingSync_.Cancelled = true;
@@ -441,7 +442,8 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
 
     // Swap Backend type safely before starting the worker.
     std::string newTracker = cfgCopy.TrackerType;
-    if (newTracker.empty()) newTracker = "Jira";
+    if (newTracker.empty())
+        newTracker = "Jira";
     const std::string trackerLower = ToLowerAsciiCopy(newTracker);
     const std::string currentType = deps_.Backend() ? deps_.Backend()->GetTrackerType() : "";
     const bool isCurrentlyJira = (currentType == "Jira");
