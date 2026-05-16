@@ -1,0 +1,7 @@
+{
+    "tracker_type": "Jira",
+    "domain": "truncated.example.com",
+    "email": "user@example.com",
+    "jql": "assignee=currentUser()",
+    "read_only_mode": false,
+    "default_iss

@@ -33,6 +33,8 @@ add_executable(SmatchetTests
     Source_Core/TrackerFieldCatalogPure.test.cpp
     Source_Core/TicketSyncService.test.cpp
     Source_Core/OfflineQueueServiceRuntime.test.cpp
+    Source_Core/ConfigManager.test.cpp
+    Source_Core/ConfigMigration.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
