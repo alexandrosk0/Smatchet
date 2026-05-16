@@ -4,6 +4,18 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-16 · build-doctor · [tooling] — Windows-path-separator regex bug in build-log-grep scripts
+  Details: While shipping Slice 4 (`scripts/dev/test-build-warnings.sh`), the first regex used `/` as the only path separator, but GCC under MinGW emits source paths with `\` (e.g. `..\..\Target_Standalone\main.cpp`). Test silently passed despite real warnings; caught by a deliberate negative-test (restored dead helper, expected exit-1, got exit-0). Cost ~5 min. Proposal: add to AGENTS.md § Debug techniques (or `agents/build-doctor.md` § Common causes) — "any future build-log-grep on Windows must use `[\\/]` for path separators, not `/`". Estimated cost: 5 min doc edit.
+  Status: open
+
+- 2026-05-16 · build-doctor · [tooling] — PS 5.1 `-Command "<multi-line>"` silently drops scope effects
+  Details: While shipping Slice 2 (`scripts/dev/doctor.ps1`), agent tried to drive a bash-wrapper test of doctor.ps1 via `pwsh -Command "<multi-line>"` with embedded `$env:PATH = ...`. PowerShell 5.1 silently failed to apply the scope change despite the inner gcc resolution reporting the prepend had happened. PS 7 + `-Command` is fine; PS 5.1 + multi-line `-Command` is broken. Reliable pattern: write a temp .ps1 file and invoke via `pwsh -File <temp.ps1>`. Proposal: add a "common causes" bullet to `agents/build-doctor.md` so the next bash-driven-PS wrapper defaults to `-File`. Estimated cost: 5 min doc edit.
+  Status: open
+
+- 2026-05-16 · build-doctor · [process] — Doctor strict `PATH contains C:\msys64\ucrt64\bin` produces false-fail on JetBrains-bundled-MinGW hosts
+  Details: Shipped Slice 2 `scripts/dev/doctor.ps1` keeps the spec-literal "PATH must contain `C:\msys64\ucrt64\bin`" check. On dev hosts where JetBrains IDEs supply gcc 13.x via a bundled MinGW (different prefix), MSYS2 presets work fine because they fix PATH internally via `MSYSTEM_PREFIX` — yet the doctor strict check reports exit-1. Proposal: split the doctor check into (a) "MSYS2 UCRT64 toolchain reachable" (required — required prefix detection independent of shell PATH) + (b) "MSYS2 UCRT64 on PATH at shell time" (warn-only — useful for `scripts/dev/` bash scripts that don't run through `cmake --preset`). Estimated cost: 30 min edit in doctor.ps1 + doctor.sh + matching test-doctor.sh case.
+  Status: open
+
 - 2026-05-15 · test-author · [tooling] — `MarkdownPreviewLangTag` covered (bucket A); rendered-output coverage deferred
   Details: Added `tests/Source_Core/MarkdownPreviewLangTag.test.cpp` (5 cases / 40 assertions) over the inlined `MarkdownPreviewRender::IsCppLikeLangTag` classifier — covers the C/C++ canonical spellings, case-insensitivity, non-cpp languages (python/js/rust/…), substring rejection (cppreference/ccache/cxxabi must not match), and whitespace-only / empty tags. This proves the decision predicate; what still needs automation is "given a markdown document containing a ` ```cpp ` fence, the leave-block handler actually iterates `codeBuffer` line-by-line through `DrawColoredCppLine`." Bucket B: scenario `markdown-preview-fence-render` that builds a `MarkdownPreviewRender::Render(fixtureMd)` against a fixed input + screenshot-diff the rendered child region (gated on bucket-C harness). Bucket C: pixel-class count assertion against known keyword RGB. Bucket E: ImGui Test Engine fixture that opens the long-text editor modal with a fixed markdown source, asserts the colorized child renders ≥ N pixels of the active theme's keyword color. Estimated cost: 30 min once bucket B/C harness from the parent theme entry lands.
 
