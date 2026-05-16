@@ -198,15 +198,39 @@ All automation goes through `scripts/dev/test-all.sh` per [AGENTS.md § Verifica
 
 ## Implementation log
 
-- Slice 1 (`fix/cppcheck-path-detection`, PR #TBD): replaced the literal-`Smatchet` regex in `scripts/dev/run_cppcheck.py` with a `relative_to(root)` + `TOP_LEVEL_DIRS` predicate; dropped the `import re`. Added `scripts/dev/test-cppcheck-path-detection.sh` (bucket-A) — synthesises a compile DB under a non-`Smatchet` temp path, runs the patched filter, asserts 3 first-party entries kept and 0 `_deps` / system headers leak through.
+- `666dfc4` · Plan doc landed (PR [#83](https://github.com/alexandrosk0/Smatchet/pull/83)).
+- `ec9e0b9` · Slice 1 — `fix(cppcheck): key TU filter off repo root, not folder name` (PR [#84](https://github.com/alexandrosk0/Smatchet/pull/84)). Replaced the literal-`Smatchet` regex in [scripts/dev/run_cppcheck.py:49](scripts/dev/run_cppcheck.py:49) with a `relative_to(root)` + `TOP_LEVEL_DIRS` predicate; dropped the `import re`. Added [scripts/dev/test-cppcheck-path-detection.sh](scripts/dev/test-cppcheck-path-detection.sh) (bucket-A).
+- `a235eb3` · Slices 2+3 — `feat(doctor): toolchain pre-flight + BUILD.md verify recipe` (PR [#85](https://github.com/alexandrosk0/Smatchet/pull/85)). New [scripts/dev/doctor.ps1](scripts/dev/doctor.ps1) (241 LOC) + [scripts/dev/doctor.sh](scripts/dev/doctor.sh) (263 LOC) with parity check list; new [scripts/dev/test-doctor.sh](scripts/dev/test-doctor.sh) (bucket-A) covering both pass and induced-fail paths. [BUILD.md](BUILD.md) gained a 31-line "First-time verification" section with the five-step recipe and the explicit `~5 min` FetchContent first-configure callout.
+- `b68bf09` · Slice 4 — `chore(warnings): remove dead file-static helpers in Target_Standalone + Source_Core` (PR [#86](https://github.com/alexandrosk0/Smatchet/pull/86)). Deleted `SmatchetGetStandaloneUserDataDirectory()` from [Target_Standalone/main.cpp](Target_Standalone/main.cpp) and `IsSessionUtilityLayoutKey(const char*)` from [Source_Core/src/SmatchetUI.cpp](Source_Core/src/SmatchetUI.cpp). Both grep-verified dead across `Source_Core/`, `Plugins/`, `UnrealPlugins/`, `Target_Standalone/` before deletion. Added [scripts/dev/test-build-warnings.sh](scripts/dev/test-build-warnings.sh) (bucket-A) — greps iter build log for `-Wunused-*` over the three first-party top-level dirs.
 
 ## Deviations from plan
 
-- None for Slice 1.
+- **Slices 2+3 bundled into one PR (#85)** instead of two — Slice 3's BUILD.md recipe references `doctor.ps1` from Slice 2 by name, so splitting would have shipped a stale reference for the lifetime of the gap. User-approved at dispatch time.
+- **Slice 4 test harness pattern**: original plan suggested inline-grep in `test-all.sh`; agent shipped a standalone [scripts/dev/test-build-warnings.sh](scripts/dev/test-build-warnings.sh) instead, auto-enrolled via the existing `test-*.sh` glob — matches the verification-automation convention from AGENTS.md § Verification automation.
+- **Slice 4 path-separator regex**: the build-doctor agent caught (via negative-test) that GCC under MinGW emits backslash separators in source paths — `..\..\Target_Standalone\main.cpp`. The shipped regex uses `[\\/]` instead of `/`. Flagged as a candidate AGENTS.md § Debug techniques entry.
 
 ## Verification
 
-- Slice 1:
+- **Slice 1**:
   - `python scripts/dev/run_cppcheck.py --no-run` from the canonical `C:\Dev\Smatchet` checkout still writes 205 entries (matches pre-fix baseline) — passed.
+  - `python scripts/dev/run_cppcheck.py --no-run` from a non-`Smatchet`-named temp clone: 0 → 3 entries — passed.
   - `bash scripts/dev/test-cppcheck-path-detection.sh` — `Passed: 2  Failed: 0`, exit 0 — passed.
-  - `bash scripts/dev/test-all.sh --filter cppcheck-path` confirmed the new script is auto-enrolled — passed.
+- **Slices 2+3**:
+  - `pwsh doctor.ps1` on a host with MSYS2 on PATH — exit 0 GREEN — passed.
+  - `pwsh doctor.ps1` with MSYS2 stripped from PATH — exit 1 RED, message names MSYS2 — passed.
+  - `bash doctor.sh` matrix (pass + induced-fail) — same result — passed.
+  - `bash scripts/dev/test-doctor.sh` — `Passed: 3  Failed: 0`, exit 0 — passed.
+  - `markdownlint BUILD.md` — not installed; manual read pass — passed.
+- **Slice 4**:
+  - `ninja-iter-msys2` Smatchet-owned `-Wunused-*` count: 2 → 0 — passed.
+  - `ninja-debug-msys2`: 2 → 0 — passed.
+  - `ninja-test-msys2`: 0 → 0 — passed.
+  - `ninja-iter-msys2 --target SmatchetCore_DX12`: 0 → 0 (no dual-target regression) — passed.
+  - `ctest --preset ninja-test-msys2`: 1/1 — passed.
+  - `bash scripts/dev/test-build-warnings.sh` — `Passed: 1  Failed: 0`, plus negative-test (restore dead helper → `Failed: 1` with exact warning line) — passed.
+- **Post-merge develop regression gate**:
+  - `bash scripts/dev/test-all.sh` on develop @ `b68bf09` — `Aggregate Passed: 89  Failed: 2  Scripts: 7`. The 2 failures are in `test-ui-views-columns-reorder.sh` (pre-existing flake, unrelated to this plan — already flagged by Slice 2+3 build-doctor agent in its smoke report).
+- **Open / deferred**:
+  - Slices 5 (CI workflow), 6 (offline-builds doc), 7 (cmake preset pre-flight hook) — not shipped, remain on the slice ladder. Slice 5 is the highest-value next step.
+  - PS 5.1 `-Command "<multi-line>"` scope-effect drop (build-doctor self-improvement flag) — backlog candidate for `agents/build-doctor.md`.
+  - Strict `PATH contains C:\msys64\ucrt64\bin` doctor check produces false-fail on JetBrains-bundled-MinGW hosts (build-doctor self-improvement flag) — backlog candidate to split into "toolchain reachable" (required) + "on PATH at shell time" (warn).
