@@ -244,3 +244,42 @@ Final regression gate (end-of-effort): `git-janitor` runs the unified test runne
 ### Plan revision after implementation (AGENTS.md mandate)
 
 This plan file gets moved to `docs/design/applied/large-files-and-phase-2.md` after the last PR lands. Implementation log + Deviations from plan + Verification sections appended per the project rule. The stale `BACKLOG_CODE_REVIEW.md` references in source comments are replaced with a single pointer to the applied plan.
+
+---
+
+## Implementation log
+
+Track A — mechanical file splits — fully shipped as of this revision:
+
+- `caa8c6f` · **A5** · extract Lua recorder types out of `AppController.h` into `AppController_LuaTypes.h` under `namespace smatchet::lua`; `using` aliases preserve `AppController::ImCmd` / `LuaFieldCacheEntry` / `LuaWindowEntry` / `PendingLuaWindowOp` at 36 call sites. `AppController.h` 1035 → 992 LOC. Folded into the plan-doc PR ([#93](https://github.com/alexandrosk0/Smatchet/pull/93)) at the user's request to keep PR noise down.
+- `4e7e0d4` · **A3** · split `ConfigManager.cpp` (1773 LOC) into `ConfigManager.cpp` (825) + `ConfigManager_PathUtils.cpp` (735) + `ConfigManager_Views.cpp` (313) + `ConfigManager_Internal.h` (78). Shared helpers live in `smatchet::config_detail::`. `tests/CMakeLists.txt` patched to compile the two new sibling `.cpp` (CommentTemplate ADL serializers + `config_detail` singletons live there). PR [#97](https://github.com/alexandrosk0/Smatchet/pull/97).
+- `3c50fb2` · **A2** · split `PlaneClient.cpp` (1646 LOC) into `PlaneClient.cpp` (151) + `PlaneIssueSearch.cpp` (659) + `PlaneIssueMutation.cpp` (390) + `PlaneFieldCatalog.cpp` (510) + `PlaneClient_Internal.h` (38). Shared helpers in `smatchet::plane_detail::`. Mirrors the existing `JiraIssueSearch.cpp` / `JiraIssueMutation.cpp` / `JiraUserAndMeta.cpp` precedent one floor up. PR [#98](https://github.com/alexandrosk0/Smatchet/pull/98).
+- `18abf80` · **A1** · split `Commands/BuiltinCommands.cpp` (1898 LOC) into a 53-LOC dispatcher + 17 per-category files under `Source_Core/src/Commands/Builtin/` (one `Register<Cat>Commands(reg, app)` each). Helpers in `smatchet::cmd::builtin_detail::`. `commands.list` count: 75 pre = 75 post (catalog byte-equivalent). PR [#100](https://github.com/alexandrosk0/Smatchet/pull/100).
+- `fab0fc7` · **A4** · split `SmatchetUI.cpp` (1454 LOC) into `SmatchetUI.cpp` (821) + `SmatchetUI_MainMenu.cpp` (479) + `SmatchetUI_Layout.cpp` (264) + `SmatchetUI_Internal.h` (38). Lua-style helpers in `smatchet::ui_detail::`. PR [#101](https://github.com/alexandrosk0/Smatchet/pull/101).
+
+Track B — interface-bundle / friend-class removal — **not started yet**; ships in follow-up PRs (B1 → B2 → B3a-d → fix-up) per the original slice ordering.
+
+## Deviations from plan
+
+- **A4 final size: 821 LOC, above the ≤ 700 LOC target.** `Draw` itself stays in the root TU and is large; further chunking would have meant splitting `Draw` into helper methods that aren't a natural shelving boundary. Stopped at the MainMenu + Layout split. Acceptable given the file went from 1454 → 821; the public surface didn't grow.
+- **A4 `SmatchetUI_Internal.h` is NOT included from `SmatchetUI.cpp` or `SmatchetUI_MainMenu.cpp`.** The internal header does `#include "imgui.h"` then `#define ImGui SmatchetLocalizedImGui`, which clashes with `imgui_internal.h` consumers (the macro rewrites function names that `imgui_internal.h` then can't resolve). Workaround: those two TUs declare the `smatchet::ui_detail::` helpers via a local forward decl block at the top of the `.cpp` instead of including the header. Layout.cpp does include the header because it does not pull `imgui_internal.h`.
+- **A1 ended up at 14 per-category files (plan said 13).** `BuiltinCommands_Tickets.cpp` (read commands) and `BuiltinCommands_TicketMutations.cpp` (write commands) split apart because the in-original-file `// === tickets ===` and `// === ticket (mutations) ===` dividers were already separate buckets; merging them would have lost the read/write distinction.
+- **A6 deferred entirely.** `AppController_LuaBindings.cpp` (2648 LOC) untouched in Track A — it is destined to dissolve into `LuaAutomationHost.cpp` during Track B / Phase 1B-1D. Splitting it mechanically now would create files that get re-deleted under B3. Original plan already called this out; recording here for completeness.
+
+## Verification
+
+- **A5** ([#93](https://github.com/alexandrosk0/Smatchet/pull/93)) — Standalone (362/362) ✓ · DX12 (109/109) ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean.
+- **A3** ([#97](https://github.com/alexandrosk0/Smatchet/pull/97)) — Standalone (58/58) ✓ · DX12 (50/50) ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean.
+- **A2** ([#98](https://github.com/alexandrosk0/Smatchet/pull/98)) — Standalone ✓ · DX12 ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean.
+- **A1** ([#100](https://github.com/alexandrosk0/Smatchet/pull/100)) — Standalone ✓ · DX12 ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean. **Bonus**: `commands.list` count 75 pre = 75 post (catalog byte-equivalent before/after).
+- **A4** ([#101](https://github.com/alexandrosk0/Smatchet/pull/101)) — Standalone ✓ · DX12 ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean.
+
+Across all Track A PRs the two `ninja-ui-test-msys2` missing-binary failures in `scripts/dev/test-all.sh` were ignored — they are a pre-existing-state issue unrelated to the splits (the UI-test build preset is not configured locally in this worktree).
+
+## Self-improvement signals captured
+
+Three durable signals surfaced during Track A — worth banking for follow-up review or the Track B fix-up PR:
+
+- **`(std::min) / (std::max)` Windows-macro convention** (tracker-backend agent, A2). The codebase uses the parenthesised form to defeat the `<windows.h>` `min`/`max` macros (no global `NOMINMAX`). Naïve `std::min` triggers the lint hook. Convention is in place at `JiraIssueSearch.cpp:469`. Worth adding to `AGENTS.md` § Quality.
+- **cppcheck `useStlAlgorithm` false-positives on lift-and-shift** (command-system agent, A1). `push_back`-into-`nlohmann::json::array()` patterns trigger the rule even though the source / dest types differ. Cost ~5 round-trips on A1 alone. Two options for fix-up: (a) suppress the rule repo-wide (it's style, not correctness), or (b) document in `agents/command-system.md` that lift-and-shift edits will hit this.
+- **ImGui macro-order trap when introducing a shared header** (orchestrator, A4). Any new internal header that does `#define ImGui SmatchetLocalizedImGui` after `#include "imgui.h"` cannot be included by TUs that also pull `imgui_internal.h` — the macro rewrites function names that the internal header can't resolve. Workaround: include the internal header only in TUs that don't touch `imgui_internal.h`, OR have callers forward-declare the helpers locally. Cost ~3 round-trips on A4.
