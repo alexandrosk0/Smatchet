@@ -16,21 +16,26 @@ add_executable(SmatchetTests
     Source_Core/JsonParseUtil.test.cpp
     Source_Core/TrackerFieldValueParser.test.cpp
     Source_Core/OfflineQueueReplayPolicy.test.cpp
+    Source_Core/SmatchetThemeSyntaxColors.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetTheme.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
 )
 
+# SmatchetTheme links ImGuiLib for ImGui::GetStyle() / CreateContext(). All other Source_Core .cpp
+# in this rig stay pure-logic; only the theme test target pulls the ImGui surface.
 target_link_libraries(SmatchetTests PRIVATE
     doctest::doctest
     nlohmann_json::nlohmann_json
+    ImGuiLib
 )
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
