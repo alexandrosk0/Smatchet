@@ -10,6 +10,10 @@
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 #endif
+// 2b. Lua recorder + replay value types (extracted from this header — see § A5
+//     of docs/design/large-files-and-phase-2.md). Self-guarded by the same
+//     SMATCHET_WITH_LUA_AUTOMATION macro.
+#include "AppController_LuaTypes.h"
 
 // 3. THE REST OF YOUR INCLUDES
 #include <chrono>
@@ -354,9 +358,8 @@ class AppController {
      *
      * @return true if the handler ran and returned a Lua-truthy value (cell fully handled).
      */
-    bool TryRenderCachedLuaField(const std::string& fieldId, const CachedTicket& ticket,
-                                 const std::string& rawValue, float availWidth,
-                                 const TrackerField* fieldMeta, bool allowEdits);
+    bool TryRenderCachedLuaField(const std::string& fieldId, const CachedTicket& ticket, const std::string& rawValue,
+                                 float availWidth, const TrackerField* fieldMeta, bool allowEdits);
 
     /**
      * Bumps `luaWindowDataGen_`. Cached Lua windows whose `cachedDataGen` lags the bump
@@ -383,13 +386,10 @@ class AppController {
     /// then `lua.script_file`s the first hit in the global env so subsequent `_G[name]`
     /// lookup succeeds. Returns false on missing-fn / not-callable / Lua-disabled; populates
     /// `outError`. No-op stub in the no-Lua build.
-    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
-                                           const std::string& luaFnName,
-                                           const std::vector<std::string>& extraScripts,
-                                           std::string& outError);
+    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
+                                           const std::vector<std::string>& extraScripts, std::string& outError);
     /// Convenience overload — equivalent to passing an empty `extraScripts`.
-    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId,
-                                           const std::string& luaFnName,
+    bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
                                            std::string& outError);
     /// Inverse of `ScenarioRegisterLuaCachedProvider`. Restores the user-side provider that
     /// was displaced at register time (if any), or erases the entry if no prior existed. Also
@@ -407,8 +407,7 @@ class AppController {
     /// Drop entries from luaFieldCache_. No-arg = drop all; (ticketId) = drop one ticket's
     /// entries; (ticketId, fieldId) = drop a single cell. Off-UI hops the dispatcher.
     /// Lua-only because the sol::optional<std::string> overload threads through sol2.
-    void LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId,
-                                       sol::optional<std::string> fieldId);
+    void LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId, sol::optional<std::string> fieldId);
 
 #endif
 
@@ -786,60 +785,18 @@ class AppController {
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    // Recorder + replay types live in `public` so the anonymous-namespace `LuaDrawList`
-    // class in AppController_LuaBindings.cpp can construct + mutate them. Members holding
-    // these types stay `private` further down. See docs/design/applied/lua-recorded-cmd-list.md.
+    // Recorder + replay value types live in `AppController_LuaTypes.h` so this header
+    // stays under ~900 LOC. The `using` aliases below preserve the existing
+    // `AppController::ImCmd` / `LuaFieldCacheEntry` / `LuaWindowEntry` / `PendingLuaWindowOp`
+    // qualified names every call site uses (notably the anonymous-namespace `LuaDrawList`
+    // class in AppController_LuaBindings.cpp). Members holding these types stay `private`
+    // further down. See docs/design/large-files-and-phase-2.md § A5 and
+    // docs/design/applied/lua-recorded-cmd-list.md.
   public:
-    struct ImCmd {
-        enum class Op : std::uint8_t {
-            Text, TextUnformatted, Image, ProgressBar,
-            SameLine, Separator, Dummy,
-            PushColor, PopColor, SetTooltip,
-            Button, InputText
-        };
-        Op          op;
-        std::string str;       // text / image path / tooltip / overlay / suffixed label
-        float       f1, f2, f3, f4;
-        int         i1;        // pop count / input max_len
-        sol::protected_function callback;
-        // on_deactivated* attach in-place to the last interactive op at record time — replay
-        // needs IsItemDeactivated* against the same ImGui item, so they can't live as
-        // separate ImCmd entries.
-        sol::protected_function onDeactivated;
-        sol::protected_function onDeactivatedAfterEdit;
-        std::vector<char>       textBuf;
-        ImCmd() : op(Op::Separator), f1(0), f2(0), f3(0), f4(0), i1(0) {}
-    };
-    struct LuaFieldCacheEntry {
-        std::vector<ImCmd> cmds;
-        std::string        rawValue;
-        std::string        fieldName;
-        int                intAvailWidth;
-        bool               isReadOnly;
-        std::uint64_t      providerGen;
-        bool               handled;
-        LuaFieldCacheEntry()
-            : intAvailWidth(0), isReadOnly(false), providerGen(0), handled(false) {}
-    };
-    struct LuaWindowEntry {
-        std::string             name;
-        sol::protected_function drawFn;
-        std::vector<ImCmd>      cmds;
-        std::uint64_t           cachedDataGen;
-        std::uint64_t           cachedProviderGen;
-        bool                    dirty;
-        bool                    hasError;
-        std::string             errorMessage;
-        LuaWindowEntry()
-            : cachedDataGen(0), cachedProviderGen(0), dirty(true), hasError(false) {}
-    };
-    // Mid-iteration safety: ops arriving during DrawLuaWindows are queued and drained after.
-    struct PendingLuaWindowOp {
-        enum class Kind { Register, Unregister, Invalidate };
-        Kind        kind;
-        std::string name;
-        sol::protected_function drawFn;
-    };
+    using ImCmd = smatchet::lua::ImCmd;
+    using LuaFieldCacheEntry = smatchet::lua::LuaFieldCacheEntry;
+    using LuaWindowEntry = smatchet::lua::LuaWindowEntry;
+    using PendingLuaWindowOp = smatchet::lua::PendingLuaWindowOp;
 
     /// UI-thread helper: applies a window register / unregister / invalidate op immediately
     /// when DrawLuaWindows is not iterating, otherwise enqueues onto pendingLuaWindowOps_
@@ -856,14 +813,14 @@ class AppController {
     /** Lowercased Jira field display name (from catalog) -> handler. */
     std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProvidersByName_;
     /// Per-cell cmd-list cache. Key = `ticket.id + '\0' + fieldId`. UI-thread only.
-    std::unordered_map<std::string, LuaFieldCacheEntry>      luaFieldCache_;
+    std::unordered_map<std::string, LuaFieldCacheEntry> luaFieldCache_;
     /// Bumped on provider (un)register. Init to 1 so cached entries with `providerGen=0`
     /// always miss on first compare.
-    std::atomic<std::uint64_t>                                luaProviderGen_{1};
+    std::atomic<std::uint64_t> luaProviderGen_{1};
     /// Bumped by NotifyLuaTicketDataChanged; cells use per-entry comparison instead.
-    std::atomic<std::uint64_t>                                luaWindowDataGen_{1};
-    std::vector<LuaWindowEntry>                               luaWindows_;
-    std::vector<PendingLuaWindowOp>                           pendingLuaWindowOps_;
+    std::atomic<std::uint64_t> luaWindowDataGen_{1};
+    std::vector<LuaWindowEntry> luaWindows_;
+    std::vector<PendingLuaWindowOp> pendingLuaWindowOps_;
     /// Snapshot of user-side providers displaced by a scenario register call. Keyed by
     /// fieldId; the value is the *prior* provider (may be empty if the field had none).
     /// `ScenarioUnregisterLuaCachedProvider` restores from this map so a scenario run never
@@ -871,11 +828,11 @@ class AppController {
     std::unordered_map<std::string, sol::protected_function> scenarioPriorFieldProviders_;
     /// Set membership tracks fields whose prior was *empty* (no provider) — distinguishes
     /// "had nothing, restore to nothing" from "field absent in scenario map → leave alone".
-    std::unordered_set<std::string>                          scenarioPriorEmptyFields_;
+    std::unordered_set<std::string> scenarioPriorEmptyFields_;
     /// True while inside DrawLuaWindows iteration. Callbacks fired during replay route
     /// register/unregister/invalidate ops into pendingLuaWindowOps_ instead of mutating
     /// luaWindows_ directly. Plain bool — UI-thread-only.
-    bool                                                      inDrawLuaWindows_ = false;
+    bool inDrawLuaWindows_ = false;
     std::vector<McpToolDefinition> luaMcpTools_;
     mutable std::mutex luaMcpToolsMutex_;
     std::vector<std::pair<std::string, std::string>> luaTicketActions_;
