@@ -15,6 +15,7 @@
 #include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
@@ -1197,6 +1198,19 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, nullptr,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(), s_ActiveLongTextState.IssueId.c_str());
+        // Required-field marker: render a red asterisk next to the modal title with a tooltip
+        // explaining the field cannot be saved blank. Mirrors the inline-glyph treatment used in
+        // the new-issue draft row so the user sees the same affordance everywhere a required field
+        // is editable.
+        if (s_ActiveLongTextState.Field.IsRequired) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextUnformatted("*");
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("field.required_tooltip", "Required field"));
+            }
+        }
 
         // Format-fidelity banners. RawMode is the strongest signal — fall back to editing
         // the source HTML directly so we don't destroy unrecognized markup. DroppedAdfNodeTypes

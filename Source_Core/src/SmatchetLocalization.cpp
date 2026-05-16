@@ -330,6 +330,8 @@ const TranslationEntry kEntries[] = {
     {"field.parent_only", "<parent only>", u8"<parent uniquement>"},
     {"field.no_labels", "(no labels discovered yet)", u8"(aucune étiquette découverte)"},
     {"field.no_matching_labels", "(no matching labels)", u8"(aucune étiquette correspondante)"},
+    {"field.required_tooltip", "Required field", u8"Champ obligatoire"},
+    {"field.required_inline_hint", "(required)", u8"(obligatoire)"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",
      u8"Temps total passé : %s\nCliquez pour saisir le travail / modifier les estimations."},

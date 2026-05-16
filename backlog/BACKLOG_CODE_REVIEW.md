@@ -42,8 +42,8 @@ Each `Load()` opens + reads + parses ~50-field JSON. Plumb a `const TrackerConfi
 ### A2. `Logger::SetFileSinkPath` never wired from `ConfigManager`
 Old item 6 tail. Header API + worker thread exist (`Source_Core/include/Logger.h:72`, `Source_Core/src/Logger.cpp:197`); `ConfigManager.cpp` never calls it. File sink stays dark unless a test path is set manually. Wire on `ConfigManager::Load()` post-parse with the chosen log path; honour a new `LogFilePath` config key (or default `<userdata>/smatchet_runtime.log`).
 
-### A3. `TrackerField::IsRequired` not consumed by UI
-Old item 10 tail. Schema populated for Plane (`PlaneClient.cpp` `TrackerFieldFromPlaneProperty`); zero UI consumer in `TicketFieldEditor.cpp` / `SmatchetNewIssueDraftUi.cpp`. Required-field state is dead data. Add a `*` glyph + tooltip on required-field labels in the new-issue draft and in-line editor; refuse submit / show validation on blank required.
+### A3. `TrackerField::IsRequired` not consumed by UI — shipped
+Old item 10 tail. Schema populated for Plane (`PlaneClient.cpp` `TrackerFieldFromPlaneProperty`); zero UI consumer in `TicketFieldEditor.cpp` / `SmatchetNewIssueDraftUi.cpp`. Required-field state is dead data. Add a `*` glyph + tooltip on required-field labels in the new-issue draft and in-line editor; refuse submit / show validation on blank required. — shipped on branch `feat/required-field-ui-glyph` (PR pending).
 
 ### A4. `FlushFileSink` not called on shutdown / crash path
 POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` exists; no caller in `AppController::~AppController` or `Target_Standalone/main.cpp` exit path or signal handler. Async file sink can drop the last batch on abrupt exit. Call from `~AppController` and from a `std::set_terminate` / `SIGSEGV` handler in `main.cpp`.

@@ -232,6 +232,28 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
     // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
     const std::unordered_set<std::string> missing(d.newIssueMissingFieldIds.begin(), d.newIssueMissingFieldIds.end());
 
+    // Build the per-render set of required-field ids. Plane carries required-ness on the field
+    // catalog itself (TrackerField::IsRequired); Jira instead surfaces it on the active issue
+    // type's create-meta (RequiredFieldIds). Reading the cached vector is a memory-only lookup
+    // — no disk hit — so it's safe to recompute every frame.
+    std::unordered_set<std::string> requiredIds;
+    for (const auto& meta : app.GetTrackerIssueTypeCreateMeta()) {
+        const bool projectMatch = meta.ProjectKey.empty() || d.newIssueDraft.ProjectKey.empty() ||
+                                  meta.ProjectKey == d.newIssueDraft.ProjectKey;
+        if (!projectMatch) {
+            continue;
+        }
+        const bool idMatch = !d.newIssueDraft.IssueTypeId.empty() && meta.IssueTypeId == d.newIssueDraft.IssueTypeId;
+        const bool nameMatch =
+            !d.newIssueDraft.IssueTypeName.empty() && meta.IssueTypeName == d.newIssueDraft.IssueTypeName;
+        if (idMatch || nameMatch) {
+            for (const auto& id : meta.RequiredFieldIds) {
+                requiredIds.insert(id);
+            }
+            break;
+        }
+    }
+
     for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
         const auto& column = columns[static_cast<size_t>(colIndex)];
         ImGui::TableSetColumnIndex(colIndex);
@@ -380,11 +402,26 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
 
         const bool isMissing = missing.count(fieldId) > 0 || (fieldId == "summary" && missing.count("summary") > 0) ||
                                (fieldId == "parent" && missing.count("__parent__") > 0);
+        // Required-ness fans in from two sources: the field catalog's per-field IsRequired (set
+        // by Plane's `is_required`) and the active issue type's per-project RequiredFieldIds
+        // (Jira's create-meta). Either marks the field with the red-asterisk affordance.
+        const bool isRequired = (field && field->IsRequired) || requiredIds.count(fieldId) > 0;
         if (isMissing) {
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.55f, 0.15f, 0.15f, 0.45f));
         }
 
         ImGui::PushID(fieldId.c_str());
+
+        if (isRequired) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextUnformatted("*");
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("field.required_tooltip", "Required field"));
+            }
+            ImGui::SameLine(0.0f, 4.0f);
+        }
+
         ImGui::SetNextItemWidth(-FLT_MIN);
 
         const std::string& current = d.newIssueDraft.FieldValues[fieldId];
@@ -525,6 +562,16 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                 d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
             }
         }
+
+        // Validation hint: a required field that failed the last Create attempt earns an inline
+        // "(required)" line right under its input. The red FrameBg already flags the cell; this
+        // adds a textual cue so the cause is obvious without having to read the banner.
+        if (isRequired && isMissing) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.55f, 1.0f));
+            ImGui::TextUnformatted(SmatchetLocalization::T("field.required_inline_hint", "(required)"));
+            ImGui::PopStyleColor();
+        }
+
         ImGui::PopID();
 
         if (isMissing) {
