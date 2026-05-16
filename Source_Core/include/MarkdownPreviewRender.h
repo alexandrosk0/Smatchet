@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 /// Shared Markdown preview renderer. Walks a Markdown string with md4c and emits
@@ -18,5 +20,19 @@ struct Options {
 };
 
 void Render(const std::string& md, const Options& opts = Options());
+
+/// Return true when an md4c fenced-code language tag should route to the C++
+/// syntax tokenizer. Case-insensitive; covers common aliases. Inlined so the
+/// pure-logic test rig can link this without pulling md4c / ImGui / fonts.
+inline bool IsCppLikeLangTag(const std::string& lang) {
+    if (lang.empty()) {
+        return false;
+    }
+    std::string lower(lang.size(), '\0');
+    std::transform(lang.begin(), lang.end(), lower.begin(),
+                   [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+    return lower == "cpp" || lower == "c++" || lower == "cxx" || lower == "cc" || lower == "c" || lower == "hpp" ||
+           lower == "h";
+}
 
 } // namespace MarkdownPreviewRender
