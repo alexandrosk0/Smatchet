@@ -236,30 +236,15 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ### test-suite-expansion-completion · wave-A2 · tracker-field-catalog-pure-tu · status: shipped (PR #122 merged at 5ce8def)
 
-### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: claimed
+### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: abandoned
 
-- **Branch**: `feat/offline-queue-deps-interface`
+- **Branch**: `feat/offline-queue-deps-interface` (never pushed)
 - **Owner agent**: `offline-sync`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR D
-- **Claimed write set**:
-  - `Source_Core/include/IOfflineQueueDeps.h` (NEW)
-  - `Source_Core/include/ITicketSyncDeps.h` (NEW)
-  - `Source_Core/include/AppControllerDepsAdapter.h` (NEW)
-  - `Source_Core/src/AppControllerDepsAdapter.cpp` (NEW)
-  - `Source_Core/include/OfflineQueueService.h`
-  - `Source_Core/src/OfflineQueueService.cpp`
-  - `Source_Core/include/TicketSyncService.h`
-  - `Source_Core/src/TicketSyncService.cpp`
-  - `Source_Core/include/AppController.h` (drop `friend` decls, wire adapter)
-  - `Source_Core/src/AppController.cpp` (wire adapter)
-  - `tests/support/FakeOfflineQueueDeps.h` (NEW)
-  - `tests/support/FakeTicketSyncDeps.h` (NEW)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 3 deferral entry)
-  - `docs/design/_plan-locks.md` (self-status flips)
-- **Read-only adjacency**: every `AppController_*.cpp` partial that names the adapter typedef.
+- **Claimed write set**: see same file § PR D for full inventory (still valid for a future resume).
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched to `offline-sync` (worktree isolated). Track B (`large-files-and-phase-2`) on-hold gate releases after this merges.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — user stopped agent mid-run (session boundary, continuing on another machine). No commits pushed. Worktree auto-cleaned. **Available for re-claim** on next session.
+- **Cleared by**: abandoned — no PR.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)

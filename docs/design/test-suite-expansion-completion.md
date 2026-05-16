@@ -212,8 +212,30 @@ This is a planning document — no code shipped here. Verification of the execut
 
 ## Implementation log
 
-(Append per shipped PR — `<sha> · <one-line summary>`.)
+### Session 2026-05-16 (machine A) — 6 PRs shipped
+
+| Slice | PR | Sha | Notes |
+|---|---|---|---|
+| `callstack-adversarial-subcases` | [#112](https://github.com/alexandrosk0/Smatchet/pull/112) | `effda92` | 4 adversarial subcases + substring pin. ReDoS budget retuned to 1 KiB / 100 ms per MinGW UCRT regex backend (orchestrator spec was 64 KiB / 50 ms — not achievable). |
+| `p4blame-parse-tu-split` | [#111](https://github.com/alexandrosk0/Smatchet/pull/111) | `52832d0` | 4 helpers lifted; 12 cases / 75 assertions. |
+| `tracker-labels-pure-tu` | [#114](https://github.com/alexandrosk0/Smatchet/pull/114) | `59282a7` | 4 cases / 33 assertions. Agent errored API-500 mid-run; orchestrator recovered. |
+| `tracker-datetime-pure-tu` | [#119](https://github.com/alexandrosk0/Smatchet/pull/119) | `9fc5f70` | 7 cases / ~140 assertions. API-500 recovery. |
+| `tracker-payload-pure-tu` | [#121](https://github.com/alexandrosk0/Smatchet/pull/121) | `39f91de` | 15 cases / ~233 assertions. API-500 recovery + initial commit missed 3 new files; force-pushed correction. |
+| `tracker-field-catalog-pure-tu` | [#122](https://github.com/alexandrosk0/Smatchet/pull/122) | `5ce8def` | 6 cases / ~217 assertions. API-500 recovery + 2-round rebase against sibling Wave A2 merges. |
+
+Plan-lock entries flipped `claimed` → `shipped` via PR [#124](https://github.com/alexandrosk0/Smatchet/pull/124) at `aeaa521`.
+
+### Session boundary — handoff to machine B
+
+- PR D (`offline-queue-deps-interface`) **dispatched then user-stopped** mid-run before any commits landed. Plan-lock entry flipped `claimed` → `abandoned` in the same commit as this log append. Re-claimable on next session — packet template still valid; spec lives at this plan's § PR D.
+- 3 git stashes remain on `develop` from concurrent-orchestrator work: `concurrent-agent-leak-A3-C7-B4-WIP`, `external-agent design-doc rename WIP (preserve)`, `theme round-trip doctest (regression guard, unmerged)`. Not mine; do not auto-drop. Inspect on next session.
+- Remaining slices (unchanged from plan): PR D + PR E + PR F (offline-queue deps + runtime tests + sync tests), Phase 4 (config), Phase 5 (MCP), Phase 6 (Lua), Phase 7 (screenshot diff), Phase 9 (coverage). Phase 8 still DEFERRED.
 
 ## Deviations from plan
 
-(Append per shipped PR — what changed vs this plan + one-line rationale.)
+### Session 2026-05-16
+
+- **ReDoS budget** (callstack-adversarial): shipped at 1 KiB / 100 ms instead of plan's 64 KiB / 50 ms — MinGW UCRT `std::regex` backend is super-linear past ~2 KiB and stack-overflows past ~32 KiB. Backlog entry routes regex hardening to `p4-blame`.
+- **Auto-merge disabled** on the repo. Orchestrator falls back to direct `gh pr merge --squash --delete-branch` after CI green (or before, when admin-merge allowed). Adds ~14 min wall-clock per PR vs `--auto`.
+- **Worktree-isolated agent recovery**: 4/4 Wave A2 agents errored API-500 mid-run after shipping 100% of file edits. Orchestrator re-verified gates locally and committed/PR'd from the worktree state. Per-PR cost ~5-10 min vs full re-dispatch.
+- **`tests/CMakeLists.txt` rebase cascade**: 4 parallel agents each append to the same lines of the test target source list. Each PR after the first needs a manual rebase resolving the union-merge. Sequential merge order (not parallel) is the right operational stance for this kind of fan-in.
