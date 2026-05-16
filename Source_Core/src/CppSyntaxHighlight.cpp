@@ -1,5 +1,6 @@
-#include "BlameSyntaxHighlight.h"
+#include "CppSyntaxHighlight.h"
 
+#include "SmatchetTheme.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -37,7 +38,7 @@ ImVec4 Rgba(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
 
 } // namespace
 
-void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& theme) {
+void DrawColoredCppLine(const char* utf8Line) {
     if (!utf8Line) {
         return;
     }
@@ -46,6 +47,8 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
         ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeight()));
         return;
     }
+
+    const SmatchetThemeSyntaxColors& colors = SmatchetTheme::GetSyntaxColors();
 
     size_t i = 0;
     bool firstTok = true;
@@ -66,8 +69,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
     while (i < n) {
         const char c = utf8Line[i];
         if (c == '/' && i + 1 < n && utf8Line[i + 1] == '/') {
-            emit(utf8Line + i, n - i, Rgba(theme.SyntaxComment));
-            i = n;
+            emit(utf8Line + i, n - i, Rgba(colors.Comment));
             break;
         }
         if (c == '/' && i + 1 < n && utf8Line[i + 1] == '*') {
@@ -80,7 +82,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
             } else {
                 j = n;
             }
-            emit(utf8Line + i, j - i, Rgba(theme.SyntaxComment));
+            emit(utf8Line + i, j - i, Rgba(colors.Comment));
             i = j;
             continue;
         }
@@ -96,7 +98,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
             if (j < n) {
                 ++j;
             }
-            emit(utf8Line + i, j - i, Rgba(theme.SyntaxString));
+            emit(utf8Line + i, j - i, Rgba(colors.String));
             i = j;
             continue;
         }
@@ -112,7 +114,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
             if (j < n) {
                 ++j;
             }
-            emit(utf8Line + i, j - i, Rgba(theme.SyntaxString));
+            emit(utf8Line + i, j - i, Rgba(colors.String));
             i = j;
             continue;
         }
@@ -121,7 +123,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
             while (j < n && utf8Line[j] != '\0' && utf8Line[j] != '/' && utf8Line[j] != '"') {
                 ++j;
             }
-            emit(utf8Line + i, j - i, Rgba(theme.SyntaxPreprocessor));
+            emit(utf8Line + i, j - i, Rgba(colors.Preprocessor));
             i = j;
             continue;
         }
@@ -134,7 +136,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
                              utf8Line[j] == 'F' || utf8Line[j] == 'u' || utf8Line[j] == 'l' || utf8Line[j] == 'L')) {
                 ++j;
             }
-            emit(utf8Line + i, j - i, Rgba(theme.SyntaxNumber));
+            emit(utf8Line + i, j - i, Rgba(colors.Number));
             i = j;
             continue;
         }
@@ -144,7 +146,7 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
                 ++j;
             }
             const std::string word(utf8Line + i, utf8Line + j);
-            const ImVec4 col = IsKeyword(word) ? Rgba(theme.SyntaxKeyword) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+            const ImVec4 col = IsKeyword(word) ? Rgba(colors.Keyword) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
             emit(utf8Line + i, j - i, col);
             i = j;
             continue;
@@ -155,8 +157,26 @@ void BlameDrawColoredCppLine(const char* utf8Line, const BlameUiThemeColors& the
     ImGui::PopID();
 }
 
-
-
-
-
-
+void DrawColoredCppText(const char* utf8Multiline) {
+    if (!utf8Multiline) {
+        return;
+    }
+    const char* p = utf8Multiline;
+    std::string line;
+    while (true) {
+        const char ch = *p;
+        if (ch == '\0' || ch == '\n') {
+            DrawColoredCppLine(line.c_str());
+            line.clear();
+            if (ch == '\0') {
+                break;
+            }
+            ++p;
+            continue;
+        }
+        if (ch != '\r') {
+            line.push_back(ch);
+        }
+        ++p;
+    }
+}

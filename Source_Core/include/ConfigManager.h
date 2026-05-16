@@ -263,7 +263,8 @@ struct PathRemapRule {
     std::string ToPrefix;
 };
 
-/** RGBA for Blame Analysis UI (ImGui); each array is {r,g,b,a} in 0..1. */
+/** RGBA for Blame Analysis UI status / find / tooltip widgets (ImGui); each array is {r,g,b,a} in 0..1.
+ *  C++ syntax colors live on the active theme — see SmatchetTheme::GetSyntaxColors(). */
 struct BlameUiThemeColors {
     float StatusInfo[4] = {0.55f, 0.92f, 0.75f, 1.0f};
     float StatusError[4] = {1.0f, 0.55f, 0.35f, 1.0f};
@@ -272,11 +273,6 @@ struct BlameUiThemeColors {
     float TextDisabled[4] = {0.55f, 0.55f, 0.58f, 1.0f};
     float ImportExisting[4] = {0.65f, 0.82f, 1.0f, 1.0f};
     float ClTooltipTitle[4] = {0.35f, 1.0f, 0.45f, 1.0f};
-    float SyntaxKeyword[4] = {0.78f, 0.5f, 1.0f, 1.0f};
-    float SyntaxString[4] = {0.95f, 0.65f, 0.45f, 1.0f};
-    float SyntaxComment[4] = {0.45f, 0.75f, 0.45f, 1.0f};
-    float SyntaxNumber[4] = {0.65f, 0.85f, 1.0f, 1.0f};
-    float SyntaxPreprocessor[4] = {0.85f, 0.85f, 0.5f, 1.0f};
 };
 
 /** Settings for the Blame Analysis tool (stored under `blame_analysis` in smatchet_config.json). */

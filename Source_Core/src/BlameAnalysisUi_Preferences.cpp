@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@ namespace {
 void PersistBlameCfg(const char* reason) {
     ConfigManager::SaveBlameAnalysis(State().blameCfg);
     LogBlameP4PathsIfChanged(reason);
+    SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
 }
 
 template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgField, const char* reason) {

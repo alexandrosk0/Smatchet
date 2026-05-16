@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "JiraClient.h"
 #include "Logger.h"
+#include "SmatchetFieldRender.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 
@@ -32,6 +33,7 @@ void HydrateBlameCfgDiskOnce() {
     }
     State().blameCfg = ConfigManager::LoadBlameAnalysis();
     State().blameCfgDiskHydrated = true;
+    SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
 }
 
 void MaybeAutoselectCallstackTrackerField(const AppController& app) {
@@ -47,6 +49,7 @@ void MaybeAutoselectCallstackTrackerField(const AppController& app) {
     if (it != fields.end()) {
         State().blameCfg.CallstackTrackerFieldId = it->Id;
         ConfigManager::SaveBlameAnalysis(State().blameCfg);
+        SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
     }
 }
 

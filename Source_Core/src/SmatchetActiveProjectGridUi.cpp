@@ -914,7 +914,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                                 !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
                                                             column.FieldId.find("Description") != std::string::npos);
                             RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
-                                                   true, saveTip, isDescriptionField);
+                                                   true, saveTip, isDescriptionField, &column.FieldId);
                             ImGui::PopClipRect();
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();

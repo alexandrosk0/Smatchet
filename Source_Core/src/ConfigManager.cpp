@@ -984,7 +984,6 @@ void ConfigManager::Save(const TrackerConfig& config) {
             densityStr = "Comfortable";
             break;
         default:
-            densityStr = "Normal";
             break;
         }
         j["ui_density"] = densityStr;
@@ -1121,11 +1120,6 @@ BlameAnalysisConfig ConfigManager::LoadBlameAnalysis() {
         loadRgba("text_disabled", b.UiColors.TextDisabled);
         loadRgba("import_existing", b.UiColors.ImportExisting);
         loadRgba("cl_tooltip_title", b.UiColors.ClTooltipTitle);
-        loadRgba("syntax_keyword", b.UiColors.SyntaxKeyword);
-        loadRgba("syntax_string", b.UiColors.SyntaxString);
-        loadRgba("syntax_comment", b.UiColors.SyntaxComment);
-        loadRgba("syntax_number", b.UiColors.SyntaxNumber);
-        loadRgba("syntax_preprocessor", b.UiColors.SyntaxPreprocessor);
     }
     return b;
 }
@@ -1162,11 +1156,6 @@ void ConfigManager::SaveBlameAnalysis(const BlameAnalysisConfig& b) {
     putRgba("text_disabled", b.UiColors.TextDisabled);
     putRgba("import_existing", b.UiColors.ImportExisting);
     putRgba("cl_tooltip_title", b.UiColors.ClTooltipTitle);
-    putRgba("syntax_keyword", b.UiColors.SyntaxKeyword);
-    putRgba("syntax_string", b.UiColors.SyntaxString);
-    putRgba("syntax_comment", b.UiColors.SyntaxComment);
-    putRgba("syntax_number", b.UiColors.SyntaxNumber);
-    putRgba("syntax_preprocessor", b.UiColors.SyntaxPreprocessor);
     ba["ui_colors"] = std::move(uc);
     j["blame_analysis"] = std::move(ba);
     WriteConfigJson(j);

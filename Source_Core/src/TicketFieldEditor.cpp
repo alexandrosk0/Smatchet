@@ -868,7 +868,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         const bool isDescriptionField =
             !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
                                         column.FieldId.find("Description") != std::string::npos);
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, isDescriptionField);
+        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, isDescriptionField,
+                               &column.FieldId);
     };
 
     switch (column.Plan) {

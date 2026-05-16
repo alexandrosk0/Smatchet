@@ -1,7 +1,7 @@
 #include "BlameAnalysisUi_Internal.h"
 
 #include "AppController.h"
-#include "BlameSyntaxHighlight.h"
+#include "CppSyntaxHighlight.h"
 #include "CompactDateFormat.h"
 #include "ConfigManager.h"
 #include "Logger.h"
@@ -295,10 +295,9 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 PopBlameLinkButtonColors();
             }
 
-            float rawFieldW = -1.f;
-            float rawMaxLineW = 0.f;
             if (!streamlinedHide) {
                 if (State().showRaw) {
+                    float rawMaxLineW = 0.f;
                     for (const char* p = State().callstackBuf; *p != '\0';) {
                         const char* nl = std::strchr(p, '\n');
                         const char* end = nl ? nl : p + std::strlen(p);
@@ -310,16 +309,12 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         p = nl + 1;
                     }
                     const float cap = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x * 2.f;
-                    rawFieldW = std::min(std::max(rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f, 120.f), cap);
-                }
+                    const float rawFieldW =
+                        std::min(std::max(rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f, 120.f), cap);
 
-                if (State().showRaw) {
                     ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
                                       ImGuiWindowFlags_HorizontalScrollbar);
-                    const ImVec2 inner = ImGui::GetContentRegionAvail();
-                    const float inputW = std::max(inner.x, rawMaxLineW + ImGui::GetStyle().FramePadding.x * 2.f + 8.f);
-                    ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
-                                              ImVec2(inputW, inner.y), ImGuiInputTextFlags_ReadOnly);
+                    DrawColoredCppText(State().callstackBuf);
                     ImGui::EndChild();
                 } else {
                     ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
@@ -691,7 +686,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         {
                             const float codeColW = ImGui::GetContentRegionAvail().x;
                             const ImVec2 codeCell0 = ImGui::GetCursorScreenPos();
-                            BlameDrawColoredCppLine(ln.Code.c_str(), theme);
+                            DrawColoredCppLine(ln.Code.c_str());
                             ImGui::SetCursorScreenPos(codeCell0);
                             ImGui::SelectableRaw("##ann_code_rmb", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2((std::max)(codeColW, 1.f), annRowHitH));
