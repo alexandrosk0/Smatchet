@@ -61,11 +61,10 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip)
 - **Read-only adjacency**: `Source_Core/include/BackendAuditTrail.h`, `Source_Core/include/ConfigManager.h`
 - **Started**: 2026-05-16
-<<<<<<< HEAD
 - **Last update**: 2026-05-16 — merged via PR #108 at sha 98ed9ea.
 - **Cleared by**: PR `#108` merged at `98ed9ea`.
 
-### cached-ticket-types-header-split · status: in-flight
+### cached-ticket-types-header-split · status: shipped
 
 - **Branch**: `feat/cached-ticket-types-header-split`
 - **Owner agent**: orchestrator
@@ -76,9 +75,49 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
 - **Read-only adjacency**: 20 callers of `LocalCacheManager.h` (no code edit — re-include keeps API)
 - **Started**: 2026-05-16
-<<<<<<< HEAD
-- **Last update**: 2026-05-16 — PR #109 opened, awaiting merge.
-- **Cleared by**: pending merge of [#109](https://github.com/alexandrosk0/Smatchet/pull/109).
+- **Last update**: 2026-05-16 — shipped on develop at sha 8724b8b (branch deleted).
+- **Cleared by**: merged to develop at `8724b8b`.
+
+### code-review-backlog · A3 · required-field-glyph · status: claimed
+
+- **Branch**: `feat/required-field-ui-glyph`
+- **Owner agent**: `tracker-backend`
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § A3
+- **Claimed write set**:
+  - `Source_Core/src/TicketFieldEditor.cpp`
+  - `Source_Core/src/SmatchetNewIssueDraftUi.cpp`
+  - `Locales/*.json` (tooltip string)
+  - `backlog/BACKLOG_CODE_REVIEW.md` (status flip A3)
+- **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/TicketFieldEditor.h`, `Source_Core/include/SmatchetNewIssueDraftUi.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### code-review-backlog · C7 · grid-pushcliprect-audit · status: claimed
+
+- **Branch**: `feat/grid-pushcliprect-audit`
+- **Owner agent**: `grid-engine`
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C7
+- **Claimed write set**:
+  - `Source_Core/src/SmatchetActiveProjectGridUi.cpp` (lines 843, 905, 930 — remove `PushClipRect`/`PopClipRect` pairs if redundant)
+  - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C7)
+- **Read-only adjacency**: `Source_Core/include/SmatchetActiveProjectGridUi.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: claimed
+
+- **Branch**: `feat/plane-fetchissuesforkeys-filter`
+- **Owner agent**: `tracker-backend`
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § B4
+- **Claimed write set**:
+  - `Source_Core/src/PlaneClient.cpp` (FetchIssuesForKeys around lines 1504-1525 only)
+  - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4)
+- **Read-only adjacency**: `Source_Core/include/PlaneClient.h`, `Source_Core/include/ITrackerClient.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: claimed
 
