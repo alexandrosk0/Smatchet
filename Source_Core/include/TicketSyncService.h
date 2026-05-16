@@ -6,7 +6,9 @@
 //
 // As of Phase 1C all runtime methods + state live here. AppController's public surface keeps
 // the same shape but its bodies are thin delegators (or de-inlined accessors that call into
-// this service). Phase 2 will replace `friend class TicketSyncService;` with interface bundles.
+// this service). Phase 2 (this PR) replaces `friend class TicketSyncService;` with the
+// `ITicketSyncDeps` interface bundle (see ITicketSyncDeps.h); the service no longer touches
+// AppController internals directly.
 
 #include <atomic>
 #include <cstdint>
@@ -19,13 +21,17 @@
 #include "AppController.h" // Needed for TrackerIssueFetchPack + ViewsStore + TrackerConfig.
 #include "LocalCacheManager.h" // For CachedTicket inside StreamingSyncState.
 
+class ITicketSyncDeps;
+
 /// Lifetime contract mirrors `OfflineQueueService`: AppController owns the service via
-/// `std::unique_ptr` and outlives it. The constructor stores an `AppController&` back-reference
-/// so methods can reach AppController-side state (`Cache`, `Backend`, `ActiveTickets`, edit-meta
-/// caches, the connectivity-probe state, etc.) during the transition.
+/// `std::unique_ptr` and outlives it. The constructor stores an `ITicketSyncDeps&` reference
+/// (typically backed by `AppControllerDepsAdapter`); methods reach AppController-side state
+/// (`Cache`, `Backend`, `ActiveTickets`, edit-meta caches, connectivity-probe state) through
+/// that interface. Tests pass a `FakeTicketSyncDeps` so the service is exercisable in
+/// pure-logic doctest builds.
 class TicketSyncService {
   public:
-    explicit TicketSyncService(AppController& app);
+    explicit TicketSyncService(ITicketSyncDeps& deps);
 
     /// Cancel any in-flight streaming sync, join the worker thread, clear the pending-batches
     /// queue. Idempotent. Called from `~AppController`, `RecreateLocalCacheDatabase`, and the
@@ -79,7 +85,7 @@ class TicketSyncService {
 
     void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
 
-    AppController& app_;
+    ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
     StreamingSyncState activeStreamingSync_;
 

@@ -13,8 +13,10 @@
 //   1C — `Tick*` replay loops + their internal helpers.
 //   1D — field-edit equivalents (`ResolveFieldEditConflict`, `Tick…FieldEdits`).
 //
-// Phase 2 introduces small interface bundles so this service no longer needs `friend` access
-// to AppController's private state.
+// Phase 2 (this PR) replaces the `friend class OfflineQueueService;` access with a small
+// `IOfflineQueueDeps` interface bundle (see IOfflineQueueDeps.h). AppController hands a
+// concrete `AppControllerDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
+// so they can exercise the service without constructing an AppController.
 
 #include <chrono>
 #include <cstddef>
@@ -29,19 +31,20 @@
 // since this service header is only consumed by AppController-side TUs.
 #include "AppController.h"
 
+class IOfflineQueueDeps;
 struct PendingCreate;
 struct DeadPendingCreate;
 struct PendingFieldEditRecord;
 struct DeadPendingFieldEdit;
 
 /// Lifetime contract: AppController owns the service via `std::unique_ptr` and outlives it.
-/// The constructor stores an `AppController&` back-reference so methods can reach the
-/// still-shared state (`Cache`, `Backend`, audit trail, mutexes). The `friend class
-/// OfflineQueueService;` declaration in `AppController.h` is the explicit access seam —
-/// no public AppController members were promoted to fit this extraction.
+/// The constructor stores an `IOfflineQueueDeps&` reference (typically backed by
+/// `AppControllerDepsAdapter`); methods reach AppController-side state (`Cache`, `Backend`,
+/// audit trail, mutexes) through that interface. Tests pass a `FakeOfflineQueueDeps` so the
+/// service is exercisable in pure-logic doctest builds.
 class OfflineQueueService {
   public:
-    explicit OfflineQueueService(AppController& app);
+    explicit OfflineQueueService(IOfflineQueueDeps& deps);
 
     // --- Phase 1A: trivial read-only accessors -------------------------------------------
     std::size_t GetPendingCreateCount() const;
@@ -127,7 +130,7 @@ class OfflineQueueService {
                                const std::string& trackerType);
 
   private:
-    AppController& app_;
+    IOfflineQueueDeps& deps_;
 
     // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
     // All accesses go through `offlineReplayScheduleMutex_`. UI thread sets the schedule

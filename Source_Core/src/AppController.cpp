@@ -16,6 +16,7 @@
 #endif
 
 #include "AppController.h"
+#include "AppControllerDepsAdapter.h"
 
 #include <algorithm>
 #include <array>
@@ -1036,16 +1037,24 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     Cache = std::make_unique<LocalCacheManager>(dbPath);
 
+    // Construct the deps adapter eagerly so OfflineQueueService + TicketSyncService can capture
+    // an interface reference at construction time. The adapter is owned by this AppController
+    // and outlives both services (per the destructor ordering: ~AppController joins the
+    // streaming-sync worker via `CancelAndJoinActiveStreamingSync` before any member is
+    // destroyed, so the adapter is live for every `deps_.X` call).
+    if (!depsAdapter_) {
+        depsAdapter_ = std::make_unique<AppControllerDepsAdapter>(*this);
+    }
     // Construct OfflineQueueService eagerly so the legacy-pending startup migration below
     // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
     if (!offlineQueue_) {
-        offlineQueue_ = std::make_unique<OfflineQueueService>(*this);
+        offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
     }
     // Construct TicketSyncService alongside — its `CancelAndJoinActiveStreamingSync` is called
     // by `RecreateLocalCacheDatabase` (which the legacy-pending cleanup below may trigger),
     // so the service must exist before that path runs (item 11 extraction).
     if (!ticketSync_) {
-        ticketSync_ = std::make_unique<TicketSyncService>(*this);
+        ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
     }
     // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
     // OnEarlyInit have a target (item 14 extraction, Phase 1A).

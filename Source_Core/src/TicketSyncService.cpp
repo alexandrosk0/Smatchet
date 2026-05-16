@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerClient.h"
 #include "LocalCacheManager.h"
@@ -21,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-TicketSyncService::TicketSyncService(AppController& app) : app_(app) {}
+TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
 void TicketSyncService::CancelAndJoinActiveStreamingSync() {
     activeStreamingSync_.Cancelled = true;
@@ -42,13 +43,13 @@ void TicketSyncService::CancelAndJoinActiveStreamingSync() {
 }
 
 void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
-    if (!app_.Backend || !app_.Cache) {
-        LOG_WARN("TicketSyncService::ApplyIssueFetchPack skipped: backend=%d cache=%d", app_.Backend ? 1 : 0,
-                 app_.Cache ? 1 : 0);
+    if (!deps_.Backend() || !deps_.Cache()) {
+        LOG_WARN("TicketSyncService::ApplyIssueFetchPack skipped: backend=%d cache=%d", deps_.Backend() ? 1 : 0,
+                 deps_.Cache() ? 1 : 0);
         return;
     }
 
-    app_.LastTrackerTicketSyncWarning.clear();
+    deps_.SetLastTrackerTicketSyncWarning(std::string());
 
     const std::vector<CachedTicket>& freshTickets = pack.Tickets;
     const std::string& fetchError = pack.FetchError;
@@ -56,24 +57,24 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     const bool fullSyncCompleted = pack.FullSyncCompleted;
 
     if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-        app_.LastTrackerTicketSyncWarning = "Showing cached issues — live refresh did not complete: " + fetchError;
+        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError);
         LOG_WARN("TicketSyncService::ApplyIssueFetchPack transport-style fetch issue: %s", fetchError.c_str());
-        app_.lastTrackerConnectivityState_ = AppController::TrackerConnectivityState::TransportDown;
+        deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
         const auto nowProbe = std::chrono::steady_clock::now();
-        app_.nextTrackerConnectivityProbeAt_ = nowProbe;
-        app_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
+        deps_.SetNextTrackerConnectivityProbeAt(nowProbe);
+        deps_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
     } else if (fetchError.empty()) {
         // Soft warnings still count as success — the fetched data is valid, just partial.
         if (!fetchWarning.empty()) {
-            app_.LastTrackerTicketSyncWarning = "Sync completed with a caveat: " + fetchWarning;
+            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
             LOG_WARN("TicketSyncService::ApplyIssueFetchPack soft warning: %s", fetchWarning.c_str());
         }
-        app_.requestDeferredLiveTrackerBackendSuccessNotify_();
+        deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     }
 
     size_t saved = 0;
     for (const auto& t : freshTickets) {
-        app_.Cache->SaveTicket(t);
+        deps_.Cache()->SaveTicket(t);
         ++saved;
     }
 
@@ -86,10 +87,10 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
                 keepIds.insert(t.id);
             }
         }
-        std::vector<CachedTicket> existing = app_.Cache->GetAllTickets();
+        std::vector<CachedTicket> existing = deps_.Cache()->GetAllTickets();
         for (const auto& row : existing) {
             if (keepIds.find(row.id) == keepIds.end()) {
-                app_.Cache->DeleteTicket(row.id);
+                deps_.Cache()->DeleteTicket(row.id);
                 ++deleted;
             }
         }
@@ -102,7 +103,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // can run during a single streaming fetch. NotifyLuaTicketDataChanged fires once at
     // session end (TickStreamingApply finalisation). Invariant: every ActiveTickets-
     // mutating path flips this flag in the same scope.
-    app_.pendingLuaWindowBump_ = true;
+    deps_.SetPendingLuaWindowBump(true);
 }
 
 void TicketSyncService::TickStreamingApply() {
@@ -173,15 +174,15 @@ void TicketSyncService::TickStreamingApply() {
             std::string id = std::move(staleIdsToDelete_.back());
             staleIdsToDelete_.pop_back();
 
-            if (app_.Cache) {
-                app_.Cache->DeleteTicket(id);
+            if (deps_.Cache()) {
+                deps_.Cache()->DeleteTicket(id);
             }
             {
-                std::lock_guard<std::mutex> lock(app_.activeTicketsMutex_);
-                app_.ActiveTickets.erase(std::remove_if(app_.ActiveTickets.begin(),
-                                                        app_.ActiveTickets.end(),
+                std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+                deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(),
+                                                        deps_.ActiveTickets().end(),
                                                         [&](const CachedTicket& t) { return t.id == id; }),
-                                          app_.ActiveTickets.end());
+                                          deps_.ActiveTickets().end());
             }
             inMemoryChanged = true;
             deletedThisFrame++;
@@ -196,13 +197,13 @@ void TicketSyncService::TickStreamingApply() {
         }
 
         if (inMemoryChanged) {
-            std::lock_guard<std::mutex> lock(app_.activeTicketsMutex_);
-            app_.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(app_.ActiveTickets);
-            app_.ActiveTicketsRevision.fetch_add(1);
+            std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
+            deps_.BumpActiveTicketsRevision();
             // Stale-deletion shrinks visible state — windows that show ticket lists / counts
             // must re-record. Coalesced via pendingLuaWindowBump_ so a 200-id prune fires one
             // bump, not 200.
-            app_.pendingLuaWindowBump_ = true;
+            deps_.SetPendingLuaWindowBump(true);
         }
 
         if (staleIdsToDelete_.empty()) {
@@ -210,13 +211,13 @@ void TicketSyncService::TickStreamingApply() {
             LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu",
                      totalStaleToDelete_);
             // Trigger editmeta warmup after cleanup completes
-            app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+            deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
             // Flush coalesced Lua window bump now that stale deletion finished. The session-
             // end flush above can't see this because stale-deletion runs across many frames
             // after the session-end block has already fired.
-            if (app_.pendingLuaWindowBump_) {
-                app_.NotifyLuaTicketDataChanged();
-                app_.pendingLuaWindowBump_ = false;
+            if (deps_.GetPendingLuaWindowBump()) {
+                deps_.NotifyLuaTicketDataChanged();
+                deps_.SetPendingLuaWindowBump(false);
             }
         }
         return;
@@ -261,8 +262,8 @@ void TicketSyncService::TickStreamingApply() {
         }
 
         for (const auto& t : batchToProcess) {
-            if (app_.Cache) {
-                app_.Cache->SaveTicket(t);
+            if (deps_.Cache()) {
+                deps_.Cache()->SaveTicket(t);
             }
             if (!t.id.empty()) {
                 activeStreamingSync_.KeepIds.insert(t.id);
@@ -283,22 +284,22 @@ void TicketSyncService::TickStreamingApply() {
 
     if (stateChanged) {
         {
-            std::lock_guard<std::mutex> lock(app_.activeTicketsMutex_);
+            std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
             for (const auto& t : processedThisFrame) {
-                auto it = std::find_if(app_.ActiveTickets.begin(), app_.ActiveTickets.end(),
+                auto it = std::find_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
                                        [&](const CachedTicket& existing) { return existing.id == t.id; });
-                if (it != app_.ActiveTickets.end()) {
+                if (it != deps_.ActiveTickets().end()) {
                     *it = t;
                 } else {
-                    app_.ActiveTickets.push_back(t);
+                    deps_.ActiveTickets().push_back(t);
                 }
             }
-            app_.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(app_.ActiveTickets);
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
         }
-        app_.PruneEditMetaCacheToActiveTickets();
-        app_.ActiveTicketsRevision.fetch_add(1);
+        deps_.PruneEditMetaCacheToActiveTickets();
+        deps_.BumpActiveTicketsRevision();
         // Streaming-batch end-of-batch — flip the coalesced bump; session-end emits once.
-        app_.pendingLuaWindowBump_ = true;
+        deps_.SetPendingLuaWindowBump(true);
     }
 
     bool isWorkerFinished = !activeStreamingSync_.Active.load();
@@ -324,13 +325,13 @@ void TicketSyncService::TickStreamingApply() {
         bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
 
         if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-            app_.LastTrackerTicketSyncWarning =
-                "Showing cached issues — live refresh did not complete: " + fetchError;
+            deps_.SetLastTrackerTicketSyncWarning(
+                "Showing cached issues — live refresh did not complete: " + fetchError);
             LOG_WARN("TicketSyncService::TickStreamingApply transport-style fetch issue: %s", fetchError.c_str());
-            app_.lastTrackerConnectivityState_ = AppController::TrackerConnectivityState::TransportDown;
+            deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
             const auto nowProbe = std::chrono::steady_clock::now();
-            app_.nextTrackerConnectivityProbeAt_ = nowProbe;
-            app_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
+            deps_.SetNextTrackerConnectivityProbeAt(nowProbe);
+            deps_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
             SmatchetToastManager::Instance().Push("Sync Failed", fetchError, ToastType::Error, 5000);
         } else if (!fetchError.empty()) {
             SmatchetToastManager::Instance().Push("Sync Warning", fetchError, ToastType::Warning, 5000);
@@ -338,11 +339,11 @@ void TicketSyncService::TickStreamingApply() {
             // Soft warnings: data is good, just partial — still notify success but surface
             // the caveat as a warning banner + toast.
             if (!fetchWarning.empty()) {
-                app_.LastTrackerTicketSyncWarning = "Sync completed with a caveat: " + fetchWarning;
+                deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
                 LOG_WARN("TicketSyncService::TickStreamingApply soft warning: %s", fetchWarning.c_str());
                 SmatchetToastManager::Instance().Push("Sync Warning", fetchWarning, ToastType::Warning, 5000);
             }
-            app_.requestDeferredLiveTrackerBackendSuccessNotify_();
+            deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
 
             std::string msg =
                 "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
@@ -370,15 +371,15 @@ void TicketSyncService::TickStreamingApply() {
                  fetchError.c_str());
 
         if (!isDeletingStale_.load()) {
-            app_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+            deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
         }
 
         // Session-end Lua window bump: emit exactly once if any apply-pack, stale-deletion,
         // or streaming-batch scope set the flag during this session. Skipping when no flag
         // was set avoids needless re-records when nothing actually changed.
-        if (app_.pendingLuaWindowBump_) {
-            app_.NotifyLuaTicketDataChanged();
-            app_.pendingLuaWindowBump_ = false;
+        if (deps_.GetPendingLuaWindowBump()) {
+            deps_.NotifyLuaTicketDataChanged();
+            deps_.SetPendingLuaWindowBump(false);
         }
     }
 }
@@ -442,15 +443,15 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     std::string newTracker = cfgCopy.TrackerType;
     if (newTracker.empty()) newTracker = "Jira";
     const std::string trackerLower = ToLowerAsciiCopy(newTracker);
-    const std::string currentType = app_.Backend ? app_.Backend->GetTrackerType() : "";
+    const std::string currentType = deps_.Backend() ? deps_.Backend()->GetTrackerType() : "";
     const bool isCurrentlyJira = (currentType == "Jira");
     const bool isCurrentlyPlane = (currentType == "Plane");
 
     if (trackerLower == "plane" && !isCurrentlyPlane) {
-        app_.Backend = app_.backendFactory_->Create("Plane");
+        deps_.SetBackend(deps_.BackendFactory()->Create("Plane"));
         LOG_INFO("TicketSyncService: Switched backend to Plane.");
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
-        app_.Backend = app_.backendFactory_->Create("Jira");
+        deps_.SetBackend(deps_.BackendFactory()->Create("Jira"));
         LOG_INFO("TicketSyncService: Switched backend to Jira.");
     }
 
@@ -495,12 +496,12 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
             };
 
             TrackerIssueFetchSummary summary =
-                app_.Backend->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
+                deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
 
             if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
                 std::vector<std::string> localStaleIds;
-                if (summary.FullSyncCompleted && app_.Cache) {
-                    std::vector<std::string> existingIds = app_.Cache->GetAllTicketIds();
+                if (summary.FullSyncCompleted && deps_.Cache()) {
+                    std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds();
                     std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
                                  [&workerKeepIds](const std::string& id) {
                                      return workerKeepIds.find(id) == workerKeepIds.end();
@@ -512,7 +513,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
                 activeStreamingSync_.FetchError = summary.FetchError;
                 activeStreamingSync_.Warning = summary.Warning;
                 activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
-                if (summary.FullSyncCompleted && app_.Cache) {
+                if (summary.FullSyncCompleted && deps_.Cache()) {
                     activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
                 }
             }

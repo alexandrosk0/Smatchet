@@ -71,6 +71,7 @@ struct AppUpdateInfo {
 };
 
 class ITrackerBackendFactory;
+class AppControllerDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
 class LuaAutomationHost;
@@ -87,16 +88,15 @@ class ScenarioRunner;
 } // namespace smatchet
 
 class AppController {
-    /// `OfflineQueueService` needs access to AppController-private state (`Cache`, `Backend`,
-    /// `AvailableFields`, the offline-replay mutex, etc.) during the extraction transition.
-    /// See BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12 — Phase 2 will replace this with a small set of
-    /// interface bundles so the access is no longer trusted-friendship-based.
-    friend class OfflineQueueService;
-    /// `TicketSyncService` needs access to `activeStreamingSync_`, `Cache`, `Backend`, the
-    /// connectivity-probe state, and various private methods (`requestDeferredLive…`,
-    /// `PushOfflineReplayTimersDuringTransportOutage`) during the extraction transition.
-    /// See BACKLOG_CODE_REVIEW.md §1.7 / §7 item 11 — Phase 2 will replace this with interface bundles.
-    friend class TicketSyncService;
+    /// `AppControllerDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
+    /// this AppController and forwards every method to AppController-private state (`Cache`,
+    /// `Backend`, `AvailableFields`, the connectivity probe state, etc.). The previous
+    /// `friend class OfflineQueueService;` + `friend class TicketSyncService;` declarations
+    /// were replaced by this single friend during the item 11 / 12 Phase 2 extraction —
+    /// the services now hold an `IOfflineQueueDeps& / ITicketSyncDeps&` reference and never
+    /// touch AppController internals directly. Tests substitute `FakeOfflineQueueDeps` /
+    /// `FakeTicketSyncDeps` so they can exercise the services without an AppController.
+    friend class AppControllerDepsAdapter;
     /// `LuaAutomationHost` is being extracted to own the sol2 state, all Lua bindings, the
     /// automation worker thread, and the per-host log sinks. See BACKLOG_CODE_REVIEW.md §1.7 / §7
     /// item 14 — Phase 2 will replace this with a `TrackerActions` interface so the host
@@ -720,6 +720,11 @@ class AppController {
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     std::unique_ptr<ITrackerClient> Backend;
+    /// Implements `IOfflineQueueDeps` + `ITicketSyncDeps`. Constructed eagerly in `Initialize`
+    /// before `offlineQueue_` / `ticketSync_` so they can capture an interface reference at
+    /// construction time. The adapter never outlives this AppController (owned by it), so the
+    /// `AppController&` member it stores is trivially valid for the adapter's full lifetime.
+    std::unique_ptr<AppControllerDepsAdapter> depsAdapter_;
     /// Owns the offline-create / offline-field-edit replay queues and their dead-letter management.
     /// Constructed lazily in `Initialize`. Public AppController methods (`QueueCreateOffline`,
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
