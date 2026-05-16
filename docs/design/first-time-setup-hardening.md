@@ -193,3 +193,20 @@ All automation goes through `scripts/dev/test-all.sh` per [AGENTS.md § Verifica
 - **CI matrix scope (Slice 5)**: full configure+build+ctest, or smoke-only (configure+ctest)? Default to full; downgrade only if minutes burn.
 - **Doctor script — bash port (Slice 2)**: ship in same PR as PowerShell, or defer? Default to same PR — single source of truth for the check list.
 - **Warning cleanup (Slice 4)**: any chance the file-static helpers are dead-on-`SMATCHET_EMBEDDED_IN_UNREAL` but live on standalone? Verify both targets before deletion.
+
+---
+
+## Implementation log
+
+- Slice 1 (`fix/cppcheck-path-detection`, PR #TBD): replaced the literal-`Smatchet` regex in `scripts/dev/run_cppcheck.py` with a `relative_to(root)` + `TOP_LEVEL_DIRS` predicate; dropped the `import re`. Added `scripts/dev/test-cppcheck-path-detection.sh` (bucket-A) — synthesises a compile DB under a non-`Smatchet` temp path, runs the patched filter, asserts 3 first-party entries kept and 0 `_deps` / system headers leak through.
+
+## Deviations from plan
+
+- None for Slice 1.
+
+## Verification
+
+- Slice 1:
+  - `python scripts/dev/run_cppcheck.py --no-run` from the canonical `C:\Dev\Smatchet` checkout still writes 205 entries (matches pre-fix baseline) — passed.
+  - `bash scripts/dev/test-cppcheck-path-detection.sh` — `Passed: 2  Failed: 0`, exit 0 — passed.
+  - `bash scripts/dev/test-all.sh --filter cppcheck-path` confirmed the new script is auto-enrolled — passed.
