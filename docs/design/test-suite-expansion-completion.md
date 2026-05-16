@@ -247,11 +247,18 @@ Plan-lock chore PRs: [#126](https://github.com/alexandrosk0/Smatchet/pull/126) r
 ### Session boundary — handoff to machine B (second attempt, 2026-05-16 evening)
 
 - **Phase 4 (`config-schema-migration`)** PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) **OPEN, CI in_progress** at session end. Agent shipped clean: shared `tests/support/TestEnvGuard.h` + `ConfigManager.test.cpp` (11/42) + `ConfigMigration.test.cpp` (10/57 with 5 [high-risk]) + 4 fixtures + `scripts/dev/test-config-migration.sh`. SmatchetTests aggregate: 284 cases / 1429 assertions. Plan-lock entry stays `in-flight` — machine B merges after CI greens.
-- Remaining slices: Phase 4 merge (CI completion only) · Phase 5 (MCP JSON-RPC harness) · Phase 6 (Lua bindings rig) · Phase 7 (screenshot diff) · Phase 9 (coverage gates). Phase 8 still DEFERRED.
-- Backlog entries totalling 13 (8 from machine-A first half, 5 from D+E+F second half) — see `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
-- 3 stashes still on develop from earlier concurrent-orchestrator work. Inspect before drop.
-- 1 active worktree besides main: `jolly-cerf-97840e` (concurrent `claude/coordination-plan-locks`) — leave alone.
-- 1 worktree from Phase 4 agent: `agent-adcc685747edc0a8d` — auto-cleans on machine B fresh clone. Branch `feat/test-phase-4-config-migration` is pushed.
+
+### Session boundary — final wrap on machine A (2026-05-16 evening, continuation)
+
+Machine-B remained unavailable; machine A continued briefly:
+
+- **Phase 4 (#134)** **MERGED** at sha `3e19f93`. Plan-lock flipped `in-flight` → `shipped`.
+- **Phase 5 (`mcp-json-rpc-harness`)** **DISPATCHED then user-stopped at session end (wrap-up)**. Agent's discovery phase completed before stop and confirmed Phase 5 is **blocked by a production-side prerequisite**: every pure helper in `Plugins/Mcp/` (`BuildRunLuaToolEntry`, `BuildRunLuaSummary`, `BuildToolCallSummary`, `ExtractJsonRpcErrorMessage`, `Base64Encode`, `NormalizeDomain`, `IsLoopbackAddress`, `ConstantTimeStringEquals`, `IsAllowedAttachmentHost`) lives in an anonymous namespace inside a `.cpp` whose top of file pulls `winsock2`, `httplib`, and `cpr`. Tests cannot link the unit without dragging banned deps. Identical pattern to the `P4BlameParse` Phase-2 deferral. Plan-lock entry flipped `claimed` → `abandoned (blocked on production TU split)`. Backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol pure logic entombed` filed with full proposal (lift to `Plugins/Mcp/McpJsonRpcPure.{h,cpp}`, ~1-2 h refactor).
+- Remaining slices: **Phase 5 pre-flight TU split** (1-2 h `mcp-toolsmith` work, must precede re-dispatch) → Phase 5 (MCP JSON-RPC harness re-dispatch) · Phase 6 (Lua bindings rig) · Phase 7 (screenshot diff) · Phase 9 (coverage gates). Phase 8 still DEFERRED.
+- Backlog entries on develop: 14 total (8 from machine-A first half, 5 from D+E+F, 1 new from Phase 5 discovery).
+- Active worktrees: only `jolly-cerf-97840e` (concurrent `claude/coordination-plan-locks`) — leave alone.
+
+Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 
 ## Deviations from plan
 

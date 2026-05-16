@@ -58,27 +58,14 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #134 at sha 3e19f93. 21 cases / 99 assertions on Config surface. Shared `tests/support/TestEnvGuard.h` shipped — Phase 5+ can consume.
 - **Cleared by**: PR `#134` merged at `3e19f93`.
 
-### test-suite-expansion-completion · Phase-5 · mcp-json-rpc-harness · status: claimed
+### test-suite-expansion-completion · Phase-5 · mcp-json-rpc-harness · status: abandoned (blocked on production TU split)
 
-- **Branch**: `feat/test-phase-5-mcp-json-rpc`
-- **Owner agent**: `test-rig` (test author) + `mcp-toolsmith` (schema sanity, parallel read-only)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5 — MCP JSON-RPC pure-logic harness.
-- **Claimed write set**:
-  - `tests/support/McpJsonRpcFixture.h` (NEW)
-  - `tests/Plugins/Mcp/McpRequestParser.test.cpp` (NEW)
-  - `tests/Plugins/Mcp/McpEnvelope.test.cpp` (NEW)
-  - `tests/Plugins/Mcp/McpToolSchemas.test.cpp` (NEW)
-  - `tests/Plugins/Mcp/McpDispatch.test.cpp` (NEW)
-  - `tests/CMakeLists.txt` (append-only — new `tests/Plugins/Mcp/*.test.cpp` registered + relevant `Plugins/Mcp/*.cpp` linked)
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
-  - `docs/design/_plan-locks.md` (self-status flips)
-- **Read-only adjacency**: `Plugins/Mcp/**.{h,cpp}`, `Source_Core/include/Commands/**.h`.
+- **Branch**: `feat/test-phase-5-mcp-json-rpc` (never pushed — agent stopped before commits)
+- **Owner agent**: `test-rig` (test-only scope per Phase 5 plan)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packets dispatched to `test-rig` + `mcp-toolsmith` (worktree isolated).
-- **Cleared by**: TBD PR against `develop`.
-- **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) opened against `develop`.
-- **Cleared by**: pending merge of [#134](https://github.com/alexandrosk0/Smatchet/pull/134).
+- **Last update**: 2026-05-16 — user stopped agent at session end (wrap-up). Agent's discovery phase confirmed Phase 5 is **blocked** by the same pattern as the P4Blame deferral: every pure helper (`BuildRunLuaToolEntry`, `BuildRunLuaSummary`, `BuildToolCallSummary`, `ExtractJsonRpcErrorMessage`, `Base64Encode`, `NormalizeDomain`, `IsLoopbackAddress`, `ConstantTimeStringEquals`, `IsAllowedAttachmentHost`) lives in an anonymous namespace inside a `Plugins/Mcp/*.cpp` whose top of file pulls `winsock2` + `httplib` + `cpr`. Tests cannot link the unit without dragging banned deps. Production-side TU split needed first (same recipe as `P4BlameParse`, `TrackerLabelsPure`, etc).
+- **Cleared by**: blocked — see backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol logic entombed in cpr/httplib-tainted lambda`.
 
 ### backend-audit-trail-per-event-path · status: shipped
 
