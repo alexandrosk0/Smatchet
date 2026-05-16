@@ -556,20 +556,41 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
 bool PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                      std::string& outError) {
-    // Basic implementation: fetch all issues and filter.
-    // Ideally we'd use a Plane filter, but for now let's just use the main FetchIssues and filter in memory.
-    std::string fetchErr;
-    auto all = FetchIssues(nullptr, &cfg, nullptr, &fetchErr);
-    if (!fetchErr.empty()) {
-        outError = fetchErr;
-        return false;
+    if (issueKeys.empty()) {
+        return true;
     }
 
-    std::unordered_set<std::string> keys(issueKeys.begin(), issueKeys.end());
-    for (auto& t : all) {
-        if (keys.count(t.id) || keys.count(t.GetFieldValue("key"))) {
+    // Stream pages and early-exit once every requested key has been found. Cuts wall-time and
+    // HTTP cost on hot prefetch-open-links paths where the targeted keys typically live on the
+    // first one or two pages. Falls back to a full sweep only when keys are missing or spread
+    // across the page cap. Server-side `sequence_id__in` filtering would be the next win — out
+    // of scope here because it requires touching FetchIssuesStreamed's URL builder.
+    std::unordered_set<std::string> wanted(issueKeys.begin(), issueKeys.end());
+    std::unordered_set<std::string> found;
+    found.reserve(wanted.size());
+
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        for (auto& t : batch) {
+            const std::string keyField = t.GetFieldValue("key");
+            const bool match = wanted.count(t.id) > 0 || (!keyField.empty() && wanted.count(keyField) > 0);
+            if (!match) {
+                continue;
+            }
+            if (!t.id.empty()) {
+                found.insert(t.id);
+            }
+            if (!keyField.empty()) {
+                found.insert(keyField);
+            }
             outTickets.push_back(std::move(t));
         }
+    };
+    auto shouldCancel = [&]() { return found.size() >= wanted.size(); };
+
+    TrackerIssueFetchSummary summary = FetchIssuesStreamed(onBatch, shouldCancel, &cfg, nullptr);
+    if (!summary.FetchError.empty()) {
+        outError = summary.FetchError;
+        return false;
     }
     return true;
 }

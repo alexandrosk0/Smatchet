@@ -71,8 +71,8 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 ### B3. Split `ITrackerClient` into role interfaces (item 16)
 `ITrackerSearch` / `ITrackerMutation` / `ITrackerSchema` / `ITrackerUserDirectory` / `ITrackerWorkflow` (Jira-only). Removes the "unsupported default-impl" pattern (~7 virtuals). Stage with `dynamic_cast` at call sites. Mechanical PR.
 
-### B4. `PlaneClient::FetchIssuesForKeys` O(N×total) (item 23)
-`PlaneClient.cpp:1504-1525` still `FetchIssues(all) + filter in memory`. Add Plane filter API call (`/api/v1/workspaces/<slug>/projects/<id>/issues?id=<csv>` or sequence-id batch). Hot path when prefetching open links.
+### B4. `PlaneClient::FetchIssuesForKeys` O(N×total) (item 23) — 🟡 partial (branch `feat/plane-fetchissuesforkeys-filter`)
+`PlaneIssueSearch.cpp:556` (file split from `PlaneClient.cpp`) still pulled every page then filtered in memory. Early-exit pagination now stops fetching once every requested key has been matched — cuts the hot prefetch-open-links path from `O(total)` to `O(pages_until_keys_found)`. Server-side `sequence_id__in` filter would be the next win (requires `FetchIssuesStreamed` URL-builder rework); leave as B4-v2 follow-up.
 
 ### B5. Markdown table-cell rich content lost on ADF→Markdown (item 28)
 `MarkdownConvert.cpp` `MarkdownCellPlainInner` flattens. Tracked partly in `RICH_TEXT_EDITING_V2_REMAINING.md`; promote to its own ticket once round-trip golden tests land.
