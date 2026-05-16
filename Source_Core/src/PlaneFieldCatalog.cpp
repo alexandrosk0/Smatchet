@@ -493,7 +493,14 @@ bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::st
                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     outError.clear();
     outFieldIdCanEdit.clear();
-    for (const char* fieldId : {"summary", "description", "priority", "status", "assignee", "labels", "sprint"}) {
+    // Plane v1 has no per-issue capability endpoint; report every built-in field the mutation
+    // paths (`BuildCreatePayload`, `BuildUpdatePayload`, `AddIssueToSprint`) can serialize as
+    // editable. Server still gets the final say — a rejected update surfaces through the same
+    // error path as any other mutation failure. Custom-property (UUID) editability is deferred
+    // until C4 lands `properties.<uuid>` serialization; reporting it editable here would only
+    // surface a UI affordance that the payload builder silently drops.
+    for (const char* fieldId :
+         {"summary", "description", "priority", "status", "assignee", "labels", "sprint", "type", "parent"}) {
         outFieldIdCanEdit[fieldId] = true;
     }
     return true;
