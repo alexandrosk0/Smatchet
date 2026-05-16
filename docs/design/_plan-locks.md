@@ -245,35 +245,23 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #127 at sha b5fc194. Track B (`large-files-and-phase-2`) on-hold gate now releases.
 - **Cleared by**: PR `#127` merged at `b5fc194`.
 
-### test-suite-expansion-completion · PR-E · offline-queue-runtime-tests · status: in-flight
+### test-suite-expansion-completion · PR-E · offline-queue-runtime-tests · status: shipped (PR #131 merged at e35794d)
 
-- **Branch**: `feat/offline-queue-runtime-tests`
+- **Branch**: `feat/offline-queue-runtime-tests` (deleted)
 - **Owner agent**: `test-rig`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR E
-- **Claimed write set**:
-  - `tests/Source_Core/OfflineQueueServiceRuntime.test.cpp` (NEW)
-  - `tests/CMakeLists.txt` (append-only)
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
-  - `docs/design/_plan-locks.md` (self-status flips)
-- **Read-only adjacency**: `Source_Core/include/IOfflineQueueDeps.h`, `Source_Core/src/OfflineQueueService.cpp`, `tests/support/FakeOfflineQueueDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#131](https://github.com/alexandrosk0/Smatchet/pull/131) opened against `develop`.
-- **Cleared by**: pending merge of [#131](https://github.com/alexandrosk0/Smatchet/pull/131).
+- **Last update**: 2026-05-16 — merged via PR #131 at sha e35794d. Required orchestrator-side dedup after rebase: test-side `IsTrackerTransportErrorText` mirror collided with production once PR F's `TrackerHttpUtils.cpp` joined the test target source list.
+- **Cleared by**: PR `#131` merged at `e35794d`.
 
-### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: in-flight
+### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: shipped (PR #130 merged at a618a2f)
 
-- **Branch**: `feat/ticket-sync-service-tests`
+- **Branch**: `feat/ticket-sync-service-tests` (deleted)
 - **Owner agent**: `test-rig`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR F
-- **Claimed write set**:
-  - `tests/Source_Core/TicketSyncService.test.cpp` (NEW)
-  - `tests/CMakeLists.txt` (append-only)
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
-  - `docs/design/_plan-locks.md` (self-status flips)
-- **Read-only adjacency**: `Source_Core/include/ITicketSyncDeps.h`, `Source_Core/src/TicketSyncService.cpp`, `tests/support/FakeTicketSyncDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — first commit in worktree; status flipped `claimed` → `in-flight`. Parallel sibling: PR E.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — merged via PR #130 at sha a618a2f. 12 cases / 83 assertions. Case 3 documents a current production bug (empty fetch in full-sync deletes all rows) — separate fix-PR pending under `offline-sync` follow-up (backlog entry filed).
+- **Cleared by**: PR `#130` merged at `a618a2f`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
