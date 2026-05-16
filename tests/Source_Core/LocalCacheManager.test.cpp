@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <string>
 
 using smatchet_tests::SqliteMemFixture;
@@ -128,9 +129,12 @@ TEST_CASE("LocalCacheManager: GetAllTickets returns all rows joined with their f
     fix.Ref().SaveTicket(MakeTicket("ABC-2"));
 
     auto all = fix.Ref().GetAllTickets();
-    CHECK(all.size() == 2);
+    REQUIRE(all.size() == 2);
+    std::vector<std::string> ids{all[0].id, all[1].id};
+    std::sort(ids.begin(), ids.end());
+    CHECK(ids[0] == "ABC-1");
+    CHECK(ids[1] == "ABC-2");
     for (const auto& t : all) {
-        CHECK_FALSE(t.id.empty());
         CHECK(t.fieldValues.count("summary") == 1);
     }
 }

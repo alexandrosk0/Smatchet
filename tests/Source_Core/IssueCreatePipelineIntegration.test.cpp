@@ -113,8 +113,12 @@ TEST_CASE("IssueCreatePipeline: Run reports missing required field ids and does 
 
     auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, required, BasicCatalog());
     CHECK_FALSE(result.Ok);
-    CHECK_FALSE(result.Error.empty());
-    CHECK_FALSE(result.MissingFieldIds.empty());
+    CHECK(result.Error.find("Missing required") != std::string::npos);
+    REQUIRE(result.MissingFieldIds.size() == 3);
+    // MissingRequiredFields sorts its output; pin the exact triple.
+    CHECK(result.MissingFieldIds[0] == "__issuetype__");
+    CHECK(result.MissingFieldIds[1] == "__project__");
+    CHECK(result.MissingFieldIds[2] == "summary");
     CHECK(client.CreateIssueCallCount() == 0);
     CHECK(client.BuildCreatePayloadCallCount() == 0);
 }
@@ -251,7 +255,7 @@ TEST_CASE("IssueCreatePipeline: Create path with attachment failures returns Ok 
 }
 
 TEST_CASE("IssueCreatePipeline: Run dispatches to update via legacy FieldValues[\"key\"] fallback") {
-    // Pre-PR-7 callers passed the existing-issue key via `FieldValues["key"]`. Production code
+    // Legacy callers passed the existing-issue key via `FieldValues["key"]`; production code
     // still honors it as a fallback — guard against regression.
     FakeTrackerClient client;
     client.SetBuildUpdatePayloadResult(true, nlohmann::json{{"summary", "X"}});
