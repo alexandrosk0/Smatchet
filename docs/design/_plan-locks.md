@@ -257,8 +257,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/IOfflineQueueDeps.h`, `Source_Core/src/OfflineQueueService.cpp`, `tests/support/FakeOfflineQueueDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — first commit landed on branch; PR open pending.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#131](https://github.com/alexandrosk0/Smatchet/pull/131) opened against `develop`.
+- **Cleared by**: pending merge of [#131](https://github.com/alexandrosk0/Smatchet/pull/131).
 
 ### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: in-flight
 
