@@ -78,6 +78,37 @@ Wrapper shortcuts are still available:
 .\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
+## First-time verification
+
+Run on a fresh clone to confirm the toolchain is wired correctly. Expect
+**~5 minutes** the very first time (FetchContent downloads + builds
+nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ImGui, GLFW, Lua, sol2, and
+ghc::filesystem into `build/<preset>/_deps/`); subsequent configures complete
+in seconds.
+
+```powershell
+# 1. Toolchain pre-flight (instant). Prints [PASS] / [FAIL] / [WARN] per check.
+.\scripts\dev\doctor.ps1
+
+# 2. Configure + build the test rig.
+cmake --preset ninja-test-msys2
+cmake --build --preset ninja-test-msys2 --target SmatchetTests
+
+# 3. Run the test rig.
+ctest --test-dir build/ninja-test-msys2 --output-on-failure
+
+# 4. Build the standalone exe.
+cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+# 5. Optional: static-analysis pass.
+python .\scripts\dev\run_cppcheck.py
+```
+
+If step 1 prints `Doctor: RED`, fix the listed prerequisites before
+continuing -- CMake errors on a missing MSYS2 / lld / Python install are
+much harder to debug than the doctor's install hints. On MSYS2 / Linux,
+`bash scripts/dev/doctor.sh` is the equivalent.
+
 ## Local Overrides
 
 If you need local-only presets, create `CMakeUserPresets.json` in your checkout.
