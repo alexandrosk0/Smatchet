@@ -40,6 +40,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-lld
             mingw-w64-ucrt-x86_64-python
+            git
 
       - name: Cache FetchContent _deps
         uses: actions/cache@v4
