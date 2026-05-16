@@ -557,6 +557,16 @@ Resume next session: `git checkout develop && git pull && git checkout -b feat/t
 
 (Append per shipped PR — `<sha> · <one-line summary>`.)
 
+- Carry-over B (Phase 2 P4BlameParse) — 2026-05-16 · `feat/p4blame-parse-tu-split`
+  - `Source_Core/include/P4BlameParse.h` + `Source_Core/src/P4BlameParse.cpp` — new pure-helper TU lifting `ParseAnnotateTextLine`, `ParseLatestChangeFromChangesOutput`, `SplitLines`, `StripP4UserDomain` from `P4Blame.cpp`'s anonymous namespace. Byte-identical implementations; new TU pulls only `StringUtil.h` + `<regex>` + stdlib.
+  - `Source_Core/src/P4Blame.cpp` — added `#include "P4BlameParse.h"` and `using P4BlameParse::*` declarations after the anonymous namespace closes; the four helper definitions removed. Existing call sites (`P4BlameLine`, `P4AnnotateFile`, `P4FirstSubmittedChangelistOnCalendarDay`, `P4ChangelistDescribeCache::GetOrFetch`) unchanged.
+  - `tests/Source_Core/P4BlameParse.test.cpp` — 12 cases / 75 assertions covering the 4 annotate-line shapes, `@domain` strip in both shapes, malformed + empty input contract, `ParseLatestChangeFromChangesOutput` happy path / multi-line / malformed-stderr fallback / canned-error fallback / empty input, `SplitLines` LF / CRLF / empty / trailing-newline-absent / double-newline preserved-empty / surrounding whitespace, `StripP4UserDomain` bare / single-`@` / multi-dot / empty / leading-`@`.
+  - `tests/CMakeLists.txt` — registered `P4BlameParse.test.cpp` + added `Source_Core/src/P4BlameParse.cpp` to per-target source list. No new link libs.
+  - Mutation sanity (production-side, on `Source_Core/src/P4BlameParse.cpp::ParseAnnotateTextLine`):
+    - Swapped `outCl = m[1]` / `outUser = m[2]` in the `reUserColonCode` branch (column-shift mutation called out in the backlog entry). All four `ParseAnnotateTextLine: 4 annotate-line shapes` SUBCASEs assert `cl == "<digits>"` and `user == "<name>"` — the swap makes `cl` hold the user token and `user` hold the digits, tripping multiple `CHECK`s. Reverted to green before commit.
+  - Dual-target verify: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` clean.
+  - Test totals after Carry-over B: +12 cases / +75 assertions on top of Phase 3 baseline.
+
 - Phase 3 — 2026-05-16 · `feat/test-phase-3-http-sqlite-fixtures`
   - `tests/support/FakeTrackerClient.h` — scripted in-memory `ITrackerClient` implementation. Records `CreateIssue`, `UpdateIssueFields`, `UpdateField`, `AddIssueToSprint`, `AttachFilesToIssue` call sequences. Per-method scripted-reply queues (`EnqueueCreateIssueSuccess(key)` / `EnqueueCreateIssueFailure(err)`) with sticky-default fallback. Header-only.
   - `tests/support/SqliteMemFixture.h` — RAII `:memory:` `LocalCacheManager`. Reopen helper for idempotent-init regression. Header-only.
@@ -601,6 +611,15 @@ Resume next session: `git checkout develop && git pull && git checkout -b feat/t
 ## Verification
 
 (Append per shipped PR — what ran + result.)
+
+- Carry-over B (Phase 2 P4BlameParse) — 2026-05-16
+  - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean (full incremental rebuild).
+  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — clean (dual-target invariant respected — both `Standalone` and `Core_DX12` link the new `P4BlameParse.cpp` via `Source_Core/src/*.cpp` glob).
+  - `ctest --output-on-failure` from `build/ninja-test-msys2`: `1/1 smatchet_tests Passed (0.60 sec)`.
+  - `bash scripts/dev/test-all.sh`: 7 unit-test scripts pass / 98 assertions / 0 failed; bucket-E UI runner reports missing `build/ninja-ui-test-msys2/Smatchet.exe` (deferred infra, not in this PR's scope).
+  - `SmatchetTests.exe --test-case="ParseAnnotateTextLine*,ParseLatestChangeFromChangesOutput*,SplitLines*,StripP4UserDomain*"`: 12 cases / 75 assertions / 0 failed.
+  - Mutation sanity (production-side, on `Source_Core/src/P4BlameParse.cpp::ParseAnnotateTextLine`):
+    - Inverted the `m[1]` ↔ `m[2]` capture in the `reUserColonCode` branch (column-shift mutation). `ParseAnnotateTextLine: 4 annotate-line shapes` SUBCASEs `rev user: code (no date)` + `rev: user YYYY/MM/DD code` (plus the `@domain` SUBCASEs) all fail their `cl ==` / `user ==` checks under the mutation. Reverted to green before commit.
 
 - Phase 3 — 2026-05-16
   - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.

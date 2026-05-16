@@ -133,7 +133,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
 - **Cleared by**: TBD PR against `develop`.
 
-### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: claimed
+### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: in-flight
 
 - **Branch**: `feat/p4blame-parse-tu-split`
 - **Owner agent**: `test-rig` (TU-split pre-authorised per AGENTS.md applied rule)
@@ -148,7 +148,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
 - **Read-only adjacency**: `Source_Core/include/P4Blame.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Last update**: 2026-05-16 — first commit pushed; PR pending against `develop`.
 - **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion · phase 1 · status: in-flight

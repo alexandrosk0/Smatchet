@@ -26,7 +26,9 @@ add_executable(SmatchetTests
     Source_Core/LocalCacheManager.test.cpp
     Source_Core/BackendAuditTrail.test.cpp
     Source_Core/IssueCreatePipelineIntegration.test.cpp
+    Source_Core/P4BlameParse.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"

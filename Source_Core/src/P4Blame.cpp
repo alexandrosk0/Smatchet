@@ -1,5 +1,6 @@
 #include "P4Blame.h"
 #include "Logger.h"
+#include "P4BlameParse.h"
 #include "P4ErrorUtil.h"
 #include "StringUtil.h"
 
@@ -330,102 +331,12 @@ bool RunProcessCapturePosix(const std::string& exe, const std::vector<std::strin
 }
 #endif
 
-std::vector<std::string> SplitLines(const std::string& s) {
-    std::vector<std::string> lines;
-    size_t i = 0;
-    while (i < s.size()) {
-        size_t j = s.find('\n', i);
-        if (j == std::string::npos) {
-            lines.push_back(TrimCopy(s.substr(i)));
-            break;
-        }
-        lines.push_back(TrimCopy(s.substr(i, j - i)));
-        i = j + 1;
-    }
-    return lines;
-}
-
-void StripP4UserDomain(std::string& user) {
-    const size_t at = user.find('@');
-    if (at != std::string::npos) {
-        user.resize(at);
-    }
-}
-
-/**
- * Parse `p4 annotate` text lines. Observed formats:
- * - rev user: code
- * - rev: user YYYY/MM/DD code   (common with -c -u on some servers)
- * - rev user YYYY/MM/DD code
- * - rev: code
- */
-bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::string& outUser, std::string& outAnnotDate,
-                           std::string& outCode) {
-    outCl.clear();
-    outUser.clear();
-    outAnnotDate.clear();
-    outCode = line;
-    static const std::regex reUserColonCode(R"(^\s*(\d+)\s+(\S+)\s*:\s*(.*)$)");
-    // Code may be empty (blank source line): "rev: user YYYY/MM/DD" with nothing after the date.
-    static const std::regex reRevUserDateCode(R"(^\s*(\d+)\s*:\s*(\S+)\s+(\S+)(?:\s+(.*))?$)");
-    static const std::regex reRevUserDateCodeNoColon(R"(^\s*(\d+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$)");
-    static const std::regex revOnlyColonCode(R"(^\s*(\d+)\s*:\s*(.*)$)");
-    std::smatch m;
-    if (std::regex_match(line, m, reUserColonCode)) {
-        outCl = m[1].str();
-        outUser = m[2].str();
-        outCode = m[3].str();
-        StripP4UserDomain(outUser);
-        return true;
-    }
-    if (std::regex_match(line, m, reRevUserDateCode)) {
-        outCl = m[1].str();
-        outUser = m[2].str();
-        outAnnotDate = m[3].str();
-        outCode = m[4].str();
-        StripP4UserDomain(outUser);
-        return true;
-    }
-    if (std::regex_match(line, m, reRevUserDateCodeNoColon)) {
-        outCl = m[1].str();
-        outUser = m[2].str();
-        outAnnotDate = m[3].str();
-        outCode = m[4].str();
-        StripP4UserDomain(outUser);
-        return true;
-    }
-    if (std::regex_match(line, m, revOnlyColonCode)) {
-        outCl = m[1].str();
-        outCode = m[2].str();
-        return true;
-    }
-    return false;
-}
-
-P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText) {
-    P4LineBlame b;
-    b.Approximate = true;
-    static const std::regex re(R"(Change\s+(\d+)\s+on\s+[^\s]+\s+by\s+(\S+))");
-    std::smatch m;
-    if (std::regex_search(stdoutText, m, re)) {
-        b.Changelist = m[1].str();
-        std::string who = m[2].str();
-        const size_t at = who.find('@');
-        if (at != std::string::npos) {
-            who.resize(at);
-        }
-        b.User = who;
-        return b;
-    }
-    if (!stderrText.empty()) {
-        b.Error = stderrText;
-    } else {
-        b.Error = "p4 changes produced no match";
-    }
-    return b;
-}
-
 } // namespace
+
+using P4BlameParse::ParseAnnotateTextLine;
+using P4BlameParse::ParseLatestChangeFromChangesOutput;
+using P4BlameParse::SplitLines;
+using P4BlameParse::StripP4UserDomain;
 
 bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
                   std::string& outStdout, std::string& outStderr) {
