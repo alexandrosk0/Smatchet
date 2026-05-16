@@ -21,6 +21,40 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# PS 7+ honors this to prevent native stderr from terminating under Stop. Harmless
+# on PS 5.1, which gets the same outcome via Invoke-NativeCommand below.
+$PSNativeCommandUseErrorActionPreference = $false
+
+function Invoke-NativeCommand {
+    <#
+      Run a native command (cmake, ninja, ...) without letting its stderr trip
+      $ErrorActionPreference = "Stop". On Windows PowerShell 5.1, every stderr
+      line from a native exe is wrapped as a NativeCommandError record, which
+      Stop treats as terminating -- so cmake warnings kill the script during
+      configure unless we drop to Continue around the invocation. Exit code is
+      validated explicitly via $LASTEXITCODE.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage,
+        [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Arguments[0] @($Arguments | Select-Object -Skip 1)
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (exit code $LASTEXITCODE)"
+    }
+}
+
 function Assert-Command {
     param(
         [Parameter(Mandatory = $true)]
@@ -156,20 +190,14 @@ try {
     $skipCMakePreset = $cmakeCacheOnDisk -and (-not $ForceConfigure)
 
     if (-not $skipCMakePreset) {
-        & cmake --preset $Preset
-        if ($LASTEXITCODE -ne 0) {
-            throw "cmake --preset $Preset failed with exit code $LASTEXITCODE"
-        }
+        Invoke-NativeCommand -FailureMessage "cmake --preset $Preset failed" -Arguments "cmake","--preset",$Preset
     }
 
-    $buildArgs = @("--build", "--preset", $Preset, "--target", $Target)
+    $buildArgs = @("cmake","--build","--preset",$Preset,"--target",$Target)
     if ($CleanFirst) {
         $buildArgs += "--clean-first"
     }
-    & cmake @buildArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "cmake --build failed with exit code $LASTEXITCODE"
-    }
+    Invoke-NativeCommand -FailureMessage "cmake --build failed" -Arguments $buildArgs
 }
 finally {
     Pop-Location
