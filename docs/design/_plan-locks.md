@@ -236,15 +236,15 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ### test-suite-expansion-completion · wave-A2 · tracker-field-catalog-pure-tu · status: shipped (PR #122 merged at 5ce8def)
 
-### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: abandoned
+### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: claimed (re-dispatch)
 
-- **Branch**: `feat/offline-queue-deps-interface` (never pushed)
+- **Branch**: `feat/offline-queue-deps-interface`
 - **Owner agent**: `offline-sync`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR D
-- **Claimed write set**: see same file § PR D for full inventory (still valid for a future resume).
+- **Claimed write set**: see same file § PR D for full inventory.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — user stopped agent mid-run (session boundary, continuing on another machine). No commits pushed. Worktree auto-cleaned. **Available for re-claim** on next session.
-- **Cleared by**: abandoned — no PR.
+- **Last update**: 2026-05-16 — re-dispatched after prior session abandon (machine-B not ready, continuing on machine A). Track B (`large-files-and-phase-2`) on-hold gate releases after this merges.
+- **Cleared by**: TBD PR against `develop`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
