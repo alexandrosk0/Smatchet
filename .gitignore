@@ -56,21 +56,17 @@ smatchet_backend_audit.jsonl
 smatchet_field_catalog_cache.json
 
 .vexp/
-.cursor/
-.claude/*.local.json
-.claude/worktrees/
 .worktrees/
+
+# Harness adapters — local-only, regenerate via `bash scripts/setup-harness.sh <name>`.
+# See docs/harness/SETUP.md for per-harness instructions.
+.claude/
+.codex/
+.cursor/
 
 # caveman (https://github.com/JuliusBrussee/caveman) — user-installed; see AGENTS.md
 .agents/
-.claude/skills/*
-!.claude/skills/agent-tokens/
-!.claude/skills/grill-with-docs/
-!.claude/skills/scratchpad-recall/
 skills-lock.json
-
-# Per-machine agent token usage log (see docs/AGENT_TOKEN_TRACKING.md)
-.claude/.agent-tokens.jsonl
 
 # Per-session orchestrator scratchpad (see AGENTS.md § Session scratchpad protocol)
 .session-context.md

@@ -91,7 +91,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 **Quality**: RAII (no raw `new`/`delete` — use `std::unique_ptr` + `make_unique`); `const&` for non-trivial params; `std::move` on last use; small focused functions; `LOG_TRACE`/`LOG_DEBUG` in non-trivial branches.
 
-**Lint**: your harness may run an automatic lint pass after C++ edits. Claude Code does so via the `PostToolUse` hook in `.claude/settings.json` calling `.claude/hooks/lint-cpp.sh` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source_Core` / `Plugins` / `Target_Standalone` and fix all reported issues before responding.
+**Lint**: your harness may run an automatic lint pass after C++ edits. Claude Code does so via a `PostToolUse` hook wired by `bash scripts/setup-harness.sh claude-code` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source_Core` / `Plugins` / `Target_Standalone` and fix all reported issues before responding.
 
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
@@ -131,24 +131,11 @@ Under Claude Code this maps to `mcp__vexp__run_pipeline` (semantic search) and `
 
 ## Agent file locations
 
-Agent definitions and shared agent tooling are **dual-located**:
+Canonical, single source of truth: `agents/<name>.md` at the repo root (per the [agents.md spec](https://agents.md/)). Shared scripts + skills live at `agents/_shared/`.
 
-- **Canonical (harness-agnostic)**:
-  - `agents/<name>.md` — one file per delegated agent. Where humans edit and where the agnostic [agents.md spec](https://agents.md/) places them.
-  - `agents/_shared/token-tracking/` — shared scripts that any agent harness can wire up: SubagentStop-style hook + statusline renderer + slash-skill definition. See [`agents/_shared/token-tracking/README.md`](agents/_shared/token-tracking/README.md).
-- **Mirror (Claude Code-specific)**:
-  - `.claude/agents/<name>.md` — auto-generated copy for Claude Code's hardcoded agent-discovery path.
-  - `.claude/hooks/agent-token-log.py` — auto-generated copy wired as a `SubagentStop` hook in `.claude/settings.json`.
-  - `.claude/hooks/agents-statusline.py` — auto-generated copy invoked from the user's `~/.claude/settings.json` `statusLine.command`.
-  - `.claude/skills/agent-tokens/SKILL.md` — auto-generated copy for Claude Code's slash-skill path.
+Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored** — they're regenerated locally from the canonical tree by `bash scripts/setup-harness.sh <name>`. Adapters use directory junctions / symlinks where possible so edits to `agents/*.md` are picked up by the harness immediately, no sync step.
 
-**Do not edit the mirror directly.** Each mirror file carries an `AUTO-GENERATED MIRROR ... DO NOT EDIT` banner at the top; edits get overwritten on the next sync.
-
-After editing any canonical file under `agents/`, run `bash scripts/sync-agents.sh` (or `scripts/sync-agents.ps1` on PowerShell-only Windows boxes) to refresh the mirror. The drift check `scripts/check-agents-mirror.sh` verifies all mirrored paths (`.claude/agents/`, `.claude/hooks/agent-token-log.py`, `.claude/hooks/agents-statusline.py`, `.claude/skills/agent-tokens/SKILL.md`) match canonical; CI-friendly.
-
-`scripts/agent-tokens-report.py` is **already harness-agnostic** (pure CLI reading the JSONL) and stays at `scripts/` with no mirror — every harness invokes it the same way.
-
-Harnesses other than Claude Code should read from `agents/` and ignore the `.claude/` mirror. The contract for the token-tracking hook is documented in `agents/_shared/token-tracking/README.md` § Wiring for other harnesses.
+First-time setup or fresh clone? See [`docs/harness/SETUP.md`](docs/harness/SETUP.md).
 
 ## Delegation
 
@@ -191,7 +178,7 @@ Rules:
 - **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the vexp `run_pipeline`-first rule.
 - **Subagents emit `## Session context append`** in their report when there are session-durable facts worth surfacing — repro state, file:line evidence, decisions locked, open questions. Hook captures + appends; agent never writes the file.
 - **Append-only.** Hook never edits prior entries.
-- **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see `agents/_shared/skills/scratchpad-recall/SKILL.md` (mirror: `.claude/skills/scratchpad-recall/SKILL.md`). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
+- **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see [`agents/_shared/skills/scratchpad-recall/SKILL.md`](agents/_shared/skills/scratchpad-recall/SKILL.md). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
 
 Section shape:
 
@@ -345,7 +332,7 @@ Each agent declares a closed set of **capability tags**. The orchestrator (and t
 
 **Harness notes:**
 
-- **Claude Code** reads `.claude/agents/` automatically (use the mirror — run `scripts/sync-agents.sh` after editing canonical files). Also reads `@`-included files in `CLAUDE.md`.
+- **Claude Code** discovers agents at `.claude/agents/` — a junction into the canonical `agents/` tree created by `bash scripts/setup-harness.sh claude-code`. Edits to `agents/*.md` are visible immediately; no sync step.
 - **Codex / OpenAI Agents** reads `AGENTS.md` per the [agents.md spec](https://agents.md/). Discover individual agents at `agents/*.md`.
 - **Cursor / Aider / generic** — human-driven. Agent files at `agents/` are reference docs the user pastes or invokes manually.
 - Harnesses without `semantic-code-search` should fall back to text-search with the symbol set named in each agent's prose. Output is degraded but workable — expect more round-trips and larger context per query.
