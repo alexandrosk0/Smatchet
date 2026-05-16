@@ -225,11 +225,33 @@ This is a planning document — no code shipped here. Verification of the execut
 
 Plan-lock entries flipped `claimed` → `shipped` via PR [#124](https://github.com/alexandrosk0/Smatchet/pull/124) at `aeaa521`.
 
-### Session boundary — handoff to machine B
+### Session boundary — handoff to machine B (first attempt)
 
 - PR D (`offline-queue-deps-interface`) **dispatched then user-stopped** mid-run before any commits landed. Plan-lock entry flipped `claimed` → `abandoned` in the same commit as this log append. Re-claimable on next session — packet template still valid; spec lives at this plan's § PR D.
 - 3 git stashes remain on `develop` from concurrent-orchestrator work: `concurrent-agent-leak-A3-C7-B4-WIP`, `external-agent design-doc rename WIP (preserve)`, `theme round-trip doctest (regression guard, unmerged)`. Not mine; do not auto-drop. Inspect on next session.
-- Remaining slices (unchanged from plan): PR D + PR E + PR F (offline-queue deps + runtime tests + sync tests), Phase 4 (config), Phase 5 (MCP), Phase 6 (Lua), Phase 7 (screenshot diff), Phase 9 (coverage). Phase 8 still DEFERRED.
+
+### Session 2026-05-16 (machine A continuation) — 5 more PRs shipped (10 total) + Phase 4 in flight
+
+Machine-B PC wasn't ready; continued on machine A.
+
+| Slice | PR | Sha | Notes |
+|---|---|---|---|
+| `offline-queue-deps-interface` (PR D) | [#127](https://github.com/alexandrosk0/Smatchet/pull/127) | `b5fc194` | Re-dispatched after abort. `IOfflineQueueDeps` 7 methods + `ITicketSyncDeps` 17 methods + `AppControllerDepsAdapter`. Zero semantic change. Track B on-hold gate released. |
+| `ticket-sync-service-tests` (PR F) | [#130](https://github.com/alexandrosk0/Smatchet/pull/130) | `a618a2f` | 12 cases / 83 assertions. Production bug surfaced: case 3 documents empty-fetch-deletes-all (no `!freshTickets.empty()` guard). Backlog entry filed for follow-up fix. |
+| `offline-queue-runtime-tests` (PR E) | [#131](https://github.com/alexandrosk0/Smatchet/pull/131) | `e35794d` | 13 cases / 76 assertions. Required orchestrator-side dedup of test-side `IsTrackerTransportErrorText` mirror after PR F rebase brought `TrackerHttpUtils.cpp` into test target. |
+| 8 agent-self-improvement entries | [#128](https://github.com/alexandrosk0/Smatchet/pull/128) | `1fb9753` | Backlog filings from Wave A1+A2. |
+| 5 more agent-self-improvement entries | [#132](https://github.com/alexandrosk0/Smatchet/pull/132) | `63c4490` | Backlog filings from PR D+E+F (incl. `TicketSyncService` empty-fetch production bug). |
+
+Plan-lock chore PRs: [#126](https://github.com/alexandrosk0/Smatchet/pull/126) re-claim PR D · [#129](https://github.com/alexandrosk0/Smatchet/pull/129) PR-D shipped + PR-E/F claim · [#132](https://github.com/alexandrosk0/Smatchet/pull/132) PR-E/F shipped · [#133](https://github.com/alexandrosk0/Smatchet/pull/133) Phase 4 claim.
+
+### Session boundary — handoff to machine B (second attempt, 2026-05-16 evening)
+
+- **Phase 4 (`config-schema-migration`)** PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) **OPEN, CI in_progress** at session end. Agent shipped clean: shared `tests/support/TestEnvGuard.h` + `ConfigManager.test.cpp` (11/42) + `ConfigMigration.test.cpp` (10/57 with 5 [high-risk]) + 4 fixtures + `scripts/dev/test-config-migration.sh`. SmatchetTests aggregate: 284 cases / 1429 assertions. Plan-lock entry stays `in-flight` — machine B merges after CI greens.
+- Remaining slices: Phase 4 merge (CI completion only) · Phase 5 (MCP JSON-RPC harness) · Phase 6 (Lua bindings rig) · Phase 7 (screenshot diff) · Phase 9 (coverage gates). Phase 8 still DEFERRED.
+- Backlog entries totalling 13 (8 from machine-A first half, 5 from D+E+F second half) — see `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+- 3 stashes still on develop from earlier concurrent-orchestrator work. Inspect before drop.
+- 1 active worktree besides main: `jolly-cerf-97840e` (concurrent `claude/coordination-plan-locks`) — leave alone.
+- 1 worktree from Phase 4 agent: `agent-adcc685747edc0a8d` — auto-cleans on machine B fresh clone. Branch `feat/test-phase-4-config-migration` is pushed.
 
 ## Deviations from plan
 
