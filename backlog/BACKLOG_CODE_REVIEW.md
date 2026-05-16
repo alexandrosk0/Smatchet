@@ -99,8 +99,8 @@ Both still defined in `Source_Core/src/ConfigManager.cpp` anonymous namespace (l
 ### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
 Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit dumps lose useful diffs. Product call: trim the list or document why each entry stays.
 
-### C7. Manual `PushClipRect` per grid cell (item 54)
-`Source_Core/src/SmatchetActiveProjectGridUi.cpp:843, 905, 930`. ImGui table already clips columns. Profile and remove if redundant.
+### C7. Manual `PushClipRect` per grid cell (item 54) — ✅ shipped (branch `feat/grid-pushcliprect-audit`)
+`Source_Core/src/SmatchetActiveProjectGridUi.cpp:843, 905, 930`. ImGui table already clips columns. Profile and remove if redundant. Removed; all three sites verified inside `BeginTable("TicketGrid")` scope.
 
 ---
 
