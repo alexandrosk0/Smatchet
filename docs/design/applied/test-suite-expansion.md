@@ -666,3 +666,27 @@ Resume next session: `git checkout develop && git pull && git checkout -b feat/t
     - `MergeDraftIntoCachedTicketForUpdate_HonoursPutFieldsSucceeded`: overlay all draft fields ignoring `putFieldsSucceeded` → 2 failures (target case + neighbour `skips keys absent from draft`).
     - `MergeTrackerFieldOption_DoesNotDuplicateById`: invert dedup-key check → 4 failures (target case + 3 dedup-by-children/value/disabled siblings).
     - `ClassifyTrackerFieldFamily_DetectsCascadingSelect`: force `hasChildren=false` → 1 failure (target case).
+
+## PR F — `ticket-sync-service-tests` (2026-05-16)
+
+### Implementation log
+
+- (pending sha) · 12 cases / 83 assertions added to `tests/Source_Core/TicketSyncService.test.cpp`. Drives `TicketSyncService` through `ITicketSyncDeps` against the `FakeTicketSyncDeps` fixture shipped by PR D (#127). Covers ApplyIssueFetchPack partial/full-sync stale-deletion, empty-pack handling (current production behavior captured — see Deviations), in-place replace + insert paths, transport-error vs non-transport-error connectivity routing, deferred-live-notify coalescing, TickStreamingApply idle no-op, end-to-end SyncWithBackend → worker → drain, and back-to-back apply-tick consistency.
+- (pending sha) · `tests/CMakeLists.txt` appended `TicketSyncService.test.cpp` + production sources (`TicketSyncService.cpp`, `TrackerHttpUtils.cpp`, `NetworkUsageTracker.cpp`, `Views.cpp`, `SmatchetToast.cpp`, `SmatchetLocalization.cpp`) and added `cpr::cpr` link (required by `TrackerHttpUtils.h`'s `<cpr/cpr.h>` include). `AppControllerDepsAdapter.cpp` intentionally NOT added — tests use `FakeTicketSyncDeps` instead.
+
+### Deviations from plan
+
+- **Case 3 (`empty fetch in full-sync mode`) ships with inverted assertion vs spec.** Plan says "rejects, does NOT delete"; production at `Source_Core/src/TicketSyncService.cpp:81-97` unconditionally deletes every row not in `keepIds`, so an empty fetch erases every cached row. Test captures the **current** behavior so the regression guard is honest; an inline comment flags the spec/reality drift and the next safeguard PR (routed to `offline-sync`) can flip the assertion. Per test-rig contract: agent's job is the rig, not silent production fixes.
+- **Re-entrancy / concurrent-read cases reframed** (spec cases 10-12). PR D's `ITicketSyncDeps` exposes `RequestDeferredLiveTrackerBackendSuccessNotify` rather than a `PostMainThreadResult` method, so case 10 asserts that counter increments on success and stays at zero on non-transport error. Case 11 → "repeated idle TickStreamingApply calls produce no state mutation" (no public re-entrancy gate to flip; production guards via `ActiveSessionRunning`+`isDeletingStale_` checks). Case 12 → "back-to-back ApplyIssueFetchPack across N interleaved idle ticks" (single-threaded streaming-state mutation; multi-threaded race coverage stays in bucket E).
+
+### Verification
+
+- `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean link, 238/238 ninja targets.
+- `ctest --output-on-failure --test-dir build/ninja-test-msys2` → `1/1 smatchet_tests Passed (0.67 sec)`.
+- `SmatchetTests.exe --test-case="*TicketSyncService*"` → 12 cases / 83 assertions / 0 failed / 239 skipped.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — both dual-target binaries link cleanly.
+- `bash scripts/dev/test-all.sh` → 7 scripts / 98 assertions / 0 failed (the standard `test-ui-views-columns-reorder.sh` bucket-E miss reports the pre-existing "ninja-ui-test-msys2 not built" message and is unrelated to this PR).
+- Mutation sanity (3 high-risk cases):
+  - Case 1 (partial-fetch no-delete) — flipped `if (fullSyncCompleted)` to unconditional in `TicketSyncService::ApplyIssueFetchPack` → 3 assertion failures (case 1 + case 4 + case 12: `ABC-2`/`ABC-3` deleted on partial pack). Reverted.
+  - Case 3 (empty-fetch full-sync delete-all) — flipped `if (fullSyncCompleted)` to `if (fullSyncCompleted && !freshTickets.empty())` (the spec'd safeguard) → 1 failure on case 3 (`CHECK(ids.empty())` flipped to expecting rows survive). Confirms the test is load-bearing on production's current behavior; the spec'd safeguard is a one-line guard. Reverted.
+  - Case 9 (non-transport error preserves connectivity state) — flipped `IsTrackerTransportErrorText` branch to unconditionally take the transport-down path → 1 assertion failure (`CHECK(deps.PushOutageCalls == 0)` saw 1). Reverted.

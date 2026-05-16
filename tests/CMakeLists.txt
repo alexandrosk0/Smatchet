@@ -31,6 +31,7 @@ add_executable(SmatchetTests
     Source_Core/TrackerDateTimePure.test.cpp
     Source_Core/TrackerFieldPayloadPure.test.cpp
     Source_Core/TrackerFieldCatalogPure.test.cpp
+    Source_Core/TicketSyncService.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
@@ -55,6 +56,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetTheme.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TicketSyncService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerHttpUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/NetworkUsageTracker.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetToast.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetLocalization.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
@@ -72,6 +79,7 @@ target_link_libraries(SmatchetTests PRIVATE
     ImGuiLib
     SQLiteCpp
     md4c
+    cpr::cpr
 )
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
