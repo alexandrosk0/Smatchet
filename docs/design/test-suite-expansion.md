@@ -526,6 +526,33 @@ Rig + infra (new / edited):
 
 ---
 
+## Session 2026-05-16 — stop point
+
+Autonomous orchestrator run, session ended after Phase 3 merged. Status:
+
+| Phase | Status | PR | Notes |
+|---|---|---|---|
+| 1 | **Merged** | [#103](https://github.com/alexandrosk0/Smatchet/pull/103) | 4/9 plan files shipped (171 CHECKs). 5 files deferred — pure helpers buried under ImGui/cpr/JiraClient; backlog entry filed. |
+| 2 | **Merged** | [#106](https://github.com/alexandrosk0/Smatchet/pull/106) | CallstackParser shipped (54 CHECKs). P4BlameParse deferred — anon-namespace helpers; backlog entry filed. |
+| 3 | **Merged** | [#107](https://github.com/alexandrosk0/Smatchet/pull/107) | 3/5 plan files shipped (195 CHECKs) + FakeTrackerClient + SqliteMemFixture. OfflineQueueServiceRuntime + TicketSyncService deferred — services hold `AppController&` back-refs; backlog filed. |
+| 4 | **Pending** | — | Config + schema migration. No infra blockers. Next phase to start. |
+| 5 | Pending | — | MCP JSON-RPC harness. |
+| 6 | Pending | — | Lua full binding round-trip rig. |
+| 7 | Pending | — | Screenshot diff (bucket C). |
+| 8 | Pending | — | Unreal headless smoke. |
+| 9 | Pending | — | Coverage gates + enforcement. |
+
+Test rig totals after Phase 3: **190 cases / 755 assertions** (vs 136 / 476 baseline before Phase 1 — **+39 % cases, +59 % assertions**).
+
+Backlog entries opened during this session (`docs/backlog/AGENT_SELF_IMPROVEMENT.md`):
+- Phase 1: 4 tracker units pending TU split; `LocalCacheManager.h` POD-vs-SQLite header split; plan-time `ls Source_Core/src/` cross-check.
+- Phase 2: `P4BlameParse.test.cpp` prep PR (TU split + tests, ≈1 h); `code-review` adversarial-input subcases for CallstackParser; orchestrator packet pre-authorize `<Unit>Parse.{h,cpp}` split.
+- Phase 3: `OfflineQueueService`/`TicketSyncService` interface-bundle extraction (1-2 d prereq); `BackendAuditTrail::AuditWriter` per-event path resolution (15 min); mid-tx-throw hostile fixture.
+
+Resume next session: `git checkout develop && git pull && git checkout -b feat/test-phase-4-config-migration`. Delegate to `test-rig` with the Phase 4 packet pattern from prior phases — pre-authorize TU splits for any anon-namespace pure helpers found.
+
+---
+
 ## Implementation log
 
 (Append per shipped PR — `<sha> · <one-line summary>`.)
