@@ -115,14 +115,12 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync deletes stale rows o
     CHECK(deps.DeferredLiveNotifyCalls == 1);
 }
 
-TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack documents current delete-all behavior" *
+TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack rejects stale-deletion and preserves cache" *
           doctest::test_suite("[high-risk]")) {
-    // Spec docs/design/test-suite-expansion-completion.md § PR F lists this case as
-    //   "empty fetch in full-sync mode → rejects, does NOT delete"
-    // but the production code at TicketSyncService.cpp lines 81-97 unconditionally deletes
-    // every row not in `keepIds` — an empty fetch makes `keepIds` empty, so all rows go.
-    // This test captures the CURRENT behavior; mismatch flagged in Self-improvement so the
-    // orchestrator can route the safeguard to `offline-sync` as a production-side fix.
+    // Guard at TicketSyncService.cpp:82-86 — a full-sync that returns zero tickets cannot
+    // prove the cache is stale, so the stale-deletion branch is skipped. A 200-with-empty-
+    // body network glitch (or a transient backend bug) must NOT silently wipe every cached
+    // row. Genuinely-empty projects re-converge on the next non-empty fetch.
     FakeTicketSyncDeps deps;
     deps.CacheImpl->SaveTicket(MakeTicket("ABC-1"));
     deps.CacheImpl->SaveTicket(MakeTicket("ABC-2"));
@@ -133,10 +131,11 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack documents
     pack.FullSyncCompleted = true;
     svc.ApplyIssueFetchPack(pack);
 
-    // Current behavior: all rows deleted. If a future PR adds the safeguard described in the
-    // spec, flip these assertions to `CHECK(ids.size() == 2);` and rewrite the rationale.
     std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
-    CHECK(ids.empty());
+    std::sort(ids.begin(), ids.end());
+    REQUIRE(ids.size() == 2);
+    CHECK(ids[0] == "ABC-1");
+    CHECK(ids[1] == "ABC-2");
     CHECK(deps.DeferredLiveNotifyCalls == 1);
     CHECK(deps.PendingLuaWindowBumpImpl == true);
 }
