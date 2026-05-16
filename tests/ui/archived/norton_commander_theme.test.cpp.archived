@@ -1,3 +1,25 @@
+// =============================================================================
+// ARCHIVED — DO NOT COMPILE. File extension `.cpp.archived` keeps this source
+// out of every glob and out of `tests/ui/CMakeLists.txt`'s explicit source
+// list. Original location: `tests/ui/norton_commander_theme.test.cpp`.
+//
+// Why archived: assertions below hard-code the original PR #91 blue palette.
+// PR #105 retunes the Norton Commander palette to teal panels per the
+// canonical NC 5.51 screenshot, which would break every assertion. Removed
+// from the live build until the palette is visually validated and locked.
+//
+// To revive: copy this file to `tests/ui/norton_commander_theme.test.cpp`,
+// drop the `.archived` extension, restore `scripts/dev/test-norton-theme.sh`
+// from `scripts/dev/archived/test-norton-theme.sh.archived`, re-add the
+// source to `tests/ui/CMakeLists.txt` _SMATCHET_UI_TEST_SOURCES list, re-add
+// the `extern "C" SmatchetRegisterNortonCommanderThemeTests` line +
+// registration call to `tests/ui/ui_tests_registry.cpp`, then retune the
+// `IM_CHECK(ChannelsApprox(...))` literals below to match the current
+// `ApplyNortonCommander()` palette in `Source_Core/src/SmatchetTheme.cpp`.
+//
+// Tracked: `docs/backlog/BACKLOG_PLANS.md` § 2.
+// =============================================================================
+
 // norton_commander_theme.test.cpp — bucket-E live-apply check for the
 // NortonCommander theme. Doctest covers `SmatchetTheme::ApplyStyle()` in an
 // isolated ImGui context; this bucket-E variant proves the apply path runs

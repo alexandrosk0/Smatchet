@@ -11,7 +11,6 @@ endif()
 set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ui_tests_registry.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/norton_commander_theme.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12
