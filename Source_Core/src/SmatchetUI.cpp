@@ -237,11 +237,6 @@ static bool WindowNeedsRepair(const ImVec2& pos, const ImVec2& size, float minW,
     return pos.x + size.x < workMin.x + 96.0f || pos.y + size.y < workMin.y + 72.0f;
 }
 
-static bool IsSessionUtilityLayoutKey(const char* key) {
-    return std::strcmp(key, "audit") == 0 || std::strcmp(key, "bulk_import") == 0 ||
-           std::strcmp(key, "bulk_export") == 0 || std::strcmp(key, "attachment") == 0;
-}
-
 static void PersistWindowOpenPreferences(UiDrawSession& d) {
     bool changed = false;
     auto setBool = [&changed](bool& dst, bool src) {
