@@ -52,6 +52,16 @@ UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
 static bool g_openFilePathsHandlerInstalled = false;
 
+// Forward decls for helpers shared with SmatchetUI_Layout.cpp / SmatchetUI_MainMenu.cpp.
+// Declarations duplicated here (and in SmatchetUI_Internal.h) so this TU can keep using
+// the raw `imgui.h` macro setup of SmatchetLocalizedImGui without dragging in the internal
+// header's redefinitions (which clash with `imgui_internal.h` consumers further down).
+namespace smatchet {
+namespace ui_detail {
+void PersistWindowOpenPreferences(UiDrawSession& d);
+} // namespace ui_detail
+} // namespace smatchet
+
 static void ApplyLoggingSettingsFromConfig(const TrackerConfig& cfg) {
     Logger::Instance().SetMinLevel(Logger::ParseLogLevelString(cfg.LogMinLevel, LogLevel::Info));
     Logger::Instance().SetLogTrackerHttpBodies(cfg.LogTrackerHttpBodies);
@@ -64,7 +74,10 @@ static std::future<AppUpdateInfo> StartAppUpdateCheckAsync(AppController& app, c
                       [&app, includePrerelease]() { return app.CheckForAppUpdate(includePrerelease); });
 }
 
-static void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual) {
+namespace smatchet {
+namespace ui_detail {
+
+void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual) {
     if (d.appUpdateCheckInFlight) {
         return;
     }
@@ -73,6 +86,9 @@ static void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manua
     d.appUpdateCheckInFlight = true;
     d.appUpdateFuture = StartAppUpdateCheckAsync(app, d.cfg);
 }
+
+} // namespace ui_detail
+} // namespace smatchet
 
 static void DrainAppUpdateCheck(UiDrawSession& d) {
     if (!d.appUpdateCheckInFlight || !d.appUpdateFuture.valid()) {
@@ -174,92 +190,6 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     ImGui::EndPopup();
 }
 
-struct LayoutRect {
-    ImVec2 Pos;
-    ImVec2 Size;
-};
-
-static float ClampFloat(float v, float lo, float hi) { return (std::max)(lo, (std::min)(v, hi)); }
-
-static LayoutRect DefaultLayoutRectFor(const char* key, float defaultW, float defaultH) {
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const ImVec2 workPos = vp ? vp->WorkPos : ImVec2(0.0f, 0.0f);
-    const ImVec2 workSize = vp ? vp->WorkSize : ImGui::GetIO().DisplaySize;
-    const float w = (std::max)(320.0f, workSize.x);
-    const float h = (std::max)(240.0f, workSize.y);
-
-    auto centered = [&](float rw, float rh) {
-        rw = ClampFloat(rw, 320.0f, w * 0.92f);
-        rh = ClampFloat(rh, 240.0f, h * 0.88f);
-        return LayoutRect{ImVec2(workPos.x + (w - rw) * 0.5f, workPos.y + (h - rh) * 0.5f), ImVec2(rw, rh)};
-    };
-
-    const float sideW = ClampFloat(w * 0.13f, 250.0f, 360.0f);
-    const float mainW = (std::max)(420.0f, w - sideW);
-    const float prefsH = g_ui.showPreferences ? ClampFloat(h * 0.36f, 300.0f, 470.0f) : 0.0f;
-    const float activeH = (std::max)(300.0f, h - prefsH);
-
-    if (std::strcmp(key, "active") == 0) {
-        return LayoutRect{workPos, ImVec2(mainW, activeH)};
-    }
-    if (std::strcmp(key, "views") == 0) {
-        return LayoutRect{ImVec2(workPos.x + w - sideW, workPos.y), ImVec2(sideW, h)};
-    }
-    if (std::strcmp(key, "preferences") == 0) {
-        return LayoutRect{ImVec2(workPos.x, workPos.y + activeH), ImVec2(mainW, prefsH)};
-    }
-    if (std::strcmp(key, "log") == 0) {
-        const float logH = ClampFloat(h * 0.34f, 260.0f, 420.0f);
-        return LayoutRect{ImVec2(workPos.x, workPos.y + h - logH), ImVec2(w, logH)};
-    }
-    if (std::strcmp(key, "scripting") == 0 || std::strcmp(key, "mcp") == 0) {
-        const float utilityPanelW = ClampFloat(defaultW, 420.0f, (std::min)(720.0f, w * 0.46f));
-        const float sideH = ClampFloat(defaultH, 420.0f, h * 0.88f);
-        return LayoutRect{ImVec2(workPos.x + w - utilityPanelW - 24.0f, workPos.y + 48.0f),
-                          ImVec2(utilityPanelW, sideH)};
-    }
-    return centered(defaultW, defaultH);
-}
-
-static bool WindowNeedsRepair(const ImVec2& pos, const ImVec2& size, float minW, float minH) {
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    if (!vp) {
-        return false;
-    }
-    const ImVec2 workMin = vp->WorkPos;
-    const ImVec2 workMax(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
-    if (size.x < minW || size.y < minH) {
-        return true;
-    }
-    if (pos.x > workMax.x - 96.0f || pos.y > workMax.y - 72.0f) {
-        return true;
-    }
-    return pos.x + size.x < workMin.x + 96.0f || pos.y + size.y < workMin.y + 72.0f;
-}
-
-static void PersistWindowOpenPreferences(UiDrawSession& d) {
-    bool changed = false;
-    auto setBool = [&changed](bool& dst, bool src) {
-        if (dst != src) {
-            dst = src;
-            changed = true;
-        }
-    };
-    setBool(d.cfg.ShowPreferencesWindow, d.showPreferences);
-    setBool(d.cfg.ShowViewsDashboardWindow, d.showViewsDashboard);
-    setBool(d.cfg.ShowPerformanceWindow, d.showPerformance);
-    setBool(d.cfg.ShowLogWindow, d.showLogWindow);
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    setBool(d.cfg.ShowLuaAutomationWindow, d.showLuaAutomationWindow);
-#endif
-#if defined(SMATCHET_WITH_MCP)
-    setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
-#endif
-    if (changed) {
-        ConfigManager::Save(d.cfg);
-    }
-}
-
 static std::future<FieldCatalogFetchResult>
 StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& projectKey) {
     return std::async(std::launch::async, [&app, fetchCfg, projectKey]() {
@@ -283,116 +213,10 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
     });
 }
 
-void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
-                                       bool requestFocus) {
-    // With docking enabled, position is managed by the dock layout (imgui.ini DockId entries).
-    // SetNextWindowPos with ImGuiCond_Appearing or ImGuiCond_Always fights the dock engine:
-    // it forces windows to absolute pixel coordinates, kicking them out of their dock nodes
-    // on every toggle. Only set size on FirstUseEver as a fallback for windows with no ini entry.
-    ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH), ImGuiCond_FirstUseEver);
-    if (requestFocus) {
-        ImGui::SetNextWindowFocus();
-    }
-    (void)layoutKey; // previously used for position lookup — no longer needed with docking
-    (void)d;
-}
-
-void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
-    // Docked windows: size and position are fully managed by the dock node. Do not repair.
-    if (ImGui::IsWindowDocked()) {
-        return;
-    }
-    const ImVec2 pos = ImGui::GetWindowPos();
-    ImVec2 size = ImGui::GetWindowSize();
-    if (!WindowNeedsRepair(pos, size, minW, minH) && d.layoutForceDefaultsFrames <= 0) {
-        return;
-    }
-
-    const LayoutRect fallback = DefaultLayoutRectFor(layoutKey, minW, minH);
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    if (!vp) {
-        ImGui::SetWindowPos(fallback.Pos, ImGuiCond_Always);
-        ImGui::SetWindowSize(fallback.Size, ImGuiCond_Always);
-        return;
-    }
-
-    size.x = ClampFloat((std::max)(size.x, minW), minW, (std::max)(minW, vp->WorkSize.x * 0.96f));
-    size.y = ClampFloat((std::max)(size.y, minH), minH, (std::max)(minH, vp->WorkSize.y * 0.94f));
-    ImVec2 nextPos = pos;
-    if (WindowNeedsRepair(pos, size, minW, minH) || d.layoutForceDefaultsFrames > 0) {
-        nextPos = fallback.Pos;
-        size = fallback.Size;
-    }
-
-    const ImVec2 workMin = vp->WorkPos;
-    const ImVec2 workMax(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
-    nextPos.x = ClampFloat(nextPos.x, workMin.x, (std::max)(workMin.x, workMax.x - size.x));
-    nextPos.y = ClampFloat(nextPos.y, workMin.y, (std::max)(workMin.y, workMax.y - size.y));
-    ImGui::SetWindowPos(nextPos, ImGuiCond_Always);
-    ImGui::SetWindowSize(size, ImGuiCond_Always);
-}
-
-void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
-    d.showViewsDashboard = true;
-    d.requestActiveProjectFocus = false;
-    d.requestViewsDashboardFocus = false;
-    d.showPerformance = false;
-    d.showBlameAnalysis = false;
-    d.showBulkImport = false;
-    d.showBulkExport = false;
-    d.showAuditTrail = false;
-    d.showLogWindow = false;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    d.showLuaAutomationWindow = false;
-    d.requestLuaAutomationFocus = false;
-    d.requestScriptingEditorTabFocus = false;
-#endif
-#if defined(SMATCHET_WITH_MCP)
-    d.showMcpServerWindow = false;
-    d.requestMcpServerFocus = false;
-#endif
-    d.layoutForceDefaultsFrames = 8;
-    // Reset the on-disk ini so the next launch picks up the default dock layout.
-    // ImGui::LoadIniSettingsFromDisk() at runtime does NOT re-parent already-created
-    // windows: docking metadata gets replaced, but live windows lose their dock parents
-    // and float free. Skip the runtime reload and ask the user to restart.
-    ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
-                                          ToastType::Info, 4000);
-    PersistWindowOpenPreferences(d);
-}
-
-void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
-    // Replicates SmatchetUI::resetWindowLayoutToDefault for callers without a SmatchetUI*.
-    // Must be called on the UI thread (see MainThreadDispatch.h).
-    d.showViewsDashboard = true;
-    d.requestActiveProjectFocus = false;
-    d.requestViewsDashboardFocus = false;
-    d.showPerformance = false;
-    d.showBlameAnalysis = false;
-    d.showBulkImport = false;
-    d.showBulkExport = false;
-    d.showAuditTrail = false;
-    d.showLogWindow = false;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    d.showLuaAutomationWindow = false;
-    d.requestLuaAutomationFocus = false;
-    d.requestScriptingEditorTabFocus = false;
-#endif
-#if defined(SMATCHET_WITH_MCP)
-    d.showMcpServerWindow = false;
-    d.requestMcpServerFocus = false;
-#endif
-    d.layoutForceDefaultsFrames = 8;
-    // Reset the on-disk ini so the next launch picks up the default dock layout.
-    // ImGui::LoadIniSettingsFromDisk() at runtime does NOT re-parent already-created
-    // windows: docking metadata gets replaced, but live windows lose their dock parents
-    // and float free. Skip the runtime reload and ask the user to restart.
-    ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
-                                          ToastType::Info, 4000);
-    PersistWindowOpenPreferences(d);
-}
+// `SmatchetUI::prepareTopLevelWindow`, `SmatchetUI::repairTopLevelWindow`,
+// `SmatchetUI::resetWindowLayoutToDefault`, and the free function
+// `SmatchetUI_ResetLayoutToDefault` moved to `SmatchetUI_Layout.cpp` per
+// `docs/design/large-files-and-phase-2.md` § A4.
 
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
@@ -473,7 +297,7 @@ void SmatchetUI::Draw(AppController& app) {
     }
     if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted) {
         d.appUpdateStartupCheckStarted = true;
-        StartAppUpdateCheck(d, app, false);
+        smatchet::ui_detail::StartAppUpdateCheck(d, app, false);
     }
     if (d.deadLetterPanelStatusHasClearDeadline && std::chrono::steady_clock::now() >= d.deadLetterPanelStatusClearAt) {
         d.deadLetterPanelStatus.clear();
@@ -874,7 +698,7 @@ void SmatchetUI::Draw(AppController& app) {
         ViewState.Save();
         g_ui.pendingViewStateSave = false;
     }
-    PersistWindowOpenPreferences(g_ui);
+    smatchet::ui_detail::PersistWindowOpenPreferences(g_ui);
     if (g_ui.layoutForceDefaultsFrames > 0) {
         --g_ui.layoutForceDefaultsFrames;
         if (g_ui.layoutForceDefaultsFrames == 0) {
@@ -972,439 +796,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
     }
 }
 
-void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
-    if (ImGui::BeginMainMenuBar()) {
-        auto ticketsSnap = app.GetActiveTicketsSnapshot();
-        const std::vector<CachedTicket> emptyTickets;
-        const auto& tickets = ticketsSnap ? *ticketsSnap : emptyTickets;
-        const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
-        const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
-        const bool hasSelection = d.gridState.RectSel.HasAnySelection();
-        const bool hasTickets = !tickets.empty();
-
-        // First-launch tracker gate: lock everything except Tools -> Preferences (which
-        // hosts the Tracker tab) until the backend probe confirms a working connection.
-        const bool trackerLocked = !d.cfg.BackendHasBeenReachable;
-        if (trackerLocked) {
-            d.showPreferences = true;
-        }
-
-        auto selectAllRows = [&]() {
-            auto& sel = d.gridState.RectSel;
-            sel.ClearAll();
-            const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
-            for (size_t row = 0; row < rowCount; ++row) {
-                sel.Rows.insert(static_cast<int>(row));
-            }
-            if (rowCount > 0) {
-                sel.PrimaryRow = 0;
-                sel.SortSignature =
-                    ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
-                const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
-                if (firstTicketIndex < tickets.size()) {
-                    d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
-                }
-            }
-        };
-
-        if (trackerLocked)
-            ImGui::BeginDisabled();
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open Project View...", "Ctrl+O")) {
-                d.showViewsDashboard = true;
-                d.requestViewsDashboardFocus = true;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Import Issues...")) {
-                d.showBulkImport = true;
-            }
-            if (ImGui::MenuItem("Export Issues...")) {
-                d.showBulkExport = true;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Read-only Mode", nullptr, d.cfg.ReadOnlyMode, true)) {
-                d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
-                ConfigManager::Save(d.cfg);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection && !columns.empty())) {
-                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Selection")) {
-            if (ImGui::MenuItem("Select All", "Ctrl+A", false, hasTickets)) {
-                selectAllRows();
-            }
-            if (ImGui::MenuItem("Clear Selection", "Ctrl+Shift+A", false, hasSelection)) {
-                d.gridState.RectSel.ClearAll();
-            }
-            if (ImGui::MenuItem("Copy Selection", "Ctrl+Shift+C", false, hasSelection && !columns.empty())) {
-                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, d.gridState.RectSel);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) {
-                commandPalette_.Open();
-            }
-            if (ImGui::MenuItem("Open View...", "Ctrl+Shift+V")) {
-                commandPalette_.Open();
-                commandPalette_.SetFilterText("view.toggle.");
-            }
-            ImGui::Separator();
-            if (ImGui::BeginMenu("Appearance")) {
-#ifndef SMATCHET_EMBEDDED_IN_UNREAL
-                if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
-                    d.requestFullScreenToggle = true;
-                }
-#endif
-                if (ImGui::MenuItem("Zen Mode", "Ctrl+M, Z", d.cfg.ZenMode)) {
-                    d.cfg.ZenMode = !d.cfg.ZenMode;
-                }
-                ImGui::Separator();
-                if (ImGui::BeginMenu("Theme")) {
-                    struct ThemeEntry {
-                        ThemeId id;
-                        const char* label;
-                    };
-                    constexpr ThemeEntry kEntries[] = {
-                        {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
-                        {ThemeId::ModernDark, "Modern Dark"},
-                        {ThemeId::Vs2022Dark, "VS 2022 Dark"},
-                        {ThemeId::Vs2022Light, "VS 2022 Light"},
-                        {ThemeId::HighContrast, "High Contrast"},
-                        {ThemeId::NortonCommander, "Norton Commander"},
-                    };
-                    for (const ThemeEntry& e : kEntries) {
-                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Theme == e.id)) {
-                            d.cfg.Theme = e.id;
-                            ConfigManager::Save(d.cfg);
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu("Density")) {
-                    struct DensityEntry {
-                        TrackerConfig::UiDensity id;
-                        const char* label;
-                    };
-                    const DensityEntry kDensities[] = {
-                        {TrackerConfig::UiDensity::Compact, "Compact"},
-                        {TrackerConfig::UiDensity::Normal, "Normal"},
-                        {TrackerConfig::UiDensity::Comfortable, "Comfortable"},
-                    };
-                    for (const DensityEntry& e : kDensities) {
-                        if (ImGui::MenuItem(e.label, nullptr, d.cfg.Density == e.id)) {
-                            d.cfg.Density = e.id;
-                            ConfigManager::Save(d.cfg);
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu("Font")) {
-                    const char* kFonts[] = {
-                        "Segoe UI", "Consolas", "Calibri", "Arial", "Cascadia Code", "JetBrains Mono",
-                    };
-                    const int kFontCount = static_cast<int>(sizeof(kFonts) / sizeof(kFonts[0]));
-                    for (int fi = 0; fi < kFontCount; ++fi) {
-                        const bool selected = (d.cfg.SelectedFontName == kFonts[fi]);
-                        if (ImGui::MenuItem(kFonts[fi], nullptr, selected)) {
-                            d.cfg.SelectedFontName = kFonts[fi];
-                            ConfigManager::Save(d.cfg);
-                            SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-                ImGui::Separator();
-                if (ImGui::BeginMenu("Panel Position")) {
-                    if (ImGui::MenuItem("Bottom", nullptr,
-                                        d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Bottom)) {
-                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Bottom) {
-                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Bottom;
-                            ConfigManager::Save(d.cfg);
-                            // Dock rebuild is complex and fragile; reset layout instead.
-                            // The panel will be repositioned after layout reset on next launch.
-                            resetWindowLayoutToDefault(d);
-                        }
-                    }
-                    if (ImGui::MenuItem("Right", nullptr, d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
-                        if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Right) {
-                            d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
-                            ConfigManager::Save(d.cfg);
-                            resetWindowLayoutToDefault(d);
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-                {
-                    const char* swapLabel =
-                        d.cfg.PrimarySideBarOnRight ? "Move Primary Side Bar Left" : "Move Primary Side Bar Right";
-                    if (ImGui::MenuItem(swapLabel)) {
-                        d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
-                        ConfigManager::Save(d.cfg);
-                        resetWindowLayoutToDefault(d);
-                    }
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {
-                    d.cfg.FontSizePt = (d.cfg.FontSizePt < 32) ? (d.cfg.FontSizePt + 1) : 32;
-                    ConfigManager::Save(d.cfg);
-                }
-                if (ImGui::MenuItem("Zoom Out", "Ctrl+-", false, d.cfg.FontSizePt > 8)) {
-                    d.cfg.FontSizePt = (d.cfg.FontSizePt > 8) ? (d.cfg.FontSizePt - 1) : 8;
-                    ConfigManager::Save(d.cfg);
-                }
-                if (ImGui::MenuItem("Reset Zoom", "Ctrl+0", false, d.cfg.FontSizePt != 16)) {
-                    d.cfg.FontSizePt = 16;
-                    ConfigManager::Save(d.cfg);
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
-                    SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
-                    recentViews_.Touch("view.toggle.primary-side-bar");
-                    ConfigManager::Save(d.cfg);
-                }
-                if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
-                    SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
-                    recentViews_.Touch("view.toggle.secondary-side-bar");
-                    ConfigManager::Save(d.cfg);
-                }
-                if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
-                    d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
-                    recentViews_.Touch("view.toggle.status-bar");
-                    ConfigManager::Save(d.cfg);
-                }
-                if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
-                    SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
-                    recentViews_.Touch("view.toggle.panel");
-                    ConfigManager::Save(d.cfg);
-                }
-                ImGui::EndMenu();
-            }
-#if defined(SMATCHET_ENABLE_EDITOR_LAYOUT)
-            if (ImGui::BeginMenu("Editor Layout")) {
-                if (ImGui::MenuItem("Single")) { /* TODO: DockBuilderSplitNode single */
-                }
-                if (ImGui::MenuItem("Two Columns")) { /* TODO */
-                }
-                if (ImGui::MenuItem("Three Columns")) { /* TODO */
-                }
-                if (ImGui::MenuItem("Two Rows")) { /* TODO */
-                }
-                if (ImGui::MenuItem("Grid (2x2)")) { /* TODO */
-                }
-                ImGui::EndMenu();
-            }
-#endif
-            ImGui::Separator();
-            if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
-                d.showViewsDashboard = !d.showViewsDashboard;
-                if (d.showViewsDashboard) {
-                    d.requestViewsDashboardFocus = true;
-                }
-                recentViews_.Touch("view.toggle.views-dashboard");
-            }
-            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.annotateTabVisible && d.activeGridTab == 1)) {
-                if (d.annotateTabVisible && d.activeGridTab == 1) {
-                    d.annotateTabVisible = false;
-                    d.activeGridTab = 0;
-                } else {
-                    d.annotateTabVisible = true;
-                    d.activeGridTab = 1;
-                    d.activeGridTabForcePending = true;
-                    d.requestActiveProjectFocus = true;
-                }
-                recentViews_.Touch("view.toggle.source-blame");
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
-                d.showLogWindow = !d.showLogWindow;
-                recentViews_.Touch("view.toggle.log");
-            }
-            if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
-                d.showAuditTrail = !d.showAuditTrail;
-                if (d.showAuditTrail) {
-                    d.requestAuditTrailFocus = true;
-                }
-                recentViews_.Touch("view.toggle.backend-audit");
-            }
-            if (ImGui::MenuItem("Performance", nullptr, d.showPerformance)) {
-                d.showPerformance = !d.showPerformance;
-                recentViews_.Touch("view.toggle.performance");
-            }
-            if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
-                d.showBulkImport = !d.showBulkImport;
-                recentViews_.Touch("view.toggle.bulk-import");
-            }
-            if (ImGui::MenuItem("Bulk Export", nullptr, d.showBulkExport)) {
-                d.showBulkExport = !d.showBulkExport;
-                recentViews_.Touch("view.toggle.bulk-export");
-            }
-            if (ImGui::MenuItem("Preferences", nullptr, d.showPreferences)) {
-                d.showPreferences = !d.showPreferences;
-                recentViews_.Touch("view.toggle.preferences");
-            }
-#if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("MCP Server", nullptr, d.showMcpServerWindow)) {
-                d.showMcpServerWindow = !d.showMcpServerWindow;
-                if (d.showMcpServerWindow) {
-                    d.requestMcpServerFocus = true;
-                }
-                recentViews_.Touch("view.toggle.mcp-server");
-            }
-#endif
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
-                d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
-                if (d.showLuaAutomationWindow) {
-                    d.requestLuaAutomationFocus = true;
-                    d.requestScriptingEditorTabFocus = true;
-                }
-                recentViews_.Touch("view.toggle.scripts-and-actions");
-            }
-#endif
-            ImGui::Separator();
-            // Recently Used Views submenu: lists the last 5 toggled view ids, oldest first.
-            if (ImGui::BeginMenu("Recently Used Views")) {
-                const std::vector<std::string> recent = recentViews_.Snapshot();
-                if (recent.empty()) {
-                    ImGui::BeginDisabled();
-                    ImGui::MenuItem("(none yet)");
-                    ImGui::EndDisabled();
-                } else {
-                    for (int ri = static_cast<int>(recent.size()) - 1; ri >= 0; --ri) {
-                        const std::string& cmdId = recent[static_cast<size_t>(ri)];
-                        if (ImGui::MenuItem(cmdId.c_str())) {
-                            smatchet::cmd::CommandContext ctx;
-                            ctx.App = &app;
-                            ctx.Source = smatchet::cmd::CommandSource::Palette;
-                            const nlohmann::json emptyArgs = nlohmann::json::object();
-                            smatchet::cmd::CommandResult r = app.Commands().Dispatch(cmdId, emptyArgs, ctx);
-                            if (!r.Ok) {
-                                LOG_DEBUG("SmatchetUI: recently used view command not found: %s", cmdId.c_str());
-                            }
-                        }
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("Reset Layout")) {
-                resetWindowLayoutToDefault(d);
-            }
-            ImGui::EndMenu();
-        }
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        if (ImGui::BeginMenu("Run")) {
-            if (ImGui::MenuItem("Scripts & Actions...")) {
-                d.showLuaAutomationWindow = true;
-                d.requestLuaAutomationFocus = true;
-                d.requestScriptingEditorTabFocus = true;
-            }
-            ImGui::EndMenu();
-        }
-#endif
-        if (trackerLocked)
-            ImGui::EndDisabled();
-        // Tools menu stays enabled when locked — but only the Preferences entry inside.
-        if (ImGui::BeginMenu("Tools")) {
-            if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
-                d.showPreferences = true;
-            }
-#if defined(SMATCHET_WITH_MCP)
-            if (trackerLocked)
-                ImGui::BeginDisabled();
-            if (ImGui::MenuItem("MCP Server...")) {
-                d.showMcpServerWindow = true;
-                d.requestMcpServerFocus = true;
-            }
-            if (trackerLocked)
-                ImGui::EndDisabled();
-#endif
-            ImGui::EndMenu();
-        }
-        if (trackerLocked)
-            ImGui::BeginDisabled();
-        if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
-                StartAppUpdateCheck(d, app, true);
-            }
-            ImGui::EndMenu();
-        }
-        if (trackerLocked)
-            ImGui::EndDisabled();
-#if !defined(SMATCHET_WITH_LUA_AUTOMATION)
-        {
-            static bool s_loggedLuaMenuAbsent = false;
-            if (!s_loggedLuaMenuAbsent) {
-                s_loggedLuaMenuAbsent = true;
-                LOG_WARN("SmatchetUI: Lua automation disabled in this binary (no Scripts & Actions window).");
-            }
-        }
-#endif
-
-        // Inline Command Palette input — VS Code Quick Input.
-        // Typing pre-fills + opens the existing palette modal; Enter does the same.
-        // cppcheck-suppress duplicateCondition
-        if (trackerLocked) {
-            ImGui::BeginDisabled();
-        }
-        {
-            constexpr float kInlineMaxWidthPx = 640.0f;
-            constexpr float kInlineMinWidthPx = 200.0f;
-            constexpr float kRightReservedPx = 140.0f;
-            const float menuRightEdge = ImGui::GetCursorPosX();
-            const float rightLimit = ImGui::GetWindowContentRegionMax().x - kRightReservedPx;
-            const float availW = (std::max)(0.0f, rightLimit - menuRightEdge);
-
-            if (availW >= kInlineMinWidthPx) {
-                const float inputW = (std::min)(kInlineMaxWidthPx, availW * 0.55f);
-                const float xPad = (availW - inputW) * 0.5f;
-                ImGui::SetCursorPosX(menuRightEdge + xPad);
-                ImGui::SetNextItemWidth(inputW);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-                const bool committed = ImGui::InputTextWithHint("##cmd-palette-input", "Search commands (Ctrl+Shift+P)",
-                                                                d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
-                                                                ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::PopStyleVar();
-                const bool edited = ImGui::IsItemEdited();
-                const bool activated = ImGui::IsItemActivated();
-                if ((activated || edited || committed) && d.paletteInlineBuf[0] != '\0') {
-                    if (!commandPalette_.IsOpen()) {
-                        commandPalette_.Open();
-                    }
-                    commandPalette_.SetFilterText(d.paletteInlineBuf);
-                }
-                if (!commandPalette_.IsOpen() && !ImGui::IsItemActive() && d.paletteInlineBuf[0] != '\0') {
-                    d.paletteInlineBuf[0] = '\0';
-                }
-            }
-        }
-        if (trackerLocked)
-            ImGui::EndDisabled();
-
-#ifdef SMATCHET_EMBEDDED_IN_UNREAL
-        {
-            const char* closeLabel = "Close";
-            const float btnW = ImGui::CalcTextSize(closeLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            constexpr float kRightMargin = 10.0f;
-            const float xPos =
-                (std::max)(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - btnW - kRightMargin);
-            ImGui::SetCursorPosX(xPos);
-            if (ImGui::SmallButton(closeLabel)) {
-                app.CloseEmbeddedUi();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Hide Smatchet overlay (same as Ctrl+Shift+J)");
-            }
-        }
-#endif
-        ImGui::EndMainMenuBar();
-    }
-}
+// `SmatchetUI::drawMainMenuBar` moved to `SmatchetUI_MainMenu.cpp` per
+// `docs/design/large-files-and-phase-2.md` § A4. Only call site is
+// `SmatchetUI::Draw` above (the declaration stays in `SmatchetUI.h`).
+// MOVED_DRAW_MAIN_MENU_BAR_BEGIN
+// MOVED_DRAW_MAIN_MENU_BAR_END
 
 namespace {
 
@@ -1421,34 +817,5 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
 
 } // namespace
 
-void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
-    (void)app;
-    UiDrawSession& d = g_ui;
-
-    DrainFutureJoinQuiet(d.fieldCatalogFuture);
-    d.fieldCatalogLoading = false;
-    d.fieldCatalogFetchStarted = false;
-
-    DrainFutureJoinQuiet(d.initialTicketSyncFuture);
-    d.initialTicketSyncLoading = false;
-    d.initialTicketSyncStarted = false;
-
-    DrainFutureJoinQuiet(d.connectivityRecoveryTicketFetchFuture);
-    d.connectivityRecoveryTicketFetchLoading = false;
-    d.connectivityRecoveryTicketResyncPending = false;
-
-    d.hasInFlightEdit = false;
-
-    DrainFutureJoinQuiet(d.newIssueCreateFuture);
-    d.newIssueCreateInFlight = false;
-
-    for (auto& f : d.bulkImportFutures) {
-        DrainFutureJoinQuiet(f);
-    }
-    d.bulkImportFutures.clear();
-    d.bulkImportRunning = false;
-
-    DrainAuditReloadFuture(d);
-}
-
-UiDrawSession::~UiDrawSession() { DrainAuditReloadFuture(*this); }
+// `DrainUiDrawSessionFuturesBeforeAppTeardown` and `UiDrawSession::~UiDrawSession`
+// moved to `SmatchetUI_Layout.cpp` per `docs/design/large-files-and-phase-2.md` § A4.
