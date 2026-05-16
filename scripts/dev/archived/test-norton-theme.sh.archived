@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+# =============================================================================
+# ARCHIVED — DO NOT EXECUTE. File extension `.sh.archived` keeps this script
+# out of `scripts/dev/test-all.sh`'s `test-*.sh` auto-enrolment glob. Original
+# location: `scripts/dev/test-norton-theme.sh`.
+#
+# Why archived: drives `tests/ui/archived/norton_commander_theme.test.cpp.archived`
+# (also archived) — the test asserts the PR #91 blue palette which PR #105
+# retuned to teal. Removed from the live build until the palette is locked.
+#
+# To revive: copy this file to `scripts/dev/test-norton-theme.sh`, drop the
+# `.archived` extension, restore the matching test from
+# `tests/ui/archived/norton_commander_theme.test.cpp.archived`, re-add the
+# `extern "C"` line in `tests/ui/ui_tests_registry.cpp` and the source in
+# `tests/ui/CMakeLists.txt` _SMATCHET_UI_TEST_SOURCES list.
+#
+# Tracked: `docs/backlog/BACKLOG_PLANS.md` § 2.
+# =============================================================================
+
 # test-norton-theme.sh — bucket-E driver for the NortonCommander theme live-apply
 # test. Spawns an ephemeral Smatchet built with SMATCHET_BUILD_UI_TESTS=ON,
 # invokes ui_test.run with the NortonCommander filter, parses the JSON envelope,
