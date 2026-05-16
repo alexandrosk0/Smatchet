@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: claimed
+### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: in-flight
 
 - **Branch**: `feat/test-phase-4-config-migration`
 - **Owner agent**: `test-rig`
@@ -66,8 +66,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager*.cpp`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) opened against `develop`.
+- **Cleared by**: pending merge of [#134](https://github.com/alexandrosk0/Smatchet/pull/134).
 
 ### backend-audit-trail-per-event-path · status: shipped
 
