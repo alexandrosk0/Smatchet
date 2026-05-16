@@ -243,8 +243,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR D
 - **Claimed write set**: see same file § PR D for full inventory.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — interface + adapter + fakes shipped on branch; dual-target build clean; ctest pass. PR pending push. Track B (`large-files-and-phase-2`) on-hold gate releases after this merges.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — interface + adapter + fakes shipped on branch; dual-target build clean; ctest pass. PR [#127](https://github.com/alexandrosk0/Smatchet/pull/127) opened against `develop`. Track B (`large-files-and-phase-2`) on-hold gate releases after this merges.
+- **Cleared by**: pending merge of [#127](https://github.com/alexandrosk0/Smatchet/pull/127).
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
