@@ -492,14 +492,11 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
     return result.str();
 }
 
-
 static std::string FormatChangelogTimeValue(const std::string& value) {
     if (value.empty()) {
         return value;
     }
-    const bool allDigits = std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-        return std::isdigit(ch);
-    });
+    const bool allDigits = std::all_of(value.begin(), value.end(), [](unsigned char ch) { return std::isdigit(ch); });
     if (allDigits) {
         try {
             long long seconds = std::stoll(value);
@@ -659,9 +656,7 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
     }
 
     // Support a plain number (seconds).
-    const bool allDigits = std::all_of(s.begin(), s.end(), [](unsigned char ch) {
-        return std::isdigit(ch);
-    });
+    const bool allDigits = std::all_of(s.begin(), s.end(), [](unsigned char ch) { return std::isdigit(ch); });
     if (allDigits) {
         try {
             return std::stoll(s);
@@ -932,9 +927,3 @@ std::string FormatWorkDurationFromSeconds(long long seconds) {
     }
     return out.substr(start, end - start);
 }
-
-
-
-
-
-

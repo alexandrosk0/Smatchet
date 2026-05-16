@@ -530,10 +530,36 @@ Rig + infra (new / edited):
 
 (Append per shipped PR — `<sha> · <one-line summary>`.)
 
+- Phase 1 — 2026-05-16 · `feat/test-phase-1-tracker-pure-logic`
+  - `tests/Source_Core/IssueDraft.test.cpp` — 26 cases / 80 assertions covering Resolve/From/Missing/ToJson/FromJson/ComputeFieldChanges/PruneUnchangedFields/MapFieldIdsToNames + suppressed/special id predicates + default inherit list.
+  - `tests/Source_Core/IssueCreatePipeline.test.cpp` — 9 cases / 19 assertions on `MergeDraftIntoCachedTicketForUpdate` (extracted to a new pure helper TU; see "Deviations").
+  - `tests/Source_Core/TrackerFieldValueParser.extended.test.cpp` — 32 cases / 91 assertions covering Build/From/Merge option helpers + ClassifyTrackerFieldFamily + NormalizeTrackerFieldValue + ParseComments + ParseChangelog + Format/Json scalar helpers + user-sort + array append.
+  - `tests/Source_Core/TrackerFieldValueUtils.test.cpp` — 16 cases / 47 assertions covering FindOptionRecursive (incl. recursive descent), ResolveOptionId/Label, ResolveCurrentSelectionIds, EmptySelectPreviewLabel, TryResolveCascadingSelection (all four input shapes), and the three time-duration field predicates.
+  - `Source_Core/include/IssueCreatePipelineHelpers.h` + `Source_Core/src/IssueCreatePipelineHelpers.cpp` — new pure-helper TU exposing `MergeDraftIntoCachedTicketForUpdate` outside of `IssueCreatePipeline.cpp`'s anonymous namespace. Picked up automatically by `Source_Core/src/*.cpp` GLOB in the main `CMakeLists.txt`.
+  - `tests/CMakeLists.txt` — registered 4 new `.test.cpp` files, added `IssueDraft.cpp` + `IssueCreatePipelineHelpers.cpp` to the per-target source list, and linked `SQLiteCpp` for headers only (LocalCacheManager.h pulls `<SQLiteCpp/SQLiteCpp.h>` transitively via `IssueDraft.h`; no test calls into SQLite).
+
 ## Deviations from plan
 
 (Append per shipped PR — what changed vs this plan + one-line rationale.)
 
+- `TrackerLabelsEditor.test.cpp` / `TrackerDateTimeFieldEditor.test.cpp` deferred — both `.cpp` files include `<imgui.h>` + `AppController.h`; the only purely-public helpers are single-line `Is*Field` predicates and don't justify a test target. Future fix is to extract the pure ParseCsv / SortAndUniqueLabels / Parse*Date* helpers into a separate TU.
+- `TrackerFieldValuePayload.test.cpp` deferred — the file named in the plan (`Source_Core/src/TrackerFieldValuePayload.cpp`) does not exist in the tree; the closest match (`TrackerFieldPayload.cpp`) transitively includes `JiraClient.h` (cpr + ConfigManager + full HTTP surface) via `TrackerFieldPayload.h`. Not in scope for this phase.
+- `JqlSurgery.test.cpp` deferred — no `JqlSurgery.cpp` exists; the JQL surface is already covered by the existing `tests/Source_Core/JqlProjectScope.test.cpp`. Plan name aliased an older path.
+- `TrackerFieldCatalog.test.cpp` deferred — `TrackerFieldCatalog.cpp` `#include "JiraClient.h"`, which pulls in cpr / ConfigManager / ITrackerClient. Pure parts would need to be extracted into a separate TU first.
+- `IssueCreatePipeline.test.cpp` scope trimmed — `MergeDraftIntoCachedTicketForUpdate` was moved to a new `Source_Core/include/IssueCreatePipelineHelpers.h` + dedicated `.cpp` (clean refactor, no public-header touch on `IssueCreatePipeline.h`). `ApplyPostIssueSteps` decision logic is **deferred**: the helper drives `ITrackerClient::UpdateIssueFields` / `AddIssueToSprint` / `AttachFilesToIssue`, so unit-testing its branches requires a mock client. That work belongs alongside an `ITrackerClient` mock harness (Phase 3+ HTTP layer).
+
 ## Verification
 
 (Append per shipped PR — what ran + result.)
+
+- Phase 1 — 2026-05-16
+  - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.
+  - `cmake --build --preset ninja-debug-msys2 --target SmatchetStandalone` — clean (new helper TU compiles into the production exe via `Source_Core/src/*.cpp` glob).
+  - `ctest --output-on-failure` from `build/ninja-test-msys2`: `1/1 smatchet_tests Passed (0.03 sec)`.
+  - `SmatchetTests.exe`: 136 test cases (up from 73) / 476 assertions (up from 305), 0 failed, 0 skipped.
+  - Mutation sanity (5 high-risk cases): one production-side mutation per case, verified each fails the target test, reverted afterward.
+    - `PruneUnchangedFields_DoesNotEraseOnCacheMiss`: force-erase on cache-miss → 1 failure (target case).
+    - `ToJsonFromJson_RoundTripPreservesNumericTypes`: drop integer coercion in `FromJson` → 1 failure (target case).
+    - `MergeDraftIntoCachedTicketForUpdate_HonoursPutFieldsSucceeded`: overlay all draft fields ignoring `putFieldsSucceeded` → 2 failures (target case + neighbour `skips keys absent from draft`).
+    - `MergeTrackerFieldOption_DoesNotDuplicateById`: invert dedup-key check → 4 failures (target case + 3 dedup-by-children/value/disabled siblings).
+    - `ClassifyTrackerFieldFamily_DetectsCascadingSelect`: force `hasChildren=false` → 1 failure (target case).
