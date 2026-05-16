@@ -78,7 +78,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — shipped on develop at sha 8724b8b (branch deleted).
 - **Cleared by**: merged to develop at `8724b8b`.
 
-### code-review-backlog · A3 · required-field-glyph · status: claimed
+### code-review-backlog · A3 · required-field-glyph · status: in-flight
 
 - **Branch**: `feat/required-field-ui-glyph`
 - **Owner agent**: `tracker-backend`
@@ -86,14 +86,14 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Claimed write set**:
   - `Source_Core/src/TicketFieldEditor.cpp`
   - `Source_Core/src/SmatchetNewIssueDraftUi.cpp`
-  - `Locales/*.json` (tooltip string)
+  - `Source_Core/src/SmatchetLocalization.cpp` (agent corrected: baseline strings live in C++ table, not `Locales/*.json`)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip A3)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/TicketFieldEditor.h`, `Source_Core/include/SmatchetNewIssueDraftUi.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#113](https://github.com/alexandrosk0/Smatchet/pull/113) opened against `develop`.
+- **Cleared by**: pending merge of [#113](https://github.com/alexandrosk0/Smatchet/pull/113).
 
-### code-review-backlog · C7 · grid-pushcliprect-audit · status: claimed
+### code-review-backlog · C7 · grid-pushcliprect-audit · status: in-flight
 
 - **Branch**: `feat/grid-pushcliprect-audit`
 - **Owner agent**: `grid-engine`
@@ -103,21 +103,21 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C7)
 - **Read-only adjacency**: `Source_Core/include/SmatchetActiveProjectGridUi.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#115](https://github.com/alexandrosk0/Smatchet/pull/115) opened against `develop`.
+- **Cleared by**: pending merge of [#115](https://github.com/alexandrosk0/Smatchet/pull/115).
 
-### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: claimed
+### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: in-flight
 
 - **Branch**: `feat/plane-fetchissuesforkeys-filter`
-- **Owner agent**: `tracker-backend`
+- **Owner agent**: `tracker-backend` (orchestrator-direct after isolated worktrees thrashed twice on API 500)
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § B4
 - **Claimed write set**:
-  - `Source_Core/src/PlaneClient.cpp` (FetchIssuesForKeys around lines 1504-1525 only)
-  - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4)
+  - `Source_Core/src/PlaneIssueSearch.cpp` (FetchIssuesForKeys only — file split from `PlaneClient.cpp` since the backlog entry was written)
+  - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4 → 🟡 partial; server-side `sequence_id__in` filter deferred as B4-v2)
 - **Read-only adjacency**: `Source_Core/include/PlaneClient.h`, `Source_Core/include/ITrackerClient.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#116](https://github.com/alexandrosk0/Smatchet/pull/116) opened against `develop`.
+- **Cleared by**: pending merge of [#116](https://github.com/alexandrosk0/Smatchet/pull/116).
 
 ### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: shipped
 
