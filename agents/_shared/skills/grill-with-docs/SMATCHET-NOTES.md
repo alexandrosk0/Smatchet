@@ -9,7 +9,6 @@ for f in SKILL.md ADR-FORMAT.md CONTEXT-FORMAT.md; do
   curl -fsSL "https://raw.githubusercontent.com/mattpocock/skills/main/skills/engineering/grill-with-docs/$f" \
     -o "agents/_shared/skills/grill-with-docs/$f"
 done
-bash scripts/sync-agents.sh
 ```
 
 ## Smatchet-specific file mapping
