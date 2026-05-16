@@ -2,7 +2,7 @@
 # AUTO-GENERATED MIRROR of ../../agents/p4-blame.md@v1 — DO NOT EDIT.
 # Run scripts/sync-agents.sh to regenerate.
 name: p4-blame
-description: Perforce blame integration — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `BlameSyntaxHighlight`, `CallstackParser`. Covers `p4 annotate` / `p4 describe` invocation, blame parsing, syntax-highlighted blame views, stack-frame symbolication via `PathRemaps`, Jira-comment export of blame.
+description: Perforce blame integration — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `CppSyntaxHighlight`, `CallstackParser`. Covers `p4 annotate` / `p4 describe` invocation, blame parsing, syntax-highlighted blame views, stack-frame symbolication via `PathRemaps`, Jira-comment export of blame.
 complexity: low
 read-only: false
 capabilities:
@@ -39,7 +39,7 @@ Perforce blame specialist.
 - **Snippets are for export.** `LineSnippet` exists so Jira-comment / AI export has source context. Don't repurpose it for display rendering — the editor already has the source.
 - **`PathRemaps` apply to callstacks.** `CallstackParser` consumes user-configured remap rules (longest-prefix match, case-sensitive on Windows paths). Don't change the matching algorithm without checking `ApplyPathRemaps` callers — Windows path semantics are easy to break.
 - **Ignore-keywords filter frames.** `FrameMatchesIgnoreKeywords` lets users hide noise (vendored deps, generated code). Filter in the parser layer, not in the UI.
-- **Syntax highlighting is offline.** `BlameSyntaxHighlight` operates on local file content with no network — keep it that way.
+- **Syntax highlighting is offline.** `CppSyntaxHighlight` operates on local file content with no network — keep it that way.
 
 **Workflow:**
 

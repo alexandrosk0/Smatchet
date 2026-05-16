@@ -4,4 +4,4 @@
 Checks: '-*,clang-analyzer-deadcode.DeadStores,misc-unused-using-decls,misc-unused-alias-decls'
 FormatStyle: none
 # FetchContent / third-party trees (ImGui, etc.): avoid deadcode noise from vendored headers.
-ExcludeHeaderFilterRegex: '.*/_deps/.*'
+ExcludeHeaderFilterRegex: '.*/(_deps|\.fetchcontent-src|\.fetchcontent-build)/.*'

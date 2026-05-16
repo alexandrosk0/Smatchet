@@ -1,8 +1,10 @@
 #include "MarkdownPreviewRender.h"
 
+#include "CppSyntaxHighlight.h"
 #include "MarkdownConvert.h"
 #include "SmatchetImGuiFonts.h"
 #include "Logger.h"
+#include "StringUtil.h"
 
 extern "C" {
 #include "md4c.h"
@@ -69,6 +71,9 @@ struct PreviewState {
     /// Verbatim accumulator for fenced / indented code blocks (separate from `runs`
     /// so newlines and whitespace inside code render byte-for-byte).
     std::string codeBuffer;
+    /// Language tag from `MD_BLOCK_CODE_DETAIL::lang` ("cpp", "c++", "python", ...).
+    /// Empty for indented code blocks or fences with no info string.
+    std::string codeLang;
     /// Stack of list kinds: '-' for bullet, '1' for ordered.
     std::vector<char> listStack;
     /// Per-ordered-list counter so we render "1. " "2. " ...
@@ -470,6 +475,13 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
     case MD_BLOCK_CODE:
         PreviewFlushBlock(s);
         ++s.codeDepth;
+        s.codeLang.clear();
+        if (detail != nullptr) {
+            auto* cd = static_cast<MD_BLOCK_CODE_DETAIL*>(detail);
+            if (cd->lang.text != nullptr && cd->lang.size > 0) {
+                s.codeLang.assign(cd->lang.text, cd->lang.size);
+            }
+        }
         break;
     case MD_BLOCK_P:
         // Inside a list item the buffer is already primed with the marker; don't flush.
@@ -564,14 +576,21 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
         break;
     case MD_BLOCK_CODE: {
         const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
+        const std::string langLower = ToLowerAsciiCopy(s.codeLang);
+        const bool isCpp = (langLower == "cpp" || langLower == "c++" || langLower == "cxx" || langLower == "cc" ||
+                            langLower == "c" || langLower == "hpp" || langLower == "h");
         if (s.mode == MarkdownPreviewRender::Mode::Tooltip) {
             // Nested child windows inside a tooltip can blow the auto-sized
             // bounds — render inline with the monospace font + dark tint only.
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-            ImGui::TextUnformatted(s.codeBuffer.c_str());
-            ImGui::PopStyleColor();
+            if (isCpp) {
+                DrawColoredCppText(s.codeBuffer.c_str());
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
+                ImGui::TextUnformatted(s.codeBuffer.c_str());
+                ImGui::PopStyleColor();
+            }
             if (fonts.Mono)
                 ImGui::PopFont();
         } else {
@@ -583,15 +602,20 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
                               ImGuiWindowFlags_HorizontalScrollbar);
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-            ImGui::TextUnformatted(s.codeBuffer.c_str());
-            ImGui::PopStyleColor();
+            if (isCpp) {
+                DrawColoredCppText(s.codeBuffer.c_str());
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
+                ImGui::TextUnformatted(s.codeBuffer.c_str());
+                ImGui::PopStyleColor();
+            }
             if (fonts.Mono)
                 ImGui::PopFont();
             ImGui::EndChild();
             ImGui::PopStyleColor();
         }
         s.codeBuffer.clear();
+        s.codeLang.clear();
         if (s.codeDepth > 0)
             --s.codeDepth;
         break;
