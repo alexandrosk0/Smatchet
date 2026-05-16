@@ -4,6 +4,24 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-16 · test-rig · [infra] — Phase 1 (`feat/test-phase-1-tracker-pure-logic`) deferred 4 tracker units pending refactor
+  Details: `tests/Source_Core/{IssueDraft,IssueCreatePipeline,TrackerFieldValueParser.extended,TrackerFieldValueUtils}.test.cpp` shipped (171 new CHECKs; 5/5 high-risk mutation sanity green). Plan-named units NOT shipped because each has pure helpers buried under ImGui / AppController / JiraClient / cpr includes — not pure-testable without a TU split:
+    - `Source_Core/src/TrackerLabelsEditor.cpp` — parse/serialize round-trip + dup-detection lives next to ImGui input handling.
+    - `Source_Core/src/TrackerDateTimeFieldEditor.cpp` — ISO-8601 parser lives next to ImGui calendar widget.
+    - `Source_Core/src/TrackerFieldPayload.cpp` — payload builder pulls JiraClient → cpr → ConfigManager transitively.
+    - `Source_Core/src/TrackerFieldCatalog.cpp` — catalog merge / lookup lives next to JiraClient catalog-fetch surface.
+  Proposal: per-unit TU split (lift pure helpers to a sibling `*Pure.cpp` + matching header with no ImGui/cpr includes), then add the doctest in a follow-up phase. Estimated cost: ~1 h per unit (4 h total).
+  Bonus: `IssueCreatePipeline::ApplyPostIssueSteps` decision logic also deferred — needs `ITrackerClient` mock fixture (Phase 3 HTTP layer).
+  Status: open — pick up after Phase 3 ships the HTTP / SQLite fixtures.
+
+- 2026-05-16 · test-rig · [infra] — `LocalCacheManager.h` mixes SQLite surface with pure `CachedTicket` POD
+  Details: Phase 1 test target had to link `SQLiteCpp` (headers only) because `IssueDraft.h` / `IssueCreatePipeline.h` transitively pull `LocalCacheManager.h` for the `CachedTicket` struct. No SQLite code is executed in tests — the link is purely a transitive-include concession. Proposal: split `CachedTicket` + `PendingCreate` + `PendingFieldEditRecord` POD types into a SQLite-free `Source_Core/include/CachedTicketTypes.h`; `LocalCacheManager.h` re-includes it. Test rig then drops the SQLite link entirely and a Phase 2 `TicketGridModel` test target gets the same benefit. Estimated cost: 30 min (header move + replace include lines).
+  Status: open — clean-up; do before Phase 3 SQLite fixture lands or it becomes harder to test in isolation.
+
+- 2026-05-16 · orchestrator · [process] — Plan-time `ls Source_Core/src/` cross-check missing
+  Details: `docs/design/test-suite-expansion.md` Phase 1 named 4 files that don't exist at the stated paths (`JqlSurgery.cpp` is `JqlProjectScope.cpp`; `TrackerFieldValuePayload.cpp` is `TrackerFieldPayload.cpp` and is not pure; `TrackerFieldCatalog.h` exists but its only pure helpers are not split out). `test-rig` agent caught it post-skeleton-scan, costing ~10 min of cross-walk before deferral entries could be written confidently. Proposal: before finalising any test-coverage plan, the orchestrator runs a one-liner `Glob` / skeleton scan to confirm every named production file exists. 5 s of pre-flight saves ~10 min per phase agent.
+  Status: open.
+
 - 2026-05-16 · build-doctor · [tooling] — Windows-path-separator regex bug in build-log-grep scripts
   Details: While shipping Slice 4 (`scripts/dev/test-build-warnings.sh`), the first regex used `/` as the only path separator, but GCC under MinGW emits source paths with `\` (e.g. `..\..\Target_Standalone\main.cpp`). Test silently passed despite real warnings; caught by a deliberate negative-test (restored dead helper, expected exit-1, got exit-0). Cost ~5 min. Proposal: add to AGENTS.md § Debug techniques (or `agents/build-doctor.md` § Common causes) — "any future build-log-grep on Windows must use `[\\/]` for path separators, not `/`". Estimated cost: 5 min doc edit.
   Status: open
