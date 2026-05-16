@@ -1,0 +1,103 @@
+name: Build and test
+
+# Slice 5 of docs/design/first-time-setup-hardening.md — canonical Windows + MSYS2
+# UCRT64 CI job. MSVC, lint (clang-format / cppcheck / clang-tidy), and Unreal DX12
+# verification are deferred to Slices 5b / 5c / 5d.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+# Cancel in-flight runs for the same branch on a new push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-msys2-ucrt64:
+    name: Windows + MSYS2 UCRT64
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-test-msys2/_deps
+            build/ninja-iter-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Toolchain pre-flight (doctor.sh)
+        # Doctor exit codes: 0=GREEN, 1=RED (required check failed), 2=YELLOW
+        # (warn-only — cppcheck / clang-tidy / clang-format optional). YELLOW is
+        # acceptable in CI; only RED should fail the job.
+        run: |
+          set +e
+          bash scripts/dev/doctor.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::doctor.sh failed (required toolchain check)"
+            exit 1
+          fi
+          echo "doctor.sh rc=$rc (0=GREEN, 2=YELLOW acceptable in CI)"
+
+      - name: Configure ninja-test-msys2
+        run: cmake --preset ninja-test-msys2
+
+      - name: Build SmatchetTests
+        run: cmake --build --preset ninja-test-msys2 --target SmatchetTests
+
+      - name: Run ctest
+        # No CTest preset is wired (see build-doctor common causes); invoke ctest
+        # from the build directory directly.
+        working-directory: build/ninja-test-msys2
+        run: ctest --output-on-failure
+
+      - name: Configure ninja-iter-msys2
+        run: cmake --preset ninja-iter-msys2
+
+      - name: Build SmatchetStandalone
+        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+      - name: Run non-UI bucket-A tests
+        # Headless GH runner — UI-spawn tests (test-ui-views-columns-reorder.sh,
+        # test-theme-syntax-colors.sh, test-doctor.sh) need either a real display
+        # or a headless GL context (mesa / xvfb). Enable them when bucket-E
+        # / headless GL is wired in a later slice.
+        run: |
+          bash scripts/dev/test-cppcheck-path-detection.sh
+          bash scripts/dev/test-build-warnings.sh
+          bash scripts/dev/test-markdown-lang-tag.sh
+
+      - name: Upload SmatchetStandalone.exe on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmatchetStandalone-failure-${{ github.run_id }}
+          path: build/ninja-iter-msys2/SmatchetStandalone.exe
+          if-no-files-found: ignore

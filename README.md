@@ -1,5 +1,7 @@
 # Smatchet
 
+[![Build and test](https://github.com/alexandrosk0/Smatchet/actions/workflows/build-and-test.yml/badge.svg?branch=develop)](https://github.com/alexandrosk0/Smatchet/actions/workflows/build-and-test.yml)
+
 Smatchet is a high-performance, engine-agnostic productivity tool and issue-tracking client. It provides a unified interface for project management, Perforce source control analysis, and AI assistance — all built using C++14 and Dear ImGui. Smatchet supports **multiple tracker backends** (Jira and Plane.so) through a clean, backend-agnostic architecture, and can run as a standalone desktop application or embedded directly into Unreal Engine.
 
 ## Features
