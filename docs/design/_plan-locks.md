@@ -119,7 +119,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — packet dispatched (worktree isolated).
 - **Cleared by**: TBD PR against `develop`.
 
-### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: in-flight
+### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: shipped
 
 - **Branch**: `feat/test-callstack-adversarial`
 - **Owner agent**: `test-rig`
@@ -130,10 +130,10 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
 - **Read-only adjacency**: `Source_Core/src/CallstackParser.cpp`, `Source_Core/include/CallstackParser.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — `test-rig` shipped 4 adversarial subcases + substring pin + docs; ctest 192/192 green; PR #112 open against develop.
-- **Cleared by**: pending merge of [#112](https://github.com/alexandrosk0/Smatchet/pull/112).
+- **Last update**: 2026-05-16 — merged via PR #112 at sha effda92.
+- **Cleared by**: PR `#112` merged at `effda92`.
 
-### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: in-flight
+### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: shipped
 
 - **Branch**: `feat/p4blame-parse-tu-split`
 - **Owner agent**: `test-rig` (TU-split pre-authorised per AGENTS.md applied rule)
@@ -148,7 +148,83 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
 - **Read-only adjacency**: `Source_Core/include/P4Blame.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — first commit pushed; PR pending against `develop`.
+- **Last update**: 2026-05-16 — merged via PR #111 at sha 52832d0.
+- **Cleared by**: PR `#111` merged at `52832d0`.
+
+### test-suite-expansion-completion · wave-A2 · tracker-labels-pure-tu · status: claimed
+
+- **Branch**: `feat/tracker-labels-pure-tu`
+- **Owner agent**: `test-rig` (TU-split pre-authorised)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C1
+- **Claimed write set**:
+  - `Source_Core/include/TrackerLabelsPure.h` (NEW)
+  - `Source_Core/src/TrackerLabelsPure.cpp` (NEW)
+  - `Source_Core/src/TrackerLabelsEditor.cpp` (call-site rewire of pure helpers only — no semantic change)
+  - `tests/Source_Core/TrackerLabelsPure.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/TrackerLabelsEditor.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### test-suite-expansion-completion · wave-A2 · tracker-datetime-pure-tu · status: claimed
+
+- **Branch**: `feat/tracker-datetime-pure-tu`
+- **Owner agent**: `test-rig` (TU-split pre-authorised)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C2
+- **Claimed write set**:
+  - `Source_Core/include/TrackerDateTimePure.h` (NEW)
+  - `Source_Core/src/TrackerDateTimePure.cpp` (NEW)
+  - `Source_Core/src/TrackerDateTimeFieldEditor.cpp` (call-site rewire only)
+  - `tests/Source_Core/TrackerDateTimePure.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/TrackerDateTimeFieldEditor.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### test-suite-expansion-completion · wave-A2 · tracker-payload-pure-tu · status: claimed
+
+- **Branch**: `feat/tracker-payload-pure-tu`
+- **Owner agent**: `test-rig` (TU-split pre-authorised)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C3
+- **Claimed write set**:
+  - `Source_Core/include/TrackerFieldPayloadPure.h` (NEW)
+  - `Source_Core/src/TrackerFieldPayloadPure.cpp` (NEW)
+  - `Source_Core/src/TrackerFieldPayload.cpp` (call-site rewire only — `JiraClient.h` stays in production TU)
+  - `tests/Source_Core/TrackerFieldPayloadPure.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/TrackerFieldPayload.h`, `Source_Core/include/JiraClient.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
+### test-suite-expansion-completion · wave-A2 · tracker-field-catalog-pure-tu · status: claimed
+
+- **Branch**: `feat/tracker-field-catalog-pure-tu`
+- **Owner agent**: `test-rig` (TU-split pre-authorised)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C4
+- **Claimed write set**:
+  - `Source_Core/include/TrackerFieldCatalogPure.h` (NEW)
+  - `Source_Core/src/TrackerFieldCatalogPure.cpp` (NEW)
+  - `Source_Core/src/TrackerFieldCatalog.cpp` (call-site rewire only — `JiraClient.h` stays in production TU)
+  - `tests/Source_Core/TrackerFieldCatalogPure.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/JiraClient.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
 - **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion · phase 1 · status: in-flight
