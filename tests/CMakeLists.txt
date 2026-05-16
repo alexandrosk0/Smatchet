@@ -24,6 +24,8 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_PathUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetTheme.cpp"
 )
 
