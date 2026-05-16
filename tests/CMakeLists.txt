@@ -22,6 +22,8 @@ add_executable(SmatchetTests
     Source_Core/MarkdownPreviewLangTag.test.cpp
     Source_Core/IssueDraft.test.cpp
     Source_Core/IssueCreatePipeline.test.cpp
+    Source_Core/CallstackParser.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"

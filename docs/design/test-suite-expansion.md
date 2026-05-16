@@ -530,6 +530,11 @@ Rig + infra (new / edited):
 
 (Append per shipped PR — `<sha> · <one-line summary>`.)
 
+- Phase 2 — 2026-05-16 · `feat/test-phase-2-callstack-p4-blame`
+  - `tests/Source_Core/CallstackParser.test.cpp` — 7 cases / 54 assertions covering `ParseCallstackText` across MSVC `path(line)`, Unreal `Module!Func [path(line)]`, Clang `path:line[:col]`, GDB `at FUNC PATH:LINE`; `ApplyPathRemaps` (single rule, no-match, empty list, longest-prefix wins, longest-prefix wins regardless of declaration order, empty `FromPrefix` ignored, equal-prefix-tie broken by last-rule index, full-path prefix, prefix-longer-than-path); `FrameMatchesIgnoreKeywords` (empty list, empty keyword, raw/function/path hits, case-insensitive, multi-keyword OR).
+  - `tests/CMakeLists.txt` — registered `CallstackParser.test.cpp` and added `Source_Core/src/CallstackParser.cpp` to the per-target source list. No new link libs (CallstackParser.h pulls only `ConfigManager.h` for `PathRemapRule`, already covered by existing linkage).
+  - Test totals after Phase 2: 143 cases (up from 136) / 530 assertions (up from 476). 0 failed.
+
 - Phase 1 — 2026-05-16 · `feat/test-phase-1-tracker-pure-logic`
   - `tests/Source_Core/IssueDraft.test.cpp` — 26 cases / 80 assertions covering Resolve/From/Missing/ToJson/FromJson/ComputeFieldChanges/PruneUnchangedFields/MapFieldIdsToNames + suppressed/special id predicates + default inherit list.
   - `tests/Source_Core/IssueCreatePipeline.test.cpp` — 9 cases / 19 assertions on `MergeDraftIntoCachedTicketForUpdate` (extracted to a new pure helper TU; see "Deviations").
@@ -542,6 +547,10 @@ Rig + infra (new / edited):
 
 (Append per shipped PR — what changed vs this plan + one-line rationale.)
 
+- Phase 2 — `PathRemaps.test.cpp` not added as a standalone file: the plan named `Source_Core/src/PathRemaps.cpp` as a separate TU, but no such file exists. `ApplyPathRemaps` lives inside `Source_Core/src/CallstackParser.cpp`; coverage was folded into `tests/Source_Core/CallstackParser.test.cpp` (9 SUBCASEs, including the documented mutation-sanity case for longest-prefix selection).
+- Phase 2 — `P4BlameParse.test.cpp` deferred: every parsing helper named in the plan (`ParseAnnotateTextLine`, `ParseLatestChangeFromChangesOutput`, `SplitLines`, `StripP4UserDomain`) is `static`-in-anonymous-namespace inside `Source_Core/src/P4Blame.cpp`. The public surface (`P4BlameLine`, `P4AnnotateFile`) spawns the `p4` process, which is out of scope for the pure-logic doctest rig. Phase 2 write set is tests-only per the orchestrator packet, so the TU split needed to expose the parsers (same pattern as `IssueCreatePipelineHelpers` in Phase 1) lands as a separate prep PR. Backlog entry `2026-05-16 · test-rig · [infra] — Phase 2 P4BlameParse.test.cpp deferred` tracks the follow-up plan (split + tests, ≈1 h combined).
+- Phase 2 — `TryParsePathLinePair` and `TryExtractUnrealOrModuleFunctionPrefix` are exercised through the public `ParseCallstackText` rather than direct calls (both live in anonymous namespace inside `CallstackParser.cpp`). The MSVC-line-number mutation-sanity target is satisfied: flipping `outLine = std::stoi(m[2].str())` to `+ 1` produced 5 assertion failures in the MSVC subcases (revert verified green).
+
 - `TrackerLabelsEditor.test.cpp` / `TrackerDateTimeFieldEditor.test.cpp` deferred — both `.cpp` files include `<imgui.h>` + `AppController.h`; the only purely-public helpers are single-line `Is*Field` predicates and don't justify a test target. Future fix is to extract the pure ParseCsv / SortAndUniqueLabels / Parse*Date* helpers into a separate TU.
 - `TrackerFieldValuePayload.test.cpp` deferred — the file named in the plan (`Source_Core/src/TrackerFieldValuePayload.cpp`) does not exist in the tree; the closest match (`TrackerFieldPayload.cpp`) transitively includes `JiraClient.h` (cpr + ConfigManager + full HTTP surface) via `TrackerFieldPayload.h`. Not in scope for this phase.
 - `JqlSurgery.test.cpp` deferred — no `JqlSurgery.cpp` exists; the JQL surface is already covered by the existing `tests/Source_Core/JqlProjectScope.test.cpp`. Plan name aliased an older path.
@@ -551,6 +560,14 @@ Rig + infra (new / edited):
 ## Verification
 
 (Append per shipped PR — what ran + result.)
+
+- Phase 2 — 2026-05-16
+  - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.
+  - `ctest --output-on-failure` from `build/ninja-test-msys2`: `1/1 smatchet_tests Passed (0.04 sec)`.
+  - `SmatchetTests.exe`: 143 test cases (up from 136) / 530 assertions (up from 476), 0 failed, 0 skipped.
+  - Mutation sanity (production-side, on `Source_Core/src/CallstackParser.cpp`):
+    - `ApplyPathRemaps` longest-prefix select (`from.size() >= bestLen` → `<= bestLen`): 8 assertion failures across the longest-prefix SUBCASEs (`longest-prefix wins`, `longest-prefix wins regardless of rule order`, `later rule with equal-length prefix wins`). Reverted to green.
+    - `TryParsePathLinePair` MSVC line-number capture (`outLine = std::stoi(m[2].str())` → `+ 1`): 5 assertion failures across the MSVC SUBCASEs (line 1 sentinel, line 123, large line 987654, bare-relative line 7, Unreal `Module!Class::Method() [path(line)]` line 42). Reverted to green.
 
 - Phase 1 — 2026-05-16
   - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.

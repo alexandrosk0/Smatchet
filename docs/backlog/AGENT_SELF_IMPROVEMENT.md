@@ -4,6 +4,19 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-16 · code-review + security-review · [test] — `CallstackParser.test.cpp` (Phase 2) non-blocking polish
+  Details: review of PR #106 produced two non-blocking medium findings. (a) `tests/Source_Core/CallstackParser.test.cpp:88` uses a soft assertion `CHECK_FALSE(f.Function.empty())` — passes regardless of value; should pin the expected substring like the MSVC SUBCASEs do. (b) No adversarial-input fixtures — production code defensively handles `std::stoi` overflow and benign-input `ApplyPathRemaps` non-normalization, but the tests do not lock those invariants. Add adversarial subcases: `INT_MAX+1` line number (asserts overflow returns zero frames), ≥64 KiB single line (cheap ReDoS sentinel, asserts completion under 50 ms), `..`-traversal path through `ApplyPathRemaps` (asserts unchanged — normalization is caller's job), NUL-embedded fixture. Routes here per autonomous-execution rule; not a Phase 2 blocker because production code is unchanged. Estimated cost: 30 min.
+  Status: open.
+
+- 2026-05-16 · orchestrator · [process] — test-rig agent packet should pre-authorize `<Unit>Parse.{h,cpp}` TU split for anon-namespace pure helpers
+  Details: Phase 2 deferred all of `P4BlameParse.test.cpp` because the agent's auto-mode classifier denied the production-side TU split that Phase 1 used for `IssueCreatePipelineHelpers`. Same shape of refactor, same reason (anon-namespace pure helpers not reachable from tests). Phase 1's packet explicitly allowed the split; Phase 2's packet did not. Fix: when delegating a `test-rig` phase whose plan lists units with anonymous-namespace pure helpers, the orchestrator packet should explicitly include `Source_Core/{include,src}/<Unit>Parse.{h,cpp}` extraction in the allowed write set. Phase 1 has the recipe. Estimated cost: 5 min for the next Phase 3+ packet template; ~1 h to come back and ship `P4BlameParse.test.cpp` with the TU split.
+  Status: open.
+
+- 2026-05-16 · test-rig · [infra] — Phase 2 `P4BlameParse.test.cpp` deferred; pure parsers live in anonymous namespace inside `P4Blame.cpp`
+  Details: `ParseAnnotateTextLine`, `ParseLatestChangeFromChangesOutput`, `SplitLines`, `StripP4UserDomain` are all `static`-in-anonymous-namespace inside `Source_Core/src/P4Blame.cpp`. The only public surface (`P4BlameLine`, `P4AnnotateFile`, `P4ChangelistDescribeCache::GetOrFetch`) spawns the `p4` process — not pure-testable without the prod-side TU split Phase 1 used for `IssueCreatePipelineHelpers`. The `test-rig` agent's write set for Phase 2 is tests-only, so the extraction must be a separate prep PR.
+  Proposal: prep PR splits the four parsers into `Source_Core/{include,src}/P4BlameParse.{h,cpp}` (≈100 LoC), `P4Blame.cpp` calls them via a small using-decl block. Then `tests/Source_Core/P4BlameParse.test.cpp` ships ≈8 cases / ≈30 CHECKs covering: each of the 4 annotate-line shapes, `Change N on DATE by USER` header parse, empty / malformed / `@`-stripped users, line-split with no trailing `\n`. Mutation-sanity target: invert the `m[2]` capture in `ParseAnnotateTextLine` to confirm a test catches the column-shift. Estimated cost: 30 min prep PR + 30 min test PR.
+  Status: open — pick up alongside the Phase 1 TU-split sweep.
+
 - 2026-05-16 · test-rig · [infra] — Phase 1 (`feat/test-phase-1-tracker-pure-logic`) deferred 4 tracker units pending refactor
   Details: `tests/Source_Core/{IssueDraft,IssueCreatePipeline,TrackerFieldValueParser.extended,TrackerFieldValueUtils}.test.cpp` shipped (171 new CHECKs; 5/5 high-risk mutation sanity green). Plan-named units NOT shipped because each has pure helpers buried under ImGui / AppController / JiraClient / cpr includes — not pure-testable without a TU split:
     - `Source_Core/src/TrackerLabelsEditor.cpp` — parse/serialize round-trip + dup-detection lives next to ImGui input handling.
