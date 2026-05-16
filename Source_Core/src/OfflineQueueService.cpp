@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "IOfflineQueueDeps.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "ITrackerClient.h"
@@ -54,14 +55,14 @@ std::string FormatOfflineQueueTerminalLine(const char* action, const char* stage
 }
 } // namespace
 
-OfflineQueueService::OfflineQueueService(AppController& app) : app_(app) {}
+OfflineQueueService::OfflineQueueService(IOfflineQueueDeps& deps) : deps_(deps) {}
 
 std::size_t OfflineQueueService::GetPendingCreateCount() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return 0;
     }
     try {
-        return app_.Cache->LoadPendingCreates().size();
+        return deps_.Cache()->LoadPendingCreates().size();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetPendingCreateCount failed: %s", ex.what());
         return 0;
@@ -72,11 +73,11 @@ std::size_t OfflineQueueService::GetPendingCreateCount() const {
 }
 
 std::size_t OfflineQueueService::GetDeadPendingCreateCount() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return 0;
     }
     try {
-        return app_.Cache->GetDeadPendingCreateCount();
+        return deps_.Cache()->GetDeadPendingCreateCount();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetDeadPendingCreateCount failed: %s", ex.what());
         return 0;
@@ -87,11 +88,11 @@ std::size_t OfflineQueueService::GetDeadPendingCreateCount() const {
 }
 
 std::vector<PendingCreate> OfflineQueueService::GetPendingCreates() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return {};
     }
     try {
-        return app_.Cache->LoadPendingCreates();
+        return deps_.Cache()->LoadPendingCreates();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetPendingCreates failed: %s", ex.what());
         return {};
@@ -102,11 +103,11 @@ std::vector<PendingCreate> OfflineQueueService::GetPendingCreates() const {
 }
 
 std::vector<DeadPendingCreate> OfflineQueueService::GetDeadPendingCreates() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return {};
     }
     try {
-        return app_.Cache->LoadDeadPendingCreates();
+        return deps_.Cache()->LoadDeadPendingCreates();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetDeadPendingCreates failed: %s", ex.what());
         return {};
@@ -122,12 +123,12 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
                                                 const std::string& legacyPlaneProjectId,
                                                 const std::string& trackerType) {
     static const std::string kSweepFlag = "legacy_project_swept_v1";
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         LOG_WARN("OfflineQueueService::RunLegacyProjectSweep skipped: cache not initialized.");
         return;
     }
     try {
-        if (app_.Cache->HasCacheMetaFlag(kSweepFlag)) {
+        if (deps_.Cache()->HasCacheMetaFlag(kSweepFlag)) {
             return;
         }
     } catch (const std::exception& ex) {
@@ -140,7 +141,7 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
 
     std::vector<PendingCreate> rows;
     try {
-        rows = app_.Cache->LoadPendingCreates();
+        rows = deps_.Cache()->LoadPendingCreates();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep LoadPendingCreates failed: %s", ex.what());
         return;
@@ -182,7 +183,7 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
             draft.ProjectKey = recoveredKey;
             const std::string newPayload = IssueDraftHelpers::ToJson(draft);
             try {
-                app_.Cache->UpdatePendingCreatePayload(pc.Id, newPayload);
+                deps_.Cache()->UpdatePendingCreatePayload(pc.Id, newPayload);
                 ++recovered;
                 LOG_INFO("Sweep: pending_create id=%lld project recovered from %s", static_cast<long long>(pc.Id),
                          recoverySource.c_str());
@@ -204,7 +205,7 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
             "offline_legacy_project_sweep", "startup_migration", "legacy_missing_project",
             std::string("IssueDraft has no ProjectKey and no parent/legacy fallback is available."));
         try {
-            app_.Cache->ArchivePendingCreate(pc.Id, "legacy_missing_project", terminal);
+            deps_.Cache()->ArchivePendingCreate(pc.Id, "legacy_missing_project", terminal);
             ++deadLettered;
             LOG_WARN("Sweep: pending_create id=%lld dead-lettered (legacy_missing_project)",
                      static_cast<long long>(pc.Id));
@@ -215,7 +216,7 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
             LOG_ERROR("Sweep: ArchivePendingCreate failed id=%lld err=%s; falling back to delete",
                       static_cast<long long>(pc.Id), ex.what());
             try {
-                app_.Cache->DeletePendingCreate(pc.Id);
+                deps_.Cache()->DeletePendingCreate(pc.Id);
                 ++deadLettered;
                 LOG_WARN("Sweep: pending_create id=%lld dropped (archive unavailable). payload_preview=%.200s",
                          static_cast<long long>(pc.Id), pc.Payload.c_str());
@@ -228,7 +229,7 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
     }
 
     try {
-        app_.Cache->SetCacheMetaFlag(kSweepFlag);
+        deps_.Cache()->SetCacheMetaFlag(kSweepFlag);
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep flag set failed: %s", ex.what());
     }
@@ -243,13 +244,13 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline blocked by read-only mode.");
         return 0;
     }
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline skipped: cache not initialized.");
         return 0;
     }
     const std::string payload = IssueDraftHelpers::ToJson(draft);
     try {
-        const std::int64_t id = app_.Cache->EnqueuePendingCreate(payload);
+        const std::int64_t id = deps_.Cache()->EnqueuePendingCreate(payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult(
             "offline_queue_create", "ui", std::string(), std::to_string(id), true, std::string(),
@@ -267,12 +268,12 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
 AppController::DeadLetterRestoreSummary
 OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds) {
     AppController::DeadLetterRestoreSummary summary;
-    if (!app_.Cache || originalIds.empty()) {
+    if (!deps_.Cache() || originalIds.empty()) {
         return summary;
     }
     for (const std::int64_t id : originalIds) {
         try {
-            if (app_.Cache->RestoreDeadPendingCreate(id)) {
+            if (deps_.Cache()->RestoreDeadPendingCreate(id)) {
                 ++summary.Restored;
                 BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
                                                 true, std::string(),
@@ -304,12 +305,12 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
 AppController::DeadLetterDeleteSummary
 OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
     AppController::DeadLetterDeleteSummary summary;
-    if (!app_.Cache || deadIds.empty()) {
+    if (!deps_.Cache() || deadIds.empty()) {
         return summary;
     }
     for (const std::int64_t id : deadIds) {
         try {
-            app_.Cache->DeleteDeadPendingCreate(id);
+            deps_.Cache()->DeleteDeadPendingCreate(id);
             ++summary.Deleted;
             BackendAuditTrail::AppendResult("offline_dead_letter_delete", "ui", std::string(), std::to_string(id), true,
                                             std::string(), nlohmann::json{{"dead_id", id}});
@@ -333,12 +334,12 @@ OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& d
 AppController::PendingQueueDeleteSummary
 OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
     AppController::PendingQueueDeleteSummary summary;
-    if (!app_.Cache || pendingIds.empty()) {
+    if (!deps_.Cache() || pendingIds.empty()) {
         return summary;
     }
     for (const std::int64_t id : pendingIds) {
         try {
-            app_.Cache->DeletePendingCreate(id);
+            deps_.Cache()->DeletePendingCreate(id);
             ++summary.Deleted;
             BackendAuditTrail::AppendResult("offline_queue_delete", "ui", std::string(), std::to_string(id), true,
                                             std::string(), nlohmann::json{{"pending_create_id", id}});
@@ -369,7 +370,7 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                  issueKey.c_str(), fieldId.c_str());
         return 0;
     }
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         outError = "Cache is not initialized.";
         return 0;
     }
@@ -379,7 +380,7 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
     }
     try {
         const std::int64_t id =
-            app_.Cache->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson, originalRichValue);
+            deps_.Cache()->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson, originalRichValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -397,11 +398,11 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
 }
 
 std::vector<PendingFieldEditRecord> OfflineQueueService::GetPendingFieldEdits() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return {};
     }
     try {
-        return app_.Cache->LoadPendingFieldEdits();
+        return deps_.Cache()->LoadPendingFieldEdits();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetPendingFieldEdits failed: %s", ex.what());
         return {};
@@ -412,11 +413,11 @@ std::vector<PendingFieldEditRecord> OfflineQueueService::GetPendingFieldEdits() 
 }
 
 std::vector<DeadPendingFieldEdit> OfflineQueueService::GetDeadPendingFieldEdits() const {
-    if (!app_.Cache) {
+    if (!deps_.Cache()) {
         return {};
     }
     try {
-        return app_.Cache->LoadDeadPendingFieldEdits();
+        return deps_.Cache()->LoadDeadPendingFieldEdits();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::GetDeadPendingFieldEdits failed: %s", ex.what());
         return {};
@@ -428,7 +429,7 @@ std::vector<DeadPendingFieldEdit> OfflineQueueService::GetDeadPendingFieldEdits(
 
 void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
                                                    const std::string& richKind) {
-    if (!app_.Cache)
+    if (!deps_.Cache())
         return;
     try {
         // Rebuild the final backend payload from the resolved Markdown.
@@ -444,7 +445,7 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
         // Simple approach: store the resolved payload back — the replay will use it directly.
         // We parse the existing payload first to keep the correct field key.
         try {
-            auto existing = app_.Cache->LoadPendingFieldEdits();
+            auto existing = deps_.Cache()->LoadPendingFieldEdits();
             const auto rowIt =
                 std::find_if(existing.begin(), existing.end(), [&](const auto& row) { return row.Id == id; });
             if (rowIt != existing.end()) {
@@ -468,12 +469,12 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                 } else {
                     newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
                 }
-                app_.Cache->ResolveFieldEditConflict(id, newPayload.dump());
+                deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
                 return;
             }
         } catch (...) {
         }
-        app_.Cache->ResolveFieldEditConflict(id, resolvedPayloadJson);
+        deps_.Cache()->ResolveFieldEditConflict(id, resolvedPayloadJson);
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id),
                   ex.what());
@@ -483,12 +484,12 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
 AppController::PendingFieldEditDeleteSummary
 OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
     AppController::PendingFieldEditDeleteSummary summary;
-    if (!app_.Cache || ids.empty()) {
+    if (!deps_.Cache() || ids.empty()) {
         return summary;
     }
     for (const std::int64_t id : ids) {
         try {
-            app_.Cache->DeletePendingFieldEdit(id);
+            deps_.Cache()->DeletePendingFieldEdit(id);
             ++summary.Deleted;
             BackendAuditTrail::AppendResult("offline_queue_field_edit_delete", "ui", std::string(), std::to_string(id),
                                             true, std::string(), nlohmann::json{{"pending_field_edit_id", id}});
@@ -512,12 +513,12 @@ OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& id
 AppController::DeadFieldEditDeleteSummary
 OfflineQueueService::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) {
     AppController::DeadFieldEditDeleteSummary summary;
-    if (!app_.Cache || deadIds.empty()) {
+    if (!deps_.Cache() || deadIds.empty()) {
         return summary;
     }
     for (const std::int64_t id : deadIds) {
         try {
-            app_.Cache->DeleteDeadPendingFieldEdit(id);
+            deps_.Cache()->DeleteDeadPendingFieldEdit(id);
             ++summary.Deleted;
             BackendAuditTrail::AppendResult("offline_dead_field_edit_delete", "ui", std::string(), std::to_string(id),
                                             true, std::string(), nlohmann::json{{"dead_field_edit_id", id}});
@@ -556,7 +557,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!app_.Cache || !app_.Backend) {
+    if (!deps_.Cache() || !deps_.Backend()) {
         return;
     }
     {
@@ -573,7 +574,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
 
     std::vector<PendingFieldEditRecord> pending;
     try {
-        pending = app_.Cache->LoadPendingFieldEdits();
+        pending = deps_.Cache()->LoadPendingFieldEdits();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits load failed: %s", ex.what());
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
@@ -591,14 +592,14 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         return;
     }
 
-    LocalCacheManager* cache = app_.Cache.get();
-    ITrackerClient* backend = app_.Backend.get();
+    LocalCacheManager* cache = deps_.Cache();
+    ITrackerClient* backend = deps_.Backend();
     if (!backend) {
         return;
     }
 
-    AppController& appRef = app_;
-    app_.LaunchBackgroundTask([this, &appRef, pending, cache, backend]() {
+    IOfflineQueueDeps& depsRef = deps_;
+    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, backend]() {
         int successes = 0;
         int failures = 0;
         int archived = 0;
@@ -809,7 +810,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
             if (tryCacheMutation("delete_pending_field_edit", row.Id,
                                  [&]() { cache->DeletePendingFieldEdit(row.Id); })) {
                 ++successes;
-                appRef.requestDeferredLiveTrackerBackendSuccessNotify_();
+                depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
                 BackendAuditTrail::AppendResult(
                     "offline_replay_field_edit", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
                     std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
@@ -819,7 +820,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         }
 
         if (successes > 0) {
-            appRef.RefreshLocalData();
+            depsRef.RefreshLocalData();
         }
         if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
             LOG_INFO("OfflineQueueService: offline field edit replay finished successes=%d failures=%d archived=%d "
@@ -846,7 +847,7 @@ void OfflineQueueService::TickOfflineCreates() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!app_.Cache || !app_.Backend) {
+    if (!deps_.Cache() || !deps_.Backend()) {
         return;
     }
     {
@@ -863,7 +864,7 @@ void OfflineQueueService::TickOfflineCreates() {
 
     std::vector<PendingCreate> pending;
     try {
-        pending = app_.Cache->LoadPendingCreates();
+        pending = deps_.Cache()->LoadPendingCreates();
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::TickOfflineCreates load failed: %s", ex.what());
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
@@ -881,12 +882,12 @@ void OfflineQueueService::TickOfflineCreates() {
         return;
     }
 
-    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(app_.AvailableFields);
-    ITrackerClient* backend = app_.Backend.get();
-    LocalCacheManager* cache = app_.Cache.get();
+    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(deps_.AvailableFields());
+    ITrackerClient* backend = deps_.Backend();
+    LocalCacheManager* cache = deps_.Cache();
 
-    AppController& appRef = app_;
-    app_.LaunchBackgroundTask([this, &appRef, pending, backend, cache, catalogCopy]() {
+    IOfflineQueueDeps& depsRef = deps_;
+    deps_.LaunchBackgroundTask([this, &depsRef, pending, backend, cache, catalogCopy]() {
         const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
         int successes = 0;
         int failures = 0;
@@ -955,13 +956,13 @@ void OfflineQueueService::TickOfflineCreates() {
                 continue;
             }
             const RequiredFieldSet required =
-                appRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
+                depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
             ranCreate = true;
             IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draft, required, *catalogCopy);
             if (result.Ok) {
                 if (tryCacheMutation("delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); })) {
                     ++successes;
-                    appRef.requestDeferredLiveTrackerBackendSuccessNotify_();
+                    depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
                     BackendAuditTrail::AppendResult(
                         "offline_replay_create", "offline_replay", result.IssueKey, std::to_string(pc.Id), true,
                         std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}});
@@ -1009,7 +1010,7 @@ void OfflineQueueService::TickOfflineCreates() {
             }
         }
         if (successes > 0) {
-            appRef.RefreshLocalData();
+            depsRef.RefreshLocalData();
         }
         if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
             LOG_INFO("OfflineQueueService: offline replay finished successes=%d failures=%d archived=%d "
