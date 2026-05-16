@@ -100,8 +100,9 @@ function Add-Msys2ToSessionPath {
     param([Parameter(Mandatory = $true)] [string]$Msys2Root)
     $ucrt = Join-Path $Msys2Root "ucrt64\bin"
     $usr  = Join-Path $Msys2Root "usr\bin"
+    $pathEntries = $env:Path.Split(';')
     foreach ($dir in @($ucrt, $usr)) {
-        if ($env:Path -notlike "*${dir}*") {
+        if ($pathEntries -notcontains $dir) {
             $env:Path = "$dir;$env:Path"
         }
     }
