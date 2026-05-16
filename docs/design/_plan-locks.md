@@ -50,6 +50,25 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: claimed
+
+- **Branch**: `feat/test-phase-4-config-migration`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 4 — Config + schema migration.
+- **Claimed write set**:
+  - `tests/Source_Core/ConfigManager.test.cpp` (NEW)
+  - `tests/Source_Core/ConfigMigration.test.cpp` (NEW)
+  - `tests/fixtures/config/v*.json` (NEW per-version fixtures)
+  - `tests/support/TestEnvGuard.h` (NEW — shared RAII per backlog entry surfaced by PR E + PR F)
+  - `scripts/dev/test-config-migration.sh` (NEW shell smoke)
+  - `tests/CMakeLists.txt` (append-only)
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager*.cpp`.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
+
 ### backend-audit-trail-per-event-path · status: shipped
 
 - **Branch**: `feat/audit-trail-per-event-path`
