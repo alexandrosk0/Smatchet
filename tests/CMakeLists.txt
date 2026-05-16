@@ -17,6 +17,7 @@ add_executable(SmatchetTests
     Source_Core/TrackerFieldValueParser.test.cpp
     Source_Core/OfflineQueueReplayPolicy.test.cpp
     Source_Core/SmatchetThemeSyntaxColors.test.cpp
+    Source_Core/MarkdownPreviewLangTag.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"

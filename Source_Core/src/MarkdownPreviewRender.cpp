@@ -4,7 +4,6 @@
 #include "MarkdownConvert.h"
 #include "SmatchetImGuiFonts.h"
 #include "Logger.h"
-#include "StringUtil.h"
 
 extern "C" {
 #include "md4c.h"
@@ -576,9 +575,7 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
         break;
     case MD_BLOCK_CODE: {
         const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
-        const std::string langLower = ToLowerAsciiCopy(s.codeLang);
-        const bool isCpp = (langLower == "cpp" || langLower == "c++" || langLower == "cxx" || langLower == "cc" ||
-                            langLower == "c" || langLower == "hpp" || langLower == "h");
+        const bool isCpp = MarkdownPreviewRender::IsCppLikeLangTag(s.codeLang);
         if (s.mode == MarkdownPreviewRender::Mode::Tooltip) {
             // Nested child windows inside a tooltip can blow the auto-sized
             // bounds — render inline with the monospace font + dark tint only.
