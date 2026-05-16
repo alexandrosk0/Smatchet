@@ -50,21 +50,32 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: in-flight
+### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: shipped (PR #134 merged at 3e19f93)
 
-- **Branch**: `feat/test-phase-4-config-migration`
+- **Branch**: `feat/test-phase-4-config-migration` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 4 — Config + schema migration.
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 4
+- **Last update**: 2026-05-16 — merged via PR #134 at sha 3e19f93. 21 cases / 99 assertions on Config surface. Shared `tests/support/TestEnvGuard.h` shipped — Phase 5+ can consume.
+- **Cleared by**: PR `#134` merged at `3e19f93`.
+
+### test-suite-expansion-completion · Phase-5 · mcp-json-rpc-harness · status: claimed
+
+- **Branch**: `feat/test-phase-5-mcp-json-rpc`
+- **Owner agent**: `test-rig` (test author) + `mcp-toolsmith` (schema sanity, parallel read-only)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5 — MCP JSON-RPC pure-logic harness.
 - **Claimed write set**:
-  - `tests/Source_Core/ConfigManager.test.cpp` (NEW)
-  - `tests/Source_Core/ConfigMigration.test.cpp` (NEW)
-  - `tests/fixtures/config/v*.json` (NEW per-version fixtures)
-  - `tests/support/TestEnvGuard.h` (NEW — shared RAII per backlog entry surfaced by PR E + PR F)
-  - `scripts/dev/test-config-migration.sh` (NEW shell smoke)
-  - `tests/CMakeLists.txt` (append-only)
+  - `tests/support/McpJsonRpcFixture.h` (NEW)
+  - `tests/Plugins/Mcp/McpRequestParser.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpEnvelope.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpToolSchemas.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpDispatch.test.cpp` (NEW)
+  - `tests/CMakeLists.txt` (append-only — new `tests/Plugins/Mcp/*.test.cpp` registered + relevant `Plugins/Mcp/*.cpp` linked)
   - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
   - `docs/design/_plan-locks.md` (self-status flips)
-- **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager*.cpp`.
+- **Read-only adjacency**: `Plugins/Mcp/**.{h,cpp}`, `Source_Core/include/Commands/**.h`.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packets dispatched to `test-rig` + `mcp-toolsmith` (worktree isolated).
+- **Cleared by**: TBD PR against `develop`.
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) opened against `develop`.
 - **Cleared by**: pending merge of [#134](https://github.com/alexandrosk0/Smatchet/pull/134).
