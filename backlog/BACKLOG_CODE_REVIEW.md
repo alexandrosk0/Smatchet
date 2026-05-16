@@ -87,8 +87,8 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 ### C2. `MarkdownConvert::EmitInlineText` per-node vector allocs (item 38)
 Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer member.
 
-### C3. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (item 39)
-`PlaneClient.cpp:1099-1108` returns `{summary, description, priority, status, assignee, labels, sprint}` as editable; everything else is unknown. Either return the full catalog or query real Plane permissions.
+### C3. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (item 39) — 🟡 partial (branch `feat/plane-fetchissueeditmeta-broaden`)
+`PlaneFieldCatalog.cpp:492` (file split from `PlaneClient.cpp`). Broadened to 9 built-ins matching what `BuildCreatePayload` / `BuildUpdatePayload` / `AddIssueToSprint` actually serialize (`+ type, parent`). Real per-issue permissions query deferred — Plane v1 has no capability endpoint; custom-property editability blocked on C4 (`properties.<uuid>` serialization).
 
 ### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40)
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
