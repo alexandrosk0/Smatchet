@@ -1,0 +1,129 @@
+#ifndef SMATCHET_TRACKER_FIELD_PAYLOAD_PURE_H
+#define SMATCHET_TRACKER_FIELD_PAYLOAD_PURE_H
+
+#include "TrackerFieldSchema.h"
+
+#include <nlohmann/json.hpp>
+
+#include <string>
+#include <vector>
+
+/**
+ * Pure per-family payload builders for Jira REST `fields` map construction.
+ *
+ * Lifted from TrackerFieldPayload.cpp to break the transitive include chain
+ * (TrackerFieldPayload.h -> JiraClient.h -> ITrackerClient.h -> LocalCacheManager.h
+ * -> SQLite/cpr) so the per-family logic can be unit-tested under the doctest
+ * rig without bringing the HTTP / cache / config stack along.
+ *
+ * Every function here is a pure data-shape transform: takes PODs from
+ * TrackerFieldSchema.h (TrackerField / TrackerFieldOption) plus raw strings,
+ * returns nlohmann::json. No HTTP, no SQLite, no ImGui, no JiraClient.
+ *
+ * TrackerFieldPayload.cpp (the production facade) delegates to these so the
+ * non-pure callers (issue-create pipeline, edit pipeline) keep their existing
+ * include path through TrackerFieldPayload.h.
+ */
+namespace TrackerFieldPayloadPure {
+
+/** Split a "parentId\x1f childId" cascading-select encoding into its two parts. */
+void DecodeCascadingSelection(const std::string& encoded, std::string& outParentId, std::string& outChildId);
+
+/** Depth-first lookup of TrackerFieldOption by Id only (used for label resolution). */
+const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& options,
+                                         const std::string& id);
+
+/** Depth-first lookup of TrackerFieldOption by Id or display Value (grid often stores labels). */
+const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,
+                                                const std::string& idOrValue);
+
+/** Walk options and return the display label for a value (id or value match). Empty if not found. */
+std::string ResolveOptionLabel(const std::vector<TrackerFieldOption>& options, const std::string& value);
+
+/**
+ * Reduce a structured option's raw JSON payload to the minimal shape Jira accepts
+ * on edit/create (id > accountId > groupId+name > key > value > name; passthrough otherwise).
+ */
+nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw);
+
+/**
+ * Build payload JSON for a TrackerFieldOption (option select / cascading parent).
+ * If nestedChildId is non-empty, recurses into option.Children to attach `child`.
+ * Returns false when the option carries no parseable PayloadJson, or the named
+ * child is missing.
+ */
+bool TryBuildStructuredOptionPayload(const TrackerFieldOption& option, const std::string& nestedChildId,
+                                     nlohmann::json& outPayload);
+
+/**
+ * Resolve a field's selected value to a structured option payload using
+ * AllowedValueOptions. Handles cascading selects (encoded "parent\x1fchild").
+ */
+bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue,
+                                nlohmann::json& outPayload);
+
+/** True iff the string is non-empty and every byte is an ASCII digit. */
+bool IsDigitsOnly(const std::string& value);
+
+/**
+ * Best-effort scalar-string -> payload for a selectable field when the structured
+ * lookup misses (catalog has no PayloadJson, or the value isn't in the catalog).
+ * Family / Type / IsUserType drive the shape Jira expects.
+ */
+nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, const std::string& scalarValue);
+
+/**
+ * Build user-field payload (`{"accountId": "..."}` or null for empty).
+ * Handles three input shapes: pre-encoded JSON, displayName lookup against the
+ * catalog, or a raw accountId string.
+ */
+void BuildUserFieldPayload(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue);
+
+/**
+ * Parse a numeric string. Empty -> null + true. Non-numeric -> false. Otherwise
+ * outValue is the parsed double.
+ */
+bool TryParseNumberValue(const std::string& rawValue, nlohmann::json& outValue);
+
+/** True when value looks like "PROJ-123" (uppercase / digit project + dash + digits). */
+bool LooksLikeIssueKey(const std::string& value);
+
+/** Split CSV input on ',', trim whitespace, drop empties. */
+std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input);
+
+/** Normalize a Jira label token: trim + replace ASCII whitespace with '-'. */
+std::string SanitizeJiraLabelToken(std::string s);
+
+// ---------------------------------------------------------------------------
+// Public mirrors of TrackerFieldPayload's pure functions. The production
+// header delegates to these so call sites continue to use the existing facade.
+// ---------------------------------------------------------------------------
+
+/** Identical to TrackerFieldPayload::FieldUsesAdfDocument — see that doc. */
+bool FieldUsesAdfDocument(const TrackerField& field);
+
+/** Identical to TrackerFieldPayload::ExtractIssueKey — see that doc. */
+std::string ExtractIssueKey(const std::string& value);
+
+/** Identical to TrackerFieldPayload::IsArrayLike. */
+bool IsArrayLike(const TrackerField& field);
+
+/** Identical to TrackerFieldPayload::IsSprintField. */
+bool IsSprintField(const TrackerField& field);
+
+/** Identical to TrackerFieldPayload::SplitCommaSeparatedValues. */
+std::vector<std::string> SplitCommaSeparatedValues(const std::string& input);
+
+/** Identical to TrackerFieldPayload::ResolveSprintIdForAgile. */
+std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string& rawValue);
+
+/** Identical to TrackerFieldPayload::ResolveDisplayValueForSubmittedSelection. */
+std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value);
+
+/** Identical to TrackerFieldPayload::BuildValue — pure top-level driver. */
+bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
+                std::string& outError);
+
+} // namespace TrackerFieldPayloadPure
+
+#endif

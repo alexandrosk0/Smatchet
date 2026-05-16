@@ -1,0 +1,448 @@
+#include <doctest/doctest.h>
+
+#include "TrackerFieldPayloadPure.h"
+#include "TrackerFieldSchema.h"
+
+#include <nlohmann/json.hpp>
+
+#include <string>
+#include <vector>
+
+using nlohmann::json;
+using TrackerFieldPayloadPure::BuildValue;
+using TrackerFieldPayloadPure::ExtractIssueKey;
+using TrackerFieldPayloadPure::FieldUsesAdfDocument;
+using TrackerFieldPayloadPure::IsSprintField;
+using TrackerFieldPayloadPure::ResolveDisplayValueForSubmittedSelection;
+using TrackerFieldPayloadPure::ResolveSprintIdForAgile;
+using TrackerFieldPayloadPure::SplitCommaSeparatedValues;
+
+namespace {
+
+TrackerField MakeField(const std::string& id, const std::string& type = "string") {
+    TrackerField f;
+    f.Id = id;
+    f.Type = type;
+    return f;
+}
+
+TrackerFieldOption MakeOption(const std::string& id, const std::string& value,
+                              const std::string& payloadJson = std::string()) {
+    TrackerFieldOption o;
+    o.Id = id;
+    o.Value = value;
+    o.PayloadJson = payloadJson;
+    return o;
+}
+
+} // namespace
+
+TEST_CASE("BuildValue: string family — basic, empty, long") {
+    TrackerField f = MakeField("summary", "string");
+    json out;
+    std::string err;
+
+    SUBCASE("plain scalar passes through") {
+        CHECK(BuildValue(f, {"hello world"}, out, err));
+        CHECK(err.empty());
+        CHECK(out.is_string());
+        CHECK(out.get<std::string>() == "hello world");
+    }
+
+    SUBCASE("empty single value becomes JSON null (clear field)") {
+        CHECK(BuildValue(f, {""}, out, err));
+        CHECK(out.is_null());
+    }
+
+    SUBCASE("empty input vector becomes JSON null") {
+        CHECK(BuildValue(f, {}, out, err));
+        CHECK(out.is_null());
+    }
+
+    SUBCASE("very long string roundtrips byte-for-byte") {
+        const std::string big(8192, 'x');
+        CHECK(BuildValue(f, {big}, out, err));
+        CHECK(out.is_string());
+        CHECK(out.get<std::string>().size() == big.size());
+    }
+}
+
+TEST_CASE("BuildValue: number family — integer, decimal, negative, malformed") {
+    TrackerField f = MakeField("storyPoints", "number");
+    json out;
+    std::string err;
+
+    SUBCASE("integer parses to double") {
+        CHECK(BuildValue(f, {"42"}, out, err));
+        CHECK(err.empty());
+        CHECK(out.is_number());
+        CHECK(out.get<double>() == doctest::Approx(42.0));
+    }
+
+    SUBCASE("decimal parses") {
+        CHECK(BuildValue(f, {"3.14"}, out, err));
+        CHECK(out.get<double>() == doctest::Approx(3.14));
+    }
+
+    SUBCASE("negative parses") {
+        CHECK(BuildValue(f, {"-7.5"}, out, err));
+        CHECK(out.get<double>() == doctest::Approx(-7.5));
+    }
+
+    SUBCASE("non-numeric returns false + error") {
+        const bool ok = BuildValue(f, {"abc"}, out, err);
+        CHECK_FALSE(ok);
+        CHECK(err.find("Invalid numeric") != std::string::npos);
+    }
+
+    SUBCASE("trailing garbage returns false (parsedChars mismatch)") {
+        const bool ok = BuildValue(f, {"12abc"}, out, err);
+        CHECK_FALSE(ok);
+    }
+
+    SUBCASE("empty number value becomes JSON null") {
+        CHECK(BuildValue(f, {""}, out, err));
+        CHECK(out.is_null());
+    }
+}
+
+TEST_CASE("BuildValue: option family — structured payload vs label fallback") {
+    TrackerField f = MakeField("customfield_10010");
+    f.Family = TrackerFieldFamily::SelectSingle;
+    f.AllowedValueOptions.push_back(MakeOption("10001", "High", "{\"id\":\"10001\",\"value\":\"High\"}"));
+    f.AllowedValueOptions.push_back(MakeOption("10002", "Low"));  // no PayloadJson -> fallback path
+
+    json out;
+    std::string err;
+
+    SUBCASE("id lookup returns structured {id} payload") {
+        CHECK(BuildValue(f, {"10001"}, out, err));
+        CHECK(out.is_object());
+        REQUIRE(out.contains("id"));
+        CHECK(out["id"].get<std::string>() == "10001");
+    }
+
+    SUBCASE("label lookup returns structured {id} payload") {
+        CHECK(BuildValue(f, {"High"}, out, err));
+        CHECK(out.is_object());
+        REQUIRE(out.contains("id"));
+        CHECK(out["id"].get<std::string>() == "10001");
+    }
+
+    SUBCASE("catalog miss falls back to {id: scalarValue}") {
+        // Option in catalog (Low) has no PayloadJson, so falls back to selectable shape.
+        CHECK(BuildValue(f, {"Low"}, out, err));
+        CHECK(out.is_object());
+        REQUIRE(out.contains("id"));
+        CHECK(out["id"].get<std::string>() == "Low");
+    }
+}
+
+TEST_CASE("BuildValue: multi-option / array family — collect + skip empties") {
+    TrackerField f = MakeField("customfield_components");
+    f.IsArray = true;
+    f.ItemsType = "option";
+    f.AllowedValueOptions.push_back(MakeOption("1", "Alpha", "{\"id\":\"1\"}"));
+    f.AllowedValueOptions.push_back(MakeOption("2", "Beta", "{\"id\":\"2\"}"));
+
+    json out;
+    std::string err;
+
+    SUBCASE("two-value array builds two object payloads") {
+        CHECK(BuildValue(f, {"1", "2"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 2);
+        CHECK(out[0]["id"].get<std::string>() == "1");
+        CHECK(out[1]["id"].get<std::string>() == "2");
+    }
+
+    SUBCASE("empty strings filtered before build") {
+        CHECK(BuildValue(f, {"", "1", ""}, out, err));
+        REQUIRE(out.is_array());
+        CHECK(out.size() == 1);
+    }
+
+    SUBCASE("empty array input stays an empty array (no null collapse for arrays)") {
+        CHECK(BuildValue(f, {}, out, err));
+        REQUIRE(out.is_array());
+        CHECK(out.empty());
+    }
+}
+
+TEST_CASE("BuildValue: labels family — comma-split + token sanitize + dedupe-of-empty") {
+    TrackerField f = MakeField("labels");
+    f.Family = TrackerFieldFamily::Labels;
+
+    json out;
+    std::string err;
+
+    SUBCASE("comma-separated input splits to array of strings") {
+        CHECK(BuildValue(f, {"alpha,beta,gamma"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 3);
+        CHECK(out[0].get<std::string>() == "alpha");
+        CHECK(out[2].get<std::string>() == "gamma");
+    }
+
+    SUBCASE("whitespace in token gets dash-normalised") {
+        CHECK(BuildValue(f, {"with space"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].get<std::string>() == "with-space");
+    }
+
+    SUBCASE("empty labels collapse to JSON null") {
+        CHECK(BuildValue(f, {",,"}, out, err));
+        CHECK(out.is_null());
+    }
+}
+
+TEST_CASE("BuildValue: user family — account-id, displayName lookup, raw string") {
+    TrackerField f = MakeField("assignee");
+    f.IsUserType = true;
+    f.AllowedValueOptions.push_back(MakeOption("abc123", "Alice Adams"));
+    json out;
+    std::string err;
+
+    SUBCASE("raw account-id passes through as {accountId}") {
+        CHECK(BuildValue(f, {"abc123"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out.contains("accountId"));
+        CHECK(out["accountId"].get<std::string>() == "abc123");
+    }
+
+    SUBCASE("displayName resolves to catalog accountId via lookup") {
+        CHECK(BuildValue(f, {"Alice Adams"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["accountId"].get<std::string>() == "abc123");
+    }
+
+    SUBCASE("pre-encoded JSON with accountId reduces to minimal {accountId}") {
+        CHECK(BuildValue(f, {"{\"accountId\":\"xyz999\",\"displayName\":\"X\"}"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["accountId"].get<std::string>() == "xyz999");
+        // displayName must be stripped — Jira rejects extra keys on some endpoints.
+        CHECK_FALSE(out.contains("displayName"));
+    }
+
+    SUBCASE("empty user value becomes JSON null") {
+        CHECK(BuildValue(f, {""}, out, err));
+        CHECK(out.is_null());
+    }
+}
+
+TEST_CASE("BuildValue: cascading-select — parent+child, parent-only, missing parent") {
+    TrackerField f = MakeField("customfield_cascade");
+    f.Family = TrackerFieldFamily::CascadingSelect;
+    TrackerFieldOption parent = MakeOption("p1", "Hardware", "{\"id\":\"p1\"}");
+    parent.Children.push_back(MakeOption("c1", "Mouse", "{\"id\":\"c1\"}"));
+    parent.Children.push_back(MakeOption("c2", "Keyboard", "{\"id\":\"c2\"}"));
+    f.AllowedValueOptions.push_back(parent);
+
+    json out;
+    std::string err;
+
+    SUBCASE("parent + child encoded with \\x1f separator nests under \"child\"") {
+        const std::string encoded = std::string("p1") + '\x1f' + "c1";
+        CHECK(BuildValue(f, {encoded}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "p1");
+        REQUIRE(out.contains("child"));
+        CHECK(out["child"]["id"].get<std::string>() == "c1");
+    }
+
+    SUBCASE("parent-only does NOT emit \"child\" key") {
+        CHECK(BuildValue(f, {"p1"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "p1");
+        CHECK_FALSE(out.contains("child"));
+    }
+
+    SUBCASE("unknown parent falls back to selectable scalar (catalog miss)") {
+        CHECK(BuildValue(f, {"unknown_parent"}, out, err));
+        // Family is CascadingSelect -> on miss BuildValue uses FallbackPayloadForSelectableField
+        // which for non-User / non-Status / non-IssueType / non-component with allowed-options
+        // returns {id: scalar}. Verify we got *something* sensible and didn't crash.
+        CHECK((out.is_object() || out.is_string()));
+    }
+}
+
+TEST_CASE("BuildValue: parent / project — issue-key extraction and project key") {
+    json out;
+    std::string err;
+
+    SUBCASE("parent field with raw issue key wraps as {key}") {
+        TrackerField f = MakeField("parent");
+        CHECK(BuildValue(f, {"PROJ-123"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["key"].get<std::string>() == "PROJ-123");
+    }
+
+    SUBCASE("parent field with key + summary suffix extracts key") {
+        TrackerField f = MakeField("parent");
+        CHECK(BuildValue(f, {"PROJ-7 - Some summary"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["key"].get<std::string>() == "PROJ-7");
+    }
+
+    SUBCASE("parent field with non-key string passes through as JSON string") {
+        TrackerField f = MakeField("parent");
+        CHECK(BuildValue(f, {"not-a-key"}, out, err));
+        CHECK(out.is_string());
+    }
+
+    SUBCASE("project field wraps as {key}") {
+        TrackerField f = MakeField("project");
+        CHECK(BuildValue(f, {"PROJ"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["key"].get<std::string>() == "PROJ");
+    }
+}
+
+TEST_CASE("BuildValue: priority / version / resolution / group — structured shape") {
+    json out;
+    std::string err;
+
+    SUBCASE("priority with digits-only uses {id}") {
+        TrackerField f = MakeField("priority", "priority");
+        CHECK(BuildValue(f, {"3"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "3");
+    }
+
+    SUBCASE("priority with non-digits uses {name}") {
+        TrackerField f = MakeField("priority", "priority");
+        CHECK(BuildValue(f, {"High"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "High");
+    }
+
+    SUBCASE("version uses {name}") {
+        TrackerField f = MakeField("fixVersion", "version");
+        CHECK(BuildValue(f, {"v1.2.3"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "v1.2.3");
+    }
+
+    SUBCASE("group uses {name}") {
+        TrackerField f = MakeField("group", "group");
+        CHECK(BuildValue(f, {"developers"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "developers");
+    }
+}
+
+TEST_CASE("ExtractIssueKey: shape detection") {
+    CHECK(ExtractIssueKey("PROJ-1") == "PROJ-1");
+    CHECK(ExtractIssueKey("ABC-42 - summary") == "ABC-42");
+    CHECK(ExtractIssueKey("  WS_2-9  ") == "WS_2-9"); // underscore + digits allowed in prefix
+    CHECK(ExtractIssueKey("not-a-key") == "");
+    CHECK(ExtractIssueKey("lowercase-1") == "");      // prefix must be upper/digit/underscore
+    CHECK(ExtractIssueKey("") == "");
+    CHECK(ExtractIssueKey("PROJ-") == "");            // suffix must be non-empty digits
+    CHECK(ExtractIssueKey("PROJ-1a") == "");          // suffix must be all digits
+}
+
+TEST_CASE("SplitCommaSeparatedValues: tokeniser") {
+    SUBCASE("basic split") {
+        const auto r = SplitCommaSeparatedValues("a,b,c");
+        REQUIRE(r.size() == 3);
+        CHECK(r[0] == "a");
+        CHECK(r[2] == "c");
+    }
+    SUBCASE("trims whitespace + drops empty segments") {
+        const auto r = SplitCommaSeparatedValues(" a , ,b ,, c ");
+        REQUIRE(r.size() == 3);
+        CHECK(r[0] == "a");
+        CHECK(r[1] == "b");
+        CHECK(r[2] == "c");
+    }
+    SUBCASE("empty input yields empty vector") {
+        CHECK(SplitCommaSeparatedValues("").empty());
+        CHECK(SplitCommaSeparatedValues(", , ,").empty());
+    }
+}
+
+TEST_CASE("ResolveSprintIdForAgile: catalog lookup + digit passthrough") {
+    TrackerField f;
+    f.AllowedValueOptions.push_back(MakeOption("999", "Sprint 1"));
+
+    CHECK(ResolveSprintIdForAgile(f, "Sprint 1") == "999"); // label resolves
+    CHECK(ResolveSprintIdForAgile(f, "999") == "999");      // id resolves
+    CHECK(ResolveSprintIdForAgile(f, "12345") == "12345");  // digits-only passthrough
+    CHECK(ResolveSprintIdForAgile(f, "unknown") == "");     // miss + non-digits -> empty
+    CHECK(ResolveSprintIdForAgile(f, "") == "");
+}
+
+TEST_CASE("IsSprintField: family vs schema-custom heuristic") {
+    TrackerField f;
+    CHECK_FALSE(IsSprintField(f));
+    f.Family = TrackerFieldFamily::Sprint;
+    CHECK(IsSprintField(f));
+
+    TrackerField g;
+    g.SchemaCustom = "com.pyxis.greenhopper.jira:gh-sprint";
+    CHECK(IsSprintField(g));
+}
+
+TEST_CASE("FieldUsesAdfDocument: id, type, schema-custom signals") {
+    TrackerField f;
+
+    SUBCASE("description by id") {
+        f.Id = "description";
+        CHECK(FieldUsesAdfDocument(f));
+    }
+
+    SUBCASE("environment by id") {
+        f.Id = "environment";
+        CHECK(FieldUsesAdfDocument(f));
+    }
+
+    SUBCASE("type doc") {
+        f.Id = "customfield_x";
+        f.Type = "doc";
+        CHECK(FieldUsesAdfDocument(f));
+    }
+
+    SUBCASE("schema-custom textarea") {
+        f.Id = "customfield_y";
+        f.SchemaCustom = "com.atlassian.jira.plugin.system.customfieldtypes:textarea";
+        CHECK(FieldUsesAdfDocument(f));
+    }
+
+    SUBCASE("plain string field with nothing matching") {
+        f.Id = "summary";
+        f.Type = "string";
+        CHECK_FALSE(FieldUsesAdfDocument(f));
+    }
+}
+
+TEST_CASE("ResolveDisplayValueForSubmittedSelection: label resolution") {
+    TrackerField f;
+    f.AllowedValueOptions.push_back(MakeOption("10", "Bug"));
+
+    SUBCASE("value id resolves to display label") {
+        CHECK(ResolveDisplayValueForSubmittedSelection(f, "10") == "Bug");
+    }
+
+    SUBCASE("unknown value passes through unchanged") {
+        CHECK(ResolveDisplayValueForSubmittedSelection(f, "unknown") == "unknown");
+    }
+
+    SUBCASE("cascading parent + child formats as 'parent > child'") {
+        TrackerField c;
+        c.Family = TrackerFieldFamily::CascadingSelect;
+        TrackerFieldOption p = MakeOption("p1", "Hardware");
+        p.Children.push_back(MakeOption("c1", "Mouse"));
+        c.AllowedValueOptions.push_back(p);
+        const std::string encoded = std::string("p1") + '\x1f' + "c1";
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, encoded) == "Hardware > Mouse");
+    }
+
+    SUBCASE("cascading parent-only formats as 'parent' only") {
+        TrackerField c;
+        c.Family = TrackerFieldFamily::CascadingSelect;
+        c.AllowedValueOptions.push_back(MakeOption("p1", "Hardware"));
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "p1") == "Hardware");
+    }
+}
