@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### backend-audit-trail-per-event-path · status: in-flight
+### backend-audit-trail-per-event-path · status: shipped
 
 - **Branch**: `feat/audit-trail-per-event-path`
 - **Owner agent**: orchestrator
@@ -61,7 +61,21 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip)
 - **Read-only adjacency**: `Source_Core/include/BackendAuditTrail.h`, `Source_Core/include/ConfigManager.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — production fix landed in working tree, building tests next.
+- **Last update**: 2026-05-16 → 2026-05-16 — production fix landed, tests passed, merged to develop via PR #108.
+- **Cleared by**: PR `#108` merged at `98ed9ea`.
+
+### cached-ticket-types-header-split · status: in-flight
+
+- **Branch**: `feat/cached-ticket-types-header-split`
+- **Owner agent**: orchestrator
+- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Claimed write set**:
+  - `Source_Core/include/CachedTicketTypes.h` (NEW)
+  - `Source_Core/include/LocalCacheManager.h`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+- **Read-only adjacency**: 20 callers of `LocalCacheManager.h` (no code edit — re-include keeps API)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — header refactor landed, gates green, ready to PR.
 - **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion · phase 1 · status: in-flight
