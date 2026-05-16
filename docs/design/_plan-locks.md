@@ -54,7 +54,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-1-tracker-pure-logic`
 - **Owner agent**: orchestrator (autonomous multi-phase mode per the plan's § Execution contract)
-- **Originating plan**: [`docs/design/test-suite-expansion.md`](./test-suite-expansion.md) § Phase 1
+- **Originating plan**: [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Phase 1
 - **Claimed write set**:
   - `Source_Core/include/IssueCreatePipelineHelpers.h` (NEW)
   - `Source_Core/src/IssueCreatePipeline.cpp`
@@ -67,7 +67,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `tests/Source_Core/TrackerFieldValueParser.extended.test.cpp` (NEW)
   - `tests/Source_Core/TrackerFieldValueUtils.test.cpp` (NEW)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
-  - `docs/design/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/include/IssueDraft.h`, `Source_Core/include/TrackerFieldValueParser.h`, `Source_Core/include/IssueCreatePipeline.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — PR `#103` opened against `develop`.
@@ -76,8 +76,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 ### test-suite-expansion · phases 2–9 · status: claimed
 
 - **Branch**: TBD per phase (`feat/test-phase-{N}-{slug}`)
-- **Owner agent**: orchestrator (autonomous; see [`docs/design/test-suite-expansion.md`](./test-suite-expansion.md) § Execution contract)
-- **Originating plan**: [`docs/design/test-suite-expansion.md`](./test-suite-expansion.md) § Phases 2-9
+- **Owner agent**: orchestrator (autonomous; see [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Execution contract)
+- **Originating plan**: [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Phases 2-9
 - **Claimed write set** (umbrella claim — narrows per phase as each kicks off):
   - `Source_Core/src/TicketSyncService.cpp` (phase ~2 — `ApplyIssueFetchPack` tests)
   - `Source_Core/src/LocalCacheManager.cpp` (phase ~3 — `SaveTicket` transaction tests)
@@ -87,7 +87,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `Plugins/LuaConsole/**` (phase ~7 — Lua sandbox / timeout tests)
   - `tests/CMakeLists.txt` (every phase)
   - `tests/Source_Core/**` (every phase, new files)
-  - `docs/design/test-suite-expansion.md` (impl-log appendix per phase)
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix per phase)
 - **Read-only adjacency**: every Source_Core header used by tested code.
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — phase 1 in flight; downstream phases umbrella-claimed to block conflicting Track-B work on the same files.
@@ -97,7 +97,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: TBD per slice (B1: `claude/offline-queue-icache-access`, B2: TBD, B3: TBD)
 - **Owner agent**: `offline-sync` (B1, B2), `lua-binder` (B3)
-- **Originating plan**: [`docs/design/large-files-and-phase-2.md`](./large-files-and-phase-2.md) § Track B
+- **Originating plan**: [`docs/design/applied/large-files-and-phase-2.md`](./applied/large-files-and-phase-2.md) § Track B
 - **Reason on-hold**: overlapping write set with `test-suite-expansion` phases 2-9 (`TicketSyncService.cpp`, `ConfigManager.cpp`, `AppController.h`, `tests/CMakeLists.txt`). Resuming Track B before those test phases land would force a multi-way rebase that defeats both efforts.
 - **Resume gate**: `test-suite-expansion` § Implementation log shows phase 9 shipped, OR the user explicitly green-lights an earlier resume with a narrower-than-umbrella write set.
 - **Claimed write set on resume** (preview — re-asserted at resume time):

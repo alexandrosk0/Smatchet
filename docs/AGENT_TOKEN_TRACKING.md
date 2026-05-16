@@ -36,7 +36,7 @@ Fields:
 
 ### Hook
 
-`agents/_shared/token-tracking/agent-token-log.py` is the canonical Python hook source. `scripts/sync-agents.sh` / `.ps1` mirror it to `.claude/hooks/agent-token-log.py`.
+`agents/_shared/token-tracking/agent-token-log.py` is the canonical Python hook source. `scripts/setup-harness.sh claude-code` hardlinks it to `.claude/hooks/agent-token-log.py` so canonical edits propagate without a sync step.
 
 Wired to `SubagentStop` event with `matcher: ""` (all subagents) in `.claude/settings.json`:
 
@@ -134,18 +134,17 @@ Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the
 ## Files added
 
 - `docs/AGENT_TOKEN_TRACKING.md` — this doc.
-- `agents/_shared/token-tracking/agent-token-log.py` — canonical hook source (Python; mirror at `.claude/hooks/agent-token-log.py`).
-- `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (mirror at `.claude/hooks/agents-statusline.py`).
-- `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (mirror at `.claude/skills/agent-tokens/SKILL.md`).
+- `agents/_shared/token-tracking/agent-token-log.py` — canonical hook source (Python; linked into `.claude/hooks/agent-token-log.py` by `setup-harness.sh`).
+- `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (linked into `.claude/hooks/agents-statusline.py`).
+- `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (linked into `.claude/skills/agent-tokens/SKILL.md`).
 - `agents/_shared/token-tracking/README.md` — README for the canonical dir.
-- `scripts/agent-tokens-report.py` — harness-agnostic CLI report. No mirror.
+- `scripts/agent-tokens-report.py` — harness-agnostic CLI report. Lives in `scripts/`, invoked the same way from any harness.
 
 ## Files modified
 
-- `.claude/settings.json` — `SubagentStop` hook entry pointing at the mirror at `.claude/hooks/agent-token-log.py`.
+- `.claude/settings.json` — `SubagentStop` hook entry pointing at `.claude/hooks/agent-token-log.py` (hardlinked to canonical).
 - `.gitignore` — ignore `.claude/.agent-tokens.jsonl`.
-- `scripts/sync-agents.sh` + `scripts/sync-agents.ps1` — extended to mirror the `agents/_shared/token-tracking/` tree into `.claude/hooks/` + `.claude/skills/agent-tokens/`.
-- `scripts/check-agents-mirror.sh` — drift check now covers the token-tracking mirror paths too.
+- `scripts/setup-harness.sh` — links the canonical `agents/_shared/token-tracking/` tree into `.claude/hooks/` + `.claude/skills/agent-tokens/` so the harness picks up canonical edits with no sync step.
 - `AGENTS.md` — § Agent file locations documents the dual-location convention for both `agents/*.md` and `agents/_shared/`.
 
 ## Migration / commit order

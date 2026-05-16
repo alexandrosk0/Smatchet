@@ -61,7 +61,7 @@ Per AGENTS.md § Verification automation: plan-time / first-round / every-agent-
 
 ### Bucket E — ImGui Test Engine (wired)
 
-**Status**: WIRED (per `docs/design/imgui-test-engine-bucket-e-execution.md`). First test landed at `tests/ui/views_columns_reorder.test.cpp`; bash driver at `scripts/dev/test-ui-views-columns-reorder.sh`. Run via `cmake --build --preset ninja-ui-test-msys2`.
+**Status**: WIRED (per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`). First test landed at `tests/ui/views_columns_reorder.test.cpp`; bash driver at `scripts/dev/test-ui-views-columns-reorder.sh`. Run via `cmake --build --preset ninja-ui-test-msys2`.
 
 How the surface works today:
 
