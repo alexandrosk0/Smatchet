@@ -140,6 +140,16 @@ setup_codex() {
 
 setup_cursor() {
   echo "Setting up Cursor adapter at .cursor/ ..."
+  # Cursor accepts .cursor/rules as either a single file or a dir of .mdc rules.
+  # Some tools (e.g. vexp) write to .cursor/rules as a single file. Detect that
+  # and bail with a fix-it message rather than clobbering user state.
+  if [[ -f ".cursor/rules" ]]; then
+    echo "  error: .cursor/rules exists as a file (not a directory)." >&2
+    echo "         Move it aside so this script can use the .mdc-rules layout:" >&2
+    echo "           mv .cursor/rules .cursor/rules.bak" >&2
+    echo "         Then re-run: bash scripts/setup-harness.sh cursor" >&2
+    exit 1
+  fi
   copy_template "docs/harness/cursor/rules/agents.mdc" ".cursor/rules/agents.mdc"
   echo "Done. .cursor/rules/agents.mdc points Cursor at AGENTS.md + agents/."
 }

@@ -115,6 +115,13 @@ function Setup-Codex {
 
 function Setup-Cursor {
     Write-Host 'Setting up Cursor adapter at .cursor\ ...'
+    # Cursor accepts .cursor\rules as either a file or a dir of .mdc rules.
+    # Some tools (e.g. vexp) write to .cursor\rules as a single file. Bail
+    # with a fix-it message rather than clobbering user state.
+    if (Test-Path '.cursor\rules' -PathType Leaf) {
+        Write-Error '.cursor\rules exists as a file (not a directory). Move it aside: `Move-Item .cursor\rules .cursor\rules.bak`. Then re-run.'
+        exit 1
+    }
     Copy-Template 'docs\harness\cursor\rules\agents.mdc' '.cursor\rules\agents.mdc'
     Write-Host 'Done. .cursor\rules\agents.mdc points Cursor at AGENTS.md + agents\.'
 }

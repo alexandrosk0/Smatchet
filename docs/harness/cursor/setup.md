@@ -10,6 +10,8 @@ pwsh scripts/setup-harness.ps1 cursor
 
 Idempotent. The script never overwrites a user-modified rule file.
 
+If your `.cursor/rules` already exists as a single file (some tools, e.g. `vexp`, write to it directly), the setup script will refuse to clobber it and print a fix-it message. Move it aside (`mv .cursor/rules .cursor/rules.bak`) and re-run to switch to the `.mdc`-rules layout.
+
 ## What it does
 
 Cursor auto-loads `.mdc` files from `.cursor/rules/` and applies them based on the rule's frontmatter (globs + `alwaysApply`). The shipped `agents.mdc` template:
