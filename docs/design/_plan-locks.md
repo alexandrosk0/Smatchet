@@ -66,8 +66,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager*.cpp`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — implementation underway; first commit on branch.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#134](https://github.com/alexandrosk0/Smatchet/pull/134) opened against `develop`.
+- **Cleared by**: pending merge of [#134](https://github.com/alexandrosk0/Smatchet/pull/134).
 
 ### backend-audit-trail-per-event-path · status: shipped
 
