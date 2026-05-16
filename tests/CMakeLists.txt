@@ -30,11 +30,13 @@ add_executable(SmatchetTests
     Source_Core/TrackerLabelsPure.test.cpp
     Source_Core/TrackerDateTimePure.test.cpp
     Source_Core/TrackerFieldPayloadPure.test.cpp
+    Source_Core/TrackerFieldCatalogPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldPayloadPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"
