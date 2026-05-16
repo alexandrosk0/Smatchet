@@ -24,9 +24,8 @@ bool IsHardMinimumEmpty(const IssueDraft& draft, const std::string& fieldId) {
     if (it == draft.FieldValues.end()) {
         return true;
     }
-    return std::all_of(it->second.begin(), it->second.end(), [](unsigned char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    });
+    return std::all_of(it->second.begin(), it->second.end(),
+                       [](unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; });
 }
 
 } // namespace
@@ -89,9 +88,8 @@ std::string ResolveIssueTypeIdFromTicket(const CachedTicket& ticket, const std::
         if (field.Id != "issuetype") {
             continue;
         }
-        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(), [&](const auto& option) {
-            return option.Value == current || option.Id == current;
-        });
+        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                                  [&](const auto& option) { return option.Value == current || option.Id == current; });
         if (optIt != field.AllowedValueOptions.end()) {
             if (outName && !optIt->Value.empty()) {
                 *outName = optIt->Value;
@@ -191,9 +189,8 @@ std::vector<std::string> MissingRequiredFields(const IssueDraft& draft, const Re
     if (required.RequiresIssueType) {
         hardMinimum.push_back("__issuetype__");
     }
-    std::copy_if(hardMinimum.begin(), hardMinimum.end(), std::back_inserter(out), [&](const auto& key) {
-        return IsHardMinimumEmpty(draft, key);
-    });
+    std::copy_if(hardMinimum.begin(), hardMinimum.end(), std::back_inserter(out),
+                 [&](const auto& key) { return IsHardMinimumEmpty(draft, key); });
     if (required.IsSubtask && draft.ParentKey.empty()) {
         out.push_back("__parent__");
     }
@@ -228,13 +225,14 @@ std::string ToJson(const IssueDraft& draft) {
     }
     j["fields"] = std::move(fields);
     nlohmann::json attachments = nlohmann::json::array();
-    std::transform(draft.StagedAttachments.begin(), draft.StagedAttachments.end(), std::back_inserter(attachments), [](const auto& att) {
-        return nlohmann::json{
-            {"absPath", att.AbsPath},
-            {"fileName", att.FileName},
-            {"sizeBytes", att.SizeBytes},
-        };
-    });
+    std::transform(draft.StagedAttachments.begin(), draft.StagedAttachments.end(), std::back_inserter(attachments),
+                   [](const auto& att) {
+                       return nlohmann::json{
+                           {"absPath", att.AbsPath},
+                           {"fileName", att.FileName},
+                           {"sizeBytes", att.SizeBytes},
+                       };
+                   });
     j["attachments"] = std::move(attachments);
     return j.dump();
 }
@@ -375,7 +373,7 @@ void PruneUnchangedFields(IssueDraft& draft, const CachedTicket& existing) {
 }
 
 std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
-                                           const std::vector<TrackerField>& catalog) {
+                                            const std::vector<TrackerField>& catalog) {
     std::vector<std::string> names;
     names.reserve(ids.size());
     for (const auto& id : ids) {
@@ -386,9 +384,7 @@ std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
         } else if (id == "__parent__") {
             names.push_back("Parent");
         } else {
-            auto catIt = std::find_if(catalog.begin(), catalog.end(), [&id](const auto& f) {
-                return f.Id == id;
-            });
+            auto catIt = std::find_if(catalog.begin(), catalog.end(), [&id](const auto& f) { return f.Id == id; });
             if (catIt != catalog.end()) {
                 names.push_back(catIt->Name);
             } else {
@@ -400,10 +396,3 @@ std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
 }
 
 } // namespace IssueDraftHelpers
-
-
-
-
-
-
-

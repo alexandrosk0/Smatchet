@@ -1,6 +1,7 @@
 #include "IssueCreatePipeline.h"
 
 #include "ITrackerClient.h"
+#include "IssueCreatePipelineHelpers.h"
 #include "TrackerFieldPayload.h"
 
 #include "LocalCacheManager.h"
@@ -29,7 +30,6 @@ TrackerField MakeSyntheticField(const std::string& id) {
 /** PUT /issue fields: mutable custom + system fields; no project/type swap; status/sprint handled elsewhere. */
 // BuildUpdateFieldsPayload removed, logic moved to Backend::BuildUpdatePayload
 
-
 struct PostIssueStepsOutcome {
     bool mergeStatusFromDraft = false;
     bool mergeSprintFieldsFromDraft = false;
@@ -46,9 +46,8 @@ bool IsSprintCatalogFieldId(const std::string& fieldId, const std::vector<Tracke
     return TrackerFieldPayload::IsSprintField(*sprintField);
 }
 
-PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::string& issueKey,
-                                          const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                                          IssueCreateResult& result) {
+PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::string& issueKey, const IssueDraft& draft,
+                                          const std::vector<TrackerField>& catalog, IssueCreateResult& result) {
     PostIssueStepsOutcome outcome;
     const auto statusIt = draft.FieldValues.find("status");
     if (statusIt != draft.FieldValues.end()) {
@@ -173,38 +172,12 @@ void MergePostStepDraftIntoCachedTicket(CachedTicket& ticket, const IssueDraft& 
     }
 }
 
-/** Overlay draft onto cache using only keys from the successful PUT fields payload (plus issue type/parent display). */
-CachedTicket MergeDraftIntoCachedTicketForUpdate(const CachedTicket& existing, const IssueDraft& draft,
-                                                 const std::string& issueKey,
-                                                 const nlohmann::json& putFieldsSucceeded) {
-    CachedTicket t = existing;
-    t.id = issueKey;
-    if (putFieldsSucceeded.is_object()) {
-        for (auto it = putFieldsSucceeded.begin(); it != putFieldsSucceeded.end(); ++it) {
-            const std::string fieldId = it.key();
-            const auto dit = draft.FieldValues.find(fieldId);
-            if (dit != draft.FieldValues.end()) {
-                t.fieldValues[fieldId] = dit->second;
-            }
-        }
-    }
-    if (!draft.IssueTypeName.empty()) {
-        t.fieldValues["issuetype"] = draft.IssueTypeName;
-    } else if (!draft.IssueTypeId.empty()) {
-        t.fieldValues["issuetype"] = draft.IssueTypeId;
-    }
-    if (!draft.ParentKey.empty()) {
-        t.fieldValues["parent"] = draft.ParentKey;
-    }
-    return t;
-}
-
 } // namespace
 
 namespace IssueCreatePipeline {
 
-bool BuildFieldsPayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/, nlohmann::json& /*outFields*/,
-                        std::string& outError) {
+bool BuildFieldsPayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
+                        nlohmann::json& /*outFields*/, std::string& outError) {
     // This method is now just a wrapper for compatibility, but the pipeline should use the client directly.
     // However, ITrackerClient doesn't have a way to call BuildCreatePayload without an instance.
     // So we'll keep the signature for now but it's deprecated for polymorphic use.
@@ -283,13 +256,13 @@ IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* c
         try {
             CachedTicket existing;
             if (cache->TryGetTicket(issueKey, existing)) {
-                result.SeededTicket = MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
+                result.SeededTicket =
+                    IssueCreatePipelineHelpers::MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
             }
             MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
             cache->SaveTicket(result.SeededTicket);
         } catch (const std::exception& ex) {
-            LOG_WARN("IssueCreatePipeline: cache update after PUT failed issue=%s err=%s", issueKey.c_str(),
-                     ex.what());
+            LOG_WARN("IssueCreatePipeline: cache update after PUT failed issue=%s err=%s", issueKey.c_str(), ex.what());
         }
     } else {
         MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
@@ -321,8 +294,8 @@ IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const Is
         return result;
     }
 
-    LOG_DEBUG("IssueCreatePipeline: building create payload for project=%s issuetype=%s",
-              work.ProjectKey.c_str(), work.IssueTypeId.c_str());
+    LOG_DEBUG("IssueCreatePipeline: building create payload for project=%s issuetype=%s", work.ProjectKey.c_str(),
+              work.IssueTypeId.c_str());
 
     nlohmann::json fields;
     std::string buildErr;
@@ -354,9 +327,3 @@ IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const Is
 }
 
 } // namespace IssueCreatePipeline
-
-
-
-
-
-
