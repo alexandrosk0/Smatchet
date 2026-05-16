@@ -89,8 +89,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
 - **Read-only adjacency**: `Source_Core/src/CallstackParser.cpp`, `Source_Core/include/CallstackParser.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — `test-rig` shipped 4 adversarial subcases + substring pin + docs; ctest 192/192 green; PR open against develop.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — `test-rig` shipped 4 adversarial subcases + substring pin + docs; ctest 192/192 green; PR #112 open against develop.
+- **Cleared by**: pending merge of [#112](https://github.com/alexandrosk0/Smatchet/pull/112).
 
 ### test-suite-expansion-completion · wave-A1 · p4blame-parse-tu-split · status: claimed
 
