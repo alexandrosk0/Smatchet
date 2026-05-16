@@ -5,11 +5,10 @@
 // ConfigManager user-data dir into a private temp dir, and writes a minimal config file
 // with `read_only_mode=false` (ConfigManager defaults that to true when no config exists).
 //
-// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText` from `TrackerHttpUtils.cpp`,
-// which transitively pulls `<cpr/cpr.h>` (banned in the doctest rig). We define the symbol
-// locally so the test binary links without dragging cpr in. The production logic is mirrored
-// byte-for-byte from `Source_Core/src/TrackerHttpUtils.cpp`; drift here is a real risk —
-// flagged in `## Self-improvement` (recommend lifting it into a cpr-free TU in a follow-up).
+// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText` from `TrackerHttpUtils.cpp`.
+// PR F added that TU to the test target's source list (alongside cpr link), so the production
+// definition resolves directly — no test-side mirror needed. Backlog entry C12 still tracks
+// the cpr-free TU split as the long-term clean-up.
 
 #include "../support/FakeOfflineQueueDeps.h"
 #include "../support/FakeTrackerClient.h"
@@ -20,6 +19,7 @@
 #include "LocalCacheManager.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "OfflineQueueService.h"
+#include "TrackerHttpUtils.h"
 
 #include <doctest/doctest.h>
 
@@ -39,80 +39,6 @@
 #endif
 
 using smatchet_tests::FakeOfflineQueueDeps;
-
-// Test-side mirror of `IsTrackerTransportErrorText` (production lives in `TrackerHttpUtils.cpp`,
-// which transitively pulls cpr). Marked `inline` here would change linkage; we deliberately
-// emit a strong external definition so the linker resolves it against this TU.
-bool IsTrackerTransportErrorText(const std::string& error) {
-    if (error.empty())
-        return false;
-    std::string s(error.size(), '\0');
-    std::transform(error.begin(), error.end(), s.begin(),
-                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
-    static const char* kHard[] = {
-        "missing tracker domain",
-        "missing tracker",
-        "api token",
-        "tracker backend is not initialized",
-        "http 400",
-        "http 401",
-        "http 402",
-        "http 403",
-        "http 404",
-        "http 405",
-        "http 406",
-        "http 409",
-        "http 410",
-        "http 422",
-        "invalid credentials",
-        "bad request",
-        "unprocessable",
-        "plane is not configured",
-        "plane api key is missing",
-    };
-    for (const char* h : kHard) {
-        if (s.find(h) != std::string::npos)
-            return false;
-    }
-    static const char* kTransport[] = {
-        "http 0",
-        "http 500",
-        "http 502",
-        "http 503",
-        "http 504",
-        "timeout",
-        "timed out",
-        "operation timed out",
-        "could not resolve host",
-        "couldn't resolve host",
-        "name or service not known",
-        "failed to connect",
-        "connection refused",
-        "connection reset",
-        "connection aborted",
-        "network is unreachable",
-        "host unreachable",
-        "ssl connect error",
-        "couldn't connect to server",
-        "eof occurred",
-        "offline",
-        "network error",
-        "resolve host",
-        "resolve proxy",
-        "connection closed",
-        "stream error",
-        "certificate verify failed",
-        "ssl peer certificate",
-        "schannel",
-        "network",
-        "connection",
-    };
-    for (const char* t : kTransport) {
-        if (s.find(t) != std::string::npos)
-            return true;
-    }
-    return false;
-}
 
 namespace {
 
