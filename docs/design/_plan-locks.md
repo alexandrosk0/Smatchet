@@ -236,15 +236,44 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ### test-suite-expansion-completion · wave-A2 · tracker-field-catalog-pure-tu · status: shipped (PR #122 merged at 5ce8def)
 
-### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: in-flight
+### test-suite-expansion-completion · PR-D · offline-queue-deps-interface · status: shipped (PR #127 merged at b5fc194)
 
-- **Branch**: `feat/offline-queue-deps-interface`
+- **Branch**: `feat/offline-queue-deps-interface` (deleted)
 - **Owner agent**: `offline-sync`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR D
-- **Claimed write set**: see same file § PR D for full inventory.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — interface + adapter + fakes shipped on branch; dual-target build clean; ctest pass. PR [#127](https://github.com/alexandrosk0/Smatchet/pull/127) opened against `develop`. Track B (`large-files-and-phase-2`) on-hold gate releases after this merges.
-- **Cleared by**: pending merge of [#127](https://github.com/alexandrosk0/Smatchet/pull/127).
+- **Last update**: 2026-05-16 — merged via PR #127 at sha b5fc194. Track B (`large-files-and-phase-2`) on-hold gate now releases.
+- **Cleared by**: PR `#127` merged at `b5fc194`.
+
+### test-suite-expansion-completion · PR-E · offline-queue-runtime-tests · status: claimed
+
+- **Branch**: `feat/offline-queue-runtime-tests`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR E
+- **Claimed write set**:
+  - `tests/Source_Core/OfflineQueueServiceRuntime.test.cpp` (NEW)
+  - `tests/CMakeLists.txt` (append-only)
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/IOfflineQueueDeps.h`, `Source_Core/src/OfflineQueueService.cpp`, `tests/support/FakeOfflineQueueDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated). Parallel sibling: PR F (disjoint test file; shared `tests/CMakeLists.txt` append).
+- **Cleared by**: TBD PR against `develop`.
+
+### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: claimed
+
+- **Branch**: `feat/ticket-sync-service-tests`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR F
+- **Claimed write set**:
+  - `tests/Source_Core/TicketSyncService.test.cpp` (NEW)
+  - `tests/CMakeLists.txt` (append-only)
+  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/_plan-locks.md` (self-status flips)
+- **Read-only adjacency**: `Source_Core/include/ITicketSyncDeps.h`, `Source_Core/src/TicketSyncService.cpp`, `tests/support/FakeTicketSyncDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated). Parallel sibling: PR E.
+- **Cleared by**: TBD PR against `develop`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
