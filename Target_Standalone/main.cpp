@@ -200,34 +200,6 @@ static void SmatchetEnsureDirectoryExists(const std::string& path) {
     fs::create_directories(fs::path(path), ec);
 }
 
-static std::string SmatchetGetStandaloneUserDataDirectory() {
-#if defined(_WIN32)
-    char buf[MAX_PATH] = {};
-    DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
-    if (n > 0 && n < MAX_PATH) {
-        return SmatchetNormalizeDirectory(std::string(buf) + "\\Smatchet");
-    }
-    n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
-    if (n > 0 && n < MAX_PATH) {
-        return SmatchetNormalizeDirectory(std::string(buf) + "\\Smatchet");
-    }
-    return std::string();
-#elif defined(__APPLE__)
-    if (const char* home = std::getenv("HOME")) {
-        return SmatchetNormalizeDirectory(std::string(home) + "/Library/Application Support/Smatchet");
-    }
-    return std::string();
-#else
-    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
-        return SmatchetNormalizeDirectory(std::string(xdg) + "/Smatchet");
-    }
-    if (const char* home = std::getenv("HOME")) {
-        return SmatchetNormalizeDirectory(std::string(home) + "/.config/Smatchet");
-    }
-    return std::string();
-#endif
-}
-
 int main(int argc, char** argv) {
     // SMATCHET_USER_DATA — override the writable user data directory.
     // Applied here, before ConfigManager::Load(), so the config file, SQLite DB,
