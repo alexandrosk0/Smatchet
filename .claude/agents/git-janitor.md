@@ -215,7 +215,7 @@ After all PRs land. `gh api ... merge` returns `merged:true` before the new sha 
 ```bash
 git -C "$MAIN_REPO" fetch origin
 git -C "$MAIN_REPO" checkout develop
-git -C "$MAIN_REPO" pull --rebase --empty=drop      # drops local commits whose patch is already upstream
+git -C "$MAIN_REPO" pull --ff-only                  # local develop is always upstream-tracking post-merge (orchestrator bans direct push); FF is the correct op
 
 # Replication-lag belt.
 if [ "$(git -C "$MAIN_REPO" rev-parse develop)" != "$(git -C "$MAIN_REPO" rev-parse origin/develop)" ]; then
