@@ -362,8 +362,7 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     // windows: docking metadata gets replaced, but live windows lose their dock parents
     // and float free. Skip the runtime reload and ask the user to restart.
     ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset",
-                                          "Restart Smatchet for the default layout to take effect.",
+    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
                                           ToastType::Info, 4000);
     PersistWindowOpenPreferences(d);
 }
@@ -395,8 +394,7 @@ void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
     // windows: docking metadata gets replaced, but live windows lose their dock parents
     // and float free. Skip the runtime reload and ask the user to restart.
     ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset",
-                                          "Restart Smatchet for the default layout to take effect.",
+    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
                                           ToastType::Info, 4000);
     PersistWindowOpenPreferences(d);
 }
@@ -1014,7 +1012,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
         };
 
-        if (trackerLocked) ImGui::BeginDisabled();
+        if (trackerLocked)
+            ImGui::BeginDisabled();
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open Project View...", "Ctrl+O")) {
                 d.showViewsDashboard = true;
@@ -1312,30 +1311,35 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             ImGui::EndMenu();
         }
 #endif
-        if (trackerLocked) ImGui::EndDisabled();
+        if (trackerLocked)
+            ImGui::EndDisabled();
         // Tools menu stays enabled when locked — but only the Preferences entry inside.
         if (ImGui::BeginMenu("Tools")) {
             if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
                 d.showPreferences = true;
             }
 #if defined(SMATCHET_WITH_MCP)
-            if (trackerLocked) ImGui::BeginDisabled();
+            if (trackerLocked)
+                ImGui::BeginDisabled();
             if (ImGui::MenuItem("MCP Server...")) {
                 d.showMcpServerWindow = true;
                 d.requestMcpServerFocus = true;
             }
-            if (trackerLocked) ImGui::EndDisabled();
+            if (trackerLocked)
+                ImGui::EndDisabled();
 #endif
             ImGui::EndMenu();
         }
-        if (trackerLocked) ImGui::BeginDisabled();
+        if (trackerLocked)
+            ImGui::BeginDisabled();
         if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
                 StartAppUpdateCheck(d, app, true);
             }
             ImGui::EndMenu();
         }
-        if (trackerLocked) ImGui::EndDisabled();
+        if (trackerLocked)
+            ImGui::EndDisabled();
 #if !defined(SMATCHET_WITH_LUA_AUTOMATION)
         {
             static bool s_loggedLuaMenuAbsent = false;
@@ -1348,7 +1352,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
 
         // Inline Command Palette input — VS Code Quick Input.
         // Typing pre-fills + opens the existing palette modal; Enter does the same.
-        if (trackerLocked) ImGui::BeginDisabled();
+        // cppcheck-suppress duplicateCondition
+        if (trackerLocked) {
+            ImGui::BeginDisabled();
+        }
         {
             constexpr float kInlineMaxWidthPx = 640.0f;
             constexpr float kInlineMinWidthPx = 200.0f;
@@ -1367,7 +1374,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                                                                 d.paletteInlineBuf, IM_ARRAYSIZE(d.paletteInlineBuf),
                                                                 ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::PopStyleVar();
-                if ((ImGui::IsItemActivated() || committed) && d.paletteInlineBuf[0] != '\0') {
+                const bool edited = ImGui::IsItemEdited();
+                const bool activated = ImGui::IsItemActivated();
+                if ((activated || edited || committed) && d.paletteInlineBuf[0] != '\0') {
                     if (!commandPalette_.IsOpen()) {
                         commandPalette_.Open();
                     }
@@ -1378,7 +1387,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 }
             }
         }
-        if (trackerLocked) ImGui::EndDisabled();
+        if (trackerLocked)
+            ImGui::EndDisabled();
 
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
