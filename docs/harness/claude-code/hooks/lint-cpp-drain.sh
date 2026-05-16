@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Stop hook: drain phase of the lint-cpp pipeline.
+# - Globs .claude/.lint-queue.* (per-PID inline-phase queues), dedups paths,
+#   filters to existing first-party files.
+# - Processes up to SMATCHET_LINT_DRAIN_CHUNK files per invocation (default 10);
+#   any remainder is rewritten to a single queue file for the next Stop event.
+# - Runs cppcheck + clang-tidy + (for .cpp outside tests/) dual-target syntax
+#   on each chunked file. Surfaces consolidated findings via exit 2.
+#
+# Serialised by flock on .claude/.lint-queue.lock so concurrent Stop events
+# (e.g. orchestrator + subagent both ending close together) cannot trample
+# each other.
+
+set -u
+
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+export CLAUDE_PROJECT_DIR="$PROJ_DIR"
+
+LOCK_FILE="$PROJ_DIR/.claude/.lint-queue.lock"
+
+# --- Serialise concurrent Stop events --------------------------------------
+# Open fd 200 on the lock file and take a non-blocking exclusive lock. If
+# another drain holds it, exit silently — that drain will process the queue
+# (or a later Stop event will).
+if command -v flock >/dev/null 2>&1; then
+    exec 200>"$LOCK_FILE" || exit 0
+    flock -n 200 || exit 0
+fi
+
+# --- Library + filters -----------------------------------------------------
+# shellcheck source=lint-cpp-common.sh
+. "$PROJ_DIR/.claude/hooks/lint-cpp-common.sh"
+
+# --- Collect queue entries -------------------------------------------------
+shopt -s nullglob
+QUEUE_FILES=("$PROJ_DIR"/.claude/.lint-queue.*)
+shopt -u nullglob
+
+if [[ ${#QUEUE_FILES[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+# Read all lines, dedup, keep order of first occurrence.
+ALL_LINES=""
+for q in "${QUEUE_FILES[@]}"; do
+    [[ -f "$q" ]] || continue
+    ALL_LINES+="$(cat "$q" 2>/dev/null || true)"$'\n'
+done
+
+# Awk-dedup preserving first-occurrence order.
+UNIQUE_ABS_PATHS="$(printf '%s' "$ALL_LINES" | awk 'NF && !seen[$0]++')"
+
+# Filter to existing first-party files.
+declare -a CANDIDATES=()
+while IFS= read -r abs; do
+    [[ -z "$abs" ]] && continue
+    [[ -f "$abs" ]] || continue
+    rel="$(lint_normalize_path "$abs")"
+    [[ -z "$rel" ]] && continue
+    lint_is_first_party "$rel" || continue
+    CANDIDATES+=("$abs")
+done <<< "$UNIQUE_ABS_PATHS"
+
+if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
+    # Nothing to do; tidy up the queue files we read.
+    rm -f "${QUEUE_FILES[@]}"
+    exit 0
+fi
+
+# --- Chunk: process up to N files this invocation --------------------------
+CHUNK_SIZE="${SMATCHET_LINT_DRAIN_CHUNK:-10}"
+if ! [[ "$CHUNK_SIZE" =~ ^[0-9]+$ ]] || [[ "$CHUNK_SIZE" -le 0 ]]; then
+    CHUNK_SIZE=10
+fi
+
+declare -a CHUNK=()
+declare -a REMAINDER=()
+i=0
+for abs in "${CANDIDATES[@]}"; do
+    if [[ $i -lt $CHUNK_SIZE ]]; then
+        CHUNK+=("$abs")
+    else
+        REMAINDER+=("$abs")
+    fi
+    i=$((i + 1))
+done
+
+# Consume the original per-PID queue files and write the remainder (if any)
+# into a single new queue file keyed off the drain's own PID. Next Stop event
+# will pick it up.
+rm -f "${QUEUE_FILES[@]}"
+if [[ ${#REMAINDER[@]} -gt 0 ]]; then
+    REMAINDER_FILE="$PROJ_DIR/.claude/.lint-queue.$$"
+    printf '%s\n' "${REMAINDER[@]}" > "$REMAINDER_FILE"
+fi
+
+# --- Run heavy tools on the chunk ------------------------------------------
+ISSUES=""
+PROCESSED_RELS=()
+for abs in "${CHUNK[@]}"; do
+    rel="$(lint_normalize_path "$abs")"
+    PROCESSED_RELS+=("$rel")
+
+    cppcheck_out="$(lint_run_cppcheck "$abs")"
+    [[ -n "$cppcheck_out" ]] && ISSUES+="$cppcheck_out"$'\n'
+
+    tidy_out="$(lint_run_clang_tidy "$abs" "$rel")"
+    [[ -n "$tidy_out" ]] && ISSUES+="$tidy_out"$'\n'
+
+    dual_out="$(lint_run_dual_target "$abs" "$rel")"
+    [[ -n "$dual_out" ]] && ISSUES+="$dual_out"$'\n'
+done
+
+# --- Surface findings ------------------------------------------------------
+if [[ -n "$ISSUES" ]]; then
+    {
+        chunk_n=${#CHUNK[@]}
+        remain_n=${#REMAINDER[@]}
+        if [[ $remain_n -gt 0 ]]; then
+            echo "lint-cpp: deferred-drain issues across $chunk_n file(s); $remain_n file(s) remain queued — fix before responding."
+        else
+            echo "lint-cpp: deferred-drain issues across $chunk_n file(s) — fix before responding."
+        fi
+        echo "files: ${PROCESSED_RELS[*]}"
+        printf '%s' "$ISSUES" | lint_format_issues
+    } >&2
+    exit 2
+fi
+
+exit 0
