@@ -4,7 +4,11 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-- 2026-05-16 · build-doctor · [tooling] — Windows-path-separator regex bug in build-log-grep scripts
+- 2026-05-16 · orchestrator · [process] — Trivial palette / theme tweaks must skip full build + test-all + bucket-E loop
+  Details: A 1-file palette retune (Norton Commander teal refinement, `Source_Core/src/SmatchetTheme.cpp` ApplyNortonCommander only) burned ~2 h of wall-clock on full `ninja-iter-msys2` + `ninja-test-msys2` + `ninja-ui-test-msys2` rebuilds, fresh CMake configures in a new isolated worktree (2 × ~120 s configure step), bucket-E spawn/quit cycles, and a port-collision retry loop — for a change with **zero behavioural risk** (only `ImVec4` literals; no API, no schema, no control flow). Concurrent-agent branch-switching on the shared main worktree compounded the cost. Proposal: classify a "trivial-visual-only" change envelope (`{ paths: [Source_Core/src/SmatchetTheme.cpp, Locales/*.json, ImGui style constants], diff-shape: literals-only, no header touch }`) where the orchestrator may ship after (a) `ninja-iter-msys2 SmatchetStandalone` builds, (b) `ninja-test-msys2` ctest passes (if pure-logic tests touch the changed file), (c) **NO** `ninja-ui-test-msys2` bucket-E run, (d) **NO** isolated worktree (use main wt + `git stash` race-recovery if concurrent agent appears). Bucket-E coverage gets deferred to a single post-batch run before merge or to the test backlog. Estimated savings: 10× wall-clock on visual-only PRs. Cost: 15 min agent-doc edit + a one-paragraph envelope spec in `agents/orchestrator.md` (or AGENTS.md § Project rules if no orchestrator doc).
+  Status: open
+
+
   Details: While shipping Slice 4 (`scripts/dev/test-build-warnings.sh`), the first regex used `/` as the only path separator, but GCC under MinGW emits source paths with `\` (e.g. `..\..\Target_Standalone\main.cpp`). Test silently passed despite real warnings; caught by a deliberate negative-test (restored dead helper, expected exit-1, got exit-0). Cost ~5 min. Proposal: add to AGENTS.md § Debug techniques (or `agents/build-doctor.md` § Common causes) — "any future build-log-grep on Windows must use `[\\/]` for path separators, not `/`". Estimated cost: 5 min doc edit.
   Status: open
 

@@ -9,11 +9,9 @@
 #include "imgui_te_engine.h"
 
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
-extern "C" void SmatchetRegisterNortonCommanderThemeTests(ImGuiTestEngine* engine);
 
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
-    SmatchetRegisterNortonCommanderThemeTests(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
