@@ -1,6 +1,6 @@
 # Offline / restricted-network builds
 
-> Slice 6 of [docs/design/first-time-setup-hardening.md](../design/first-time-setup-hardening.md). Niche audience — contributors behind restrictive firewalls, corporate proxies that block `https://github.com`, air-gapped CI runners, or first-time setups where re-downloading every dependency on every fresh clone is painful.
+> Slice 6 of [docs/design/applied/first-time-setup-hardening.md](../design/applied/first-time-setup-hardening.md). Niche audience — contributors behind restrictive firewalls, corporate proxies that block `https://github.com`, air-gapped CI runners, or first-time setups where re-downloading every dependency on every fresh clone is painful.
 
 Smatchet pulls 11 third-party libraries via CMake `FetchContent` at configure time. The very first configure on a fresh clone takes ~5 min (see [BUILD.md § First-time verification](../../BUILD.md)). Every subsequent fresh clone repeats those downloads unless you steer FetchContent to a pre-populated cache.
 
