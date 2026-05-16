@@ -355,7 +355,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — held by user after parallel `test-suite-expansion` plan surfaced. Track A (5 mechanical splits) already shipped; Track B paused at the boundary.
 - **Cleared by**: TBD (gate above).
 
-### ai-assistant-side-panel · Phase A-narrowed · status: claimed
+### ai-assistant-side-panel · Phase A-narrowed · status: in-flight
 
 - **Branch**: `feat/ai-assistant-side-panel` (plan recovered from dangling 84913a8 → a39097c)
 - **Owner agent**: orchestrator (direct — provider-pluggable C++14 skeleton)
@@ -380,7 +380,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `Source_Core/include/ConfigManager.h` + `Source_Core/src/ConfigManager.cpp` (Ai field set + DPAPI key protection)
   - `tests/CMakeLists.txt` + `tests/Source_Core/AiSseParser.test.cpp` + `tests/Source_Core/AiClientFactory.test.cpp` (doctest coverage)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — recovered dangling commit + claimed narrowed scope after user picked option (b) on overlap-resolution prompt. Phases B-E remain unscoped pending Phase A ship + Track-B / umbrella status check.
+- **Last update**: 2026-05-16 — Phase A code committed locally (skeleton + OpenAiClient + NetworkUsageTracker re-fit + CMake option/shim). Both targets build clean. Push + PR pending. Phases B-E unscoped pending Phase A ship + Track-B / umbrella status check.
 - **Cleared by**: TBD.
 
 ## Shipped recent entries
