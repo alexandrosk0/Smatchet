@@ -9,5 +9,6 @@ enum class ThemeId : std::uint8_t {
     ModernDark = 1,
     Vs2022Dark = 2,
     Vs2022Light = 3,
-    HighContrast = 4
+    HighContrast = 4,
+    NortonCommander = 5
 };

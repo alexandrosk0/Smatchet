@@ -444,6 +444,110 @@ void ApplyHighContrast(ImGuiStyle& /*style*/, ImVec4* colors) {
     SetSyntaxColors(syn);
 }
 
+// Norton Commander 5.51 palette — CGA/EGA 16-color tribute: deep blue background, cyan panel
+// borders, bright yellow titles/highlights, bright white body text. Selected row uses cyan bg with
+// black text. Mirrors the iconic DOS file manager look (en.wikipedia.org/wiki/Norton_Commander).
+void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
+    // Canonical 16-color CGA hexes mapped to 0..1 floats.
+    const ImVec4 ncBlue = ImVec4(0.00f, 0.00f, 0.667f, 1.00f);        // #0000AA — panel bg
+    const ImVec4 ncCyan = ImVec4(0.00f, 0.667f, 0.667f, 1.00f);       // #00AAAA — title / border
+    const ImVec4 ncBrightCyan = ImVec4(0.333f, 1.000f, 1.000f, 1.0f); // #55FFFF — hover accents
+    const ImVec4 ncWhite = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);        // #FFFFFF — body text
+    const ImVec4 ncYellow = ImVec4(1.00f, 1.00f, 0.333f, 1.00f);      // #FFFF55 — selection/highlight
+    const ImVec4 ncDarkBlue = ImVec4(0.00f, 0.00f, 0.40f, 1.00f);     // shadow for popups
+
+    // Override the shell geometry to be flatter — the original Norton Commander used sharp 1px
+    // borders, not rounded corners. Keep WindowPadding from ApplyCommonStyle so layouts still fit.
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 0.0f;
+    style.FrameRounding = 0.0f;
+    style.PopupRounding = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.GrabRounding = 0.0f;
+    style.TabRounding = 0.0f;
+
+    colors[ImGuiCol_Text] = ncWhite;
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.667f, 0.667f, 0.667f, 1.00f); // #AAAAAA
+    colors[ImGuiCol_WindowBg] = ncBlue;
+    colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg] = ncBlue;
+    colors[ImGuiCol_Border] = ncBrightCyan;
+    colors[ImGuiCol_BorderShadow] = ncDarkBlue;
+
+    colors[ImGuiCol_FrameBg] = ncCyan;
+    colors[ImGuiCol_FrameBgHovered] = ncBrightCyan;
+    colors[ImGuiCol_FrameBgActive] = ncYellow;
+
+    colors[ImGuiCol_TitleBg] = ncCyan;
+    colors[ImGuiCol_TitleBgActive] = ncBrightCyan;
+    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.40f, 0.40f, 0.80f);
+
+    colors[ImGuiCol_MenuBarBg] = ncCyan;
+    colors[ImGuiCol_ScrollbarBg] = ncDarkBlue;
+    colors[ImGuiCol_ScrollbarGrab] = ncCyan;
+    colors[ImGuiCol_ScrollbarGrabHovered] = ncBrightCyan;
+    colors[ImGuiCol_ScrollbarGrabActive] = ncYellow;
+
+    colors[ImGuiCol_CheckMark] = ncYellow;
+    colors[ImGuiCol_SliderGrab] = ncYellow;
+    colors[ImGuiCol_SliderGrabActive] = ncWhite;
+
+    colors[ImGuiCol_Button] = ncCyan;
+    colors[ImGuiCol_ButtonHovered] = ncBrightCyan;
+    colors[ImGuiCol_ButtonActive] = ncYellow;
+
+    // Selected row in the file panel = cyan bg with bright body text. Norton's iconic look.
+    colors[ImGuiCol_Header] = ncCyan;
+    colors[ImGuiCol_HeaderHovered] = ncBrightCyan;
+    colors[ImGuiCol_HeaderActive] = ncYellow;
+
+    colors[ImGuiCol_Separator] = ncBrightCyan;
+    colors[ImGuiCol_SeparatorHovered] = ncYellow;
+    colors[ImGuiCol_SeparatorActive] = ncYellow;
+
+    colors[ImGuiCol_ResizeGrip] = ImVec4(1.00f, 1.00f, 0.333f, 0.30f);
+    colors[ImGuiCol_ResizeGripHovered] = ImVec4(1.00f, 1.00f, 0.333f, 0.67f);
+    colors[ImGuiCol_ResizeGripActive] = ncYellow;
+
+    colors[ImGuiCol_Tab] = ncBlue;
+    colors[ImGuiCol_TabHovered] = ncBrightCyan;
+    colors[ImGuiCol_TabActive] = ncCyan;
+    colors[ImGuiCol_TabUnfocused] = ncBlue;
+    colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.00f, 0.40f, 0.40f, 1.00f);
+
+    colors[ImGuiCol_DockingPreview] = ImVec4(1.00f, 1.00f, 0.333f, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg] = ncDarkBlue;
+
+    colors[ImGuiCol_PlotLines] = ncBrightCyan;
+    colors[ImGuiCol_PlotLinesHovered] = ncYellow;
+    colors[ImGuiCol_PlotHistogram] = ncYellow;
+    colors[ImGuiCol_PlotHistogramHovered] = ncWhite;
+
+    colors[ImGuiCol_TableHeaderBg] = ncCyan;
+    colors[ImGuiCol_TableBorderStrong] = ncBrightCyan;
+    colors[ImGuiCol_TableBorderLight] = ImVec4(0.00f, 0.667f, 0.667f, 0.60f);
+    colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.00f, 0.00f, 0.40f, 0.60f);
+
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 0.667f, 0.667f, 0.55f);
+    colors[ImGuiCol_DragDropTarget] = ncYellow;
+    colors[ImGuiCol_NavHighlight] = ncYellow;
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 0.333f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.40f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.55f);
+
+    // C++ syntax palette — DOS-era ANSI palette tribute. Keyword bright yellow (matches Norton's
+    // title-bar accent), string light red, comment light gray, number bright cyan, preproc green.
+    // Keyword R/G/B differs from HighContrast's pure yellow on the B channel (0.333 vs 0.0) so
+    // pairwise-divergence tests still pass.
+    const SmatchetThemeSyntaxColors syn = {{1.00f, 1.00f, 0.333f, 1.0f},   // Keyword  bright yellow
+                                           {1.00f, 0.50f, 0.50f, 1.0f},    // String   light red
+                                           {0.667f, 0.667f, 0.667f, 1.0f}, // Comment light gray
+                                           {0.333f, 1.00f, 1.00f, 1.0f},   // Number   bright cyan
+                                           {0.333f, 1.00f, 0.333f, 1.0f}}; // Preproc bright green
+    SetSyntaxColors(syn);
+}
+
 } // namespace
 
 void SmatchetTheme::ApplyStyle(ThemeId theme) {
@@ -464,6 +568,9 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
         break;
     case ThemeId::HighContrast:
         ApplyHighContrast(style, colors);
+        break;
+    case ThemeId::NortonCommander:
+        ApplyNortonCommander(style, colors);
         break;
     case ThemeId::SmatchetDark:
     default:

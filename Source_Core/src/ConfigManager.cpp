@@ -1002,6 +1002,8 @@ void ConfigManager::Save(const TrackerConfig& config) {
             return "Vs2022Light";
         case ThemeId::HighContrast:
             return "HighContrast";
+        case ThemeId::NortonCommander:
+            return "NortonCommander";
         case ThemeId::SmatchetDark:
         default:
             return "SmatchetDark";
@@ -1318,6 +1320,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.Theme = ThemeId::Vs2022Light;
             else if (themeStr == "HighContrast")
                 cfg.Theme = ThemeId::HighContrast;
+            else if (themeStr == "NortonCommander")
+                cfg.Theme = ThemeId::NortonCommander;
             else
                 cfg.Theme = ThemeId::SmatchetDark;
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
