@@ -92,12 +92,12 @@ class AuditDirGuard {
 };
 
 /// Wait for the async audit writer to flush at least `expected_min` lines that contain
-/// `operationId` to the audit file. Operation-id filtering scopes the wait to events the
-/// current test produced — useful because the AuditWriter is a process-wide singleton and
+/// `operationId` to the audit file at `path`. Operation-id filtering scopes the wait to events
+/// the current test produced — useful because the AuditWriter is a process-wide singleton and
 /// the audit file may accumulate lines from earlier tests in the same run.
 /// Returns the number of matching lines observed (after the count is met, or timeout).
-std::size_t WaitForOperationLines(const std::string& operationId, std::size_t expected_min, int timeout_ms = 2000) {
-    const std::string path = GetAuditFilePath();
+std::size_t WaitForOperationLinesAt(const std::string& path, const std::string& operationId, std::size_t expected_min,
+                                    int timeout_ms = 2000) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     std::size_t matches = 0;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -115,6 +115,10 @@ std::size_t WaitForOperationLines(const std::string& operationId, std::size_t ex
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return matches;
+}
+
+std::size_t WaitForOperationLines(const std::string& operationId, std::size_t expected_min, int timeout_ms = 2000) {
+    return WaitForOperationLinesAt(GetAuditFilePath(), operationId, expected_min, timeout_ms);
 }
 
 } // namespace
@@ -205,13 +209,11 @@ TEST_CASE("BackendAuditTrail: MakeFieldDiffUnknownBefore returns empty array for
     CHECK(MakeFieldDiffUnknownBefore(nlohmann::json::object()).empty());
 }
 
-// Async-writer / IO surface tests share a single AuditDirGuard inside one TEST_CASE body
-// (no SUBCASEs). Rationale: BackendAuditTrail's AuditWriter is a process-wide singleton
-// whose worker thread captures `GetAuditFilePath()` once on the first AppendEvent call
-// and reuses that path for the rest of the process lifetime. Doctest re-enters a
-// TEST_CASE body once per SUBCASE — that would re-construct AuditDirGuard twice and
-// silently desync the cached writer path from the new user-data dir. Keep both scenarios
-// in one body so the guard exists exactly once.
+// The async writer thread re-resolves GetAuditFilePath() per event, so tests that swap the
+// user-data dir between AppendEvent calls (or between TEST_CASEs) route subsequent lines to
+// the new path. The cross-TEST_CASE behaviour is exercised by the runtime-dir-change case
+// below; this case keeps a single AuditDirGuard so the two in-fixture scenarios share one
+// directory (cheaper than two guards per case).
 TEST_CASE("BackendAuditTrail: file IO surface (begin/result + failure error string)") {
     AuditDirGuard guard;
 
@@ -259,4 +261,28 @@ TEST_CASE("BackendAuditTrail: file IO surface (begin/result + failure error stri
         CHECK((*it)["success"].get<bool>() == false);
         CHECK((*it)["error"].get<std::string>() == "Backend error: 500");
     }
+}
+
+// Runtime user-data-dir change: writer re-resolves GetAuditFilePath() per event, so events
+// emitted after a SetUserDataDirectory swap land in the new directory's audit file, not the
+// previous one's. Prior to the per-event re-resolve fix, the writer cached the path on first
+// event and silently kept appending to the original location.
+TEST_CASE("BackendAuditTrail: writer follows ConfigManager user-data dir change at runtime") {
+    AuditDirGuard guardA;
+    const std::string pathA = GetAuditFilePath();
+
+    const std::string opIdA = MakeOperationId("rt-dir-A");
+    AppendBegin("create_issue", "test", "ABC-1", opIdA, nlohmann::json::object());
+    REQUIRE(WaitForOperationLinesAt(pathA, opIdA, 1) >= 1);
+
+    AuditDirGuard guardB;
+    const std::string pathB = GetAuditFilePath();
+    REQUIRE(pathA != pathB);
+
+    const std::string opIdB = MakeOperationId("rt-dir-B");
+    AppendBegin("create_issue", "test", "DEF-2", opIdB, nlohmann::json::object());
+    REQUIRE(WaitForOperationLinesAt(pathB, opIdB, 1) >= 1);
+
+    CHECK(WaitForOperationLinesAt(pathA, opIdB, 1, 200) == 0);
+    CHECK(WaitForOperationLinesAt(pathB, opIdA, 1, 200) == 0);
 }

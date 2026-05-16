@@ -181,21 +181,25 @@ struct AuditWriter {
 
     AuditWriter() {
         thread = std::thread([this] {
-            std::string path;
-            std::string fallbackPath;
             while (true) {
                 std::string line;
                 {
                     std::unique_lock<std::mutex> lk(mutex);
                     cv.wait(lk, [this] { return !queue.empty() || !running.load(); });
-                    if (queue.empty() && !running.load()) break;
-                    if (queue.empty()) continue;
+                    if (queue.empty() && !running.load())
+                        break;
+                    if (queue.empty())
+                        continue;
                     line = std::move(queue.front());
                     queue.pop_front();
                 }
                 try {
-                    if (path.empty()) path = GetAuditFilePath();
-                    if (fallbackPath.empty()) fallbackPath = GetAuditFallbackPath();
+                    // Re-resolve per-event so ConfigManager::SetUserDataDirectory changes at
+                    // runtime (per-test fixture redirection, user changing config dir from the UI)
+                    // route subsequent audit lines to the new path. GetAuditFilePath() is a cheap
+                    // string concat — no syscall — so the cost per event is negligible.
+                    const std::string path = GetAuditFilePath();
+                    const std::string fallbackPath = GetAuditFallbackPath();
                     // The file is also read by ReadRecentEvents under AuditMutex(); take the
                     // same mutex around our append so the reader cannot observe a half-flushed
                     // line (the reader's JSON parser silently swallows partial JSON, so the
@@ -223,7 +227,8 @@ struct AuditWriter {
                                 static std::atomic<bool> warnedFallbackWrite{false};
                                 if (!warnedFallbackWrite.exchange(true)) {
                                     LOG_ERROR("BackendAuditTrail: write failed for audit fallback "
-                                              "(path '%s')", fallbackPath.c_str());
+                                              "(path '%s')",
+                                              fallbackPath.c_str());
                                 }
                             }
                         } else {
@@ -235,8 +240,7 @@ struct AuditWriter {
                             if (n == 1 || n == 10 || n == 100 || n == 1000 || n == 10000) {
                                 LOG_ERROR("BackendAuditTrail: %llu audit event(s) dropped — neither "
                                           "primary ('%s') nor fallback ('%s') could be opened",
-                                          static_cast<unsigned long long>(n),
-                                          path.c_str(), fallbackPath.c_str());
+                                          static_cast<unsigned long long>(n), path.c_str(), fallbackPath.c_str());
                             }
                             continue;
                         }
@@ -246,12 +250,12 @@ struct AuditWriter {
                         if (!file.good()) {
                             static std::atomic<bool> warnedAuditFileWrite{false};
                             if (!warnedAuditFileWrite.exchange(true)) {
-                                LOG_ERROR("BackendAuditTrail: write failed for audit line (path '%s')",
-                                          path.c_str());
+                                LOG_ERROR("BackendAuditTrail: write failed for audit line (path '%s')", path.c_str());
                             }
                         }
                     }
-                } catch (...) {}
+                } catch (...) {
+                }
             }
         });
     }
@@ -262,7 +266,8 @@ struct AuditWriter {
             running = false;
         }
         cv.notify_one();
-        if (thread.joinable()) thread.join();
+        if (thread.joinable())
+            thread.join();
     }
 
     void Post(std::string line) {
@@ -417,8 +422,3 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
 }
 
 } // namespace BackendAuditTrail
-
-
-
-
-
