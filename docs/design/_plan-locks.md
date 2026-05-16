@@ -50,6 +50,20 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### backend-audit-trail-per-event-path · status: in-flight
+
+- **Branch**: `feat/audit-trail-per-event-path`
+- **Owner agent**: orchestrator
+- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Claimed write set**:
+  - `Source_Core/src/BackendAuditTrail.cpp` (writer re-resolves `GetAuditFilePath()` per-event)
+  - `tests/Source_Core/BackendAuditTrail.test.cpp` (add runtime-dir-change case; existing TEST_CASE workaround drops)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip)
+- **Read-only adjacency**: `Source_Core/include/BackendAuditTrail.h`, `Source_Core/include/ConfigManager.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — production fix landed in working tree, building tests next.
+- **Cleared by**: TBD PR against `develop`.
+
 ### test-suite-expansion · phase 1 · status: in-flight
 
 - **Branch**: `feat/test-phase-1-tracker-pure-logic`
