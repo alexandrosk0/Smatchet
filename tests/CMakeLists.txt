@@ -32,6 +32,7 @@ add_executable(SmatchetTests
     Source_Core/TrackerFieldPayloadPure.test.cpp
     Source_Core/TrackerFieldCatalogPure.test.cpp
     Source_Core/TicketSyncService.test.cpp
+    Source_Core/OfflineQueueServiceRuntime.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
@@ -59,6 +60,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/NetworkUsageTracker.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/OfflineQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetLocalization.cpp"

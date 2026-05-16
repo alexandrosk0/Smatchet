@@ -245,7 +245,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #127 at sha b5fc194. Track B (`large-files-and-phase-2`) on-hold gate now releases.
 - **Cleared by**: PR `#127` merged at `b5fc194`.
 
-### test-suite-expansion-completion · PR-E · offline-queue-runtime-tests · status: claimed
+### test-suite-expansion-completion · PR-E · offline-queue-runtime-tests · status: in-flight
 
 - **Branch**: `feat/offline-queue-runtime-tests`
 - **Owner agent**: `test-rig`
@@ -257,7 +257,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/IOfflineQueueDeps.h`, `Source_Core/src/OfflineQueueService.cpp`, `tests/support/FakeOfflineQueueDeps.h`, `tests/support/SqliteMemFixture.h`, `tests/support/FakeTrackerClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — packet dispatched to `test-rig` (worktree isolated). Parallel sibling: PR F (disjoint test file; shared `tests/CMakeLists.txt` append).
+- **Last update**: 2026-05-16 — first commit landed on branch; PR open pending.
 - **Cleared by**: TBD PR against `develop`.
 
 ### test-suite-expansion-completion · PR-F · ticket-sync-service-tests · status: in-flight
