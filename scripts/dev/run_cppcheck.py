@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+TOP_LEVEL_DIRS = ("Source_Core", "Plugins", "Target_Standalone")
 
 
 def main() -> int:
@@ -46,11 +47,16 @@ def main() -> int:
     with src_db.open(encoding="utf-8") as f:
         j = json.load(f)
 
-    rx = re.compile(r"[/\\]Smatchet[/\\](Source_Core|Plugins|Target_Standalone)[/\\]", re.I)
-
     def keep(entry: dict) -> bool:
-        path = entry["file"].replace("\\", "/")
-        return bool(rx.search(path)) and "/_deps/" not in path
+        abs_path = Path(entry["file"]).resolve()
+        try:
+            rel = abs_path.relative_to(root)
+        except ValueError:
+            return False  # outside repo (FetchContent _deps, system headers)
+        parts = rel.parts
+        if not parts or parts[0] not in TOP_LEVEL_DIRS:
+            return False
+        return "_deps" not in parts
 
     filt = [e for e in j if keep(e)]
     out_db.parent.mkdir(parents=True, exist_ok=True)
