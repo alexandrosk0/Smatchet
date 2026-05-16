@@ -1076,6 +1076,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         {ThemeId::Vs2022Dark, "VS 2022 Dark"},
                         {ThemeId::Vs2022Light, "VS 2022 Light"},
                         {ThemeId::HighContrast, "High Contrast"},
+                        {ThemeId::NortonCommander, "Norton Commander"},
                     };
                     for (const ThemeEntry& e : kEntries) {
                         if (ImGui::MenuItem(e.label, nullptr, d.cfg.Theme == e.id)) {

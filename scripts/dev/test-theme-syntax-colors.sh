@@ -3,7 +3,7 @@
 #
 # Asserts that SmatchetTheme::ApplyStyle(theme) writes a per-theme entry into the file-static
 # SmatchetThemeSyntaxColors that CppSyntaxHighlight reads. Proves the round-trip plumbing for all
-# 5 themes (SmatchetDark / ModernDark / Vs2022Dark / Vs2022Light / HighContrast) plus the
+# 6 themes (SmatchetDark / ModernDark / Vs2022Dark / Vs2022Light / HighContrast / NortonCommander) plus the
 # cross-theme divergence claim (switching theme actually recolors the syntax palette).
 #
 # Builds the doctest rig if SmatchetTests.exe is missing, then runs only the SmatchetTheme test

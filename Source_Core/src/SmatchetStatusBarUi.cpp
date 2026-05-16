@@ -17,24 +17,36 @@ namespace {
 
 static const char* ThemeIdName(ThemeId t) {
     switch (t) {
-        case ThemeId::ModernDark:   return "Modern Dark";
-        case ThemeId::Vs2022Dark:   return "VS 2022 Dark";
-        case ThemeId::Vs2022Light:  return "VS 2022 Light";
-        case ThemeId::HighContrast: return "High Contrast";
-        case ThemeId::SmatchetDark:
-        default:                    return "Smatchet Dark";
+    case ThemeId::ModernDark:
+        return "Modern Dark";
+    case ThemeId::Vs2022Dark:
+        return "VS 2022 Dark";
+    case ThemeId::Vs2022Light:
+        return "VS 2022 Light";
+    case ThemeId::HighContrast:
+        return "High Contrast";
+    case ThemeId::NortonCommander:
+        return "Norton Commander";
+    case ThemeId::SmatchetDark:
+    default:
+        return "Smatchet Dark";
     }
 }
 
 static const char* ConnectivityLabel(AppController& app) {
     using State = AppController::TrackerConnectivityState;
     switch (app.GetLastTrackerConnectivityState()) {
-        case State::AuthenticatedReachable:       return "online";
-        case State::ReachableAuthOrConfigError:   return "auth error";
-        case State::TransportDown:                return "offline";
-        case State::ServiceUnavailable:           return "unavailable";
-        case State::Unknown:
-        default:                                  return "unknown";
+    case State::AuthenticatedReachable:
+        return "online";
+    case State::ReachableAuthOrConfigError:
+        return "auth error";
+    case State::TransportDown:
+        return "offline";
+    case State::ServiceUnavailable:
+        return "unavailable";
+    case State::Unknown:
+    default:
+        return "unknown";
     }
 }
 
@@ -43,8 +55,7 @@ static const char* ConnectivityLabel(AppController& app) {
 void DrawStatusBar(AppController& app, const UiDrawSession& d) {
     const float barH = ::ImGui::GetFrameHeight();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
-    if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(),
-                                       ImGuiDir_Down, barH, flags)) {
+    if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(), ImGuiDir_Down, barH, flags)) {
         ::ImGui::End();
         return;
     }
@@ -71,8 +82,7 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
     // Field-edit count comes from d.cachedPendingFieldEditCount (refreshed once per frame
     // in SmatchetUI after TickOfflineFieldEdits) to avoid a SQLite SELECT on the render thread.
     {
-        const size_t queuedOps = app.GetPendingCreateCount() +
-                                 static_cast<size_t>(d.cachedPendingFieldEditCount);
+        const size_t queuedOps = app.GetPendingCreateCount() + static_cast<size_t>(d.cachedPendingFieldEditCount);
         if (queuedOps > 0) {
             ImGui::SameLine();
             ImGui::TextUnformatted("|");
@@ -98,8 +108,8 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
         char rightBuf[128];
         const float fps = ::ImGui::GetIO().Framerate;
         const char* themeName = ThemeIdName(d.cfg.Theme);
-        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s  %.0f fps",
-                      d.cfg.FontSizePt, themeName, static_cast<double>(fps));
+        std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s  %.0f fps", d.cfg.FontSizePt, themeName,
+                      static_cast<double>(fps));
 
         const float textW = ::ImGui::CalcTextSize(rightBuf).x;
         const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;

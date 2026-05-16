@@ -119,6 +119,26 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes HighContras
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes NortonCommander syntax palette") {
+    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
+    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+
+    // Norton Commander DOS tribute — keyword bright yellow #FFFF55, string light red, comment light
+    // gray, number bright cyan #55FFFF, preproc bright green. Source-of-truth in SmatchetTheme.cpp
+    // ApplyNortonCommander.
+    const float keyword[4] = {1.00f, 1.00f, 0.333f, 1.0f};
+    const float strLit[4] = {1.00f, 0.50f, 0.50f, 1.0f};
+    const float comment[4] = {0.667f, 0.667f, 0.667f, 1.0f};
+    const float number[4] = {0.333f, 1.00f, 1.00f, 1.0f};
+    const float preproc[4] = {0.333f, 1.00f, 0.333f, 1.0f};
+
+    CHECK(ApproxEq(s.Keyword, keyword));
+    CHECK(ApproxEq(s.String, strLit));
+    CHECK(ApproxEq(s.Comment, comment));
+    CHECK(ApproxEq(s.Number, number));
+    CHECK(ApproxEq(s.Preprocessor, preproc));
+}
+
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle keyword color diverges between themes") {
     // Round-trip proof for the user-facing claim — switching theme actually recolors the syntax
     // palette in the next frame. Captures the SmatchetDark / Vs2022Dark / Vs2022Light /
@@ -144,12 +164,21 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle keyword color dive
         SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
         SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
 
+    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
+    const float nortonKeyword[4] = {
+        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
+        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+
     CHECK_FALSE(ApproxEq(smatchetKeyword, vsDarkKeyword));
     CHECK_FALSE(ApproxEq(smatchetKeyword, vsLightKeyword));
     CHECK_FALSE(ApproxEq(smatchetKeyword, highContrastKeyword));
+    CHECK_FALSE(ApproxEq(smatchetKeyword, nortonKeyword));
     CHECK_FALSE(ApproxEq(vsDarkKeyword, vsLightKeyword));
     CHECK_FALSE(ApproxEq(vsDarkKeyword, highContrastKeyword));
+    CHECK_FALSE(ApproxEq(vsDarkKeyword, nortonKeyword));
     CHECK_FALSE(ApproxEq(vsLightKeyword, highContrastKeyword));
+    CHECK_FALSE(ApproxEq(vsLightKeyword, nortonKeyword));
+    CHECK_FALSE(ApproxEq(highContrastKeyword, nortonKeyword));
 }
 
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle is idempotent for syntax palette") {
