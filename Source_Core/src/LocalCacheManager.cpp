@@ -139,8 +139,9 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
         deleteFields.bind(1, ticket.id);
         deleteFields.exec();
 
-        auto& fieldUpsert = stmt(stmt_save_insert_field_,
-            "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+        auto& fieldUpsert =
+            stmt(stmt_save_insert_field_,
+                 "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
         for (const auto& kv : ticket.fieldValues) {
             fieldUpsert.bind(1, ticket.id);
             fieldUpsert.bind(2, kv.first);
@@ -151,15 +152,16 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
         }
 
         // Mirror the rich-value table.
-        auto& deleteRich = stmt(stmt_save_delete_rich_,
-            "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
+        auto& deleteRich = stmt(stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
         deleteRich.bind(1, ticket.id);
         deleteRich.exec();
 
-        auto& richUpsert = stmt(stmt_save_insert_rich_,
+        auto& richUpsert = stmt(
+            stmt_save_insert_rich_,
             "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
         for (const auto& kv : ticket.fieldRichValues) {
-            if (kv.second.empty()) continue;
+            if (kv.second.empty())
+                continue;
             richUpsert.bind(1, ticket.id);
             richUpsert.bind(2, kv.first);
             richUpsert.bind(3, kv.second);
@@ -185,16 +187,16 @@ bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& 
         if (!exists.executeStep()) {
             return false;
         }
-        auto& fieldQuery = stmt(stmt_get_fields_,
-            "SELECT field_key, field_value FROM ticket_field_values WHERE ticket_id = ?");
+        auto& fieldQuery =
+            stmt(stmt_get_fields_, "SELECT field_key, field_value FROM ticket_field_values WHERE ticket_id = ?");
         fieldQuery.bind(1, ticketId);
         while (fieldQuery.executeStep()) {
             const std::string fieldKey = fieldQuery.getColumn(0).getText();
             out.fieldValues[fieldKey] =
                 fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
         }
-        auto& richQuery = stmt(stmt_get_rich_,
-            "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
+        auto& richQuery =
+            stmt(stmt_get_rich_, "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
         richQuery.bind(1, ticketId);
         while (richQuery.executeStep()) {
             const std::string fieldKey = richQuery.getColumn(0).getText();
@@ -265,7 +267,8 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
         while (richQuery.executeStep()) {
             const std::string ticketId = richQuery.getColumn(0).getText();
             const auto it = indexById.find(ticketId);
-            if (it == indexById.end()) continue;
+            if (it == indexById.end())
+                continue;
             const std::string fieldKey = richQuery.getColumn(1).getText();
             const std::string fieldValue =
                 richQuery.getColumn(2).isNull() ? std::string() : std::string(richQuery.getColumn(2).getText());
@@ -282,17 +285,18 @@ void LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>&
     try {
         // Join tickets with their field values and rich values in one pass per ticket to avoid
         // materialising the entire result set into memory (§4.3).
-        SQLite::Statement q(db,
-            "SELECT t.id, fv.field_key, fv.field_value, rv.field_key, rv.field_value "
-            "FROM tickets t "
-            "LEFT JOIN ticket_field_values fv ON fv.ticket_id = t.id "
-            "LEFT JOIN ticket_field_rich_values rv ON rv.ticket_id = t.id AND rv.field_key = fv.field_key "
-            "ORDER BY t.id");
+        SQLite::Statement q(
+            db, "SELECT t.id, fv.field_key, fv.field_value, rv.field_key, rv.field_value "
+                "FROM tickets t "
+                "LEFT JOIN ticket_field_values fv ON fv.ticket_id = t.id "
+                "LEFT JOIN ticket_field_rich_values rv ON rv.ticket_id = t.id AND rv.field_key = fv.field_key "
+                "ORDER BY t.id");
         CachedTicket cur;
         while (q.executeStep()) {
             const std::string id = q.getColumn(0).getText();
             if (id != cur.id) {
-                if (!cur.id.empty()) fn(std::move(cur));
+                if (!cur.id.empty())
+                    fn(std::move(cur));
                 cur = CachedTicket{};
                 cur.id = id;
             }
@@ -304,7 +308,8 @@ void LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>&
                 }
             }
         }
-        if (!cur.id.empty()) fn(std::move(cur));
+        if (!cur.id.empty())
+            fn(std::move(cur));
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::ForEachTicket failed err=%s", ex.what());
         throw;
@@ -383,8 +388,8 @@ void LocalCacheManager::UpdatePendingCreatePayload(std::int64_t id, const std::s
         update.bind(2, id);
         update.exec();
     } catch (const std::exception& ex) {
-        LOG_ERROR("LocalCacheManager::UpdatePendingCreatePayload failed id=%lld err=%s",
-                  static_cast<long long>(id), ex.what());
+        LOG_ERROR("LocalCacheManager::UpdatePendingCreatePayload failed id=%lld err=%s", static_cast<long long>(id),
+                  ex.what());
         throw;
     }
 }
@@ -598,8 +603,10 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issue
         insert.bind(1, issueKey);
         insert.bind(2, fieldId);
         insert.bind(3, fieldsPayloadJson);
-        if (originalRichValue.empty()) insert.bind(4); // NULL
-        else insert.bind(4, originalRichValue);
+        if (originalRichValue.empty())
+            insert.bind(4); // NULL
+        else
+            insert.bind(4, originalRichValue);
         insert.bind(5, epoch);
         insert.exec();
         return db.getLastInsertRowid();
@@ -612,12 +619,11 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issue
 std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
     try {
         std::vector<PendingFieldEditRecord> results;
-        SQLite::Statement query(db,
-                                "SELECT id, issue_key, field_id, fields_payload_json, "
-                                "COALESCE(original_rich_value, ''), "
-                                "COALESCE(has_merge_conflict, 0), COALESCE(conflict_context_json, ''), "
-                                "attempts, last_error, created_at "
-                                "FROM pending_field_edits ORDER BY id ASC");
+        SQLite::Statement query(db, "SELECT id, issue_key, field_id, fields_payload_json, "
+                                    "COALESCE(original_rich_value, ''), "
+                                    "COALESCE(has_merge_conflict, 0), COALESCE(conflict_context_json, ''), "
+                                    "attempts, last_error, created_at "
+                                    "FROM pending_field_edits ORDER BY id ASC");
         while (query.executeStep()) {
             PendingFieldEditRecord row;
             row.Id = query.getColumn(0).getInt64();
@@ -658,14 +664,14 @@ void LocalCacheManager::UpdatePendingFieldEdit(std::int64_t id, int attempts, co
 
 void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string& contextJson) {
     try {
-        SQLite::Statement upd(db,
-            "UPDATE pending_field_edits SET has_merge_conflict = 1, conflict_context_json = ? WHERE id = ?");
+        SQLite::Statement upd(
+            db, "UPDATE pending_field_edits SET has_merge_conflict = 1, conflict_context_json = ? WHERE id = ?");
         upd.bind(1, contextJson);
         upd.bind(2, id);
         upd.exec();
     } catch (const std::exception& ex) {
-        LOG_ERROR("LocalCacheManager::MarkFieldEditConflict failed id=%lld err=%s",
-                  static_cast<long long>(id), ex.what());
+        LOG_ERROR("LocalCacheManager::MarkFieldEditConflict failed id=%lld err=%s", static_cast<long long>(id),
+                  ex.what());
         throw;
     }
 }
@@ -673,14 +679,14 @@ void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string
 void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) {
     try {
         SQLite::Statement upd(db,
-            "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
-            "fields_payload_json = ? WHERE id = ?");
+                              "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
+                              "fields_payload_json = ? WHERE id = ?");
         upd.bind(1, resolvedPayloadJson);
         upd.bind(2, id);
         upd.exec();
     } catch (const std::exception& ex) {
-        LOG_ERROR("LocalCacheManager::ResolveFieldEditConflict failed id=%lld err=%s",
-                  static_cast<long long>(id), ex.what());
+        LOG_ERROR("LocalCacheManager::ResolveFieldEditConflict failed id=%lld err=%s", static_cast<long long>(id),
+                  ex.what());
         throw;
     }
 }
@@ -701,10 +707,9 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
                                                 const std::string& terminalError) {
     try {
         SQLite::Transaction transaction(db);
-        SQLite::Statement select(
-            db, "SELECT issue_key, field_id, fields_payload_json, "
-                "COALESCE(original_rich_value,''), attempts, last_error, created_at FROM "
-                "pending_field_edits WHERE id = ?");
+        SQLite::Statement select(db, "SELECT issue_key, field_id, fields_payload_json, "
+                                     "COALESCE(original_rich_value,''), attempts, last_error, created_at FROM "
+                                     "pending_field_edits WHERE id = ?");
         select.bind(1, id);
         if (!select.executeStep()) {
             throw std::runtime_error("pending_field_edits row not found");
@@ -727,17 +732,18 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
 
-        SQLite::Statement insert(
-            db,
-            "INSERT INTO pending_field_edits_dead "
-            "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
-            "attempts, last_error, created_at, archived_at, terminal_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        SQLite::Statement insert(db, "INSERT INTO pending_field_edits_dead "
+                                     "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
+                                     "attempts, last_error, created_at, archived_at, terminal_reason) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         insert.bind(1, id);
         insert.bind(2, issueKey);
         insert.bind(3, fieldId);
         insert.bind(4, payload);
-        if (originalRichValue.empty()) insert.bind(5); else insert.bind(5, originalRichValue);
+        if (originalRichValue.empty())
+            insert.bind(5);
+        else
+            insert.bind(5, originalRichValue);
         insert.bind(6, attempts);
         insert.bind(7, lastError);
         insert.bind(8, createdAtEpochSec);
@@ -801,9 +807,3 @@ void LocalCacheManager::DeleteDeadPendingFieldEdit(const std::int64_t deadId) {
         throw;
     }
 }
-
-
-
-
-
-

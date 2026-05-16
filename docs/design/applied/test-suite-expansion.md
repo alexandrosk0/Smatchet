@@ -526,9 +526,45 @@ Rig + infra (new / edited):
 
 ---
 
+## Session 2026-05-16 — stop point
+
+Autonomous orchestrator run, session ended after Phase 3 merged. Status:
+
+| Phase | Status | PR | Notes |
+|---|---|---|---|
+| 1 | **Merged** | [#103](https://github.com/alexandrosk0/Smatchet/pull/103) | 4/9 plan files shipped (171 CHECKs). 5 files deferred — pure helpers buried under ImGui/cpr/JiraClient; backlog entry filed. |
+| 2 | **Merged** | [#106](https://github.com/alexandrosk0/Smatchet/pull/106) | CallstackParser shipped (54 CHECKs). P4BlameParse deferred — anon-namespace helpers; backlog entry filed. |
+| 3 | **Merged** | [#107](https://github.com/alexandrosk0/Smatchet/pull/107) | 3/5 plan files shipped (195 CHECKs) + FakeTrackerClient + SqliteMemFixture. OfflineQueueServiceRuntime + TicketSyncService deferred — services hold `AppController&` back-refs; backlog filed. |
+| 4 | **Pending** | — | Config + schema migration. No infra blockers. Next phase to start. |
+| 5 | Pending | — | MCP JSON-RPC harness. |
+| 6 | Pending | — | Lua full binding round-trip rig. |
+| 7 | Pending | — | Screenshot diff (bucket C). |
+| 8 | Pending | — | Unreal headless smoke. |
+| 9 | Pending | — | Coverage gates + enforcement. |
+
+Test rig totals after Phase 3: **190 cases / 755 assertions** (vs 136 / 476 baseline before Phase 1 — **+39 % cases, +59 % assertions**).
+
+Backlog entries opened during this session (`docs/backlog/AGENT_SELF_IMPROVEMENT.md`):
+- Phase 1: 4 tracker units pending TU split; `LocalCacheManager.h` POD-vs-SQLite header split; plan-time `ls Source_Core/src/` cross-check.
+- Phase 2: `P4BlameParse.test.cpp` prep PR (TU split + tests, ≈1 h); `code-review` adversarial-input subcases for CallstackParser; orchestrator packet pre-authorize `<Unit>Parse.{h,cpp}` split.
+- Phase 3: `OfflineQueueService`/`TicketSyncService` interface-bundle extraction (1-2 d prereq); `BackendAuditTrail::AuditWriter` per-event path resolution (15 min); mid-tx-throw hostile fixture.
+
+Resume next session: `git checkout develop && git pull && git checkout -b feat/test-phase-4-config-migration`. Delegate to `test-rig` with the Phase 4 packet pattern from prior phases — pre-authorize TU splits for any anon-namespace pure helpers found.
+
+---
+
 ## Implementation log
 
 (Append per shipped PR — `<sha> · <one-line summary>`.)
+
+- Phase 3 — 2026-05-16 · `feat/test-phase-3-http-sqlite-fixtures`
+  - `tests/support/FakeTrackerClient.h` — scripted in-memory `ITrackerClient` implementation. Records `CreateIssue`, `UpdateIssueFields`, `UpdateField`, `AddIssueToSprint`, `AttachFilesToIssue` call sequences. Per-method scripted-reply queues (`EnqueueCreateIssueSuccess(key)` / `EnqueueCreateIssueFailure(err)`) with sticky-default fallback. Header-only.
+  - `tests/support/SqliteMemFixture.h` — RAII `:memory:` `LocalCacheManager`. Reopen helper for idempotent-init regression. Header-only.
+  - `tests/Source_Core/LocalCacheManager.test.cpp` — 27 cases / 113 assertions covering SaveTicket (round-trip, full-snapshot replace, rich-value parallel table, empty-rich skip), prepared-statement reuse (25-iter loop), DeleteTicket, GetAllTickets, ForEachTicket, cache_meta flag, pending_creates lifecycle (enqueue/load/update/payload-update/archive/restore/delete/legacy-drop), pending_field_edits lifecycle (enqueue with rich value, mark+resolve conflict, attempts-bump, archive, delete-active, delete-dead), and idempotent re-init.
+  - `tests/Source_Core/BackendAuditTrail.test.cpp` — 9 cases / 33 assertions covering MakeOperationId uniqueness + prefix fallback, RedactText sensitive-key matrix + 1000-char truncation, RedactJson recursive-object + field-diff redaction by field_id, MakeFieldDiffUnknownBefore array-vs-non-object, AppendBegin/AppendResult round-trip via ReadRecentEvents (filtered by operation_id), failure error-string passthrough.
+  - `tests/Source_Core/IssueCreatePipelineIntegration.test.cpp` — 11 cases / 49 assertions exercising `IssueCreatePipeline::Run` end-to-end with `FakeTrackerClient` + `:memory:` cache. Covers: create-success seeds cache, null-cache fallback, missing-required-field validation, CreateIssue-failure propagation, BuildCreatePayload-failure propagation, update path via ExistingIssueKey, MergeDraftIntoCachedTicketForUpdate real-path (preserves untouched cache fields), UpdateIssueFields-failure leaves cache untouched, empty PUT payload skips network, attachment failures pass through, legacy `FieldValues["key"]` update dispatch, whitespace-only `key` falls through to create.
+  - `tests/CMakeLists.txt` — registered 3 new test files, added `LocalCacheManager.cpp`, `BackendAuditTrail.cpp`, `IssueCreatePipeline.cpp`, `TrackerFieldPayload.cpp`, `CompactDateFormat.cpp`, `UiPerfMonitor.cpp`, `MarkdownConvert.cpp` to the per-target source list. Linked `md4c` at runtime (for `MarkdownConvert`). Added `tests/support` to `target_include_directories`.
+  - Test totals after Phase 3: 190 cases (up from 143) / 755 assertions (up from 530). 0 failed.
 
 - Phase 2 — 2026-05-16 · `feat/test-phase-2-callstack-p4-blame`
   - `tests/Source_Core/CallstackParser.test.cpp` — 7 cases / 54 assertions covering `ParseCallstackText` across MSVC `path(line)`, Unreal `Module!Func [path(line)]`, Clang `path:line[:col]`, GDB `at FUNC PATH:LINE`; `ApplyPathRemaps` (single rule, no-match, empty list, longest-prefix wins, longest-prefix wins regardless of declaration order, empty `FromPrefix` ignored, equal-prefix-tie broken by last-rule index, full-path prefix, prefix-longer-than-path); `FrameMatchesIgnoreKeywords` (empty list, empty keyword, raw/function/path hits, case-insensitive, multi-keyword OR).
@@ -547,6 +583,11 @@ Rig + infra (new / edited):
 
 (Append per shipped PR — what changed vs this plan + one-line rationale.)
 
+- Phase 3 — `tests/support/FakeTrackerHttpClient.h` not shipped. `TrackerHttpClient` is already free-function-style with an injectable `requestFn` lambda (see `Source_Core/include/TrackerHttpClient.h:50-53`); no interface extraction needed. The plan's "promote `ITrackerHttpClient`" path is therefore not applicable. All Phase 3 HTTP simulation runs through the higher-level `FakeTrackerClient` (which implements `ITrackerClient` directly — the natural mock layer for `IssueCreatePipeline::Run`).
+- Phase 3 — `tests/Source_Core/OfflineQueueServiceRuntime.test.cpp` + `tests/Source_Core/TicketSyncService.test.cpp` deferred. Both services hold `AppController&` back-references and reach into 8-10 different AppController-private fields each (`Cache`, `Backend`, `ActiveTickets`, `activeTicketsMutex_`, `lastTrackerConnectivityState_`, several callback fields). Standing up a real `AppController` for tests is impractical (the class is 1000-line header + 1700-line impl with ImGui / GLFW / OpenGL touch points). Their own header migration comments call this out: `OfflineQueueService.h:13-17` says Phase 2 of the AppController-detangle migration will "introduce small interface bundles so this service no longer needs `friend` access". That interface-bundle work is the prerequisite for runtime tests. Backlog entry `2026-05-16 · offline-sync · [infra] — Phase 3 OfflineQueueServiceRuntime + TicketSyncService deferred` tracks the follow-up. Phase 3 hostile-fixture cases ("queue replay with 401 stays in queue", "ApplyIssueFetchPack empty fetch must not delete") move with that follow-up — neither is reachable today.
+- Phase 3 — `BackendAuditTrail.test.cpp` does NOT include a "missing audit file returns empty" case. The async writer is a process-wide singleton; once the first audit event in the test binary runs, the writer thread captures the audit file path for the rest of the process. Subsequent tests that change `ConfigManager::SetUserDataDirectory` can't redirect the writer, so a "no audit file" assertion is unreliable. Backlog entry `2026-05-16 · offline-sync · [test] — Phase 3 BackendAuditTrail async-writer process-wide singleton` proposes moving the path capture inside the loop body in production code. Workaround in test: scope IO-surface assertions to one TEST_CASE body with shared `AuditDirGuard` + operation_id filtering.
+- Phase 3 — `LocalCacheManager.test.cpp` mid-transaction-throw hostile-fixture is NOT shipped. The test exists implicitly: SQLite's RAII `SQLite::Transaction` rolls back on stack unwind, and `SaveTicket` already wraps its DB ops in a transaction that re-throws on inner exceptions (`LocalCacheManager.cpp:130-175`). A test that simulates a throw between INSERTs would need either a SQLite-level fault-injection layer (out of scope) or a custom `ITransaction` interface (production refactor not in Phase 3 scope). Documented as an open hostile-fixture for the follow-up runtime PR.
+
 - Phase 2 — `PathRemaps.test.cpp` not added as a standalone file: the plan named `Source_Core/src/PathRemaps.cpp` as a separate TU, but no such file exists. `ApplyPathRemaps` lives inside `Source_Core/src/CallstackParser.cpp`; coverage was folded into `tests/Source_Core/CallstackParser.test.cpp` (9 SUBCASEs, including the documented mutation-sanity case for longest-prefix selection).
 - Phase 2 — `P4BlameParse.test.cpp` deferred: every parsing helper named in the plan (`ParseAnnotateTextLine`, `ParseLatestChangeFromChangesOutput`, `SplitLines`, `StripP4UserDomain`) is `static`-in-anonymous-namespace inside `Source_Core/src/P4Blame.cpp`. The public surface (`P4BlameLine`, `P4AnnotateFile`) spawns the `p4` process, which is out of scope for the pure-logic doctest rig. Phase 2 write set is tests-only per the orchestrator packet, so the TU split needed to expose the parsers (same pattern as `IssueCreatePipelineHelpers` in Phase 1) lands as a separate prep PR. Backlog entry `2026-05-16 · test-rig · [infra] — Phase 2 P4BlameParse.test.cpp deferred` tracks the follow-up plan (split + tests, ≈1 h combined).
 - Phase 2 — `TryParsePathLinePair` and `TryExtractUnrealOrModuleFunctionPrefix` are exercised through the public `ParseCallstackText` rather than direct calls (both live in anonymous namespace inside `CallstackParser.cpp`). The MSVC-line-number mutation-sanity target is satisfied: flipping `outLine = std::stoi(m[2].str())` to `+ 1` produced 5 assertion failures in the MSVC subcases (revert verified green).
@@ -560,6 +601,17 @@ Rig + infra (new / edited):
 ## Verification
 
 (Append per shipped PR — what ran + result.)
+
+- Phase 3 — 2026-05-16
+  - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.
+  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — clean (new production-side code paths still link; no new production code was added).
+  - `ctest --output-on-failure` from `build/ninja-test-msys2`: `1/1 smatchet_tests Passed (0.18 sec)`.
+  - `SmatchetTests.exe`: 190 test cases (up from 143) / 755 assertions (up from 530), 0 failed, 0 skipped.
+  - Mutation sanity (production-side, 4 cases):
+    - `LocalCacheManager.cpp::SaveTicket` — commented out the `DELETE FROM ticket_field_values WHERE ticket_id = ?` step. `LocalCacheManager: SaveTicket replaces the full field-value snapshot (delete+insert under one tx) [high-risk]` failed at lines 68/69 with `priority` / `labels` still 1. Reverted to green.
+    - `LocalCacheManager.cpp::ArchivePendingCreate` — inverted `terminalError` precedence (always read `last_error` from row). `LocalCacheManager: ArchivePendingCreate moves row to dead-letter with metadata [high-risk]` failed at line 221 (`tracker error` ≠ `final tracker error`). Reverted to green.
+    - `LocalCacheManager.cpp::MarkFieldEditConflict` — flipped `has_merge_conflict = 1` to `= 0`. `LocalCacheManager: MarkFieldEditConflict + ResolveFieldEditConflict flow [high-risk]` failed at line 328 (`HasMergeConflict` false). Reverted to green.
+    - `IssueCreatePipeline.cpp::Run` — short-circuited the `ExistingIssueKey` dispatch so update path is never taken. `IssueCreatePipeline: Run dispatches to update path when ExistingIssueKey is set` failed at line 169 (`BuildUpdatePayloadCallCount` == 0, expected 1) and line 175 (cache row still `Original`). Reverted to green.
 
 - Phase 2 — 2026-05-16
   - `cmake --build --preset ninja-test-msys2 --target SmatchetTests` — clean.

@@ -23,13 +23,23 @@ add_executable(SmatchetTests
     Source_Core/IssueDraft.test.cpp
     Source_Core/IssueCreatePipeline.test.cpp
     Source_Core/CallstackParser.test.cpp
+    Source_Core/LocalCacheManager.test.cpp
+    Source_Core/BackendAuditTrail.test.cpp
+    Source_Core/IssueCreatePipelineIntegration.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldValueUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/IssueDraft.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/IssueCreatePipeline.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/IssueCreatePipelineHelpers.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldPayload.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/CompactDateFormat.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/UiPerfMonitor.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/MarkdownConvert.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/LocalCacheManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_PathUtils.cpp"
@@ -39,18 +49,19 @@ add_executable(SmatchetTests
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
+    "${CMAKE_SOURCE_DIR}/tests/support"
 )
 
-# SmatchetTheme links ImGuiLib for ImGui::GetStyle() / CreateContext(). All other Source_Core .cpp
-# in this rig stay pure-logic; only the theme test target pulls the ImGui surface.
-# SQLiteCpp is linked for headers only — LocalCacheManager.h (transitively included by
-# IssueDraft.h / IssueCreatePipeline.h) #include's <SQLiteCpp/SQLiteCpp.h>. No test calls into
-# SQLite at runtime; the production .cpp files that do (LocalCacheManager.cpp) are never linked.
+# SmatchetTheme links ImGuiLib for ImGui::GetStyle() / CreateContext().
+# SQLiteCpp is linked at runtime as of Phase 3 — LocalCacheManager.cpp + IssueCreatePipeline.cpp
+# pull SQLite/Statement objects directly. md4c is linked at runtime so MarkdownConvert.cpp
+# (transitively used by TrackerFieldPayload) resolves.
 target_link_libraries(SmatchetTests PRIVATE
     doctest::doctest
     nlohmann_json::nlohmann_json
     ImGuiLib
     SQLiteCpp
+    md4c
 )
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
