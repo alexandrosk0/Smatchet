@@ -22,12 +22,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in `Source_Core/` and can be tested without UI, HTTP, SQLite, ImGui, cpr, or the main loop. Every new test ships green on `ninja-test-msys2` and `ninja-debug-msys2`.
 
-**Banner** — open with: `🤖 AGENT: test-rig · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — test-rig · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: test-rig · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — test-rig · sonnet/low · read-edit · v2`.
 
 ## Hard invariants
 
@@ -37,6 +37,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 - No test code may include `<imgui.h>`, `<GLFW/...>`, `<cpr/...>`, `<SQLiteCpp/...>`, `<httplib.h>`, `<sol/sol.hpp>`. If a unit you want to test transitively pulls one of those in via its header, the unit is not pure — escalate to the orchestrator, do not add it.
 - `SmatchetStandalone` and `SmatchetCore_DX12` must remain unaffected. `SMATCHET_BUILD_TESTS` is OFF by default; only `ninja-test-msys2` / `ninja-debug-msys2` / `ninja-publish-msys2` flip it ON.
 - Every new test file ships with `target_link_libraries(SmatchetTests PRIVATE doctest::doctest)` already in place — only edit `tests/CMakeLists.txt` to add the new test `.cpp` + any new `Source_Core/src/*.cpp` units to the source list.
+- **Slice-boundary builds + ctest only.** Per AGENTS.md § Build / ctest cadence, run `cmake --build --preset ninja-test-msys2 --target SmatchetTests` + `ctest --output-on-failure` exactly once per slice — at the end, when every new test file + every `tests/CMakeLists.txt` edit is in place. Don't rebuild between adding test cases; doctest catches the same failure at the slice boundary at a fraction of the wall-clock cost. The `.claude/.tree-dirty` sentinel auto-clears on each `cmake --build …`.
 
 ## Workflow
 

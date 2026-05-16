@@ -23,12 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
-version: 1
+version: 2
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only · v1`.
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only · v2`.
 
 ## Process
 
@@ -48,7 +48,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
    - `clang-tidy <changed-cpp> -- -std=c++14 -ISource_Core/include`
    - `clang-format --dry-run --Werror <changed-cpp-and-h>`
 
-   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session.
+   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session. Per AGENTS.md § Build / ctest cadence, the deferred-lint drain (`scripts/dev/lint-flush.sh` or the Stop hook) already ran cppcheck + clang-tidy + dual-target syntax on every edited file — re-running the same tools here is redundant when the drain log showed clean. Only re-run if your review uncovers changed files the drain didn't touch (e.g. files modified in earlier commits on the branch).
 
 4. **Read changed files at full context.** Don't trust line excerpts. Apply the Smatchet checklist below.
 

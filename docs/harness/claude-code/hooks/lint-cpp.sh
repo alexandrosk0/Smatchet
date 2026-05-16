@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# PostToolUse hook: lint C++ after Edit/Write.
-# - Filters to first-party .cpp/.h files only.
-# - Auto-formats in place via clang-format.
-# - Reports cppcheck + clang-tidy issues on stderr (exit 2 surfaces them to Claude).
-# - Degrades gracefully if any tool is missing.
+# PostToolUse hook: inline phase of the lint-cpp pipeline.
+# - Applies clang-format -i immediately (next edit reads the formatted file).
+# - Appends the edited path to a per-PID queue file for the drain hook to
+#   process at end-of-turn (Stop event → .claude/hooks/lint-cpp-drain.sh).
+# - Marks the tree as dirty so agents reading .claude/.tree-dirty know edits
+#   have happened since the last `cmake --build`.
+#
+# Escape hatch: SMATCHET_LINT_INLINE=1 reverts to the pre-deferred behaviour —
+# clang-format + cppcheck + clang-tidy + dual-target run synchronously here.
 
 set -u
 
 # --- Read tool input JSON from stdin ---------------------------------------
 INPUT="$(cat || true)"
-if [[ -z "$INPUT" ]]; then exit 0; fi
+[[ -z "$INPUT" ]] && exit 0
 
-# Extract file_path. Prefer jq when present; fall back to sed.
 if command -v jq >/dev/null 2>&1; then
     FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')"
 else
@@ -19,105 +22,54 @@ else
 fi
 [[ -z "$FILE_PATH" ]] && exit 0
 
-# --- Normalize to a forward-slash relative path under the project ----------
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-# Convert Windows backslashes for matching.
-NORM_FILE="${FILE_PATH//\\//}"
-NORM_PROJ="${PROJECT_DIR//\\//}"
-# Under MSYS2 / Cygwin, PROJECT_DIR arrives as /c/... while FILE_PATH arrives
-# as C:/... — normalise both to mixed-Windows form (C:/...) so the prefix
-# strip matches. cygpath -m is idempotent across /c/..., C:/..., and C:\... .
-if command -v cygpath >/dev/null 2>&1; then
-    NORM_PROJ="$(cygpath -m "$NORM_PROJ" 2>/dev/null || printf '%s' "$NORM_PROJ")"
-    NORM_FILE="$(cygpath -m "$NORM_FILE" 2>/dev/null || printf '%s' "$NORM_FILE")"
-fi
-REL="${NORM_FILE#$NORM_PROJ/}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+export CLAUDE_PROJECT_DIR="$PROJ_DIR"
+# shellcheck source=lint-cpp-common.sh
+. "$PROJ_DIR/.claude/hooks/lint-cpp-common.sh"
 
-# --- Filter: first-party C/C++ only ----------------------------------------
-case "$REL" in
-    Source_Core/*.cpp|Source_Core/*.h|Source_Core/**/*.cpp|Source_Core/**/*.h) ;;
-    Plugins/*.cpp|Plugins/*.h|Plugins/**/*.cpp|Plugins/**/*.h) ;;
-    Target_Standalone/*.cpp|Target_Standalone/*.h|Target_Standalone/**/*.cpp|Target_Standalone/**/*.h) ;;
-    tests/*.cpp|tests/*.h|tests/**/*.cpp|tests/**/*.h) ;;
-    *) exit 0 ;;
-esac
+REL="$(lint_normalize_path "$FILE_PATH")"
+[[ -z "$REL" ]] && exit 0
+lint_is_first_party "$REL" || exit 0
 
-ABS_FILE="$NORM_FILE"
+ABS_FILE="$(lint_abs_path "$FILE_PATH")"
 [[ -f "$ABS_FILE" ]] || exit 0
 
-ISSUES=""
-add_issues() { ISSUES+="$1"$'\n'; }
-format_issues() {
-    local max_lines="${SMATCHET_LINT_MAX_LINES:-120}"
-    printf '%s' "$ISSUES" | awk -v max="$max_lines" '
-        NF && !seen[$0]++ { lines[++n] = $0 }
-        END {
-            limit = (max ~ /^[0-9]+$/ && max > 0) ? max : n
-            for (i = 1; i <= n && i <= limit; ++i) print lines[i]
-            if (n > limit) {
-                printf("lint-cpp: truncated %d duplicate-filtered diagnostic lines; rerun hook manually for full output.\n", n - limit)
-            }
-        }'
-}
-
-# --- 1) clang-format -i (apply in place) -----------------------------------
+# --- 1) clang-format -i (always inline) ------------------------------------
 if command -v clang-format >/dev/null 2>&1; then
     clang-format -i "$ABS_FILE" 2>/dev/null || true
 fi
 
-# --- 2) cppcheck (report only) ---------------------------------------------
-# Force --language=c++ so cppcheck doesn't guess C for .h files and choke on
-# `std::string` etc. when an included header is parsed bare. Everything under
-# Source_Core / Plugins / Target_Standalone / tests is C++ regardless of
-# extension.
-if command -v cppcheck >/dev/null 2>&1; then
-    CPPCHECK_OUT="$(cppcheck \
-        --enable=warning,style,performance,portability \
-        --inconclusive \
-        --inline-suppr \
-        --suppress=missingIncludeSystem \
-        --suppress=unusedFunction \
-        --suppress=unusedStructMember \
-        --language=c++ \
-        --std=c++14 \
-        --quiet \
-        --template='cppcheck: {file}:{line}: [{severity}] {id}: {message}' \
-        "$ABS_FILE" 2>&1 || true)"
-    [[ -n "$CPPCHECK_OUT" ]] && add_issues "$CPPCHECK_OUT"
+# --- Mark tree dirty for the build slice-boundary rule ---------------------
+: > "$PROJ_DIR/.claude/.tree-dirty" 2>/dev/null || true
+
+# --- Inline-mode escape hatch ----------------------------------------------
+if [[ "${SMATCHET_LINT_INLINE:-0}" == "1" ]]; then
+    ISSUES=""
+    cppcheck_out="$(lint_run_cppcheck "$ABS_FILE")"
+    [[ -n "$cppcheck_out" ]] && ISSUES+="$cppcheck_out"$'\n'
+    tidy_out="$(lint_run_clang_tidy "$ABS_FILE" "$REL")"
+    [[ -n "$tidy_out" ]] && ISSUES+="$tidy_out"$'\n'
+    dual_out="$(lint_run_dual_target "$ABS_FILE" "$REL")"
+    [[ -n "$dual_out" ]] && ISSUES+="$dual_out"$'\n'
+    if [[ -n "$ISSUES" ]]; then
+        {
+            echo "lint-cpp: issues found in $REL — fix before responding."
+            printf '%s' "$ISSUES" | lint_format_issues
+        } >&2
+        exit 2
+    fi
+    exit 0
 fi
 
-# --- 3) clang-tidy (report only, needs compile_commands.json) --------------
-# tests/** are not part of the iter compile_commands.json (iter preset stays
-# test-free for speed). Prefer the ninja-test-msys2 build dir for test files
-# and fall back to the iter dir for everything else.
-if [[ "$REL" == tests/* ]]; then
-    BUILD_DIR="$NORM_PROJ/build/ninja-test-msys2"
-else
-    BUILD_DIR="$NORM_PROJ/build/ninja-iter-msys2"
-fi
-if [[ -f "$BUILD_DIR/compile_commands.json" ]] && command -v clang-tidy >/dev/null 2>&1; then
-    TIDY_OUT="$(clang-tidy -p "$BUILD_DIR" --quiet "$ABS_FILE" 2>/dev/null || true)"
-    # Strip clang-tidy's "N warnings generated." footer noise when there are no actual diagnostics.
-    TIDY_FILTERED="$(printf '%s' "$TIDY_OUT" | grep -E '(warning|error):' || true)"
-    [[ -n "$TIDY_FILTERED" ]] && add_issues "$TIDY_FILTERED"
-fi
+# --- Deferred path: append to per-PID queue, exit silently -----------------
+# Each Claude Code instance (or parallel subagent) writes to its own queue
+# file via $PPID. The drain hook (Stop) globs .claude/.lint-queue.* so all
+# files are consumed regardless of which PID owned them.
+QUEUE_ID="${PPID:-unknown}"
+QUEUE_FILE="$PROJ_DIR/.claude/.lint-queue.$QUEUE_ID"
 
-# --- 4) Both-target syntax check (catches DX12 regressions instantly) ------
-# Runs only for .cpp files; needs python + compile_commands.json. Header edits
-# are validated via dependent .cpp edits. tests/** are pure-logic doctest sources
-# that don't compile against DX12 by design — skip the dual-target probe there.
-if [[ "$REL" == *.cpp && "$REL" != tests/* ]] && command -v python >/dev/null 2>&1; then
-    SYNTAX_OUT="$(python "$NORM_PROJ/.claude/hooks/lint-syntax-both.py" "$ABS_FILE" 2>&1 || true)"
-    [[ -n "$SYNTAX_OUT" ]] && add_issues "$SYNTAX_OUT"
-fi
-
-# --- Surface issues back to Claude -----------------------------------------
-if [[ -n "$ISSUES" ]]; then
-    {
-        echo "lint-cpp: issues found in $REL — fix before responding."
-        format_issues
-    } >&2
-    exit 2
-fi
+# Atomic line-append under POSIX PIPE_BUF (4096 bytes). One absolute path per
+# line; dedup happens at drain time, not here.
+printf '%s\n' "$ABS_FILE" >> "$QUEUE_FILE" 2>/dev/null || true
 
 exit 0

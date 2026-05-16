@@ -65,4 +65,13 @@ _Append-only. The SubagentStop hook (agent-token-log.py) writes one header block
 
 EOF
 
+# --- Deferred-lint hook state: discard prior-session leftovers --------------
+# .lint-queue.<pid> / .lint-queue.lock are written by the inline + drain hooks
+# (lint-cpp.sh / lint-cpp-drain.sh). Any orphaned entries from a crashed
+# session are stale — discard rather than re-lint at startup. .tree-dirty is
+# advisory and likewise stale across sessions.
+rm -f "$PROJECT_DIR"/.claude/.lint-queue.* 2>/dev/null || true
+rm -f "$PROJECT_DIR/.claude/.lint-queue.lock" 2>/dev/null || true
+rm -f "$PROJECT_DIR/.claude/.tree-dirty" 2>/dev/null || true
+
 exit 0
