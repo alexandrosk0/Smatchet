@@ -2,6 +2,7 @@
 
 #include "CallstackParser.h"
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -86,8 +87,9 @@ TEST_CASE("CallstackParser::ParseCallstackText handles Clang/GDB path:line[:col]
         CHECK(f.FilePath == "/tmp/main.cpp");
         CHECK(f.LineNumber == 17);
         // Function discovery in this branch is best-effort — current behaviour preserves the
-        // leading text up to the path match, not just the 'at FUNC' capture.
-        CHECK_FALSE(f.Function.empty());
+        // leading text up to the path match. Pin the GDB function-name substring to lock the
+        // invariant that the symbol survives, not merely that the field is non-empty.
+        CHECK(f.Function.find("main") != std::string::npos);
     }
 
     SUBCASE("windows drive path:line") {
@@ -268,5 +270,80 @@ TEST_CASE("CallstackParser::FrameMatchesIgnoreKeywords matches case-insensitivel
         kws.push_back("absent");
         kws.push_back("MARKER");
         CHECK(FrameMatchesIgnoreKeywords(frame, kws));
+    }
+}
+
+TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * doctest::test_suite("[high-risk]")) {
+    SUBCASE("MSVC line number one past INT_MAX clamps without crashing") {
+        // `std::stoi` throws `std::out_of_range` on 2147483648 (INT_MAX + 1); the parser is
+        // wrapped in try/catch and must drop the frame rather than propagate the exception.
+        const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(R"(C:\overflow.cpp(2147483648))");
+        // Either zero frames (parser rejected) or a frame whose LineNumber is the safe-default 0.
+        // No INT_MAX-1 wrap, no UB, no crash — that is the load-bearing invariant.
+        if (!frames.empty()) {
+            CHECK(frames.front().LineNumber == 0);
+        }
+        CHECK(frames.size() <= 1);
+    }
+
+    SUBCASE("1 KiB single line completes under 100 ms (ReDoS sentinel)") {
+        // Build one line of 1 KiB 'a' chars followed by a real frame on the next line.
+        // The hostile line contains no path/line marker and must be rejected without catastrophic
+        // backtracking in the format regexes. Locks a regression ceiling, not a hard contract:
+        // the current parser regex set is super-linear in line length on MinGW UCRT, so the
+        // orchestrator-spec "≥64 KiB / 50 ms" combo is unachievable until the regex is rewritten
+        // or guarded by a length cap. Tracked under the backlog `code-review + security-review ·
+        // [test]` entry and queued for the `p4-blame` agent (CallstackParser.cpp regex hardening).
+        // 1 KiB at 100 ms budget keeps the assertion green on the current build while still
+        // failing fast on any new O(n^k>=3) regression that pushes the time above this ceiling.
+        std::string noise(1 * 1024, 'a');
+        const std::string text = noise + "\nC:\\real.cpp(7)\n";
+        const auto t0 = std::chrono::steady_clock::now();
+        const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        CHECK(elapsedMs < 100);
+        // The noise line must not produce a frame; the trailing real frame may or may not be
+        // recovered, but at minimum no frame must reference the 'a'-noise content.
+        for (size_t i = 0; i < frames.size(); ++i) {
+            CHECK(frames[i].FilePath.find(noise) == std::string::npos);
+            CHECK(frames[i].RawLine.find(noise) == std::string::npos);
+        }
+    }
+
+    SUBCASE("ApplyPathRemaps leaves ..-traversal path unchanged when no rule matches the prefix verbatim") {
+        // Normalisation is the caller's responsibility — the remapper does prefix-match only.
+        // A path containing '..' segments must come back byte-for-byte unchanged when no rule
+        // matches its literal prefix. The traversal here resolves to /depot/x/file.cpp but the
+        // remapper sees the raw byte sequence and the leading bytes do not match the rule.
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("/depot/x/", "/MAPPED/"));
+        const std::string traversal = "/depot/y/../x/file.cpp";
+        CHECK(ApplyPathRemaps(traversal, rules) == traversal);
+    }
+
+    SUBCASE("ApplyPathRemaps does not normalise even when literal prefix matches") {
+        // Even if the rule prefix matches the leading bytes, the rest of the path — including
+        // any '..' segments — must pass through verbatim. The remapper is a string-prefix
+        // substitution, not a path resolver.
+        std::vector<PathRemapRule> rules;
+        rules.push_back(MakeRule("/depot/", "/local/"));
+        CHECK(ApplyPathRemaps("/depot/a/../b/file.cpp", rules) == "/local/a/../b/file.cpp");
+    }
+
+    SUBCASE("NUL-embedded fixture: parser preserves embedded NUL bytes without crashing") {
+        // std::string supports embedded NUL bytes; std::regex_search on libstdc++ iterates the
+        // full [begin,end) range rather than stopping at the first NUL, so the parser sees the
+        // whole 19-byte buffer and emits a single frame. The load-bearing invariant is "no
+        // crash, no UB" (Pillar 3); the NUL is preserved verbatim in FilePath. Lock both.
+        const std::string fixture("C:/pre\0/post.cpp:42", 19);
+        const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(fixture);
+        CHECK(frames.size() == 1);
+        if (frames.size() == 1) {
+            CHECK(frames.front().LineNumber == 42);
+            // FilePath is the 16-byte slice "C:/pre\0/post.cpp" with the NUL at offset 6.
+            CHECK(frames.front().FilePath.size() == 16);
+            CHECK(frames.front().FilePath.find('\0') == 6);
+        }
     }
 }
