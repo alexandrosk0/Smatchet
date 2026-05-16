@@ -727,7 +727,12 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     if (type == "text") {
         std::string text = node.value("text", std::string());
         // Apply marks innermost-first when emitting; ADF stores marks innermost-last in its array.
-        std::vector<std::string> openWrap, closeWrap;
+        // Scratch buffers are thread_local + const char* (no std::string heap churn on the hot
+        // text-node path); capacity persists across calls within a thread.
+        static thread_local std::vector<const char*> openWrap;
+        static thread_local std::vector<const char*> closeWrap;
+        openWrap.clear();
+        closeWrap.clear();
         std::string href;
         bool isCode = false;
         if (node.contains("marks") && node["marks"].is_array()) {
@@ -1137,8 +1142,7 @@ const std::unordered_set<std::string>& HtmlAllowedTags() {
 std::string DecodeHtmlEntities(const std::string& s) {
     // Static map built once; O(1) lookup replaces O(entity-list-len) linear scan (§2.2).
     static const std::unordered_map<std::string, char> kNamedEntities = {
-        {"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'},
-        {"apos", '\''}, {"#39", '\''}, {"nbsp", ' '},
+        {"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'}, {"apos", '\''}, {"#39", '\''}, {"nbsp", ' '},
     };
     std::string out;
     out.reserve(s.size());

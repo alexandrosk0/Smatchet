@@ -84,8 +84,8 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 ### C1. Two retry-after-HTTP-400 blocks (item 34)
 `AppController_CatalogAndFieldEdit.cpp:837` and `:1009` both `if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) { ... refetch edit-meta ... retry }`. Extract `SubmitWithEditMetaRetry(issueId, field, payload, ...)` helper.
 
-### C2. `MarkdownConvert::EmitInlineText` per-node vector allocs (item 38)
-Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer member.
+### C2. `MarkdownConvert::EmitInlineText` per-node vector allocs (item 38) — ✅ shipped (branch `feat/markdown-emitinlinetext-scratch`)
+Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer member. Done via `thread_local std::vector<const char*>` (capacity persists, mark markers are all string literals so no `std::string` heap churn).
 
 ### C3. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (item 39)
 `PlaneClient.cpp:1099-1108` returns `{summary, description, priority, status, assignee, labels, sprint}` as editable; everything else is unknown. Either return the full catalog or query real Plane permissions.
