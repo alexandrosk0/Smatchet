@@ -24,7 +24,7 @@ Categories:
 
 1. Delegated agents end every report with a `## Self-improvement` section. Empty is the common case and explicitly fine — agents only flag real friction.
 2. The orchestrator reads the section, dedupes against the live data file, appends new entries with date + source agent + category.
-3. When an entry has gathered enough evidence (mentioned by ≥ 2 agents, or blocks the same workflow ≥ 3 times), apply it: edit the relevant agent prompt(s) in `agents/`, regenerate the mirror via `scripts/sync-agents.sh`, and close out the entry.
+3. When an entry has gathered enough evidence (mentioned by ≥ 2 agents, or blocks the same workflow ≥ 3 times), apply it: edit the relevant agent prompt(s) in `agents/`, and close out the entry. Per-harness adapters (`.claude/agents/` etc.) are junctioned/symlinked by `scripts/setup-harness.sh` and pick up canonical edits immediately.
 
 ## Triage cadence
 
