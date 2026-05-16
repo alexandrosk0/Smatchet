@@ -1,0 +1,101 @@
+// users.* — search tracker users, list watchers/voters for an issue.
+
+#include "BuiltinCommands_Internal.h"
+
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+
+#include "AppController.h"
+
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace smatchet {
+namespace cmd {
+
+using builtin_detail::MakeCommand;
+using builtin_detail::PaginateJsonArray;
+using builtin_detail::PInt;
+using builtin_detail::PString;
+
+void RegisterUsersCommands(CommandRegistry& reg, AppController& app) {
+    {
+        Command c = MakeCommand("users.search", "Search tracker users by display-name substring.",
+                                [&app](const nlohmann::json& args, const CommandContext&) {
+                                    const std::string query = args.value("query", std::string());
+                                    const int limit = args.value("limit", 20);
+                                    std::vector<TrackerUser> users;
+                                    std::string err;
+                                    app.SearchUsersByQuery(query, users, err);
+                                    nlohmann::json items = nlohmann::json::array();
+                                    for (const TrackerUser& u : users) {
+                                        nlohmann::json one;
+                                        one["id"] = u.AccountId;
+                                        one["displayName"] = u.DisplayName;
+                                        one["email"] = u.EmailAddress;
+                                        items.push_back(std::move(one));
+                                    }
+                                    return CommandResult::Success(PaginateJsonArray(items, limit, 0));
+                                });
+        c.Params = {
+            PString("query", "Display-name substring.", true),
+            PInt("limit", "Max results.", 20),
+        };
+        reg.Register(std::move(c));
+    }
+
+    {
+        Command c = MakeCommand(
+            "users.watchers", "List watchers for a ticket.", [&app](const nlohmann::json& args, const CommandContext&) {
+                const std::string ticketId = args.value("ticketId", std::string());
+                std::vector<TrackerUser> watchers;
+                std::string err;
+                const bool ok = app.FetchIssueWatchers(ticketId, watchers, err);
+                if (!ok) {
+                    return CommandResult::Failure(ErrorCode::BackendError, "Watchers fetch failed: " + err);
+                }
+                nlohmann::json items = nlohmann::json::array();
+                for (const TrackerUser& u : watchers) {
+                    nlohmann::json one;
+                    one["id"] = u.AccountId;
+                    one["displayName"] = u.DisplayName;
+                    items.push_back(std::move(one));
+                }
+                return CommandResult::Success(PaginateJsonArray(items, 500, 0));
+            });
+        c.Params = {PString("ticketId", "Ticket id.", true)};
+        reg.Register(std::move(c));
+    }
+
+    {
+        Command c =
+            MakeCommand("users.votes", "List voters (and vote count) for a ticket.",
+                        [&app](const nlohmann::json& args, const CommandContext&) {
+                            const std::string ticketId = args.value("ticketId", std::string());
+                            std::vector<TrackerUser> voters;
+                            std::string err;
+                            int voteCount = 0;
+                            const bool ok = app.FetchIssueVotes(ticketId, voters, err, &voteCount);
+                            if (!ok) {
+                                return CommandResult::Failure(ErrorCode::BackendError, "Votes fetch failed: " + err);
+                            }
+                            nlohmann::json items = nlohmann::json::array();
+                            for (const TrackerUser& u : voters) {
+                                nlohmann::json one;
+                                one["id"] = u.AccountId;
+                                one["displayName"] = u.DisplayName;
+                                items.push_back(std::move(one));
+                            }
+                            nlohmann::json out;
+                            out["voteCount"] = voteCount;
+                            out["voters"] = std::move(items);
+                            return CommandResult::Success(std::move(out));
+                        });
+        c.Params = {PString("ticketId", "Ticket id.", true)};
+        reg.Register(std::move(c));
+    }
+}
+
+} // namespace cmd
+} // namespace smatchet
