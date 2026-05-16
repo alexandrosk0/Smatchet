@@ -106,7 +106,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — PR [#115](https://github.com/alexandrosk0/Smatchet/pull/115) opened against `develop`.
 - **Cleared by**: pending merge of [#115](https://github.com/alexandrosk0/Smatchet/pull/115).
 
-### code-review-backlog · C2 · markdown-emitinlinetext-scratch · status: claimed
+### code-review-backlog · C2 · markdown-emitinlinetext-scratch · status: in-flight
 
 - **Branch**: `feat/markdown-emitinlinetext-scratch`
 - **Owner agent**: orchestrator (direct — small allocator-only change, no header touch)
@@ -116,10 +116,10 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C2)
 - **Read-only adjacency**: none.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — orchestrator-direct slice.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#117](https://github.com/alexandrosk0/Smatchet/pull/117) opened against `develop`.
+- **Cleared by**: pending merge of [#117](https://github.com/alexandrosk0/Smatchet/pull/117).
 
-### code-review-backlog · C3 · plane-fetchissueeditmeta-broaden · status: claimed
+### code-review-backlog · C3 · plane-fetchissueeditmeta-broaden · status: in-flight
 
 - **Branch**: `feat/plane-fetchissueeditmeta-broaden`
 - **Owner agent**: orchestrator (direct — one-line list expansion)
@@ -129,8 +129,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C3 → 🟡 partial; real-permissions query deferred)
 - **Read-only adjacency**: `Source_Core/include/PlaneClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — orchestrator-direct slice.
-- **Cleared by**: TBD PR against `develop`.
+- **Last update**: 2026-05-16 — PR [#118](https://github.com/alexandrosk0/Smatchet/pull/118) opened against `develop`.
+- **Cleared by**: pending merge of [#118](https://github.com/alexandrosk0/Smatchet/pull/118).
 
 ### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: in-flight
 
