@@ -13,13 +13,18 @@
         - cmake >= 3.24
         - ninja present
         - git present
-        - MSYS2 UCRT64 gcc/g++ (>= 13)
+        - MSYS2 UCRT64 gcc/g++ (>= 13) -- "toolchain reachable" check
         - lld / ld.lld present
         - python >= 3.10
-        - PATH contains C:\msys64\ucrt64\bin
         - >= 4 GB free under <repo>\build
 
     Warn-only checks (exit 2 if only these fail):
+        - PATH contains C:\msys64\ucrt64\bin -- "on PATH at shell time".
+          Required for scripts/dev/ bash scripts that resolve gcc via $PATH
+          directly. NOT required for `cmake --preset` (presets prepend the
+          UCRT64 bin via `MSYSTEM_PREFIX` internally). False-failed on hosts
+          with JetBrains-bundled MinGW or other working-but-non-canonical
+          gcc sources -- hence warn-only.
         - cppcheck
         - clang-tidy
         - clang-format
@@ -123,21 +128,22 @@ if (-not $gitLine) {
     Write-Pass 'git' $gitLine
 }
 
-# MSYS2 UCRT64 gcc/g++ (>= 13)
+# gcc (>= 13) -- "toolchain reachable". Accept any gcc that resolves on
+# PATH at version >= 13 (canonical MSYS2 UCRT64, JetBrains-bundled MinGW,
+# or other working MinGW). `cmake --preset` will internally fix PATH to
+# the UCRT64 prefix regardless. The "MSYS2 UCRT64 bin on PATH" check
+# below is warn-only.
 $ucrtBin = 'C:\msys64\ucrt64\bin'
-$ucrtGcc = Join-Path $ucrtBin 'gcc.exe'
-if (-not (Test-Path -LiteralPath $ucrtGcc)) {
-    Write-Fail 'MSYS2 UCRT64 gcc' "missing $ucrtGcc -- install: winget install MSYS2.MSYS2 then pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld"
+$gccLine = Get-ToolVersion 'gcc'
+$gccVer  = Parse-Version $gccLine
+if (-not $gccVer) {
+    Write-Fail 'gcc' "no gcc on PATH -- install: winget install MSYS2.MSYS2 then pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld"
+} elseif ($gccVer.Major -lt 13) {
+    Write-Fail 'gcc' "found gcc $gccVer, need >= 13 -- update: pacman -Syu then pacman -S mingw-w64-ucrt-x86_64-toolchain"
 } else {
-    $gccLine = Get-ToolVersion 'gcc'
-    $gccVer  = Parse-Version $gccLine
-    if (-not $gccVer) {
-        Write-Fail 'MSYS2 UCRT64 gcc' "gcc --version produced no parseable version -- check that $ucrtBin is ahead of system gcc on PATH"
-    } elseif ($gccVer.Major -lt 13) {
-        Write-Fail 'MSYS2 UCRT64 gcc' "found gcc $gccVer, need >= 13 -- update: pacman -Syu then pacman -S mingw-w64-ucrt-x86_64-toolchain"
-    } else {
-        Write-Pass 'MSYS2 UCRT64 gcc' $gccLine
-    }
+    $gccCmd = Get-Command gcc -ErrorAction SilentlyContinue
+    $origin = if ($gccCmd -and $gccCmd.Source -like "*ucrt64*") { " (under $ucrtBin)" } elseif ($gccCmd) { " (resolves to $($gccCmd.Source))" } else { "" }
+    Write-Pass 'gcc' "$gccLine$origin"
 }
 
 # g++ present (same toolchain)
@@ -170,19 +176,6 @@ if (-not $pyVer) {
     Write-Pass 'python' $pyLine
 }
 
-# PATH contains C:\msys64\ucrt64\bin
-$pathParts = $env:PATH -split ';' | ForEach-Object { $_.TrimEnd('\') }
-$ucrtBinNormalized = $ucrtBin.TrimEnd('\')
-$pathHasUcrt = $false
-foreach ($p in $pathParts) {
-    if ($p -ieq $ucrtBinNormalized) { $pathHasUcrt = $true; break }
-}
-if (-not $pathHasUcrt) {
-    Write-Fail 'PATH' "missing $ucrtBin -- prepend to PATH so MSYS2 UCRT64 toolchain wins over system gcc"
-} else {
-    Write-Pass 'PATH' "contains $ucrtBin"
-}
-
 # Disk: >= 4 GB free under <repo>\build (FetchContent + LTO needs space)
 $buildDir = Join-Path $repoRoot 'build'
 $diskTarget = if (Test-Path -LiteralPath $buildDir) { $buildDir } else { $repoRoot }
@@ -202,6 +195,22 @@ try {
 # ----------------------------------------------------------------------------
 # Warn-only checks
 # ----------------------------------------------------------------------------
+
+# PATH contains C:\msys64\ucrt64\bin -- warn-only because `cmake --preset
+# ninja-iter-msys2` prepends the UCRT64 prefix via `MSYSTEM_PREFIX` regardless.
+# This check matters for scripts/dev/ bash wrappers that resolve gcc via $PATH
+# directly. False-failed on JetBrains-bundled-MinGW hosts pre-split.
+$pathParts = $env:PATH -split ';' | ForEach-Object { $_.TrimEnd('\') }
+$ucrtBinNormalized = $ucrtBin.TrimEnd('\')
+$pathHasUcrt = $false
+foreach ($p in $pathParts) {
+    if ($p -ieq $ucrtBinNormalized) { $pathHasUcrt = $true; break }
+}
+if (-not $pathHasUcrt) {
+    Write-Warn2 'PATH' "MSYS2 UCRT64 bin ($ucrtBin) not on PATH -- prepend it for direct-gcc invocation by scripts/dev/ (not required for cmake --preset)"
+} else {
+    Write-Pass 'PATH' "contains $ucrtBin"
+}
 
 $cppcheckLine = Get-ToolVersion 'cppcheck'
 if (-not $cppcheckLine) {

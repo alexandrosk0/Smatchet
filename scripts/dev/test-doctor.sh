@@ -4,7 +4,10 @@
 # Asserts:
 #   1. Running the doctor on the current host exits 0 (toolchain is wired).
 #   2. Stripping C:\msys64\ucrt64\bin (or its bash equivalent) from PATH
-#      makes the doctor exit 1 AND its output mentions "MSYS2".
+#      makes the doctor exit >= 2 (WARN or FAIL) AND its output mentions
+#      "MSYS2". Exit code is non-zero either way: 2 when a working gcc
+#      still resolves elsewhere (e.g. JetBrains-bundled MinGW) and only
+#      the PATH check warns, 1 when gcc is also unreachable.
 #
 # This catches: (a) the doctor regressing into always-passing or always-failing,
 # (b) the MSYS2-missing path losing its actionable install hint.
@@ -130,7 +133,7 @@ echo
 # Assertion 2: MSYS2 UCRT64 removed -> doctor must fail and mention MSYS2
 # ---------------------------------------------------------------------------
 
-echo "[2/2] doctor with C:\\msys64\\ucrt64\\bin stripped from PATH -- expect exit 1 + mentions MSYS2"
+echo "[2/2] doctor with C:\\msys64\\ucrt64\\bin stripped from PATH -- expect exit >= 2 + mentions MSYS2"
 
 if [ "$USE_PS1" -eq 1 ]; then
     # Strip both forms (with / without trailing backslash, case-insensitive) inside the
@@ -157,10 +160,12 @@ RC_FAIL="${RC_FAIL:-0}"
 echo "$OUT_FAIL" | sed 's/^/    /'
 echo "    (exit=$RC_FAIL)"
 
-if [ "$RC_FAIL" -eq 1 ]; then
-    note_pass "doctor exits 1 when MSYS2 UCRT64 bin is missing from PATH"
+if [ "$RC_FAIL" -ge 2 ]; then
+    note_pass "doctor exits $RC_FAIL (>= 2) when MSYS2 UCRT64 bin is missing from PATH"
+elif [ "$RC_FAIL" -eq 1 ]; then
+    note_pass "doctor exits 1 when MSYS2 UCRT64 bin is missing from PATH (gcc also unreachable)"
 else
-    note_fail "expected exit 1 with MSYS2 bin stripped, got $RC_FAIL"
+    note_fail "expected exit >= 2 (or 1) with MSYS2 bin stripped, got $RC_FAIL"
 fi
 
 if echo "$OUT_FAIL" | grep -qi 'MSYS2'; then

@@ -10,15 +10,20 @@
 #   - cmake >= 3.24
 #   - ninja present
 #   - git present
-#   - MSYS2 UCRT64 gcc (>= 13)  [via `which gcc` resolving under /ucrt64/
-#                                or $MSYSTEM == UCRT64 on MSYS2]
+#   - MSYS2 UCRT64 gcc (>= 13)  -- "toolchain reachable": `which gcc`
+#                                  resolving under /ucrt64/ or $MSYSTEM ==
+#                                  UCRT64 on MSYS2.
 #   - g++ present
 #   - lld / ld.lld present
 #   - python >= 3.10
-#   - PATH contains the MSYS2 UCRT64 toolchain dir
 #   - >= 4 GB free under <repo>/build
 #
 # Warn-only checks:
+#   - PATH contains the MSYS2 UCRT64 toolchain dir -- "on PATH at shell
+#     time". Required by scripts/dev/ bash wrappers that resolve gcc via
+#     $PATH directly. NOT required for `cmake --preset` (presets prepend
+#     UCRT64 bin via MSYSTEM_PREFIX). False-failed on JetBrains-bundled-
+#     MinGW hosts where a working gcc resolves outside /ucrt64/.
 #   - cppcheck
 #   - clang-tidy
 #   - clang-format
@@ -113,32 +118,30 @@ else
     write_pass 'git' "$git_line"
 fi
 
-# MSYS2 UCRT64 gcc (>= 13)
+# gcc (>= 13) -- "toolchain reachable". A gcc resolving outside /ucrt64/
+# (e.g. JetBrains-bundled MinGW) is acceptable because `cmake --preset
+# ninja-iter-msys2` prepends the UCRT64 prefix via MSYSTEM_PREFIX before
+# invoking the compiler. The "MSYS2 UCRT64 bin on PATH" check is warn-only
+# below.
 gcc_path=$(command -v gcc 2>/dev/null || true)
-ucrt_ok=0
-if [ -n "$gcc_path" ]; then
-    case "$gcc_path" in
-        */ucrt64/*) ucrt_ok=1 ;;
-    esac
-    if [ "${MSYSTEM:-}" = "UCRT64" ]; then
-        ucrt_ok=1
-    fi
-fi
 gcc_line=$(tool_version gcc --version)
 if [ -z "$gcc_line" ]; then
-    write_fail 'MSYS2 UCRT64 gcc' 'install: winget install MSYS2.MSYS2 then pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld'
+    write_fail 'gcc' 'install: winget install MSYS2.MSYS2 then pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld'
 else
     gcc_ver=$(parse_version "$gcc_line")
-    if [ "$ucrt_ok" -eq 0 ]; then
-        write_fail 'MSYS2 UCRT64 gcc' "gcc resolves to $gcc_path -- not under /ucrt64/; install: pacman -S mingw-w64-ucrt-x86_64-toolchain and ensure /ucrt64/bin is first on PATH"
-    elif [ -z "$gcc_ver" ]; then
-        write_fail 'MSYS2 UCRT64 gcc' "could not parse version from: $gcc_line"
+    if [ -z "$gcc_ver" ]; then
+        write_fail 'gcc' "could not parse version from: $gcc_line"
     else
         gcc_major=$(echo "$gcc_ver" | awk '{print $1}')
         if [ "$gcc_major" -lt 13 ]; then
-            write_fail 'MSYS2 UCRT64 gcc' "found gcc $gcc_ver, need >= 13 -- update: pacman -Syu then pacman -S mingw-w64-ucrt-x86_64-toolchain"
+            write_fail 'gcc' "found gcc $gcc_ver, need >= 13 -- update: pacman -Syu then pacman -S mingw-w64-ucrt-x86_64-toolchain"
         else
-            write_pass 'MSYS2 UCRT64 gcc' "$gcc_line"
+            origin=""
+            case "$gcc_path" in
+                */ucrt64/*) origin=" (under /ucrt64/)" ;;
+                *) origin=" (resolves to $gcc_path)" ;;
+            esac
+            write_pass 'gcc' "$gcc_line$origin"
         fi
     fi
 fi
@@ -180,28 +183,6 @@ else
     fi
 fi
 
-# PATH contains MSYS2 UCRT64 toolchain dir
-path_has_ucrt=0
-IFS=':' read -r -a path_parts <<< "$PATH"
-for p in "${path_parts[@]}"; do
-    case "$p" in
-        */ucrt64/bin|/ucrt64/bin|/c/msys64/ucrt64/bin|/C/msys64/ucrt64/bin)
-            path_has_ucrt=1; break ;;
-    esac
-done
-# Windows-style PATH entries (semicolons) also valid when running this script
-# under Git Bash / pwsh: parse $PATH for "msys64\ucrt64\bin" or "msys64/ucrt64/bin".
-if [ "$path_has_ucrt" -eq 0 ]; then
-    case "$PATH" in
-        *msys64/ucrt64/bin*|*msys64\\ucrt64\\bin*) path_has_ucrt=1 ;;
-    esac
-fi
-if [ "$path_has_ucrt" -eq 0 ]; then
-    write_fail 'PATH' 'missing MSYS2 UCRT64 bin dir (e.g. /ucrt64/bin or C:\msys64\ucrt64\bin) -- prepend it so the UCRT64 toolchain wins over system gcc'
-else
-    write_pass 'PATH' 'contains MSYS2 UCRT64 bin dir'
-fi
-
 # Disk: >= 4 GB free under <repo>/build
 build_dir="$REPO_ROOT/build"
 disk_target="$build_dir"
@@ -224,6 +205,32 @@ fi
 # ---------------------------------------------------------------------------
 # Warn-only checks
 # ---------------------------------------------------------------------------
+
+# PATH contains MSYS2 UCRT64 toolchain dir -- warn-only because `cmake
+# --preset ninja-iter-msys2` prepends the UCRT64 prefix via MSYSTEM_PREFIX
+# regardless. This check matters for scripts/dev/ bash wrappers that
+# resolve gcc via $PATH directly. False-failed on JetBrains-bundled-MinGW
+# hosts pre-split.
+path_has_ucrt=0
+IFS=':' read -r -a path_parts <<< "$PATH"
+for p in "${path_parts[@]}"; do
+    case "$p" in
+        */ucrt64/bin|/ucrt64/bin|/c/msys64/ucrt64/bin|/C/msys64/ucrt64/bin)
+            path_has_ucrt=1; break ;;
+    esac
+done
+# Windows-style PATH entries (semicolons) also valid when running this script
+# under Git Bash / pwsh: parse $PATH for "msys64\ucrt64\bin" or "msys64/ucrt64/bin".
+if [ "$path_has_ucrt" -eq 0 ]; then
+    case "$PATH" in
+        *msys64/ucrt64/bin*|*msys64\\ucrt64\\bin*) path_has_ucrt=1 ;;
+    esac
+fi
+if [ "$path_has_ucrt" -eq 0 ]; then
+    write_warn 'PATH' 'MSYS2 UCRT64 bin dir (e.g. /ucrt64/bin or C:\msys64\ucrt64\bin) not on PATH -- prepend it for direct-gcc invocation by scripts/dev/ (not required for cmake --preset)'
+else
+    write_pass 'PATH' 'contains MSYS2 UCRT64 bin dir'
+fi
 
 cppcheck_line=$(tool_version cppcheck --version)
 if [ -z "$cppcheck_line" ]; then
