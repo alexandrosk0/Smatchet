@@ -112,25 +112,27 @@ TEST_CASE("TrackerFieldValueParser: MergeTrackerFieldOption_DoesNotDuplicateById
     // here would balloon allowed-value lists with near-duplicates that disagree on metadata.
     std::vector<TrackerFieldOption> target;
     TrackerFieldOption a;
-    a.Id = "10001";
+    a.Id = "ABC-1";
     a.Value = "Bug";
     MergeTrackerFieldOption(target, a);
     REQUIRE(target.size() == 1);
 
     TrackerFieldOption a_again;
-    a_again.Id = "10001";
+    a_again.Id = "ABC-1";
     a_again.Value = "Bug";
     a_again.SecondaryValue = "A defect";
     MergeTrackerFieldOption(target, a_again);
     REQUIRE(target.size() == 1);
     CHECK(target[0].SecondaryValue == "A defect");
 
-    // Case-insensitive id dedup.
+    // Case-insensitive id dedup: "abc-1" must collapse onto "ABC-1" because the merge key
+    // is computed via ToLowerAsciiCopy on the id.
     TrackerFieldOption a_case;
-    a_case.Id = "10001"; // same casing in id (numeric); lowercase matching wouldn't differ
+    a_case.Id = "abc-1";
     a_case.Value = "BUG-DUP";
     MergeTrackerFieldOption(target, a_case);
     REQUIRE(target.size() == 1);
+    CHECK(target[0].Id == "ABC-1"); // first-write wins; case-different incoming did not push a new row
 }
 
 TEST_CASE("MergeTrackerFieldOption dedups by value when id is empty") {

@@ -1,6 +1,7 @@
 #include "IssueCreatePipeline.h"
 
 #include "ITrackerClient.h"
+#include "IssueCreatePipelineHelpers.h"
 #include "TrackerFieldPayload.h"
 
 #include "LocalCacheManager.h"
@@ -171,32 +172,6 @@ void MergePostStepDraftIntoCachedTicket(CachedTicket& ticket, const IssueDraft& 
     }
 }
 
-/** Overlay draft onto cache using only keys from the successful PUT fields payload (plus issue type/parent display). */
-CachedTicket MergeDraftIntoCachedTicketForUpdate(const CachedTicket& existing, const IssueDraft& draft,
-                                                 const std::string& issueKey,
-                                                 const nlohmann::json& putFieldsSucceeded) {
-    CachedTicket t = existing;
-    t.id = issueKey;
-    if (putFieldsSucceeded.is_object()) {
-        for (auto it = putFieldsSucceeded.begin(); it != putFieldsSucceeded.end(); ++it) {
-            const std::string fieldId = it.key();
-            const auto dit = draft.FieldValues.find(fieldId);
-            if (dit != draft.FieldValues.end()) {
-                t.fieldValues[fieldId] = dit->second;
-            }
-        }
-    }
-    if (!draft.IssueTypeName.empty()) {
-        t.fieldValues["issuetype"] = draft.IssueTypeName;
-    } else if (!draft.IssueTypeId.empty()) {
-        t.fieldValues["issuetype"] = draft.IssueTypeId;
-    }
-    if (!draft.ParentKey.empty()) {
-        t.fieldValues["parent"] = draft.ParentKey;
-    }
-    return t;
-}
-
 } // namespace
 
 namespace IssueCreatePipeline {
@@ -281,7 +256,8 @@ IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* c
         try {
             CachedTicket existing;
             if (cache->TryGetTicket(issueKey, existing)) {
-                result.SeededTicket = MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
+                result.SeededTicket =
+                    IssueCreatePipelineHelpers::MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
             }
             MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
             cache->SaveTicket(result.SeededTicket);

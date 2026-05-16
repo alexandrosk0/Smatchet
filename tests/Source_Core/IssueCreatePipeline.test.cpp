@@ -135,8 +135,7 @@ TEST_CASE("IssueCreatePipelineHelpers::MergeDraftIntoCachedTicketForUpdate does 
     CHECK(merged.fieldValues.count("issuetype") == 0);
 }
 
-// ApplyPostIssueSteps decision-logic coverage is deferred — that helper invokes
-// ITrackerClient::UpdateIssueFields / AddIssueToSprint / AttachFilesToIssue and
-// is wedded to the HTTP path. Lifting its decision math into a pure free function
-// requires a mock-client interface that doesn't exist yet. Tracked separately so
-// Phase 1 can land without an HTTP-stub refactor.
+// ApplyPostIssueSteps decision-logic is exercised through integration tests where an
+// ITrackerClient mock is available — not a pure-logic unit. It invokes
+// ITrackerClient::UpdateIssueFields / AddIssueToSprint / AttachFilesToIssue, so it
+// cannot be linked here without dragging the HTTP path into the doctest rig.
