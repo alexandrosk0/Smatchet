@@ -1,0 +1,513 @@
+// OfflineQueueService runtime tests — drive the service through `IOfflineQueueDeps` against
+// a `FakeOfflineQueueDeps` + `FakeTrackerClient` + `LocalCacheManager(":memory:")`. Every
+// case constructs a fresh fixture stack so queue / cache / mock state never leaks across
+// `TEST_CASE`s. Each test owns a `TestEnvGuard` that redirects the audit writer + the
+// ConfigManager user-data dir into a private temp dir, and writes a minimal config file
+// with `read_only_mode=false` (ConfigManager defaults that to true when no config exists).
+//
+// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText` from `TrackerHttpUtils.cpp`.
+// PR F added that TU to the test target's source list (alongside cpr link), so the production
+// definition resolves directly — no test-side mirror needed. Backlog entry C12 still tracks
+// the cpr-free TU split as the long-term clean-up.
+
+#include "../support/FakeOfflineQueueDeps.h"
+#include "../support/FakeTrackerClient.h"
+
+#include "BackendAuditTrail.h"
+#include "ConfigManager.h"
+#include "IssueDraft.h"
+#include "LocalCacheManager.h"
+#include "OfflineQueueReplayPolicy.h"
+#include "OfflineQueueService.h"
+#include "TrackerHttpUtils.h"
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
+
+using smatchet_tests::FakeOfflineQueueDeps;
+
+namespace {
+
+// Per-test temp directory + ConfigManager redirection. Each instance:
+//   * creates a unique temp dir,
+//   * points `ConfigManager::SetUserDataDirectory()` at it (so audit + config land there),
+//   * writes `smatchet_config.json` with `read_only_mode=false` (when ConfigManager loads
+//     against a missing/empty config file it defaults `ReadOnlyMode=true`, blocking every
+//     queue mutation we want to test).
+// All state is process-wide; doctest's single-threaded runner prevents races.
+class TestEnvGuard {
+  public:
+    TestEnvGuard() {
+        const char* envTmp = nullptr;
+#if defined(_WIN32)
+        envTmp = std::getenv("TEMP");
+        if (!envTmp)
+            envTmp = std::getenv("TMP");
+        if (!envTmp)
+            envTmp = "C:\\Windows\\Temp";
+        const char sep = '\\';
+        const auto unique =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        dir_ = std::string(envTmp) + sep + "smatchet_offqueue_test_" + std::to_string(unique);
+        ::_mkdir(dir_.c_str());
+#else
+        envTmp = std::getenv("TMPDIR");
+        if (!envTmp)
+            envTmp = "/tmp";
+        const char sep = '/';
+        const auto unique =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        dir_ = std::string(envTmp) + sep + "smatchet_offqueue_test_" + std::to_string(unique);
+        ::mkdir(dir_.c_str(), 0755);
+#endif
+        dirWithSep_ = dir_;
+        if (dirWithSep_.back() != sep)
+            dirWithSep_.push_back(sep);
+        ConfigManager::SetUserDataDirectory(dirWithSep_);
+        // Drop a minimal config so ConfigManager::Load() sees `read_only_mode=false`.
+        const std::string cfgPath = dirWithSep_ + "smatchet_config.json";
+        std::ofstream f(cfgPath, std::ios::binary | std::ios::trunc);
+        f << "{\"read_only_mode\":false}";
+        f.close();
+        ConfigManager::InvalidateCache();
+    }
+    ~TestEnvGuard() {
+        std::remove(BackendAuditTrail::GetAuditFilePath().c_str());
+        std::remove((dirWithSep_ + "smatchet_config.json").c_str());
+        ConfigManager::SetUserDataDirectory("");
+        ConfigManager::InvalidateCache();
+        std::remove(dir_.c_str());
+    }
+    TestEnvGuard(const TestEnvGuard&) = delete;
+    TestEnvGuard& operator=(const TestEnvGuard&) = delete;
+
+  private:
+    std::string dir_;
+    std::string dirWithSep_;
+};
+
+// Wait for the async audit writer to flush at least `expectedMin` lines that include
+// `needle` to the current audit file path. Returns the number observed.
+std::size_t WaitForAuditLines(const std::string& needle, std::size_t expectedMin, int timeoutMs = 2000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    std::size_t matches = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::ifstream f(BackendAuditTrail::GetAuditFilePath(), std::ios::binary);
+        if (f.is_open()) {
+            matches = 0;
+            std::string line;
+            while (std::getline(f, line)) {
+                if (line.find(needle) != std::string::npos)
+                    ++matches;
+            }
+            if (matches >= expectedMin)
+                return matches;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return matches;
+}
+
+TrackerField MakeField(const std::string& id, TrackerFieldFamily family = TrackerFieldFamily::Text) {
+    TrackerField f;
+    f.Id = id;
+    f.Name = id;
+    f.Type = "string";
+    f.Family = family;
+    return f;
+}
+
+IssueDraft MakeBasicCreateDraft(const std::string& summary = "Test summary") {
+    IssueDraft d;
+    d.ProjectKey = "PROJ";
+    d.IssueTypeId = "10001";
+    d.IssueTypeName = "Story";
+    d.FieldValues["summary"] = summary;
+    return d;
+}
+
+// Configure a deps fixture so its FakeTrackerClient successfully serves `IssueCreatePipeline::Run`:
+// BuildCreatePayload returns a non-empty object; CreateIssue defaults to scripted queue.
+void PrimeCreatePipelineHappy(FakeOfflineQueueDeps& deps) {
+    deps.BackendImpl->SetBuildCreatePayloadResult(true, nlohmann::json{{"fields", {{"summary", "X"}}}});
+    deps.Fields = {MakeField("summary"), MakeField("priority")};
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Case 1 — Enqueue create-issue → drain 200 OK → row deleted from queue. [high-risk]
+// Mutation-sanity (test-side): flipping the expected `Pending=0` to `Pending=1` fails the
+// assertion, confirming the post-success delete is what flips the row off the queue.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → drain 200 OK deletes row" * doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-42");
+
+    OfflineQueueService svc(deps);
+    const auto id = svc.QueueCreateOffline(MakeBasicCreateDraft());
+    REQUIRE(id > 0);
+    CHECK(svc.GetPendingCreateCount() == 1u);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+    CHECK(deps.BackendImpl->CreateIssueCallCount() == 1u);
+    CHECK(deps.RefreshLocalDataCalls == 1);
+    CHECK(deps.DeferredLiveNotifyCalls == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Case 2 — Enqueue create-issue → drain 4xx → row stays in queue (4xx alone does NOT
+// dead-letter; only the cap does for the create path). [high-risk]
+// The case description in the plan says "4xx archives". After implementation review of
+// `TickOfflineCreates`, the create path never branches on `IsTrackerTransportErrorText` —
+// only `ShouldArchive(nextAttempts)` decides archive-vs-retry. So a 4xx with attempts < cap
+// keeps the row, increments attempts, populates LastError. Documented as a plan deviation
+// in `docs/design/applied/test-suite-expansion.md`.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → drain 4xx increments attempts, no dead-letter" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 422: validation failed");
+
+    OfflineQueueService svc(deps);
+    const auto id = svc.QueueCreateOffline(MakeBasicCreateDraft());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    REQUIRE(svc.GetPendingCreateCount() == 1u);
+    const auto rows = svc.GetPendingCreates();
+    CHECK(rows.front().Attempts == 1);
+    CHECK(rows.front().LastError.find("422") != std::string::npos);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 3 — Enqueue create-issue → 5xx (server error, transport-classified) → stays + attempts++.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx increments attempts, stays in queue") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 503: service unavailable");
+
+    OfflineQueueService svc(deps);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    REQUIRE(svc.GetPendingCreateCount() == 1u);
+    CHECK(svc.GetPendingCreates().front().Attempts == 1);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 4 — Enqueue create-issue → timeout → stays + attempts++.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout increments attempts, stays in queue") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueFailure("Operation timed out after 30000 ms");
+
+    OfflineQueueService svc(deps);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    REQUIRE(svc.GetPendingCreateCount() == 1u);
+    CHECK(svc.GetPendingCreates().front().Attempts == 1);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 5 — Enqueue create-issue → 401 (auth) → row stays in queue, no dead-letter.
+// Phase-3 hostile-fixture target: the create path must NOT collapse an auth error into
+// dead-letter while attempts << cap. [high-risk]
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → 401 stays in queue, no dead-letter on auth" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 401: invalid credentials");
+
+    OfflineQueueService svc(deps);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    REQUIRE(svc.GetPendingCreateCount() == 1u);
+    CHECK(svc.GetPendingCreates().front().Attempts == 1);
+    CHECK(svc.GetPendingCreates().front().LastError.find("401") != std::string::npos);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 6 — Repeated failures → row dead-lettered exactly at the
+// `OfflineQueueReplayPolicy::kMaxReplayAttempts` boundary.
+//
+// Setup: pre-load attempts = kMaxReplayAttempts - 1 (boundary minus one). One more failed
+// tick takes nextAttempts = kMaxReplayAttempts → `ShouldArchive(nextAttempts)` returns
+// true → row archives.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → repeated failure archives at kMaxReplayAttempts boundary") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->SetDefaultCreateIssueResult(false, "HTTP 503: still down");
+
+    OfflineQueueService svc(deps);
+    const auto id = svc.QueueCreateOffline(MakeBasicCreateDraft());
+    REQUIRE(id > 0);
+    // Walk the row to one-below-cap so the next tick tips it over.
+    const int preload = OfflineQueueReplayPolicy::kMaxReplayAttempts - 1;
+    deps.CacheImpl->UpdatePendingCreate(id, preload, "scripted");
+    CHECK(svc.GetPendingCreates().front().Attempts == preload);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    REQUIRE(svc.GetDeadPendingCreateCount() == 1u);
+    const auto dead = svc.GetDeadPendingCreates();
+    CHECK(dead.front().Attempts == OfflineQueueReplayPolicy::kMaxReplayAttempts);
+    CHECK(dead.front().TerminalReason == "max_attempts");
+}
+
+// ---------------------------------------------------------------------------
+// Case 6b — Pre-attempt cap gate (post-restart): a row that already sits at the cap from a
+// previous session must dead-letter on the NEXT tick without calling CreateIssue. Covers
+// `OfflineQueueReplayPolicy::ShouldArchive` pre-attempt boundary (the cap check at the very
+// top of the replay loop, before the create call).
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: create → already-at-cap row dead-letters without invoking backend") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    // Make the backend explode if it gets called — proves we never reached CreateIssue.
+    deps.BackendImpl->SetDefaultCreateIssueResult(false, "should-not-be-called");
+
+    OfflineQueueService svc(deps);
+    const auto id = svc.QueueCreateOffline(MakeBasicCreateDraft());
+    REQUIRE(id > 0);
+    deps.CacheImpl->UpdatePendingCreate(id, OfflineQueueReplayPolicy::kMaxReplayAttempts, "from prior session");
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    CHECK(svc.GetDeadPendingCreateCount() == 1u);
+    // Pre-attempt gate: backend was never touched.
+    CHECK(deps.BackendImpl->CreateIssueCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 7 — Enqueue field-edit → drain 200 OK → row deleted.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 200 OK deletes row") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const nlohmann::json payload = nlohmann::json{{"summary", "Updated value"}};
+    const auto id = svc.QueueFieldEditOffline("PROJ-1", "summary", payload.dump(), err, std::string());
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+    CHECK(svc.GetPendingFieldEdits().size() == 1u);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    CHECK(deps.RefreshLocalDataCalls == 1);
+    CHECK(deps.DeferredLiveNotifyCalls == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Case 8 — Enqueue field-edit → drain 4xx (hard rejection) → row archives to dead-letter.
+// Unlike the create path, `TickOfflineFieldEdits` does branch on
+// `IsTrackerTransportErrorText`: non-transport errors archive immediately as `replay_rejected`.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 4xx archives to dead-letter") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsFailure("HTTP 422: Unprocessable Entity");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const auto id = svc.QueueFieldEditOffline("PROJ-2", "summary", nlohmann::json{{"summary", "Bad value"}}.dump(), err,
+                                              std::string());
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    REQUIRE(svc.GetDeadPendingFieldEdits().size() == 1u);
+    const auto dead = svc.GetDeadPendingFieldEdits().front();
+    CHECK(dead.TerminalReason == "replay_rejected");
+    CHECK(dead.OriginalId == id);
+    CHECK(dead.IssueKey == "PROJ-2");
+    CHECK(dead.FieldId == "summary");
+}
+
+// ---------------------------------------------------------------------------
+// Case 9 — Audit-trail row emitted per replay attempt. Uses `BackendAuditTrail::ReadRecentEvents`
+// filtered by the pending-create id encoded in the event's `operation_id` field.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: replay emits audit-trail row per attempt") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-44");
+
+    OfflineQueueService svc(deps);
+    const auto id = svc.QueueCreateOffline(MakeBasicCreateDraft());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    // Wait for the async audit writer to flush. The replay-create event's operation_id is
+    // the stringified pending_create id; the queue-create event uses the same id. Both
+    // should appear.
+    const std::string idStr = std::to_string(id);
+    const std::size_t lineMatches = WaitForAuditLines(idStr, 2u);
+    CHECK(lineMatches >= 2u);
+
+    std::string readErr;
+    const auto events = BackendAuditTrail::ReadRecentEvents(500u, &readErr);
+    CHECK(readErr.empty());
+    std::size_t queueCount = 0;
+    std::size_t replayCount = 0;
+    for (const auto& ev : events) {
+        if (ev.value("operation_id", std::string()) != idStr)
+            continue;
+        const std::string action = ev.value("action", std::string());
+        if (action == "offline_queue_create")
+            ++queueCount;
+        else if (action == "offline_replay_create")
+            ++replayCount;
+    }
+    CHECK(queueCount >= 1u);
+    CHECK(replayCount >= 1u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 10 — Two sequential pending creates both drain in a single tick. Each gets its own
+// audit row and the FakeTrackerClient sees CreateIssue twice in stable order. This replaces
+// the plan's chained pending-create → field-edit case: production OfflineQueueService does
+// not currently rewrite a queued field-edit's IssueKey when its referenced create succeeds
+// (no such code path in `TickOfflineCreates`); the plan-intent for `chained replay` was
+// "successive rows are processed independently". Documented in plan Deviations.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: two sequential creates both drain in one tick") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    PrimeCreatePipelineHappy(deps);
+    deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-100");
+    deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-101");
+
+    OfflineQueueService svc(deps);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft("First")) > 0);
+    REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft("Second")) > 0);
+    REQUIRE(svc.GetPendingCreateCount() == 2u);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineCreates();
+
+    CHECK(svc.GetPendingCreateCount() == 0u);
+    CHECK(svc.GetDeadPendingCreateCount() == 0u);
+    CHECK(deps.BackendImpl->CreateIssueCallCount() == 2u);
+    // Both successes coalesce into a single RefreshLocalData (called once after the batch).
+    CHECK(deps.RefreshLocalDataCalls == 1);
+    CHECK(deps.DeferredLiveNotifyCalls == 2);
+}
+
+// ---------------------------------------------------------------------------
+// Case 11 — Field-edit with merge conflict: drain fetches a server document whose rich value
+// differs from the queued `OriginalRichValue` and from the local edit on overlapping lines.
+// The 3-way merge surfaces the conflict, row is flagged with `HasMergeConflict=true`, and
+// no UpdateIssueFields call is issued. [high-risk]
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: field-edit → merge conflict marks row, no PUT, no dead-letter" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // Stage a server document with a `summary` field that diverged from base.
+    CachedTicket fresh;
+    fresh.id = "PROJ-30";
+    fresh.fieldValues["summary"] = "Server moved on";
+    fresh.fieldRichValues["summary"] = "Server moved on"; // plain-text rich (no '{', no '<') → toMd identity
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    // Local edit: differs from base.
+    const nlohmann::json payload = nlohmann::json{{"summary", "My local change"}};
+    const std::string originalRich = "Common ancestor"; // base — differs from both mine and theirs
+    const auto id = svc.QueueFieldEditOffline("PROJ-30", "summary", payload.dump(), err, originalRich);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    // Conflict path: row stays in active queue, no PUT issued, no dead-letter, conflict flag set.
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Case 12 — `OfflineQueueReplayPolicy::ShouldArchive` boundary coverage in isolation, both
+// pre-attempt and post-failure shapes. Mirrors how the runtime invokes the policy.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: ShouldArchive boundary — pre-attempt + post-failure") {
+    const int cap = OfflineQueueReplayPolicy::kMaxReplayAttempts;
+    // Pre-attempt gate shape: a row with attempts == cap must archive without replay.
+    CHECK_FALSE(OfflineQueueReplayPolicy::ShouldArchive(cap - 1));
+    CHECK(OfflineQueueReplayPolicy::ShouldArchive(cap));
+    CHECK(OfflineQueueReplayPolicy::ShouldArchive(cap + 1));
+    // Post-failure gate shape: attempts = cap - 1, nextAttempts = cap → archive.
+    const int nextAttempts = (cap - 1) + 1;
+    CHECK(OfflineQueueReplayPolicy::ShouldArchive(nextAttempts));
+    // Below cap → retry.
+    CHECK_FALSE(OfflineQueueReplayPolicy::ShouldArchive(0));
+    CHECK_FALSE(OfflineQueueReplayPolicy::ShouldArchive(1));
+}
