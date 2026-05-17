@@ -621,6 +621,12 @@ function(smatchet_configure_opengl_core_impl_target _target)
     if(SMATCHET_WITH_MCP)
         target_link_libraries("${_target}" PUBLIC SmatchetCoreMcpShim)
     endif()
+    if(SMATCHET_WITH_AI)
+        # Phase B: standalone target gets the side-panel + worker controller. DX12 (Unreal)
+        # builds compile the same Source_Core/ TUs with SMATCHET_WITH_AI undefined so the
+        # ai-assistant codepaths drop out via #if defined gates.
+        target_link_libraries("${_target}" PUBLIC SmatchetCoreAiShim)
+    endif()
     if(WIN32)
         # WIC (windowscodecs/ole32) is used to decode attachment bitmaps into RGBA32 for ImGui's
         # backend-agnostic texture API (ImTextureData) when previewing image attachments.

@@ -14,14 +14,20 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
+#if defined(SMATCHET_WITH_AI)
+#include "AiTypes.h"
+#endif
 
 #include "imgui.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -152,6 +158,34 @@ struct UiDrawSession {
     /** MCP status / endpoints / activity; reopen from Automation -> Agent Bridge (MCP).... */
     bool showMcpServerWindow = false;
     bool requestMcpServerFocus = false;
+#endif
+
+#if defined(SMATCHET_WITH_AI)
+    // Smatchet Assistant side panel — Phase B fields. Hydrated from
+    // `cfg.AssistantPanelOpen` + `cfg.AssistantPanelWidth` on first frame and
+    // round-tripped through ConfigManager::Save on user toggles + width-drag
+    // release. Stream/history/cancel state is per-process — never persisted.
+    bool assistantPanelOpen = false;
+    bool requestAssistantFocus = false;
+    float assistantPanelWidthLive = 380.0f;
+    std::vector<AiMessage> assistantHistory;
+    std::string assistantInputBuf;
+    std::string assistantStreamBuf;
+    bool assistantInFlight = false;
+    /// Cancel atom for the in-flight turn. UI thread sets to true via
+    /// `AiAssistantController::Cancel`; worker's `WriteCallback` polls and
+    /// aborts. Default-null; controller allocates a fresh atom per Submit.
+    std::shared_ptr<std::atomic<bool>> assistantCancel;
+    std::string assistantLastError;
+    /// True while the history view is scrolled to the bottom — streaming new
+    /// tokens auto-pin to tail; scrolling up releases the pin until the user
+    /// scrolls back down.
+    bool assistantAutoScrollAtTail = true;
+    /// Monotonic per-turn id. Incremented on Send; the controller passes this
+    /// value back through every MainThreadDispatcher callback so the UI thread
+    /// can drop stale tokens (Cancel + immediate Send must not let the first
+    /// turn's tail bytes corrupt the second turn's stream).
+    std::uint64_t assistantTurnGen = 0;
 #endif
 
     bool fieldCatalogFetchStarted = false;

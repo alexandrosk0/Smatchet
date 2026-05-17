@@ -106,6 +106,12 @@ class SmatchetUI {
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
+#if defined(SMATCHET_WITH_AI)
+    /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
+    /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
+    /// the free function when `d.assistantPanelOpen` is false.
+    void drawAiAssistantPanel(AppController& app, UiDrawSession& d);
+#endif
     void drawPreferencesWindow(AppController& app, UiDrawSession& d);
     void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);

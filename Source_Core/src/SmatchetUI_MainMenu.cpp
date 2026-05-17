@@ -329,6 +329,15 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 recentViews_.Touch("view.toggle.mcp-server");
             }
 #endif
+#if defined(SMATCHET_WITH_AI)
+            if (ImGui::MenuItem("Assistant", "Ctrl+Shift+A", d.assistantPanelOpen)) {
+                d.assistantPanelOpen = !d.assistantPanelOpen;
+                if (d.assistantPanelOpen) {
+                    d.requestAssistantFocus = true;
+                }
+                recentViews_.Touch("view.toggle.assistant");
+            }
+#endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
             if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
                 d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
