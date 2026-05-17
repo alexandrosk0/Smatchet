@@ -114,8 +114,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/src/AppController_LuaStubs.cpp`, `tests/Lua/LuaSandbox.test.cpp` (sandbox closure invariant regression gate)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — dispatched.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-16 — PR [#144](https://github.com/alexandrosk0/Smatchet/pull/144) opened against `develop`.
+- **Cleared by**: pending merge of [#144](https://github.com/alexandrosk0/Smatchet/pull/144).
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)
 
