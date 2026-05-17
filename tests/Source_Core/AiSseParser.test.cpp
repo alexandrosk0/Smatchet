@@ -27,9 +27,7 @@ struct EventCollector {
     }
 };
 
-void Feed(AiSseParser& p, const std::string& s, EventCollector& c) {
-    p.Feed(s.data(), s.size(), c.callback());
-}
+void Feed(AiSseParser& p, const std::string& s, EventCollector& c) { p.Feed(s.data(), s.size(), c.callback()); }
 
 } // namespace
 
@@ -204,21 +202,62 @@ TEST_CASE("AiSseParser: empty Feed is a no-op") {
     CHECK(c.events.empty());
 }
 
-TEST_CASE("AiSseParser: leading whitespace after data: stripped (impl strips all spaces)") {
+TEST_CASE("AiSseParser: strips exactly one leading space after data:/event: (RFC)") {
+    // WHATWG SSE / RFC 8895: strip the single optional space after the colon —
+    // NOT all leading whitespace. A payload that intentionally leads with spaces
+    // must reach the consumer with the extra spaces intact.
+    SUBCASE("Single space stripped to empty leading") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "data: hello\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Data == "hello");
+    }
+
+    SUBCASE("Two spaces — only first stripped, second preserved") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "data:  two-spaces\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Data == " two-spaces"); // leading space preserved
+    }
+
+    SUBCASE("No space after colon — payload starts immediately") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "data:no-space\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Data == "no-space");
+    }
+
+    SUBCASE("event: same single-space rule") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "event:  named\ndata:x\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Name == " named"); // leading space preserved
+        CHECK(c.events[0].Data == "x");
+    }
+}
+
+TEST_CASE("AiSseParser: aborts cleanly past 4 MiB cap without frame boundary") {
     AiSseParser p;
     EventCollector c;
-    // Parser strips a leading-space RUN after `data:` (not just the single-space SSE-spec
-    // sentinel). Test reflects observed implementation behaviour at AiSseParser.cpp:67-69:
-    // payload re-aligns with no leading spaces regardless of how many the source produced.
-    Feed(p, "data:  two-leading-spaces\n\n", c);
+    // Feed 5 MiB of data: lines with NO terminator. The cap kicks in and the
+    // parser drops the rest of the stream; no exceptions, no OOM, no infinite
+    // buffer growth.
+    const std::string oneMb(1024u * 1024u, 'X');
+    for (int i = 0; i < 5; ++i) {
+        p.Feed(oneMb.data(), oneMb.size(), c.callback());
+    }
+    // After cap, further feeds are no-ops (no spurious events).
+    p.Feed("data: late\n\n", 12, c.callback());
+    CHECK(c.events.empty()); // nothing was framed
+    p.Reset();
+    // Post-reset the parser is usable again.
+    Feed(p, "data: ok\n\n", c);
     REQUIRE(c.events.size() == 1);
-    CHECK(c.events[0].Data == "two-leading-spaces");
-
-    EventCollector c2;
-    AiSseParser p2;
-    Feed(p2, "data:no-space\n\n", c2);
-    REQUIRE(c2.events.size() == 1);
-    CHECK(c2.events[0].Data == "no-space");
+    CHECK(c.events[0].Data == "ok");
 }
 
 TEST_CASE("AiSseParser: many small Feeds reconstruct a full stream") {

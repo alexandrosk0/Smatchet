@@ -1,5 +1,6 @@
 #include "OllamaClient.h"
 
+#include "AiErrorRedact.h"
 #include "AiNdjsonParser.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -177,7 +178,7 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
         if (!r.text.empty()) {
             err.Message.append(": ");
-            err.Message.append(r.text.substr(0, 600));
+            err.Message.append(smatchet::ai::pure::RedactProviderErrorBody(r.text));
         }
         onError(err);
         return;

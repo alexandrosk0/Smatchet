@@ -7,6 +7,11 @@
 #include <functional>
 #include <string>
 
+/// Hard ceiling on the un-terminated NDJSON line buffer. Mirrors the SSE cap to
+/// keep a misbehaving / malicious server from growing the worker-side buffer
+/// without limit (UX pillar 3 — never crash).
+constexpr std::size_t kAiNdjsonParserMaxBufferBytes = 4u * 1024u * 1024u; // 4 MiB
+
 /// Stateful newline-delimited JSON (NDJSON) byte-stream parser used by `OllamaClient`.
 ///
 /// Sibling to `AiSseParser`. Ollama's native `/api/chat` endpoint streams one
@@ -38,6 +43,7 @@ class AiNdjsonParser {
 
   private:
     std::string buffer_;
+    bool overflowed_ = false;
 
     // Parse + dispatch one buffered line in range [begin, end) (newline excluded).
     // Strips trailing \r; drops blank lines silently.

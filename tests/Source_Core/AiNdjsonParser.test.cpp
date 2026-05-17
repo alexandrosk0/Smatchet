@@ -130,6 +130,27 @@ TEST_CASE("AiNdjsonParser: invalid JSON line surfaces to onError, subsequent val
     CHECK(sink.lines[1]["done"].get<bool>() == true);
 }
 
+TEST_CASE("AiNdjsonParser: aborts cleanly past 4 MiB cap without newline") {
+    AiNdjsonParser parser;
+    CollectingSink sink;
+    // Feed 5 MiB with no newline at all — cap engages, stream poisoned until
+    // Reset, no OOM, no callbacks.
+    const std::string oneMb(1024u * 1024u, 'X');
+    for (int i = 0; i < 5; ++i) {
+        parser.Feed(oneMb.data(), oneMb.size(), sink.onLine(), sink.onError());
+    }
+    CHECK(sink.lines.empty());
+    CHECK(sink.errors.empty());
+    // Post-cap feeds are no-ops.
+    FeedString(parser, "{\"x\":1}\n", sink);
+    CHECK(sink.lines.empty());
+    // Reset restores the parser to a usable state.
+    parser.Reset();
+    FeedString(parser, "{\"x\":1}\n", sink);
+    REQUIRE(sink.lines.size() == 1);
+    CHECK(sink.lines[0]["x"].get<int>() == 1);
+}
+
 TEST_CASE("AiNdjsonParser: Reset() clears partial-frame buffer mid-stream") {
     AiNdjsonParser parser;
     CollectingSink sink;

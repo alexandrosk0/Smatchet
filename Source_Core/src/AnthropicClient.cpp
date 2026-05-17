@@ -128,8 +128,8 @@ std::string AnthropicClient::ProbeReachability(const AiClientConfig& cfg) {
     if (!cfg.ApiKey.empty())
         headers["x-api-key"] = cfg.ApiKey;
 
-    cpr::Response r = cpr::Head(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs},
-                                cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r =
+        cpr::Head(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;

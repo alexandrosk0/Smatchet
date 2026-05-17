@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · security-review · [process] · P2 — `agents/security-review.md` attack-surface map missing AI feature surfaces
+  Details: Current security-review prompt enumerates MCP / CLI / Lua / p4 / HTTP / SQLite as the standard attack surfaces. The shipped AI-assistant feature added five more — AI provider HTTP clients (OpenAi/Anthropic/Ollama), streaming parsers (`AiSseParser` / `AiNdjsonParser`), `AgentsMdLoader` (filesystem read into prompt), `AiContextBuilder` (data exfil channel for ticket / view / audit data), `AiAssistantController` (worker thread + cancel atom + Lua glue surface). Future security-review invocations need these as a default checklist row so reviewers don't miss provider-specific patterns (per-client error-body redaction, URL allow-list, buffer caps, Lua rate limit).
+  Concrete next action: extend the "Specific attack-surface" section of `agents/security-review.md` with a new "AI feature surface" bullet listing those 5 components + the standard checks (URL sanitisation, error-body redaction, buffer caps, agents.md path validation, Lua ai.* rate limit). ~30 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · lua-binder · [process] · P3 — Plan packet "stub parity" framing misleading when receivers are already always-on
   Details: Phase E packet explicitly listed `Source_Core/src/AppController_LuaStubs.cpp` as a MOD path with "mirror stub implementations of the same 3 glue functions" claim. But the Lua surface in question (`ai.*`) calls `AppController::AddAiContext` / `ClearAiContext` / `PromptAi` which are **always-on** members (declared without `SMATCHET_WITH_LUA_AUTOMATION` gate, shipped Phase B specifically so Phase E Lua glue is stable across LUA=ON/OFF + AI=ON/OFF). No stub mirror was needed; the agent added a docstring to LuaStubs.cpp to honour the packet's write-set claim but no functional code change.
   Concrete next action: distinguish two cases in orchestrator delegation packets that touch the LuaBindings ↔ LuaStubs pair — (a) glue calls a Lua-only method on AppController → stub mirror required + `LuaStubsCompile.test.cpp` sentinel update; (b) glue calls an always-on AppController method → **no** stub action; parity invariant already satisfied by the always-on declaration. ~5 min phrasing change to `agents/lua-binder.md` § Hard invariants as a checklist bullet.

@@ -5,6 +5,12 @@
 #include <functional>
 #include <string>
 
+/// Hard ceiling on the un-framed SSE buffer. A misbehaving / malicious server that
+/// never emits a frame boundary (`\n\n` / `\r\n\r\n`) could otherwise grow the
+/// worker-side buffer without limit (UX pillar 3 — never crash, defense-in-depth
+/// against provider OOM).
+constexpr std::size_t kAiSseParserMaxBufferBytes = 4u * 1024u * 1024u; // 4 MiB
+
 /// Stateful Server-Sent-Events byte-stream parser shared by OpenAi/Anthropic clients.
 ///
 /// SSE frames are terminated by a blank line (`\n\n` or `\r\n\r\n`). libcurl
@@ -35,6 +41,7 @@ class AiSseParser {
   private:
     std::string buffer_;
     Event partial_;
+    bool overflowed_ = false;
 
     void emitIfReady(const EventCallback& onEvent);
 };

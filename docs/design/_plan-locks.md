@@ -50,6 +50,30 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### ai-assistant-side-panel · Hotfix-batch-2 · p0-p1-retrospective-sweep · status: claimed
+
+- **Branch**: `fix/ai-feature-p0-p1-hotfix`
+- **Owner agent**: `orchestrator`
+- **Originating plan**: orchestrator-direct (retrospective review of [`docs/design/applied/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
+- **Claimed write set**:
+  - `Source_Core/src/AnthropicClient.cpp` (MOD — redact error body)
+  - `Source_Core/src/OllamaClient.cpp` (MOD — redact error body)
+  - `Source_Core/src/AiErrorRedact.cpp` (MOD — add `x-api-key` JSON-field rule)
+  - `Source_Core/src/AiAssistantController.cpp` (MOD — URL allow-list, luaContext_ mutex, cancel-atom race, agents.md cache)
+  - `Source_Core/include/AiAssistantController.h` (MOD — mutex member, cache members)
+  - `Source_Core/src/SmatchetAiAssistantUi.cpp` (MOD — defer ConfigManager::Save, deferred audit-trail fetch, static-buf re-seed)
+  - `Source_Core/src/AiSseParser.cpp` (MOD — single-space strip per RFC + buffer cap)
+  - `Source_Core/include/AiSseParser.h` (MOD — buffer cap constant)
+  - `Source_Core/src/AiNdjsonParser.cpp` (MOD — buffer cap)
+  - `Source_Core/include/AiNdjsonParser.h` (MOD — buffer cap constant)
+  - `Source_Core/src/AiContextBuilder.cpp` (MOD — split audit-trail body so caller can defer the fs read)
+  - `Source_Core/include/AiContextBuilder.h` (MOD — surface deferred-audit hook)
+  - `Source_Core/src/AppController.cpp` (MOD — no lazy ctor post-shutdown)
+- **Read-only adjacency**: `Source_Core/include/AppController.h`, `Source_Core/include/SmatchetUiSession.h`, `Source_Core/include/ConfigManager.h`, `Source_Core/include/BackendAuditTrail.h`.
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — claimed.
+- **Cleared by**: TBD PR.
+
 ### ai-debug-cli-and-prefs-validation · slice-1 · status: shipped (PR #174 merged at 8ba3dc3)
 
 - **Branch**: `feat/ai-debug-cli-and-prefs-validation` (deleted)

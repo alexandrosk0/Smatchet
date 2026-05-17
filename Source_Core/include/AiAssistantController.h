@@ -86,11 +86,20 @@ class AiAssistantController {
     // context-accumulation logic.
 
     /// Append a Lua-supplied context block to the next turn's payload.
+    /// Thread-safe — guarded by `luaContextMutex_`. May be called from the
+    /// background Lua automation worker via the `__smatchet_app_ui` slot, in
+    /// addition to the UI-thread Lua glue.
     void AddAiContext(const AiContextBlock& block);
-    /// Reset the per-turn Lua context.
+    /// Reset the per-turn Lua context. Thread-safe.
     void ClearAiContext();
-    /// Snapshot of the Lua-side context; UI-thread only.
+    /// Snapshot of the Lua-side context. Thread-safe (returns a copy under lock).
     std::vector<AiContextBlock> GetAiContext() const;
+
+    /// Invalidate the worker-side agents.md cache. Call from the UI thread
+    /// after the user edits AgentsMdGlobalPath / ProjectAgentsMdPath in
+    /// Preferences so the next worker turn re-reads from disk instead of
+    /// serving a stale cached blob. Cheap — flips an atomic.
+    void InvalidateAgentsMdCache();
 
   private:
     struct Request {
@@ -100,7 +109,7 @@ class AiAssistantController {
     };
 
     void WorkerLoop();
-    void RunRequest(const Request& req);
+    void RunRequest(const Request& req, const AiCancelToken& cancel);
 
     AppController& app_;
 
@@ -126,10 +135,22 @@ class AiAssistantController {
 
     std::atomic<State> state_{State::Idle};
 
-    // Lua-side context stash. UI-thread only — protected by `app_.IsOnUiThread()`
-    // contract rather than a mutex, since the only callers are the Lua glue
-    // (Phase E) which runs on the UI thread via MainThreadDispatcher.
+    // Lua-side context stash. Mutated from both the UI thread (Lua glue running
+    // on the main state) and the background automation worker (Lua glue running
+    // via `__smatchet_app_ui` on `bgState`). Wrapped in a mutex — the cost of a
+    // single lock per `ai.add_context` is negligible vs. the data-race UB risk.
+    mutable std::mutex luaContextMutex_;
     std::vector<AiContextBlock> luaContext_;
+
+    // Worker-thread cache of the merged agents.md blob + the paths it was
+    // built from. Invalidated when `agentsMdCacheValid_` flips to false from
+    // the UI thread via `InvalidateAgentsMdCache()`. Avoids re-reading the
+    // (potentially 64 KB × 2 layers) blob on every turn.
+    mutable std::mutex agentsMdMutex_;
+    std::string agentsMdCachedBody_;
+    std::string agentsMdCachedGlobalPath_;
+    std::string agentsMdCachedProjectPath_;
+    std::atomic<bool> agentsMdCacheValid_{false};
 };
 
 #endif // SMATCHET_WITH_AI
