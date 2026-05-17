@@ -435,6 +435,15 @@ struct UiDrawSession {
     bool requestScreenshot = false;
     std::string requestScreenshotPath;
 
+    /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
+    /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive
+    /// the palette open/filter state without reaching into `SmatchetUI`'s private
+    /// `commandPalette_` member. Cleared by the consumer the moment the flag is honoured.
+    bool requestCommandPaletteOpen = false;
+    /// Filter substring applied via `CommandPaletteUi::SetFilterText` when
+    /// `requestCommandPaletteOpen` is consumed. Empty means "open with no filter".
+    std::string requestCommandPaletteFilter;
+
     /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
     bool showDockDebug = false;
 

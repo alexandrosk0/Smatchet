@@ -117,9 +117,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #144 at sha 7e6762d. Phase 6b (LuaBindings.test.cpp round-trip) unblocked.
 - **Cleared by**: PR `#144` merged at `7e6762d`.
 
-### test-suite-expansion-completion · Phase-6b · lua-bindings-roundtrip · status: in-flight
+### test-suite-expansion-completion · Phase-6b · lua-bindings-roundtrip · status: shipped (PR #145 merged at d125b36)
 
-- **Branch**: `feat/test-phase-6b-lua-bindings-roundtrip`
+- **Branch**: `feat/test-phase-6b-lua-bindings-roundtrip` (deleted)
 - **Owner agent**: `test-rig`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
 - **Claimed write set**:
@@ -131,7 +131,35 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close any TBD PR placeholder left by PR #144)
 - **Read-only adjacency**: `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp`, `tests/support/LuaHostFixture.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — dispatched after PR #144 unblocker.
+- **Last update**: 2026-05-16 — merged via PR #145 at sha d125b36. Phase 7 (screenshot diff) unblocked + dispatched.
+- **Cleared by**: PR `#145` merged at `d125b36`.
+
+### test-suite-expansion-completion · Phase-7 · screenshot-diff · status: in-flight
+
+- **Branch**: `feat/test-phase-7-screenshot-diff`
+- **Owner agent**: `test-author`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 7
+- **Claimed write set**:
+  - `Source_Core/include/SmatchetUiSession.h` (add `requestCommandPaletteOpen` + `requestCommandPaletteFilter` flag pair so the palette scenario can open + pre-filter the modal without touching `SmatchetUI`'s private `commandPalette_`)
+  - `Source_Core/src/SmatchetUI.cpp` (consume the new flags once per frame right before `commandPalette_.Draw`)
+  - `Source_Core/include/Commands/Scenarios/DockGapSentinelScenario.h` (NEW — factory entry-point)
+  - `Source_Core/src/Commands/Scenarios/DockGapSentinelScenario.cpp` (NEW — drives default dock + reset, screenshot trigger)
+  - `Source_Core/include/Commands/Scenarios/CommandPaletteFuzzyScenario.h` (NEW)
+  - `Source_Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` (NEW)
+  - `Source_Core/src/AppController.cpp` (append two `scenarioRunner_->RegisterFactory` lines next to the existing trio at lines 1290-1305)
+  - `tests/support/GoldenImage.h` (NEW — header-only PPM reader + per-channel L∞ diff)
+  - `tests/support/ScreenshotDiffMain.cpp` (NEW — tiny CLI helper compiled by the bash script via the host's g++ for the diff step; PascalCase to dodge the repo's `.gitignore` `screenshot_*` rule for capture outputs)
+  - `tests/golden/dock-gap-sentinel.ppm` (NEW — bootstrapped via `--bootstrap` first run; 1280x720 P6 PPM)
+  - `tests/golden/command-palette-fuzzy.ppm` (NEW — bootstrapped via `--bootstrap` first run; 1280x720 P6 PPM)
+  - `tests/golden/README.md` (NEW — bootstrap protocol + regeneration recipe)
+  - `scripts/dev/test-screenshot-diff.sh` (NEW — bash driver, auto-enrolled by test-all.sh)
+  - `.github/workflows/build-and-test.yml` (append a `continue-on-error: true` screenshot-diff step that no-ops cleanly on headless runners)
+  - `docs/design/_plan-locks.md` (this self-status flip)
+  - `docs/design/test-suite-expansion-completion.md` (impl-log + deviations + verification appendices)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (DX12 backbuffer readback follow-up + headless-CI display-server follow-up)
+- **Read-only adjacency**: `Source_Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` (debug.window.screenshot already wired), `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp`, `Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`, `Target_Standalone/main.cpp` (PPM writer already present at line 569).
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — dispatched. Both new scenarios fit the existing IScenario/ScenarioRunner contract; screenshot capture re-uses the pre-existing `debug.window.screenshot` flag pair (no new command surface — plan packet's BuiltinCommands_Debug.cpp delta was satisfied by prior infra).
 - **Cleared by**: TBD PR.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)

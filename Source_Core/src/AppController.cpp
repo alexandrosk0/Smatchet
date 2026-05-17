@@ -1303,6 +1303,18 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario();
         return MakeUiTestScenario();
     });
+    // Phase 7 bucket-C screenshot-diff scenarios (test-suite-expansion-
+    // completion plan). Each scenario drives the UI to a known steady state,
+    // then triggers debug.window.screenshot so the bash driver can diff the
+    // captured PPM against tests/golden/<name>.ppm.
+    scenarioRunner_->RegisterFactory("dock-gap-sentinel", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario();
+        return MakeDockGapSentinelScenario();
+    });
+    scenarioRunner_->RegisterFactory("command-palette-fuzzy", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
+        return MakeCommandPaletteFuzzyScenario();
+    });
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
