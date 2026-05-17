@@ -68,9 +68,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #141 at sha cfab599. Pure JSON-RPC surface (12 exported helpers in `smatchet::mcp::pure`) is link-clean for Phase 5 tests.
 - **Cleared by**: PR `#141` merged at `cfab599`.
 
-### test-suite-expansion-completion · Phase-5-redispatch · mcp-json-rpc-harness · status: in-flight
+### test-suite-expansion-completion · Phase-5-redispatch · mcp-json-rpc-harness · status: shipped (PR #142 merged at d0b1f12)
 
-- **Branch**: `feat/test-phase-5-mcp-json-rpc`
+- **Branch**: `feat/test-phase-5-mcp-json-rpc` (deleted)
 - **Owner agent**: `test-rig`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5
 - **Claimed write set**:
@@ -84,7 +84,30 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Plugins/Mcp/McpJsonRpcPure.h`, `Plugins/Mcp/McpJsonRpcPure.cpp`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — dispatched after PR #141 unblocker.
+- **Last update**: 2026-05-16 — merged via PR #142 at sha d0b1f12.
+- **Cleared by**: PR `#142` merged at `d0b1f12`.
+
+### test-suite-expansion-completion · Phase-6 · lua-bindings-rig · status: in-flight
+
+- **Branch**: `feat/test-phase-6-lua-bindings`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6
+- **Claimed write set**:
+  - `tests/Lua/CMakeLists.txt` (NEW)
+  - `tests/Lua/lua_main.cpp` (NEW)
+  - `tests/Lua/LuaSandbox.test.cpp` (NEW)
+  - `tests/Lua/LuaTimeout.test.cpp` (NEW)
+  - `tests/Lua/LuaStubsCompile.test.cpp` (NEW)
+  - `tests/support/LuaHostFixture.h` (NEW)
+  - `CMakeLists.txt` (add `option(SMATCHET_BUILD_LUA_TESTS …)` + `add_subdirectory(tests/Lua)` gate)
+  - `CMakePresets.json` (add `SMATCHET_BUILD_LUA_TESTS=ON` to `ninja-test-msys2` cacheVariables)
+  - `docs/design/_plan-locks.md`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (Phase 6 LuaBindings.test.cpp unblocker)
+  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
+- **Read-only adjacency**: `Source_Core/src/AppController_LuaBindings.cpp`, `Source_Core/src/AppController_LuaStubs.cpp`, `Source_Core/include/LuaAutomationHost.h`, `Source_Core/include/AppController.h`
+- **InitLuaCore classification**: Class C — `AppController_LuaBindings.cpp:32` `#include "imgui.h"` + `:766` `state["__smatchet_app"] = this` + glue functions in `smatchet_lua_init_detail::` resolve `__smatchet_app` back to live `AppController*`. Binding TU is unusable as a test link target without production refactor. LuaBindings.test.cpp deferred; sandbox + timeout + stubs-compile shipped this slice.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — dispatched.
 - **Cleared by**: TBD PR.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)

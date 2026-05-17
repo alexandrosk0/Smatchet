@@ -153,6 +153,7 @@ option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)"
 option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
+option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -1160,4 +1161,16 @@ endif()
 if(SMATCHET_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# Lua bindings rig — separate binary because Smatchet_Lua_Internal + sol2 are
+# heavy templates we don't want linked into every pure-logic test run. See
+# tests/Lua/CMakeLists.txt and docs/design/test-suite-expansion-completion.md
+# § Phase 6.
+if(SMATCHET_BUILD_LUA_TESTS)
+    if(NOT SMATCHET_WITH_LUA_AUTOMATION)
+        message(FATAL_ERROR "SMATCHET_BUILD_LUA_TESTS=ON requires SMATCHET_WITH_LUA_AUTOMATION=ON.")
+    endif()
+    enable_testing()
+    add_subdirectory(tests/Lua)
 endif()
