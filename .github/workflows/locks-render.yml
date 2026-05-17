@@ -1,0 +1,101 @@
+name: Plan-locks render
+
+# Regenerates docs/design/_plan-locks.generated.md from the live state of
+# refs/locks/* on origin. The rendered file is the human-readable mirror of
+# the atomic ref-based plan-lock state — see docs/design/git-ref-plan-locks.md
+# (Phase 2) and scripts/dev/locks-render-markdown.sh.
+#
+# GitHub's `on: push` event does not fire for non-branch / non-tag refs
+# (refs/locks/* are neither), so this workflow runs on a schedule plus manual
+# dispatch. Mean lag from a ref-update to the rendered PR is bounded by the
+# cron interval (currently 30 minutes).
+#
+# Branch protection — develop is unmodified. The workflow opens or updates
+# a single bot-owned PR (`bot/plan-locks-sync`) which a human merges. No
+# direct push to develop.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # every 30 minutes
+  workflow_dispatch:
+
+concurrency:
+  group: plan-locks-render
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  render:
+    name: Render refs/locks/* to Markdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Fetch refs/locks/*
+        run: |
+          # The default checkout does not pull refs outside refs/heads/.
+          # Pull all refs/locks/* into the local repo for the render script.
+          # NOTE: no `|| true` — a transient fetch failure here would leave the
+          # local namespace empty and the render step would produce an
+          # empty-state file, opening a PR that incorrectly claims all locks
+          # released. Fail loud; the next scheduled run retries.
+          git fetch --quiet --prune origin '+refs/locks/*:refs/locks/*'
+
+      - name: Render
+        run: |
+          bash scripts/dev/locks-render-markdown.sh > docs/design/_plan-locks.generated.md
+          echo "--- rendered file size:"
+          wc -l docs/design/_plan-locks.generated.md
+
+      - name: Detect change
+        id: diff
+        run: |
+          if git diff --quiet -- docs/design/_plan-locks.generated.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No diff — refs/locks/* state matches the file already on develop."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Diff detected; will open or update the sync PR."
+          fi
+
+      - name: Commit, push, open or update PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="bot/plan-locks-sync"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Always force the sync branch to develop tip + the new render.
+          # The branch is bot-owned and exists solely to carry the regenerated
+          # file. A human merges the PR or closes it.
+          git checkout -B "$BRANCH"
+          git add docs/design/_plan-locks.generated.md
+          git commit -m "chore(plan-locks): regenerate _plan-locks.generated.md from refs/locks/*"
+          git push -u origin "$BRANCH" --force
+
+          # Open the PR only if one is not already open against develop.
+          existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[].number' || true)
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --base develop \
+              --head "$BRANCH" \
+              --title "chore(plan-locks): regenerate _plan-locks.generated.md from refs" \
+              --body "Automated regeneration of \`docs/design/_plan-locks.generated.md\` from the current state of \`refs/locks/*\` on origin. Source of truth is the refs themselves; this Markdown is a convenience mirror per [git-ref-plan-locks](../blob/develop/docs/design/git-ref-plan-locks.md) § Phase 2. Safe to merge or close — the workflow will regenerate on schedule."
+            echo "::notice::Opened new sync PR."
+          else
+            echo "::notice::Existing PR #$existing already open against $BRANCH; commit force-pushed onto it."
+          fi
