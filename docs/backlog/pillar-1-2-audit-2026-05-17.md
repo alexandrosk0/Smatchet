@@ -185,6 +185,25 @@ Fix: same as H11 — coalesce Save. Optionally, debounce cache invalidation.
 
 ## Disposition
 
-- **Top 5 CRITICAL bundle** (findings 1-5, 9 sites total) shipped as single PR via dispatched agent. Tracked as `feat/pillar-2-critical-top5` slice.
-- **`ConfigManager::Save` coalescing** (H11 + P1, same root cause) shipped as separate PR. Different pattern (debounce, not worker hand-off) and touches the Preferences UI surface broadly.
-- **Remaining MEDIUM / LOW / Pillar-1-MED** items stay open in this doc as backlog. Re-evaluate after Top 5 + Save-coalesce land.
+### Shipped 2026-05-17
+
+- **CRITICAL findings #1–9** (all 9 sync HTTP/IO call paths) — PR [#191](https://github.com/alexandrosk0/Smatchet/pull/191) at sha `8b779bc`. Worker dispatch via `LaunchBackgroundTask` + `MainThreadDispatcher::PostToMainThread`, cancel atoms on installer download path.
+- **M15** (disk-cached icon read) — bundled into PR #191 via `LoadTextureForResolvedPath` refactor that defers disk reads off the icon-render path.
+- **H11 + P1** (`ConfigManager::Save` cascade + cache invalidation) — PR [#190](https://github.com/alexandrosk0/Smatchet/pull/190) at sha `a3298ca`. 31 per-widget Save sites → `MarkPrefsDirty(d)` + 100 ms end-of-frame debounce. Final sync Save on shutdown via `DrainUiDrawSessionFuturesBeforeAppTeardown`.
+
+### Accepted — no fix needed
+
+- **H10** Win32 file picker — system-modal supplies its own visual cue per Pillar-2 envelope.
+- **M14** app-update check — every call site already wrapped in `std::async`; observational only.
+- **L17** available-fields mutex — critical section is short (vector move under `SetFieldCatalog`); observational only.
+
+### Open / backlog
+
+- **H12** Bulk-tickets file r/w on click (`SmatchetBulkTicketsUi.cpp:150, 551`) — Pattern A worker + future poll.
+- **M13** Long-text editor JSON parse on open (`TicketFieldEditor.cpp:185, 216`) — parse on worker.
+- **L16** Image texture cache disk read first-touch (`SmatchetImageTextureCache.cpp:244`) — bundle with H12.
+- **P2** Lua field-cell provider spike (observational) — enable `perf_temp:LuaDrawList::Record` capture before deciding.
+- **P3** O(N²) icon-fallback dedup — N≤5 today; watch-list only.
+- **P4** JSON `dump(4)` in config save — ~5 KB today; watch-list only.
+
+Suggested next bundle: H12 + L16 + M13 as a single PR (same Pattern A worker shape).
