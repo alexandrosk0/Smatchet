@@ -961,16 +961,17 @@ void AppController::ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op) {
         return;
     }
     switch (op.kind) {
-    case PendingLuaWindowOp::Kind::Invalidate:
-        for (LuaWindowEntry& w : luaWindows_) {
-            if (w.name == op.name) {
-                w.dirty = true;
-                w.hasError = false;
-                w.errorMessage.clear();
-                return;
-            }
+    case PendingLuaWindowOp::Kind::Invalidate: {
+        auto it = std::find_if(luaWindows_.begin(), luaWindows_.end(),
+                               [&](const LuaWindowEntry& w) { return w.name == op.name; });
+        if (it != luaWindows_.end()) {
+            it->dirty = true;
+            it->hasError = false;
+            it->errorMessage.clear();
+            return;
         }
         break;
+    }
     case PendingLuaWindowOp::Kind::Register: {
         auto it = std::find_if(luaWindows_.begin(), luaWindows_.end(),
                                [&](const LuaWindowEntry& w) { return w.name == op.name; });
@@ -1481,12 +1482,10 @@ void LuaDrawList::RequireActive(const char* method) {
 }
 
 AppController::ImCmd* LuaDrawList::LastInteractive() {
-    for (auto it = cmds_.rbegin(); it != cmds_.rend(); ++it) {
-        if (it->op == AppController::ImCmd::Op::Button || it->op == AppController::ImCmd::Op::InputText) {
-            return &(*it);
-        }
-    }
-    return nullptr;
+    auto it = std::find_if(cmds_.rbegin(), cmds_.rend(), [](const AppController::ImCmd& c) {
+        return c.op == AppController::ImCmd::Op::Button || c.op == AppController::ImCmd::Op::InputText;
+    });
+    return it == cmds_.rend() ? nullptr : &(*it);
 }
 
 void LuaDrawList::Text(std::string s) {
@@ -1992,9 +1991,7 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
         // lookup succeeds. Non-`local` `function` declarations become globally visible.
         std::vector<std::string> filenames;
         filenames.emplace_back("SmatchetHooks.lua");
-        for (const std::string& extra : extraScripts) {
-            filenames.push_back(extra);
-        }
+        filenames.insert(filenames.end(), extraScripts.begin(), extraScripts.end());
 
         std::vector<std::string> roots;
         if (!luaScriptsDirectory_.empty()) {
