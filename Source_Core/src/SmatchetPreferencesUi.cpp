@@ -241,7 +241,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
 
             if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip("Disables tracker-changing actions such as field edits, issue creation, comments, "
                                   "worklogs, and offline "
@@ -380,7 +380,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     d.cfg.McpAllowRemote = d.mcpAllowRemote;
                     d.cfg.McpAllowLuaExecution = d.mcpAllowLuaExecution;
                     d.cfg.McpAuthToken = tokenBufStr;
-                    ConfigManager::Save(d.cfg);
+                    MarkPrefsDirty(d);
                     LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)",
                              static_cast<int>(d.cfg.McpEnabled), d.cfg.McpPort);
                     app.AppendMcpActivity("MCP: Integrations saved settings to disk; syncing plugin host.");
@@ -637,7 +637,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                   "be picked up automatically. Turn ON for old behavior (walks up the cwd chain).");
             if (autoDiscoverChanged) {
                 d.cfg.AgentsMdAutoDiscoverProject = autoDiscover;
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
                 // Invalidate the worker-side agents.md cache so the next turn
                 // re-reads from disk instead of serving the stale blob.
                 if (app.HasAiAssistantController()) {
@@ -671,7 +671,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
                              static_cast<int>(providerLabels.size()))) {
                 d.cfg.AiProviderKind = static_cast<int>(providers[providerIdx].Kind);
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
                 // Re-seed so the per-provider buffers below load the chosen provider's
                 // persisted state on the next paint. The check at function-scope
                 // already runs `s_lastSeededProvider != d.cfg.AiProviderKind` and
@@ -1016,7 +1016,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     // toast on failure.
                     runProbe(workingCopy, selectedKind, /*saveOnSuccess=*/true);
                 } else {
-                    // Static-validation-only path: commit immediately.
+                    // Static-validation-only path: commit immediately. AI Assistant tab keeps an
+                    // explicit synchronous Save (PR #181 / #184) — does NOT route through the
+                    // SmatchetPreferences debounce since the toast announces persistence and the
+                    // user expects on-disk state when the Save button releases.
                     d.cfg = workingCopy;
                     ConfigManager::Save(d.cfg);
                     SmatchetToastManager::Instance().Push(
@@ -1040,6 +1043,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
 
             // --- Verify-on-save checkbox (direct-bound; meta-setting) ---
+            // AI Assistant tab keeps explicit synchronous Save (sibling to lines 953 / 1021).
             if (ImGui::Checkbox("Verify connection on save", &d.cfg.AiPrefsVerifyOnSave)) {
                 ConfigManager::Save(d.cfg);
             }
@@ -1241,7 +1245,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             if (ImGui::Combo("Application Font", &currentFontIdx, fonts, 10)) {
                 d.cfg.SelectedFontName = fonts[currentFontIdx];
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
                 SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
             }
             ImGui::SetItemTooltip(
@@ -1260,7 +1264,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Combo("Language", &currentLanguageIdx, languageItems, IM_ARRAYSIZE(languageItems))) {
                 if (currentLanguageIdx >= 0 && currentLanguageIdx < static_cast<int>(languages.size())) {
                     d.cfg.UiLanguage = languages[static_cast<size_t>(currentLanguageIdx)].Code;
-                    ConfigManager::Save(d.cfg);
+                    MarkPrefsDirty(d);
                     SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
                 }
             }
@@ -1271,7 +1275,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::TextUnformatted("Grid and field text");
             ImGui::Separator();
             if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip(
                 "When a value is truncated to fit the cell, or spans multiple lines, hover to read the full text in a "
@@ -1285,7 +1289,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     gridWheelSwallowTicks = 32;
                 }
                 d.cfg.GridEndWheelSwallowsBeforeHorizontal = gridWheelSwallowTicks;
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip(
                 "At top/bottom of the ticket grid, vertical wheel starts horizontal scrolling after this many wheel "
@@ -1316,7 +1320,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 } else if (currentDateFormatIdx == 3) {
                     d.cfg.DateFormatOption = "absolute_friendly";
                 }
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip("Select how date and datetime values are rendered in the grids and UI panels.");
 
@@ -1324,7 +1328,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 int threshold = d.cfg.DateCompactRelativeThresholdDays;
                 if (ImGui::SliderInt("Compact Relative Threshold (Days)", &threshold, 1, 90, "%d days")) {
                     d.cfg.DateCompactRelativeThresholdDays = threshold;
-                    ConfigManager::Save(d.cfg);
+                    MarkPrefsDirty(d);
                 }
                 ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) "
                                       "to short absolute (e.g. May 07 '26).");
@@ -1334,10 +1338,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::TextUnformatted("Updates");
             ImGui::Separator();
             if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             if (ImGui::Checkbox("Include prerelease builds", &d.cfg.UpdateIncludePrerelease)) {
-                ConfigManager::Save(d.cfg);
+                MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip("When enabled, startup and manual checks can target prerelease GitHub releases too.");
             if (ImGui::Button("Check for Updates Now")) {
@@ -1357,7 +1361,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextDisabled("Skipped version: %s", d.cfg.UpdateSkipVersion.c_str());
                 if (ImGui::SmallButton("Clear skipped version")) {
                     d.cfg.UpdateSkipVersion.clear();
-                    ConfigManager::Save(d.cfg);
+                    MarkPrefsDirty(d);
                 }
             }
             ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
@@ -1580,7 +1584,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 else if (s_selectedQuickIdx == static_cast<int>(i - 1))
                                     s_selectedQuickIdx = static_cast<int>(i);
                                 d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                                ConfigManager::Save(d.cfg);
+                                MarkPrefsDirty(d);
                             }
                         } else {
                             ImGui::BeginDisabled();
@@ -1597,7 +1601,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 else if (s_selectedQuickIdx == static_cast<int>(i + 1))
                                     s_selectedQuickIdx = static_cast<int>(i);
                                 d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                                ConfigManager::Save(d.cfg);
+                                MarkPrefsDirty(d);
                             }
                         } else {
                             ImGui::BeginDisabled();
@@ -1615,7 +1619,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 s_selectedQuickIdx--;
                             }
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                             --i;
                         }
                         ImGui::PopStyleColor();
@@ -1652,7 +1656,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (ImGui::InputText("##EditQuickTitle", titleBuf, sizeof(titleBuf))) {
                             t.Title = titleBuf;
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
 
                         ImGui::SameLine(280.0f);
@@ -1662,7 +1666,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (ImGui::InputText("##EditQuickId", idBuf, sizeof(idBuf))) {
                             t.Id = idBuf;
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
 
                         ImGui::TextUnformatted("Body:");
@@ -1670,7 +1674,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                       ImVec2(-FLT_MIN, 60.0f))) {
                             t.Text = textBuf;
                             d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
                     } else {
                         ImGui::TextDisabled("Select a template above to view or edit its details.");
@@ -1688,7 +1692,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         s_quickTemplatesList.push_back(t);
                         s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
                         d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                        ConfigManager::Save(d.cfg);
+                        MarkPrefsDirty(d);
                     }
 
                     ImGui::EndTabItem();
@@ -1733,7 +1737,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 else if (s_selectedBlameIdx == static_cast<int>(i - 1))
                                     s_selectedBlameIdx = static_cast<int>(i);
                                 d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                                ConfigManager::Save(d.cfg);
+                                MarkPrefsDirty(d);
                             }
                         } else {
                             ImGui::BeginDisabled();
@@ -1750,7 +1754,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 else if (s_selectedBlameIdx == static_cast<int>(i + 1))
                                     s_selectedBlameIdx = static_cast<int>(i);
                                 d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                                ConfigManager::Save(d.cfg);
+                                MarkPrefsDirty(d);
                             }
                         } else {
                             ImGui::BeginDisabled();
@@ -1768,7 +1772,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 s_selectedBlameIdx--;
                             }
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                             --i;
                         }
                         ImGui::PopStyleColor();
@@ -1805,7 +1809,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (ImGui::InputText("##EditBlameTitle", titleBuf, sizeof(titleBuf))) {
                             t.Title = titleBuf;
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
 
                         ImGui::SameLine(280.0f);
@@ -1815,7 +1819,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (ImGui::InputText("##EditBlameId", idBuf, sizeof(idBuf))) {
                             t.Id = idBuf;
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
 
                         ImGui::TextUnformatted("Body:");
@@ -1823,7 +1827,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                       ImVec2(-FLT_MIN, 60.0f))) {
                             t.Text = textBuf;
                             d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                            ConfigManager::Save(d.cfg);
+                            MarkPrefsDirty(d);
                         }
                     } else {
                         ImGui::TextDisabled("Select a template above to view or edit its details.");
@@ -1841,7 +1845,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         s_blameTemplatesList.push_back(t);
                         s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
                         d.cfg.BlameCommentTemplates = s_blameTemplatesList;
-                        ConfigManager::Save(d.cfg);
+                        MarkPrefsDirty(d);
                     }
 
                     ImGui::EndTabItem();
@@ -1910,7 +1914,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.cfg.McpAuthToken = d.mcpAuthTokenBuf;
 #endif
 
-        ConfigManager::Save(d.cfg);
+        MarkPrefsDirty(d);
 #if defined(SMATCHET_WITH_MCP)
         app.AppendMcpActivity("MCP: Save & Sync wrote MCP fields; syncing plugin host.");
         if (::PluginHost* ph = app.RuntimePluginHost()) {

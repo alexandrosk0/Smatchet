@@ -737,6 +737,16 @@ void SmatchetUI::Draw(AppController& app) {
             ImGui::SaveIniSettingsToDisk(ConfigManager::GetImGuiSettingsPath().c_str());
         }
     }
+    // Coalesced ConfigManager::Save for SmatchetPreferencesUi widget mutations.
+    // Each MarkPrefsDirty call arms `prefsDirty` + a ~100 ms debounce window;
+    // we drain at end-of-frame (after all panels have drawn) so the write
+    // happens outside any mid-panel state. See SmatchetUiSession.h MarkPrefsDirty
+    // and docs/backlog/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    if (g_ui.prefsDirty && std::chrono::steady_clock::now() >= g_ui.prefsSaveDueAt) {
+        SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)");
+        ConfigManager::Save(g_ui.cfg);
+        g_ui.prefsDirty = false;
+    }
 }
 
 #if defined(SMATCHET_WITH_AI)

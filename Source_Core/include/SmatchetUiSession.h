@@ -512,8 +512,29 @@ struct UiDrawSession {
     /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
     bool showDockDebug = false;
 
+    /// End-of-frame coalesced ConfigManager::Save. SmatchetPreferencesUi widgets
+    /// flag `prefsDirty = true` (via MarkPrefsDirty) on every mutation; the
+    /// debounced fire in SmatchetUI::Draw drains the dirty flag and persists
+    /// once per ~100 ms window. Eliminates the per-frame Save cascade documented
+    /// in docs/backlog/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    /// AI Assistant tab keeps its explicit Save flow (PR #181 / #184) and does
+    /// NOT route through this flag.
+    bool prefsDirty = false;
+    std::chrono::steady_clock::time_point prefsSaveDueAt{};
+
     ~UiDrawSession();
 };
+
+/// Mark Preferences config as dirty and schedule a debounced ConfigManager::Save
+/// at most ~100 ms later. Idempotent — repeated calls within the window keep the
+/// same due-time on the first call (the latest mutation also gets persisted
+/// because the Save reads the live `d.cfg` at fire time). UI-thread-only.
+inline void MarkPrefsDirty(UiDrawSession& d) {
+    if (!d.prefsDirty) {
+        d.prefsDirty = true;
+        d.prefsSaveDueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    }
+}
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern UiDrawSession g_ui;

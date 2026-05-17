@@ -239,6 +239,14 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     (void)app;
     UiDrawSession& d = g_ui;
 
+    // Final synchronous Save if a Preferences mutation is still dirty — catches the
+    // "user changed a setting + immediately quit before the 100 ms debounce fired"
+    // case. See SmatchetUiSession.h MarkPrefsDirty + SmatchetUI.cpp Draw tail.
+    if (d.cfgInitialized && d.prefsDirty) {
+        ConfigManager::Save(d.cfg);
+        d.prefsDirty = false;
+    }
+
     DrainFutureJoinQuiet(d.fieldCatalogFuture);
     d.fieldCatalogLoading = false;
     d.fieldCatalogFetchStarted = false;
