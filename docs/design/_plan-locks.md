@@ -691,7 +691,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ### large-files-and-phase-2 · Track A · status: shipped
 
-- A5 → PR [#93](https://github.com/alexandrosk0/Smatchet/pull/93) (merged 2026-05-16)
+- A5 code → revival PR pending on `feat/app-controller-lua-types-a5` (PR #93 shipped only the plan doc; the `AppController_LuaTypes.h` extraction commit was not included in that merge)
 - A3 → PR [#97](https://github.com/alexandrosk0/Smatchet/pull/97) (merged 2026-05-16)
 - A2 → PR [#98](https://github.com/alexandrosk0/Smatchet/pull/98) (merged 2026-05-16)
 - A1 → PR [#100](https://github.com/alexandrosk0/Smatchet/pull/100) (pending)
