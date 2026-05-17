@@ -2,20 +2,153 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
-#include "SmatchetUiSession.h"
+#include "Logger.h"
+#include "MainThreadDispatcher.h"
 #include "SmatchetToast.h"
+#include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
+#include "UiPerfMonitor.h"
 
 #include "imgui.h"
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
+
+namespace {
+
+// Apply the final commit result on the UI thread. Runs from the
+// MainThreadDispatcher::Drain at the top of the next frame, which mutates
+// `d` (the singleton UiDrawSession via `g_ui`) safely from the UI thread.
+//
+// This function is intentionally light — every cost here is what the user
+// pays after the HTTP roundtrip has already completed off-thread, so the
+// post-back cost is "did the commit succeed?" + cache write + toast.
+void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const PendingFieldEdit& edit,
+                                 FieldEditCommitResult result) {
+    const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
+    std::string applyError;
+
+    if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
+        std::string qerr;
+        const std::int64_t qid = app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson,
+                                                           qerr, edit.OriginalRichValue);
+        if (qid <= 0) {
+            SmatchetToastManager::Instance().Push(
+                "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Error;
+            feedback.Message = qerr;
+            feedback.FramesRemaining = 0;
+            d.cellFeedbackByKey[editKey] = feedback;
+        } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
+            SmatchetToastManager::Instance().Push(
+                "Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError,
+                ToastType::Error);
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Error;
+            feedback.Message = applyError;
+            feedback.FramesRemaining = 0;
+            d.cellFeedbackByKey[editKey] = feedback;
+        } else {
+            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Tracker is reachable.",
+                                                  ToastType::Info);
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Success;
+            feedback.Message = "Queued";
+            feedback.FramesRemaining = 240;
+            d.cellFeedbackByKey[editKey] = feedback;
+        }
+    } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
+        const bool applied = app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError);
+        if (!applied) {
+            SmatchetToastManager::Instance().Push(
+                "Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError,
+                ToastType::Error);
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Error;
+            feedback.Message = applyError;
+            feedback.FramesRemaining = 0;
+            d.cellFeedbackByKey[editKey] = feedback;
+        } else {
+            SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.", ToastType::Success);
+            CellWriteFeedback feedback;
+            feedback.State = CellWriteState::Success;
+            feedback.Message = "Saved";
+            feedback.FramesRemaining = 180;
+            d.cellFeedbackByKey[editKey] = feedback;
+        }
+    } else {
+        d.gridEditError = result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
+        d.gridEditSuccess.clear();
+        CellWriteFeedback feedback;
+        feedback.State = CellWriteState::Error;
+        feedback.Message = d.gridEditError;
+        feedback.FramesRemaining = 0;
+        d.cellFeedbackByKey[editKey] = feedback;
+    }
+
+    // Clear the in-flight gate so the next queued edit can dispatch on the
+    // following frame. Done unconditionally so a failed save does not
+    // strand the deque.
+    d.hasInFlightEdit = false;
+}
+
+// Worker body — runs OFF the UI thread. Performs the HTTP commit and, on
+// transport failure, prepares an offline-queue fallback. Posts a single
+// completion lambda back via MainThreadDispatcher::PostToMainThread.
+//
+// Captures own value copies of all fields needed; AppController& is the
+// only reference and remains valid for the lifetime of the app (workers
+// are joined before destruction via JoinBackgroundTasks).
+void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit,
+                     std::string originalEstimateSnapshot, std::string remainingEstimateSnapshot,
+                     std::string issueTypeKeyForNetwork) {
+    FieldEditCommitResult result;
+    result.CommitKind = FieldEditCommitResult::Kind::Failed;
+
+    if (app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
+                                       remainingEstimateSnapshot, issueTypeKeyForNetwork, result.ApplyResult)) {
+        result.Ok = true;
+        result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
+        result.Error.clear();
+    } else {
+        result.Error = result.ApplyResult.Error;
+        if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
+            AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
+            AppController::FieldEditResult prepared;
+            std::string payloadJson;
+            std::string prepErr;
+            if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
+                                               remainingEstimateSnapshot, issueTypeKeyForNetwork, prepared,
+                                               payloadJson, prepErr)) {
+                result.ApplyResult = std::move(prepared);
+                result.QueuedFieldsPayloadJson = std::move(payloadJson);
+                result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
+                result.Ok = true;
+                result.Error.clear();
+            } else if (!prepErr.empty()) {
+                result.Error = prepErr;
+            }
+        }
+    }
+
+    // Hand the result back to the UI thread. The dispatcher's bounded queue
+    // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
+    app.mainThreadDispatcher.PostToMainThread([&app, &d, edit, result]() mutable {
+        ApplyCommitResultOnUiThread(app, d, edit, std::move(result));
+    });
+}
+
+} // namespace
 
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
                            const std::vector<CachedTicket>& tickets,
                            const std::vector<PendingFieldEdit>& pendingEdits,
                            bool readOnlyMode) {
+    SMATCHET_UI_PERF_SCOPE("grid.cell_commit_pump");
+
     {
         // Keep queued edits latest-per-cell (drop older queued item for same cell).
         if (!readOnlyMode) {
@@ -40,139 +173,56 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
         }
     }
 
-    {
-        if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
-            d.inFlightEdit = d.queuedFieldEdits.front();
-            d.queuedFieldEdits.pop_front();
-            d.inFlightOriginalEstimateSnapshot.clear();
-            d.inFlightRemainingEstimateSnapshot.clear();
-            d.inFlightIssueTypeKeySnapshot.clear();
-            const auto snapshotIt = std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) {
-                return ticket.id == d.inFlightEdit.IssueId;
-            });
-            if (snapshotIt != tickets.end()) {
-                d.inFlightOriginalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
-                d.inFlightRemainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
-                d.inFlightIssueTypeKeySnapshot = ToLowerAsciiCopy(TrimCopy(snapshotIt->GetFieldValue("issuetype")));
-            }
-            d.hasInFlightEdit = true;
-            d.inFlightDelayFrames = 1;
-            CellWriteFeedback feedback;
-            feedback.State = CellWriteState::Saving;
-            feedback.Message = "Saving to Tracker...";
-            feedback.FramesRemaining = 0;
-            d.cellFeedbackByKey[BuildCellKey(d.inFlightEdit.IssueId, d.inFlightEdit.Field.Id)] = feedback;
+    // Dispatch the next queued edit to a worker thread. Only one in flight
+    // at a time so the offline-queue ordering matches user intent and the
+    // status chip can show progress meaningfully.
+    if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
+        PendingFieldEdit edit = d.queuedFieldEdits.front();
+        d.queuedFieldEdits.pop_front();
+
+        std::string originalEstimateSnapshot;
+        std::string remainingEstimateSnapshot;
+        std::string issueTypeKeyForNetwork;
+        const auto snapshotIt =
+            std::find_if(tickets.begin(), tickets.end(),
+                         [&](const CachedTicket& ticket) { return ticket.id == edit.IssueId; });
+        if (snapshotIt != tickets.end()) {
+            originalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
+            remainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
+            issueTypeKeyForNetwork = ToLowerAsciiCopy(TrimCopy(snapshotIt->GetFieldValue("issuetype")));
         }
 
-        if (d.hasInFlightEdit) {
-            if (d.inFlightDelayFrames > 0) {
-                --d.inFlightDelayFrames;
-            } else {
-                const PendingFieldEdit edit = d.inFlightEdit;
-                const std::string originalEstimateSnapshot = d.inFlightOriginalEstimateSnapshot;
-                const std::string remainingEstimateSnapshot = d.inFlightRemainingEstimateSnapshot;
-                const std::string issueTypeKeyForNetwork = d.inFlightIssueTypeKeySnapshot;
-                const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
+        d.hasInFlightEdit = true;
+        // Retained for legacy diagnostics + future inspection (in-flight cell
+        // identification). The worker carries its own copies so these are
+        // diagnostic-only after dispatch.
+        d.inFlightEdit = edit;
+        d.inFlightOriginalEstimateSnapshot = originalEstimateSnapshot;
+        d.inFlightRemainingEstimateSnapshot = remainingEstimateSnapshot;
+        d.inFlightIssueTypeKeySnapshot = issueTypeKeyForNetwork;
+        d.inFlightDelayFrames = 0;
 
-                FieldEditCommitResult result;
-                result.CommitKind = FieldEditCommitResult::Kind::Failed;
-                if (app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
-                                                   remainingEstimateSnapshot, issueTypeKeyForNetwork,
-                                                   result.ApplyResult)) {
-                    result.Ok = true;
-                    result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
-                    result.Error.clear();
-                } else {
-                    result.Error = result.ApplyResult.Error;
-                    if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
-                        AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
-                        AppController::FieldEditResult prepared;
-                        std::string payloadJson;
-                        std::string prepErr;
-                        if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values,
-                                                           originalEstimateSnapshot, remainingEstimateSnapshot,
-                                                           issueTypeKeyForNetwork, prepared, payloadJson, prepErr)) {
-                            result.ApplyResult = std::move(prepared);
-                            result.QueuedFieldsPayloadJson = std::move(payloadJson);
-                            result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
-                            result.Ok = true;
-                            result.Error.clear();
-                        } else if (!prepErr.empty()) {
-                            result.Error = prepErr;
-                        }
-                    }
-                }
+        CellWriteFeedback feedback;
+        feedback.State = CellWriteState::Saving;
+        feedback.Message = "Saving to Tracker...";
+        feedback.FramesRemaining = 0;
+        d.cellFeedbackByKey[BuildCellKey(edit.IssueId, edit.Field.Id)] = feedback;
 
-                std::string applyError;
-                if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
-                    std::string qerr;
-                    const std::int64_t qid =
-                        app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr,
-                                                  edit.OriginalRichValue);
-                    if (qid <= 0) {
-                        SmatchetToastManager::Instance().Push(
-                            "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr,
-                            ToastType::Error);
-                        CellWriteFeedback feedback;
-                        feedback.State = CellWriteState::Error;
-                        feedback.Message = qerr;
-                        feedback.FramesRemaining = 0;
-                        d.cellFeedbackByKey[editKey] = feedback;
-                    } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
-                        SmatchetToastManager::Instance().Push(
-                            "Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError,
-                            ToastType::Error);
-                        CellWriteFeedback feedback;
-                        feedback.State = CellWriteState::Error;
-                        feedback.Message = applyError;
-                        feedback.FramesRemaining = 0;
-                        d.cellFeedbackByKey[editKey] = feedback;
-                    } else {
-                        SmatchetToastManager::Instance().Push("Queued Offline",
-                                                              "Field edit will sync when Tracker is reachable.",
-                                                              ToastType::Info);
-                        CellWriteFeedback feedback;
-                        feedback.State = CellWriteState::Success;
-                        feedback.Message = "Queued";
-                        feedback.FramesRemaining = 240;
-                        d.cellFeedbackByKey[editKey] = feedback;
-                    }
-                } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
-                    const bool applied = app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError);
-                    if (!applied) {
-                        SmatchetToastManager::Instance().Push(
-                            "Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError,
-                            ToastType::Error);
-                        CellWriteFeedback feedback;
-                        feedback.State = CellWriteState::Error;
-                        feedback.Message = applyError;
-                        feedback.FramesRemaining = 0;
-                        d.cellFeedbackByKey[editKey] = feedback;
-                    } else {
-                        SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.",
-                                                              ToastType::Success);
-                        CellWriteFeedback feedback;
-                        feedback.State = CellWriteState::Success;
-                        feedback.Message = "Saved";
-                        feedback.FramesRemaining = 180;
-                        d.cellFeedbackByKey[editKey] = feedback;
-                    }
-                } else {
-                    d.gridEditError =
-                        result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
-                    d.gridEditSuccess.clear();
-                    CellWriteFeedback feedback;
-                    feedback.State = CellWriteState::Error;
-                    feedback.Message = d.gridEditError;
-                    feedback.FramesRemaining = 0;
-                    d.cellFeedbackByKey[editKey] = feedback;
-                }
+        LOG_TRACE("ProcessGridFieldEdits: dispatching worker for issue=%s field=%s", edit.IssueId.c_str(),
+                  edit.Field.Id.c_str());
 
-                d.hasInFlightEdit = false;
-            }
-        }
+        // Worker runs SubmitFieldEditNetworkOnly (HTTP) and posts the result
+        // back to the UI thread. Lifetime: AppController owns the worker
+        // thread; JoinBackgroundTasks is called before destruction.
+        app.LaunchBackgroundTask([&app, &d, edit, originalEstimateSnapshot, remainingEstimateSnapshot,
+                                  issueTypeKeyForNetwork]() mutable {
+            RunCommitWorker(app, d, std::move(edit), std::move(originalEstimateSnapshot),
+                            std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
+        });
     }
 
+    // Decrement frame counters on success chips so they fade after their
+    // FramesRemaining window. Runs every frame.
     {
         for (auto it = d.cellFeedbackByKey.begin(); it != d.cellFeedbackByKey.end();) {
             if (it->second.State == CellWriteState::Success && it->second.FramesRemaining > 0) {

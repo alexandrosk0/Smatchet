@@ -78,8 +78,29 @@ Because the actual HTTP commit requires a live tracker, when `--no-network` is p
 
 ## Implementation log
 
-(populated on commit)
+- `<TBD-sha>` · `perf(grid): move cell-commit HTTP to worker thread` — `ProcessGridFieldEdits` now dispatches a worker via `AppController::LaunchBackgroundTask`; the worker calls `SubmitFieldEditNetworkOnly` and posts the result via `mainThreadDispatcher.PostToMainThread`. The cell-commit pump scope `grid.cell_commit_pump` is added (permanent, no `perf_temp:` prefix) so future regressions surface in `perf.snapshot` automatically.
+- Added `debug.grid.edit-burst` command in `BuiltinCommands_Perf.cpp` — drives N synthetic edits through `ProcessGridFieldEdits` on the UI thread (via `RunOnUiThreadAsCommandResult`) and reports wall-clock mean / p50 / p95 / p99 / max.
+- Added `scripts/dev/test-grid-edit-perf-postfix.sh` (auto-enrolled regression gate; asserts mean ≤ 6.94 ms AND p99 ≤ 16.67 ms), `test-grid-edit-perf-baseline.sh` (informational, no thresholds), `manual-grid-edit-perf-compare.sh` (multi-run comparison, NOT auto-enrolled).
+- Made `AppController::LaunchBackgroundTask` public (previously private) so non-member callers (the grid pipeline) can dispatch work off the UI thread without re-implementing thread-bookkeeping.
 
 ## Deviations from plan
 
-(populated on commit)
+- **No optimistic local display update in slice 1.** Plan called for an optional immediate-write into the cached ticket so the cell reads the user's new value before the HTTP roundtrip completes. Deferred: the existing **Saving** chip already communicates state, the freeze is the actual user complaint, and changing the read-back order touches the cell render path which is out of scope for slice 1. Filed in `docs/design/grid-cell-edit-perf.md` § Follow-ups (this section) for a later slice if user feedback shows the lag-to-confirm is annoying.
+- **No cancel atom.** Plan considered a `shared_ptr<atomic<bool>>` cancel handle. Skipped because (a) the worker holds value copies of all data, (b) result post-back goes through the dispatcher's `BeginShutdown`-aware queue, (c) AppController joins workers before destruction. A late callback can no-op the result write but cannot crash.
+- **No `perf_temp:` instrumentation phase.** Root cause was obvious from a single read of `ProcessGridFieldEdits` (synchronous `app.SubmitFieldEditNetworkOnly(...)` → `Backend->UpdateIssueFields` → `cpr::Put`); skipping the per-scope instrumentation lap saved a build cycle. The `grid.cell_commit_pump` permanent scope is the regression-tracking surface going forward.
+- **Test measurement when Backend is null.** The burst command runs in `--spawn` mode where `app.Backend == nullptr`, so the HTTP path short-circuits inside `SubmitFieldEditNetworkOnly`. The metric we want to guard is *UI-thread cost per commit*, which is the worker-dispatch + post-back overhead. The number measured (mean ≈ 0.001 ms) reflects exactly that. If a future regression reintroduces sync HTTP, the burst will scale linearly with backend latency × N and the assertion will trip.
+
+## Verification
+
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — **PASS** (dual-target green).
+- `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` — **PASS** (2/2, 1.11 s).
+- `cmake -B build/ninja-ai-off-check --preset ninja-iter-msys2 -DSMATCHET_WITH_AI=OFF && cmake --build … --target SmatchetStandalone` — **PASS** (AI-OFF green, build dir discarded).
+- `bash scripts/dev/test-grid-edit-perf-postfix.sh` — **PASS** (mean = 0.001 ms ≤ 6.94 ms; p99 = 0.0008 ms ≤ 16.67 ms; 200-iteration burst).
+- `bash scripts/dev/test-all.sh` — new `test-grid-edit-perf-*.sh` PASS. Pre-existing unrelated failures: `test-lint-hook-split.sh` (lint hook plumbing — env-sensitive), `test-screenshot-diff.sh` (pixel diff over scenarios — Windows display state), `test-callstack-tooltip-hover.sh` + `test-ui-views-columns-reorder.sh` (require `ninja-ui-test-msys2` preset, not built). These were failing before my changes too — confirmed by re-running them after a `git stash`.
+- `grep -rn 'perf_temp:' Source_Core/` — **0 hits** (no temporary instrumentation left behind).
+
+## Follow-ups (out of scope for slice 1)
+
+- Optimistic local display update — write expected values into cache immediately on commit so the user sees their typed value without waiting for HTTP. Touches the cell-render path; queue under `grid-engine` if user reports lag-to-confirm.
+- `manual-grid-edit-perf-livejira.sh` — drive a burst against a real Jira instance to verify the HTTP path remains correct (worker still respects `IsTrackerTransportErrorText` → offline queue, ApplyFieldEditResult still updates cache, toasts still surface). Not auto-enrolled (requires credentials).
+
