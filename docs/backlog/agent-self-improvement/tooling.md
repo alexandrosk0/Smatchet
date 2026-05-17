@@ -19,6 +19,12 @@
   Status: open
   Last-reviewed: 2026-05-17
 
+- 2026-05-17 · test-author · [tooling] · P2 — Bucket-E tooltip-content-identity helper for production-driven hover tests
+  Details: While writing `tests/ui/callstack_tooltip_hover.test.cpp` (PR #156 — regression gate for #147) a production-driven variant 4 had to be dropped. A generic `##Tooltip_NN` window probe cannot distinguish "my cell's tooltip" from concurrent host-process tooltips. Even with `WindowFocus` + `NoDocking` + `ImGuiCond_Always` position pinning, production's `IsItemHovered()` against the cell rect returned false in the spawned-child host because something else in the shared `ImGuiContext` claimed `g.HoveredWindow`. Workaround taken: faithful replica of the production callstack path with a TU-local `tooltipFiredThisFrame` flag (same idiom as `views_columns_reorder.test.cpp`), plus a `NoGroupWrap` regression-shape variant that proves the methodology is sensitive to the wrap's presence. Sanity-checked end-to-end: removing the wrap from the replica fails variants 1+2 deterministically.
+  Concrete next action: add a `BucketE::TooltipContentMatches(ctx, sentinel)` helper to `tests/ui/` (or shared `tests/ui/_helpers/`) that walks a tooltip window's `DrawList`'s `CmdBuffer` for a text command containing `sentinel`. Use it to distinguish "my cell's tooltip" from concurrent tooltips by feeding a unique marker through `rawForTooltip`. Once available, retrofit `callstack_tooltip_hover.test.cpp` with a variant 4 that drives real `RenderClippedFieldText` and asserts content match — closing the production-drift gap the replica can't cover.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
   Details: A PR can add an empty `tests/support/foo.h` to dismiss the gate. The intent was per-test-file coverage parity.
   Concrete next action: tighten to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/**/*.test.cpp` only. Surfaced by retrospective code-review sweep on PR #148.
