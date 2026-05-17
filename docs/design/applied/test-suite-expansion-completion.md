@@ -373,4 +373,59 @@ Coverage measurement + structural test-delta enforcement infra. Pure infra slice
 | Slice | PR | Sha | Notes |
 |---|---|---|---|
 | `test-phase-7-screenshot-diff` (Phase 7) | [#146](https://github.com/alexandrosk0/Smatchet/pull/146) | `d857310` | Added `DockGapSentinelScenario` + `CommandPaletteFuzzyScenario` + `tests/support/GoldenImage.h` (header-only PPM + L∞ diff) + `tests/support/ScreenshotDiffMain.cpp` (bash-compiled helper) + `scripts/dev/test-screenshot-diff.sh` + `.github/workflows/build-and-test.yml` advisory step. `UiDrawSession::requestCommandPaletteOpen` + `requestCommandPaletteFilter` flag pair lets the palette scenario open + pre-filter without touching `SmatchetUI`'s private `commandPalette_`. Re-uses pre-existing `debug.window.screenshot` flag pair (no new CLI command surface — plan packet's `BuiltinCommands.cpp` delta was satisfied by prior infra). Goldens auto-bootstrap on first run; the second run gates. |
-| `test-phase-9-coverage-gates` (Phase 9) | TBD | TBD | Wires the coverage measurement + structural-test-delta enforcement infra: `scripts/dev/coverage.sh` (Windows-OpenCppCoverage-first wrapper; POSIX `lcov+gcov` fallback documented inline per § Locked decisions), `scripts/dev/coverage-delta-gate.sh` (per-PR `Source_Core/src/*.cpp` changes without test deltas → blocked unless `tests-out-of-band` label), `.github/workflows/coverage.yml` (advisory threshold for 2-week soak), `.github/workflows/coverage-gate.yml` (hard-blocking test-delta check from day 1; label override via `gh pr view --json labels`), new `ninja-coverage-msys2` CMake preset (gcov-instrumented build/test pair). Threshold enforcement (≥ 70% line coverage on `Source_Core/src/`) deliberately disabled (`--threshold 0`) for the soak — future flip is its own PR. OpenCppCoverage installed on the CI runner via Chocolatey; documented local install hint when absent. |
+| `test-phase-9-coverage-gates` (Phase 9) | [#148](https://github.com/alexandrosk0/Smatchet/pull/148) | `039d286` | Wires the coverage measurement + structural-test-delta enforcement infra: `scripts/dev/coverage.sh` (Windows-OpenCppCoverage-first wrapper; POSIX `lcov+gcov` fallback documented inline per § Locked decisions), `scripts/dev/coverage-delta-gate.sh` (per-PR `Source_Core/src/*.cpp` changes without test deltas → blocked unless `tests-out-of-band` label), `.github/workflows/coverage.yml` (advisory threshold for 2-week soak), `.github/workflows/coverage-gate.yml` (hard-blocking test-delta check from day 1; label override via `gh pr view --json labels`), new `ninja-coverage-msys2` CMake preset (gcov-instrumented build/test pair). Threshold enforcement (≥ 70% line coverage on `Source_Core/src/`) deliberately disabled (`--threshold 0`) for the soak — future flip is its own PR. OpenCppCoverage installed on the CI runner via Chocolatey; documented local install hint when absent. |
+
+## Outcome
+
+Plan-execution summary. Phases 1-7 + 9 shipped; Phase 8 (UE 5.4 smoke) remains deferred to backlog (`unreal-bridge · [infra]`) pending a UE install reachable from the build env.
+
+| Phase / Slice | PR | Sha | Cases Δ | Assertions Δ |
+|---|---|---|---|---|
+| Wave A1 — `callstack-adversarial-subcases` | [#112](https://github.com/alexandrosk0/Smatchet/pull/112) | `effda92` | +1 | +9 |
+| Wave A1 — `p4blame-parse-tu-split` | [#111](https://github.com/alexandrosk0/Smatchet/pull/111) | `52832d0` | +12 | +75 |
+| Wave A2 — `tracker-labels-pure-tu` | [#114](https://github.com/alexandrosk0/Smatchet/pull/114) | `59282a7` | +4 | +33 |
+| Wave A2 — `tracker-datetime-pure-tu` | [#119](https://github.com/alexandrosk0/Smatchet/pull/119) | `9fc5f70` | +7 | +140 |
+| Wave A2 — `tracker-payload-pure-tu` | [#121](https://github.com/alexandrosk0/Smatchet/pull/121) | `39f91de` | +15 | +233 |
+| Wave A2 — `tracker-field-catalog-pure-tu` | [#122](https://github.com/alexandrosk0/Smatchet/pull/122) | `5ce8def` | +6 | +217 |
+| PR D — `offline-queue-deps-interface` | [#127](https://github.com/alexandrosk0/Smatchet/pull/127) | `b5fc194` | 0 | 0 |
+| PR F — `ticket-sync-service-tests` | [#130](https://github.com/alexandrosk0/Smatchet/pull/130) | `a618a2f` | +12 | +83 |
+| PR E — `offline-queue-runtime-tests` | [#131](https://github.com/alexandrosk0/Smatchet/pull/131) | `e35794d` | +13 | +76 |
+| Phase 4 — `config-schema-migration` | [#134](https://github.com/alexandrosk0/Smatchet/pull/134) | `3e19f93` | +21 | +99 |
+| Phase 5 preflight — `mcp-jsonrpc-pure-tu-split` (unblocker) | [#141](https://github.com/alexandrosk0/Smatchet/pull/141) | `cfab599` | 0 | 0 |
+| Phase 5 — `mcp-json-rpc-harness` | [#142](https://github.com/alexandrosk0/Smatchet/pull/142) | `d0b1f12` | +23 | +145 |
+| Phase 6 — Lua sandbox + timeout + stubs-compile (partial) | [#143](https://github.com/alexandrosk0/Smatchet/pull/143) | `ba1302e` | +14 | +99 |
+| Phase 6 unblocker — `lua-bindings-host-interface-lift` | [#144](https://github.com/alexandrosk0/Smatchet/pull/144) | `7e6762d` | 0 | 0 |
+| Phase 6b — `lua-bindings-roundtrip` (closes Phase 6 split) | [#145](https://github.com/alexandrosk0/Smatchet/pull/145) | `d125b36` | +15 | +63 |
+| Phase 7 — `screenshot-diff` (bucket C) | [#146](https://github.com/alexandrosk0/Smatchet/pull/146) | `d857310` | +4 scenarios | n/a (bucket C) |
+| Phase 9 — `coverage-gates` | [#148](https://github.com/alexandrosk0/Smatchet/pull/148) | `039d286` | 0 | 0 |
+| **Total (doctest)** | | | **+143 cases** | **+1272 assertions** |
+
+Out-of-band PR shipped during the run (not part of the original plan, surfaced by PR F):
+
+| Slice | PR | Sha | Notes |
+|---|---|---|---|
+| `offline-sync` — TicketSyncService empty-fetch full-sync cache-wipe guard | [#139](https://github.com/alexandrosk0/Smatchet/pull/139) | `95d51a5` | Production bug surfaced as `[high-risk]` documented-bug case 3 in PR F's `TicketSyncService.test.cpp`. Guard added: `if (fullSyncCompleted && !freshTickets.empty())` around the stale-deletion branch. Test case flipped from documenting the bug to enforcing the guard. Backlog entry `2026-05-16 · offline-sync · [bug]` flipped to applied. |
+
+### End-state vs targets
+
+- **Aggregate test coverage** on develop at plan close: `SmatchetTests` 322 cases / 1717 assertions + `SmatchetLuaTests` 29 cases / 162 assertions + 4 screenshot scenarios = 355 test cases backing `Source_Core/src/` + `Plugins/Mcp/` + `Plugins/Lua` + bucket-C visual.
+- **Line coverage threshold** (≥ 70% on `Source_Core/src/` excluding ImGui/UI): infrastructure shipped via Phase 9 (`OpenCppCoverage` wrapper + Cobertura artifact); threshold flip from advisory (`--threshold 0`) to hard-blocking (`--threshold 70`) deferred to its own future PR after the standard 2-week advisory soak (target flip: 2026-05-30).
+- **Structural test-delta gate**: hard-blocking from day 1. `Source_Core/src/*.cpp` changes without test deltas → CI fails unless `tests-out-of-band` PR label is present (label must be created at repo via `gh label create tests-out-of-band` — surfaced as residue in PR #148).
+- **Screenshot diff (bucket C)**: 2 seed scenarios live (dock-gap-sentinel + command-palette-fuzzy), per-channel L∞ ≤ 4 tolerance, advisory CI step (`continue-on-error: true`) until 2026-05-30 then flips blocking.
+- **Phase 8 (UE 5.4 smoke)**: DEFERRED. Re-evaluate when a UE 5.4 install is reachable from the build env. Phase 9 shipped without Phase 8 dependencies per § Risk + halt conditions.
+- **Backlog follow-ups** filed during the plan run (open items, not blocking plan closure):
+  - `unreal-bridge · [infra]` — DX12 backbuffer readback for screenshot diff
+  - `build-doctor · [tooling]` — headless CI runner GL context (mesa / ANGLE-D3D11) for bucket-C / bucket-E in cloud
+  - `build-doctor · [tooling]` — flip coverage threshold advisory → blocking after 2-week soak
+  - `build-doctor · [infra]` — OpenCppCoverage local install hint in `docs/harness/SETUP.md`
+  - `test-author · [tooling]` — `.github/pull_request_template.md` with `## Coverage gate override` section
+  - `test-author · [tooling]` — Phase 7 mutation-sanity demo against bootstrapped goldens (recipe in `scripts/dev/test-screenshot-diff.sh` header)
+  - `test-author · [tooling]` — Phase 7 pink-clear dock-gap pixel-scan follow-up (`smatchet::test::CountPixels` shipped, awaits clear-color toggle)
+  - `lua-binder · [context]` — sol2 v2.20.6 multi-inheritance base-offset retagging gotcha documented in `agents/lua-binder.md` § sol2 v2.20.6 API constraints
+- **Operational improvements** locked in during the plan run (already applied):
+  - Lint-hook split: PostToolUse inline (`clang-format -i` only) + Stop drain (`cppcheck` + `clang-tidy` + dual-target) with auto-cleared `.tree-dirty` sentinel. Reduced per-edit lint cost from 5–15 s to <1 s.
+  - Slice-boundary build rule: at most one `cmake --build` + one `ctest` per agent turn, only after implementation is complete. Built into the test-rig / build-doctor agent prompts.
+  - Trivial-visual-only change envelope: theme/locale literal-only edits skip the full regression loop, ship after a single Standalone build.
+  - TU-split pre-authorisation pattern: orchestrator delegation packets for `test-rig` carry explicit allowed-production-file lists for the `<Unit>Parse.{h,cpp}` lift class (Phase 1 `IssueCreatePipelineHelpers` set the recipe; carried forward through Wave A1/A2 + Phase 5 preflight + Phase 6 unblocker).
+
+**Plan status**: closed. Moved to `docs/design/applied/test-suite-expansion-completion.md` via the same chore PR that flipped Phase-9's plan-lock to shipped. Subsequent test-coverage work is per-slice (e.g. the threshold flip, the DX12 readback, the bucket-E ImGui Test Engine wiring) and originates from individual backlog entries rather than this multi-phase plan.

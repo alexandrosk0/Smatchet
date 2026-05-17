@@ -7,7 +7,7 @@ name: Coverage (advisory)
 #
 # Flip continue-on-error → false and pass --threshold 70 to coverage.sh once
 # two consecutive weeks of clean runs have built confidence. See
-# docs/design/test-suite-expansion-completion.md § Phase 9 + § End-state targets.
+# docs/design/applied/test-suite-expansion-completion.md § Phase 9 + § End-state targets.
 
 on:
   pull_request:

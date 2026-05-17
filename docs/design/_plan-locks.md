@@ -72,7 +72,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-5-mcp-json-rpc` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 5
 - **Claimed write set**:
   - `tests/Plugins/Mcp/McpRequestParser.test.cpp` (NEW)
   - `tests/Plugins/Mcp/McpEnvelope.test.cpp` (NEW)
@@ -91,7 +91,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-6-lua-bindings` (merged)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 6
 - **Claimed write set**: see prior entry (preserved for audit)
 - **InitLuaCore classification**: Class C — `AppController_LuaBindings.cpp:32` `#include "imgui.h"` + `:766` `state["__smatchet_app"] = this` + glue functions in `smatchet_lua_init_detail::` resolve `__smatchet_app` back to live `AppController*`. Binding TU is unusable as a test link target without production refactor. LuaBindings.test.cpp deferred; sandbox + timeout + stubs-compile shipped this slice.
 - **Started**: 2026-05-16
@@ -121,7 +121,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-6b-lua-bindings-roundtrip` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
 - **Claimed write set**:
   - `tests/Lua/LuaBindings.test.cpp` (NEW)
   - `tests/support/FakeLuaBindingHost.h` (NEW)
@@ -134,11 +134,11 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #145 at sha d125b36. Phase 7 (screenshot diff) unblocked + dispatched.
 - **Cleared by**: PR `#145` merged at `d125b36`.
 
-### test-suite-expansion-completion · Phase-9 · coverage-gates · status: in-flight
+### test-suite-expansion-completion · Phase-9 · coverage-gates · status: shipped (PR #148 merged at 039d286)
 
-- **Branch**: `feat/test-phase-9-coverage-gates`
+- **Branch**: `feat/test-phase-9-coverage-gates` (deleted)
 - **Owner agent**: `build-doctor`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 9
+- **Originating plan**: [`docs/design/applied/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 9
 - **Claimed write set**:
   - `scripts/dev/coverage.sh` (NEW — Windows-OpenCppCoverage-first wrapper; inline POSIX `lcov+gcov` fallback documented in header)
   - `scripts/dev/coverage-delta-gate.sh` (NEW — per-PR `Source_Core/` change without test delta → exit 1)
@@ -150,14 +150,14 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)
 - **Read-only adjacency**: `.github/workflows/build-and-test.yml` (pattern reference only), `cmake/Sanitizers.cmake` (helper convention reference)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — implemented + gates green. ninja-coverage-msys2 preset configures clean; 313/313 build; ctest 2/2 PASS under instrumentation; delta-gate PASS on this slice's diff (no Source_Core/src/ touch); ninja-iter-msys2 dual-target (Standalone+DX12) clean; test-all.sh 166 passed / 8 failed (same pre-existing bucket-E exclusions noted in Phase 6/7 verification). OpenCppCoverage absent locally → coverage.sh hit the documented exit-2 install-hint branch; CI runner installs via Chocolatey. PR pending.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-16 — merged via PR #148 at sha `039d286`. Final phase of `test-suite-expansion-completion` plan; plan doc moved to `docs/design/applied/` with full Outcome table in the same chore PR.
+- **Cleared by**: PR `#148` merged at `039d286`.
 
 ### test-suite-expansion-completion · Phase-7 · screenshot-diff · status: shipped (PR #146 merged at d857310)
 
 - **Branch**: `feat/test-phase-7-screenshot-diff` (deleted)
 - **Owner agent**: `test-author`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 7
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 7
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (add `requestCommandPaletteOpen` + `requestCommandPaletteFilter` flag pair so the palette scenario can open + pre-filter the modal without touching `SmatchetUI`'s private `commandPalette_`)
   - `Source_Core/src/SmatchetUI.cpp` (consume the new flags once per frame right before `commandPalette_.Draw`)
@@ -190,7 +190,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-4-config-migration` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 4
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 4
 - **Last update**: 2026-05-16 — merged via PR #134 at sha 3e19f93. 21 cases / 99 assertions on Config surface. Shared `tests/support/TestEnvGuard.h` shipped — Phase 5+ can consume.
 - **Cleared by**: PR `#134` merged at `3e19f93`.
 
@@ -198,7 +198,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-phase-5-mcp-json-rpc` (never pushed — agent stopped before commits)
 - **Owner agent**: `test-rig` (test-only scope per Phase 5 plan)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 5
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — user stopped agent at session end (wrap-up). Agent's discovery phase confirmed Phase 5 is **blocked** by the same pattern as the P4Blame deferral: every pure helper (`BuildRunLuaToolEntry`, `BuildRunLuaSummary`, `BuildToolCallSummary`, `ExtractJsonRpcErrorMessage`, `Base64Encode`, `NormalizeDomain`, `IsLoopbackAddress`, `ConstantTimeStringEquals`, `IsAllowedAttachmentHost`) lives in an anonymous namespace inside a `Plugins/Mcp/*.cpp` whose top of file pulls `winsock2` + `httplib` + `cpr`. Tests cannot link the unit without dragging banned deps. Production-side TU split needed first (same recipe as `P4BlameParse`, `TrackerLabelsPure`, etc).
 - **Cleared by**: blocked — see backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol logic entombed in cpr/httplib-tainted lambda`.
@@ -302,7 +302,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/test-callstack-adversarial`
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-over A
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-over A
 - **Claimed write set**:
   - `tests/Source_Core/CallstackParser.test.cpp`
   - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
@@ -316,7 +316,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/p4blame-parse-tu-split`
 - **Owner agent**: `test-rig` (TU-split pre-authorised per AGENTS.md applied rule)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-over B
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-over B
 - **Claimed write set**:
   - `Source_Core/include/P4BlameParse.h` (NEW)
   - `Source_Core/src/P4BlameParse.cpp` (NEW)
@@ -334,7 +334,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/tracker-labels-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C1
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-overs C1
 - **Claimed write set**:
   - `Source_Core/include/TrackerLabelsPure.h` (NEW)
   - `Source_Core/src/TrackerLabelsPure.cpp` (NEW)
@@ -353,7 +353,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/tracker-datetime-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C2
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-overs C2
 - **Claimed write set**:
   - `Source_Core/include/TrackerDateTimePure.h` (NEW)
   - `Source_Core/src/TrackerDateTimePure.cpp` (NEW)
@@ -372,7 +372,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/tracker-payload-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C3
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-overs C3
 - **Claimed write set**:
   - `Source_Core/include/TrackerFieldPayloadPure.h` (NEW)
   - `Source_Core/src/TrackerFieldPayloadPure.cpp` (NEW)
@@ -393,7 +393,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/offline-queue-deps-interface` (deleted)
 - **Owner agent**: `offline-sync`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR D
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Per-slice scoping § PR D
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #127 at sha b5fc194. Track B (`large-files-and-phase-2`) on-hold gate now releases.
 - **Cleared by**: PR `#127` merged at `b5fc194`.
@@ -402,7 +402,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/offline-queue-runtime-tests` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR E
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Per-slice scoping § PR E
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #131 at sha e35794d. Required orchestrator-side dedup after rebase: test-side `IsTrackerTransportErrorText` mirror collided with production once PR F's `TrackerHttpUtils.cpp` joined the test target source list.
 - **Cleared by**: PR `#131` merged at `e35794d`.
@@ -411,14 +411,14 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/ticket-sync-service-tests` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Per-slice scoping § PR F
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Per-slice scoping § PR F
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #130 at sha a618a2f. 12 cases / 83 assertions. Case 3 documents a current production bug (empty fetch in full-sync deletes all rows) — separate fix-PR pending under `offline-sync` follow-up (backlog entry filed).
 - **Cleared by**: PR `#130` merged at `a618a2f`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Carry-overs C4
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-overs C4
 - **Claimed write set**:
   - `Source_Core/include/TrackerFieldCatalogPure.h` (NEW)
   - `Source_Core/src/TrackerFieldCatalogPure.cpp` (NEW)
