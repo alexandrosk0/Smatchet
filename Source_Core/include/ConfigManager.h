@@ -355,7 +355,14 @@ class ConfigManager {
     // Bumped to 5: added NoTabBar=1 to central node 0x2 so the dock-node tab header
     // ("Smatchet - Active Project") is suppressed — the in-window Grid / Annotate
     // tab bar is the only chrome the user sees on the active project panel.
-    static const int kCurrentLayoutSchemaVersion = 5;
+    // Bumped to 6: AI assistant side-panel feature shipped (Phases A-E of
+    // docs/design/ai-assistant-side-panel.md). One-shot reset surfaces the new
+    // right-anchored AI panel in the default VS-shell layout; the previous v5
+    // ini stays valid (no panel in the dock tree means no migration error),
+    // the bump just guarantees the new dock ID picks up cleanly on first launch
+    // after the feature lands. All Ai* TrackerConfig fields default-load via
+    // `j.value(..., default)` so v4 / v5 configs continue to load unchanged.
+    static const int kCurrentLayoutSchemaVersion = 6;
 
     struct CliOverrides {
         bool HasDbPath;

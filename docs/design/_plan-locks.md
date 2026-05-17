@@ -50,7 +50,26 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-side-panel · Phase D · clients-and-provider-combo · status: claimed
+### ai-assistant-side-panel · Phase E · lua-glue-schema-bump-and-docs · status: in-flight
+
+- **Branch**: `feat/ai-assistant-side-panel-phase-e`
+- **Owner agent**: `lua-binder`
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (Phase E rows) — Lua glue + stubs + LayoutSchemaVersion bump + README/LUA_GUIDE bullets
+- **Claimed write set**:
+  - `Source_Core/src/AppController_LuaBindings.cpp` (MOD — restore 3 `ai.*` glues registered on `state["ai"]`)
+  - `Source_Core/src/AppController_LuaStubs.cpp` (MOD — no-op stub parity for `ai.*` Lua-callable names so script-load works under `SMATCHET_WITH_LUA_AUTOMATION=0`)
+  - `Source_Core/include/ConfigManager.h` (MOD — `kCurrentLayoutSchemaVersion` 5→6, single bump for the whole feature)
+  - `README.md` (MOD — one feature bullet)
+  - `LUA_GUIDE.md` (MOD — one `ai.*` bullet + short example)
+  - `docs/backlog/agent-self-improvement/process.md` (MOD — latest-first P2 worktree-bootstrap entry)
+  - `docs/design/_plan-locks.md` (this entry + Phase D flip to shipped)
+  - `docs/design/ai-assistant-side-panel.md` (Implementation log + Deviations + Verification for Phase E — closes plan)
+- **Read-only adjacency**: `Source_Core/include/AppController.h` (always-on `AddAiContext` / `ClearAiContext` / `PromptAi` shipped Phase B), `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp` (Phase 6b InitLuaCore pattern + `__smatchet_app_ui` dual-key)
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — commits ready: 3 Lua glues registered on `state["ai"]` (resolve via `__smatchet_app_ui`); `LayoutSchemaVersion 5→6`; ConfigMigration v5-fixture assertion flipped `==` → `<` (post-bump invariant); README + LUA_GUIDE bullets added; LuaStubs.cpp gains docstring (no new stub needed — receivers are always-on AppController members from Phase B); P2 worktree-bootstrap backlog entry filed. Build gates: dual-target green; `SMATCHET_WITH_AI=OFF` green; SmatchetTests 363/1873 (Phase D baseline preserved); SmatchetLuaTests 29 cases; ConfigMigration 11/57 pass post-bump.
+- **Cleared by**: TBD PR.
+
+### ai-assistant-side-panel · Phase D · clients-and-provider-combo · status: shipped (PR #169 merged at 1b45505)
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-d`
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)

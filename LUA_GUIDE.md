@@ -107,6 +107,25 @@ Smatchet acts as a Model Context Protocol (MCP) server. You can use Lua to defin
 | `mcp.register_tool(schema_table, fn)` | Registers an MCP Tool. `schema_table` must contain `name`, `description`, and either `parameters` (as a Lua table) or `parameters_json` (as a JSON string). `fn` receives the arguments as a Lua table and must return a string (or a table which will be JSON-encoded). |
 | Built-in MCP `run_lua` tool | Optional core MCP tool (enabled in Preferences -> Integrations) that can execute a snippet or a script file under `Scripts/` with optional `args`. Uses the same sandbox and instruction-limit guard as other one-shot Lua entry points. |
 
+### `ai` Module
+
+Drives the AI assistant side panel (`Ctrl+Shift+A`) from Lua. Context blocks accumulate on the controller and ship with the next prompt; the panel's own context-block toggles are independent of the Lua-attached blocks. The panel-level system prompt (layered from `agents.md`) applies to every Lua-issued prompt — no separate Lua surface for that.
+
+| Function | Description |
+| :--- | :--- |
+| `ai.add_context(block)` | Appends an `AiContextBlock` to the controller's context list. `block` is a table with `kind = "active_ticket" \| "multi_selected_tickets" \| "visible_grid_rows" \| "active_view" \| "audit_trail"`, `name = "..."`, `body = "..."`. Unknown `kind` defaults to `"active_ticket"`. |
+| `ai.clear_context()` | Drops every block on the controller's context list. The panel-side auto-context toggles are untouched. |
+| `ai.prompt(prompt [, extra_blocks])` | Submits `prompt` to the active provider; the controller's accumulated context blocks ship with it. Optional `extra_blocks` is an array of `AiContextBlock` tables appended via `add_context` immediately before submit. Returns nothing; the panel renders the streaming reply. |
+
+```lua
+-- Ask the assistant to summarise the active ticket plus some extra context.
+ai.clear_context()
+ai.add_context({ kind = "active_ticket", name = "Ticket", body = "PROJ-42" })
+ai.prompt("Summarise this ticket and propose two next steps.")
+```
+
+**Threading**: call `ai.*` from UI-thread paths (`ui.register_ticket_action`, `ui.register_global_action`, `imgui.button` callbacks). Calling from a background `process_ticket` worker race-mutates the controller's context list. **Cost**: `ai.prompt` is event-time, never per-frame; it spawns a worker and returns immediately.
+
 ### `Ticket` Object
 
 The `Ticket` object is passed to your automation scripts:
