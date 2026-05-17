@@ -236,6 +236,13 @@ struct TrackerConfig {
     bool AssistantContextBlockActiveTicket = true;
     bool AssistantContextBlockActiveView = true;
     bool AssistantContextBlockAuditTrail = true;
+    // When true, the Preferences "Save changes" button runs a live ProbeReachability
+    // probe before committing the Assistant tab buffers. Static validation
+    // (`AiPrefsValidator`) must still pass first; the probe is the live network /
+    // auth check on top. Default on — surfaces credential mistakes at Save time
+    // rather than at first-message time. Uncheck to commit offline-entered
+    // credentials without contacting the provider.
+    bool AiPrefsVerifyOnSave = true;
 
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
     bool FullScreen = false;

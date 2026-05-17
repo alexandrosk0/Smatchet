@@ -3,9 +3,11 @@
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
 #include "AiClientFactory.h"
+#include "AiEndpointSanitize.h"
 #include "AiModelCatalog.h"
 #include "AiPrefsValidator.h"
 #include "AiTypes.h"
+#include "IAiClient.h"
 #endif
 
 #include "AppController.h"
@@ -24,11 +26,14 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(SMATCHET_WITH_MCP)
@@ -166,6 +171,15 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 
 } // namespace
 
+#if defined(SMATCHET_WITH_AI)
+// `g_ui` lives in SmatchetUI.cpp. Header declares it `extern` only when
+// `SMATCHET_WITH_LUA_AUTOMATION` is defined, so we forward-declare it here
+// unconditionally (matches the pattern in AiAssistantController.cpp). The
+// Assistant Preferences async probe's MainThreadDispatcher callback reaches
+// the global to flip in-flight state + result strings.
+extern UiDrawSession g_ui;
+#endif
+
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     static bool s_suggestionsLoaded = false;
     static bool s_templatesLoaded = false;
@@ -178,6 +192,17 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         s_templatesLoaded = false;
         s_quickTemplatesLoaded = false;
         s_blameTemplatesLoaded = false;
+#if defined(SMATCHET_WITH_AI)
+        // Cancel any in-flight Assistant Preferences probe so its posted callback
+        // short-circuits before touching the buffers / cfg. The worker thread
+        // itself finishes naturally via `AiClientConfig.TotalTimeoutMs`.
+        if (d.assistantPrefsTestCancel) {
+            d.assistantPrefsTestCancel->store(true);
+        }
+        d.assistantPrefsTestInFlight = false;
+        d.assistantPrefsTestResult.clear();
+        d.assistantPrefsTestResultType = 0;
+#endif
         return;
     }
 
@@ -385,12 +410,107 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         }
 #endif
 #if defined(SMATCHET_WITH_AI)
-        if (ImGui::BeginTabItem("Assistant")) {
+        // ----- Assistant tab — explicit Save flow (PR #181 batch 2 + Fix 6/7/8). -----
+        //
+        // Static InputText buffers live at function scope across frames + tab toggles.
+        // The per-frame loop below seeds them from `d.cfg.Ai*` on first paint + on
+        // provider change. User typing mutates the buffers only — `d.cfg.Ai*` is
+        // untouched until the Save button commits. This replaces the per-keystroke
+        // `ConfigManager::Save()` that surfaced the "validation only after typing
+        // started" complaint.
+        //
+        // Layout intent: declared OUTSIDE `if (BeginTabItem)` so the dirty check
+        // can compute the tab label suffix ("Assistant *") and the buttons can
+        // reach the same buffers from the bottom-strip layout.
+        static char s_agentsMdGlobalBuf[1024] = {};
+        static char s_projectAgentsMdBuf[1024] = {};
+        static bool s_agentsBufsSeeded = false;
+        static char s_openAiKeyBuf[1024] = {};
+        static char s_anthropicKeyBuf[1024] = {};
+        static char s_openAiModelBuf[256] = {};
+        static char s_anthropicModelBuf[256] = {};
+        static char s_ollamaModelBuf[256] = {};
+        static char s_baseUrlBuf[512] = {};
+        static char s_ollamaBaseUrlBuf[512] = {};
+        static bool s_aiBufsSeeded = false;
+        static int s_lastSeededProvider = -1;
+        // First-paint seeding from cfg. Also re-seeds whenever provider changes so a
+        // user can switch providers and see the persisted-per-provider state rather
+        // than the unsaved buffer (matches previous behaviour).
+        if (!s_agentsBufsSeeded) {
+            s_agentsBufsSeeded = true;
+            std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
+            std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s",
+                          d.cfg.ProjectAgentsMdPath.c_str());
+        }
+        if (!s_aiBufsSeeded || s_lastSeededProvider != d.cfg.AiProviderKind) {
+            s_aiBufsSeeded = true;
+            s_lastSeededProvider = d.cfg.AiProviderKind;
+            std::snprintf(s_openAiKeyBuf, sizeof(s_openAiKeyBuf), "%s", d.cfg.AiApiKey.c_str());
+            std::snprintf(s_anthropicKeyBuf, sizeof(s_anthropicKeyBuf), "%s", d.cfg.AiAnthropicApiKey.c_str());
+            std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s", d.cfg.AiModelOpenAi.c_str());
+            std::snprintf(s_anthropicModelBuf, sizeof(s_anthropicModelBuf), "%s", d.cfg.AiModelAnthropic.c_str());
+            std::snprintf(s_ollamaModelBuf, sizeof(s_ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
+            std::snprintf(s_baseUrlBuf, sizeof(s_baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
+            std::snprintf(s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
+        }
+
+        // Reseed-from-cfg helper used by Discard + by the post-commit reseed path.
+        // Provider-pinned: the model and base-URL buffers re-read from the cfg
+        // values that apply to the CURRENT provider, which is what the user sees.
+        auto reseedAssistantBuffersFromCfg = [&]() {
+            std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
+            std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s",
+                          d.cfg.ProjectAgentsMdPath.c_str());
+            std::snprintf(s_openAiKeyBuf, sizeof(s_openAiKeyBuf), "%s", d.cfg.AiApiKey.c_str());
+            std::snprintf(s_anthropicKeyBuf, sizeof(s_anthropicKeyBuf), "%s", d.cfg.AiAnthropicApiKey.c_str());
+            std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s", d.cfg.AiModelOpenAi.c_str());
+            std::snprintf(s_anthropicModelBuf, sizeof(s_anthropicModelBuf), "%s", d.cfg.AiModelAnthropic.c_str());
+            std::snprintf(s_ollamaModelBuf, sizeof(s_ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
+            std::snprintf(s_baseUrlBuf, sizeof(s_baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
+            std::snprintf(s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
+            s_lastSeededProvider = d.cfg.AiProviderKind;
+        };
+
+        // Build the working copy with current buffer values applied.
+        auto buildAssistantWorkingCopy = [&]() {
+            TrackerConfig wc = d.cfg;
+            wc.AgentsMdGlobalPath = s_agentsMdGlobalBuf;
+            wc.ProjectAgentsMdPath = s_projectAgentsMdBuf;
+            wc.AiApiKey = s_openAiKeyBuf;
+            wc.AiAnthropicApiKey = s_anthropicKeyBuf;
+            wc.AiModelOpenAi = s_openAiModelBuf;
+            wc.AiModelAnthropic = s_anthropicModelBuf;
+            wc.AiModelOllama = s_ollamaModelBuf;
+            wc.AiBaseUrl = s_baseUrlBuf;
+            wc.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
+            // AiProviderKind + AgentsMdAutoDiscoverProject are direct-bound below;
+            // they live in `d.cfg` already (and are kept in `wc` via the copy ctor).
+            return wc;
+        };
+
+        // Dirty test — used both for the tab-label suffix and Save/Discard enable.
+        const TrackerConfig workingCopyForDirty = buildAssistantWorkingCopy();
+        const bool assistantTabDirty =
+            workingCopyForDirty.AgentsMdGlobalPath != d.cfg.AgentsMdGlobalPath ||
+            workingCopyForDirty.ProjectAgentsMdPath != d.cfg.ProjectAgentsMdPath ||
+            workingCopyForDirty.AiApiKey != d.cfg.AiApiKey ||
+            workingCopyForDirty.AiAnthropicApiKey != d.cfg.AiAnthropicApiKey ||
+            workingCopyForDirty.AiModelOpenAi != d.cfg.AiModelOpenAi ||
+            workingCopyForDirty.AiModelAnthropic != d.cfg.AiModelAnthropic ||
+            workingCopyForDirty.AiModelOllama != d.cfg.AiModelOllama ||
+            workingCopyForDirty.AiBaseUrl != d.cfg.AiBaseUrl ||
+            workingCopyForDirty.AiOllamaBaseUrl != d.cfg.AiOllamaBaseUrl;
+
+        const char* assistantTabLabel = assistantTabDirty ? "Assistant *" : "Assistant";
+        if (ImGui::BeginTabItem(assistantTabLabel)) {
             // --- Sticky validation banner — rendered FIRST so it stays at the top of
             // the tab regardless of where the user has scrolled. Errors block save;
-            // warnings inform but pass through. Recomputed every frame from the live
-            // cfg state (pure-logic, no I/O).
-            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);
+            // warnings inform but pass through. Validator runs against the
+            // working-copy cfg (buffers applied) so the user gets live feedback for
+            // the text they're typing, not the last-saved snapshot.
+            const TrackerConfig workingCopy = buildAssistantWorkingCopy();
+            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(workingCopy);
 
             auto renderBanner = [&]() {
                 if (validation.Errors.empty() && validation.Warnings.empty()) {
@@ -407,7 +527,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::BeginChild("##AiPrefsErrorBanner", ImVec2(0.0f, h), true,
                                       ImGuiWindowFlags_NoScrollbar);
                     ImGui::PushStyleColor(ImGuiCol_Text, kErrText);
-                    ImGui::TextWrapped("(!) %d error%s block save - settings will NOT persist until fixed:",
+                    ImGui::TextWrapped("(!) %d error%s block save - fix to enable Save:",
                                        static_cast<int>(validation.Errors.size()),
                                        validation.Errors.size() == 1 ? "" : "s");
                     for (const auto& e : validation.Errors) {
@@ -425,7 +545,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::BeginChild("##AiPrefsWarnBanner", ImVec2(0.0f, h), true,
                                       ImGuiWindowFlags_NoScrollbar);
                     ImGui::PushStyleColor(ImGuiCol_Text, kWarnText);
-                    ImGui::TextWrapped("Warnings (settings still save):");
+                    ImGui::TextWrapped("Warnings (Save still proceeds):");
                     for (const auto& w : validation.Warnings) {
                         ImGui::BulletText("%s", w.c_str());
                     }
@@ -436,27 +556,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::Spacing();
             };
             renderBanner();
-
-            // Helper that gates ConfigManager::Save on validation.IsOk(). Buffer mutations
-            // still take effect on the in-memory cfg so the user can keep editing;
-            // disk-level persistence is held back until the validator clears. A toast
-            // surfaces the blocked state at most once every 4 s to avoid spam during
-            // each-keystroke autosave.
-            static std::chrono::steady_clock::time_point s_lastBlockedToastAt{};
-            auto saveIfValid = [&](const char* /*originDebugLabel*/) {
-                if (validation.IsOk()) {
-                    ConfigManager::Save(d.cfg);
-                    return;
-                }
-                const auto now = std::chrono::steady_clock::now();
-                if (now - s_lastBlockedToastAt >= std::chrono::seconds(4)) {
-                    s_lastBlockedToastAt = now;
-                    SmatchetToastManager::Instance().Push(
-                        std::string("Preferences"),
-                        std::string("Preferences not saved - fix the highlighted errors above."),
-                        ToastType::Warning, 4000);
-                }
-            };
 
             // Map a field key to its per-issue glyph rendered next to the input. Pure
             // display — no state. The most-severe issue for the field wins.
@@ -498,6 +597,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
             };
 
+            // Any field edit invalidates a stale Test-connection result.
+            auto clearStaleTestResult = [&]() {
+                if (!d.assistantPrefsTestInFlight) {
+                    d.assistantPrefsTestResult.clear();
+                    d.assistantPrefsTestResultType = 0;
+                }
+            };
+
             ImGui::TextUnformatted("agents.md harness");
             ImGui::Separator();
             ImGui::Spacing();
@@ -507,17 +614,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 "explicit via the Project path field below. Each layer is capped at 64 KB.");
             ImGui::Spacing();
 
-            // Local input buffers — sized large enough for typical filesystem paths
-            // including long-path-prefixed forms on Windows.
-            static char s_agentsMdGlobalBuf[1024] = {};
-            static char s_projectAgentsMdBuf[1024] = {};
-            static bool s_agentsBufsSeeded = false;
-            if (!s_agentsBufsSeeded) {
-                s_agentsBufsSeeded = true;
-                std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
-                std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s",
-                              d.cfg.ProjectAgentsMdPath.c_str());
-            }
+            // Buffers seeded once at function scope above; mutations stay buffer-local
+            // until the Save button commits + ConfigManager::Save persists. The user
+            // sees `(!)` / `(~)` glyphs + the banner above for live feedback.
             const bool globalChanged =
                 ImGui::InputText("Global agents.md path", s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf));
             ImGui::SetItemTooltip("Default location is %LOCALAPPDATA%/Smatchet/agents.md (resolved at load time). "
@@ -526,9 +625,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                          s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf));
             ImGui::SetItemTooltip("When set, this exact path is used as the project layer. Leave blank to disable "
                                   "the project layer entirely unless 'Auto-discover' is enabled below.");
-            // Opt-in walk-up discovery checkbox — default OFF so Smatchet running from inside
-            // a source tree does not silently pick up that repo's AGENTS.md as the assistant
-            // prompt. The flag plumbs through AgentsMdLoader::LoadLayered.
+            // Auto-discover bound directly to cfg — single bool flag, not a credential.
+            // Same boat as the (later in tab) verify-on-save checkbox: meta-setting,
+            // not a value users compose-and-review before saving, so direct bind +
+            // immediate persistence is the right UX.
             bool autoDiscover = d.cfg.AgentsMdAutoDiscoverProject;
             const bool autoDiscoverChanged = ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)",
                                                               &autoDiscover);
@@ -537,16 +637,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                   "be picked up automatically. Turn ON for old behavior (walks up the cwd chain).");
             if (autoDiscoverChanged) {
                 d.cfg.AgentsMdAutoDiscoverProject = autoDiscover;
-            }
-            if (globalChanged || projectChanged || autoDiscoverChanged) {
-                d.cfg.AgentsMdGlobalPath = s_agentsMdGlobalBuf;
-                d.cfg.ProjectAgentsMdPath = s_projectAgentsMdBuf;
-                saveIfValid("agents.md changed");
+                ConfigManager::Save(d.cfg);
                 // Invalidate the worker-side agents.md cache so the next turn
                 // re-reads from disk instead of serving the stale blob.
                 if (app.HasAiAssistantController()) {
                     app.GetAiAssistantController().InvalidateAgentsMdCache();
                 }
+            }
+            if (globalChanged || projectChanged) {
+                clearStaleTestResult();
             }
             ImGui::Spacing();
             ImGui::Separator();
@@ -572,33 +671,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
                              static_cast<int>(providerLabels.size()))) {
                 d.cfg.AiProviderKind = static_cast<int>(providers[providerIdx].Kind);
-                saveIfValid("provider changed");
+                ConfigManager::Save(d.cfg);
+                // Re-seed so the per-provider buffers below load the chosen provider's
+                // persisted state on the next paint. The check at function-scope
+                // already runs `s_lastSeededProvider != d.cfg.AiProviderKind` and
+                // refreshes — no extra work needed here.
+                clearStaleTestResult();
             }
             const AiProvider selectedKind = providers[providerIdx].Kind;
-
-            // Per-provider input buffers. Seeded once from cfg + reseeded whenever the
-            // provider changes (so a user can edit a buffer, switch providers, switch
-            // back, and see their persisted value rather than the unsaved buffer).
-            static char s_openAiKeyBuf[1024] = {};
-            static char s_anthropicKeyBuf[1024] = {};
-            static char s_openAiModelBuf[256] = {};
-            static char s_anthropicModelBuf[256] = {};
-            static char s_ollamaModelBuf[256] = {};
-            static char s_baseUrlBuf[512] = {};
-            static char s_ollamaBaseUrlBuf[512] = {};
-            static bool s_aiBufsSeeded = false;
-            static int s_lastSeededProvider = -1;
-            if (!s_aiBufsSeeded || s_lastSeededProvider != d.cfg.AiProviderKind) {
-                s_aiBufsSeeded = true;
-                s_lastSeededProvider = d.cfg.AiProviderKind;
-                std::snprintf(s_openAiKeyBuf, sizeof(s_openAiKeyBuf), "%s", d.cfg.AiApiKey.c_str());
-                std::snprintf(s_anthropicKeyBuf, sizeof(s_anthropicKeyBuf), "%s", d.cfg.AiAnthropicApiKey.c_str());
-                std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s", d.cfg.AiModelOpenAi.c_str());
-                std::snprintf(s_anthropicModelBuf, sizeof(s_anthropicModelBuf), "%s", d.cfg.AiModelAnthropic.c_str());
-                std::snprintf(s_ollamaModelBuf, sizeof(s_ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
-                std::snprintf(s_baseUrlBuf, sizeof(s_baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
-                std::snprintf(s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
-            }
 
             ImGui::Spacing();
             if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
@@ -681,10 +761,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
                 renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiBaseUrl);
                 if (keyChanged || modelChanged || baseChanged) {
-                    d.cfg.AiApiKey = s_openAiKeyBuf;
-                    d.cfg.AiModelOpenAi = s_openAiModelBuf;
-                    d.cfg.AiBaseUrl = s_baseUrlBuf;
-                    saveIfValid("openai/compat field changed");
+                    // Buffer-only — Save button commits.
+                    clearStaleTestResult();
                 }
             } else if (selectedKind == AiProvider::Anthropic) {
                 const bool keyChanged = ImGui::InputText("Anthropic API key", s_anthropicKeyBuf,
@@ -740,10 +818,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                       "through an Anthropic-compatible proxy.");
                 renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiBaseUrl);
                 if (keyChanged || modelChanged || baseChanged) {
-                    d.cfg.AiAnthropicApiKey = s_anthropicKeyBuf;
-                    d.cfg.AiModelAnthropic = s_anthropicModelBuf;
-                    d.cfg.AiBaseUrl = s_baseUrlBuf;
-                    saveIfValid("anthropic field changed");
+                    // Buffer-only — Save button commits.
+                    clearStaleTestResult();
                 }
             } else if (selectedKind == AiProvider::OllamaNative) {
                 ImGui::TextDisabled("Ollama is local — no API key required.");
@@ -757,11 +833,270 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     "Default http://localhost:11434. Override for a remote Ollama daemon on the LAN.");
                 renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiOllamaBaseUrl);
                 if (modelChanged || baseChanged) {
-                    d.cfg.AiModelOllama = s_ollamaModelBuf;
-                    d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
-                    saveIfValid("ollama-native field changed");
+                    // Buffer-only — Save button commits.
+                    clearStaleTestResult();
                 }
             }
+
+            // --- Save / Discard / Test connection strip + verify-on-save checkbox. ---
+            //
+            // Save is the discrete commit moment that replaces the per-keystroke
+            // `ConfigManager::Save()` autosave. Test-connection runs the
+            // long-deferred async `ProbeReachability` worker; the same worker is
+            // re-used by save-with-verify when the checkbox is on (default).
+            //
+            // Threading invariant: the worker thread captures a value-copy of
+            // `workingCopy` + a shared_ptr cancel atom + the
+            // `app.mainThreadDispatcher` reference. It constructs a fresh
+            // `IAiClient`, runs `ProbeReachability`, then posts the result via
+            // MainThreadDispatcher. The worker never touches `g_ui` directly.
+            //
+            // Cancel-on-close (handled below the tab body via the bottom-of-
+            // function reset) sets `*assistantPrefsTestCancel = true` so the
+            // posted callback short-circuits if Preferences closes mid-probe.
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Shared probe helper — runs ProbeReachability on a worker thread and
+            // posts the result back via MainThreadDispatcher. Captured by value
+            // into the lambda so a concurrent edit during the probe doesn't
+            // change the bytes the worker sees.
+            //
+            // `saveOnSuccess`: when true, the success callback also commits the
+            // working-copy state to `d.cfg` + persists via `ConfigManager::Save`.
+            // Used by the verify-on-save Save flow; the plain Test button passes
+            // false (display-only).
+            auto runProbe = [&app, &d](TrackerConfig probeCfg, AiProvider provider, bool saveOnSuccess) {
+                d.assistantPrefsTestInFlight = true;
+                d.assistantPrefsTestResult = "Testing...";
+                d.assistantPrefsTestResultType = 0;
+                d.assistantPrefsTestCancel = std::make_shared<std::atomic<bool>>(false);
+                d.assistantPrefsTestProbeSavesOnSuccess = saveOnSuccess;
+                d.assistantPrefsSavePendingCfg = probeCfg;
+                auto cancel = d.assistantPrefsTestCancel;
+                // Provider-aware ApiKey / BaseUrl pick. Mirrors `BuildClientConfig`
+                // in `AiAssistantController.cpp` (kept local because that helper
+                // lives in an anonymous namespace).
+                std::string apiKey;
+                std::string baseUrl;
+                switch (provider) {
+                case AiProvider::Anthropic:
+                    apiKey = probeCfg.AiAnthropicApiKey;
+                    baseUrl = probeCfg.AiBaseUrl;
+                    break;
+                case AiProvider::OllamaNative:
+                    apiKey.clear();
+                    baseUrl = probeCfg.AiOllamaBaseUrl;
+                    break;
+                case AiProvider::OllamaOpenAiCompat:
+                    apiKey = probeCfg.AiApiKey;
+                    baseUrl = probeCfg.AiBaseUrl.empty() ? probeCfg.AiOllamaBaseUrl : probeCfg.AiBaseUrl;
+                    break;
+                case AiProvider::OpenAi:
+                default:
+                    apiKey = probeCfg.AiApiKey;
+                    baseUrl = probeCfg.AiBaseUrl;
+                    break;
+                }
+                // Strip header-smuggling control characters from the key (cheap
+                // defence-in-depth; libcurl rejects them too).
+                std::string sanitisedKey;
+                sanitisedKey.reserve(apiKey.size());
+                for (char c : apiKey) {
+                    if (c != '\r' && c != '\n' && c != '\0') {
+                        sanitisedKey.push_back(c);
+                    }
+                }
+                // Validate BaseUrl via the shared sanitiser; empty falls back to
+                // provider default.
+                std::string sanitisedBase;
+                if (!baseUrl.empty()) {
+                    std::string normalised;
+                    const smatchet::ai::pure::EndpointVerdict v =
+                        smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, normalised);
+                    if (v == smatchet::ai::pure::EndpointVerdict::Allowed) {
+                        sanitisedBase = normalised;
+                    } else {
+                        LOG_WARN("Preferences: Test connection — endpoint URL %s; falling back to provider default.",
+                                 smatchet::ai::pure::EndpointVerdictDescription(v));
+                    }
+                }
+                AiClientConfig clientCfg;
+                clientCfg.ApiKey = sanitisedKey;
+                clientCfg.BaseUrl = sanitisedBase;
+                clientCfg.ConnectTimeoutMs = 5000;
+                // Tight cap on the probe — much shorter than the chat default so
+                // a hung backend doesn't keep the spinner up for two minutes.
+                clientCfg.TotalTimeoutMs = 15000;
+
+                MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
+
+                std::thread([provider, clientCfg, saveOnSuccess, probeCfg, cancel, &dispatcher]() {
+                    std::string errMsg;
+                    std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
+                    if (!client) {
+                        errMsg = "Provider not available in this build.";
+                    } else {
+                        errMsg = client->ProbeReachability(clientCfg);
+                    }
+                    dispatcher.PostToMainThread([provider, errMsg, cancel, saveOnSuccess, probeCfg]() {
+                        if (cancel && cancel->load()) {
+                            return;
+                        }
+                        g_ui.assistantPrefsTestInFlight = false;
+                        const bool ok = errMsg.empty();
+                        if (ok) {
+                            if (saveOnSuccess) {
+                                g_ui.cfg = probeCfg;
+                                ConfigManager::Save(g_ui.cfg);
+                                g_ui.assistantPrefsTestResult = "Saved + verified.";
+                                g_ui.assistantPrefsTestResultType = 1;
+                                SmatchetToastManager::Instance().Push(
+                                    std::string("Preferences"),
+                                    std::string("Saved + verified."),
+                                    ToastType::Success, 3500);
+                            } else {
+                                g_ui.assistantPrefsTestResult = "Verified.";
+                                g_ui.assistantPrefsTestResultType = 1;
+                            }
+                        } else {
+                            g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
+                            g_ui.assistantPrefsTestResultType = 2;
+                            if (saveOnSuccess) {
+                                SmatchetToastManager::Instance().Push(
+                                    std::string("Preferences"),
+                                    std::string("Connection failed - not saved: ") + errMsg,
+                                    ToastType::Error, 6000);
+                            }
+                        }
+                        // Avoid leaking the cfg snapshot past the callback.
+                        g_ui.assistantPrefsSavePendingCfg = TrackerConfig();
+                        g_ui.assistantPrefsTestProbeSavesOnSuccess = false;
+                        (void)provider;
+                    });
+                }).detach();
+            };
+
+            // --- Save / Discard buttons row ---
+            const bool canSave = assistantTabDirty && !d.assistantPrefsTestInFlight && validation.IsOk();
+            const bool canDiscard = assistantTabDirty && !d.assistantPrefsTestInFlight;
+
+            if (!canSave) {
+                ImGui::BeginDisabled(true);
+            }
+            const bool savePressed = ImGui::Button("Save changes");
+            if (!canSave) {
+                ImGui::EndDisabled();
+                if (assistantTabDirty && !validation.IsOk() && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Fix the errors above to enable Save.");
+                }
+            }
+            ImGui::SameLine();
+            if (!canDiscard) {
+                ImGui::BeginDisabled(true);
+            }
+            const bool discardPressed = ImGui::Button("Discard");
+            if (!canDiscard) {
+                ImGui::EndDisabled();
+            }
+            ImGui::SameLine();
+            // Tab-bar dirty hint also rendered inline for users who hide the tab strip.
+            if (assistantTabDirty) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.30f, 1.0f), "unsaved changes");
+            } else {
+                ImGui::TextDisabled("no unsaved changes");
+            }
+
+            if (savePressed && canSave) {
+                if (d.cfg.AiPrefsVerifyOnSave) {
+                    // Kick off the probe with saveOnSuccess=true. The posted
+                    // callback commits + toasts on success, surfaces an error
+                    // toast on failure.
+                    runProbe(workingCopy, selectedKind, /*saveOnSuccess=*/true);
+                } else {
+                    // Static-validation-only path: commit immediately.
+                    d.cfg = workingCopy;
+                    ConfigManager::Save(d.cfg);
+                    SmatchetToastManager::Instance().Push(
+                        std::string("Preferences"),
+                        std::string("Saved (not verified)."),
+                        ToastType::Success, 3500);
+                    // Invalidate agents.md cache in case the global / project path changed.
+                    if (app.HasAiAssistantController()) {
+                        app.GetAiAssistantController().InvalidateAgentsMdCache();
+                    }
+                }
+            }
+            if (discardPressed && canDiscard) {
+                reseedAssistantBuffersFromCfg();
+                d.assistantPrefsTestResult.clear();
+                d.assistantPrefsTestResultType = 0;
+                SmatchetToastManager::Instance().Push(
+                    std::string("Preferences"),
+                    std::string("Reverted to last saved values."),
+                    ToastType::Info, 3000);
+            }
+
+            // --- Verify-on-save checkbox (direct-bound; meta-setting) ---
+            if (ImGui::Checkbox("Verify connection on save", &d.cfg.AiPrefsVerifyOnSave)) {
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::SetItemTooltip("When checked (default), Save runs a connection probe before committing. "
+                                  "Uncheck to save offline-entered credentials without a live check.");
+
+            // --- Test connection button + result line ---
+            ImGui::Spacing();
+            // Disable when validation fails, when a probe is already running, or
+            // for local-only providers that have no target URL configured.
+            bool canTest = validation.IsOk() && !d.assistantPrefsTestInFlight;
+            const bool isLocalProvider =
+                (selectedKind == AiProvider::OllamaNative || selectedKind == AiProvider::OllamaOpenAiCompat);
+            const std::string testBaseUrl =
+                (selectedKind == AiProvider::OllamaNative)
+                    ? std::string(s_ollamaBaseUrlBuf)
+                    : (s_baseUrlBuf[0] != '\0' ? std::string(s_baseUrlBuf)
+                                               : (isLocalProvider ? std::string(s_ollamaBaseUrlBuf) : std::string()));
+            if (isLocalProvider && testBaseUrl.empty()) {
+                canTest = false;
+            }
+            if (!canTest) {
+                ImGui::BeginDisabled(true);
+            }
+            const bool testPressed = ImGui::Button("Test connection");
+            if (!canTest) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) {
+                    if (d.assistantPrefsTestInFlight) {
+                        ImGui::SetTooltip("Probe already running...");
+                    } else if (!validation.IsOk()) {
+                        ImGui::SetTooltip("Fix the errors above to enable Test connection.");
+                    } else if (isLocalProvider && testBaseUrl.empty()) {
+                        ImGui::SetTooltip("Set a base URL above first (local servers need an explicit endpoint).");
+                    }
+                }
+            }
+            if (testPressed && canTest) {
+                runProbe(workingCopy, selectedKind, /*saveOnSuccess=*/false);
+            }
+            ImGui::SameLine();
+            if (!d.assistantPrefsTestResult.empty()) {
+                const int kind = d.assistantPrefsTestResultType;
+                ImVec4 col(0.78f, 0.78f, 0.78f, 1.0f);
+                if (kind == 1) {
+                    col = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+                } else if (kind == 2) {
+                    col = ImVec4(1.0f, 0.55f, 0.55f, 1.0f);
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, col);
+                ImGui::TextUnformatted(d.assistantPrefsTestResult.c_str());
+                ImGui::PopStyleColor();
+                if (kind == 2 && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", d.assistantPrefsTestResult.c_str());
+                }
+            }
+
             ImGui::EndTabItem();
         }
 #endif

@@ -188,6 +188,35 @@ struct UiDrawSession {
     /// can drop stale tokens (Cancel + immediate Send must not let the first
     /// turn's tail bytes corrupt the second turn's stream).
     std::uint64_t assistantTurnGen = 0;
+
+    // --- Assistant Preferences tab: Test-connection async probe state. ---
+    // Mirrors Phase B's cancel-atom + MainThreadDispatcher hand-off shape. The
+    // worker thread is detached; it constructs a fresh IAiClient, runs
+    // ProbeReachability, and posts the result via MainThreadDispatcher with the
+    // shared cancel atom captured by value. When the Preferences window closes
+    // mid-probe, the UI sets `*assistantPrefsTestCancel = true` so the posted
+    // callback short-circuits before touching the about-to-be-stale buffers.
+    // All three fields are UI-thread-owned; the worker only reads its captured
+    // shared_ptr copy of the cancel atom.
+    bool assistantPrefsTestInFlight = false;
+    /// Empty when no probe has run for the current edit. Re-armed to
+    /// `"Testing..."` on click, then replaced with `"OK verified"` or
+    /// `"FAIL <msg>"` by the posted callback. Cleared on any field edit to
+    /// signal staleness.
+    std::string assistantPrefsTestResult;
+    /// Distinguishes display tints — Info (Testing), Success (verified), Error
+    /// (failure). UI consumes this directly; toast paths bypass it.
+    int assistantPrefsTestResultType = 0; // 0 info, 1 success, 2 error
+    std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
+    /// When true, the running probe is the "save-with-verify" flow rather than
+    /// the plain Test button: on success the posted callback commits the
+    /// `workingCopy` buffers to `g_ui.assistantPrefsSavePending*` cfg state and
+    /// calls `ConfigManager::Save`. On failure no commit happens.
+    bool assistantPrefsTestProbeSavesOnSuccess = false;
+    /// Snapshot of the buffer values to commit when the save-with-verify probe
+    /// completes successfully. Captured at click time so a concurrent edit
+    /// during the probe doesn't sneak unintended state in.
+    TrackerConfig assistantPrefsSavePendingCfg;
 #endif
 
     bool fieldCatalogFetchStarted = false;
