@@ -50,9 +50,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-debug-cli-and-prefs-validation · slice-1 · status: in-flight
+### ai-debug-cli-and-prefs-validation · slice-1 · status: shipped (PR #174 merged at 8ba3dc3)
 
-- **Branch**: `feat/ai-debug-cli-and-prefs-validation`
+- **Branch**: `feat/ai-debug-cli-and-prefs-validation` (deleted)
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
 - **Originating plan**: orchestrator-direct (no design doc — investigation + tooling slice)
 - **Claimed write set**:
@@ -75,8 +75,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (this entry)
 - **Read-only adjacency**: `Source_Core/include/IAiClient.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/src/AiClientFactory.cpp`, `Source_Core/include/ConfigManager.h`
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — dispatched.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#174](https://github.com/alexandrosk0/Smatchet/pull/174) at sha `8ba3dc3`. HTTP-error logging in both AI clients; `AiModelCatalog` + `AiPrefsValidator` doctest-covered (14 + 6 cases, 1 `[high-risk]`); 5 CLI commands (`ai.{list-models,dump-request,probe,send-once,validate-prefs}`); Preferences UI model Combo + live validation banners (Test-connection async button deferred — existing tab uses per-field autosave). Test aggregate 388 cases / 1994 assertions (+17/+100). `claude-sonnet-4-6` confirmed valid Anthropic ID — 400 cause is at the wire boundary (expired key / tier / quota), now diagnosable via `ai.send-once`'s `response_body_excerpt` + new `LOG_ERROR`.
+- **Cleared by**: PR `#174` merged at `8ba3dc3`.
 
 ### ai-assistant-side-panel · Phase E · lua-glue-schema-bump-and-docs · status: shipped (PR #170 merged at f2d0933)
 

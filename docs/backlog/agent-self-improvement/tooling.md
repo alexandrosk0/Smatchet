@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · test-author · [tooling] · P3 — Preferences "Test connection" async button deferred from PR #174
+  Details: PR #174 (`ai-debug-cli-and-prefs-validation`) planned a "Test connection" button in `SmatchetPreferencesUi.cpp` Assistant tab that would call `IAiClient::ProbeReachability` on a worker thread + post the result back via `MainThreadDispatcher`. Agent deferred at implementation time because the existing Preferences tab uses **per-field autosave** (no single Save button), so the async-result-display pattern would have fought the existing flow. Workaround for user: run `bash scripts/dev/manual-ai-anthropic-probe.sh` or `Smatchet.exe cmd ai.probe --provider anthropic` directly. Cost-to-add: ~30 min if folded into the broader Preferences UI refactor that gives the Assistant tab its own Save button (would also unblock other staged-validation UX). Independent worth alone: lower; CLI command + bash script already provide a clean equivalent.
+  Concrete next action: either (a) add a self-contained Assistant-tab Save button + the async test button, or (b) leave the CLI path as the canonical reachability test and remove the button from any future plan docs. Decide at the next AI-feature-touching PR.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · code-review · [tooling] · P3 — `MainThreadDispatcher::PostUiTask` sugar for typed worker→UI hand-off
   Details: `MainThreadDispatcher::PostToMainThread(Task)` takes `std::function<void()>` per `Source_Core/include/MainThreadDispatcher.h:33`. Phase B (PR #163) had to use the pattern "outer lambda captures AppController*, inner lambda references `g_ui` via TU-local `extern`" to reach UI state from a worker callback (`AiAssistantController.cpp` delta + error paths). The shape works but the discoverability is poor — Phase B agent's packet sketched the wrong signature (`function<void(AppController&)>`) on a guess. A typed sugar layer like `PostUiTask([](UiDrawSession& d){ ... })` (or two-arg `(AppController& app, UiDrawSession& d)`) would (a) make worker→UI hand-off self-documenting + (b) centralise the `g_ui` extern shim that AI/MCP/sync currently each replicate.
   Concrete next action: add `MainThreadDispatcher::PostUiTask(std::function<void(UiDrawSession&)>)` as a thin wrapper that resolves `g_ui` once at the dispatch boundary; deprecate raw `PostToMainThread` for worker callbacks. ~1 h including in-tree replacements of the 3 known worker→UI sites (sync, audit, AI).
