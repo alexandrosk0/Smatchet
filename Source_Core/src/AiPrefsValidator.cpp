@@ -36,6 +36,24 @@ bool LooksLikeHttpUrl(const std::string& s) {
     return StartsWith(s, "http://") || StartsWith(s, "https://");
 }
 
+void EmitError(PrefsValidation& v, const char* fieldKey, std::string message) {
+    PrefsValidationIssue issue;
+    issue.FieldKey = (fieldKey != nullptr) ? std::string(fieldKey) : std::string();
+    issue.Severity = PrefsSeverity::Error;
+    issue.Message = message;
+    v.Errors.push_back(message);
+    v.Issues.push_back(std::move(issue));
+}
+
+void EmitWarning(PrefsValidation& v, const char* fieldKey, std::string message) {
+    PrefsValidationIssue issue;
+    issue.FieldKey = (fieldKey != nullptr) ? std::string(fieldKey) : std::string();
+    issue.Severity = PrefsSeverity::Warning;
+    issue.Message = message;
+    v.Warnings.push_back(message);
+    v.Issues.push_back(std::move(issue));
+}
+
 } // namespace
 
 PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
@@ -43,76 +61,90 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
     const AiProvider provider = ClampProvider(cfg.AiProviderKind);
 
     // --- Key presence (per active provider) ---
-    if (provider == AiProvider::OpenAi || provider == AiProvider::OllamaOpenAiCompat) {
-        // OllamaOpenAiCompat reuses the same key slot. Most local-only setups
-        // leave it blank — but if the chosen provider is OpenAI proper, the
-        // key is required.
-        if (provider == AiProvider::OpenAi && cfg.AiApiKey.empty()) {
-            v.Errors.push_back("OpenAI: API key required");
+    // Only the hosted providers (OpenAi proper, Anthropic) require a key. Local
+    // OpenAI-compatible servers (LM Studio / Ollama / LocalAI / vLLM) and Ollama
+    // native ship without auth by default; even when the server is configured
+    // for token gating, users frequently leave the slot blank and provide auth
+    // out-of-band (header injection via reverse proxy, OS keychain helper, etc).
+    if (provider == AiProvider::OpenAi) {
+        if (cfg.AiApiKey.empty()) {
+            EmitError(v, PrefsFieldKey::kAiApiKey, "OpenAI: API key required");
         }
     } else if (provider == AiProvider::Anthropic) {
         if (cfg.AiAnthropicApiKey.empty()) {
-            v.Errors.push_back("Anthropic: API key required");
+            EmitError(v, PrefsFieldKey::kAiAnthropicApiKey, "Anthropic: API key required");
         }
     }
-    // OllamaNative needs no API key.
+    // OllamaOpenAiCompat + OllamaNative: API key optional (no error when empty).
 
     // --- Model presence (per active provider) ---
     std::string activeModelId;
     const char* activeProviderLabel = "";
+    const char* activeModelFieldKey = nullptr;
     switch (provider) {
     case AiProvider::OpenAi:
         activeModelId = cfg.AiModelOpenAi;
         activeProviderLabel = "OpenAI";
+        activeModelFieldKey = PrefsFieldKey::kAiModelOpenAi;
         break;
     case AiProvider::Anthropic:
         activeModelId = cfg.AiModelAnthropic;
         activeProviderLabel = "Anthropic";
+        activeModelFieldKey = PrefsFieldKey::kAiModelAnthropic;
         break;
     case AiProvider::OllamaNative:
         activeModelId = cfg.AiModelOllama;
         activeProviderLabel = "Ollama (native)";
+        activeModelFieldKey = PrefsFieldKey::kAiModelOllama;
         break;
     case AiProvider::OllamaOpenAiCompat:
         activeModelId = cfg.AiModelOpenAi;
-        activeProviderLabel = "Ollama (OpenAI-compat)";
+        activeProviderLabel = "OpenAI-compatible local";
+        activeModelFieldKey = PrefsFieldKey::kAiModelOpenAi;
         break;
     }
     if (activeModelId.empty()) {
-        v.Errors.push_back(std::string(activeProviderLabel) + ": model ID required");
+        EmitError(v, activeModelFieldKey, std::string(activeProviderLabel) + ": model ID required");
     }
 
     // --- Base URL well-formedness ---
     if (!cfg.AiBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiBaseUrl)) {
-        v.Errors.push_back("Base URL must start with http:// or https://");
+        EmitError(v, PrefsFieldKey::kAiBaseUrl, "Base URL must start with http:// or https://");
     }
     if (provider == AiProvider::OllamaNative) {
         if (!cfg.AiOllamaBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiOllamaBaseUrl)) {
-            v.Errors.push_back("Ollama base URL must start with http:// or https://");
+            EmitError(v, PrefsFieldKey::kAiOllamaBaseUrl,
+                      "Ollama base URL must start with http:// or https://");
         }
     }
 
     // --- Key format sniff (warnings) ---
+    // Only nag for the hosted-provider key formats. Local-server keys (rare; sometimes used
+    // as a literal "sk-no-key-required" placeholder) don't follow a stable prefix.
     if (provider == AiProvider::OpenAi && !cfg.AiApiKey.empty() && !StartsWith(cfg.AiApiKey, "sk-")) {
-        v.Warnings.push_back("OpenAI: API key doesn't start with 'sk-' - likely malformed");
+        EmitWarning(v, PrefsFieldKey::kAiApiKey,
+                    "OpenAI: API key doesn't start with 'sk-' - likely malformed");
     }
     if (provider == AiProvider::Anthropic && !cfg.AiAnthropicApiKey.empty() &&
         !StartsWith(cfg.AiAnthropicApiKey, "sk-ant-")) {
-        v.Warnings.push_back("Anthropic: API key doesn't start with 'sk-ant-' - likely malformed");
+        EmitWarning(v, PrefsFieldKey::kAiAnthropicApiKey,
+                    "Anthropic: API key doesn't start with 'sk-ant-' - likely malformed");
     }
 
     // --- Unknown model warning (only when catalog non-empty) ---
     if (!activeModelId.empty()) {
         const std::vector<ModelOption> catalog = KnownModels(provider);
         if (!catalog.empty() && !IsKnownModel(provider, activeModelId)) {
-            v.Warnings.push_back(std::string(activeProviderLabel) + ": model '" + activeModelId +
-                                 "' not in known catalog - may not exist");
+            EmitWarning(v, activeModelFieldKey,
+                        std::string(activeProviderLabel) + ": model '" + activeModelId +
+                            "' not in known catalog - may not exist");
         }
     }
 
     // --- Ollama default-URL hint ---
     if (provider == AiProvider::OllamaNative && cfg.AiOllamaBaseUrl.empty()) {
-        v.Warnings.push_back("Ollama: base URL empty; will default to http://localhost:11434");
+        EmitWarning(v, PrefsFieldKey::kAiOllamaBaseUrl,
+                    "Ollama: base URL empty; will default to http://localhost:11434");
     }
 
     return v;

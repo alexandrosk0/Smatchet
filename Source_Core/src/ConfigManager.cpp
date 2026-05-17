@@ -214,8 +214,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["ai_model_ollama"] = config.AiModelOllama;
     j["assistant_panel_open"] = config.AssistantPanelOpen;
     j["assistant_panel_width"] = config.AssistantPanelWidth;
+    j["assistant_panel_on_secondary_side"] = config.AssistantPanelOnSecondarySide;
     j["agents_md_global_path"] = config.AgentsMdGlobalPath;
     j["project_agents_md_path"] = config.ProjectAgentsMdPath;
+    j["agents_md_auto_discover_project"] = config.AgentsMdAutoDiscoverProject;
     j["assistant_context_block_selection"] = config.AssistantContextBlockSelection;
     j["assistant_context_block_visible_rows"] = config.AssistantContextBlockVisibleRows;
     j["assistant_context_block_active_ticket"] = config.AssistantContextBlockActiveTicket;
@@ -595,8 +597,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AssistantPanelOpen = j.value("assistant_panel_open", cfg.AssistantPanelOpen);
             cfg.AssistantPanelWidth = static_cast<float>(
                 j.value("assistant_panel_width", static_cast<double>(cfg.AssistantPanelWidth)));
+            cfg.AssistantPanelOnSecondarySide =
+                j.value("assistant_panel_on_secondary_side", cfg.AssistantPanelOnSecondarySide);
             cfg.AgentsMdGlobalPath = j.value("agents_md_global_path", cfg.AgentsMdGlobalPath);
             cfg.ProjectAgentsMdPath = j.value("project_agents_md_path", cfg.ProjectAgentsMdPath);
+            cfg.AgentsMdAutoDiscoverProject =
+                j.value("agents_md_auto_discover_project", cfg.AgentsMdAutoDiscoverProject);
             cfg.AssistantContextBlockSelection =
                 j.value("assistant_context_block_selection", cfg.AssistantContextBlockSelection);
             cfg.AssistantContextBlockVisibleRows =

@@ -120,14 +120,11 @@ void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layou
 }
 
 void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
-    // The Smatchet Assistant side panel is right-anchored via per-frame SetNextWindowPos +
-    // SetNextWindowSize with ImGuiCond_Always and carries NoSavedSettings — the repair pass
-    // would fight the explicit layout. The panel never calls repairTopLevelWindow itself,
-    // but the early-return is defensive against future call-site mistakes.
-    if (layoutKey && std::strcmp(layoutKey, "assistant_panel") == 0) {
-        return;
-    }
     // Docked windows: size and position are fully managed by the dock node. Do not repair.
+    // (Used to special-case the Smatchet Assistant side panel here because it ran as a
+    // floating non-docked window with ImGuiCond_Always SetNextWindowPos; that layout was
+    // replaced with dock-system integration in 2026-05-17. The IsWindowDocked guard below
+    // already covers the new path.)
     if (ImGui::IsWindowDocked()) {
         return;
     }

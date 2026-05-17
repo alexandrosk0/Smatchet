@@ -7,6 +7,7 @@
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 
@@ -28,17 +29,8 @@
 
 namespace {
 
-constexpr float kMinPanelWidth = 280.0f;
-constexpr float kMaxPanelWidthAbs = 720.0f;
-constexpr float kMaxPanelFraction = 0.45f;
-constexpr float kResizeGripWidth = 4.0f;
 constexpr float kInputRowsTall = 4.0f;
 constexpr int kInputBufCap = 8 * 1024;
-
-float ClampedWidth(float requested, float workSizeX) {
-    const float maxW = (std::min)(kMaxPanelWidthAbs, workSizeX * kMaxPanelFraction);
-    return (std::max)(kMinPanelWidth, (std::min)(requested, maxW));
-}
 
 // UX pillar 2: ConfigManager::Save performs a synchronous JSON encode + atomic
 // file replace; even when the user is only toggling a checkbox the resulting
@@ -47,8 +39,8 @@ float ClampedWidth(float requested, float workSizeX) {
 // captured by value so the worker is independent of the UI-thread cfg state.
 // Each save is small (a few KB), and the rate of saves is bounded by user
 // input frequency, so spawning a fresh thread per save is acceptable for the
-// scenarios that hit this path (panel toggle, checkbox click, width-drag
-// release). Move to a single coalescing worker if profiling shows churn.
+// scenarios that hit this path (panel toggle, checkbox click, swap button).
+// Move to a single coalescing worker if profiling shows churn.
 void ScheduleConfigSaveDetached(const TrackerConfig& cfg) {
     TrackerConfig snapshot = cfg;
     std::thread([snapshot]() {
@@ -68,7 +60,6 @@ void HydrateFromConfigOnce(UiDrawSession& d) {
     }
     s_hydrated = true;
     d.assistantPanelOpen = d.cfg.AssistantPanelOpen;
-    d.assistantPanelWidthLive = d.cfg.AssistantPanelWidth;
     if (d.assistantInputBuf.capacity() < static_cast<size_t>(kInputBufCap)) {
         d.assistantInputBuf.reserve(kInputBufCap);
     }
@@ -77,15 +68,6 @@ void HydrateFromConfigOnce(UiDrawSession& d) {
 void PersistOpenStateImmediate(UiDrawSession& d) {
     if (d.cfg.AssistantPanelOpen != d.assistantPanelOpen) {
         d.cfg.AssistantPanelOpen = d.assistantPanelOpen;
-        ScheduleConfigSaveDetached(d.cfg);
-    }
-}
-
-void PersistWidthDebounced(UiDrawSession& d) {
-    // Width drag committed (mouse released) — persist immediately. The "debounced"
-    // name reflects the contract: only commit on release, never every frame mid-drag.
-    if (std::fabs(d.cfg.AssistantPanelWidth - d.assistantPanelWidthLive) > 0.5f) {
-        d.cfg.AssistantPanelWidth = d.assistantPanelWidthLive;
         ScheduleConfigSaveDetached(d.cfg);
     }
 }
@@ -183,7 +165,9 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
     return AiContextBuilder::BuildAll(inputs);
 }
 
-void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+// Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
+// the keyboard path matches the Send button click; the input buffer is cleared + focus restored.
+bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     // Use a process-static char buffer for InputTextMultiline. Mirroring through a
     // std::string per-frame keeps the rest of the codepaths (Send-button snapshot,
     // Lua glue) free of ImGui-specific resizable callbacks. Pre-seeded from
@@ -207,8 +191,16 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     }
 
     const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
-    ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
-                              ImVec2(-1.0f, inputH));
+
+    // Pillar 4 (aspirational keyboard-nav): Enter sends, Ctrl+Enter inserts newline.
+    // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
+    // semantics so a bare Enter submits and Ctrl+Enter inserts a line break — see
+    // imgui.h flag docs. EnterReturnsTrue makes the call return true on submit.
+    const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue
+                                         | ImGuiInputTextFlags_CtrlEnterForNewLine;
+    const bool enterSubmitted = ImGui::InputTextMultiline(
+        "##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
+        ImVec2(-1.0f, inputH), inputFlags);
     // Mirror char-buf back into the string field every frame so the Send-button click
     // below + the Lua glue see the latest value with no separate poke.
     d.assistantInputBuf.assign(s_inputCharBuf.data());
@@ -216,10 +208,8 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
 
     const bool sendDisabled = d.assistantInFlight || d.assistantInputBuf.empty() || ctrl == nullptr;
-    if (sendDisabled) {
-        ImGui::BeginDisabled();
-    }
-    if (ImGui::Button("Send")) {
+
+    auto dispatchSend = [&]() {
         const uint64_t turnGen = ++d.assistantTurnGen;
         d.assistantInFlight = true;
         d.assistantStreamBuf.clear();
@@ -241,6 +231,22 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
             ctrl->Submit(turnGen, std::move(snapshot), std::move(context));
         }
         d.assistantAutoScrollAtTail = true;
+    };
+
+    bool submittedByKey = false;
+    if (enterSubmitted && !sendDisabled) {
+        dispatchSend();
+        // Re-focus the same multiline input so the user can keep typing without
+        // clicking back in. -1 targets the previously-submitted item.
+        ImGui::SetKeyboardFocusHere(-1);
+        submittedByKey = true;
+    }
+
+    if (sendDisabled) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Send")) {
+        dispatchSend();
     }
     if (sendDisabled) {
         ImGui::EndDisabled();
@@ -254,29 +260,12 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
             }
         }
     }
-}
 
-void DrawResizeGrip(UiDrawSession& d, float panelHeight) {
-    // Place a thin invisible button at the panel's LEFT edge. The panel is right-anchored,
-    // so dragging this grip leftward grows the panel.
-    ImGui::SetCursorPos(ImVec2(0.0f, 0.0f));
-    ImGui::InvisibleButton("##AiAssistantResizeGrip", ImVec2(kResizeGripWidth, panelHeight));
-    if (ImGui::IsItemActive()) {
-        // GetMouseDragDelta is relative to the drag start; using MouseDelta keeps the
-        // calculation incremental and avoids snap-jumps when the cursor leaves the grip.
-        const float dx = ImGui::GetIO().MouseDelta.x;
-        // Right-anchored: leftward drag (negative dx in screen-x) grows the panel.
-        d.assistantPanelWidthLive -= dx;
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
-        const float workW = vp ? vp->WorkSize.x : 1920.0f;
-        d.assistantPanelWidthLive = ClampedWidth(d.assistantPanelWidthLive, workW);
-    }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        PersistWidthDebounced(d);
-    }
-    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    }
+    // Compact help so the keybinding is discoverable on first view.
+    ImGui::SameLine();
+    ImGui::TextDisabled("Enter sends, Ctrl+Enter = newline");
+
+    return submittedByKey;
 }
 
 } // namespace
@@ -289,27 +278,32 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         return;
     }
 
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    if (!vp) {
-        return;
+    // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
+    // owns layout, sizing, and the resize/swap chrome. The panel attaches to the
+    // primary side bar (left) by default and migrates to the secondary side bar
+    // (right) when the user toggles the swap button. A pending-side request fires
+    // SetNextWindowDockID with ImGuiCond_Always so the move actually takes effect;
+    // otherwise FirstUseEver lets the user's saved imgui.ini state win.
+    const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
+    const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
+    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
+    if (d.assistantPendingSideSwap) {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
+        d.assistantPendingSideSwap = false;
+    } else {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
     }
-    const ImVec2 workPos = vp->WorkPos;
-    const ImVec2 workSize = vp->WorkSize;
-    const float w = ClampedWidth(d.assistantPanelWidthLive, workSize.x);
-    d.assistantPanelWidthLive = w; // clamp-back so a saved over-cap width doesn't persist
-
-    ImGui::SetNextWindowPos(ImVec2(workPos.x + workSize.x - w, workPos.y), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(w, workSize.y), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(1.0f);
-
-    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
-                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
-                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 
     if (d.requestAssistantFocus) {
         ImGui::SetNextWindowFocus();
     }
-    if (!ImGui::Begin("##SmatchetAssistantPanel", &d.assistantPanelOpen, kFlags)) {
+
+    // The panel is now a dockable, resizable window — drop the floating-only flags
+    // (NoDocking / NoSavedSettings / NoTitleBar / NoMove / NoResize). NoCollapse is
+    // kept because dock-tab collapse fights the open/close persistence contract.
+    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
+
+    if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
         ImGui::End();
         if (d.requestAssistantFocus) {
             d.requestAssistantFocus = false;
@@ -322,9 +316,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         d.requestAssistantFocus = false;
     }
 
-    // Header strip
-    ImGui::TextUnformatted("Smatchet Assistant");
-    ImGui::SameLine();
+    // Header strip: provider + swap-side toggle.
     {
         AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
         const std::string provider = ctrl ? ctrl->GetActiveProviderName() : std::string();
@@ -335,13 +327,26 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         }
     }
     ImGui::SameLine();
-    // Right-align the close button.
     {
-        const float btnW = ImGui::CalcTextSize("X").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
-        ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - btnW);
-        if (ImGui::SmallButton("X")) {
-            d.assistantPanelOpen = false;
+        // The swap button label inverts to telegraph the destination (where the panel
+        // WILL move). When currently on the left primary side, the label reads "Right"
+        // because clicking moves it to the right. Tooltip clarifies the action.
+        const bool onRight = d.cfg.AssistantPanelOnSecondarySide;
+        const char* swapLabel = onRight ? "<- Left" : "Right ->";
+        if (ImGui::SmallButton(swapLabel)) {
+            d.cfg.AssistantPanelOnSecondarySide = !onRight;
+            d.assistantPendingSideSwap = true;
+            // Moving to the right side bar slot requires the slot to actually be
+            // visible; otherwise the dock node may be empty and the new tab has
+            // nowhere to land. Mirror the existing View-menu toggle pattern so
+            // users don't get a vanishing panel.
+            if (d.cfg.AssistantPanelOnSecondarySide && !d.cfg.ShowSecondarySideBar) {
+                d.cfg.ShowSecondarySideBar = true;
+            }
+            ScheduleConfigSaveDetached(d.cfg);
         }
+        ImGui::SetItemTooltip(onRight ? "Move panel to the left primary side bar."
+                                      : "Move panel to the right secondary side bar.");
     }
     ImGui::Separator();
 
@@ -352,7 +357,6 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     DrawErrorStrip(d);
     DrawContextBlockCheckboxes(d);
     DrawInputAndButtons(app, d, activeView);
-    DrawResizeGrip(d, workSize.y);
 
     ImGui::End();
 

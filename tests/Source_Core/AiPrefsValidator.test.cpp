@@ -191,3 +191,94 @@ TEST_CASE("AiPrefsValidator: out-of-range AiProviderKind clamps to OpenAI") {
     CHECK_FALSE(v.IsOk());
     CHECK(ContainsSubstring(v.Errors, "OpenAI"));
 }
+
+// --- Local OpenAI-compatible (LM Studio / Ollama / LocalAI / vLLM) ---
+// The OllamaOpenAiCompat slot covers any local OpenAI-compatible server.
+// API key is OPTIONAL for these servers - empty key must NOT block save.
+TEST_CASE("AiPrefsValidator: OllamaOpenAiCompat with EMPTY key passes (LM Studio etc are local)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2;          // OllamaOpenAiCompat
+    cfg.AiApiKey.clear();              // empty - must not error for local servers
+    cfg.AiModelOpenAi = "any-local-model";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Errors.empty());
+}
+
+// And even when a key IS supplied for a local server, the 'sk-' format sniff
+// must NOT fire - local servers often accept any token or use exotic formats.
+TEST_CASE("AiPrefsValidator: OllamaOpenAiCompat with non-sk- key produces no warning") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2;
+    cfg.AiApiKey = "anything";
+    cfg.AiModelOpenAi = "local-model";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(ContainsSubstring(v.Warnings, "sk-"));
+}
+
+// OllamaNative has always been keyless; reaffirm here so the pattern is uniform.
+TEST_CASE("AiPrefsValidator: OllamaNative with EMPTY key passes (no key required)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 3;          // OllamaNative
+    cfg.AiApiKey.clear();
+    cfg.AiAnthropicApiKey.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    // OllamaNative emits a warning about default-URL when AiOllamaBaseUrl
+    // is blank but no key error.
+    CHECK(v.IsOk());
+}
+
+// --- Structured PrefsValidationIssue records (Fix 5b) ---
+// Each emitted error / warning must carry a FieldKey mapping so the
+// Preferences UI can render per-field glyphs.
+TEST_CASE("AiPrefsValidator: missing OpenAI key issue carries FieldKey kAiApiKey") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    REQUIRE_FALSE(v.Issues.empty());
+    bool sawKeyIssue = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiApiKey) {
+            CHECK(iss.Severity == smatchet::ai::PrefsSeverity::Error);
+            CHECK(iss.Message.find("OpenAI") != std::string::npos);
+            sawKeyIssue = true;
+        }
+    }
+    CHECK(sawKeyIssue);
+}
+
+TEST_CASE("AiPrefsValidator: malformed key warning carries FieldKey + Warning severity") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "not-sk-prefix-key";
+    cfg.AiModelOpenAi = "gpt-4o-mini";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk()); // warning only
+    bool sawKeyWarn = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiApiKey &&
+            iss.Severity == smatchet::ai::PrefsSeverity::Warning) {
+            sawKeyWarn = true;
+        }
+    }
+    CHECK(sawKeyWarn);
+}
+
+TEST_CASE("AiPrefsValidator: bad AiBaseUrl issue carries FieldKey kAiBaseUrl") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-x";
+    cfg.AiBaseUrl = "not-a-url";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    bool sawBaseIssue = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiBaseUrl) {
+            CHECK(iss.Severity == smatchet::ai::PrefsSeverity::Error);
+            sawBaseIssue = true;
+        }
+    }
+    CHECK(sawBaseIssue);
+}

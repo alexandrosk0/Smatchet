@@ -386,14 +386,125 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 #endif
 #if defined(SMATCHET_WITH_AI)
         if (ImGui::BeginTabItem("Assistant")) {
+            // --- Sticky validation banner — rendered FIRST so it stays at the top of
+            // the tab regardless of where the user has scrolled. Errors block save;
+            // warnings inform but pass through. Recomputed every frame from the live
+            // cfg state (pure-logic, no I/O).
+            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);
+
+            auto renderBanner = [&]() {
+                if (validation.Errors.empty() && validation.Warnings.empty()) {
+                    return;
+                }
+                const float lineH = ImGui::GetTextLineHeightWithSpacing();
+                const float pad = ImGui::GetStyle().FramePadding.y * 2.0f + 4.0f;
+                if (!validation.Errors.empty()) {
+                    const ImVec4 kErrFill(0.35f, 0.10f, 0.10f, 1.0f);
+                    const ImVec4 kErrText(1.0f, 0.55f, 0.55f, 1.0f);
+                    // +1 for the header line; bullets compact via line-height.
+                    const float h = lineH * static_cast<float>(validation.Errors.size() + 1) + pad;
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, kErrFill);
+                    ImGui::BeginChild("##AiPrefsErrorBanner", ImVec2(0.0f, h), true,
+                                      ImGuiWindowFlags_NoScrollbar);
+                    ImGui::PushStyleColor(ImGuiCol_Text, kErrText);
+                    ImGui::TextWrapped("(!) %d error%s block save - settings will NOT persist until fixed:",
+                                       static_cast<int>(validation.Errors.size()),
+                                       validation.Errors.size() == 1 ? "" : "s");
+                    for (const auto& e : validation.Errors) {
+                        ImGui::BulletText("%s", e.c_str());
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::EndChild();
+                    ImGui::PopStyleColor();
+                }
+                if (!validation.Warnings.empty()) {
+                    const ImVec4 kWarnFill(0.32f, 0.26f, 0.06f, 1.0f);
+                    const ImVec4 kWarnText(1.0f, 0.90f, 0.45f, 1.0f);
+                    const float h = lineH * static_cast<float>(validation.Warnings.size() + 1) + pad;
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, kWarnFill);
+                    ImGui::BeginChild("##AiPrefsWarnBanner", ImVec2(0.0f, h), true,
+                                      ImGuiWindowFlags_NoScrollbar);
+                    ImGui::PushStyleColor(ImGuiCol_Text, kWarnText);
+                    ImGui::TextWrapped("Warnings (settings still save):");
+                    for (const auto& w : validation.Warnings) {
+                        ImGui::BulletText("%s", w.c_str());
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::EndChild();
+                    ImGui::PopStyleColor();
+                }
+                ImGui::Spacing();
+            };
+            renderBanner();
+
+            // Helper that gates ConfigManager::Save on validation.IsOk(). Buffer mutations
+            // still take effect on the in-memory cfg so the user can keep editing;
+            // disk-level persistence is held back until the validator clears. A toast
+            // surfaces the blocked state at most once every 4 s to avoid spam during
+            // each-keystroke autosave.
+            static std::chrono::steady_clock::time_point s_lastBlockedToastAt{};
+            auto saveIfValid = [&](const char* /*originDebugLabel*/) {
+                if (validation.IsOk()) {
+                    ConfigManager::Save(d.cfg);
+                    return;
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (now - s_lastBlockedToastAt >= std::chrono::seconds(4)) {
+                    s_lastBlockedToastAt = now;
+                    SmatchetToastManager::Instance().Push(
+                        std::string("Preferences"),
+                        std::string("Preferences not saved - fix the highlighted errors above."),
+                        ToastType::Warning, 4000);
+                }
+            };
+
+            // Map a field key to its per-issue glyph rendered next to the input. Pure
+            // display — no state. The most-severe issue for the field wins.
+            auto fieldIssueFor = [&](const char* key) -> const smatchet::ai::PrefsValidationIssue* {
+                if (key == nullptr || *key == '\0') {
+                    return nullptr;
+                }
+                const smatchet::ai::PrefsValidationIssue* found = nullptr;
+                for (const auto& issue : validation.Issues) {
+                    if (issue.FieldKey != key) {
+                        continue;
+                    }
+                    if (found == nullptr) {
+                        found = &issue;
+                        continue;
+                    }
+                    // Promote to Error if a later Error appears for the same field.
+                    if (issue.Severity == smatchet::ai::PrefsSeverity::Error &&
+                        found->Severity == smatchet::ai::PrefsSeverity::Warning) {
+                        found = &issue;
+                    }
+                }
+                return found;
+            };
+            auto renderFieldGlyph = [&](const char* fieldKey) {
+                const smatchet::ai::PrefsValidationIssue* issue = fieldIssueFor(fieldKey);
+                if (issue == nullptr) {
+                    return;
+                }
+                const bool isError = (issue->Severity == smatchet::ai::PrefsSeverity::Error);
+                const ImVec4 col = isError ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                                           : ImVec4(1.0f, 0.85f, 0.30f, 1.0f);
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, col);
+                ImGui::TextUnformatted(isError ? "(!)" : "(~)");
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", issue->Message.c_str());
+                }
+            };
+
             ImGui::TextUnformatted("agents.md harness");
             ImGui::Separator();
             ImGui::Spacing();
             ImGui::TextWrapped(
                 "agents.md files supply per-project + global instructions injected into every Assistant turn. "
                 "The global layer defaults to %%LOCALAPPDATA%%/Smatchet/agents.md when blank; the project layer is "
-                "discovered by walking up from the current working directory unless an explicit override is set "
-                "below. Each layer is capped at 64 KB.");
+                "explicit via the Project path field below. Each layer is capped at 64 KB.");
             ImGui::Spacing();
 
             // Local input buffers — sized large enough for typical filesystem paths
@@ -413,12 +524,24 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                   "Override to point at a checked-in shared file if your team keeps one.");
             const bool projectChanged = ImGui::InputText("Project agents.md path (optional override)",
                                                          s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf));
-            ImGui::SetItemTooltip("When set, this exact path is used as the project layer instead of walking up "
-                                  "from the working directory.");
-            if (globalChanged || projectChanged) {
+            ImGui::SetItemTooltip("When set, this exact path is used as the project layer. Leave blank to disable "
+                                  "the project layer entirely unless 'Auto-discover' is enabled below.");
+            // Opt-in walk-up discovery checkbox — default OFF so Smatchet running from inside
+            // a source tree does not silently pick up that repo's AGENTS.md as the assistant
+            // prompt. The flag plumbs through AgentsMdLoader::LoadLayered.
+            bool autoDiscover = d.cfg.AgentsMdAutoDiscoverProject;
+            const bool autoDiscoverChanged = ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)",
+                                                              &autoDiscover);
+            ImGui::SetItemTooltip("When OFF (default), only the Global file and the explicit Project path above are "
+                                  "used. Smatchet's own AGENTS.md and any unrelated parent-repo AGENTS.md will not "
+                                  "be picked up automatically. Turn ON for old behavior (walks up the cwd chain).");
+            if (autoDiscoverChanged) {
+                d.cfg.AgentsMdAutoDiscoverProject = autoDiscover;
+            }
+            if (globalChanged || projectChanged || autoDiscoverChanged) {
                 d.cfg.AgentsMdGlobalPath = s_agentsMdGlobalBuf;
                 d.cfg.ProjectAgentsMdPath = s_projectAgentsMdBuf;
-                ConfigManager::Save(d.cfg);
+                saveIfValid("agents.md changed");
                 // Invalidate the worker-side agents.md cache so the next turn
                 // re-reads from disk instead of serving the stale blob.
                 if (app.HasAiAssistantController()) {
@@ -429,28 +552,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             ImGui::TextUnformatted("Provider");
             ImGui::Spacing();
-
-            // Live validation - recomputed every frame (pure-logic, no I/O).
-            // Errors block save with a red banner; warnings inform with yellow.
-            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);
-            if (!validation.Errors.empty()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-                ImGui::TextWrapped("Save blocked - fix these errors:");
-                for (const auto& e : validation.Errors) {
-                    ImGui::BulletText("%s", e.c_str());
-                }
-                ImGui::PopStyleColor();
-                ImGui::Spacing();
-            }
-            if (!validation.Warnings.empty()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f));
-                ImGui::TextWrapped("Warnings:");
-                for (const auto& w : validation.Warnings) {
-                    ImGui::BulletText("%s", w.c_str());
-                }
-                ImGui::PopStyleColor();
-                ImGui::Spacing();
-            }
 
             // Provider Combo — enumerated via AiClientFactory so display order stays
             // stable across builds and matches the AiProvider enum (load-bearing for
@@ -471,7 +572,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
                              static_cast<int>(providerLabels.size()))) {
                 d.cfg.AiProviderKind = static_cast<int>(providers[providerIdx].Kind);
-                ConfigManager::Save(d.cfg);
+                saveIfValid("provider changed");
             }
             const AiProvider selectedKind = providers[providerIdx].Kind;
 
@@ -501,11 +602,18 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
             ImGui::Spacing();
             if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
-                const bool keyChanged = ImGui::InputText("OpenAI / compat API key", s_openAiKeyBuf,
+                const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
+                const char* keyLabel = isLocalCompat ? "API key (optional for local servers)"
+                                                     : "OpenAI / compat API key";
+                const bool keyChanged = ImGui::InputText(keyLabel, s_openAiKeyBuf,
                                                          sizeof(s_openAiKeyBuf), ImGuiInputTextFlags_Password);
                 ImGui::SetItemTooltip(
-                    "OpenAI / Azure / Groq / Together / Ollama-OpenAI-compat key. Stored DPAPI-protected at rest "
-                    "(Windows); plaintext fallback on other OS.");
+                    isLocalCompat
+                        ? "Local OpenAI-compatible servers (LM Studio / Ollama / LocalAI / vLLM) usually accept any "
+                          "value or no key at all. Leave blank if your server is unauthenticated."
+                        : "OpenAI / Azure / Groq / Together key. Stored DPAPI-protected at rest "
+                          "(Windows); plaintext fallback on other OS.");
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiApiKey);
                 // Model dropdown when the provider has a published catalog.
                 // Falls back to a free-form InputText otherwise (OllamaOpenAi
                 // surfaces here, but its models are local + user-defined).
@@ -529,33 +637,54 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
                     }
                     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
-                    if (ImGui::Combo("OpenAI model", &comboIdx, displayPtrs.data(),
+                    const char* modelLabel = isLocalCompat ? "Model (local server name)" : "OpenAI model";
+                    if (ImGui::Combo(modelLabel, &comboIdx, displayPtrs.data(),
                                      static_cast<int>(displayPtrs.size()))) {
                         std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s",
                                       catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
                         modelChanged = true;
                     }
+                    renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiModelOpenAi);
                     if (selectedIdx < 0 && s_openAiModelBuf[0] != '\0') {
                         ImGui::SameLine();
                         ImGui::TextDisabled("(custom: %s)", s_openAiModelBuf);
                     }
-                    if (ImGui::CollapsingHeader("Custom OpenAI model ID (advanced)")) {
+                    if (ImGui::CollapsingHeader("Custom model ID (advanced)")) {
                         if (ImGui::InputText("##openai_custom", s_openAiModelBuf, sizeof(s_openAiModelBuf))) {
                             modelChanged = true;
                         }
                     }
                 } else {
-                    modelChanged = ImGui::InputText("OpenAI model", s_openAiModelBuf, sizeof(s_openAiModelBuf));
-                    ImGui::SetItemTooltip("OpenAI-compatible model identifier.");
+                    const char* modelLabel = isLocalCompat ? "Model (local server name)" : "OpenAI model";
+                    modelChanged = ImGui::InputText(modelLabel, s_openAiModelBuf, sizeof(s_openAiModelBuf));
+                    ImGui::SetItemTooltip(
+                        isLocalCompat
+                            ? "Free-form: the model name your local server reports. For LM Studio this is the "
+                              "loaded file (e.g. 'meta-llama/Llama-3.2-3B-Instruct'); for Ollama use the name "
+                              "from 'ollama list'."
+                            : "OpenAI-compatible model identifier.");
+                    renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiModelOpenAi);
                 }
-                const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
-                ImGui::SetItemTooltip("Leave blank for https://api.openai.com. Override for Azure / Groq / Together "
-                                      "/ Ollama-OpenAI-compat endpoints. The /v1/chat/completions path is appended.");
+                bool baseChanged = false;
+                if (isLocalCompat) {
+                    baseChanged = ImGui::InputTextWithHint(
+                        "Base URL", "http://localhost:1234/v1 (LM Studio)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
+                    ImGui::SetItemTooltip(
+                        "Local OpenAI-compatible endpoint. LM Studio defaults to http://localhost:1234/v1; Ollama's "
+                        "compat endpoint is http://localhost:11434/v1; LocalAI / vLLM expose their own. The "
+                        "/v1/chat/completions path is appended automatically.");
+                } else {
+                    baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
+                    ImGui::SetItemTooltip(
+                        "Leave blank for https://api.openai.com. Override for Azure / Groq / Together endpoints. "
+                        "The /v1/chat/completions path is appended.");
+                }
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiBaseUrl);
                 if (keyChanged || modelChanged || baseChanged) {
                     d.cfg.AiApiKey = s_openAiKeyBuf;
                     d.cfg.AiModelOpenAi = s_openAiModelBuf;
                     d.cfg.AiBaseUrl = s_baseUrlBuf;
-                    ConfigManager::Save(d.cfg);
+                    saveIfValid("openai/compat field changed");
                 }
             } else if (selectedKind == AiProvider::Anthropic) {
                 const bool keyChanged = ImGui::InputText("Anthropic API key", s_anthropicKeyBuf,
@@ -563,6 +692,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip(
                     "Anthropic API key (sk-ant-...). Stored DPAPI-protected at rest (Windows); plaintext fallback "
                     "on other OS.");
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiAnthropicApiKey);
                 bool modelChanged = false;
                 const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(AiProvider::Anthropic);
                 if (!catalog.empty()) {
@@ -589,6 +719,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                       catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
                         modelChanged = true;
                     }
+                    renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiModelAnthropic);
                     if (selectedIdx < 0 && s_anthropicModelBuf[0] != '\0') {
                         ImGui::SameLine();
                         ImGui::TextDisabled("(custom: %s)", s_anthropicModelBuf);
@@ -602,29 +733,33 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     modelChanged =
                         ImGui::InputText("Anthropic model", s_anthropicModelBuf, sizeof(s_anthropicModelBuf));
                     ImGui::SetItemTooltip("Anthropic model identifier.");
+                    renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiModelAnthropic);
                 }
                 const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
                 ImGui::SetItemTooltip("Leave blank for https://api.anthropic.com. Override only if you're routing "
                                       "through an Anthropic-compatible proxy.");
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiBaseUrl);
                 if (keyChanged || modelChanged || baseChanged) {
                     d.cfg.AiAnthropicApiKey = s_anthropicKeyBuf;
                     d.cfg.AiModelAnthropic = s_anthropicModelBuf;
                     d.cfg.AiBaseUrl = s_baseUrlBuf;
-                    ConfigManager::Save(d.cfg);
+                    saveIfValid("anthropic field changed");
                 }
             } else if (selectedKind == AiProvider::OllamaNative) {
                 ImGui::TextDisabled("Ollama is local — no API key required.");
                 const bool modelChanged = ImGui::InputText("Ollama model", s_ollamaModelBuf, sizeof(s_ollamaModelBuf));
                 ImGui::SetItemTooltip("Locally-installed model name. e.g. llama3, qwen2.5, mistral, "
                                       "deepseek-r1. Run `ollama list` to see what's installed.");
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiModelOllama);
                 const bool baseChanged =
                     ImGui::InputText("Ollama base URL", s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf));
                 ImGui::SetItemTooltip(
                     "Default http://localhost:11434. Override for a remote Ollama daemon on the LAN.");
+                renderFieldGlyph(smatchet::ai::PrefsFieldKey::kAiOllamaBaseUrl);
                 if (modelChanged || baseChanged) {
                     d.cfg.AiModelOllama = s_ollamaModelBuf;
                     d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
-                    ConfigManager::Save(d.cfg);
+                    saveIfValid("ollama-native field changed");
                 }
             }
             ImGui::EndTabItem();

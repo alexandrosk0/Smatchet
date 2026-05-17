@@ -50,9 +50,37 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-side-panel · Hotfix-batch-2 · p0-p1-retrospective-sweep · status: claimed
+### ai-assistant-fixes-batch-1 · slice-1 · status: in-flight
 
-- **Branch**: `fix/ai-feature-p0-p1-hotfix`
+- **Branch**: `feat/ai-assistant-fixes-batch-1`
+- **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
+- **Originating plan**: orchestrator-direct (5 user-reported fixes; no design doc)
+- **Claimed write set**:
+  - `Source_Core/include/ConfigManager.h` (MOD — 2 new TrackerConfig fields)
+  - `Source_Core/src/ConfigManager.cpp` (MOD — serialize + j.value() defaults)
+  - `Source_Core/src/SmatchetAiAssistantUi.cpp` (MOD — Fix 1 dock + Fix 2 Enter)
+  - `Source_Core/include/SmatchetAiAssistantUi.h` (MOD — if needed)
+  - `Source_Core/src/SmatchetUI.cpp` (MOD — Fix 1 repairTopLevelWindow tweak)
+  - `Source_Core/include/SmatchetUiSession.h` (MOD — drop assistantPanelWidthLive)
+  - `Source_Core/include/AgentsMdLoader.h` (MOD — Fix 3 opt-in flag)
+  - `Source_Core/src/AgentsMdLoader.cpp` (MOD — Fix 3)
+  - `Source_Core/src/AiContextBuilder.cpp` (MOD — Fix 3 call-site)
+  - `Source_Core/src/AiClientFactory.cpp` (MOD — Fix 4 relabel)
+  - `Source_Core/include/AiPrefsValidator.h` (MOD — Fix 4 + Fix 5b)
+  - `Source_Core/src/AiPrefsValidator.cpp` (MOD — Fix 4 + Fix 5b)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — Fix 3 + Fix 4 + Fix 5)
+  - `tests/Source_Core/AgentsMdLoader.test.cpp` (MOD — Fix 3)
+  - `tests/Source_Core/AiPrefsValidator.test.cpp` (MOD — Fix 4 + Fix 5b)
+  - `scripts/dev/manual-ai-lmstudio-send.sh` (NEW — Fix 4)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/SmatchetDockNodeIds.h`, `Source_Core/include/Views.h`, `Source_Core/include/AppController.h`, `Source_Core/include/AiAssistantController.h`.
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — claimed.
+- **Cleared by**: TBD PR.
+
+### ai-assistant-side-panel · Hotfix-batch-2 · p0-p1-retrospective-sweep · status: shipped (PR #176 merged at 2ef403e)
+
+- **Branch**: `fix/ai-feature-p0-p1-hotfix` (deleted)
 - **Owner agent**: `orchestrator`
 - **Originating plan**: orchestrator-direct (retrospective review of [`docs/design/applied/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
 - **Claimed write set**:
@@ -71,8 +99,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `Source_Core/src/AppController.cpp` (MOD — no lazy ctor post-shutdown)
 - **Read-only adjacency**: `Source_Core/include/AppController.h`, `Source_Core/include/SmatchetUiSession.h`, `Source_Core/include/ConfigManager.h`, `Source_Core/include/BackendAuditTrail.h`.
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — claimed.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#176](https://github.com/alexandrosk0/Smatchet/pull/176) at sha `2ef403e`.
+- **Cleared by**: PR `#176` merged at `2ef403e`.
 
 ### ai-debug-cli-and-prefs-validation · slice-1 · status: shipped (PR #174 merged at 8ba3dc3)
 
