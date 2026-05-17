@@ -72,3 +72,20 @@ The implementing agent must, in the same commit (or the commit that drops the fr
 Per AGENTS.md § Plan revision after implementation. Plans that ship without revision turn stale and are the main cost of multi-week feature work.
 
 ✅ END — architect · opus/high · read-only · v1
+
+## Implementation log
+
+- `<this PR>` · drop `friend class LuaAutomationHost;` at `AppController.h:109`; convert `LuaAutomationHost` ctor to `= default`; remove dead `AppController& app_;` field + `class AppController;` forward-decl + `#include "AppController.h"`; update sole ctor call site `AppController.cpp:1062` to drop `*this`. Track B (`large-files-and-phase-2.md`) closed: B1+B2 via PR #127, B3 superseded by PR #144 + dead-code drop here.
+
+## Deviations from plan
+
+- **No deviations.** Sketch in § Next slice sketch executed verbatim. The `class AppController;` forward declaration was already absent from the new `LuaAutomationHost.h` (defaulted ctor + no friend means no need for the forward-decl); plan called for its removal — outcome equivalent.
+- **`BACKLOG_CODE_REVIEW.md` references in source comments** (flagged as an Open question by the architect): not touched in this slice. The two relevant comment blocks were the `friend class LuaAutomationHost;` doc + the header doc-comment on `LuaAutomationHost.h` — both deleted as part of the friend-drop / header-rewrite, so the references are gone without a separate sweep. No follow-up backlog entry needed.
+
+## Verification
+
+- **Bucket A (build)**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target compile green.
+- **Bucket A (test-all)**: `bash scripts/dev/test-all.sh` — `SmatchetTests` + `SmatchetLuaTests` pass; 8 pre-existing sidecar failures unchanged.
+- **Bucket D (sanitizer)**: `ninja-test-msys2` runs under ASan/UBSan — green.
+- **Closure rule**: `grep -n 'app_' Source_Core/src/LuaAutomationHost.cpp Source_Core/include/LuaAutomationHost.h` empty; `grep -n 'friend class LuaAutomationHost' Source_Core/include/AppController.h` empty.
+- **Mutation sanity**: closure-grep evidence (no `app_` references inside the TU + no `AppController.h` include) is the canonical proof that the include surgery has teeth — adding any `AppController*` reference to the cpp post-surgery would fail to compile. The mutation experiment was prepared then reverted before commit; the proof is structural rather than dynamic this slice.

@@ -50,6 +50,24 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### lua-host-friend-drop · slice-1 · status: in-flight
+
+- **Branch**: `feat/lua-host-friend-drop`
+- **Owner agent**: `lua-binder`
+- **Originating plan**: [`docs/design/lua-host-friend-drop.md`](./lua-host-friend-drop.md)
+- **Claimed write set**:
+  - `Source_Core/include/AppController.h` (drop `friend class LuaAutomationHost;` + surrounding comment block at lines 105-109; drop `class LuaAutomationHost;` forward-decl if no longer needed)
+  - `Source_Core/include/LuaAutomationHost.h` (default ctor; remove `AppController& app_;` field + forward-decl; rewrite header doc-comment)
+  - `Source_Core/src/LuaAutomationHost.cpp` (drop `#include "AppController.h"`; simplify ctor body)
+  - `Source_Core/src/AppController.cpp` (line 1062 — `make_unique<LuaAutomationHost>()` with no `*this` arg)
+  - `docs/design/applied/large-files-and-phase-2.md` (B1/B2 shipped via PR #127 — `Deps` suffix; B3 superseded by PR #144 + this PR; append `## Implementation log` + `## Deviations from plan` + `## Verification`)
+  - `docs/design/lua-host-friend-drop.md` (append `## Implementation log` + `## Deviations from plan` + `## Verification`)
+  - `docs/design/_plan-locks.md` (this entry + Track B status flip)
+- **Read-only adjacency**: `Source_Core/src/AppController_LuaBindings.cpp`, `Source_Core/src/AppController_LuaBindingsCore.cpp` (verification no friend-channel breakage)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — dispatched.
+- **Cleared by**: TBD PR.
+
 ### test-suite-expansion-completion · Phase-5-preflight · mcp-jsonrpc-pure-tu-split · status: shipped (PR #141 merged at cfab599)
 
 - **Branch**: `feat/mcp-jsonrpc-pure-tu-split` (deleted)
@@ -464,20 +482,19 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — converted `claimed` → `abandoned` by the Phase-5 pre-flight unblocker so the lock file matches reality.
 - **Cleared by**: superseded.
 
-### large-files-and-phase-2 · Track B (B1–B3 + fix-up) · status: on-hold
+### large-files-and-phase-2 · Track B (B1–B3 + fix-up) · status: shipped via PR #127 (B1+B2) + PR #144 (B3 superseded) + this PR (friend drop)
 
 - **Branch**: TBD per slice (B1: `claude/offline-queue-icache-access`, B2: TBD, B3: TBD)
 - **Owner agent**: `offline-sync` (B1, B2), `lua-binder` (B3)
 - **Originating plan**: [`docs/design/applied/large-files-and-phase-2.md`](./applied/large-files-and-phase-2.md) § Track B
-- **Reason on-hold**: overlapping write set with `test-suite-expansion` phases 2-9 (`TicketSyncService.cpp`, `ConfigManager.cpp`, `AppController.h`, `tests/CMakeLists.txt`). Resuming Track B before those test phases land would force a multi-way rebase that defeats both efforts.
-- **Resume gate**: `test-suite-expansion` § Implementation log shows phase 9 shipped, OR the user explicitly green-lights an earlier resume with a narrower-than-umbrella write set.
+- **Reason on-hold (historical)**: overlapping write set with `test-suite-expansion` phases 2-9 (`TicketSyncService.cpp`, `ConfigManager.cpp`, `AppController.h`, `tests/CMakeLists.txt`). Resuming Track B before those test phases landed would have forced a multi-way rebase that defeated both efforts. Resume gate cleared by PR #148 + #149.
 - **Claimed write set on resume** (preview — re-asserted at resume time):
-  - B1: `Source_Core/include/ICacheAccess.h` (NEW), `Source_Core/include/AppController.h`, `Source_Core/src/AppController.cpp`, `Source_Core/src/AppController_*.cpp` (rename `Cache` → `cache_`), `Source_Core/include/OfflineQueueService.h`, `Source_Core/src/OfflineQueueService.cpp`, `tests/CMakeLists.txt` (if rename cascades to test-rig-compiled sources)
-  - B2: `Source_Core/include/ITicketSyncHost.h` (NEW), `Source_Core/include/AppController.h`, `Source_Core/src/AppController.cpp`, `Source_Core/include/TicketSyncService.h`, `Source_Core/src/TicketSyncService.cpp`
-  - B3a-d: `Source_Core/include/LuaAutomationHost.h`, `Source_Core/src/LuaAutomationHost.cpp`, `Source_Core/src/AppController_LuaBindings.cpp`, `Source_Core/src/AppController_LuaStubs.cpp`, `Source_Core/include/AppController.h`, `Source_Core/src/AppController.cpp` (Lua state + worker thread + Phase-2 `ITrackerActions` interface)
+  - B1: shipped as `IOfflineQueueDeps` (PR #127) — `Deps` suffix naming, not `Access`/`Host`. Behaviour equivalent.
+  - B2: shipped as `ITicketSyncDeps` (PR #127) — `Deps` suffix naming, not `Access`/`Host`. Behaviour equivalent.
+  - B3a-d: **superseded** by PR #144 (`ILuaBindingHost` TU lift — opposite architectural choice; AppController stays binding owner). Residual friend drops this PR via dead-code removal.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — held by user after parallel `test-suite-expansion` plan surfaced. Track A (5 mechanical splits) already shipped; Track B paused at the boundary.
-- **Cleared by**: TBD (gate above).
+- **Last update**: 2026-05-16 — closed via lua-host-friend-drop slice (this PR). All three friend-class declarations now removed from `AppController.h`.
+- **Cleared by**: PR #127 (`b5fc194`) + PR #144 (`7e6762d`) + TBD (this PR).
 
 ### ai-assistant-side-panel · Phase A-narrowed · status: in-flight
 
