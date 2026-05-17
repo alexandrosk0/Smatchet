@@ -49,16 +49,15 @@ namespace smatchet {
 namespace cmd {
 
 using builtin_detail::MakeCommand;
-using builtin_detail::PInt;
-using builtin_detail::PString;
 
 #if defined(SMATCHET_WITH_AI)
 
+using builtin_detail::PInt;
+using builtin_detail::PString;
+
 namespace {
 
-bool ResolveProvider(const std::string& key, AiProvider& out) {
-    return AiClientFactory::ProviderFromString(key, out);
-}
+bool ResolveProvider(const std::string& key, AiProvider& out) { return AiClientFactory::ProviderFromString(key, out); }
 
 const char* AiProviderDisplayName(AiProvider p) {
     switch (p) {
@@ -142,10 +141,16 @@ nlohmann::json BuildAnthropicBody(const std::string& model, const std::string& s
     return body;
 }
 
-nlohmann::json BuildOpenAiBody(const std::string& model, const std::string& systemPrompt, const std::string& prompt) {
+nlohmann::json BuildOpenAiBody(const std::string& model, const std::string& systemPrompt, const std::string& prompt,
+                               int maxTokens) {
     nlohmann::json body;
     body["model"] = model;
     body["stream"] = true;
+    // Mirror OpenAiClient::BuildChatBody — always emit max_tokens so the
+    // debug dump matches the wire body that reasoning-style models depend on
+    // (gemma-4-31b, o1-style) to reach `content` instead of exhausting on
+    // `reasoning_content`.
+    body["max_tokens"] = (maxTokens > 0) ? maxTokens : 4096;
     nlohmann::json messages = nlohmann::json::array();
     if (!systemPrompt.empty()) {
         nlohmann::json sys;
@@ -181,6 +186,18 @@ nlohmann::json BuildOllamaNativeBody(const std::string& model, const std::string
     return body;
 }
 
+// Mirror OpenAiClient::ResolveBaseUrl — strip a trailing "/v1" or "/v1/" so
+// debug dumps match the wire body when callers configure the natural
+// LM Studio / Ollama-OpenAI-compat / OpenAI-docs form ending in /v1.
+std::string StripOpenAiV1Suffix(std::string base) {
+    if (base.size() >= 4 && base.compare(base.size() - 4, 4, "/v1/") == 0) {
+        base.resize(base.size() - 4);
+    } else if (base.size() >= 3 && base.compare(base.size() - 3, 3, "/v1") == 0) {
+        base.resize(base.size() - 3);
+    }
+    return base;
+}
+
 std::string ResolveEndpointUrl(AiProvider provider, const std::string& baseUrl) {
     auto join = [](std::string base, const char* path) {
         if (base.empty()) {
@@ -199,7 +216,8 @@ std::string ResolveEndpointUrl(AiProvider provider, const std::string& baseUrl) 
     case AiProvider::OllamaOpenAiCompat:
     case AiProvider::OpenAi:
     default:
-        return join(baseUrl.empty() ? std::string("https://api.openai.com") : baseUrl, "/v1/chat/completions");
+        return join(StripOpenAiV1Suffix(baseUrl.empty() ? std::string("https://api.openai.com") : baseUrl),
+                    "/v1/chat/completions");
     }
 }
 
@@ -209,14 +227,12 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
     // --- ai.list-models -----------------------------------------------------
     {
         Command c = MakeCommand(
-            "ai.list-models",
-            "List the hardcoded public model catalog for an AI provider (no network).",
+            "ai.list-models", "List the hardcoded public model catalog for an AI provider (no network).",
             [](const nlohmann::json& args, const CommandContext&) {
                 const std::string providerStr = args.value("provider", std::string("openai"));
                 AiProvider p;
                 if (!ResolveProvider(providerStr, p)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "unknown provider '" + providerStr + "'");
+                    return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
                 }
                 const std::vector<smatchet::ai::ModelOption> models = smatchet::ai::KnownModels(p);
                 nlohmann::json arr = nlohmann::json::array();
@@ -250,8 +266,7 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 const std::string providerStr = args.value("provider", std::string("openai"));
                 AiProvider provider;
                 if (!ResolveProvider(providerStr, provider)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "unknown provider '" + providerStr + "'");
+                    return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
                 }
                 const std::string prompt = args.value("prompt", std::string());
                 if (prompt.empty()) {
@@ -284,7 +299,7 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 case AiProvider::OpenAi:
                 case AiProvider::OllamaOpenAiCompat:
                 default:
-                    body = BuildOpenAiBody(model, systemPrompt, prompt);
+                    body = BuildOpenAiBody(model, systemPrompt, prompt, 0);
                     headers["accept"] = "text/event-stream";
                     headers["content-type"] = "application/json";
                     headers["cache-control"] = "no-cache";
@@ -323,8 +338,7 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 const std::string providerStr = args.value("provider", std::string("openai"));
                 AiProvider provider;
                 if (!ResolveProvider(providerStr, provider)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "unknown provider '" + providerStr + "'");
+                    return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
                 }
                 std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
                 if (!client) {
@@ -363,8 +377,7 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 const std::string providerStr = args.value("provider", std::string("openai"));
                 AiProvider provider;
                 if (!ResolveProvider(providerStr, provider)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "unknown provider '" + providerStr + "'");
+                    return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
                 }
                 const std::string prompt = args.value("prompt", std::string());
                 if (prompt.empty()) {
@@ -474,7 +487,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 // redacted, but extra defence-in-depth against log spam if a
                 // future provider returns a giant HTML stack trace.
                 if (responseBodyExcerpt.size() > 1024) {
-                    responseBodyExcerpt = responseBodyExcerpt.substr(0, 1024) + "...";
+                    responseBodyExcerpt.resize(1024);
+                    responseBodyExcerpt += "...";
                 }
                 out["response_body_excerpt"] = responseBodyExcerpt;
                 return CommandResult::Success(std::move(out));
@@ -503,14 +517,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
             [](const nlohmann::json&, const CommandContext&) {
                 const TrackerConfig cfg = ConfigManager::Load();
                 const smatchet::ai::PrefsValidation v = smatchet::ai::ValidateAiPrefs(cfg);
-                nlohmann::json errs = nlohmann::json::array();
-                for (const auto& e : v.Errors) {
-                    errs.push_back(e);
-                }
-                nlohmann::json warns = nlohmann::json::array();
-                for (const auto& w : v.Warnings) {
-                    warns.push_back(w);
-                }
+                nlohmann::json errs = v.Errors;
+                nlohmann::json warns = v.Warnings;
                 nlohmann::json out;
                 out["ok"] = v.IsOk();
                 out["errors"] = std::move(errs);
@@ -547,8 +555,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
     // Build is missing the AI surface entirely. Register stub commands so the
     // CLI/MCP/Palette enumerate them and emit a coherent error rather than
     // unknown-command from the registry.
-    static const char* const kNames[] = {"ai.list-models",   "ai.dump-request",   "ai.probe",
-                                         "ai.send-once",     "ai.validate-prefs"};
+    static const char* const kNames[] = {"ai.list-models", "ai.dump-request", "ai.probe", "ai.send-once",
+                                         "ai.validate-prefs"};
     for (const char* name : kNames) {
         Command c = MakeCommand(name, "AI assistant disabled in this build (SMATCHET_WITH_AI=OFF).",
                                 [name](const nlohmann::json&, const CommandContext&) {
