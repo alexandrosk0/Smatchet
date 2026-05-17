@@ -21,10 +21,49 @@ add_executable(SmatchetLuaTests
     LuaSandbox.test.cpp
     LuaTimeout.test.cpp
     LuaStubsCompile.test.cpp
+    LuaBindings.test.cpp
+    # Phase 6b: link the lifted, ImGui-free production TU directly so the
+    # round-trip test exercises the real `smatchet::lua::InitLuaCore` body
+    # (per the Phase-5 mcp-pure recipe -- production .cpp on the test target's
+    # source list, not a static lib). Transitive deps (ConfigManager,
+    # FieldEditAuditSource, Logger, Commands::CommandRegistry/Command/FuzzyMatch)
+    # are added below.
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_PathUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/FieldEditAuditSource.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/CommandRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/FuzzyMatch.cpp"
 )
+
+# AppController_LuaBindingsCore.cpp uses -mcmodel=large in the BFD-ld production
+# build (CMakeLists.txt:976-989) to reach symbols past 2 GB. Under lld -- which
+# the ninja-test-msys2 preset selects via SMATCHET_LLD_PROGRAM -- the flag
+# produces "unsupported relocation type 0xe" link errors and is explicitly
+# skipped (CMakeLists.txt:976 gate). Mirror that gate here so the test binary
+# links cleanly regardless of which linker is active. -Wa,-mbig-obj is still
+# applied to keep COFF debug-section relocations under the 64K limit when
+# sol2's templates expand inside this TU.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(NOT SMATCHET_LLD_PROGRAM)
+        set_source_files_properties(
+            "${CMAKE_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
+            PROPERTIES
+                COMPILE_OPTIONS "-mcmodel=large"
+                SKIP_PRECOMPILE_HEADERS ON)
+        target_link_options(SmatchetLuaTests PRIVATE -mcmodel=large)
+    endif()
+    if(SMATCHET_HAS_MBIG_OBJ)
+        target_compile_options(SmatchetLuaTests PRIVATE -Wa,-mbig-obj)
+    endif()
+endif()
 
 target_include_directories(SmatchetLuaTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src"   # for ConfigManager_Internal.h
     "${CMAKE_SOURCE_DIR}/tests/support"
     "${LUA_SRC_DIR}/src"
 )
@@ -36,12 +75,19 @@ target_include_directories(SmatchetLuaTests SYSTEM PRIVATE
 # Link against the production Lua static lib (Smatchet_Lua_Internal -- the
 # 5.3 source built as C++ per CMakeLists.txt:336-343) so sol2's pcall +
 # luaL_error path works the same way it does in the standalone exe.
-# doctest is the only test-only dep. NO ImGui, NO cpr, NO SQLite -- those
-# would defeat the Lua-only isolation.
+# Phase 6b adds nlohmann_json (consumed by AppController_LuaBindingsCore.cpp
+# + ConfigManager.cpp + CommandRegistry.cpp) and Windows crypt32 (consumed by
+# ConfigManager_PathUtils.cpp's DPAPI calls). NO ImGui, NO cpr, NO SQLite --
+# those would defeat the Lua-only isolation.
 target_link_libraries(SmatchetLuaTests PRIVATE
     doctest::doctest
     Smatchet_Lua_Internal
+    nlohmann_json::nlohmann_json
 )
+
+if(WIN32)
+    target_link_libraries(SmatchetLuaTests PRIVATE crypt32)
+endif()
 
 target_compile_features(SmatchetLuaTests PRIVATE cxx_std_14)
 
