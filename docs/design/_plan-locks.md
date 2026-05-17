@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-fixes-batch-2 · slice-1 · status: in-flight
+### ai-assistant-fixes-batch-2 · slice-1 · status: shipped (PR #184 merged at f61315e)
 
 - **Branch**: `feat/ai-assistant-fixes-batch-2`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
@@ -66,7 +66,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-17 — claimed.
 - **Cleared by**: TBD PR.
 
-### ai-assistant-fixes-batch-1 · slice-1 · status: in-flight
+### ai-assistant-fixes-batch-1 · slice-1 · status: shipped (PR #181 merged at a3c7411)
 
 - **Branch**: `feat/ai-assistant-fixes-batch-1`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
