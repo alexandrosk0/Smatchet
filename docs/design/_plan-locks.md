@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### grid-cell-edit-perf · slice-1 · status: in-flight
+### grid-cell-edit-perf · slice-1 · status: shipped (PR #186 merged at 16e0611)
 
 - **Branch**: `feat/grid-cell-edit-perf`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose; perf-detective workflow inline since user is offline)
