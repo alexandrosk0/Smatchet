@@ -103,6 +103,12 @@ struct BlameAnalysisUi::BlameState {
     std::string profileErr;
     std::vector<std::string> profileGroups;
     bool openProfileModal = false;
+    /// Pillar 2 — finding #5: profile + assign-modal HTTP runs on a worker. These gates
+    /// suppress duplicate dispatches while a fetch is in flight, and the modal renders a
+    /// "Loading..." status until the post-back populates the fields.
+    bool profileInFlight = false;
+    bool assignInFlight = false;
+    bool assignCommitInFlight = false;
 
     std::string lastUiStatus;
     int pendingSelectEntryIndex = -1;

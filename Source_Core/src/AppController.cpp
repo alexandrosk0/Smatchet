@@ -972,7 +972,8 @@ AppUpdateInfo AppController::CheckForAppUpdate(bool includePrerelease) const {
 }
 
 bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
-                                                     std::string& outError) const {
+                                                     std::string& outError,
+                                                     std::shared_ptr<std::atomic<bool>> cancelFlag) const {
     outError.clear();
     if (downloadUrl.empty()) {
         outError = "Missing installer download URL.";
@@ -999,13 +1000,23 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 
     cpr::Header headers{{"Accept", "application/octet-stream"}, {"User-Agent", "SmatchetUpdater/" + GetAppVersion()}};
     cpr::Redirect redirect(true, true);
+    bool cancelled = false;
     cpr::WriteCallback writeCb{[&](const std::string& data, intptr_t) -> bool {
+        if (cancelFlag && cancelFlag->load(std::memory_order_acquire)) {
+            cancelled = true;
+            return false;
+        }
         ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
         return ofs.good();
     }};
     cpr::Response resp =
         cpr::Get(cpr::Url{downloadUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
     ofs.close();
+    if (cancelled) {
+        std::remove(localPath.c_str());
+        outError = "Download cancelled.";
+        return false;
+    }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
         std::remove(localPath.c_str());
         outError = "Failed to download installer.";
@@ -1028,6 +1039,7 @@ bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& download
 #else
     (void)assetName;
     (void)downloadUrl;
+    (void)cancelFlag;
     outError = "Installer updates are currently supported only on Windows.";
     return false;
 #endif

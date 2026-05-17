@@ -10,7 +10,9 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <unordered_set>
 
 namespace {
@@ -323,6 +325,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
         d.jqlAcpAsyncUserError.clear();
         d.jqlAcpUserSearchFireAt = 0.0;
         d.jqlAcpUserSearchQuery.clear();
+        d.jqlAcpUserSearchInFlightId = 0;
         return;
     }
     const std::string& q = meta.UserSearchPrefix;
@@ -331,6 +334,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
         d.jqlAcpAsyncUserError.clear();
         d.jqlAcpUserSearchFireAt = 0.0;
         d.jqlAcpUserSearchQuery.clear();
+        d.jqlAcpUserSearchInFlightId = 0;
         return;
     }
     if (q != d.jqlAcpUserSearchQuery) {
@@ -341,6 +345,38 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
         d.jqlAcpAsyncUserItems.clear();
         d.jqlAcpAsyncUserError.clear();
         return;
+    }
+    // Poll any pending future first — non-blocking; consume result when ready and matching id.
+    if (d.jqlAcpUserSearchFuture.valid() &&
+        d.jqlAcpUserSearchFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+        UiDrawSession::JqlUserSearchResult result = d.jqlAcpUserSearchFuture.get();
+        const uint64_t completedId = d.jqlAcpUserSearchInFlightId;
+        d.jqlAcpUserSearchInFlightId = 0;
+        // Drop stale results when the user typed past this request (armed id moved on).
+        if (completedId == d.jqlAcpUserSearchArmedId) {
+            if (!result.Ok) {
+                d.jqlAcpAsyncUserError = result.Error;
+                d.jqlAcpAsyncUserItems.clear();
+            } else {
+                d.jqlAcpAsyncUserError.clear();
+                d.jqlAcpAsyncUserItems.clear();
+                std::unordered_set<std::string> seen;
+                for (const auto& u : result.Users) {
+                    if (u.AccountId.empty()) {
+                        continue;
+                    }
+                    const std::string ins = InsertTokenForUserAccountId(u.AccountId);
+                    if (!seen.insert(ins).second) {
+                        continue;
+                    }
+                    std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + " -> " + ins);
+                    d.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});
+                    if (static_cast<int>(d.jqlAcpAsyncUserItems.size()) >= 40) {
+                        break;
+                    }
+                }
+            }
+        }
     }
     if (d.jqlAcpUserSearchFireAt <= 0.0) {
         return;
@@ -353,30 +389,21 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
         d.jqlAcpUserSearchFireAt = 0.0;
         return;
     }
-
-    std::vector<TrackerUser> users;
-    std::string err;
-    if (!app.SearchUsersByQuery(q, users, err)) {
-        d.jqlAcpAsyncUserError = err;
-        d.jqlAcpAsyncUserItems.clear();
-    } else {
-        d.jqlAcpAsyncUserError.clear();
-        d.jqlAcpAsyncUserItems.clear();
-        std::unordered_set<std::string> seen;
-        for (const auto& u : users) {
-            if (u.AccountId.empty()) {
-                continue;
-            }
-            const std::string ins = InsertTokenForUserAccountId(u.AccountId);
-            if (!seen.insert(ins).second) {
-                continue;
-            }
-            std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + " -> " + ins);
-            d.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});
-            if (static_cast<int>(d.jqlAcpAsyncUserItems.size()) >= 40) {
-                break;
-            }
-        }
+    if (d.jqlAcpUserSearchInFlightId != 0) {
+        // Already issued for this request id; let it complete (poll above next frame).
+        return;
     }
+
+    // Dispatch to worker thread via std::async — Jira/Plane user search HTTP must not block
+    // the UI thread (Pillar 2 — finding #3). `AppController&` outlives any UI frame so the
+    // ref capture is safe; the future is consumed on the UI thread above.
+    const std::string capturedQ = q;
+    const uint64_t inFlightId = d.jqlAcpUserSearchArmedId;
+    d.jqlAcpUserSearchInFlightId = inFlightId;
     d.jqlAcpUserSearchFireAt = 0.0;
+    d.jqlAcpUserSearchFuture = std::async(std::launch::async, [&app, capturedQ]() {
+        UiDrawSession::JqlUserSearchResult r;
+        r.Ok = app.SearchUsersByQuery(capturedQ, r.Users, r.Error);
+        return r;
+    });
 }

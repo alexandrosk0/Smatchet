@@ -200,15 +200,53 @@ bool HttpGetBinary(const std::string& url, std::vector<unsigned char>& out, std:
     return true;
 }
 
-bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out, std::string& outError) {
+// In-flight URL fetch set. Suppresses re-issue of identical HTTP requests across many frames
+// while a worker is still downloading the icon. UI-thread reads + worker-thread writes go
+// through the mutex (Pillar 2 — finding #1).
+std::mutex& IconUrlFetchInFlightMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_set<std::string>& IconUrlFetchInFlightSet() {
+    static std::unordered_set<std::string> s;
+    return s;
+}
+
+bool IconUrlFetchInFlight(const std::string& url) {
+    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
+    return IconUrlFetchInFlightSet().count(url) > 0;
+}
+
+bool MarkIconUrlFetchInFlight(const std::string& url) {
+    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
+    auto& s = IconUrlFetchInFlightSet();
+    if (s.count(url) > 0) {
+        return false;
+    }
+    s.insert(url);
+    return true;
+}
+
+void ClearIconUrlFetchInFlight(const std::string& url) {
+    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
+    IconUrlFetchInFlightSet().erase(url);
+}
+
+/// Loads the URL-keyed icon texture. Returns:
+///   - `true` + populated `out` when the texture is in the cache or on disk (decoded inline).
+///   - `false` + `outDeferred=true` when a background fetch was scheduled (or one is already
+///     in-flight); the caller MUST NOT negative-memo this result — the URL will be cached on a
+///     subsequent frame and the next memo lookup will hit.
+///   - `false` + `outDeferred=false` when the load genuinely failed (bad path, disk error).
+bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoadedIconTexture& out,
+                         std::string& outError, bool& outDeferred) {
     out = {};
     outError.clear();
+    outDeferred = false;
     // Canonical cache key for URL-loaded icons. All paths through this function MUST
     // end up storing the texture under this key — otherwise the caller's memo (which
     // derives its key from the URL candidate) will look it up and miss, falling back
-    // to the slow path every frame. This was a bug pre-PR: when the disk cache was
-    // hit, the texture got stored under a "file:" key instead of "url:", causing
-    // ~6ms / frame of wasted re-resolution work on a 18-cell priority column.
+    // to the slow path every frame.
     const std::string urlKey = std::string("url:") + url;
     if (SmatchetImageTextureCache::TryGetCached(urlKey, out)) {
         return true;
@@ -233,29 +271,73 @@ bool LoadOrFetchUrlImage(const std::string& url, SmatchetLoadedIconTexture& out,
             }
         }
     }
-    // Fetch from network and persist both bytes (disk) and texture (cache under url:).
-    std::vector<unsigned char> bytes;
-    if (!HttpGetBinary(url, bytes, outError)) {
+    // No cache, no disk → defer HTTP fetch to a worker thread (Pillar 2 — finding #1).
+    // The grid-render path was blocking up to 3s per priority icon on first frame.
+    if (IconUrlFetchInFlight(url)) {
+        outDeferred = true;
         return false;
     }
-    std::ofstream ofs(diskPath.c_str(), std::ios::binary | std::ios::trunc);
-    if (ofs) {
-        ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!MarkIconUrlFetchInFlight(url)) {
+        // Lost a race; another thread is now fetching. Treat as deferred.
+        outDeferred = true;
+        return false;
     }
-    return SmatchetImageTextureCache::GetOrLoadFromMemory(urlKey, bytes.data(), bytes.size(), out, outError);
+    const std::string capturedUrl = url;
+    const std::string capturedDiskPath = diskPath;
+    const std::string capturedUrlKey = urlKey;
+    app.LaunchBackgroundTask([&app, capturedUrl, capturedDiskPath, capturedUrlKey]() {
+        std::vector<unsigned char> bytes;
+        std::string fetchError;
+        const bool fetchOk = HttpGetBinary(capturedUrl, bytes, fetchError);
+        if (fetchOk) {
+            std::ofstream ofs(capturedDiskPath.c_str(), std::ios::binary | std::ios::trunc);
+            if (ofs) {
+                ofs.write(reinterpret_cast<const char*>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()));
+            }
+        }
+        // Post texture upload + in-flight-set release back to the UI thread. The image-texture
+        // cache requires UI-thread invocation (GL / DX12 resource creation).
+        app.mainThreadDispatcher.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
+            ClearIconUrlFetchInFlight(capturedUrl);
+            if (!fetchOk || bytes.empty()) {
+                return;
+            }
+            SmatchetLoadedIconTexture loaded;
+            std::string err;
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
+                capturedUrlKey, bytes.data(), bytes.size(), loaded, err);
+        });
+    });
+    outDeferred = true;
+    return false;
 }
 
-bool LoadTextureForResolvedPath(const std::string& resolved, SmatchetLoadedIconTexture& out, std::string& outError) {
+bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved, SmatchetLoadedIconTexture& out,
+                                std::string& outError, bool& outDeferred) {
     out = {};
     outError.clear();
+    outDeferred = false;
     if (resolved.empty()) {
         outError = "Empty path.";
         return false;
     }
     if (resolved.rfind("https://", 0) == 0 || resolved.rfind("http://", 0) == 0) {
-        return LoadOrFetchUrlImage(resolved, out, outError);
+        return LoadOrFetchUrlImage(app, resolved, out, outError, outDeferred);
     }
     return SmatchetImageTextureCache::GetOrLoadFromFile(std::string("file:") + resolved, resolved, out, outError);
+}
+
+// Backwards-compat wrapper for the const-AppController call sites that don't need the deferred
+// distinction (e.g. preview-only/non-priority paths). HTTP fetch still defers; caller sees
+// `false` while the fetch is in flight.
+bool LoadTextureForResolvedPath(const AppController& app, const std::string& resolved,
+                                SmatchetLoadedIconTexture& out, std::string& outError) {
+    bool deferred = false;
+    // `LaunchBackgroundTask` is non-const; cast away const to dispatch. This matches the rest
+    // of the AppController API (`mainThreadDispatcher` is a mutable member; the worker pattern
+    // doesn't mutate observable AppController state).
+    return LoadTextureForResolvedPath(const_cast<AppController&>(app), resolved, out, outError, deferred);
 }
 
 /**
@@ -313,11 +395,13 @@ void RememberNegativePriorityResolution(const std::string& rawValue, const std::
  * On success, populates `outResolvedCacheKey` with the texture-cache key that resolved so the caller
  * can memoise it for subsequent frames.
  */
-bool LoadPriorityIconWithFallbacks(const std::string& iconUrl, const std::string& slug, SmatchetLoadedIconTexture& out,
-                                   std::string& outResolvedCacheKey, std::string& outLastError) {
+bool LoadPriorityIconWithFallbacks(AppController& app, const std::string& iconUrl, const std::string& slug,
+                                   SmatchetLoadedIconTexture& out, std::string& outResolvedCacheKey,
+                                   std::string& outLastError, bool& outAnyDeferred) {
     out = {};
     outLastError.clear();
     outResolvedCacheKey.clear();
+    outAnyDeferred = false;
     const std::string domain = GetCachedJiraDomainForPriorityIcons();
     std::vector<std::string> candidates;
     auto pushUnique = [&](const std::string& s) {
@@ -342,10 +426,14 @@ bool LoadPriorityIconWithFallbacks(const std::string& iconUrl, const std::string
     }
     for (const auto& c : candidates) {
         std::string err;
-        if (LoadTextureForResolvedPath(c, out, err)) {
+        bool deferred = false;
+        if (LoadTextureForResolvedPath(app, c, out, err, deferred)) {
             const bool isUrl = c.rfind("https://", 0) == 0 || c.rfind("http://", 0) == 0;
             outResolvedCacheKey = (isUrl ? std::string("url:") : std::string("file:")) + c;
             return true;
+        }
+        if (deferred) {
+            outAnyDeferred = true;
         }
         outLastError = err;
     }
@@ -396,7 +484,7 @@ bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float 
     }
     std::string err;
     SmatchetLoadedIconTexture icon;
-    if (!LoadTextureForResolvedPath(resolved, icon, err)) {
+    if (!LoadTextureForResolvedPath(app, resolved, icon, err)) {
         return false;
     }
     float drawW = width;
@@ -422,7 +510,7 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
     if (app.TryGetFieldIconMapTarget(field.Id, &field, rawValue, mapPath)) {
         const std::string resolved = app.ResolveFieldIconAssetPath(mapPath);
         const std::string& loadPath = resolved.empty() ? mapPath : resolved;
-        if (LoadTextureForResolvedPath(loadPath, outIcon, outError)) {
+        if (LoadTextureForResolvedPath(app, loadPath, outIcon, outError)) {
             return true;
         }
         return false;
@@ -461,10 +549,13 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
         return false;
     }
     std::string resolvedKey;
-    if (!LoadPriorityIconWithFallbacks(iconUrl, slug, outIcon, resolvedKey, outError)) {
-        // Load failed across all fallback paths — remember the failure so subsequent frames
-        // short-circuit at the memo lookup above instead of repeating the full work.
-        RememberNegativePriorityResolution(rawValue, label);
+    bool anyDeferred = false;
+    if (!LoadPriorityIconWithFallbacks(const_cast<AppController&>(app), iconUrl, slug, outIcon, resolvedKey, outError,
+                                       anyDeferred)) {
+        // Don't negative-memo when a candidate is mid-download — next frame will hit the cache.
+        if (!anyDeferred) {
+            RememberNegativePriorityResolution(rawValue, label);
+        }
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);
@@ -501,7 +592,7 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
         const std::string& loadPath = resolved.empty() ? pathOrUrl : resolved;
         std::string err;
         SmatchetLoadedIconTexture icon;
-        if (LoadTextureForResolvedPath(loadPath, icon, err)) {
+        if (LoadTextureForResolvedPath(app, loadPath, icon, err)) {
             const float maxEdge = ImGui::GetFrameHeight();
             DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
                 return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue) : std::string(rawValue);
@@ -539,7 +630,9 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 
     std::string err;
     std::string resolvedKey;
-    if (!LoadPriorityIconWithFallbacks(iconUrl, slug, icon, resolvedKey, err)) {
+    bool anyDeferred = false;
+    if (!LoadPriorityIconWithFallbacks(const_cast<AppController&>(app), iconUrl, slug, icon, resolvedKey, err,
+                                       anyDeferred)) {
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);

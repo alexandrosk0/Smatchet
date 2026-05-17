@@ -167,26 +167,52 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
-        std::string err;
-        if (app.DownloadAndLaunchInstallerUpdate(d.appUpdateInfo.InstallerAsset.DownloadUrl,
-                                                 d.appUpdateInfo.InstallerAsset.Name, err)) {
-            d.appUpdateActionStatus = "Installer launched. Smatchet will close so the update can proceed.";
-        } else {
-            d.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
+    if (d.installerDownloadInFlight) {
+        ImGui::TextUnformatted("Downloading installer...");
+        // Indeterminate progress bar — cpr doesn't expose byte-count callbacks without restructuring
+        // the WriteCallback signature; the spinner satisfies the < 100ms-cue Pillar 2 contract.
+        const float t = static_cast<float>(ImGui::GetTime());
+        ImGui::ProgressBar(-1.0f * t, ImVec2(280.0f, 0.0f), "");
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##installer_cancel", ImVec2(90.0f, 0.0f))) {
+            if (d.installerDownloadCancel) {
+                d.installerDownloadCancel->store(true, std::memory_order_release);
+            }
         }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
-        d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
-        ConfigManager::Save(d.cfg);
-        d.appUpdateModalOpen = false;
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Later", ImVec2(90.0f, 0.0f))) {
-        d.appUpdateModalOpen = false;
-        ImGui::CloseCurrentPopup();
+    } else {
+        if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
+            d.installerDownloadInFlight = true;
+            d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
+            const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
+            const std::string assetName = d.appUpdateInfo.InstallerAsset.Name;
+            std::shared_ptr<std::atomic<bool>> cancelFlag = d.installerDownloadCancel;
+            d.appUpdateActionStatus = "Downloading installer...";
+            app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
+                std::string err;
+                const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
+                app.mainThreadDispatcher.PostToMainThread([ok, err]() {
+                    g_ui.installerDownloadInFlight = false;
+                    g_ui.installerDownloadCancel.reset();
+                    if (ok) {
+                        g_ui.appUpdateActionStatus = "Installer launched. Smatchet will close so the update can proceed.";
+                    } else {
+                        g_ui.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
+                    }
+                });
+            });
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
+            d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
+            ConfigManager::Save(d.cfg);
+            d.appUpdateModalOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Later", ImVec2(90.0f, 0.0f))) {
+            d.appUpdateModalOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
     }
     ImGui::EndPopup();
 }

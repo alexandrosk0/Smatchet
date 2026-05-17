@@ -761,10 +761,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
             ImGui::TextDisabled("Select a Jira issue in the grid.");
         } else {
             const bool hasJiraAccount = State().assignHasJiraAccount && !State().assignAccountId.empty();
+            const bool commitInFlight = State().assignCommitInFlight;
             PushBlameLinkTextOnly(theme);
-            ImGui::BeginDisabled(readOnlyMode);
+            ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Assign issue to user", false)) {
-                std::string err;
                 const TrackerField* f = app.FindFieldById("assignee");
                 if (!hasJiraAccount) {
                     LOG_ERROR("Blame UI: assign skipped — no Jira account match for this Perforce user.");
@@ -772,13 +772,28 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 } else if (!f) {
                     LOG_ERROR("Blame UI: assignee field not in catalog.");
                     State().lastUiStatus = "assignee field not in catalog.";
-                } else if (app.SubmitFieldEdit(selectedJiraIssueKey, *f, {State().assignAccountId}, err)) {
-                    LOG_INFO("Blame UI: assignee set on %s", selectedJiraIssueKey.c_str());
-                    State().lastUiStatus = "Assignee updated.";
-                    ImGui::CloseCurrentPopup();
                 } else {
-                    LOG_ERROR("Blame UI: assign failed: %s", err.c_str());
-                    State().lastUiStatus = err;
+                    // Pillar 2 — finding #7: dispatch SubmitFieldEdit (cpr::Post) off the UI thread.
+                    State().assignCommitInFlight = true;
+                    State().lastUiStatus = "Posting...";
+                    const std::string capturedIssueKey = selectedJiraIssueKey;
+                    const std::string capturedAccountId = State().assignAccountId;
+                    const TrackerField fieldCopy = *f;
+                    app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy]() {
+                        std::string err;
+                        const bool ok = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
+                        app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                            State().assignCommitInFlight = false;
+                            if (ok) {
+                                LOG_INFO("Blame UI: assignee set on %s", capturedIssueKey.c_str());
+                                State().lastUiStatus = "Assignee updated.";
+                            } else {
+                                LOG_ERROR("Blame UI: assign failed: %s", err.c_str());
+                                State().lastUiStatus = err;
+                            }
+                        });
+                    });
+                    ImGui::CloseCurrentPopup();
                 }
             }
             ImGui::EndDisabled();
@@ -789,26 +804,36 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                     "the Annotate row you used (callstack table or Entry tab row menu).\n"
                     "Requires a matching Jira account; otherwise an error is shown.");
             }
-            ImGui::BeginDisabled(readOnlyMode);
+            ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Add Annotate context comment", false)) {
-                std::string err;
-                if (app.AddIssueCommentBlameContext(
-                        selectedJiraIssueKey, State().assignRow.Blame.User, State().assignRow.Parsed.Function,
-                        State().assignRow.PathForP4, State().assignRow.Parsed.LineNumber,
-                        State().assignRow.Blame.Changelist, State().assignRow.Blame.Date,
-                        State().assignRow.Blame.Approximate, State().assignRow.Blame.LineSnippet, err)) {
-                    LOG_INFO("Blame UI: posted blame context comment for %s.", selectedJiraIssueKey.c_str());
-                    State().lastUiStatus = "Annotate context comment posted.";
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    LOG_ERROR("Blame UI: comment failed: %s", err.c_str());
-                    State().lastUiStatus = err;
-                }
+                // Pillar 2 — finding #7: AddIssueCommentBlameContext (cpr::Post) → worker.
+                State().assignCommitInFlight = true;
+                State().lastUiStatus = "Posting...";
+                const std::string capturedIssueKey = selectedJiraIssueKey;
+                const BlameRow capturedRow = State().assignRow;
+                app.LaunchBackgroundTask([&app, capturedIssueKey, capturedRow]() {
+                    std::string err;
+                    const bool ok = app.AddIssueCommentBlameContext(
+                        capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
+                        capturedRow.PathForP4, capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist,
+                        capturedRow.Blame.Date, capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
+                    app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                        State().assignCommitInFlight = false;
+                        if (ok) {
+                            LOG_INFO("Blame UI: posted blame context comment for %s.", capturedIssueKey.c_str());
+                            State().lastUiStatus = "Annotate context comment posted.";
+                        } else {
+                            LOG_ERROR("Blame UI: comment failed: %s", err.c_str());
+                            State().lastUiStatus = err;
+                        }
+                    });
+                });
+                ImGui::CloseCurrentPopup();
             }
             ImGui::EndDisabled();
             ImGui::Separator();
             ImGui::TextDisabled("Quick comment templates");
-            ImGui::BeginDisabled(readOnlyMode);
+            ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             {
                 const TrackerConfig jiraCfg = cfg;
                 int blameTplIndex = 0;
@@ -819,15 +844,26 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         ImGui::PushID(blameTplIndex);
                     }
                     if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
-                        std::string err;
-                        std::string commentBody = BuildBlameQuickCommentTemplate(
+                        // Pillar 2 — finding #7: AddIssueCommentPlain (cpr::Post) → worker.
+                        State().assignCommitInFlight = true;
+                        State().lastUiStatus = "Posting...";
+                        const std::string capturedIssueKey = selectedJiraIssueKey;
+                        const std::string capturedTitle = t.Title;
+                        const std::string commentBody = BuildBlameQuickCommentTemplate(
                             selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.BlameCommentTemplates);
-                        if (app.AddIssueCommentPlain(selectedJiraIssueKey, commentBody, err)) {
-                            State().lastUiStatus = "Posted '" + t.Title + "' comment.";
-                            ImGui::CloseCurrentPopup();
-                        } else {
-                            State().lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
-                        }
+                        app.LaunchBackgroundTask([&app, capturedIssueKey, capturedTitle, commentBody]() {
+                            std::string err;
+                            const bool ok = app.AddIssueCommentPlain(capturedIssueKey, commentBody, err);
+                            app.mainThreadDispatcher.PostToMainThread([ok, err, capturedTitle]() {
+                                State().assignCommitInFlight = false;
+                                if (ok) {
+                                    State().lastUiStatus = "Posted '" + capturedTitle + "' comment.";
+                                } else {
+                                    State().lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
+                                }
+                            });
+                        });
+                        ImGui::CloseCurrentPopup();
                     }
                     ImGui::PopID();
                     ++blameTplIndex;
@@ -840,29 +876,47 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
             if (hasJiraAccount) {
                 PushBlameLinkTextOnly(theme);
             }
-            ImGui::BeginDisabled(!hasJiraAccount || readOnlyMode);
+            ImGui::BeginDisabled(!hasJiraAccount || readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Assign and add Annotate context", false)) {
-                std::string err;
                 const TrackerField* f = app.FindFieldById("assignee");
-                bool assigned = true;
                 if (!f) {
-                    err = "assignee field not in catalog.";
-                    assigned = false;
+                    State().lastUiStatus = "assignee field not in catalog.";
                 } else {
-                    assigned = app.SubmitFieldEdit(selectedJiraIssueKey, *f, {State().assignAccountId}, err);
-                }
-                if (assigned &&
-                    app.AddIssueCommentBlameContext(
-                        selectedJiraIssueKey, State().assignRow.Blame.User, State().assignRow.Parsed.Function,
-                        State().assignRow.PathForP4, State().assignRow.Parsed.LineNumber,
-                        State().assignRow.Blame.Changelist, State().assignRow.Blame.Date,
-                        State().assignRow.Blame.Approximate, State().assignRow.Blame.LineSnippet, err)) {
-                    LOG_INFO("Blame UI: assigned %s and posted blame context comment.", selectedJiraIssueKey.c_str());
-                    State().lastUiStatus = "Assigned and commented.";
+                    // Pillar 2 — finding #7: chain SubmitFieldEdit + AddIssueCommentBlameContext
+                    // on a single worker so the user clicks once and both HTTP calls run off-UI.
+                    State().assignCommitInFlight = true;
+                    State().lastUiStatus = "Posting...";
+                    const std::string capturedIssueKey = selectedJiraIssueKey;
+                    const std::string capturedAccountId = State().assignAccountId;
+                    const TrackerField fieldCopy = *f;
+                    const BlameRow capturedRow = State().assignRow;
+                    app.LaunchBackgroundTask(
+                        [&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
+                            std::string err;
+                            const bool assigned =
+                                app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
+                            bool commented = false;
+                            if (assigned) {
+                                commented = app.AddIssueCommentBlameContext(
+                                    capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
+                                    capturedRow.PathForP4, capturedRow.Parsed.LineNumber,
+                                    capturedRow.Blame.Changelist, capturedRow.Blame.Date,
+                                    capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
+                            }
+                            const bool ok = assigned && commented;
+                            app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                                State().assignCommitInFlight = false;
+                                if (ok) {
+                                    LOG_INFO("Blame UI: assigned %s and posted blame context comment.",
+                                             capturedIssueKey.c_str());
+                                    State().lastUiStatus = "Assigned and commented.";
+                                } else {
+                                    LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
+                                    State().lastUiStatus = err;
+                                }
+                            });
+                        });
                     ImGui::CloseCurrentPopup();
-                } else {
-                    LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
-                    State().lastUiStatus = err;
                 }
             }
             ImGui::EndDisabled();

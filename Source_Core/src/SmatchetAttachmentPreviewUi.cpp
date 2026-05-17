@@ -383,16 +383,30 @@ static bool QueueAttachmentPreviewRequest(AppController& app, AttachmentWindowEn
         return false;
     }
 
+    // Capture the request fields by value before dispatching — `entry` may be invalidated
+    // if the attachment window entries are released/regenerated mid-download. The download
+    // completion path runs through the existing AttachmentPreviewHandlerCallback (mutex-
+    // protected attachmentPreviewUpdateQueue) so no UI-thread state is touched from the
+    // worker thread (Pillar 2 — finding #2: was blocking the UI for the 120s-timeout cpr
+    // download of up to 50MB per attachment).
     entry.PreviewRequestIssued = true;
-    std::string previewError;
-    if (!app.DownloadAttachmentForPreview(entry.Url, entry.Filename, entry.MimeType, &previewError)) {
-        entry.PreviewError = previewError.empty() ? std::string("Failed to start preview download.") : previewError;
-        LOG_WARN("SmatchetUI: preview request failed reason=%s file=%s err=%s", reason, entry.Filename.c_str(),
-                 entry.PreviewError.c_str());
-        return false;
-    }
-
-    LOG_DEBUG("SmatchetUI: preview request queued reason=%s file=%s", reason, entry.Filename.c_str());
+    const std::string capturedUrl = entry.Url;
+    const std::string capturedFilename = entry.Filename;
+    const std::string capturedMime = entry.MimeType;
+    const std::string capturedReason = reason ? std::string(reason) : std::string();
+    app.LaunchBackgroundTask([&app, capturedUrl, capturedFilename, capturedMime, capturedReason]() {
+        std::string previewError;
+        if (!app.DownloadAttachmentForPreview(capturedUrl, capturedFilename, capturedMime, &previewError)) {
+            LOG_WARN("SmatchetUI: preview request failed reason=%s file=%s err=%s", capturedReason.c_str(),
+                     capturedFilename.c_str(),
+                     previewError.empty() ? "Failed to start preview download." : previewError.c_str());
+            return;
+        }
+        LOG_DEBUG("SmatchetUI: preview request completed reason=%s file=%s", capturedReason.c_str(),
+                  capturedFilename.c_str());
+    });
+    LOG_DEBUG("SmatchetUI: preview request queued reason=%s file=%s", capturedReason.c_str(),
+              capturedFilename.c_str());
     return true;
 }
 

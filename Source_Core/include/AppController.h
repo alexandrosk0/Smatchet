@@ -286,8 +286,13 @@ class AppController
     std::string GetAppVersion() const;
     std::string GetGitHubReleaseRepo() const;
     AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
+    /// Downloads + launches the installer. Blocking — callers must dispatch this on a worker
+    /// thread via `LaunchBackgroundTask`. The optional `cancelFlag` is polled inside the cpr
+    /// write callback; when set to `true` the download aborts cleanly and the partial file is
+    /// removed. On cancel returns `false` with `outError == "Download cancelled."`.
     bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
-                                          std::string& outError) const;
+                                          std::string& outError,
+                                          std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
     void InitLua();
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
