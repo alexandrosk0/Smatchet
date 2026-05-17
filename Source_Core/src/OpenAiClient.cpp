@@ -15,11 +15,20 @@
 namespace {
 
 constexpr const char* kDefaultBaseUrl = "https://api.openai.com";
+constexpr int kDefaultMaxTokens = 4096;
 
 std::string ResolveBaseUrl(const AiClientConfig& cfg) {
-    if (!cfg.BaseUrl.empty())
-        return cfg.BaseUrl;
-    return kDefaultBaseUrl;
+    std::string base = cfg.BaseUrl.empty() ? std::string(kDefaultBaseUrl) : cfg.BaseUrl;
+    // Strip a trailing "/v1" or "/v1/" so callers can interchangeably pass
+    // "http://localhost:1234" or "http://localhost:1234/v1" — the natural
+    // copy-paste from LM Studio / Ollama-OpenAI-compat / OpenAI docs all
+    // include the /v1 suffix, which would otherwise produce /v1/v1/... paths.
+    if (base.size() >= 4 && base.compare(base.size() - 4, 4, "/v1/") == 0) {
+        base.resize(base.size() - 4);
+    } else if (base.size() >= 3 && base.compare(base.size() - 3, 3, "/v1") == 0) {
+        base.resize(base.size() - 3);
+    }
+    return base;
 }
 
 std::string JoinUrl(const std::string& base, const char* path) {
@@ -36,8 +45,10 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     body["stream"] = true;
     if (req.Temperature >= 0.0f)
         body["temperature"] = req.Temperature;
-    if (req.MaxTokens > 0)
-        body["max_tokens"] = req.MaxTokens;
+    // Always cap max_tokens so reasoning-style models (e.g. LM Studio's
+    // gemma-4-31b) don't burn their entire budget on `reasoning_content`
+    // and never reach `content`. Mirrors AnthropicClient::kDefaultMaxTokens.
+    body["max_tokens"] = (req.MaxTokens > 0) ? req.MaxTokens : kDefaultMaxTokens;
 
     nlohmann::json messages = nlohmann::json::array();
     if (!req.SystemPrompt.empty()) {
@@ -165,8 +176,8 @@ void OpenAiClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     }
 
     if (r.error.code != cpr::ErrorCode::OK && r.error.code != cpr::ErrorCode::REQUEST_CANCELLED) {
-        LOG_ERROR("OpenAiClient: transport error - cpr code %d, message: %s",
-                  static_cast<int>(r.error.code), r.error.message.c_str());
+        LOG_ERROR("OpenAiClient: transport error - cpr code %d, message: %s", static_cast<int>(r.error.code),
+                  r.error.message.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("transport: ") + r.error.message;

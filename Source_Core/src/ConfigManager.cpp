@@ -223,6 +223,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["assistant_context_block_active_ticket"] = config.AssistantContextBlockActiveTicket;
     j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
     j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
+    j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
     j["mcp_enabled"] = config.McpEnabled;
     j["mcp_port"] = config.McpPort;
     j["mcp_allow_remote"] = config.McpAllowRemote;
@@ -613,6 +614,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 j.value("assistant_context_block_active_view", cfg.AssistantContextBlockActiveView);
             cfg.AssistantContextBlockAuditTrail =
                 j.value("assistant_context_block_audit_trail", cfg.AssistantContextBlockAuditTrail);
+            cfg.AiPrefsVerifyOnSave = j.value("ai_prefs_verify_on_save", cfg.AiPrefsVerifyOnSave);
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
             cfg.DateCompactRelativeThresholdDays =

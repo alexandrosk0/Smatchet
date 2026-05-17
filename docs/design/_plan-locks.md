@@ -50,6 +50,22 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### ai-assistant-fixes-batch-2 · slice-1 · status: in-flight
+
+- **Branch**: `feat/ai-assistant-fixes-batch-2`
+- **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
+- **Originating plan**: orchestrator-direct (3 fixes; follow-up to PR #181 user testing)
+- **Claimed write set**:
+  - `Source_Core/include/ConfigManager.h` (MOD — 1 new TrackerConfig field `AiPrefsVerifyOnSave`)
+  - `Source_Core/src/ConfigManager.cpp` (MOD — serialize + `j.value()` default)
+  - `Source_Core/include/SmatchetUiSession.h` (MOD — transient probe state)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — explicit Save/Discard/Test-connection flow)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/IAiClient.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AiPrefsValidator.h`
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — claimed.
+- **Cleared by**: TBD PR.
+
 ### ai-assistant-fixes-batch-1 · slice-1 · status: in-flight
 
 - **Branch**: `feat/ai-assistant-fixes-batch-1`
