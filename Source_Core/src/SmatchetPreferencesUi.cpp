@@ -375,6 +375,49 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::EndTabItem();
         }
 #endif
+#if defined(SMATCHET_WITH_AI)
+        if (ImGui::BeginTabItem("Assistant")) {
+            ImGui::TextUnformatted("agents.md harness");
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextWrapped(
+                "agents.md files supply per-project + global instructions injected into every Assistant turn. "
+                "The global layer defaults to %%LOCALAPPDATA%%/Smatchet/agents.md when blank; the project layer is "
+                "discovered by walking up from the current working directory unless an explicit override is set "
+                "below. Each layer is capped at 64 KB.");
+            ImGui::Spacing();
+
+            // Local input buffers — sized large enough for typical filesystem paths
+            // including long-path-prefixed forms on Windows.
+            static char s_agentsMdGlobalBuf[1024] = {};
+            static char s_projectAgentsMdBuf[1024] = {};
+            static bool s_agentsBufsSeeded = false;
+            if (!s_agentsBufsSeeded) {
+                s_agentsBufsSeeded = true;
+                std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
+                std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s",
+                              d.cfg.ProjectAgentsMdPath.c_str());
+            }
+            const bool globalChanged = ImGui::InputText("Global agents.md path", s_agentsMdGlobalBuf,
+                                                        sizeof(s_agentsMdGlobalBuf));
+            ImGui::SetItemTooltip("Default location is %LOCALAPPDATA%/Smatchet/agents.md (resolved at load time). "
+                                  "Override to point at a checked-in shared file if your team keeps one.");
+            const bool projectChanged = ImGui::InputText("Project agents.md path (optional override)",
+                                                         s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf));
+            ImGui::SetItemTooltip("When set, this exact path is used as the project layer instead of walking up "
+                                  "from the working directory.");
+            if (globalChanged || projectChanged) {
+                d.cfg.AgentsMdGlobalPath = s_agentsMdGlobalBuf;
+                d.cfg.ProjectAgentsMdPath = s_projectAgentsMdBuf;
+                ConfigManager::Save(d.cfg);
+            }
+            ImGui::Spacing();
+            ImGui::TextDisabled(
+                "Provider, API keys, model selection, and base URLs land in this tab in a future phase. For now "
+                "edit smatchet_config.json directly to switch providers.");
+            ImGui::EndTabItem();
+        }
+#endif
         if (ImGui::BeginTabItem("Local data")) {
             ImGui::TextWrapped(
                 "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "

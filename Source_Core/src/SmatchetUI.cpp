@@ -743,7 +743,9 @@ void SmatchetUI::Draw(AppController& app) {
 void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d) {
     // Free function lives in SmatchetAiAssistantUi.cpp; this member exists to keep
     // SmatchetUI.h's private-method contract uniform with the other window drawers.
-    SmatchetDrawAiAssistantPanel(app, d);
+    // Phase C: forward the active view definition so the panel's auto-context builder
+    // can populate the ActiveView block.
+    SmatchetDrawAiAssistantPanel(app, d, ViewState.GetActiveView());
 }
 #endif
 

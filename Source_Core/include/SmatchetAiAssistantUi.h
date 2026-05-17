@@ -2,6 +2,7 @@
 
 class AppController;
 struct UiDrawSession;
+struct ViewDefinition;
 
 #if defined(SMATCHET_WITH_AI)
 /// Right-anchored, pinned non-docked Smatchet Assistant side panel. Reads + mutates the
@@ -9,5 +10,9 @@ struct UiDrawSession;
 /// `AppController::GetAiAssistantController`. Always called every frame from
 /// `SmatchetUI::Draw` — the function itself early-returns when `d.assistantPanelOpen`
 /// is false (the View menu toggles that flag).
-void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d);
+///
+/// `activeView` is the currently-active `ViewDefinition*` from `SmatchetUI::ViewState`
+/// (may be null). Phase C uses it to populate the ActiveView auto-context block; the
+/// pointer is read-only and only valid for the duration of the call.
+void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
 #endif

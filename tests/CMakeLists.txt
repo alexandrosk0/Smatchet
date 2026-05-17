@@ -37,6 +37,8 @@ add_executable(SmatchetTests
     Source_Core/ConfigMigration.test.cpp
     Source_Core/AiSseParser.test.cpp
     Source_Core/AiClientFactory.test.cpp
+    Source_Core/AgentsMdLoader.test.cpp
+    Source_Core/AiContextBuilder.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -76,6 +78,8 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiSseParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiClientFactory.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
@@ -95,6 +99,7 @@ target_link_libraries(SmatchetTests PRIVATE
     SQLiteCpp
     md4c
     cpr::cpr
+    ghc_filesystem
 )
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.

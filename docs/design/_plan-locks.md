@@ -50,6 +50,29 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### ai-assistant-side-panel · Phase C · agents-md-loader-and-context-builder · status: claimed
+
+- **Branch**: `feat/ai-assistant-side-panel-phase-c`
+- **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
+- **Claimed write set**:
+  - `Source_Core/include/AgentsMdLoader.h` (NEW)
+  - `Source_Core/src/AgentsMdLoader.cpp` (NEW)
+  - `Source_Core/include/AiContextBuilder.h` (NEW)
+  - `Source_Core/src/AiContextBuilder.cpp` (NEW)
+  - `Source_Core/src/SmatchetAiAssistantUi.cpp` (MOD — per-block context checkboxes near input area; build context via AiContextBuilder on Send)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — Assistant tab with agents.md path inputs only; provider/model/API key inputs deferred to Phase D)
+  - `Source_Core/src/AiAssistantController.cpp` (MOD — system-prompt assembly uses AgentsMdLoader + builder output; UI-thread Submit)
+  - `tests/Source_Core/AgentsMdLoader.test.cpp` (NEW)
+  - `tests/Source_Core/AiContextBuilder.test.cpp` (NEW)
+  - `tests/CMakeLists.txt` (MOD — register 2 new test files + 2 new production .cpps)
+  - `docs/design/ai-assistant-side-panel.md` (revise — append Implementation log row + Deviations + extend Verification)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/AiAssistantController.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/ConfigManager.h` (Ai field set + 5 context-block toggles + agents.md paths already shipped Phase A'), `Source_Core/include/AppController.h` (`GetActiveTicketsSnapshot` + `IsOnUiThread`), `Source_Core/include/SpreadsheetState.h` (`RectSel.Rows` + `ActiveIssueId`), `Source_Core/include/SmatchetUiSession.h` (`cachedSortedIndices` + `assistantContextBlock*` runtime mirror), `Source_Core/include/BackendAuditTrail.h` (`ReadRecentEvents`), `Source_Core/include/Views.h` + `ConfigManager::ViewDefinition` (active view + JQL + columns).
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched.
+- **Cleared by**: TBD PR.
+
 ### ai-assistant-side-panel · Phase B · side-panel-ui-and-controller · status: shipped (PR #163 merged at dd703ab)
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-b` (deleted)

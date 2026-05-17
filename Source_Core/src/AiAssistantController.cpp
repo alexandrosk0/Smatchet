@@ -2,6 +2,7 @@
 
 #if defined(SMATCHET_WITH_AI)
 
+#include "AgentsMdLoader.h"
 #include "AiClientFactory.h"
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -181,10 +182,47 @@ void AiAssistantController::RunRequest(const Request& req) {
         }
     }();
 
+    // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
+    // (when any block has content) + each enabled block wrapped in
+    // `<smatchet_context block="...">...</smatchet_context>` tags. File I/O for
+    // agents.md happens here on the worker thread to honour pillar 2 (no synchronous
+    // I/O reaches the UI thread). Layers are capped at 64 KB each by AgentsMdLoader,
+    // so the total system-prompt overhead is bounded.
     chatReq.SystemPrompt.clear();
-    for (const auto& block : req.Context) {
-        chatReq.SystemPrompt.append(block.Body);
-        chatReq.SystemPrompt.push_back('\n');
+    {
+        const TrackerConfig agentsCfg = ConfigManager::Load();
+        const std::string agentsMd =
+            AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath);
+        if (!agentsMd.empty()) {
+            chatReq.SystemPrompt.append(agentsMd);
+            if (chatReq.SystemPrompt.back() != '\n') {
+                chatReq.SystemPrompt.push_back('\n');
+            }
+            chatReq.SystemPrompt.append("\n---\n\n");
+        }
+    }
+    {
+        std::string contextSection;
+        for (const auto& block : req.Context) {
+            if (block.Body.empty()) {
+                continue;
+            }
+            if (!contextSection.empty()) {
+                contextSection.push_back('\n');
+            }
+            contextSection.append("<smatchet_context block=\"");
+            contextSection.append(block.Name);
+            contextSection.append("\">\n");
+            contextSection.append(block.Body);
+            if (block.Body.back() != '\n') {
+                contextSection.push_back('\n');
+            }
+            contextSection.append("</smatchet_context>\n");
+        }
+        if (!contextSection.empty()) {
+            chatReq.SystemPrompt.append("## Current Smatchet context\n\n");
+            chatReq.SystemPrompt.append(contextSection);
+        }
     }
     AiMessage userMsg;
     userMsg.Role = "user";
