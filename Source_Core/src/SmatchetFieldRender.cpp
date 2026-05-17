@@ -38,11 +38,16 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     if (disabled) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     }
+    // Group wrap so IsItemHovered() below treats the whole cell as one item.
+    // DrawColoredCppLine emits one TextUnformatted per token; without the group,
+    // hover would only register on the last token and suppress the tooltip.
+    ImGui::BeginGroup();
     if (isCallstack) {
         DrawColoredCppLine(singleLine.c_str());
     } else {
         ImGui::TextUnformatted(singleLine.c_str());
     }
+    ImGui::EndGroup();
 
     const std::string& tipSource = (rawForTooltip && !rawForTooltip->empty()) ? *rawForTooltip : displayValue;
     if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
