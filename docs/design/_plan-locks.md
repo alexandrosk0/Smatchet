@@ -50,7 +50,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### h12-l16-m13-bundle · slice-1 · status: claimed
+### h12-l16-m13-bundle · slice-1 · status: in-flight
 
 - **Branch**: `feat/h12-l16-m13-bundle`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
@@ -64,7 +64,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/pillar-1-2-audit-2026-05-17.md` (Shipped + Watch list section)
 - **Read-only adjacency**: `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (PR #186 pattern reference), `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AppController.h`
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — claimed.
+- **Last update**: 2026-05-17 — implementation commit landed; dual-target build + ctest pass; PR pending.
 - **Cleared by**: TBD PR.
 
 ### configmanager-save-coalesce · slice-1 · status: shipped (PR #190 merged at a3298ca)

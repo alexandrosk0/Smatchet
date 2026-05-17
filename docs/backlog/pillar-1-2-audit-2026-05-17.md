@@ -190,6 +190,7 @@ Fix: same as H11 — coalesce Save. Optionally, debounce cache invalidation.
 - **CRITICAL findings #1–9** (all 9 sync HTTP/IO call paths) — PR [#191](https://github.com/alexandrosk0/Smatchet/pull/191) at sha `8b779bc`. Worker dispatch via `LaunchBackgroundTask` + `MainThreadDispatcher::PostToMainThread`, cancel atoms on installer download path.
 - **M15** (disk-cached icon read) — bundled into PR #191 via `LoadTextureForResolvedPath` refactor that defers disk reads off the icon-render path.
 - **H11 + P1** (`ConfigManager::Save` cascade + cache invalidation) — PR [#190](https://github.com/alexandrosk0/Smatchet/pull/190) at sha `a3298ca`. 31 per-widget Save sites → `MarkPrefsDirty(d)` + 100 ms end-of-frame debounce. Final sync Save on shutdown via `DrainUiDrawSessionFuturesBeforeAppTeardown`.
+- **H12 + L16 + M13** (bulk-tickets file r/w, image-texture-cache file reads, long-text editor JSON parse) — PR `feat/h12-l16-m13-bundle`. H12: Load file + Save to file buttons disable while a worker reads/writes, button label flips to "Loading..." / "Saving..."; modal-close flips a cancel atom so the worker's post-back bails. L16: URL-disk-cache-hit branch and file-path branch in `SmatchetFieldIconRender.cpp` now dispatch via `LaunchBackgroundTask`; `IconFileReadInFlightSet` mirrors the URL-fetch suppression set; worker reads bytes, posts back to UI thread for GPU upload via `GetOrLoadFromMemory`. M13: threshold-gated — rich values ≤ 32 KB stay on the sync path (no UX regression for normal Jira descriptions); above the cutoff, `nlohmann::json::parse` + `MarkdownConvert::AdfToMarkdown` run on a worker, the modal shows a placeholder "Loading description..." banner until a generation-checked post-back swaps the real seed in.
 
 ### Accepted — no fix needed
 
@@ -197,13 +198,10 @@ Fix: same as H11 — coalesce Save. Optionally, debounce cache invalidation.
 - **M14** app-update check — every call site already wrapped in `std::async`; observational only.
 - **L17** available-fields mutex — critical section is short (vector move under `SetFieldCatalog`); observational only.
 
-### Open / backlog
+### Watch list — re-evaluate when triggers fire
 
-- **H12** Bulk-tickets file r/w on click (`SmatchetBulkTicketsUi.cpp:150, 551`) — Pattern A worker + future poll.
-- **M13** Long-text editor JSON parse on open (`TicketFieldEditor.cpp:185, 216`) — parse on worker.
-- **L16** Image texture cache disk read first-touch (`SmatchetImageTextureCache.cpp:244`) — bundle with H12.
-- **P2** Lua field-cell provider spike (observational) — enable `perf_temp:LuaDrawList::Record` capture before deciding.
-- **P3** O(N²) icon-fallback dedup — N≤5 today; watch-list only.
-- **P4** JSON `dump(4)` in config save — ~5 KB today; watch-list only.
+The three items below are below the merge-block bar today (small N, small payloads). They stay tracked so a future scenario crossing the trigger condition gets caught by the next audit pass.
 
-Suggested next bundle: H12 + L16 + M13 as a single PR (same Pattern A worker shape).
+- **P2** Lua field-cell provider spike. **Trigger**: `perf_temp:LuaDrawList::Record` capture (already scoped at `AppController_LuaBindings.cpp:1886`) shows `maxPerCallMs > 1.0` on any representative scenario. **Action when fired**: document in the Lua bindings contract that providers must stay pure (no catalog rebuild / image fetch / blocking C++ callbacks); pathological providers move to a worker via the same Pattern A. **Why not now**: cache absorbs almost all calls; current N misses on sort/refilter are sub-millisecond.
+- **P3** O(N²) icon-fallback dedup (`SmatchetFieldIconRender.cpp:327-329`). **Trigger**: a future grid view ever holds **> 50 distinct priority candidates per cell**, OR the same shape appears in `JiraUserAndMeta` / `FieldCatalogCache` and N there crosses 50. **Action**: switch `std::any_of` over `candidates` to `std::unordered_set<std::string>` membership check. **Why not now**: N ≤ 5 today; the constant-factor win of `std::any_of` on tiny vectors beats hash-set setup.
+- **P4** JSON `dump(4)` in config save (`ConfigManager_PathUtils.cpp:634`). **Trigger**: `smatchet_config.json` file size **> 64 KB** measured on disk in any real install. **Action**: switch the hot-write path to `dump()` (no indent); keep `dump(4)` for the Settings → Export flow where pretty-print is user-visible. **Why not now**: current config is ~5 KB; pretty-print cost is sub-millisecond.

@@ -17,11 +17,14 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -115,6 +118,11 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
 void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkImport) {
         if (d.bulkImportWasOpen) {
+            // Closing the modal cancels any in-flight load; the worker still completes but its
+            // post-back checks the cancel atom and bails before touching d.bulkImportTextBuf.
+            if (d.bulkImportLoadCancel) {
+                d.bulkImportLoadCancel->store(true);
+            }
             d.bulkImportTextBuf.clear();
             d.bulkImportPathBuf[0] = '\0';
             d.bulkImportFormatSel = 0;
@@ -145,15 +153,38 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     ImGui::SetNextItemWidth(520);
     ImGui::InputText("##bulkImportPath", d.bulkImportPathBuf, sizeof(d.bulkImportPathBuf));
     ImGui::SameLine();
-    if (ImGui::Button("Load file")) {
-        std::string text, err;
-        if (ReadEntireFile(d.bulkImportPathBuf, text, err)) {
-            d.bulkImportTextBuf.assign(text.begin(), text.end());
-            d.bulkImportTextBuf.push_back('\0');
-            d.bulkImportError.clear();
-        } else {
-            d.bulkImportError = err;
-        }
+    // Pillar 2 — file read is deferred to a worker. Files can be megabytes (bulk-import scenarios
+    // with 1000s of tickets); the inline ifstream blocked the UI thread. The button disables while
+    // in-flight; result posts back via MainThreadDispatcher.
+    if (d.bulkImportLoadInFlight) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Load file");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Loading...");
+    } else if (ImGui::Button("Load file")) {
+        const std::string capturedPath = d.bulkImportPathBuf;
+        d.bulkImportLoadInFlight = true;
+        d.bulkImportLoadCancel = std::make_shared<std::atomic<bool>>(false);
+        auto cancel = d.bulkImportLoadCancel;
+        app.LaunchBackgroundTask([&app, &d, capturedPath, cancel]() {
+            std::string text, err;
+            const bool ok = ReadEntireFile(capturedPath, text, err);
+            app.mainThreadDispatcher.PostToMainThread(
+                [&d, ok, text = std::move(text), err = std::move(err), cancel]() mutable {
+                    d.bulkImportLoadInFlight = false;
+                    if (cancel && cancel->load()) {
+                        return;
+                    }
+                    if (ok) {
+                        d.bulkImportTextBuf.assign(text.begin(), text.end());
+                        d.bulkImportTextBuf.push_back('\0');
+                        d.bulkImportError.clear();
+                    } else {
+                        d.bulkImportError = err;
+                    }
+                });
+        });
     }
     ImGui::SameLine();
     if (ImGui::Button("Paste clipboard")) {
@@ -545,14 +576,38 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         d.bulkExportFeedback = "Copied " + std::to_string(text.size()) + " bytes.";
     }
     ImGui::SameLine();
-    if (ImGui::Button("Save to file")) {
-        const std::string text = buildText();
-        std::string err;
-        if (WriteEntireFile(d.bulkExportPathBuf, text, err)) {
-            d.bulkExportFeedback = "Wrote " + std::to_string(text.size()) + " bytes.";
-        } else {
-            d.bulkExportFeedback = err;
-        }
+    // Pillar 2 — file write deferred to a worker. Serialised payload can be megabytes for grids
+    // with thousands of rows; the inline ofstream blocked the UI thread. Build the text on the
+    // UI thread (touches the active snapshot) then hand the path+bytes to a worker.
+    if (d.bulkExportSaveInFlight) {
+        ImGui::BeginDisabled();
+        ImGui::Button("Save to file");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Saving...");
+    } else if (ImGui::Button("Save to file")) {
+        std::string text = buildText();
+        const std::string capturedPath = d.bulkExportPathBuf;
+        const size_t byteCount = text.size();
+        d.bulkExportSaveInFlight = true;
+        d.bulkExportSaveCancel = std::make_shared<std::atomic<bool>>(false);
+        auto cancel = d.bulkExportSaveCancel;
+        app.LaunchBackgroundTask([&app, &d, capturedPath, text = std::move(text), byteCount, cancel]() mutable {
+            std::string err;
+            const bool ok = WriteEntireFile(capturedPath, text, err);
+            app.mainThreadDispatcher.PostToMainThread(
+                [&d, ok, byteCount, err = std::move(err), cancel]() mutable {
+                    d.bulkExportSaveInFlight = false;
+                    if (cancel && cancel->load()) {
+                        return;
+                    }
+                    if (ok) {
+                        d.bulkExportFeedback = "Wrote " + std::to_string(byteCount) + " bytes.";
+                    } else {
+                        d.bulkExportFeedback = err;
+                    }
+                });
+        });
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%s", d.bulkExportFeedback.c_str());
