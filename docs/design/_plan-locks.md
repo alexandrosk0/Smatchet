@@ -50,6 +50,22 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### configmanager-save-coalesce · slice-1 · status: in-flight
+
+- **Branch**: `feat/configmanager-save-coalesce`
+- **Owner agent**: `claude` (orchestrator-dispatched)
+- **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
+- **Claimed write set**:
+  - `Source_Core/include/SmatchetUiSession.h` (MOD — add `prefsDirty` + `prefsSaveDueAt` + `MarkPrefsDirty` helper)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — replace direct `ConfigManager::Save` per-widget calls with `MarkPrefsDirty(d)`; AI Assistant tab unchanged)
+  - `Source_Core/src/SmatchetUI.cpp` (MOD — end-of-frame debounced Save firing)
+  - `Source_Core/src/AppController.cpp` (MOD — final synchronous Save on shutdown if dirty; if not already present)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager.cpp`
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched.
+- **Cleared by**: TBD PR.
+
 ### grid-cell-edit-perf · slice-1 · status: shipped (PR #186 merged at 16e0611)
 
 - **Branch**: `feat/grid-cell-edit-perf`
