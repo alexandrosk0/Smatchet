@@ -1,5 +1,7 @@
 #include "AiNdjsonParser.h"
 
+#include "Logger.h"
+
 #include <cstddef>
 #include <exception>
 #include <string>
@@ -25,10 +27,19 @@ void AiNdjsonParser::emitOneLine(std::size_t begin, std::size_t end, const LineC
         onLine(j);
 }
 
-void AiNdjsonParser::Feed(const char* data, std::size_t len, const LineCallback& onLine,
-                          const ErrorCallback& onError) {
-    if (len > 0 && data != nullptr)
+void AiNdjsonParser::Feed(const char* data, std::size_t len, const LineCallback& onLine, const ErrorCallback& onError) {
+    if (overflowed_)
+        return; // Stream poisoned; ignore further bytes until Reset.
+    if (len > 0 && data != nullptr) {
+        if (buffer_.size() + len > kAiNdjsonParserMaxBufferBytes) {
+            overflowed_ = true;
+            LOG_ERROR("AiNdjsonParser: stream exceeded %zu-byte cap without a newline; aborting parse.",
+                      kAiNdjsonParserMaxBufferBytes);
+            buffer_.clear();
+            return;
+        }
         buffer_.append(data, len);
+    }
 
     std::size_t scanFrom = 0;
     while (true) {
@@ -49,4 +60,7 @@ void AiNdjsonParser::Flush(const LineCallback& onLine, const ErrorCallback& onEr
     buffer_.clear();
 }
 
-void AiNdjsonParser::Reset() { buffer_.clear(); }
+void AiNdjsonParser::Reset() {
+    buffer_.clear();
+    overflowed_ = false;
+}

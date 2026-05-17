@@ -128,8 +128,8 @@ std::string AnthropicClient::ProbeReachability(const AiClientConfig& cfg) {
     if (!cfg.ApiKey.empty())
         headers["x-api-key"] = cfg.ApiKey;
 
-    cpr::Response r = cpr::Head(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs},
-                                cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r =
+        cpr::Head(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
@@ -216,7 +216,11 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
         if (!redactedBody.empty()) {
             err.Message.append(": ");
+<<<<<<< HEAD
             err.Message.append(redactedBody);
+=======
+            err.Message.append(smatchet::ai::pure::RedactProviderErrorBody(r.text));
+>>>>>>> 19fc262 (fix(ai-hotfix-batch-2): four CRITICAL + eight HIGH findings from retrospective review)
         }
         onError(err);
         return;

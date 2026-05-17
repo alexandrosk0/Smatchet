@@ -4,14 +4,19 @@
 
 #include "AgentsMdLoader.h"
 #include "AiClientFactory.h"
+#include "AiContextBuilder.h"
+#include "AiEndpointSanitize.h"
 #include "AppController.h"
+#include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <utility>
 
 // `g_ui` is the UI-thread-owned UiDrawSession defined unconditionally in
@@ -42,26 +47,52 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
     }
 }
 
+// Strip CR/LF/NUL from a header-bound value. libcurl will usually reject them
+// already, but defense-in-depth: a user-typed `cfg.Ai*ApiKey` should never
+// carry header-smuggling control characters into the outbound request.
+std::string SanitizeHeaderValue(const std::string& v) {
+    std::string out;
+    out.reserve(v.size());
+    std::copy_if(v.begin(), v.end(), std::back_inserter(out),
+                 [](char c) { return c != '\r' && c != '\n' && c != '\0'; });
+    return out;
+}
+
+// Validate + (best-effort) normalise the user-configured endpoint URL. Returns
+// the sanitised URL on success; empty + logs a structured warning on rejection
+// (the empty string causes the provider client to fall back to its built-in
+// default, which is the safe choice).
+std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLabel) {
+    std::string normalised;
+    const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(raw, normalised);
+    if (v == smatchet::ai::pure::EndpointVerdict::Allowed)
+        return normalised;
+    LOG_ERROR("AiAssistantController: %s endpoint URL %s — falling back to provider default. Raw URL withheld.",
+              providerLabel, smatchet::ai::pure::EndpointVerdictDescription(v));
+    return std::string();
+}
+
 AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) {
     AiClientConfig out;
     switch (provider) {
     case AiProvider::Anthropic:
-        out.ApiKey = cfg.AiAnthropicApiKey;
-        out.BaseUrl = cfg.AiBaseUrl; // user-overridable; empty = provider default
+        out.ApiKey = SanitizeHeaderValue(cfg.AiAnthropicApiKey);
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "anthropic");
         break;
     case AiProvider::OllamaNative:
         out.ApiKey.clear(); // Ollama-native has no API key
-        out.BaseUrl = cfg.AiOllamaBaseUrl;
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiOllamaBaseUrl, "ollama");
         break;
     case AiProvider::OllamaOpenAiCompat:
-        out.ApiKey = cfg.AiApiKey;
+        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
         // OllamaOpenAi-compat uses the user's base URL (typically http://localhost:11434/v1)
-        out.BaseUrl = cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
+        out.BaseUrl =
+            SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl, "ollama-openai-compat");
         break;
     case AiProvider::OpenAi:
     default:
-        out.ApiKey = cfg.AiApiKey;
-        out.BaseUrl = cfg.AiBaseUrl;
+        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai");
         break;
     }
     return out;
@@ -153,11 +184,11 @@ void AiAssistantController::WorkerLoop() {
             continue;
         }
         state_.store(State::InFlight, std::memory_order_release);
-        RunRequest(req);
+        RunRequest(req, cancel);
     }
 }
 
-void AiAssistantController::RunRequest(const Request& req) {
+void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& cancel) {
     if (!client_) {
         state_.store(State::Errored, std::memory_order_release);
         return;
@@ -190,9 +221,26 @@ void AiAssistantController::RunRequest(const Request& req) {
     // so the total system-prompt overhead is bounded.
     chatReq.SystemPrompt.clear();
     {
+        // agents.md cache: avoid re-reading the (up to 64 KB × 2 layers) blob on
+        // every turn. Re-reads happen only when the cache is invalidated
+        // (`InvalidateAgentsMdCache` from the Preferences UI) or when the
+        // configured paths change between turns.
         const TrackerConfig agentsCfg = ConfigManager::Load();
-        const std::string agentsMd =
-            AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath);
+        std::string agentsMd;
+        {
+            std::lock_guard<std::mutex> lk(agentsMdMutex_);
+            const bool pathsMatch = (agentsMdCachedGlobalPath_ == agentsCfg.AgentsMdGlobalPath) &&
+                                    (agentsMdCachedProjectPath_ == agentsCfg.ProjectAgentsMdPath);
+            if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
+                agentsMd = agentsMdCachedBody_;
+            } else {
+                agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath);
+                agentsMdCachedBody_ = agentsMd;
+                agentsMdCachedGlobalPath_ = agentsCfg.AgentsMdGlobalPath;
+                agentsMdCachedProjectPath_ = agentsCfg.ProjectAgentsMdPath;
+                agentsMdCacheValid_.store(true, std::memory_order_release);
+            }
+        }
         if (!agentsMd.empty()) {
             chatReq.SystemPrompt.append(agentsMd);
             if (chatReq.SystemPrompt.back() != '\n') {
@@ -201,9 +249,41 @@ void AiAssistantController::RunRequest(const Request& req) {
             chatReq.SystemPrompt.append("\n---\n\n");
         }
     }
+
+    // Fetch the audit-trail block on the worker thread when requested. The UI-side
+    // BuildSendContext deliberately skips audit (the SQLite + filesystem read is too
+    // heavy for the UI frame) and instead emits an `AuditTrail`-kind block with the
+    // body `"__SMATCHET_DEFERRED__"` (literal sentinel). We rewrite it here using the
+    // canonical pure helper. Disabled audit-trail blocks have empty bodies and are
+    // skipped by the block-emit loop below, so this is a no-op when the user
+    // disabled the toggle.
+    std::vector<AiContextBlock> resolvedContext;
+    resolvedContext.reserve(req.Context.size());
+    for (const auto& block : req.Context) {
+        if (block.Kind == AiContextBlockKind::AuditTrail && block.Body == "__SMATCHET_DEFERRED__") {
+            std::string body;
+            try {
+                std::vector<nlohmann::json> events =
+                    BackendAuditTrail::ReadRecentEvents(AiContextBuilder::kAuditCap, nullptr);
+                std::vector<std::string> lines;
+                lines.reserve(events.size());
+                for (const auto& ev : events) {
+                    lines.push_back(ev.dump());
+                }
+                body = AiContextBuilder::BuildAuditTrailBody(lines);
+            } catch (const std::exception& ex) {
+                LOG_WARN("AiAssistantController: audit-trail fetch failed: %s", ex.what());
+            }
+            AiContextBlock resolved = block;
+            resolved.Body = std::move(body);
+            resolvedContext.push_back(std::move(resolved));
+        } else {
+            resolvedContext.push_back(block);
+        }
+    }
     {
         std::string contextSection;
-        for (const auto& block : req.Context) {
+        for (const auto& block : resolvedContext) {
             if (block.Body.empty()) {
                 continue;
             }
@@ -242,7 +322,19 @@ void AiAssistantController::RunRequest(const Request& req) {
                 return; // stale callback — Cancel or newer Submit raced us
             }
             if (!chunk.empty()) {
-                g_ui.assistantStreamBuf.append(chunk);
+                // Hard cap on assistantStreamBuf — defense-in-depth against a
+                // runaway provider that keeps streaming past any reasonable
+                // response size. 4 MiB mirrors the SSE/NDJSON parser caps.
+                constexpr std::size_t kMaxStreamBufBytes = 4u * 1024u * 1024u;
+                if (g_ui.assistantStreamBuf.size() < kMaxStreamBufBytes) {
+                    const std::size_t room = kMaxStreamBufBytes - g_ui.assistantStreamBuf.size();
+                    if (chunk.size() <= room) {
+                        g_ui.assistantStreamBuf.append(chunk);
+                    } else {
+                        g_ui.assistantStreamBuf.append(chunk, 0, room);
+                        g_ui.assistantStreamBuf.append("\n[truncated — response exceeded 4 MiB cap]");
+                    }
+                }
             }
             if (isFinal) {
                 AiMessage assistantMsg;
@@ -288,17 +380,19 @@ void AiAssistantController::RunRequest(const Request& req) {
         });
     };
 
-    AiCancelToken cancel;
-    {
-        std::lock_guard<std::mutex> lk(queueMutex_);
-        cancel = currentCancel_;
-    }
-    if (!cancel) {
-        cancel = std::make_shared<std::atomic<bool>>(false);
+    // Trust the cancel atom captured in WorkerLoop under the queueMutex_. The
+    // earlier "re-acquire under lock; fallback to fresh atom if currentCancel_
+    // was reset" path could silently swallow a Cancel that arrived after the
+    // worker popped its turn but before this re-acquire — Submit() guarantees a
+    // non-null currentCancel_ exists by the time WorkerLoop reads it, so the
+    // fallback was dead code that masked a real race.
+    AiCancelToken liveCancel = cancel;
+    if (!liveCancel) {
+        liveCancel = std::make_shared<std::atomic<bool>>(false);
     }
 
     try {
-        client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, cancel);
+        client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, liveCancel);
     } catch (const std::exception& ex) {
         LOG_ERROR("AiAssistantController: SendStreaming threw: %s", ex.what());
         AiStreamError err;
@@ -323,15 +417,20 @@ void AiAssistantController::RunRequest(const Request& req) {
 }
 
 void AiAssistantController::AddAiContext(const AiContextBlock& block) {
+    std::lock_guard<std::mutex> lk(luaContextMutex_);
     luaContext_.push_back(block);
 }
 
 void AiAssistantController::ClearAiContext() {
+    std::lock_guard<std::mutex> lk(luaContextMutex_);
     luaContext_.clear();
 }
 
 std::vector<AiContextBlock> AiAssistantController::GetAiContext() const {
+    std::lock_guard<std::mutex> lk(luaContextMutex_);
     return luaContext_;
 }
+
+void AiAssistantController::InvalidateAgentsMdCache() { agentsMdCacheValid_.store(false, std::memory_order_release); }
 
 #endif // SMATCHET_WITH_AI

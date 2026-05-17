@@ -84,8 +84,7 @@ AiContextBlock MakeBlock(AiContextBlockKind kind, std::string body) {
 
 } // namespace
 
-std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets,
-                               const std::vector<std::size_t>& sortedIndices,
+std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const std::vector<std::size_t>& sortedIndices,
                                const std::set<int>& selectedRows) {
     if (selectedRows.empty() || sortedIndices.empty() || tickets.empty()) {
         return std::string();
@@ -149,13 +148,9 @@ std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, cons
     if (activeIssueId.empty() || tickets.empty()) {
         return std::string();
     }
-    const CachedTicket* found = nullptr;
-    for (const CachedTicket& t : tickets) {
-        if (t.id == activeIssueId) {
-            found = &t;
-            break;
-        }
-    }
+    const auto it =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& t) { return t.id == activeIssueId; });
+    const CachedTicket* found = (it == tickets.end()) ? nullptr : &(*it);
     if (!found) {
         return std::string();
     }
@@ -265,16 +260,24 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in) {
     {
         std::string body;
         if (in.EnableAuditTrail) {
-            // ReadRecentEvents returns JSON objects; serialise back to strings so the
-            // builder stays free of UI / SQLite / dispatcher coupling. Cap is also
-            // applied inside BuildAuditTrailBody.
-            std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(kAuditCap, nullptr);
-            std::vector<std::string> lines;
-            lines.reserve(events.size());
-            for (const auto& ev : events) {
-                lines.push_back(ev.dump());
+            if (in.DeferAuditTrailFetch) {
+                // UX pillar 2: BackendAuditTrail::ReadRecentEvents performs a
+                // synchronous SQLite + filesystem read that must not run on the
+                // UI thread. Emit a sentinel body; the worker thread
+                // (AiAssistantController::RunRequest) replaces it with the real
+                // body before the request is dispatched.
+                body = kDeferredAuditTrailSentinel;
+            } else {
+                // ReadRecentEvents returns JSON objects; serialise back to strings so the
+                // builder stays free of UI / SQLite / dispatcher coupling. Cap is also
+                // applied inside BuildAuditTrailBody.
+                std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(kAuditCap, nullptr);
+                std::vector<std::string> lines;
+                lines.reserve(events.size());
+                std::transform(events.begin(), events.end(), std::back_inserter(lines),
+                               [](const nlohmann::json& ev) { return ev.dump(); });
+                body = BuildAuditTrailBody(lines);
             }
-            body = BuildAuditTrailBody(lines);
         }
         out.push_back(MakeBlock(AiContextBlockKind::AuditTrail, std::move(body)));
     }

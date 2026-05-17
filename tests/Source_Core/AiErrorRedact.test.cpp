@@ -58,6 +58,25 @@ TEST_CASE("RedactProviderErrorBody strips api_key / Authorization JSON fields" *
         const std::string out = RedactProviderErrorBody(body);
         CHECK(out.find("spaced") == std::string::npos);
     }
+
+    SUBCASE("Anthropic x-api-key field echo") {
+        const std::string body = R"({"echoed_header":{"x-api-key":"sk-ant-leakedanthropickey1234"}})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("leakedanthropickey") == std::string::npos);
+        CHECK(out.find("\"x-api-key\":\"[REDACTED]\"") != std::string::npos);
+    }
+
+    SUBCASE("X-Api-Key capitalised header echo") {
+        const std::string body = R"({"X-Api-Key":"sk-mixedcaseleak1234567"})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("mixedcaseleak") == std::string::npos);
+    }
+
+    SUBCASE("anthropic-api-key field echo") {
+        const std::string body = R"({"anthropic-api-key":"sk-ant-otherleak1234567"})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("otherleak") == std::string::npos);
+    }
 }
 
 TEST_CASE("RedactProviderErrorBody strips id-prefix tokens (sk-/org-/proj_/asst_)" *

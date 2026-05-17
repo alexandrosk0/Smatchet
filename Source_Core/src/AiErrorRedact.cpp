@@ -58,6 +58,9 @@ std::string RedactProviderErrorBody(const std::string& body) {
     redactJsonField("apiKey");
     redactJsonField("Authorization");
     redactJsonField("authorization");
+    redactJsonField("x-api-key");
+    redactJsonField("X-Api-Key");
+    redactJsonField("anthropic-api-key");
 
     // Common id prefixes (OpenAI: sk-..., org-..., proj_..., asst_...).
     static const char* kIdPrefixes[] = {"sk-", "sk_", "org-", "proj_", "asst_"};

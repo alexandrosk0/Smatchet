@@ -31,6 +31,15 @@ constexpr std::size_t kRowsCap = 50u;
 /// AuditTrail cap. Plan-locked at N=20.
 constexpr std::size_t kAuditCap = 20u;
 
+/// Sentinel body inserted into the AuditTrail block when the UI-thread caller
+/// asks BuildAll to defer the actual SQLite + filesystem read to a worker
+/// thread (see `Inputs::DeferAuditTrailFetch`). The worker (today:
+/// `AiAssistantController::RunRequest`) recognises this exact string and
+/// rewrites the block body with the result of `BuildAuditTrailBody` before
+/// the request is sent. Chosen to be highly unlikely to collide with any
+/// real audit-trail content.
+constexpr const char* kDeferredAuditTrailSentinel = "__SMATCHET_DEFERRED__";
+
 struct Inputs {
     /// Active tickets snapshot (typically obtained via
     /// `AppController::GetActiveTicketsSnapshot()` on the UI thread). May be null in
@@ -58,6 +67,13 @@ struct Inputs {
     bool EnableActiveTicket = true;
     bool EnableActiveView = true;
     bool EnableAuditTrail = true;
+    /// When true, the AuditTrail block body is set to `kDeferredAuditTrailSentinel`
+    /// instead of the full audit dump — the caller commits to fetching + replacing
+    /// the body on a worker thread before the request is dispatched. UI-thread
+    /// callers MUST pass `true` to honour UX pillar 2 (no synchronous filesystem
+    /// / SQLite read reaches the UI frame). Pure-logic tests default to `false`
+    /// for backwards compatibility with the Phase C test rig.
+    bool DeferAuditTrailFetch = false;
 };
 
 /// Build all 5 blocks. Disabled blocks have empty Body (kind + name still set).
@@ -79,17 +95,14 @@ std::string MergeEnabled(const Inputs& in);
 
 /// Render a single block's body for the Selection block: at most `kRowsCap` rows,
 /// dereferenced via the provided tickets list + sort-order indices.
-std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets,
-                               const std::vector<std::size_t>& sortedIndices,
+std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const std::vector<std::size_t>& sortedIndices,
                                const std::set<int>& selectedRows);
 
 /// Render the VisibleRows block body.
-std::string BuildVisibleRowsBody(const std::vector<CachedTicket>& tickets,
-                                 const std::vector<std::size_t>& visibleRows);
+std::string BuildVisibleRowsBody(const std::vector<CachedTicket>& tickets, const std::vector<std::size_t>& visibleRows);
 
 /// Render the ActiveTicket block body. Empty `activeIssueId` returns empty string.
-std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets,
-                                  const std::string& activeIssueId);
+std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, const std::string& activeIssueId);
 
 /// Render the ActiveView block body. Null view returns empty string.
 std::string BuildActiveViewBody(const ViewDefinition* view);

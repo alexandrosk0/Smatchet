@@ -1397,14 +1397,18 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
 #if defined(SMATCHET_WITH_AI)
 AiAssistantController& AppController::GetAiAssistantController() {
-    // Defensive — Initialize is expected to have wired it; if it failed, lazily wire
-    // here so the UI panel + Lua glue don't dereference null in production. The
-    // construction may still fail (no API key); the controller itself handles the
-    // no-provider case gracefully via Submit short-circuit.
-    if (!aiAssistant_) {
-        aiAssistant_ = std::unique_ptr<AiAssistantController>(new AiAssistantController(*this));
-    }
-    return *aiAssistant_;
+    // No lazy construction. Callers MUST guard with HasAiAssistantController()
+    // first — the controller is constructed exactly once at the end of
+    // AppController::Initialize and destroyed at the top of ~AppController.
+    // A lazy ctor here would race with shutdown: if a worker callback or Lua
+    // glue called Get* during/after ~AppController, it would spawn a fresh
+    // controller with no joiner, leaving a dangling thread at process exit.
+    //
+    // The previous lazy-fallback was originally added because Initialize could
+    // throw on a bad provider, but the try/catch in Initialize already swallows
+    // the exception and leaves aiAssistant_ null — at which point
+    // HasAiAssistantController() correctly returns false and callers handle it.
+    return *aiAssistant_; // pre-condition: HasAiAssistantController() == true
 }
 #endif
 

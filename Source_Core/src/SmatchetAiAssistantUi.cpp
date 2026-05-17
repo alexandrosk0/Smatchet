@@ -23,6 +23,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -39,16 +40,25 @@ float ClampedWidth(float requested, float workSizeX) {
     return (std::max)(kMinPanelWidth, (std::min)(requested, maxW));
 }
 
-// Debounced ConfigManager save tracker — width drags fire IsItemDeactivatedAfterEdit on
-// release, so we only persist on commit. Open/close toggles persist immediately.
-struct PanelPersistState {
-    bool pendingWidthSave = false;
-    std::chrono::steady_clock::time_point pendingWidthSaveAt{};
-};
-
-PanelPersistState& Persist() {
-    static PanelPersistState s;
-    return s;
+// UX pillar 2: ConfigManager::Save performs a synchronous JSON encode + atomic
+// file replace; even when the user is only toggling a checkbox the resulting
+// disk write can easily breach the 6.94 ms per-frame UI budget on a slow disk.
+// Push the save to a detached worker thread. The TrackerConfig snapshot is
+// captured by value so the worker is independent of the UI-thread cfg state.
+// Each save is small (a few KB), and the rate of saves is bounded by user
+// input frequency, so spawning a fresh thread per save is acceptable for the
+// scenarios that hit this path (panel toggle, checkbox click, width-drag
+// release). Move to a single coalescing worker if profiling shows churn.
+void ScheduleConfigSaveDetached(const TrackerConfig& cfg) {
+    TrackerConfig snapshot = cfg;
+    std::thread([snapshot]() {
+        try {
+            ConfigManager::Save(snapshot);
+        } catch (...) {
+            // Save logs its own diagnostics; swallow exceptions so a detached
+            // worker exit doesn't terminate the process.
+        }
+    }).detach();
 }
 
 void HydrateFromConfigOnce(UiDrawSession& d) {
@@ -67,7 +77,7 @@ void HydrateFromConfigOnce(UiDrawSession& d) {
 void PersistOpenStateImmediate(UiDrawSession& d) {
     if (d.cfg.AssistantPanelOpen != d.assistantPanelOpen) {
         d.cfg.AssistantPanelOpen = d.assistantPanelOpen;
-        ConfigManager::Save(d.cfg);
+        ScheduleConfigSaveDetached(d.cfg);
     }
 }
 
@@ -76,7 +86,7 @@ void PersistWidthDebounced(UiDrawSession& d) {
     // name reflects the contract: only commit on release, never every frame mid-drag.
     if (std::fabs(d.cfg.AssistantPanelWidth - d.assistantPanelWidthLive) > 0.5f) {
         d.cfg.AssistantPanelWidth = d.assistantPanelWidthLive;
-        ConfigManager::Save(d.cfg);
+        ScheduleConfigSaveDetached(d.cfg);
     }
 }
 
@@ -143,7 +153,7 @@ void DrawContextBlockCheckboxes(UiDrawSession& d) {
     ImGui::SameLine();
     draw("Audit##AiCtxAudit", d.cfg.AssistantContextBlockAuditTrail);
     if (dirty) {
-        ConfigManager::Save(d.cfg);
+        ScheduleConfigSaveDetached(d.cfg);
     }
 }
 
@@ -165,6 +175,11 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
     inputs.EnableActiveTicket = d.cfg.AssistantContextBlockActiveTicket;
     inputs.EnableActiveView = d.cfg.AssistantContextBlockActiveView;
     inputs.EnableAuditTrail = d.cfg.AssistantContextBlockAuditTrail;
+    // UX pillar 2: BackendAuditTrail::ReadRecentEvents performs synchronous
+    // SQLite + filesystem reads that must not run on the UI thread. The
+    // sentinel body is replaced on the worker thread inside
+    // AiAssistantController::RunRequest before the request is dispatched.
+    inputs.DeferAuditTrailFetch = true;
     return AiContextBuilder::BuildAll(inputs);
 }
 
@@ -176,7 +191,15 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // (Phase E) survives a panel reopen.
     static std::array<char, kInputBufCap> s_inputCharBuf{};
     static bool s_seeded = false;
-    if (!s_seeded) {
+    // Re-seed when (a) first frame, or (b) the model-side `assistantInputBuf`
+    // diverged from the char buffer (e.g. Lua glue poked it between frames, or
+    // the panel was closed + reopened and external code edited the field).
+    // Without this check, the char buffer kept the previous session's text and
+    // Lua-supplied input on Phase E was silently lost.
+    const std::size_t bufLen = std::strlen(s_inputCharBuf.data());
+    const bool divergedFromModel = (d.assistantInputBuf.size() != bufLen) ||
+                                   (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
+    if (!s_seeded || divergedFromModel) {
         s_seeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);

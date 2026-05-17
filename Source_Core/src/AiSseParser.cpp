@@ -1,5 +1,7 @@
 #include "AiSseParser.h"
 
+#include "Logger.h"
+
 #include <cstddef>
 #include <string>
 
@@ -35,8 +37,18 @@ void AppendDataLine(std::string& acc, const std::string& payload) {
 } // namespace
 
 void AiSseParser::Feed(const char* data, std::size_t len, const EventCallback& onEvent) {
-    if (len > 0)
+    if (overflowed_)
+        return; // Stream poisoned; ignore further bytes until Reset.
+    if (len > 0) {
+        if (buffer_.size() + len > kAiSseParserMaxBufferBytes) {
+            overflowed_ = true;
+            LOG_ERROR("AiSseParser: stream exceeded %zu-byte cap without a frame boundary; aborting parse.",
+                      kAiSseParserMaxBufferBytes);
+            buffer_.clear();
+            return;
+        }
         buffer_.append(data, len);
+    }
 
     std::size_t scanFrom = 0;
     while (true) {
@@ -59,13 +71,16 @@ void AiSseParser::Feed(const char* data, std::size_t len, const EventCallback& o
                 if (line[0] == ':') {
                     // Comment line — ignore.
                 } else if (line.compare(0, 6, "event:") == 0) {
+                    // RFC 8895 / WHATWG SSE: strip exactly one optional leading
+                    // space after the colon — not all of them. Stripping multiple
+                    // would corrupt payloads that intentionally lead with spaces.
                     std::size_t p = 6;
-                    while (p < line.size() && line[p] == ' ')
+                    if (p < line.size() && line[p] == ' ')
                         ++p;
                     ev.Name.assign(line, p, line.size() - p);
                 } else if (line.compare(0, 5, "data:") == 0) {
                     std::size_t p = 5;
-                    while (p < line.size() && line[p] == ' ')
+                    if (p < line.size() && line[p] == ' ')
                         ++p;
                     AppendDataLine(ev.Data, line.substr(p));
                 }
@@ -96,6 +111,7 @@ void AiSseParser::Flush(const EventCallback& onEvent) {
 void AiSseParser::Reset() {
     buffer_.clear();
     partial_ = Event();
+    overflowed_ = false;
 }
 
 void AiSseParser::emitIfReady(const EventCallback&) {}

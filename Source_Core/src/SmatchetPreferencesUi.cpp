@@ -1,6 +1,7 @@
 #include "SmatchetUI.h"
 
 #if defined(SMATCHET_WITH_AI)
+#include "AiAssistantController.h"
 #include "AiClientFactory.h"
 #include "AiModelCatalog.h"
 #include "AiPrefsValidator.h"
@@ -418,6 +419,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 d.cfg.AgentsMdGlobalPath = s_agentsMdGlobalBuf;
                 d.cfg.ProjectAgentsMdPath = s_projectAgentsMdBuf;
                 ConfigManager::Save(d.cfg);
+                // Invalidate the worker-side agents.md cache so the next turn
+                // re-reads from disk instead of serving the stale blob.
+                if (app.HasAiAssistantController()) {
+                    app.GetAiAssistantController().InvalidateAgentsMdCache();
+                }
             }
             ImGui::Spacing();
             ImGui::Separator();
