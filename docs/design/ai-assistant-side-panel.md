@@ -330,7 +330,8 @@ Each scenario is a deterministic bash + CLI + scenario.run check. Manual residue
 - `b7d901d` · 2026-05-16 · `plan-locks: claim ai-assistant-side-panel Phase A (narrowed)` — `_plan-locks.md` claim entry added after pre-flight intersection check vs every `claimed | in-flight` lock. Narrowed scope agreed (option (b) overlap-resolution): defer `ConfigManager` field set + doctest additions until `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**`.
 - `a6a8cb1` · 2026-05-16 · `feat(ai): Phase A — provider-pluggable IAiClient skeleton + OpenAiClient` — 14 files (8 new C++ + `NetworkUsageTracker` re-fit + 3 caller updates + CMake option/shim).
 - `8086793` · 2026-05-16 · `plan-locks: ai-assistant-side-panel Phase A-narrowed -> in-flight` — status flip after dual-target build verified.
-- PR [#140](https://github.com/alexandrosk0/Smatchet/pull/140) opened against `develop`; pending merge.
+- PR [#140](https://github.com/alexandrosk0/Smatchet/pull/140) merged at `eeea501`.
+- TBD · 2026-05-17 · `feat(ai): Phase A' — ConfigManager Ai fields + DPAPI key protection + AiSseParser/AiClientFactory doctests` — 17 `TrackerConfig` Ai fields appended (provider kind clamped to `AiProvider` enum, DPAPI-protected `AiApiKey` + `AiAnthropicApiKey` mirroring `McpAuthToken`, per-provider models + base URLs, side-panel persistence, `agents.md` paths, 5 context-block toggles). 2 new doctest files registered: `AiSseParser.test.cpp` (15 cases / 40+ assertions, 2 `[high-risk]`) + `AiClientFactory.test.cpp` (8 cases / 25+ assertions). `tests/CMakeLists.txt` extended with `AiSseParser.cpp` + `AiClientFactory.cpp` + `OpenAiClient.cpp` direct-source-list (Phase-5 mcp-pure recipe).
 
 ### Phase A shipped contents (narrowed)
 
@@ -355,15 +356,24 @@ Each scenario is a deterministic bash + CLI + scenario.run check. Manual residue
 - **`ConfigManager` field set + Ai doctest deferred to Phase A'.** Plan-locks pre-flight intersected hard with `test-suite-expansion · phases 2-9 · claimed` (umbrella claim on `Source_Core/src/ConfigManager*.cpp` + `tests/CMakeLists.txt` + `tests/Source_Core/**`) and `test-suite-expansion · phase 1 · in-flight` (`tests/CMakeLists.txt`). User picked option (b) — defer the colliding paths to Phase A'.
 - **`SMATCHET_AI_SCRATCH_DRIVER` skipped in Phase A.** Plan A land-gate included a scratch driver behind `#ifdef SMATCHET_AI_SCRATCH_DRIVER` in `Target_Standalone/main.cpp` to prove a real OpenAI prompt round-trip. Not added — Phase A ships with no validation against a live endpoint. Will validate once Phase B wires the side-panel UI and the user can drive a real prompt through the running app, or earlier via Phase A' doctest of `AiSseParser` against canned fixtures + a one-shot `bash scripts/dev/ai-smoke.sh` once `test-author` automates it.
 
+### Phase A' deviations
+
+- **Direct-cpr link in `SmatchetTests` already cleared.** Plan A' noted `OpenAiClient.cpp` pulls `cpr/cpr.h` and worried about banned-include leakage in tests. In practice `cpr::cpr` is already a `target_link_libraries` of `SmatchetTests` (transitive via `TrackerHttpUtils.cpp`, present since Phase 4); adding `OpenAiClient.cpp` to the test target's source list is a no-op for the dep graph. Tests don't actually call `SendStreaming` (which would need a live HTTP endpoint) — they only exercise the constructor + `GetProviderName()` and let the factory return `nullptr` for Phase D branches.
+- **`AgentsMdGlobalPath` default-at-Load resolution uses `ConfigManager::GetPlatformSharedUserDataDirectory()`.** That helper already lives in `ConfigManager_PathUtils.cpp:507` and returns `%LOCALAPPDATA%\Smatchet\` (with trailing separator) on Win32 with sensible POSIX/macOS fallbacks. The new logic appends `agents.md` only when the user's persisted path is blank — explicitly-empty user choice round-trips as empty (caller can re-blank to opt out of agents.md inclusion).
+- **`AiProviderKind` clamped to `AiProvider` enum range on Load, not at construct.** Out-of-range values (e.g. a future-version config opening on an older build) silently degrade to `OpenAi` (0). The default in `TrackerConfig` is the integer `0` rather than `static_cast<int>(AiProvider::OpenAi)` to keep the header from forcing `AiTypes.h` into TUs that already include `ConfigManager.h` purely for path getters.
+- **No `LayoutSchemaVersion` bump.** Phase A' is field-additions only with `j.value()`-default migration; old v4/v5 configs default-load cleanly. The single schema bump for the whole feature lands in Phase E per plan rule.
+
 ## Verification
 
 - [x] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — green.
 - [x] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — green (dual-target).
 - [x] `clang-format -i` / `cppcheck` / `clang-tidy` — clean via PostToolUse lint hook (manual re-run of `.claude/hooks/lint-cpp.sh` after one race-condition false-block during multi-edit confirmed no real issues).
 - [x] `cpr` 1.9.2 `WriteCallback` signature `bool(std::string, intptr_t)` confirmed at `.fetchcontent-src/cpr-src/include/cpr/callback.h:39`.
-- [ ] **Scenario 2** (OpenAI streaming happy path) — DEFERRED to Phase B (needs UI surface) OR to Phase A' (could land as `tests/Source_Core/AiSseParser.test.cpp` with canned fixtures once `tests/**` umbrella releases).
-- [ ] **Scenario 4** (Bad API key → "API Error: 401") — same defer as Scenario 2.
-- [ ] **Scenario 5** (Transport down → "Network unreachable" within 5 s) — same defer as Scenario 2.
+- [x] **Phase A' — `tests/Source_Core/AiSseParser.test.cpp`** (15 cases / 40+ assertions, 2 `[high-risk]`): single + multi-event frames, partial-frame buffering, CRLF/LF boundary equivalence, multi-data-line concat, named events (Anthropic shape), `:` comments, unknown fields, `[DONE]` sentinel pass-through, Reset / Flush, one-byte-at-a-time drip equivalence. Covers Scenario 2 (streaming happy path) for the parser surface; Scenario 4 / 5 still defer to Phase B (HTTP-driven assertions need the real client wired against a fixture endpoint).
+- [x] **Phase A' — `tests/Source_Core/AiClientFactory.test.cpp`** (8 cases / 25+ assertions): `ProviderToString` / `ProviderFromString` round-trip for all 4 enums, rejection of unknown / case-mismatched keys, `EnumeratedProviders` stable order + non-empty Display, `MakeAiClient(OpenAi)` + `MakeAiClient(OllamaOpenAiCompat)` non-null with `GetProviderName() == "openai"`, `MakeAiClient(Anthropic)` + `MakeAiClient(OllamaNative)` nullptr until Phase D.
+- [x] **Phase A' — `ConfigManager` Ai fields default-load cleanly from v4 / v5 fixtures.** `test-config-migration.sh` keeps passing post-Phase-A' (additive `j.value()` defaults; no schema bump).
+- [ ] **Scenario 4** (Bad API key → "API Error: 401") — DEFERRED to Phase B (needs UI surface that surfaces the AiStreamError text).
+- [ ] **Scenario 5** (Transport down → "Network unreachable" within 5 s) — same defer as Scenario 4.
 - [ ] **Scenario 13** (`-DSMATCHET_WITH_AI=OFF` builds clean, no menu item, Lua `ai.*` no-op) — not meaningfully testable in Phase A (no menu / Lua surface yet). Will block on Phase E.
 - [ ] **`SMATCHET_WITH_AI=OFF` build** — not verified explicitly. Phase A files compile unconditionally so OFF is structurally equivalent to ON; explicit OFF-config-and-build is a Phase A' addition.
 

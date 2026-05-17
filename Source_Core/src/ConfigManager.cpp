@@ -202,11 +202,25 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["log_min_level"] = config.LogMinLevel;
     j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
     j["log_p4_io"] = config.LogP4Io;
+    // Smatchet Assistant (AI) — Phase A'. Legacy exploratory keys (`ai_model`, `show_ai_assistant_window`)
+    // pre-date the provider-pluggable schema and are erased; the new provider-aware keys are written below.
     j.erase("ai_model");
-    j.erase("ai_base_url");
     j.erase("show_ai_assistant_window");
-    j.erase("ai_api_key");
-    j.erase("ai_api_key_enc");
+    j["ai_provider_kind"] = config.AiProviderKind;
+    j["ai_ollama_base_url"] = config.AiOllamaBaseUrl;
+    j["ai_base_url"] = config.AiBaseUrl;
+    j["ai_model_openai"] = config.AiModelOpenAi;
+    j["ai_model_anthropic"] = config.AiModelAnthropic;
+    j["ai_model_ollama"] = config.AiModelOllama;
+    j["assistant_panel_open"] = config.AssistantPanelOpen;
+    j["assistant_panel_width"] = config.AssistantPanelWidth;
+    j["agents_md_global_path"] = config.AgentsMdGlobalPath;
+    j["project_agents_md_path"] = config.ProjectAgentsMdPath;
+    j["assistant_context_block_selection"] = config.AssistantContextBlockSelection;
+    j["assistant_context_block_visible_rows"] = config.AssistantContextBlockVisibleRows;
+    j["assistant_context_block_active_ticket"] = config.AssistantContextBlockActiveTicket;
+    j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
+    j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
     j["mcp_enabled"] = config.McpEnabled;
     j["mcp_port"] = config.McpPort;
     j["mcp_allow_remote"] = config.McpAllowRemote;
@@ -307,13 +321,28 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("mcp_auth_token");
     }
     j["mcp_auth_token_enc"] = mcpAuthTokenEnc;
+    // Smatchet Assistant API keys — same DPAPI + legacy-plaintext fallback pattern as McpAuthToken.
+    const std::string aiApiKeyEnc = ProtectSecretForConfig(config.AiApiKey);
+    if (config.AiApiKey.empty() || !aiApiKeyEnc.empty()) {
+        j.erase("ai_api_key");
+    }
+    j["ai_api_key_enc"] = aiApiKeyEnc;
+    const std::string aiAnthropicEnc = ProtectSecretForConfig(config.AiAnthropicApiKey);
+    if (config.AiAnthropicApiKey.empty() || !aiAnthropicEnc.empty()) {
+        j.erase("ai_anthropic_api_key");
+    }
+    j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
 #else
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
     j.erase("mcp_auth_token_enc");
+    j.erase("ai_api_key_enc");
+    j.erase("ai_anthropic_api_key_enc");
     j["token"] = config.ApiToken;
     j["plane_api_key"] = config.PlaneApiKey;
     j["mcp_auth_token"] = config.McpAuthToken;
+    j["ai_api_key"] = config.AiApiKey;
+    j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
 #endif
     WriteConfigJson(j);
 }
@@ -445,6 +474,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
 #if defined(_WIN32)
     bool migrateLegacyPlaintextMcpAuthToken = false;
+    bool migrateLegacyPlaintextAiApiKey = false;
+    bool migrateLegacyPlaintextAiAnthropicApiKey = false;
 #endif
 
     if (!j.empty()) {
@@ -528,6 +559,55 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.McpServerActivityPanelHeightPx = static_cast<float>(j.value(
                 "mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
             cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
+
+            // Smatchet Assistant (AI) — Phase A'. Clamp `ai_provider_kind` to the known enum range;
+            // a future-version persisted int (e.g. 99) on an older build degrades to OpenAi (0)
+            // rather than triggering UB on enum cast.
+            {
+                const int rawProvider = j.value("ai_provider_kind", cfg.AiProviderKind);
+                const int kProviderMin = static_cast<int>(AiProvider::OpenAi);
+                const int kProviderMax = static_cast<int>(AiProvider::OllamaNative);
+                cfg.AiProviderKind = (rawProvider < kProviderMin || rawProvider > kProviderMax)
+                                         ? static_cast<int>(AiProvider::OpenAi)
+                                         : rawProvider;
+            }
+#if defined(_WIN32)
+            cfg.AiApiKey = UnprotectSecretFieldFromConfig("ai_api_key_enc", j.value("ai_api_key_enc", std::string{}));
+            if (cfg.AiApiKey.empty()) {
+                cfg.AiApiKey = j.value("ai_api_key", std::string{});
+                migrateLegacyPlaintextAiApiKey = !cfg.AiApiKey.empty();
+            }
+            cfg.AiAnthropicApiKey = UnprotectSecretFieldFromConfig(
+                "ai_anthropic_api_key_enc", j.value("ai_anthropic_api_key_enc", std::string{}));
+            if (cfg.AiAnthropicApiKey.empty()) {
+                cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+                migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
+            }
+#else
+            cfg.AiApiKey = j.value("ai_api_key", std::string{});
+            cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+#endif
+            cfg.AiOllamaBaseUrl = j.value("ai_ollama_base_url", cfg.AiOllamaBaseUrl);
+            cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
+            cfg.AiModelOpenAi = j.value("ai_model_openai", cfg.AiModelOpenAi);
+            cfg.AiModelAnthropic = j.value("ai_model_anthropic", cfg.AiModelAnthropic);
+            cfg.AiModelOllama = j.value("ai_model_ollama", cfg.AiModelOllama);
+            cfg.AssistantPanelOpen = j.value("assistant_panel_open", cfg.AssistantPanelOpen);
+            cfg.AssistantPanelWidth = static_cast<float>(
+                j.value("assistant_panel_width", static_cast<double>(cfg.AssistantPanelWidth)));
+            cfg.AgentsMdGlobalPath = j.value("agents_md_global_path", cfg.AgentsMdGlobalPath);
+            cfg.ProjectAgentsMdPath = j.value("project_agents_md_path", cfg.ProjectAgentsMdPath);
+            cfg.AssistantContextBlockSelection =
+                j.value("assistant_context_block_selection", cfg.AssistantContextBlockSelection);
+            cfg.AssistantContextBlockVisibleRows =
+                j.value("assistant_context_block_visible_rows", cfg.AssistantContextBlockVisibleRows);
+            cfg.AssistantContextBlockActiveTicket =
+                j.value("assistant_context_block_active_ticket", cfg.AssistantContextBlockActiveTicket);
+            cfg.AssistantContextBlockActiveView =
+                j.value("assistant_context_block_active_view", cfg.AssistantContextBlockActiveView);
+            cfg.AssistantContextBlockAuditTrail =
+                j.value("assistant_context_block_audit_trail", cfg.AssistantContextBlockAuditTrail);
+
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
             cfg.DateCompactRelativeThresholdDays =
                 j.value("date_compact_relative_threshold_days", cfg.DateCompactRelativeThresholdDays);
@@ -717,6 +797,16 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         cfg.ShowPreferencesWindow = true;
     }
 
+    // AgentsMdGlobalPath default-at-Load (vs default-at-construct): blank in-memory state means
+    // "user has not picked a path"; only here do we know the platform shared dir. Resolving at
+    // construct time would lose the ability to distinguish blank-by-default from blank-by-user.
+    if (cfg.AgentsMdGlobalPath.empty()) {
+        const std::string shared = GetPlatformSharedUserDataDirectory();
+        if (!shared.empty()) {
+            cfg.AgentsMdGlobalPath = shared + "agents.md";
+        }
+    }
+
 #if defined(_WIN32)
     // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
     //
@@ -730,8 +820,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    if (migrateLegacyPlaintextMcpAuthToken) {
-        LOG_INFO("ConfigManager: migrating legacy plaintext mcp_auth_token to protected storage.");
+    if (migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
+        migrateLegacyPlaintextAiAnthropicApiKey) {
+        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+                 "(mcp=%d ai=%d anthropic=%d)",
+                 migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
+                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0);
         Save(cfg);
     }
 #endif
