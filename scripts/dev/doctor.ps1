@@ -233,6 +233,19 @@ if (-not $clangFmtLine) {
     Write-Pass 'clang-format' $clangFmtLine
 }
 
+# Opt-in: OpenCppCoverage check is skipped by default. Set the env var
+# SMATCHET_DOCTOR_CHECK_COVERAGE=1 to enable. Windows-only; install via
+# `choco install opencppcoverage` or the releases page. CI runners install
+# it themselves, so this check is only relevant for local coverage runs.
+if ($env:SMATCHET_DOCTOR_CHECK_COVERAGE -eq '1') {
+    $occLine = Get-ToolVersion 'OpenCppCoverage' --help
+    if (-not $occLine) {
+        Write-Warn2 'OpenCppCoverage' 'install via Chocolatey (choco install opencppcoverage) or releases page (used by scripts/dev/coverage.sh; CI installs it via Chocolatey, so this is only relevant for local coverage runs)'
+    } else {
+        Write-Pass 'OpenCppCoverage' $occLine
+    }
+}
+
 # ----------------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------------

@@ -28,6 +28,13 @@
 #   - clang-tidy
 #   - clang-format
 #
+# Opt-in warn-only checks (gated by env var, skipped by default):
+#   - OpenCppCoverage (SMATCHET_DOCTOR_CHECK_COVERAGE=1) -- Windows-only
+#     local coverage tool; install via `choco install opencppcoverage`
+#     or download from github.com/OpenCppCoverage/OpenCppCoverage/releases.
+#     CI runners install it themselves; only enable this check if you're
+#     working on coverage gates / threshold tuning locally.
+#
 # Companion: scripts/dev/doctor.ps1 (PowerShell version on Windows).
 # Verification: scripts/dev/test-doctor.sh.
 
@@ -251,6 +258,19 @@ if [ -z "$clang_format_line" ]; then
     write_warn 'clang-format' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra (used by lint hook)'
 else
     write_pass 'clang-format' "$clang_format_line"
+fi
+
+# Opt-in: OpenCppCoverage check is skipped by default. Set the env var
+# SMATCHET_DOCTOR_CHECK_COVERAGE=1 to enable. Windows-only; install via
+# `choco install opencppcoverage` or the releases page. CI runners install
+# it themselves, so this check is only relevant for local coverage runs.
+if [ "${SMATCHET_DOCTOR_CHECK_COVERAGE:-0}" = "1" ]; then
+    occ_line=$(tool_version OpenCppCoverage --help 2>/dev/null | head -n 1 || true)
+    if [ -z "$occ_line" ]; then
+        write_warn 'OpenCppCoverage' 'install via Chocolatey (choco install opencppcoverage) or releases page (used by scripts/dev/coverage.sh; CI installs it via Chocolatey, so this is only relevant for local coverage runs)'
+    else
+        write_pass 'OpenCppCoverage' "$occ_line"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
