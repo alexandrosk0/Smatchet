@@ -50,6 +50,25 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### grid-cell-edit-perf · slice-1 · status: in-flight
+
+- **Branch**: `feat/grid-cell-edit-perf`
+- **Owner agent**: `claude` (orchestrator-dispatched general-purpose; perf-detective workflow inline since user is offline)
+- **Originating plan**: orchestrator-direct (user report: "When I edit any value, there is a pause...")
+- **Claimed write set**:
+  - `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (MOD — replace inline `SubmitFieldEditNetworkOnly` call with worker dispatch + main-thread post-back)
+  - `Source_Core/include/SmatchetUiSession.h` (MOD — add worker-dispatch tracking flags + result-staging fields on `UiDrawSession`)
+  - `Source_Core/src/Commands/Builtin/BuiltinCommands_Perf.cpp` (MOD — add `debug.grid.edit-burst` command)
+  - `scripts/dev/test-grid-edit-perf-postfix.sh` (NEW — regression gate, auto-enrolled by `test-all.sh`)
+  - `scripts/dev/test-grid-edit-perf-baseline.sh` (NEW — baseline capture; `test-` prefix but lenient — does not assert)
+  - `scripts/dev/manual-grid-edit-perf-compare.sh` (NEW — `manual-` prefix means NOT auto-enrolled)
+  - `docs/design/grid-cell-edit-perf.md` (NEW — plan + implementation log)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/src/AppController_CatalogAndFieldEdit.cpp`, `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AppController.h`
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — claimed.
+- **Cleared by**: TBD PR.
+
 ### ai-assistant-fixes-batch-2 · slice-1 · status: shipped (PR #184 merged at f61315e)
 
 - **Branch**: `feat/ai-assistant-fixes-batch-2`

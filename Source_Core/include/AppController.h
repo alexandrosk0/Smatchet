@@ -948,7 +948,19 @@ class AppController
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
+
+  public:
+    /// Spawn `task` on a tracked background thread. Threads are joined either
+    /// when the producer completes or in `JoinBackgroundTasks` before
+    /// destruction — never detached. Post results back to the UI thread via
+    /// `mainThreadDispatcher.PostToMainThread` inside `task`.
+    ///
+    /// Public so non-member callers (grid field-edit pipeline, etc.) can
+    /// dispatch HTTP / SQLite work off the UI thread without re-implementing
+    /// thread-bookkeeping.
     void LaunchBackgroundTask(std::function<void()> task);
+
+  private:
     void JoinBackgroundTasks();
 
     void DrainTrackerConnectivityProbeFuture();

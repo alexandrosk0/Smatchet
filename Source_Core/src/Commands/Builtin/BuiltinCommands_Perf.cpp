@@ -1,14 +1,22 @@
 // perf.* — UI performance monitor snapshot, reset, dump, and panel toggle.
+// debug.grid.edit-burst — headless cell-edit burst harness (docs/design/grid-cell-edit-perf.md).
 
 #include "BuiltinCommands_Internal.h"
 
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
 
+#include "AppController.h"
+#include "CachedTicketTypes.h"
 #include "ConfigManager.h"
+#include "SmatchetGridUiSupport.h"
+#include "SmatchetUiSession.h"
+#include "TrackerFieldSchema.h"
 #include "UiPerfMonitor.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -21,13 +29,16 @@
 #include <ghc/filesystem.hpp>
 namespace fs = ghc::filesystem;
 
+extern UiDrawSession g_ui;
+
 namespace smatchet {
 namespace cmd {
 
 using builtin_detail::MakeCommand;
+using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterPerfCommands(CommandRegistry& reg, AppController& /*app*/) {
+void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("perf.snapshot", "Per-scope UI perf rows from the last drawn frame.",
                                 [](const nlohmann::json&, const CommandContext&) {
@@ -148,6 +159,134 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& /*app*/) {
                 return p;
             }()},
         };
+        reg.Register(std::move(c));
+    }
+
+    {
+        // debug.grid.edit-burst — headless harness that exercises the grid cell
+        // commit pipeline `count` times and reports per-invocation wall-clock
+        // statistics. Used by `scripts/dev/test-grid-edit-perf-postfix.sh` to
+        // assert the UI thread never blocks for an HTTP roundtrip on edit.
+        //
+        // The handler hops to the UI thread (RunOnUiThreadAsCommandResult)
+        // because ProcessGridFieldEdits mutates the singleton UiDrawSession
+        // (g_ui) which is UI-thread owned. Per-iteration timing is therefore a
+        // true measure of UI-thread cost — the same code path the user pays.
+        //
+        // With `Backend == nullptr` (typical `--spawn` mode) the worker
+        // short-circuits at "no tracker backend"; the regression check is
+        // about UI-thread cost, not the HTTP transport. Live-tracker E2E is
+        // manual.
+        Command c =
+            MakeCommand("debug.grid.edit-burst",
+                        "Drive N synthetic cell commits through ProcessGridFieldEdits and report wall-clock stats.",
+                        [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                            const int count =
+                                std::max(1, std::min(static_cast<int>(args.value("count", 200)), 100000));
+                            const std::string fieldId = args.value("field", std::string("summary"));
+                            const std::string issueIdArg = args.value("issue", std::string());
+                            const std::string newValue = args.value("value", std::string("burst-edit"));
+
+                            return RunOnUiThreadAsCommandResult(app, [&app, count, fieldId, issueIdArg, newValue]() {
+                                // Resolve issueId: explicit arg wins; otherwise pick the first cached
+                                // ticket. Works in --spawn mode with a seeded cache; for an empty
+                                // cache we synthesize a sentinel ID — the commit fails fast at the
+                                // worker (no backend) and the UI-thread cost we want to measure is
+                                // unchanged.
+                                std::string issueId = issueIdArg;
+                                if (issueId.empty()) {
+                                    const auto tickets = app.GetActiveTicketsSnapshot();
+                                    if (tickets && !tickets->empty()) {
+                                        issueId = tickets->front().id;
+                                    } else {
+                                        issueId = "SMATCHET-PERF-1";
+                                    }
+                                }
+
+                                TrackerField field;
+                                if (const TrackerField* meta = app.FindFieldById(fieldId)) {
+                                    field = *meta;
+                                } else {
+                                    field.Id = fieldId;
+                                    field.Name = fieldId;
+                                    field.Type = "string";
+                                }
+
+                                // Build the synthetic pending-edit batch once and reuse a fresh
+                                // copy per iteration. The vector input shape matches the
+                                // SmatchetActiveProjectGridUi caller.
+                                PendingFieldEdit oneEdit;
+                                oneEdit.IssueId = issueId;
+                                oneEdit.Field = field;
+                                oneEdit.Values = std::vector<std::string>{newValue};
+
+                                const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+                                static const std::vector<CachedTicket> kEmptyTickets;
+                                const std::vector<CachedTicket>& tickets =
+                                    ticketsSnap ? *ticketsSnap : kEmptyTickets;
+
+                                std::vector<double> samplesMs;
+                                samplesMs.reserve(static_cast<size_t>(count));
+
+                                const auto runStart = std::chrono::steady_clock::now();
+                                for (int i = 0; i < count; ++i) {
+                                    std::vector<PendingFieldEdit> pendingEdits;
+                                    pendingEdits.push_back(oneEdit);
+                                    const auto t0 = std::chrono::steady_clock::now();
+                                    ProcessGridFieldEdits(app, g_ui, tickets, pendingEdits, /*readOnlyMode=*/false);
+                                    const auto t1 = std::chrono::steady_clock::now();
+                                    const double ms =
+                                        std::chrono::duration<double, std::milli>(t1 - t0).count();
+                                    samplesMs.push_back(ms);
+                                }
+                                const auto runEnd = std::chrono::steady_clock::now();
+                                const double wallMs =
+                                    std::chrono::duration<double, std::milli>(runEnd - runStart).count();
+
+                                // Stats: mean, p50, p95, p99, max from samplesMs.
+                                std::vector<double> sorted = samplesMs;
+                                std::sort(sorted.begin(), sorted.end());
+                                const auto pct = [&sorted](double q) -> double {
+                                    if (sorted.empty()) {
+                                        return 0.0;
+                                    }
+                                    const size_t n = sorted.size();
+                                    const size_t idx = static_cast<size_t>(
+                                        std::min<double>(static_cast<double>(n - 1), q * static_cast<double>(n - 1)));
+                                    return sorted[idx];
+                                };
+                                const double mean =
+                                    samplesMs.empty()
+                                        ? 0.0
+                                        : std::accumulate(samplesMs.begin(), samplesMs.end(), 0.0) /
+                                              static_cast<double>(samplesMs.size());
+
+                                nlohmann::json out;
+                                out["field"] = fieldId;
+                                out["issue"] = issueId;
+                                out["iterations"] = count;
+                                out["wall_clock_ms"] = wallMs;
+                                out["per_event_mean_ms"] = mean;
+                                out["per_event_p50_ms"] = pct(0.50);
+                                out["per_event_p95_ms"] = pct(0.95);
+                                out["per_event_p99_ms"] = pct(0.99);
+                                out["per_event_max_ms"] = sorted.empty() ? 0.0 : sorted.back();
+                                out["target_mean_ms"] = 6.94;
+                                out["target_p99_ms"] = 16.67;
+                                out["ok_mean"] = mean <= 6.94;
+                                out["ok_p99"] = pct(0.99) <= 16.67;
+                                return CommandResult::Success(std::move(out));
+                            });
+                        });
+        std::vector<ParamSpec> params;
+        params.push_back(PInt("count", "Number of synthetic edits to drive. Clamped to [1, 100000].", 200));
+        params.push_back(PString("field", "Tracker field id (default 'summary').", false));
+        params.push_back(
+            PString("issue", "Issue id (default: first cached ticket; or sentinel if cache is empty).", false));
+        params.push_back(PString("value", "New value to write (default 'burst-edit').", false));
+        c.Params = std::move(params);
+        c.Destructive = false; // No persistent side-effects when --spawn + no backend.
+        c.Idempotent = false;
         reg.Register(std::move(c));
     }
 }
