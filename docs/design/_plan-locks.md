@@ -63,11 +63,11 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### git-ref-plan-locks · phase-0-1-2 · status: in-flight
+### git-ref-plan-locks · phase-0-1-2-3 · status: in-flight
 
-- **Branch**: `feat/git-ref-plan-locks`
+- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (stacked, Phase 3)
 - **Owner agent**: `orchestrator`
-- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2)
+- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2, 3)
 - **Claimed write set**:
   - `docs/design/git-ref-plan-locks.md` (NEW — plan doc + phase results)
   - `docs/design/_plan-locks.md` (MOD — this entry + Phase 2 banner)
@@ -80,10 +80,12 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `scripts/dev/_lock-json.py` (NEW — internal helper, Phase 1)
   - `scripts/dev/test-lock-primitives.sh` (NEW — sandbox test, Phase 1)
   - `.github/workflows/locks-render.yml` (NEW — Phase 2 schedule + dispatch sync workflow)
+  - `.github/workflows/lock-cleanup.yml` (NEW — Phase 3 PR-merge auto-release workflow)
+  - `.github/PULL_REQUEST_TEMPLATE.md` (MOD — Phase 3 optional `lock-slug:` instruction)
 - **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template).
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — scope expanded to include Phase 2 deliverables.
-- **Cleared by**: TBD PR. Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
+- **Last update**: 2026-05-17 — scope expanded to include Phase 3 deliverables.
+- **Cleared by**: TBD PR(s). Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
 
 ### h12-l16-m13-bundle · slice-1 · status: shipped (PR #196 merged at 1952e8b)
 
