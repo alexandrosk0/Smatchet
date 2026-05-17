@@ -54,7 +54,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/lua-host-friend-drop`
 - **Owner agent**: `lua-binder`
-- **Originating plan**: [`docs/design/lua-host-friend-drop.md`](./lua-host-friend-drop.md)
+- **Originating plan**: [`docs/design/applied/lua-host-friend-drop.md`](./applied/lua-host-friend-drop.md)
 - **Claimed write set**:
   - `Source_Core/include/AppController.h` (drop `friend class LuaAutomationHost;` + surrounding comment block at lines 105-109; drop `class LuaAutomationHost;` forward-decl if no longer needed)
   - `Source_Core/include/LuaAutomationHost.h` (default ctor; remove `AppController& app_;` field + forward-decl; rewrite header doc-comment)
