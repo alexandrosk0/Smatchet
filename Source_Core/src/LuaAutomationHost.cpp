@@ -1,10 +1,6 @@
 #include "LuaAutomationHost.h"
 
-#include "AppController.h"
-
 #include <utility>
-
-LuaAutomationHost::LuaAutomationHost(AppController& app) : app_(app) {}
 
 void LuaAutomationHost::AddAutomationLogSink(std::function<void(const std::string&)> sink) {
     if (sink) {

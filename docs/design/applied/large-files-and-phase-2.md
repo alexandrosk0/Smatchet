@@ -257,7 +257,19 @@ Track A — mechanical file splits — fully shipped as of this revision:
 - `18abf80` · **A1** · split `Commands/BuiltinCommands.cpp` (1898 LOC) into a 53-LOC dispatcher + 17 per-category files under `Source_Core/src/Commands/Builtin/` (one `Register<Cat>Commands(reg, app)` each). Helpers in `smatchet::cmd::builtin_detail::`. `commands.list` count: 75 pre = 75 post (catalog byte-equivalent). PR [#100](https://github.com/alexandrosk0/Smatchet/pull/100).
 - `fab0fc7` · **A4** · split `SmatchetUI.cpp` (1454 LOC) into `SmatchetUI.cpp` (821) + `SmatchetUI_MainMenu.cpp` (479) + `SmatchetUI_Layout.cpp` (264) + `SmatchetUI_Internal.h` (38). Lua-style helpers in `smatchet::ui_detail::`. PR [#101](https://github.com/alexandrosk0/Smatchet/pull/101).
 
-Track B — interface-bundle / friend-class removal — **not started yet**; ships in follow-up PRs (B1 → B2 → B3a-d → fix-up) per the original slice ordering.
+Track B — interface-bundle / friend-class removal — **shipped via a different shape than originally planned**:
+
+- **B1** (`OfflineQueueService` friend drop) — shipped via PR [#127](https://github.com/alexandrosk0/Smatchet/pull/127) (`b5fc194`) as `IOfflineQueueDeps` interface (`Deps` suffix, not `ICacheAccess`). Behaviour equivalent; naming deviation only.
+- **B2** (`TicketSyncService` friend drop) — shipped via PR [#127](https://github.com/alexandrosk0/Smatchet/pull/127) (`b5fc194`) as `ITicketSyncDeps` interface (`Deps` suffix, not `ITicketSyncHost`). Behaviour equivalent; naming deviation only. (B1 + B2 landed together in the single PR.)
+- **B3** (`LuaAutomationHost` friend drop) — **done via dead-code drop**, NOT the originally-planned Phase 1B/1C/1D ownership migration. PR [#144](https://github.com/alexandrosk0/Smatchet/pull/144) (`7e6762d`) shipped the `ILuaBindingHost` interface + TU lift of `InitLuaCore` + 11 sol2 glues — AppController stays the owner of binding methods (now expressed through `ILuaBindingHost` virtuals); only the TU boundary moved so tests can link binding code without ImGui. That made the original Phase 1B/1C/1D ownership-migration plan obsolete: the friend declaration on `LuaAutomationHost` was reserved for that migration and is now vestigial. Architect re-scope dropped it directly via `docs/design/lua-host-friend-drop.md` — see that plan and this PR's friend-drop slice.
+
+## B3 — done-via-dead-code-drop (see lua-host-friend-drop.md)
+
+`docs/design/lua-host-friend-drop.md` carries the full re-scope. Summary:
+
+- `LuaAutomationHost::app_` field + ctor parameter were dead code (no `app_.…` access inside `LuaAutomationHost.cpp`).
+- Friend declaration on `AppController` was vestigial — reserved for the obsolete Phase 1B/1C/1D migration.
+- Single-slice drop: remove the friend, remove the dead field + forward-decl + `AppController.h` include, switch ctor to `= default`, update the one ctor call site (`AppController.cpp:1062`) to drop the `*this` argument. Originating PR + Implementation log in `lua-host-friend-drop.md`.
 
 ## Deviations from plan
 
@@ -265,6 +277,8 @@ Track B — interface-bundle / friend-class removal — **not started yet**; shi
 - **A4 `SmatchetUI_Internal.h` is NOT included from `SmatchetUI.cpp` or `SmatchetUI_MainMenu.cpp`.** The internal header does `#include "imgui.h"` then `#define ImGui SmatchetLocalizedImGui`, which clashes with `imgui_internal.h` consumers (the macro rewrites function names that `imgui_internal.h` then can't resolve). Workaround: those two TUs declare the `smatchet::ui_detail::` helpers via a local forward decl block at the top of the `.cpp` instead of including the header. Layout.cpp does include the header because it does not pull `imgui_internal.h`.
 - **A1 ended up at 14 per-category files (plan said 13).** `BuiltinCommands_Tickets.cpp` (read commands) and `BuiltinCommands_TicketMutations.cpp` (write commands) split apart because the in-original-file `// === tickets ===` and `// === ticket (mutations) ===` dividers were already separate buckets; merging them would have lost the read/write distinction.
 - **A6 deferred entirely.** `AppController_LuaBindings.cpp` (2648 LOC) untouched in Track A — it is destined to dissolve into `LuaAutomationHost.cpp` during Track B / Phase 1B-1D. Splitting it mechanically now would create files that get re-deleted under B3. Original plan already called this out; recording here for completeness.
+- **Track B B1 + B2 landed together in PR #127 with `Deps` suffix, not `Access`/`Host`.** Interface names diverged from the plan (`IOfflineQueueDeps` vs `ICacheAccess`; `ITicketSyncDeps` vs `ITicketSyncHost`). Naming deviation only; the dependency-injection shape and behaviour are equivalent.
+- **Track B B3 ownership migration superseded by PR #144's TU lift direction.** PR #144 shipped `ILuaBindingHost` and lifted `InitLuaCore` + 11 sol2 glues out into `AppController_LuaBindingsCore.cpp` — but AppController stayed the owner of every binding (it now implements `ILuaBindingHost`). The four-phase Phase 1B/1C/1D/2 migration into LuaAutomationHost would have re-litigated that ownership decision; instead the residual friend declaration was dropped as dead code via `docs/design/lua-host-friend-drop.md`.
 
 ## Verification
 
@@ -275,6 +289,10 @@ Track B — interface-bundle / friend-class removal — **not started yet**; shi
 - **A4** ([#101](https://github.com/alexandrosk0/Smatchet/pull/101)) — Standalone ✓ · DX12 ✓ · doctest (1/1) ✓ · test-all (61 assertions, 0 fails) ✓ · clang-format clean.
 
 Across all Track A PRs the two `ninja-ui-test-msys2` missing-binary failures in `scripts/dev/test-all.sh` were ignored — they are a pre-existing-state issue unrelated to the splits (the UI-test build preset is not configured locally in this worktree).
+
+Track B verification (closed via lua-host-friend-drop slice):
+
+- **B3 friend-drop slice** (this PR) — see `docs/design/lua-host-friend-drop.md` § Verification for the full bucket-classified gate results. Closure rule (`grep app_ Source_Core/{include,src}/LuaAutomationHost.{h,cpp}` empty + `grep 'friend class LuaAutomationHost' Source_Core/include/AppController.h` empty) passed.
 
 ## Self-improvement signals captured
 

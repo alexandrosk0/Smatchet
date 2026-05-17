@@ -102,11 +102,6 @@ class AppController
     /// touch AppController internals directly. Tests substitute `FakeOfflineQueueDeps` /
     /// `FakeTicketSyncDeps` so they can exercise the services without an AppController.
     friend class AppControllerDepsAdapter;
-    /// `LuaAutomationHost` is being extracted to own the sol2 state, all Lua bindings, the
-    /// automation worker thread, and the per-host log sinks. See BACKLOG_CODE_REVIEW.md §1.7 / §7
-    /// item 14 — Phase 2 will replace this with a `TrackerActions` interface so the host
-    /// stops needing AppController-private access.
-    friend class LuaAutomationHost;
 
   public:
     ~AppController();

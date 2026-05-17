@@ -1059,7 +1059,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
     // OnEarlyInit have a target (item 14 extraction, Phase 1A).
     if (!luaHost_) {
-        luaHost_ = std::make_unique<LuaAutomationHost>(*this);
+        luaHost_ = std::make_unique<LuaAutomationHost>();
     }
     // Drain sinks buffered by AddAutomationLogSink calls during OnEarlyInit (which runs
     // before Initialize). From this point forward AddAutomationLogSink forwards directly.
