@@ -496,7 +496,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — closed via lua-host-friend-drop slice (this PR). All three friend-class declarations now removed from `AppController.h`.
 - **Cleared by**: PR #127 (`b5fc194`) + PR #144 (`7e6762d`) + TBD (this PR).
 
-### ai-assistant-side-panel · Phase A-narrowed · status: in-flight
+### ai-assistant-side-panel · Phase A-narrowed · status: shipped (PR #140 merged at eeea501)
 
 - **Branch**: `feat/ai-assistant-side-panel` (plan recovered from dangling 84913a8 → a39097c)
 - **Owner agent**: orchestrator (direct — provider-pluggable C++14 skeleton)
@@ -521,8 +521,26 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `Source_Core/include/ConfigManager.h` + `Source_Core/src/ConfigManager.cpp` (Ai field set + DPAPI key protection)
   - `tests/CMakeLists.txt` + `tests/Source_Core/AiSseParser.test.cpp` + `tests/Source_Core/AiClientFactory.test.cpp` (doctest coverage)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — Phase A code committed locally (skeleton + OpenAiClient + NetworkUsageTracker re-fit + CMake option/shim). Both targets build clean. Push + PR pending. Phases B-E unscoped pending Phase A ship + Track-B / umbrella status check.
-- **Cleared by**: TBD.
+- **Last update**: 2026-05-17 — Phase A-narrowed shipped via PR #140 at sha eeea501. Phase A' (ConfigManager Ai fields + doctests) now dispatched on `feat/ai-config-fields-and-tests` after `test-suite-expansion` umbrella released (PR #149).
+- **Cleared by**: PR `#140` merged at `eeea501`.
+
+### ai-assistant-side-panel · Phase A' · ai-config-fields-and-tests · status: in-flight
+
+- **Branch**: `feat/ai-config-fields-and-tests`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (ConfigManager rows) + § Pending follow-ups (Phase A' row)
+- **Claimed write set**:
+  - `Source_Core/include/ConfigManager.h` (append 17 `TrackerConfig` Ai fields + `#include "AiTypes.h"`)
+  - `Source_Core/src/ConfigManager.cpp` (serialize + deserialize of new fields; DPAPI on `AiApiKey` + `AiAnthropicApiKey`; clamp `AiProviderKind`; `%LOCALAPPDATA%/Smatchet/agents.md` default at Load time)
+  - `tests/Source_Core/AiSseParser.test.cpp` (NEW — ≥ 8 cases / ≥ 40 assertions, ≥ 2 `[high-risk]`)
+  - `tests/Source_Core/AiClientFactory.test.cpp` (NEW — ≥ 4 cases / ≥ 20 assertions)
+  - `tests/CMakeLists.txt` (append: 2 new tests + `AiSseParser.cpp` + `AiClientFactory.cpp` + `OpenAiClient.cpp`)
+  - `docs/design/_plan-locks.md` (this entry)
+  - `docs/design/ai-assistant-side-panel.md` (append Implementation log row + Deviations bullets + extend Verification)
+- **Read-only adjacency**: `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/include/IAiClient.h`, `Source_Core/src/AiClientFactory.cpp`, `Source_Core/src/AiSseParser.cpp`, `Source_Core/src/ConfigManager_PathUtils.cpp` (`GetPlatformSharedUserDataDirectory` reuse)
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched after test-suite-expansion umbrella release.
+- **Cleared by**: TBD PR.
 
 ## Shipped recent entries
 

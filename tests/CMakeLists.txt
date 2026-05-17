@@ -35,6 +35,8 @@ add_executable(SmatchetTests
     Source_Core/OfflineQueueServiceRuntime.test.cpp
     Source_Core/ConfigManager.test.cpp
     Source_Core/ConfigMigration.test.cpp
+    Source_Core/AiSseParser.test.cpp
+    Source_Core/AiClientFactory.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -71,6 +73,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetLocalization.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiSseParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiClientFactory.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE

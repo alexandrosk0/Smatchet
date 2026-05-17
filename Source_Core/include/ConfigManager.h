@@ -20,6 +20,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+#include "AiTypes.h"
 #include "SmatchetDefaults.h"
 #include "SmatchetThemeIds.h"
 
@@ -191,6 +192,37 @@ struct TrackerConfig {
 
     // Side bar orientation: true = right (VS Code default), false = left.
     bool PrimarySideBarOnRight = true;
+
+    // --- Smatchet Assistant (AI) — Phase A' ---
+    // AiProvider enum value persisted as int; unknown / out-of-range values clamp to 0 (OpenAi)
+    // on Load so a future-version config opened by an older build degrades safely.
+    int AiProviderKind = 0;
+    // OpenAI (or OpenAI-compatible) API key. Persisted DPAPI-encrypted on Win32; legacy plaintext
+    // `ai_api_key` keys from earlier exploratory builds are migrated on Load and erased on next Save.
+    std::string AiApiKey;
+    // Anthropic API key. Same DPAPI + legacy-migration shape as `AiApiKey`.
+    std::string AiAnthropicApiKey;
+    // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
+    std::string AiOllamaBaseUrl;
+    // Generic base URL for `OpenAi` / `OllamaOpenAiCompat`; empty means provider default
+    // (`https://api.openai.com`). Stored verbatim — empty round-trips as empty.
+    std::string AiBaseUrl;
+    std::string AiModelOpenAi = "gpt-4o-mini";
+    std::string AiModelAnthropic = "claude-sonnet-4-6";
+    std::string AiModelOllama = "llama3";
+    bool AssistantPanelOpen = false;
+    float AssistantPanelWidth = 380.0f;
+    // Global agents.md path. Default-at-Load (not default-at-construct): when blank on Load
+    // and a platform shared user-data dir is available, ConfigManager fills this with
+    // `<shared>/agents.md`. Construct-time default would have made the empty/blank distinction
+    // impossible — users who explicitly cleared the field would silently get the default back.
+    std::string AgentsMdGlobalPath;
+    std::string ProjectAgentsMdPath;
+    bool AssistantContextBlockSelection = true;
+    bool AssistantContextBlockVisibleRows = true;
+    bool AssistantContextBlockActiveTicket = true;
+    bool AssistantContextBlockActiveView = true;
+    bool AssistantContextBlockAuditTrail = true;
 
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
     bool FullScreen = false;
