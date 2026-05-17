@@ -127,7 +127,7 @@ OCC_FILTER_ARGS=(
     --modules "$MODULE_INCLUDE"
     --excluded_sources "_deps"
     --excluded_sources "tests"
-    --excluded_sources "Plugins/Mcp/imgui"
+    --excluded_sources "Plugins\\Mcp\\imgui"
     --excluded_sources "ImGui"
     --excluded_sources "imgui"
 )
