@@ -2,6 +2,8 @@
 
 > **Plan-doc relocation (mandatory first commit step)**: per `AGENTS.md` § Plan location, plans live at `docs/design/<slug>.md`. After this file is approved, copy it to `docs/design/ai-assistant-side-panel.md` and commit with `wip(plan): ai-assistant-side-panel` before any code work. The path under `~/.claude/plans/` is plan-mode scratch only.
 
+> **Status (2026-05-16)**: Phase A shipped (narrowed scope) — see § Implementation log. Phase A' deferred behind `test-suite-expansion` umbrella release on `Source_Core/src/ConfigManager*.cpp` + `tests/**`. Phases B-E unscoped. Plan-lock entry: [`docs/design/_plan-locks.md`](./_plan-locks.md) § `ai-assistant-side-panel · Phase A-narrowed · status: in-flight`.
+
 ## Context
 
 Smatchet shipped an AI assistant in commit `997f23f` (Apr 2026): a synchronous OpenAI-compatible chat panel as a floating ImGui window, with Lua glue (`ai.add_context`, `ai.prompt`, `ai.clear_context`) and a per-ticket "Generate Action Plan" button. Commit `5e85fb5` (May 2026) tore the entire feature out — `AiController.{h,cpp}`, the `SmatchetUtilityWindowsUi.cpp::drawAIAssistantWindow` body, Lua bindings, `ConfigManager` fields (`AiApiKey/AiModel/AiBaseUrl/ShowAiAssistantWindow`), the `HttpTrafficKind::OpenAi` traffic kind, and the `SMATCHET_WITH_AI` build flag — to "streamline functionality."
@@ -321,3 +323,61 @@ Each scenario is a deterministic bash + CLI + scenario.run check. Manual residue
 - `SmatchetToastManager::Instance().Push(...)` — for `agents.md` truncation toast.
 - `SmatchetLocalizedImGui` shim — all `ImGui::*` calls in UI go through it.
 - `cpr` + `nlohmann/json` — already vendored.
+
+## Implementation log
+
+- `a39097c` · 2026-05-16 · `wip(plan): ai-assistant-side-panel` — plan recovered from dangling commit `84913a8` (orphan worktree `charming-gates-1d68ec` had been wiped before its branch was anchored). 323-line plan re-committed verbatim on `feat/ai-assistant-side-panel` off `develop@e07fcf2`.
+- `b7d901d` · 2026-05-16 · `plan-locks: claim ai-assistant-side-panel Phase A (narrowed)` — `_plan-locks.md` claim entry added after pre-flight intersection check vs every `claimed | in-flight` lock. Narrowed scope agreed (option (b) overlap-resolution): defer `ConfigManager` field set + doctest additions until `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**`.
+- `a6a8cb1` · 2026-05-16 · `feat(ai): Phase A — provider-pluggable IAiClient skeleton + OpenAiClient` — 14 files (8 new C++ + `NetworkUsageTracker` re-fit + 3 caller updates + CMake option/shim).
+- `8086793` · 2026-05-16 · `plan-locks: ai-assistant-side-panel Phase A-narrowed -> in-flight` — status flip after dual-target build verified.
+- PR [#140](https://github.com/alexandrosk0/Smatchet/pull/140) opened against `develop`; pending merge.
+
+### Phase A shipped contents (narrowed)
+
+| File | Disposition | Notes |
+|---|---|---|
+| `Source_Core/include/IAiClient.h` | NEW | Interface verbatim from § Interface signature. |
+| `Source_Core/include/AiTypes.h` | NEW | POD types + `AiCancelToken = shared_ptr<atomic<bool>>` alias. C++14 — no `optional`/`variant`. |
+| `Source_Core/include/AiSseParser.h` + `.cpp` | NEW | Byte-stream stateful SSE parser. Handles `\n\n` + `\r\n\r\n` boundaries, multiple `data:` lines per event, `event:` named events, `:` comments, unknown fields. |
+| `Source_Core/include/OpenAiClient.h` + `.cpp` | NEW | Drives OpenAI `/v1/chat/completions` + OpenAI-compatible endpoints. Cancel via `cpr::WriteCallback` returning `false`. Both pre-completion and mid-stream cancel paths covered. Translates `choices[0].delta.content` → `TokenChunk`, `choices[0].finish_reason` → `IsFinal`. `[DONE]` sentinel terminates. |
+| `Source_Core/include/AiClientFactory.h` + `.cpp` | NEW | `MakeAiClient(AiProvider)` returns `unique_ptr`. `Anthropic` + `OllamaNative` return null + LOG_WARN until Phase D. `ProviderToString` / `ProviderFromString` / `EnumeratedProviders` for the future Preferences Combo. |
+| `Source_Core/include/NetworkUsageTracker.h` + `.cpp` | MOD | Added `enum class HttpTrafficKind { Tracker, Ai }` + `ai*` atomics + snapshot fields. `Record` signature: `Record(HttpTrafficKind, uint64_t, const cpr::Response&)`. |
+| `Source_Core/src/TrackerHttpUtils.cpp` | MOD | 5 callers updated to pass `HttpTrafficKind::Tracker`. |
+| `Source_Core/src/JiraIssueMutation.cpp` | MOD | 1 caller updated. |
+| `CMakeLists.txt` | MOD | `option(SMATCHET_WITH_AI ON)` + `SmatchetCoreAiShim` INTERFACE target mirroring the MCP shim pattern. Files auto-picked-up by existing `file(GLOB_RECURSE CORE_SOURCES …)`. |
+
+## Deviations from plan
+
+- **`FieldCatalogCache.cpp` is not a `NetworkUsageTracker::Record` caller.** Plan listed it among the 3 callers needing one-line updates; `git grep` finds only `TrackerHttpUtils.cpp` (5×) + `JiraIssueMutation.cpp` (1×). No edit applied to `FieldCatalogCache.cpp`.
+- **No `CORE_SOURCES` list edit.** Plan said "Add new sources to `CORE_SOURCES`" — the target is `file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")` (CMakeLists.txt line 530), so new files auto-included. Phase A's CMake edits are option + shim only.
+- **cpr version bump unnecessary.** Plan risk #1 said "cpr ≥ 1.10 required for `cpr::WriteCallback`". Repo ships 1.9.2 (`CMakeLists.txt:FetchContent_Declare(cpr GIT_TAG 1.9.2)`); `cpr/callback.h` line 39 already defines `class WriteCallback` with `bool(std::string, intptr_t)` signature. No bump applied.
+- **`SMATCHET_WITH_AI` shim wired, not yet consumed.** Plan A says Phases A and B are "gated `SMATCHET_WITH_AI=ON`". Phase A files compile unconditionally — nothing depends on the macro yet. The shim INTERFACE target is created so Phases B-E can `target_link_libraries(... SmatchetCoreAiShim)` without re-plumbing CMake. ON/OFF builds are structurally identical for Phase A.
+- **`ConfigManager` field set + Ai doctest deferred to Phase A'.** Plan-locks pre-flight intersected hard with `test-suite-expansion · phases 2-9 · claimed` (umbrella claim on `Source_Core/src/ConfigManager*.cpp` + `tests/CMakeLists.txt` + `tests/Source_Core/**`) and `test-suite-expansion · phase 1 · in-flight` (`tests/CMakeLists.txt`). User picked option (b) — defer the colliding paths to Phase A'.
+- **`SMATCHET_AI_SCRATCH_DRIVER` skipped in Phase A.** Plan A land-gate included a scratch driver behind `#ifdef SMATCHET_AI_SCRATCH_DRIVER` in `Target_Standalone/main.cpp` to prove a real OpenAI prompt round-trip. Not added — Phase A ships with no validation against a live endpoint. Will validate once Phase B wires the side-panel UI and the user can drive a real prompt through the running app, or earlier via Phase A' doctest of `AiSseParser` against canned fixtures + a one-shot `bash scripts/dev/ai-smoke.sh` once `test-author` automates it.
+
+## Verification
+
+- [x] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — green.
+- [x] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — green (dual-target).
+- [x] `clang-format -i` / `cppcheck` / `clang-tidy` — clean via PostToolUse lint hook (manual re-run of `.claude/hooks/lint-cpp.sh` after one race-condition false-block during multi-edit confirmed no real issues).
+- [x] `cpr` 1.9.2 `WriteCallback` signature `bool(std::string, intptr_t)` confirmed at `.fetchcontent-src/cpr-src/include/cpr/callback.h:39`.
+- [ ] **Scenario 2** (OpenAI streaming happy path) — DEFERRED to Phase B (needs UI surface) OR to Phase A' (could land as `tests/Source_Core/AiSseParser.test.cpp` with canned fixtures once `tests/**` umbrella releases).
+- [ ] **Scenario 4** (Bad API key → "API Error: 401") — same defer as Scenario 2.
+- [ ] **Scenario 5** (Transport down → "Network unreachable" within 5 s) — same defer as Scenario 2.
+- [ ] **Scenario 13** (`-DSMATCHET_WITH_AI=OFF` builds clean, no menu item, Lua `ai.*` no-op) — not meaningfully testable in Phase A (no menu / Lua surface yet). Will block on Phase E.
+- [ ] **`SMATCHET_WITH_AI=OFF` build** — not verified explicitly. Phase A files compile unconditionally so OFF is structurally equivalent to ON; explicit OFF-config-and-build is a Phase A' addition.
+
+### Manual residue
+
+- **None for Phase A.** No user-visible surface introduced; the only verification is "does it build dual-target". Plan handed off to `test-author` for Phase A' when the umbrella releases the `tests/**` lock — three scenarios (2, 4, 5) automatable via a CLI smoke harness that drives `IAiClient::SendStreaming` against a canned httplib fixture; one (13) automatable via a `cmake --preset` matrix once Phase B/E add the gates.
+
+## Pending follow-ups
+
+| Item | Trigger | Owner | Notes |
+|---|---|---|---|
+| Phase A' — `ConfigManager` Ai field set + DPAPI key protection + doctests | `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**` | orchestrator + `test-rig` | Pre-stageable on a branch off `feat/ai-assistant-side-panel` once PR #140 merges. |
+| Phase B — `SmatchetAiAssistantUi` + worker thread inside `AiAssistantController` + `MainThreadDispatcher` + Cancel button + persistent open/closed + width | Phase A merged AND `large-files-and-phase-2 · Track B · on-hold` released (touches `AppController.{h,cpp}` + Lua quartet) | orchestrator | Scope already specified in § File-level changes table. |
+| Phase C — `AgentsMdLoader` + `AiContextBuilder` + per-block checkboxes | Phase B merged | orchestrator | All-new files except `SmatchetPreferencesUi.cpp` toggle wiring. |
+| Phase D — `AnthropicClient` + optional `OllamaClient` + `AiNdjsonParser` + provider Combo | Phase C merged | `tracker-backend`-shape (HTTP client) | `AiClientFactory::MakeAiClient` Anthropic + OllamaNative branches go non-null. |
+| Phase E — Lua glue restore + `LayoutSchemaVersion` 5→6 (single bump) | Phase D merged | `lua-binder` | Touches `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp` pair. |
+| Plan-time accuracy audit on file-level tables | future plan-doc revisions | author | Caught one mis-listed caller (`FieldCatalogCache.cpp`) and one wrong CMake mechanism (`CORE_SOURCES` glob, not explicit list) in this plan. Cheap to re-grep before sealing the file-level table. |
