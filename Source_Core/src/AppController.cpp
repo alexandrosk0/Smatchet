@@ -86,6 +86,11 @@
 
 #include "SmatchetToast.h"
 
+#include "AiTypes.h"
+#if defined(SMATCHET_WITH_AI)
+#include "AiAssistantController.h"
+#endif
+
 #if defined(_WIN32)
 
 #include <windows.h>
@@ -348,6 +353,15 @@ AppController::~AppController() {
     // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
+#if defined(SMATCHET_WITH_AI)
+    // Drop the AI assistant first — its worker may still be inside SendStreaming. The
+    // dtor flips the cancel atom + joins; only after the join can the main-thread
+    // dispatcher safely BeginShutdown(), because callbacks already in flight will
+    // hand off through `mainThreadDispatcher.PostToMainThread` (still accepting posts
+    // at this instant) and the controller's join blocks until those callbacks return.
+    aiAssistant_.reset();
+#endif
+
     mainThreadDispatcher.BeginShutdown();
 
     CancelAndJoinActiveStreamingSync();
@@ -1363,6 +1377,78 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         } catch (...) {
         }
     }
+
+#if defined(SMATCHET_WITH_AI)
+    // Construct the Smatchet Assistant controller last so it captures a settled config
+    // snapshot (ConfigManager::Load() above already populated all Ai* fields). The
+    // controller spawns its worker thread in its own constructor — no further wiring
+    // needed. Lifetime contract: destroyed at the top of ~AppController.
+    try {
+        aiAssistant_ = std::unique_ptr<AiAssistantController>(new AiAssistantController(*this));
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController::Initialize: AiAssistantController init failed: %s", ex.what());
+        aiAssistant_.reset();
+    } catch (...) {
+        LOG_ERROR("AppController::Initialize: AiAssistantController init failed: unknown exception");
+        aiAssistant_.reset();
+    }
+#endif
+}
+
+#if defined(SMATCHET_WITH_AI)
+AiAssistantController& AppController::GetAiAssistantController() {
+    // Defensive — Initialize is expected to have wired it; if it failed, lazily wire
+    // here so the UI panel + Lua glue don't dereference null in production. The
+    // construction may still fail (no API key); the controller itself handles the
+    // no-provider case gracefully via Submit short-circuit.
+    if (!aiAssistant_) {
+        aiAssistant_ = std::unique_ptr<AiAssistantController>(new AiAssistantController(*this));
+    }
+    return *aiAssistant_;
+}
+#endif
+
+void AppController::AddAiContext(const AiContextBlock& block) {
+#if defined(SMATCHET_WITH_AI)
+    if (aiAssistant_) {
+        aiAssistant_->AddAiContext(block);
+    }
+#else
+    (void)block;
+#endif
+}
+
+void AppController::ClearAiContext() {
+#if defined(SMATCHET_WITH_AI)
+    if (aiAssistant_) {
+        aiAssistant_->ClearAiContext();
+    }
+#endif
+}
+
+std::vector<AiContextBlock> AppController::GetAiContext() const {
+#if defined(SMATCHET_WITH_AI)
+    if (aiAssistant_) {
+        return aiAssistant_->GetAiContext();
+    }
+#endif
+    return {};
+}
+
+void AppController::PromptAi(const std::string& prompt) {
+#if defined(SMATCHET_WITH_AI)
+    if (aiAssistant_) {
+        // Use a process-local counter so the panel-side and Lua-side turn-gens never
+        // collide. Reading `g_ui.assistantTurnGen` would be safer but pulls a UI-side
+        // global into AppController; for Phase B the controller's caller (the UI panel)
+        // owns the gen-counter mutation and Lua glue lands in Phase E.
+        static std::atomic<uint64_t> s_promptAiSeq{1ULL << 32};
+        const uint64_t turnGen = s_promptAiSeq.fetch_add(1, std::memory_order_relaxed);
+        aiAssistant_->Submit(turnGen, prompt, aiAssistant_->GetAiContext());
+    }
+#else
+    (void)prompt;
+#endif
 }
 
 smatchet::cmd::CommandRegistry& AppController::Commands() {

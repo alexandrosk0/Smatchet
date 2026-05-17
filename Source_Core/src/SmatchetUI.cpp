@@ -23,6 +23,7 @@
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "SmatchetMcpServerUi.h"
+#include "SmatchetAiAssistantUi.h"
 #endif
 #include "SmatchetToast.h"
 #include "SmatchetImGuiFonts.h"
@@ -556,6 +557,7 @@ void SmatchetUI::Draw(AppController& app) {
         const ImGuiIO& io = ::ImGui::GetIO();
         const bool ctrlDown = io.KeyCtrl;
         const bool altDown = io.KeyAlt;
+        const bool shiftDown = io.KeyShift;
         if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
             SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
             ConfigManager::Save(d.cfg);
@@ -568,6 +570,19 @@ void SmatchetUI::Draw(AppController& app) {
             SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
             ConfigManager::Save(d.cfg);
         }
+#if defined(SMATCHET_WITH_AI)
+        // Ctrl+Shift+A toggles the Smatchet Assistant side panel. Persistence runs through
+        // the panel-draw path (PersistOpenStateImmediate) so we only flip the live flag
+        // here; the panel's first draw next frame picks up the new value.
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+            d.assistantPanelOpen = !d.assistantPanelOpen;
+            if (d.assistantPanelOpen) {
+                d.requestAssistantFocus = true;
+            }
+        }
+#else
+        (void)shiftDown;
+#endif
     }
     DrainAppUpdateCheck(d);
     if (!d.offlineLegacyStartupBannerText.empty()) {
@@ -627,6 +642,12 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
         drawAuditWindow(app, d);
     }
+#if defined(SMATCHET_WITH_AI)
+    {
+        SMATCHET_UI_PERF_SCOPE("drawAiAssistantPanel");
+        drawAiAssistantPanel(app, d);
+    }
+#endif
     {
         SMATCHET_UI_PERF_SCOPE("TrackerGridFieldDisplay::DrawWatchersListWindow");
         TrackerGridFieldDisplay::DrawWatchersListWindow(g_ui.trackerGridAsync);
@@ -717,6 +738,14 @@ void SmatchetUI::Draw(AppController& app) {
         }
     }
 }
+
+#if defined(SMATCHET_WITH_AI)
+void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d) {
+    // Free function lives in SmatchetAiAssistantUi.cpp; this member exists to keep
+    // SmatchetUI.h's private-method contract uniform with the other window drawers.
+    SmatchetDrawAiAssistantPanel(app, d);
+}
+#endif
 
 void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d) {
     const auto startCatalogFetch = [&](const TrackerConfig& fetchCfg) {

@@ -50,6 +50,31 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### ai-assistant-side-panel · Phase B · side-panel-ui-and-controller · status: in-flight
+
+- **Branch**: `feat/ai-assistant-side-panel-phase-b`
+- **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
+- **Claimed write set**:
+  - `Source_Core/include/AiAssistantController.h` (NEW)
+  - `Source_Core/src/AiAssistantController.cpp` (NEW)
+  - `Source_Core/include/SmatchetAiAssistantUi.h` (NEW)
+  - `Source_Core/src/SmatchetAiAssistantUi.cpp` (NEW)
+  - `Source_Core/include/AppController.h` (MOD — `aiAssistant_` member + accessor + always-on stubs)
+  - `Source_Core/src/AppController.cpp` (MOD — ctor wiring + dtor reset-at-top + stub bodies + AiAssistantController + AiTypes includes)
+  - `Source_Core/include/SmatchetUI.h` (MOD — private `drawAiAssistantPanel` method decl)
+  - `Source_Core/src/SmatchetUI.cpp` (MOD — include + Draw call site + Ctrl+Shift+A keybinding + member-impl delegating to free function)
+  - `Source_Core/src/SmatchetUI_MainMenu.cpp` (MOD — View menu "Assistant (Ctrl+Shift+A)" toggle)
+  - `Source_Core/src/SmatchetUI_Layout.cpp` (MOD — `repairTopLevelWindow` early-return on `layoutKey == "assistant_panel"`)
+  - `Source_Core/include/SmatchetUiSession.h` (MOD — 10 `assistant*` fields gated `#if defined(SMATCHET_WITH_AI)`)
+  - `CMakeLists.txt` (MOD — link `SmatchetCoreAiShim` PUBLIC to standalone-OpenGL core targets only)
+  - `docs/design/ai-assistant-side-panel.md` (revise — append Implementation log row + Deviations + extend Verification)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/IAiClient.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/src/OpenAiClient.cpp`, `Source_Core/include/ConfigManager.h` (`AssistantPanelOpen` + `AssistantPanelWidth` + `AiProviderKind` + `AiApiKey` already shipped Phase A')
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched after Phase A' (#157) merged. Phase B is the first user-visible AI surface: right-anchored panel, worker thread, cancel button, persistent open/closed + width. No `agents.md` loader / context builder / Anthropic / Ollama / Lua glue (those land Phases C-E).
+- **Cleared by**: TBD PR.
+
 ### lua-host-friend-drop · slice-1 · status: shipped (PR #151 merged at 53b2881)
 
 - **Branch**: `feat/lua-host-friend-drop` (deleted)

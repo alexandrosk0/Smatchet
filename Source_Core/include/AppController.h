@@ -37,6 +37,17 @@
 #include <nlohmann/json.hpp>
 
 class PluginHost;
+// AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
+// so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
+// stub methods take it by const-ref / return std::vector<AiContextBlock>.
+#include "AiTypes.h"
+#if defined(SMATCHET_WITH_AI)
+// Phase B: AiAssistantController is a complete type here so `std::unique_ptr<AiAssistantController>`
+// can be destroyed by the (implicit-on-translation-unit) default deleter when consumers include
+// this header. Without the full type, every TU that includes AppController.h would have to
+// either provide a dtor or run into the unique_ptr<incomplete-type> sizeof error.
+#include "AiAssistantController.h"
+#endif
 
 /** Single consolidated tracker degraded/offline banner for main windows (replaces stacked warnings). */
 struct TrackerConnectivityBannerForUi {
@@ -203,6 +214,27 @@ class AppController
     /** Increments once per MCP HTTP request after the auth pre-hook (distinct from activity-log lines). */
     std::uint64_t GetMcpHttpTrafficEpoch() const;
 #endif
+
+#if defined(SMATCHET_WITH_AI)
+    /// Smatchet Assistant — Phase B. Owns the worker thread, conversation history, and the
+    /// per-turn cancel atom. Constructed in `Initialize`; destroyed at the *top* of
+    /// `~AppController` before any other join so its worker observes a live
+    /// `mainThreadDispatcher` while in-flight callbacks drain.
+    AiAssistantController& GetAiAssistantController();
+    /// Phase B safety probe — false during early init before the controller is wired.
+    bool HasAiAssistantController() const { return aiAssistant_ != nullptr; }
+#endif
+
+    /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
+    /// Phase E Lua glue calls these unconditionally; the OFF build silently no-ops so the
+    /// Lua binder TU does not need a parallel SMATCHET_WITH_AI gate. Phase B: delegate to
+    /// `aiAssistant_` when present; Phase C extends with real context-block plumbing.
+    void AddAiContext(const AiContextBlock& block);
+    void ClearAiContext();
+    std::vector<AiContextBlock> GetAiContext() const;
+    /// Equivalent to `aiAssistant_->Submit(prompt, {})` plus a UiDrawSession turn-gen bump.
+    /// UI-thread only.
+    void PromptAi(const std::string& prompt);
 
     /**
      * Optional host callback for showing tracker attachments inside Unreal.
@@ -1001,6 +1033,16 @@ class AppController
     /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
     std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
     std::atomic<std::uint64_t> mcpHttpTrafficEpoch_{0};
+#endif
+
+#if defined(SMATCHET_WITH_AI)
+    // Smatchet Assistant — Phase B. Held in a unique_ptr so the header can forward-declare
+    // `AiAssistantController` and avoid pulling in AiTypes.h + AiClientFactory transitively.
+    // Lifetime contract: constructed at the end of `Initialize` (after ConfigManager::Load
+    // has settled the Ai* config fields); destroyed at the *top* of `~AppController` BEFORE
+    // mainThreadDispatcher.BeginShutdown() fires, so any in-flight worker callback can
+    // still post to the dispatcher during its shutdown drain.
+    std::unique_ptr<AiAssistantController> aiAssistant_;
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
