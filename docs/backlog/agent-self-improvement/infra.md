@@ -7,6 +7,36 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · code-review · [infra] · P3 — Worker-side per-chunk dispatcher post coalescing for AI stream
+  Details: `AiAssistantController::RunRequest`'s `onDelta` posts one task to `MainThreadDispatcher` per provider chunk. OpenAI streams 5–10 chunks/s, Anthropic ~30/s, Ollama ~50+/s for fast local models. The dispatcher queue stays drained but the per-frame `assistantStreamBuf.append` cost + redraw cost is proportional to chunk rate. Coalesce on the worker into 50–100 ms windows before posting; one task per window appends the concatenated chunks.
+  Concrete next action: add a small per-turn `std::string pendingChunks_` + `std::chrono::steady_clock::time_point lastPostAt_` on the worker side; flush when (a) pendingChunks_.size() > 4 KB OR (b) 80 ms elapsed since `lastPostAt_` OR (c) `isFinal`. Wire through `onDelta`. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · code-review · [infra] · P3 — `ImGuiListClipper` in `DrawHistoryArea` for long assistant histories
+  Details: `SmatchetAiAssistantUi.cpp:96-101` (now ~110 after PR #176) renders every `AiMessage` via `TextWrapped` per frame. A 10 000-turn session reflows the entire history every frame at 144 Hz. Use `ImGuiListClipper` once messages exceed ~50 to skip rendering off-screen entries. Currently latent (real sessions are short), but cheap to add and future-proofs the panel for "ask Claude to refactor the whole codebase" sessions.
+  Concrete next action: wrap the history `for` loop in `ImGui::ListClipper` with `clipper.Begin(history.size())`. Verify `TextWrapped` row-height estimation works (or measure once + cache). ~45 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · code-review · [infra] · P3 — `AiContextBuilder::BuildActiveTicketBody` O(N) ticket scan
+  Details: Linear scan over `tickets` to find the active id at [`AiContextBuilder.cpp:151-153`](../../../Source_Core/src/AiContextBuilder.cpp). For 10 K-ticket views the Send button blocks proportionally. `IdIndex` map already exists elsewhere in the codebase; pass through `Inputs` or accept a pre-resolved `const CachedTicket*`.
+  Concrete next action: extend `AiContextBuilder::Inputs` with `const CachedTicket* PreResolvedActiveTicket = nullptr`; populate from the UI side via `IdIndex` lookup. Fall back to the existing scan when null. ~30 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · code-review · [infra] · P3 — `AgentsMdLoader` reads `maxBytes + 1` even when file is smaller
+  Details: [`AgentsMdLoader.cpp:45-46`](../../../Source_Core/src/AgentsMdLoader.cpp) `out.resize(maxBytes + 1)` then reads `maxBytes + 1` bytes regardless of actual file size. Functionally correct (over-cap detection works), but each load reads up to 64 KB+1 even for a 1 KB agents.md. Trivial waste; matters only when invalidation happens on a hot Preferences-change loop.
+  Concrete next action: stat the file first; cap the read at `min(maxBytes + 1, file_size)`. ~15 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · code-review · [infra] · P3 — `SmatchetAiAssistantUi` silently truncates 8 KiB paste
+  Details: `InputTextMultiline` is sized to `s_inputCharBuf.size()` (8 KiB). User pasting 9 KiB has the suffix silently dropped with no toast.
+  Concrete next action: detect truncation on paste (compare `clipboard.size()` against `kInputBufCap` in an `ImGuiInputTextCallback`); emit a toast naming the dropped suffix length. ~45 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-16 · unreal-bridge · [infra] · P2 — DX12 backbuffer readback for screenshot diff (Phase 7 bucket C)
   Details: Phase 7 (`test-phase-7-screenshot-diff`) ships PPM capture wired into `Target_Standalone/main.cpp:569` via `glReadPixels(GL_FRONT, GL_RGBA, ...)`. The `debug.window.screenshot` flag pair (`UiDrawSession::requestScreenshot{,Path}`) flips on both Standalone and DX12 builds but DX12 never consumes it — Unreal owns the swap chain and has no equivalent backbuffer-readback path wired in `SmatchetCore_DX12`. Bucket-C verification therefore covers Standalone-only.
   Concrete next action: add a DX12-side equivalent in `UnrealPlugins/SmatchetImGuiPlugin/` (or wherever the swap-chain present hook lives) — `ID3D12GraphicsCommandList::CopyResource` from the backbuffer to a readback heap, then memcpy to the same PPM writer used by Standalone. Estimated cost ~4-6 h (DX12 resource-state transitions are fiddly). Until then, Phase 7 gates only run on Standalone — Unreal-shipped builds skip bucket-C without notice.

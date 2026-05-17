@@ -41,12 +41,9 @@ add_executable(SmatchetTests
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiContextBuilder.test.cpp
     Source_Core/AiErrorRedact.test.cpp
-<<<<<<< HEAD
     Source_Core/AiModelCatalog.test.cpp
     Source_Core/AiPrefsValidator.test.cpp
-=======
     Source_Core/AiEndpointSanitize.test.cpp
->>>>>>> 19fc262 (fix(ai-hotfix-batch-2): four CRITICAL + eight HIGH findings from retrospective review)
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp

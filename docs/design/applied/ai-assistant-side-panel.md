@@ -575,3 +575,47 @@ Adjacent chore / cleanup PRs (not feature work, but shipped during this plan):
 - **Worktree-bootstrap stale-HEAD** — Phases D + E both observed isolated worktrees rooted on `f2ce5b5` instead of `origin/develop`. ~3 min recovery per dispatch. Filed `orchestrator · [process] · P2` via PR #170. Fix candidate: `scripts/dev/worktree-spawn.sh` to pin new branches to `origin/develop`
 
 **Plan status**: closed. Moved to `docs/design/applied/ai-assistant-side-panel.md` via a chore PR after PR #170 merged. Future AI assistant work originates from individual backlog entries rather than this multi-phase plan.
+
+## Post-ship retrospective (2026-05-17)
+
+`code-review` + `security-review` sweep over the merged feature surfaced findings beyond hotfix [#165](https://github.com/alexandrosk0/Smatchet/pull/165). Two follow-up batches:
+
+| Batch | PR | Scope | Status |
+|---|---|---|---|
+| Hotfix batch 1 | [#165](https://github.com/alexandrosk0/Smatchet/pull/165) | First retrospective sweep — 6 P0/P1 items | shipped |
+| Hotfix batch 2 | [#176](https://github.com/alexandrosk0/Smatchet/pull/176) | Second retrospective sweep — 4 CRITICAL + 8 HIGH | shipped |
+
+### Hotfix batch 2 (PR #176) shipped fixes
+
+| # | Severity | What |
+|---|---|---|
+| 1 | CRITICAL | `AnthropicClient` error body now redacted via `RedactProviderErrorBody` |
+| 2 | CRITICAL | `OllamaClient` error body now redacted; `AiErrorRedact` extended with `x-api-key` / `X-Api-Key` / `anthropic-api-key` JSON-field rules |
+| 3 | CRITICAL | `ConfigManager::Save` calls from `SmatchetAiAssistantUi` deferred to detached worker (UX pillar 2) |
+| 4 | CRITICAL | `BackendAuditTrail::ReadRecentEvents` deferred from UI to worker via new `AiContextBuilder::Inputs::DeferAuditTrailFetch` + `kDeferredAuditTrailSentinel` |
+| 5 | HIGH | New `AiEndpointSanitize` pure helper — rejects non-http(s), CR/LF/NUL, cloud-metadata IPs (169.254.169.254, 100.100.100.200), link-local 169.254/16; API keys CR/LF/NUL-stripped |
+| 6 | HIGH | 4 MiB caps on `AiSseParser` + `AiNdjsonParser` + `assistantStreamBuf` |
+| 7 | HIGH | `luaContext_` mutex-guarded (UI thread + automation worker both touch) |
+| 8 | HIGH | Cancel-atom race fixed — `RunRequest` trusts cancel local captured in `WorkerLoop` |
+| 9 | HIGH | Worker-side agents.md cache, invalidated from Preferences UI on path edit |
+| 10 | HIGH | `AppController::GetAiAssistantController` no longer lazy-constructs post-shutdown |
+| 11 | HIGH | Static input buffer re-seeds on divergence (Lua-supplied text survives panel reopen) |
+| 12 | HIGH | `AiSseParser` strips exactly one leading space per RFC 8895 |
+
+### Hotfix batch 2 — tests added
+
+- `tests/Source_Core/AiEndpointSanitize.test.cpp` — 8 cases (default / allowed / rejected schemes / control chars / cloud metadata / link-local / malformed)
+- `tests/Source_Core/AiSseParser.test.cpp` — RFC single-space-strip contract + 4 MiB cap with `Reset` recovery
+- `tests/Source_Core/AiNdjsonParser.test.cpp` — 4 MiB cap with `Reset` recovery
+- `tests/Source_Core/AiErrorRedact.test.cpp` — three subcases for `x-api-key` / `X-Api-Key` / `anthropic-api-key`
+
+### Remaining work (filed in backlog)
+
+Deferred MED + LOW items from the retrospective. All live entries under `docs/backlog/agent-self-improvement/`. See:
+
+- **security** — `AI-client URL allow-list policy` (P1), `Default AuditTrail toggle off + consent dialog` (P1), `AgentsMdLoader path traversal` (P2), `ai.prompt Lua rate limit + consent toast` (P2), `CR/LF strip at config persist site` (P3), `SSE/NDJSON parse-failure log redact` (P3)
+- **bug** — `AiSseParser::Flush synthesised boundary` (P3)
+- **process** — `agents/security-review.md AI surface map update` (P2)
+- **tooling** — `install gitleaks + semgrep + flawfinder in dev image` (P3)
+- **test** — `per-client cancel-abort regression test` (P2), `per-client error-body redaction regression test` (P2)
+- **infra** — `per-chunk dispatcher coalescing` (P3), `ImGuiListClipper on long histories` (P3), `BuildActiveTicketBody O(N) → IdIndex` (P3), `AgentsMdLoader read = min(maxBytes+1, file_size)` (P3), `InputTextMultiline truncation toast` (P3)

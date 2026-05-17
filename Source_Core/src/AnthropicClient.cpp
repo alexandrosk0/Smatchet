@@ -216,11 +216,7 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
         if (!redactedBody.empty()) {
             err.Message.append(": ");
-<<<<<<< HEAD
             err.Message.append(redactedBody);
-=======
-            err.Message.append(smatchet::ai::pure::RedactProviderErrorBody(r.text));
->>>>>>> 19fc262 (fix(ai-hotfix-batch-2): four CRITICAL + eight HIGH findings from retrospective review)
         }
         onError(err);
         return;

@@ -13,6 +13,12 @@
   Status: open
   Last-reviewed: 2026-05-17
 
+- 2026-05-17 · security-review · [tooling] · P3 — Install gitleaks + semgrep + flawfinder in MSYS2 dev image (security-review fallback is grep)
+  Details: Current `security-review` agent attempts gitleaks / semgrep / flawfinder when present, falls back to grep heuristics + cppcheck security warnings otherwise. On the MSYS2 UCRT64 runner none of the three are installed, so cross-language secret scans + AST-aware vuln patterns silently degrade to text-search.
+  Concrete next action: add a `scripts/dev/install-security-tools.sh` (mirror of `doctor.sh` shape) that pacman-installs `gitleaks` (or `go install` if not packaged), `pipx install semgrep`, `pacman -S mingw-w64-ucrt-x86_64-flawfinder`. Document in `docs/harness/SETUP.md`. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · code-review · [tooling] · P3 — `MainThreadDispatcher::PostUiTask` sugar for typed worker→UI hand-off
   Details: `MainThreadDispatcher::PostToMainThread(Task)` takes `std::function<void()>` per `Source_Core/include/MainThreadDispatcher.h:33`. Phase B (PR #163) had to use the pattern "outer lambda captures AppController*, inner lambda references `g_ui` via TU-local `extern`" to reach UI state from a worker callback (`AiAssistantController.cpp` delta + error paths). The shape works but the discoverability is poor — Phase B agent's packet sketched the wrong signature (`function<void(AppController&)>`) on a guess. A typed sugar layer like `PostUiTask([](UiDrawSession& d){ ... })` (or two-arg `(AppController& app, UiDrawSession& d)`) would (a) make worker→UI hand-off self-documenting + (b) centralise the `g_ui` extern shim that AI/MCP/sync currently each replicate.
   Concrete next action: add `MainThreadDispatcher::PostUiTask(std::function<void(UiDrawSession&)>)` as a thin wrapper that resolves `g_ui` once at the dispatch boundary; deprecate raw `PostToMainThread` for worker callbacks. ~1 h including in-tree replacements of the 3 known worker→UI sites (sync, audit, AI).
