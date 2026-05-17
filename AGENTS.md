@@ -168,6 +168,7 @@ Each packet should include:
 - **File-split closure rule**: when delegating a multi-file split of a monolithic `.cpp` (`BlameAnalysisUi.cpp` shape), the packet must state the *closure rule* — "everything `<target-fn>` calls that isn't already in another TU goes to `<bucket>`" — not enumerate symbols from memory. Enumeration misses transitive callees (export builders, modal helpers); a closure rule does not.
 - **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 - **Plan-time production-file existence check**: before finalising any test-coverage plan (or any plan whose write set names specific production `.h` / `.cpp` files), the orchestrator runs a one-liner Glob / skeleton scan to confirm every named production file actually exists at the stated path. Five seconds of pre-flight catches plan / tree drift (renamed file, file moved during a refactor, name aliased an older path) that otherwise costs the delegated agent ~10 min of cross-walk per phase before deferral entries can be written confidently.
+- **Subagent progress markers reminder** (per § Subagent progress markers): every delegation packet must include the literal sentence: *"Emit one-line progress markers to `.progress.log` via `bash scripts/dev/agent-progress.sh "<phase>: <text>"` at each major step (start, lock, design, code, test, gate, commit, push, pr, end) so `tail-agent.sh` shows live progress."*
 - **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source_Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4BlameParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4BlameParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/backlog/agent-self-improvement/infra.md`.
 
 ### Parallel dispatch
@@ -199,6 +200,39 @@ Section shape:
 - <decision locked>
 - <open question handed back to orchestrator>
 ```
+
+### Subagent progress markers
+
+Subagents dispatched in isolated worktrees emit single-line progress markers to `.progress.log` at the worktree root (gitignored). The orchestrator (and the user) tails the file via `bash scripts/dev/tail-agent.sh` to see live progress without parsing JSONL transcripts or polling `git status`.
+
+**How** — one line per meaningful step via the helper:
+
+```bash
+bash scripts/dev/agent-progress.sh "<phase>: <one-line message>"
+# or two-arg form:
+bash scripts/dev/agent-progress.sh <phase> <one-line message>
+```
+
+The helper resolves the worktree root via `git rev-parse --show-toplevel`, appends a `[HH:MM:SS] <phase>: <message>` line, and flushes (each invocation is a separate process — the `>>` redirect closes on exit, so `tail -f` sees the line within ~1 s).
+
+**When** — emit at these phase transitions, minimum:
+
+| Phase | When to emit |
+|---|---|
+| `start` | First Bash call after entering the worktree |
+| `lock` | After appending the plan-lock claim |
+| `design` | Before writing the first production file (one line per major artifact: header drafted, .cpp scaffolded) |
+| `code` | Each major implementation chunk landed (e.g. "AgentsMdLoader.cpp implemented") |
+| `test` | Each new test TU drafted + each new test case clustering |
+| `gate` | Before each `cmake --build` / `ctest` / `test-all.sh` invocation, plus result |
+| `commit` | After `git commit` |
+| `push` | After `git push` |
+| `pr` | After `gh pr create` (include the PR URL on the same line) |
+| `end` | Final line before producing the report |
+
+**Why** — real-time visibility is otherwise expensive: the `<agentId>.output` stdout-capture file is empty for non-Bash agent work, and watching git-status snapshots in a loop is noisy. A small explicit log is low-cost to emit and gives the user a clean stream of "agent is at step N of M". Best-effort — not a merge gate; agents that forget aren't blocked but visibility regresses.
+
+**Quoting note** — phase + message live on one bash arg; use shell-safe quoting (no embedded newlines; avoid `$` unless intentional). Anything with backticks or curly braces should be single-quoted.
 
 ### Tool-trace contract
 

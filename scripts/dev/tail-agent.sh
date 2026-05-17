@@ -161,10 +161,29 @@ fi
 ( cd "$wt" 2>/dev/null && git rev-parse "origin/develop" >/dev/null 2>&1 ) \
     || echo "# note: origin/develop ref not present in this worktree (diff stats may be empty)" >&2
 
+progress_log="$wt/.progress.log"
+
+# If the agent is emitting progress markers per AGENTS.md § Subagent progress
+# markers, `.progress.log` exists at the worktree root. Prefer tailing it —
+# it's lower-noise than git-snapshot polling and updates in near-real-time.
+if [ -f "$progress_log" ]; then
+    echo "# tailing .progress.log: $progress_log" >&2
+    echo "# (Ctrl+C to stop; falls through to git snapshot at end)" >&2
+    if [ "$once" -eq 1 ]; then
+        cat "$progress_log"
+        echo
+        snapshot_worktree "$wt" "$show_diff" "$show_files"
+    else
+        tail -n 50 -f "$progress_log"
+    fi
+    exit 0
+fi
+
 if [ "$once" -eq 1 ]; then
     snapshot_worktree "$wt" "$show_diff" "$show_files"
 else
     echo "# watching: $wt (every ${interval}s — Ctrl+C to stop)" >&2
+    echo "# (no .progress.log present — agent may not emit progress markers; falling back to git snapshot)" >&2
     echo
     while true; do
         snapshot_worktree "$wt" "$show_diff" "$show_files"
