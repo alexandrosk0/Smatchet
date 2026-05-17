@@ -4,7 +4,7 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 ## UX Pillars
 
-Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `context`), not a merge block, until the supporting infrastructure lands.
+Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
 
 ### 1. Performance — sustain ≈ 144 Hz
 
@@ -47,7 +47,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ### 4. Accessibility — aspirational (locked scope)
 
-**Status**: no auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `context`) so it accumulates evidence; pillar hardens once the supporting infra lands.
+**Status**: no auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
 
 **Locked in-scope (work on these when adjacent to current task):**
 - **Keyboard navigation**: every actionable widget reachable without mouse. Tab order sane, focus indicators visible, `Ctrl+Shift+P` Command Palette as the keyboard entry point to every registered command.
@@ -168,7 +168,7 @@ Each packet should include:
 - **File-split closure rule**: when delegating a multi-file split of a monolithic `.cpp` (`BlameAnalysisUi.cpp` shape), the packet must state the *closure rule* — "everything `<target-fn>` calls that isn't already in another TU goes to `<bucket>`" — not enumerate symbols from memory. Enumeration misses transitive callees (export builders, modal helpers); a closure rule does not.
 - **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 - **Plan-time production-file existence check**: before finalising any test-coverage plan (or any plan whose write set names specific production `.h` / `.cpp` files), the orchestrator runs a one-liner Glob / skeleton scan to confirm every named production file actually exists at the stated path. Five seconds of pre-flight catches plan / tree drift (renamed file, file moved during a refactor, name aliased an older path) that otherwise costs the delegated agent ~10 min of cross-walk per phase before deferral entries can be written confidently.
-- **Test-rig `<Unit>Parse.{h,cpp}` TU-split pre-authorisation**: when delegating a `test-rig` phase whose plan lists units with anonymous-namespace pure helpers (e.g. `static`-in-anon-namespace parsers inside a process-spawning `.cpp`), the orchestrator packet must explicitly include `Source_Core/{include,src}/<Unit>Parse.{h,cpp}` in the allowed write set. Without this, the agent's auto-mode classifier denies the production-side TU split — same shape of refactor that Phase 1 (`IssueCreatePipelineHelpers`) used. Phase 1's packet allowed the split; subsequent phases inherit the recipe.
+- **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source_Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4BlameParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4BlameParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/backlog/agent-self-improvement/infra.md`.
 
 ### Parallel dispatch
 
@@ -323,7 +323,7 @@ Each delegated agent gets a fresh context window — `tracker-backend` work does
 
 Every delegated agent ends its report with a `## Self-improvement` section. **Empty is the common case and explicitly fine** — agents only flag real friction, never make up suggestions.
 
-Operational rules — format, categories, workflow steps, apply threshold, triage cadence — live in [`docs/agents/self-improvement.md`](docs/agents/self-improvement.md). Live entries: [`docs/docs/backlog/AGENT_SELF_IMPROVEMENT.md`](docs/docs/backlog/AGENT_SELF_IMPROVEMENT.md). The goal is a self-tightening loop — agents notice friction, the orchestrator accumulates evidence, prompts get patched, friction drops.
+Operational rules — format, categories (`bug` / `process` / `tooling` / `infra` / `test` / `security`), priority enum (P0–P3), workflow steps, apply threshold, triage cadence — live alongside the index at [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](docs/backlog/AGENT_SELF_IMPROVEMENT.md). Live entries split per category under [`docs/backlog/agent-self-improvement/`](docs/backlog/agent-self-improvement/). Applied entries archive immediately to `agent-self-improvement/applied.md`. The goal is a self-tightening loop — agents notice friction, the orchestrator accumulates evidence, prompts get patched, friction drops.
 
 ## Harness adapter
 
