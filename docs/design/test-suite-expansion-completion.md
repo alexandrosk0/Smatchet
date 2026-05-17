@@ -260,6 +260,12 @@ Machine-B remained unavailable; machine A continued briefly:
 
 Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 
+### Session 2026-05-16 (Phase 5 pre-flight unblocker)
+
+| Slice | PR | Sha | Notes |
+|---|---|---|---|
+| `mcp-jsonrpc-pure-tu-split` (Phase-5 pre-flight) | TBD | TBD | 9 named helpers + 5 transitive (`ToLowerAscii`, `TrimAsciiWhitespace`, `BasenameForDisplay`, `AppendAllowlistedArgKvs`) kept internal-linkage in pure TU + `TruncateOneLine` exported (also called from non-anon code in `McpPlugin.cpp`). Namespace `smatchet::mcp::pure`. Zero semantic change. Test-rig snapshot: 284 cases / 1509 assertions (assertion count grew vs. last session-end snapshot because Phase 4 + downstream landed cases). Unblocks Phase 5 re-dispatch. |
+
 ## Deviations from plan
 
 ### Session 2026-05-16
@@ -268,3 +274,14 @@ Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 - **Auto-merge disabled** on the repo. Orchestrator falls back to direct `gh pr merge --squash --delete-branch` after CI green (or before, when admin-merge allowed). Adds ~14 min wall-clock per PR vs `--auto`.
 - **Worktree-isolated agent recovery**: 4/4 Wave A2 agents errored API-500 mid-run after shipping 100% of file edits. Orchestrator re-verified gates locally and committed/PR'd from the worktree state. Per-PR cost ~5-10 min vs full re-dispatch.
 - **`tests/CMakeLists.txt` rebase cascade**: 4 parallel agents each append to the same lines of the test target source list. Each PR after the first needs a manual rebase resolving the union-merge. Sequential merge order (not parallel) is the right operational stance for this kind of fan-in.
+- **Phase-5 pre-flight TU split required before Phase-5 test PR** (added 2026-05-16): pure helpers were entombed inside an anonymous namespace in `Plugins/Mcp/McpPlugin.cpp` whose top of file pulls `winsock2` + `httplib` + `cpr`. Plan originally assumed the helpers were already link-clean — they were not. Pre-flight `mcp-jsonrpc-pure-tu-split` slice lifts them to `Plugins/Mcp/McpJsonRpcPure.{h,cpp}` (cpr/httplib/winsock-free) before Phase 5's test PR can compile.
+- **`TruncateOneLine` exported from pure TU** (not in original closure inventory): scan during the lift surfaced 6 call sites in `McpPlugin.cpp`'s non-anon HTTP-handling code. Exporting the helper (rather than duplicating it back into `McpPlugin.cpp`) keeps the post-split TU clean and lets future Phase-5 tests directly cover it.
+
+## Verification
+
+### Phase 5 pre-flight (`mcp-jsonrpc-pure-tu-split`) — 2026-05-16
+
+- **Standalone build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` → clean (`Smatchet.exe` linked, `EXIT=0`).
+- **DX12 build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12` → clean (`libSmatchetCore_DX12.a` linked, `EXIT=0`).
+- **Test rig**: `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` → 1/1 ctest target passed; doctest summary `284 cases | 284 passed | 0 failed | 1509 assertions | 1509 passed | 0 failed | Status: SUCCESS!`.
+- **Banned-deps guard**: `grep -nE '#include\s*<(httplib|cpr|winsock2)' Plugins/Mcp/McpJsonRpcPure.{h,cpp}` → no matches (empty output). Pure TU is link-clean for the test rig.
