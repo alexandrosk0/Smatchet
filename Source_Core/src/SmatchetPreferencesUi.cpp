@@ -475,7 +475,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     ImGui::BeginChild("##AiPrefsErrorBanner", ImVec2(0.0f, h), true, ImGuiWindowFlags_NoScrollbar);
                     ImGui::PushStyleColor(ImGuiCol_Text, kErrText);
                     ImGui::TextWrapped(
-                        "(!) %d error%s block save - fix to enable Save:", static_cast<int>(validation.Errors.size()),
+                        "(!) %d configuration error%s - see details below:", static_cast<int>(validation.Errors.size()),
                         validation.Errors.size() == 1 ? "" : "s");
                     for (const auto& e : validation.Errors) {
                         ImGui::BulletText("%s", e.c_str());
@@ -592,47 +592,59 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
                 std::thread([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
                     std::string errMsg;
-                    std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
-                    if (!client) {
-                        errMsg = "Provider not available in this build.";
-                    } else {
-                        // Step 1: reachability — server alive + auth accepted on the
-                        // listing endpoint (cheap GET).
-                        errMsg = client->ProbeReachability(clientCfg);
-                        // Step 2: real chat handshake — sends a 1-token "ping" against
-                        // the configured model so model-not-found / chat-disabled /
-                        // missing-loaded-model errors surface BEFORE the user types
-                        // their first real prompt. This is what made earlier Test-
-                        // connection passes mislead users into thinking the full chat
-                        // path worked (it didn't — /v1/models OK ≠ /v1/chat/completions
-                        // OK against a loaded model).
-                        if (errMsg.empty()) {
-                            if (modelId.empty()) {
-                                errMsg = "chat: model id is empty (set 'Model' field)";
-                            } else {
-                                AiChatRequest req;
-                                req.Model = modelId;
-                                AiMessage userMsg;
-                                userMsg.Role = "user";
-                                userMsg.Content = "ping";
-                                req.History.push_back(std::move(userMsg));
-                                req.MaxTokens = 4;
-                                std::atomic<bool> sawDelta(false);
-                                std::string chatErr;
-                                auto onDelta = [&](const AiStreamDelta& d2) {
-                                    if (!d2.TokenChunk.empty() || d2.IsFinal) {
-                                        sawDelta.store(true);
+                    // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
+                    // `SendStreaming` all run third-party transport (cpr/libcurl) +
+                    // SSE parser code. An uncaught exception here would propagate
+                    // out of the detached thread and call `std::terminate`. Trap
+                    // it, surface as a failure result via the existing dispatcher
+                    // path so UI state (in-flight flag + result line) recovers.
+                    try {
+                        std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
+                        if (!client) {
+                            errMsg = "Provider not available in this build.";
+                        } else {
+                            // Step 1: reachability — server alive + auth accepted on the
+                            // listing endpoint (cheap GET).
+                            errMsg = client->ProbeReachability(clientCfg);
+                            // Step 2: real chat handshake — sends a 1-token "ping" against
+                            // the configured model so model-not-found / chat-disabled /
+                            // missing-loaded-model errors surface BEFORE the user types
+                            // their first real prompt. This is what made earlier Test-
+                            // connection passes mislead users into thinking the full chat
+                            // path worked (it didn't — /v1/models OK ≠ /v1/chat/completions
+                            // OK against a loaded model).
+                            if (errMsg.empty()) {
+                                if (modelId.empty()) {
+                                    errMsg = "chat: model id is empty (set 'Model' field)";
+                                } else {
+                                    AiChatRequest req;
+                                    req.Model = modelId;
+                                    AiMessage userMsg;
+                                    userMsg.Role = "user";
+                                    userMsg.Content = "ping";
+                                    req.History.push_back(std::move(userMsg));
+                                    req.MaxTokens = 4;
+                                    std::atomic<bool> sawDelta(false);
+                                    std::string chatErr;
+                                    auto onDelta = [&](const AiStreamDelta& d2) {
+                                        if (!d2.TokenChunk.empty() || d2.IsFinal) {
+                                            sawDelta.store(true);
+                                        }
+                                    };
+                                    auto onError = [&](const AiStreamError& e) { chatErr = e.Message; };
+                                    client->SendStreaming(clientCfg, req, onDelta, onError, cancel);
+                                    if (!chatErr.empty()) {
+                                        errMsg = std::string("chat: ") + chatErr;
+                                    } else if (!sawDelta.load()) {
+                                        errMsg = "chat: server returned no content";
                                     }
-                                };
-                                auto onError = [&](const AiStreamError& e) { chatErr = e.Message; };
-                                client->SendStreaming(clientCfg, req, onDelta, onError, cancel);
-                                if (!chatErr.empty()) {
-                                    errMsg = std::string("chat: ") + chatErr;
-                                } else if (!sawDelta.load()) {
-                                    errMsg = "chat: server returned no content";
                                 }
                             }
                         }
+                    } catch (const std::exception& ex) {
+                        errMsg = std::string("internal error: ") + ex.what();
+                    } catch (...) {
+                        errMsg = "internal error: unknown exception";
                     }
                     dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
                         if (cancel && cancel->load()) {
@@ -725,6 +737,55 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
 
             // --- Per-provider credentials (auto-saved on every edit). ---
+            //
+            // Model picker shape: when the provider ships a published catalog
+            // (`KnownModels(provider)` non-empty), render a Combo + a collapsing
+            // "Custom model ID" header for free-form override. Otherwise (local
+            // OpenAI-compat / Ollama-native, models are user-side) render plain
+            // InputText with a hint.
+            auto renderModelPicker = [&](const char* comboLabel, const char* freeFormLabel, const char* freeFormHint,
+                                         AiProvider catalogProvider, char* modelBuf, std::size_t modelBufCap,
+                                         std::string& cfgField) {
+                const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(catalogProvider);
+                if (catalog.empty()) {
+                    if (ImGui::InputTextWithHint(freeFormLabel, freeFormHint, modelBuf,
+                                                 static_cast<int>(modelBufCap))) {
+                        cfgField = modelBuf;
+                        MarkPrefsDirty(d);
+                        clearStaleTestResult();
+                    }
+                    return;
+                }
+                std::vector<const char*> displayPtrs;
+                displayPtrs.reserve(catalog.size());
+                std::transform(catalog.begin(), catalog.end(), std::back_inserter(displayPtrs),
+                               [](const smatchet::ai::ModelOption& m) { return m.DisplayName.c_str(); });
+                int selectedIdx = -1;
+                auto it = std::find_if(catalog.begin(), catalog.end(),
+                                       [&](const smatchet::ai::ModelOption& m) { return m.Id == modelBuf; });
+                if (it != catalog.end()) {
+                    selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
+                }
+                int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
+                if (ImGui::Combo(comboLabel, &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
+                    std::snprintf(modelBuf, modelBufCap, "%s", catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
+                    cfgField = modelBuf;
+                    MarkPrefsDirty(d);
+                    clearStaleTestResult();
+                }
+                if (selectedIdx < 0 && modelBuf[0] != '\0') {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(custom: %s)", modelBuf);
+                }
+                if (ImGui::CollapsingHeader("Custom model ID (advanced)")) {
+                    if (ImGui::InputText("##model_custom", modelBuf, static_cast<int>(modelBufCap))) {
+                        cfgField = modelBuf;
+                        MarkPrefsDirty(d);
+                        clearStaleTestResult();
+                    }
+                }
+            };
+
             if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
                 const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
                 const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
@@ -733,12 +794,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     MarkPrefsDirty(d);
                     clearStaleTestResult();
                 }
-                const char* modelLabel = isLocalCompat ? "Model" : "OpenAI model";
-                if (ImGui::InputText(modelLabel, s_openAiModelBuf, sizeof(s_openAiModelBuf))) {
-                    d.cfg.AiModelOpenAi = s_openAiModelBuf;
-                    MarkPrefsDirty(d);
-                    clearStaleTestResult();
-                }
+                // OllamaOpenAiCompat keeps an empty catalog — the local server
+                // names its own models. `renderModelPicker` falls back to free-form
+                // hint in that case. OpenAi has a catalog so the Combo renders.
+                const char* modelComboLabel = isLocalCompat ? "Model" : "OpenAI model";
+                const char* modelFreeFormLabel = modelComboLabel;
+                const char* modelHint = isLocalCompat ? "e.g. local-model, llama3, qwen2.5" : "";
+                renderModelPicker(modelComboLabel, modelFreeFormLabel, modelHint, selectedKind, s_openAiModelBuf,
+                                  sizeof(s_openAiModelBuf), d.cfg.AiModelOpenAi);
                 const char* urlHint = isLocalCompat ? "http://127.0.0.1:1234 (LM Studio)" : "https://api.openai.com";
                 if (ImGui::InputTextWithHint("Base URL", urlHint, s_baseUrlBuf, sizeof(s_baseUrlBuf))) {
                     d.cfg.AiBaseUrl = s_baseUrlBuf;
@@ -752,17 +815,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     MarkPrefsDirty(d);
                     clearStaleTestResult();
                 }
-                if (ImGui::InputText("Anthropic model", s_anthropicModelBuf, sizeof(s_anthropicModelBuf))) {
-                    d.cfg.AiModelAnthropic = s_anthropicModelBuf;
-                    MarkPrefsDirty(d);
-                    clearStaleTestResult();
-                }
+                renderModelPicker("Anthropic model", "Anthropic model", "", AiProvider::Anthropic, s_anthropicModelBuf,
+                                  sizeof(s_anthropicModelBuf), d.cfg.AiModelAnthropic);
             } else if (selectedKind == AiProvider::OllamaNative) {
-                if (ImGui::InputText("Ollama model", s_ollamaModelBuf, sizeof(s_ollamaModelBuf))) {
-                    d.cfg.AiModelOllama = s_ollamaModelBuf;
-                    MarkPrefsDirty(d);
-                    clearStaleTestResult();
-                }
+                renderModelPicker("Ollama model", "Ollama model", "e.g. llama3, qwen2.5, mistral",
+                                  AiProvider::OllamaNative, s_ollamaModelBuf, sizeof(s_ollamaModelBuf),
+                                  d.cfg.AiModelOllama);
                 if (ImGui::InputTextWithHint("Ollama base URL", "http://localhost:11434", s_ollamaBaseUrlBuf,
                                              sizeof(s_ollamaBaseUrlBuf))) {
                     d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
