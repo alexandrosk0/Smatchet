@@ -129,11 +129,12 @@ Build the claim primitive standalone. No agent reads it yet.
 
 Files (new):
 
-- `scripts/dev/lock-claim.sh` — args: `<slug> <write-set-file>`. Builds claim blob, commits on detached tree, pushes to `refs/locks/<slug>`. Atomic CAS. Retries on loss (3 retries, exponential backoff).
+- `scripts/dev/lock-claim.sh` — args: `<slug> <write-set-file>`. Builds claim blob, commits on detached tree, pushes to `refs/locks/<slug>`. Atomic CAS via standard non-fast-forward rejection. Retries only on transient errors (3 retries, exponential backoff); CAS rejection is terminal.
 - `scripts/dev/lock-claim-update.sh` — args: `<slug> <new-write-set-file>`. Force-with-lease updates existing ref. For scope growth mid-slice.
 - `scripts/dev/lock-release.sh` — args: `<slug>`. Deletes remote ref. Idempotent. For abandoned local branches.
-- `scripts/dev/locks-show.sh` — no args. Renders all `refs/locks/*` as a stdout table.
-- `tests/scripts/lock-primitives.test.sh` — exercises claim / show / release loop in a sandboxed bare repo. Asserts CAS rejects concurrent claim.
+- `scripts/dev/locks-show.sh` — no args. Renders all `refs/locks/*` as a stdout table (or JSON when `LOCKS_SHOW_FORMAT=json`).
+- `scripts/dev/_lock-json.py` — internal Python helper. Builds + parses + formats `claim.json` payloads. Pure stdlib. Underscore-prefix marks it as not part of the supported `scripts/dev/` surface.
+- `scripts/dev/test-lock-primitives.sh` — exercises claim / claim-update / release / show in a sandboxed bare repo with two clones. Asserts CAS rejects concurrent claim and stale-lease update hijack. Auto-enrolled by `scripts/dev/test-all.sh`.
 
 Acceptance: tests pass. Two concurrent `lock-claim.sh` invocations on the same slug → exactly one succeeds. `locks-show.sh` prints both before either releases.
 
@@ -238,7 +239,7 @@ Build only if collision frequency warrants. Each is an independent micro-PR.
 Filled in during each phase.
 
 - Phase 0: results section appended below.
-- Phase 1: `bash tests/scripts/lock-primitives.test.sh` green.
+- Phase 1: `bash scripts/dev/test-lock-primitives.sh` green (8/8). Also auto-discovered by `bash scripts/dev/test-all.sh --filter lock-primitives`.
 - Phase 2: ref push triggers render PR within 5 min; merged PR produces matching `_plan-locks.md`.
 - Phase 3: synthetic merge → ref deleted within 60 s.
 - Phase 4: backdated ref → Issue opened within 24 h.
@@ -284,12 +285,13 @@ Phase 7 is reactive — ship each item when the corresponding pain surfaces.
 
 ## Implementation log
 
-To be populated as phases ship.
-
-- *(pending)*
+- 2026-05-17 · `b3e44f6` · plan drafted (`wip(plan): git-ref-plan-locks`).
+- 2026-05-17 · `773d42a` · Phase 0 pre-flight complete; environment greenlit Phases 1–6.
+- 2026-05-17 · Phase 1 landed locally on `feat/git-ref-plan-locks`: primitive scripts + Python helper + sandboxed test (8/8). Live end-to-end smoke against `origin` for `refs/locks/tmp-smoke-live` PASS (claim → show → release → idempotent re-release).
 
 ## Deviations from plan
 
-To be populated when actual implementation diverges.
-
-- *(pending)*
+- **`jq` swapped for a Python helper** (`scripts/dev/_lock-json.py`). `jq` is not installed on the user's Smatchet dev box; Python 3.x is. Plan originally specified `jq` calls inline in each `.sh` script. Pure stdlib Python is more portable across Smatchet's developer environments (MSYS2 UCRT64 + Windows) and removes an external dependency.
+- **Python detection probe** added because `python3` on Windows often resolves to the Microsoft Store stub (`exit 49`). Scripts probe candidates `python`, `python3` and accept only those that pass `sys.version_info[0] >= 3`.
+- **Test path** moved from `tests/scripts/lock-primitives.test.sh` to `scripts/dev/test-lock-primitives.sh` so the existing `scripts/dev/test-all.sh` auto-discovery glob (`scripts/dev/test-*.sh`) picks it up without needing changes to the runner.
+- **Test case 5** (stale-lease hijack) required `git fetch origin '+refs/locks/*:refs/locks/*'` in the second clone before `commit-tree -p <sha>` could reference the ref's tip as a parent. Documented in the test inline.
