@@ -264,7 +264,8 @@ Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 
 | Slice | PR | Sha | Notes |
 |---|---|---|---|
-| `mcp-jsonrpc-pure-tu-split` (Phase-5 pre-flight) | TBD | TBD | 9 named helpers + 5 transitive (`ToLowerAscii`, `TrimAsciiWhitespace`, `BasenameForDisplay`, `AppendAllowlistedArgKvs`) kept internal-linkage in pure TU + `TruncateOneLine` exported (also called from non-anon code in `McpPlugin.cpp`). Namespace `smatchet::mcp::pure`. Zero semantic change. Test-rig snapshot: 284 cases / 1509 assertions (assertion count grew vs. last session-end snapshot because Phase 4 + downstream landed cases). Unblocks Phase 5 re-dispatch. |
+| `mcp-jsonrpc-pure-tu-split` (Phase-5 pre-flight) | [#141](https://github.com/alexandrosk0/Smatchet/pull/141) | `cfab599` | 9 named helpers + 5 transitive (`ToLowerAscii`, `TrimAsciiWhitespace`, `BasenameForDisplay`, `AppendAllowlistedArgKvs`) kept internal-linkage in pure TU + `TruncateOneLine` exported (also called from non-anon code in `McpPlugin.cpp`). Namespace `smatchet::mcp::pure`. Zero semantic change. Test-rig snapshot: 284 cases / 1509 assertions (assertion count grew vs. last session-end snapshot because Phase 4 + downstream landed cases). Unblocks Phase 5 re-dispatch. |
+| `test-phase-5-mcp-json-rpc` (Phase 5 re-dispatch) | TBD | TBD | 4 test TUs under `tests/Plugins/Mcp/` covering the 12 exported `smatchet::mcp::pure` helpers: `McpRequestParser.test.cpp` (URL/host parsing + loopback detection), `McpEnvelope.test.cpp` (Base64 + summary builders + JSON-RPC error extraction + TruncateOneLine), `McpToolSchemas.test.cpp` (`run_lua` schema invariants), `McpDispatch.test.cpp` (constant-time compare + attachment-host allowlist). 4 high-risk cases mark assertions whose failure pinpoints specific production lines per backlog #48 (taxonomy option 2 — production-out-of-scope argument-from-assertion-shape). |
 
 ## Deviations from plan
 
@@ -276,6 +277,8 @@ Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 - **`tests/CMakeLists.txt` rebase cascade**: 4 parallel agents each append to the same lines of the test target source list. Each PR after the first needs a manual rebase resolving the union-merge. Sequential merge order (not parallel) is the right operational stance for this kind of fan-in.
 - **Phase-5 pre-flight TU split required before Phase-5 test PR** (added 2026-05-16): pure helpers were entombed inside an anonymous namespace in `Plugins/Mcp/McpPlugin.cpp` whose top of file pulls `winsock2` + `httplib` + `cpr`. Plan originally assumed the helpers were already link-clean — they were not. Pre-flight `mcp-jsonrpc-pure-tu-split` slice lifts them to `Plugins/Mcp/McpJsonRpcPure.{h,cpp}` (cpr/httplib/winsock-free) before Phase 5's test PR can compile.
 - **`TruncateOneLine` exported from pure TU** (not in original closure inventory): scan during the lift surfaced 6 call sites in `McpPlugin.cpp`'s non-anon HTTP-handling code. Exporting the helper (rather than duplicating it back into `McpPlugin.cpp`) keeps the post-split TU clean and lets future Phase-5 tests directly cover it.
+- **Phase 5 link strategy — Option A (direct `.cpp`)**: `Plugins/Mcp/McpJsonRpcPure.cpp` added directly to the `SmatchetTests` source list (mirroring the Phase 1–4 pattern for `Source_Core/src/*.cpp`) rather than linking against `SmatchetPlugin_Mcp` (Option B). Option A is more surgical — the pure TU pulls only `<string>`, `<cstddef>`, `<nlohmann/json.hpp>`, and `SmatchetDefaults.h`, all already on the test target. Option B would drag the rest of the plugin.
+- **No `tests/support/McpJsonRpcFixture.h` shipped**: original packet listed a shared fixture as "if needed". The 4 TUs are self-contained — no JSON fixture files, no shared setup — so the fixture would be dead weight. Dropped per AGENTS.md § Plan-doc safety (do not ship unused files).
 
 ## Verification
 
@@ -285,3 +288,10 @@ Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 - **DX12 build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12` → clean (`libSmatchetCore_DX12.a` linked, `EXIT=0`).
 - **Test rig**: `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` → 1/1 ctest target passed; doctest summary `284 cases | 284 passed | 0 failed | 1509 assertions | 1509 passed | 0 failed | Status: SUCCESS!`.
 - **Banned-deps guard**: `grep -nE '#include\s*<(httplib|cpr|winsock2)' Plugins/Mcp/McpJsonRpcPure.{h,cpp}` → no matches (empty output). Pure TU is link-clean for the test rig.
+
+### Phase 5 re-dispatch (`test-phase-5-mcp-json-rpc`) — 2026-05-16
+
+- **Test rig**: `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` → 1/1 ctest target passed; doctest aggregate captured in PR body (≥ baseline 284 cases / 1509 assertions + Phase-5 contribution).
+- **Dual-target regression**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → clean (production untouched, smoke check).
+- **Sidecar suite**: `bash scripts/dev/test-all.sh` → green.
+- **Manual residue**: none (pure-logic harness, fully automated).
