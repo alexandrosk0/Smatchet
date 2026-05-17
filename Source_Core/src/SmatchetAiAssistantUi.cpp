@@ -409,15 +409,24 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         std::transform(displayStrings.begin(), displayStrings.end(), std::back_inserter(displayPtrs),
                        [](const std::string& s) { return s.c_str(); });
         int comboIdx = 0;
+        // When the saved per-turn override doesn't match any entry in the active
+        // provider's catalog (e.g. user switched providers leaving a stale id, or
+        // typed a custom name from another build), fall back to free-form input
+        // so the UI accurately reflects what the next Send will actually use —
+        // showing `<default model>` while a hidden non-catalog override is still
+        // active is a major UX trap (CodeRabbit comment 3255682299).
+        bool useFreeformModelInput = catalog.empty();
         if (!d.assistantPerTurnModel.empty() && !catalog.empty()) {
             auto it = std::find_if(catalog.begin(), catalog.end(),
                                    [&](const smatchet::ai::ModelOption& m) { return m.Id == d.assistantPerTurnModel; });
             if (it != catalog.end()) {
                 comboIdx = 1 + static_cast<int>(std::distance(catalog.begin(), it));
+            } else {
+                useFreeformModelInput = true;
             }
         }
         ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 12.0f);
-        if (catalog.empty()) {
+        if (useFreeformModelInput) {
             // Provider has no published catalog (Ollama variants). Free-form
             // InputText sized to look like the Combo above.
             char modelBuf[256] = {};
