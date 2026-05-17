@@ -44,7 +44,11 @@ jobs:
         run: |
           # The default checkout does not pull refs outside refs/heads/.
           # Pull all refs/locks/* into the local repo for the render script.
-          git fetch --quiet --prune origin '+refs/locks/*:refs/locks/*' || true
+          # NOTE: no `|| true` — a transient fetch failure here would leave the
+          # local namespace empty and the render step would produce an
+          # empty-state file, opening a PR that incorrectly claims all locks
+          # released. Fail loud; the next scheduled run retries.
+          git fetch --quiet --prune origin '+refs/locks/*:refs/locks/*'
 
       - name: Render
         run: |
