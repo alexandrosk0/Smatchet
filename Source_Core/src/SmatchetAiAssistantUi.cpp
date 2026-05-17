@@ -3,10 +3,12 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiAssistantController.h"
+#include "AiContextBuilder.h"
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
+#include "SpreadsheetState.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -121,7 +123,52 @@ void DrawErrorStrip(UiDrawSession& d) {
     ImGui::PopStyleColor();
 }
 
-void DrawInputAndButtons(AppController& app, UiDrawSession& d) {
+void DrawContextBlockCheckboxes(UiDrawSession& d) {
+    // Five-checkbox row driving the `cfg.AssistantContextBlock*` toggles shipped in
+    // Phase A'. Changes persist to disk immediately so the next launch reflects the
+    // user's pick; per-block defaults are all `true`.
+    bool dirty = false;
+    auto draw = [&](const char* label, bool& flag) {
+        if (ImGui::Checkbox(label, &flag)) {
+            dirty = true;
+        }
+    };
+    draw("Selection##AiCtxSel", d.cfg.AssistantContextBlockSelection);
+    ImGui::SameLine();
+    draw("Visible##AiCtxVis", d.cfg.AssistantContextBlockVisibleRows);
+    ImGui::SameLine();
+    draw("Ticket##AiCtxTicket", d.cfg.AssistantContextBlockActiveTicket);
+    ImGui::SameLine();
+    draw("View##AiCtxView", d.cfg.AssistantContextBlockActiveView);
+    ImGui::SameLine();
+    draw("Audit##AiCtxAudit", d.cfg.AssistantContextBlockAuditTrail);
+    if (dirty) {
+        ConfigManager::Save(d.cfg);
+    }
+}
+
+std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSession& d,
+                                             const ViewDefinition* activeView) {
+    AiContextBuilder::Inputs inputs;
+    inputs.Tickets = app.GetActiveTicketsSnapshot();
+    inputs.SortedIndices = &d.cachedSortedIndices;
+    inputs.SelectedRows = &d.gridState.RectSel.Rows;
+    inputs.ActiveIssueId = d.gridState.ActiveIssueId;
+    inputs.ActiveView = activeView;
+    // VisibleRows = the same sort-order list (capped internally at kRowsCap). Phase B
+    // intentionally does not yet plumb the precise top-of-viewport range — using the
+    // sorted-index list gives a deterministic "top N rows" approximation matching the
+    // grid's natural rendering order.
+    inputs.VisibleRows = &d.cachedSortedIndices;
+    inputs.EnableSelection = d.cfg.AssistantContextBlockSelection;
+    inputs.EnableVisibleRows = d.cfg.AssistantContextBlockVisibleRows;
+    inputs.EnableActiveTicket = d.cfg.AssistantContextBlockActiveTicket;
+    inputs.EnableActiveView = d.cfg.AssistantContextBlockActiveView;
+    inputs.EnableAuditTrail = d.cfg.AssistantContextBlockAuditTrail;
+    return AiContextBuilder::BuildAll(inputs);
+}
+
+void DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     // Use a process-static char buffer for InputTextMultiline. Mirroring through a
     // std::string per-frame keeps the rest of the codepaths (Send-button snapshot,
     // Lua glue) free of ImGui-specific resizable callbacks. Pre-seeded from
@@ -162,7 +209,13 @@ void DrawInputAndButtons(AppController& app, UiDrawSession& d) {
         d.assistantInputBuf.clear();
         std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
         if (ctrl) {
-            ctrl->Submit(turnGen, std::move(snapshot), {});
+            // Phase C: build the 5-block auto-context snapshot on the UI thread (where
+            // all the source state lives) and pass it through Submit. The controller
+            // then concatenates these + the agents.md prefix on the worker before
+            // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
+            // — the controller skips empty-body entries when emitting tag wrappers.
+            std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
+            ctrl->Submit(turnGen, std::move(snapshot), std::move(context));
         }
         d.assistantAutoScrollAtTail = true;
     }
@@ -205,7 +258,7 @@ void DrawResizeGrip(UiDrawSession& d, float panelHeight) {
 
 } // namespace
 
-void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d) {
+void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     HydrateFromConfigOnce(d);
     if (!d.assistantPanelOpen) {
         // Persist a closed state at most once per close event (idempotent if already false).
@@ -270,9 +323,12 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d) {
     ImGui::Separator();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    DrawHistoryArea(app, d, avail.y);
+    // Reserve a row for the per-block context checkboxes drawn just above the input strip.
+    const float checkboxRowH = ImGui::GetFrameHeightWithSpacing();
+    DrawHistoryArea(app, d, avail.y - checkboxRowH);
     DrawErrorStrip(d);
-    DrawInputAndButtons(app, d);
+    DrawContextBlockCheckboxes(d);
+    DrawInputAndButtons(app, d, activeView);
     DrawResizeGrip(d, workSize.y);
 
     ImGui::End();
