@@ -29,6 +29,7 @@ add_executable(SmatchetTests
     Source_Core/P4BlameParse.test.cpp
     Source_Core/TrackerLabelsPure.test.cpp
     Source_Core/TrackerDateTimePure.test.cpp
+    Source_Core/TicketFieldEditorLongTextPure.test.cpp
     Source_Core/TrackerFieldPayloadPure.test.cpp
     Source_Core/TrackerFieldCatalogPure.test.cpp
     Source_Core/TicketSyncService.test.cpp
@@ -53,6 +54,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerDateTimePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/TicketFieldEditorLongTextPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldPayloadPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/JqlProjectScope.cpp"

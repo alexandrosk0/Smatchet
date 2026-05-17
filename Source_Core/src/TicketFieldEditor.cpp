@@ -12,6 +12,7 @@
 #include "TrackerFieldPayload.h"
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
+#include "TicketFieldEditorLongTextPure.h"
 #include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
@@ -105,9 +106,9 @@ struct ActiveWorklogDialogState {
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
 
-/// Source format of the original rich payload (`OriginalRichValue`). Determines which converter
-/// seeds the Markdown buffer on open and which target format is expected by the payload layer.
-enum class LongTextRichKind { None, Adf, Html };
+/// Pure-helper aliases — definitions live in TicketFieldEditorLongTextPure.{h,cpp} so they are
+/// unit-testable without ImGui / AppController. The aliases keep call sites in this TU unchanged.
+using LongTextRichKind = TicketFieldEditorLongTextPure::LongTextRichKind;
 
 /// Singleton state for the long-text / ADF field modal editor. Decoupled from `SpreadsheetState`
 /// so the modal survives the originating cell scrolling out of view: the cell triggers
@@ -177,32 +178,7 @@ static ActiveLongTextEditorState s_ActiveLongTextState;
 
 static constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
 
-/// Determine whether a stored rich payload looks like ADF JSON or HTML. Returns LongTextRichKind::None
-/// when the input is empty or unrecognizable (caller falls back to the stripped text).
-static LongTextRichKind ClassifyRichValue(const std::string& rich) {
-    if (rich.empty())
-        return LongTextRichKind::None;
-    // Cheap leading-whitespace skip.
-    size_t i = 0;
-    while (i < rich.size() && (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r'))
-        ++i;
-    if (i >= rich.size())
-        return LongTextRichKind::None;
-    if (rich[i] == '{') {
-        try {
-            auto parsed = nlohmann::json::parse(rich, nullptr, false);
-            if (parsed.is_object() && parsed.value("type", std::string()) == "doc") {
-                return LongTextRichKind::Adf;
-            }
-        } catch (...) {
-            // fall through
-        }
-    }
-    if (rich[i] == '<') {
-        return LongTextRichKind::Html;
-    }
-    return LongTextRichKind::None;
-}
+using TicketFieldEditorLongTextPure::ClassifyRichValue;
 
 /// Pillar 2 — rich values above this size are parsed + converted on a worker thread. Typical
 /// Jira descriptions are well under 50 KB; the parse + AdfToMarkdown cost only crosses ~100 ms
@@ -210,37 +186,7 @@ static LongTextRichKind ClassifyRichValue(const std::string& rich) {
 /// the sync path (no UX regression) and gates only the pathologically-large payloads.
 static constexpr size_t kAsyncRichSeedThresholdBytes = 32 * 1024;
 
-/// Compute the Markdown seed (and capture the dropped-ADF-nodes side-channel) from a rich value.
-/// Pure function — no UI access. Safe to call on a worker thread.
-static std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich,
-                                       const std::string& strippedFallback,
-                                       std::vector<std::string>& outDroppedAdfNodeTypes,
-                                       bool& outRawMode) {
-    outRawMode = false;
-    outDroppedAdfNodeTypes.clear();
-    switch (kind) {
-    case LongTextRichKind::Adf: {
-        try {
-            const auto adf = nlohmann::json::parse(rich);
-            return MarkdownConvert::AdfToMarkdown(adf, &outDroppedAdfNodeTypes);
-        } catch (...) {
-            return strippedFallback;
-        }
-    }
-    case LongTextRichKind::Html: {
-        bool fellBack = false;
-        std::string seed = MarkdownConvert::HtmlSubsetToMarkdown(rich, &fellBack);
-        if (fellBack) {
-            outRawMode = true;
-            return rich; // edit raw HTML directly so nothing is lost.
-        }
-        return seed;
-    }
-    case LongTextRichKind::None:
-    default:
-        return strippedFallback;
-    }
-}
+using TicketFieldEditorLongTextPure::ComputeLongTextSeed;
 
 static void OpenLongTextEditor(AppController& app, const std::string& issueId, const TrackerField& field,
                                const std::string& label, const std::string& currentStrippedValue,
