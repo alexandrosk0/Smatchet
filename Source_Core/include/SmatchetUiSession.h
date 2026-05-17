@@ -294,6 +294,19 @@ struct UiDrawSession {
     std::vector<QuerySuggestion> jqlAcpAsyncUserItems;
     std::string jqlAcpAsyncUserError;
 
+    /// JQL @-mention worker-thread search (Pillar 2 — finding #3). When set, the result of
+    /// `SearchUsersByQuery` is pending in `jqlAcpUserSearchFuture`; polled per-frame via
+    /// `wait_for(0ms)` and reduced into the items vector on completion.
+    /// `jqlAcpUserSearchInFlightId` identifies which request the future belongs to so a
+    /// stale completion (user typed a new query) is discarded.
+    struct JqlUserSearchResult {
+        bool Ok = false;
+        std::vector<TrackerUser> Users;
+        std::string Error;
+    };
+    std::future<JqlUserSearchResult> jqlAcpUserSearchFuture;
+    uint64_t jqlAcpUserSearchInFlightId = 0;
+
     char selectedFieldsBuf[1024]{};
     char fieldSearchBuf[128]{};
     char auditSearchBuf[256]{};
@@ -399,6 +412,12 @@ struct UiDrawSession {
     std::future<AppUpdateInfo> appUpdateFuture;
     AppUpdateInfo appUpdateInfo;
     std::string appUpdateActionStatus;
+
+    /// Installer-download worker state for `DrawAppUpdateModal` (Pillar 2 — finding #4).
+    /// `installerDownloadInFlight` gates re-issue while the worker is running; `installerDownloadCancel`
+    /// is checked by the cpr write callback so closing the modal aborts the download.
+    bool installerDownloadInFlight = false;
+    std::shared_ptr<std::atomic<bool>> installerDownloadCancel;
 
     /** One visual row per string (embedded newlines in messages are split). */
     std::vector<std::string> logViewLines;

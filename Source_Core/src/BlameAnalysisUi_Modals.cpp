@@ -295,25 +295,55 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
         State().profileName = "Past Employee";
         return;
     }
-    std::vector<TrackerUser> users;
-    std::string qerr;
-    if (!app.SearchUsersByQuery(p4User, users, qerr) || users.empty()) {
-        State().profileName = "Past Employee";
-        State().profileEmail = p4User;
-        if (!qerr.empty()) {
-            State().profileErr = qerr;
-        }
+    if (State().profileInFlight) {
         return;
     }
-    auto it = std::find_if(users.begin(), users.end(), [](const auto& u) { return !u.EmailAddress.empty(); });
-    const TrackerUser* best = (it != users.end()) ? &(*it) : &users[0];
-    State().profileName = best->DisplayName;
-    State().profileEmail = best->EmailAddress;
-    std::string gerr;
-    app.FetchUserGroupNames(best->AccountId, State().profileGroups, gerr);
-    if (State().profileGroups.empty() && !gerr.empty()) {
-        State().profileErr = gerr;
-    }
+    // Pillar 2 — finding #5: dispatch the back-to-back SearchUsersByQuery + FetchUserGroupNames
+    // pair to a worker. The modal renders "Loading..." until the post-back populates fields.
+    State().profileInFlight = true;
+    State().profileName = "Loading...";
+    const std::string capturedUser = p4User;
+    AppController& appMut = const_cast<AppController&>(app);
+    appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
+        std::vector<TrackerUser> users;
+        std::string qerr;
+        const bool searchOk = appMut.SearchUsersByQuery(capturedUser, users, qerr);
+        std::string bestDisplayName;
+        std::string bestEmail;
+        std::string bestAccountId;
+        if (searchOk && !users.empty()) {
+            auto it = std::find_if(users.begin(), users.end(),
+                                   [](const TrackerUser& u) { return !u.EmailAddress.empty(); });
+            const TrackerUser& best = (it != users.end()) ? *it : users[0];
+            bestDisplayName = best.DisplayName;
+            bestEmail = best.EmailAddress;
+            bestAccountId = best.AccountId;
+        }
+        std::vector<std::string> groups;
+        std::string gerr;
+        if (!bestAccountId.empty()) {
+            appMut.FetchUserGroupNames(bestAccountId, groups, gerr);
+        }
+        const bool found = searchOk && !users.empty();
+        appMut.mainThreadDispatcher.PostToMainThread(
+            [capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
+                State().profileInFlight = false;
+                if (!found) {
+                    State().profileName = "Past Employee";
+                    State().profileEmail = capturedUser;
+                    if (!qerr.empty()) {
+                        State().profileErr = qerr;
+                    }
+                    return;
+                }
+                State().profileName = bestDisplayName;
+                State().profileEmail = bestEmail;
+                State().profileGroups = groups;
+                if (State().profileGroups.empty() && !gerr.empty()) {
+                    State().profileErr = gerr;
+                }
+            });
+    });
 }
 
 void PrepareAssignModal(const AppController& app, const BlameRow& row, const std::string& p4UserCell) {
@@ -325,27 +355,51 @@ void PrepareAssignModal(const AppController& app, const BlameRow& row, const std
         State().assignTitle = "Past Employee";
         return;
     }
-    std::vector<TrackerUser> users;
-    std::string err;
-    if (!app.SearchUsersByQuery(pu, users, err) || users.empty()) {
-        State().assignTitle = std::string("Past Employee (") + pu + ")";
+    if (State().assignInFlight) {
         return;
     }
-    std::string aid;
-    std::string e2;
-    if (ResolveP4UserForAssign(app, pu, aid, e2) && !aid.empty()) {
-        State().assignAccountId = std::move(aid);
-        State().assignHasJiraAccount = true;
-        std::string dn = users[0].DisplayName;
-        auto it = std::find_if(users.begin(), users.end(),
-                               [](const auto& u) { return u.AccountId == State().assignAccountId; });
-        if (it != users.end()) {
-            dn = it->DisplayName;
+    // Pillar 2 — finding #5/#6: dispatch SearchUsersByQuery (and ResolveP4UserForAssign's own
+    // SearchUsersByQuery) to a worker. Both share the same blame-row, so a single dispatch
+    // sequentialises them.
+    State().assignInFlight = true;
+    State().assignTitle = "Loading...";
+    const std::string capturedUser = pu;
+    AppController& appMut = const_cast<AppController&>(app);
+    appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
+        std::vector<TrackerUser> users;
+        std::string err;
+        const bool searchOk = appMut.SearchUsersByQuery(capturedUser, users, err);
+        std::string accountId;
+        std::string resolveErr;
+        bool hasJiraAccount = false;
+        if (searchOk && !users.empty()) {
+            if (ResolveP4UserForAssign(appMut, capturedUser, accountId, resolveErr) && !accountId.empty()) {
+                hasJiraAccount = true;
+            }
         }
-        State().assignTitle = dn + " (" + pu + ")";
-    } else {
-        State().assignTitle = std::string("Past Employee (") + pu + ")";
-    }
+        std::string displayName;
+        if (hasJiraAccount) {
+            auto it = std::find_if(users.begin(), users.end(),
+                                   [&accountId](const TrackerUser& u) { return u.AccountId == accountId; });
+            displayName = (it != users.end()) ? it->DisplayName : users[0].DisplayName;
+        }
+        const bool foundAny = searchOk && !users.empty();
+        appMut.mainThreadDispatcher.PostToMainThread(
+            [capturedUser, foundAny, hasJiraAccount, accountId, displayName]() {
+                State().assignInFlight = false;
+                if (!foundAny) {
+                    State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
+                    return;
+                }
+                if (hasJiraAccount) {
+                    State().assignAccountId = accountId;
+                    State().assignHasJiraAccount = true;
+                    State().assignTitle = displayName + " (" + capturedUser + ")";
+                } else {
+                    State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
+                }
+            });
+    });
 }
 
 std::string BuildCallstackRowTsv(const BlameRow& row, size_t displayIndex) {

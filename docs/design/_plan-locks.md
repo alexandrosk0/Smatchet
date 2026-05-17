@@ -50,18 +50,40 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### configmanager-save-coalesce · slice-1 · status: in-flight
+### configmanager-save-coalesce · slice-1 · status: shipped (PR #190 merged at a3298ca)
 
-- **Branch**: `feat/configmanager-save-coalesce`
+- **Branch**: `feat/configmanager-save-coalesce` (deleted)
 - **Owner agent**: `claude` (orchestrator-dispatched)
 - **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (MOD — add `prefsDirty` + `prefsSaveDueAt` + `MarkPrefsDirty` helper)
-  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — replace direct `ConfigManager::Save` per-widget calls with `MarkPrefsDirty(d)`; AI Assistant tab unchanged)
-  - `Source_Core/src/SmatchetUI.cpp` (MOD — end-of-frame debounced Save firing)
-  - `Source_Core/src/AppController.cpp` (MOD — final synchronous Save on shutdown if dirty; if not already present)
-  - `docs/design/_plan-locks.md` (this entry)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — 31 sites replaced with `MarkPrefsDirty(d)`; 3 AI Assistant tab sites preserved at lines 953/1024/1048)
+  - `Source_Core/src/SmatchetUI.cpp` (MOD — end-of-frame debounced fire at Draw tail)
+  - `Source_Core/src/SmatchetUI_Layout.cpp` (MOD — final sync Save in `DrainUiDrawSessionFuturesBeforeAppTeardown`)
+  - `docs/design/_plan-locks.md`
 - **Read-only adjacency**: `Source_Core/include/ConfigManager.h`, `Source_Core/src/ConfigManager.cpp`
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — merged via PR [#190](https://github.com/alexandrosk0/Smatchet/pull/190) at sha `a3298ca`. 100 ms debounce; AI Assistant tab Save flow preserved.
+- **Cleared by**: PR `#190` merged at `a3298ca`.
+
+### pillar-2-top5-fixes · slice-1 · status: in-flight
+
+- **Branch**: `feat/pillar-2-top5-fixes`
+- **Owner agent**: `claude` (orchestrator-dispatched)
+- **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
+- **Claimed write set**:
+  - `Source_Core/src/SmatchetFieldIconRender.cpp` (finding #1 — icon fetch worker dispatch + loading sentinel)
+  - `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` (finding #2 — attachment download worker dispatch)
+  - `Source_Core/src/SmatchetAutocompleteUi.cpp` (finding #3 — JQL @-mention via std::async)
+  - `Source_Core/src/SmatchetGridUiSupport.cpp` (finding #4 — quick-comment worker dispatch)
+  - `Source_Core/src/BlameAnalysisUi_Modals.cpp` (finding #5/#6 — blame profile + assign-prepare worker)
+  - `Source_Core/src/BlameAnalysisUi_Window.cpp` (finding #7 — blame assign-commit worker chain)
+  - `Source_Core/src/SmatchetUI.cpp` (finding #8 — installer download worker + progress modal, DrawAppUpdateModal only)
+  - `Source_Core/include/SmatchetUiSession.h` (transient in-flight state for installer + comment + blame ops)
+  - `Source_Core/include/AppController.h` + `Source_Core/src/AppController.cpp` (MOD — `DownloadAndLaunchInstallerUpdate` gains optional cancel atom)
+  - `Source_Core/src/BlameAnalysisUi_Internal.h` (BlameState gates)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (PR #186 pattern), `Source_Core/include/MainThreadDispatcher.h`
 - **Started**: 2026-05-17
 - **Last update**: 2026-05-17 — dispatched.
 - **Cleared by**: TBD PR.

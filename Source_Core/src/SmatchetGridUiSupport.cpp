@@ -188,16 +188,33 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             } else {
                 for (const auto& t : ui->cfg.QuickCommentTemplates) {
                     if (ImGui::MenuItem(t.Title.c_str())) {
-                        std::string err;
-                        std::string commentBody =
+                        // Dispatch the Jira comment POST to a worker thread so the right-click
+                        // menu doesn't block the UI for the POST latency (Pillar 2 — finding #4).
+                        // Capture the issueKey + body by value; AppController& lives for the
+                        // lifetime of the app. The acknowledgement + completion toasts are
+                        // posted back to the UI thread via MainThreadDispatcher.
+                        const std::string capturedIssueKey = issueKey;
+                        const std::string commentBody =
                             BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
-                        if (app->AddIssueCommentPlain(issueKey, commentBody, err)) {
-                            SmatchetToastManager::Instance().Push("Comment Posted", "Added to " + issueKey,
-                                                                  ToastType::Success);
-                        } else {
-                            SmatchetToastManager::Instance().Push(
-                                "Comment Failed", err.empty() ? "Failed to post Jira comment." : err, ToastType::Error);
-                        }
+                        AppController* appPtr = app;
+                        SmatchetToastManager::Instance().Push("Comment Queued", "Posting to " + capturedIssueKey,
+                                                              ToastType::Info);
+                        app->LaunchBackgroundTask([appPtr, capturedIssueKey, commentBody]() {
+                            std::string err;
+                            const bool ok = appPtr->AddIssueCommentPlain(capturedIssueKey, commentBody, err);
+                            appPtr->mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                                if (ok) {
+                                    SmatchetToastManager::Instance().Push("Comment Posted",
+                                                                          "Added to " + capturedIssueKey,
+                                                                          ToastType::Success);
+                                } else {
+                                    SmatchetToastManager::Instance().Push(
+                                        "Comment Failed",
+                                        err.empty() ? "Failed to post Jira comment." : err,
+                                        ToastType::Error);
+                                }
+                            });
+                        });
                     }
                 }
             }
