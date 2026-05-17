@@ -211,13 +211,26 @@ struct TrackerConfig {
     std::string AiModelAnthropic = "claude-sonnet-4-6";
     std::string AiModelOllama = "llama3";
     bool AssistantPanelOpen = false;
+    // Historical floating-window width; deprecated since the panel was dock-integrated.
+    // The field is still serialized (additive default load + round-trip) so v6 configs
+    // can downgrade to an older build without losing other fields, but the dock node
+    // now owns sizing — this value is no longer consulted at runtime.
     float AssistantPanelWidth = 380.0f;
+    // When true, the assistant panel docks to the right secondary side bar instead of
+    // the default left primary side bar. Toggled via the swap-side button in the
+    // panel header.
+    bool AssistantPanelOnSecondarySide = false;
     // Global agents.md path. Default-at-Load (not default-at-construct): when blank on Load
     // and a platform shared user-data dir is available, ConfigManager fills this with
     // `<shared>/agents.md`. Construct-time default would have made the empty/blank distinction
     // impossible — users who explicitly cleared the field would silently get the default back.
     std::string AgentsMdGlobalPath;
     std::string ProjectAgentsMdPath;
+    // When true (and the explicit ProjectAgentsMdPath is empty), AgentsMdLoader walks up
+    // from the process cwd looking for `agents.md` / `AGENTS.md`. Default off: users
+    // running Smatchet from inside an unrelated repo (e.g. the Smatchet source tree
+    // itself) otherwise pick up that project's `AGENTS.md` as their assistant prompt.
+    bool AgentsMdAutoDiscoverProject = false;
     bool AssistantContextBlockSelection = true;
     bool AssistantContextBlockVisibleRows = true;
     bool AssistantContextBlockActiveTicket = true;

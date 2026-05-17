@@ -119,14 +119,15 @@ std::string FindProjectAgentsMd(const std::string& startDir, std::size_t maxDept
     return std::string();
 }
 
-std::string LoadLayered(const std::string& globalPath, const std::string& projectPathOverride) {
+std::string LoadLayered(const std::string& globalPath, const std::string& projectPathOverride,
+                        bool autoDiscoverProject) {
     std::string globalBody;
     if (!globalPath.empty()) {
         globalBody = LoadOneCapped(globalPath, kDefaultLayerCapBytes);
     }
 
     std::string projectPath = projectPathOverride;
-    if (projectPath.empty()) {
+    if (projectPath.empty() && autoDiscoverProject) {
         projectPath = FindProjectAgentsMd(std::string(), kDefaultWalkUpMaxDepth);
     }
     std::string projectBody;

@@ -161,13 +161,15 @@ struct UiDrawSession {
 #endif
 
 #if defined(SMATCHET_WITH_AI)
-    // Smatchet Assistant side panel — Phase B fields. Hydrated from
-    // `cfg.AssistantPanelOpen` + `cfg.AssistantPanelWidth` on first frame and
-    // round-tripped through ConfigManager::Save on user toggles + width-drag
-    // release. Stream/history/cancel state is per-process — never persisted.
+    // Smatchet Assistant side panel. Hydrated from `cfg.AssistantPanelOpen` on
+    // first frame and round-tripped through ConfigManager::Save on user toggles.
+    // Stream/history/cancel state is per-process — never persisted. Dock side
+    // (`cfg.AssistantPanelOnSecondarySide`) governs which side bar the docked
+    // window attaches to; `assistantPendingSideSwap` is a one-frame latch driven
+    // by the swap button so the next `ImGui::Begin` reseats the dock id.
     bool assistantPanelOpen = false;
     bool requestAssistantFocus = false;
-    float assistantPanelWidthLive = 380.0f;
+    bool assistantPendingSideSwap = false;
     std::vector<AiMessage> assistantHistory;
     std::string assistantInputBuf;
     std::string assistantStreamBuf;

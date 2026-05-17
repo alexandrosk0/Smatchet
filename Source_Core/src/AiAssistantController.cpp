@@ -234,7 +234,8 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
             if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
                 agentsMd = agentsMdCachedBody_;
             } else {
-                agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath);
+                agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath,
+                                                       agentsCfg.AgentsMdAutoDiscoverProject);
                 agentsMdCachedBody_ = agentsMd;
                 agentsMdCachedGlobalPath_ = agentsCfg.AgentsMdGlobalPath;
                 agentsMdCachedProjectPath_ = agentsCfg.ProjectAgentsMdPath;

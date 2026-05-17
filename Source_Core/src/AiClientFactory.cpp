@@ -63,7 +63,11 @@ std::vector<ProviderEntry> EnumeratedProviders() {
     std::vector<ProviderEntry> v;
     v.push_back({AiProvider::OpenAi, "openai", "OpenAI (or OpenAI-compatible)"});
     v.push_back({AiProvider::Anthropic, "anthropic", "Anthropic"});
-    v.push_back({AiProvider::OllamaOpenAiCompat, "ollama-openai", "Ollama (OpenAI-compat /v1)"});
+    // Display copy expanded so the LM Studio / LocalAI / vLLM cases the slot covers
+    // are discoverable in the Combo. The CLI string ("ollama-openai") is unchanged so
+    // round-tripping persisted AiProviderKind / CLI flags stays stable.
+    v.push_back({AiProvider::OllamaOpenAiCompat, "ollama-openai",
+                 "OpenAI-compatible local (LM Studio / Ollama / LocalAI / vLLM)"});
     v.push_back({AiProvider::OllamaNative, "ollama-native", "Ollama (native /api/chat)"});
     return v;
 }

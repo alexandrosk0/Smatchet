@@ -47,13 +47,19 @@ std::string FindProjectAgentsMd(const std::string& startDir,
 /// Compose the merged system-prompt prefix from global + project layers.
 ///
 /// `projectPathOverride` non-empty: that exact path is used as the project layer.
-/// `projectPathOverride` empty: walk up from the process's current working directory
-/// to discover a project agents.md.
+/// `projectPathOverride` empty AND `autoDiscoverProject` true: walk up from the
+/// process's current working directory to discover a project agents.md.
+/// `projectPathOverride` empty AND `autoDiscoverProject` false (default): the
+/// project layer is skipped entirely. Auto-discovery defaults OFF because the
+/// cwd is rarely the user's project root and they often see surprising injections
+/// from a parent repo's `AGENTS.md` (e.g. Smatchet's own dev-rules file when
+/// running from inside the Smatchet source tree).
 ///
 /// Result is `<global>\n\n---\n\n<project>\n` when both layers contribute, or just
 /// the non-empty layer (no separator) when only one layer contributes, or empty
 /// string when neither layer has content.
-std::string LoadLayered(const std::string& globalPath, const std::string& projectPathOverride);
+std::string LoadLayered(const std::string& globalPath, const std::string& projectPathOverride,
+                        bool autoDiscoverProject = false);
 
 } // namespace AgentsMdLoader
 
