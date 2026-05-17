@@ -208,15 +208,12 @@ struct UiDrawSession {
     /// (failure). UI consumes this directly; toast paths bypass it.
     int assistantPrefsTestResultType = 0; // 0 info, 1 success, 2 error
     std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
-    /// When true, the running probe is the "save-with-verify" flow rather than
-    /// the plain Test button: on success the posted callback commits the
-    /// `workingCopy` buffers to `g_ui.assistantPrefsSavePending*` cfg state and
-    /// calls `ConfigManager::Save`. On failure no commit happens.
-    bool assistantPrefsTestProbeSavesOnSuccess = false;
-    /// Snapshot of the buffer values to commit when the save-with-verify probe
-    /// completes successfully. Captured at click time so a concurrent edit
-    /// during the probe doesn't sneak unintended state in.
-    TrackerConfig assistantPrefsSavePendingCfg;
+    /// Set by the Test-connection success callback when the probe used a
+    /// fallback default URL (cfg base URL was empty). The next paint of the
+    /// Assistant tab reseeds the static InputText buffers from cfg so the
+    /// just-persisted default value shows up in the field, then clears this
+    /// flag. UI-thread-only.
+    bool assistantPrefsForceBufferReseed = false;
 #endif
 
     bool fieldCatalogFetchStarted = false;
