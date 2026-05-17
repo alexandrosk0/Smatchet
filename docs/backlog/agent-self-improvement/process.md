@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · lua-binder · [process] · P3 — Plan packet "stub parity" framing misleading when receivers are already always-on
+  Details: Phase E packet explicitly listed `Source_Core/src/AppController_LuaStubs.cpp` as a MOD path with "mirror stub implementations of the same 3 glue functions" claim. But the Lua surface in question (`ai.*`) calls `AppController::AddAiContext` / `ClearAiContext` / `PromptAi` which are **always-on** members (declared without `SMATCHET_WITH_LUA_AUTOMATION` gate, shipped Phase B specifically so Phase E Lua glue is stable across LUA=ON/OFF + AI=ON/OFF). No stub mirror was needed; the agent added a docstring to LuaStubs.cpp to honour the packet's write-set claim but no functional code change.
+  Concrete next action: distinguish two cases in orchestrator delegation packets that touch the LuaBindings ↔ LuaStubs pair — (a) glue calls a Lua-only method on AppController → stub mirror required + `LuaStubsCompile.test.cpp` sentinel update; (b) glue calls an always-on AppController method → **no** stub action; parity invariant already satisfied by the always-on declaration. ~5 min phrasing change to `agents/lua-binder.md` § Hard invariants as a checklist bullet.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · orchestrator · [process] · P2 — Worktree bootstrap branches start on stale base (not origin/develop)
   Details: Phase D's agent reported the worktree's branch HEAD was rooted on f2ce5b5 (an old `feat: add Google domain verification file` commit) instead of develop. Recovered via `git checkout -b feat/ai-assistant-side-panel-phase-d origin/develop` (~3 min wasted). The harness's worktree-spawn machinery does not pin the new branch to `origin/develop`; instead it inherits whatever HEAD the parent worktree's most-recent branch had. Pattern likely repeats on every dispatch. Phase E confirmed: worktree HEAD again on f2ce5b5, same recovery applied.
   Concrete next action: `scripts/dev/worktree-spawn.sh` (or wherever the worktree creation lives) should `git fetch origin develop` + branch from `origin/develop` explicitly. ~30 min.

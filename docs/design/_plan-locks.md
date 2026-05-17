@@ -50,11 +50,11 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-side-panel · Phase E · lua-glue-schema-bump-and-docs · status: in-flight
+### ai-assistant-side-panel · Phase E · lua-glue-schema-bump-and-docs · status: shipped (PR #170 merged at f2d0933)
 
-- **Branch**: `feat/ai-assistant-side-panel-phase-e`
+- **Branch**: `feat/ai-assistant-side-panel-phase-e` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (Phase E rows) — Lua glue + stubs + LayoutSchemaVersion bump + README/LUA_GUIDE bullets
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § File-level changes (Phase E rows) — Lua glue + stubs + LayoutSchemaVersion bump + README/LUA_GUIDE bullets
 - **Claimed write set**:
   - `Source_Core/src/AppController_LuaBindings.cpp` (MOD — restore 3 `ai.*` glues registered on `state["ai"]`)
   - `Source_Core/src/AppController_LuaStubs.cpp` (MOD — no-op stub parity for `ai.*` Lua-callable names so script-load works under `SMATCHET_WITH_LUA_AUTOMATION=0`)
@@ -66,14 +66,14 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/ai-assistant-side-panel.md` (Implementation log + Deviations + Verification for Phase E — closes plan)
 - **Read-only adjacency**: `Source_Core/include/AppController.h` (always-on `AddAiContext` / `ClearAiContext` / `PromptAi` shipped Phase B), `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp` (Phase 6b InitLuaCore pattern + `__smatchet_app_ui` dual-key)
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — commits ready: 3 Lua glues registered on `state["ai"]` (resolve via `__smatchet_app_ui`); `LayoutSchemaVersion 5→6`; ConfigMigration v5-fixture assertion flipped `==` → `<` (post-bump invariant); README + LUA_GUIDE bullets added; LuaStubs.cpp gains docstring (no new stub needed — receivers are always-on AppController members from Phase B); P2 worktree-bootstrap backlog entry filed. Build gates: dual-target green; `SMATCHET_WITH_AI=OFF` green; SmatchetTests 363/1873 (Phase D baseline preserved); SmatchetLuaTests 29 cases; ConfigMigration 11/57 pass post-bump.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#170](https://github.com/alexandrosk0/Smatchet/pull/170) at sha `f2d0933`. 3 Lua glues registered on `state["ai"]` (resolve via `__smatchet_app_ui` per Phase 6b dual-key); `LayoutSchemaVersion` 5→6 (single bump for the whole feature per AGENTS.md § Schema-version bumps); README + LUA_GUIDE bullets; no LuaStubs.cpp parity needed (receivers are always-on AppController members from Phase B). Final phase — ai-assistant-side-panel plan closes here.
+- **Cleared by**: PR `#170` merged at `f2d0933`.
 
 ### ai-assistant-side-panel · Phase D · clients-and-provider-combo · status: shipped (PR #169 merged at 1b45505)
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-d`
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § Streaming protocol (Anthropic SSE + Ollama native) + § File-level changes (Phase D rows) + § Preferences extension
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § Streaming protocol (Anthropic SSE + Ollama native) + § File-level changes (Phase D rows) + § Preferences extension
 - **Claimed write set**:
   - `Source_Core/include/AiNdjsonParser.h` (NEW — line-buffered NDJSON sibling to `AiSseParser`)
   - `Source_Core/src/AiNdjsonParser.cpp` (NEW)
@@ -97,7 +97,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-c` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
 - **Claimed write set**:
   - `Source_Core/include/AgentsMdLoader.h` (NEW)
   - `Source_Core/src/AgentsMdLoader.cpp` (NEW)
@@ -120,7 +120,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-b` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
 - **Claimed write set**:
   - `Source_Core/include/AiAssistantController.h` (NEW)
   - `Source_Core/src/AiAssistantController.cpp` (NEW)
@@ -591,7 +591,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/ai-assistant-side-panel` (plan recovered from dangling 84913a8 → a39097c)
 - **Owner agent**: orchestrator (direct — provider-pluggable C++14 skeleton)
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § Phase A
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § Phase A
 - **Claimed write set** (narrowed — ConfigManager fields + tests deferred to Phase A' until `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**`):
   - `Source_Core/include/IAiClient.h` (NEW)
   - `Source_Core/include/AiTypes.h` (NEW)
@@ -619,7 +619,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 - **Branch**: `feat/ai-config-fields-and-tests`
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (ConfigManager rows) + § Pending follow-ups (Phase A' row)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) § File-level changes (ConfigManager rows) + § Pending follow-ups (Phase A' row)
 - **Claimed write set**:
   - `Source_Core/include/ConfigManager.h` (append 17 `TrackerConfig` Ai fields + `#include "AiTypes.h"`)
   - `Source_Core/src/ConfigManager.cpp` (serialize + deserialize of new fields; DPAPI on `AiApiKey` + `AiAnthropicApiKey`; clamp `AiProviderKind`; `%LOCALAPPDATA%/Smatchet/agents.md` default at Load time)
