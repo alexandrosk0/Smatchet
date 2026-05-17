@@ -47,7 +47,12 @@ jobs:
 
       - name: Fetch refs/locks/*
         run: |
-          git fetch --quiet --prune origin '+refs/locks/*:refs/locks/*' || true
+          # NOTE: no `|| true` — a transient fetch failure here would leave
+          # the local namespace empty and the sweep would log "nothing to
+          # sweep", silently skipping the day. Fail loud so the next
+          # scheduled run retries and any permanent failure surfaces via
+          # GitHub's repeated-failure email.
+          git fetch --quiet --prune origin '+refs/locks/*:refs/locks/*'
 
       - name: Ensure `plan-lock-stale` label exists
         env:
@@ -109,11 +114,16 @@ print(updated or started)
               continue
             fi
 
-            # Parse ISO-8601 to epoch via python (date -d works on GNU but
-            # this keeps parsing isolated to one tool).
-            ts_epoch=$(python3 -c "
-import sys, datetime
-s = '${latest_ts}'
+            # Parse ISO-8601 to epoch via python. The timestamp value
+            # originates from claim.json `started` / `updated` and is
+            # attacker-controlled by anyone with push rights to
+            # refs/locks/*. Pass it via env var (NOT shell interpolation
+            # into the -c source) so a malicious payload cannot escape
+            # the string literal and execute python with the workflow's
+            # GITHUB_TOKEN.
+            ts_epoch=$(LATEST_TS="$latest_ts" python3 -c "
+import os, datetime
+s = os.environ.get('LATEST_TS', '')
 try:
     # Accept both 'Z' and '+00:00' suffix forms.
     if s.endswith('Z'):
