@@ -532,3 +532,46 @@ Each scenario is a deterministic bash + CLI + scenario.run check. Manual residue
 | Phase D — `AnthropicClient` + optional `OllamaClient` + `AiNdjsonParser` + provider Combo | Phase C merged | `tracker-backend`-shape (HTTP client) | `AiClientFactory::MakeAiClient` Anthropic + OllamaNative branches go non-null. |
 | Phase E — Lua glue restore + `LayoutSchemaVersion` 5→6 (single bump) | Phase D merged | `lua-binder` | Touches `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp` pair. |
 | Plan-time accuracy audit on file-level tables | future plan-doc revisions | author | Caught one mis-listed caller (`FieldCatalogCache.cpp`) and one wrong CMake mechanism (`CORE_SOURCES` glob, not explicit list) in this plan. Cheap to re-grep before sealing the file-level table. |
+
+## Outcome
+
+Plan-execution summary. All 6 phases shipped 2026-05-16 → 2026-05-17 in PR-per-phase cadence. No phase abandoned; one phase narrowed (A → A' split) due to the `test-suite-expansion` umbrella's hold on `Source_Core/src/ConfigManager*.cpp` + `tests/**` at the time A was authored; A' shipped once that umbrella released.
+
+| Phase / Slice | PR | Sha | Cases Δ | Assertions Δ | Notes |
+|---|---|---|---|---|---|
+| A — IAiClient skeleton + OpenAiClient (narrowed) | [#140](https://github.com/alexandrosk0/Smatchet/pull/140) | `eeea501` | 0 | 0 | ConfigManager fields + doctests deferred to A' per `test-suite-expansion` umbrella collision |
+| A' — ConfigManager Ai fields + DPAPI + doctests | [#157](https://github.com/alexandrosk0/Smatchet/pull/157) | `a7cd940` | +23 | +73 | 17 `TrackerConfig` Ai fields including DPAPI-protected `AiApiKey` + `AiAnthropicApiKey`; `AiSseParser` + `AiClientFactory` doctests |
+| B — Assistant side panel + AiAssistantController worker thread + Ctrl+Shift+A | [#163](https://github.com/alexandrosk0/Smatchet/pull/163) | `dd703ab` | 0 | 0 | First user-visible AI surface. Threading invariants enforced (per-turn cancel atom, MainThreadDispatcher worker→UI hand-off, stale-callback drop via `assistantTurnGen`). AppController gains always-on `AddAiContext`/`ClearAiContext`/`PromptAi` stubs so Phase E Lua glue is stable across `SMATCHET_WITH_AI` ON / OFF |
+| C — AgentsMdLoader + AiContextBuilder + context-block checkboxes | [#168](https://github.com/alexandrosk0/Smatchet/pull/168) | `339eb24` | +26 | +91 | Global + project agents.md layering with 64 KB cap; 5-block context builder (Selection / VisibleRows / ActiveTicket / ActiveView / AuditTrail); SystemPrompt assembled on worker for the streaming request |
+| D — AnthropicClient + OllamaClient + AiNdjsonParser + provider Combo | [#169](https://github.com/alexandrosk0/Smatchet/pull/169) | `1b45505` | +6 | +37 | Anthropic Native Messages API via existing AiSseParser; Ollama `/api/chat` NDJSON via new AiNdjsonParser; Preferences UI Assistant group completed (Combo + masked keys + per-provider models + base URLs) |
+| E — Lua `ai.*` glue + LayoutSchemaVersion 5→6 + README/LUA_GUIDE bullets | [#170](https://github.com/alexandrosk0/Smatchet/pull/170) | `f2d0933` | 0 | 0 | `ai.add_context` / `ai.clear_context` / `ai.prompt` registered on `state["ai"]` in `InitLuaCore`; resolve via `__smatchet_app_ui` (Phase 6b dual-key pattern); single schema bump for the whole feature; no LuaStubs.cpp parity work needed — receivers are always-on AppController members from Phase B |
+| **Total (doctest)** | | | **+55 cases** | **+201 assertions** | |
+
+Adjacent chore / cleanup PRs (not feature work, but shipped during this plan):
+
+| PR | Notes |
+|---|---|
+| [#155](https://github.com/alexandrosk0/Smatchet/pull/155) | `chore(post-session-tidy): gitignore lock file + retrospective PR audit findings` — runtime `smatchet_config.json.lock` now gitignored |
+| [#159](https://github.com/alexandrosk0/Smatchet/pull/159) | `chore(plan-locks): flip 8 stale in-flight entries to shipped` — full plan-locks audit |
+| [#164](https://github.com/alexandrosk0/Smatchet/pull/164) | `chore(phase-b-followups): flip Phase B lock + file 5 self-improvement entries` |
+| [#166](https://github.com/alexandrosk0/Smatchet/pull/166) | `chore(dev): scripts/dev/tail-agent.sh for observing live subagent progress` |
+| [#167](https://github.com/alexandrosk0/Smatchet/pull/167) | `chore(agents): subagent progress-marker convention — .progress.log + agent-progress.sh + tail-agent.sh prefer` |
+
+### End-state aggregate
+
+- **SmatchetTests**: 363 cases / 1873 assertions (up from 308 / 1672 pre-plan; +55 / +201 from this plan)
+- **SmatchetLuaTests**: 29 cases / 162 assertions (unchanged by this plan; Phase E added 3 Lua glues but no new test surface — `LuaStubsCompile.test.cpp` drift sentinel covers stubs ↔ bindings parity)
+- **`SMATCHET_WITH_AI=ON`** + **`OFF`**: both build clean end-to-end. AppController exposes always-on `AddAiContext` / `ClearAiContext` / `GetAiContext` / `PromptAi` so Lua scripts that call `ai.*` work in both modes (no-op under OFF)
+- **`LayoutSchemaVersion`**: 5 → 6. Old v4 / v5 configs migrate silently via `j.value(..., default)` on every new Ai field. `test-config-migration.sh` fixtures stay at their authored version
+- **End-user surface**: View menu → Assistant (`Ctrl+Shift+A`) opens right-anchored panel. 4 providers configurable (OpenAI / Anthropic / Ollama OpenAI-compat / Ollama Native). 5 toggleable auto-context blocks. agents.md layering (global + project). Cancel-mid-stream. Persistent open/closed + width
+
+### Manual residue carried forward (filed in backlog)
+
+- **Headless AiAssistant scenarios (Scenarios 2 / 4 / 5 / 8 / 9 / 11 / 12)** — live-API streaming end-to-end verification needs a canned `httplib::Server` fixture (same scaffold as `DockGapSentinelScenario`). Filed under `test-author · [test] · P2` (added by Phase B follow-up PR #164). Phases A → E ship without this; runtime smoke is "launch the app, configure a provider, type a prompt" until the fixture lands
+- **3-layer agents.md (per-view override)** — plan called for `<views-dir>/<view-id>.agents.md` as the third layer. Phase C shipped only global + project. Defer until a clear per-view authoring story exists
+- **`AiBaseUrl` shared between OpenAI + Anthropic in Preferences** — a user who switches providers and forgets to clear the URL can point Anthropic at an OpenAI endpoint. Filed Phase D deviation; backlog candidate to split into `AiBaseUrlOpenAi` + `AiBaseUrlAnthropic` if the case bites
+- **`MainThreadDispatcher::PostUiTask` typed sugar** — current worker→UI hand-off uses `function<void()>` + `g_ui` extern shim. A typed `PostUiTask([](UiDrawSession&){...})` would centralise the pattern. Filed `code-review · [tooling] · P3` via PR #164
+- **`unique_ptr<incomplete-type>` AGENTS.md note** — Phase B agent hit this; pattern worth one bullet in `AGENTS.md § Quality`. Filed `orchestrator · [process] · P3` via PR #164
+- **Worktree-bootstrap stale-HEAD** — Phases D + E both observed isolated worktrees rooted on `f2ce5b5` instead of `origin/develop`. ~3 min recovery per dispatch. Filed `orchestrator · [process] · P2` via PR #170. Fix candidate: `scripts/dev/worktree-spawn.sh` to pin new branches to `origin/develop`
+
+**Plan status**: closed. Moved to `docs/design/applied/ai-assistant-side-panel.md` via a chore PR after PR #170 merged. Future AI assistant work originates from individual backlog entries rather than this multi-phase plan.
