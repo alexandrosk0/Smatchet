@@ -259,7 +259,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 |---|---|
 | slow, FPS, lag, profile, optimize | `perf-detective` |
 | spike, hitch, freeze, stutter, intermittent, occasional hang | `spike-hunter` |
-| crash, broken, regression, wrong output, doesn't work, assert | `debug-detective` |
+| crash, broken, regression, wrong output, doesn't work, assert, debug, investigate, "fix bug", "looks wrong" | `debug-detective` (**pause-loop, see § Debug-mode pause-loop**) |
 | review, pre-merge, PR review, /review | `code-review` |
 | security, vuln, secret, injection, audit, CVE | `security-review` |
 | build, cmake, preset, link, packaging, lld, LTO | `build-doctor` |
@@ -269,6 +269,27 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 
 Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific synonyms.
+
+### Debug-mode pause-loop (overrides ship-loop)
+
+When the user prompt matches the `debug-detective` trigger row above ("fix bug", "debug X", "investigate Y", "wrong output", "regression", "crash", "broken", "doesn't work", "looks wrong", "this used to work"), the orchestrator follows a **Cursor-style pause-loop** and **suspends the default autonomous ship-loop** (memory `feedback_autonomous_ship_loop.md`) for the duration of the investigation.
+
+**Phases — every phase ends in an explicit pause:**
+
+1. **Clarify** — orchestrator (or `debug-detective`) batches every uncertainty into one `AskUserQuestion` before the first mutating tool call. Front-loaded; no drip-feed mid-loop.
+2. **Hypothesise** — write 2-4 falsifiable hypotheses ranked by distinguishing-evidence cost.
+3. **Instrument** — temporary `[temp-debug]` markers + the NDJSON helper (`tests/_debug/SmatchetAgentDebug.h`). Both sides of the suspect boundary.
+4. **Run** — auto-repro path when a CLI / scenario / Lua / doctest exists; otherwise **ask the user to reproduce** and supply the fresh-exe path + steps + log location.
+5. **Read** — parse logs, mark each hypothesis confirmed / rejected / open.
+6. **Pause + report** — emit the mid-loop report shape from `agents/debug-detective.md` § Report Shape, ending with an `AWAITING USER FEEDBACK` line. **Stop.** Orchestrator does **not** auto-commit, auto-push, or open a PR while waiting.
+7. **Resume on user signal** — acceptable signals: "fixed", "still broken + here's the log", "try hypothesis N", "use this repro instead", "skip to handoff", "abort". Loop back to (2) for next-round or (3) directly when call sites are already chosen.
+8. **Promote useful logs** — once the cause is pinned, promote ≤ 3 high-value boundary / state-transition logs to permanent (`LOG_DEBUG` / `LOG_INFO`). Zero promotions is valid.
+9. **Strip temp** — `[temp-debug]` text-search must return zero hits. Delete the per-investigation helper + NDJSON log file.
+10. **Hand off** — package the cause + write set + decision-resolved invariants + verification metric for the matching subsystem specialist. The fix-commit-push-PR-merge ship-loop **resumes from here**, owned by the subsystem specialist, not by `debug-detective`.
+
+**Why a separate loop.** Bugs are an iterative narrowing problem. The default ship-loop ("diagnose → fix → build → commit → push → PR end-to-end without re-prompt") collapses the diagnose phase, ships the first plausible fix, and discards intermediate evidence. The pause-loop keeps each round's evidence in the user's hands and forbids speculative product edits until a hypothesis is confirmed.
+
+**Pause-loop is not pause-everything.** Within a single round the agent freely edits instrumentation, builds, runs auto-repros, reads logs. The pause is at the **round boundary** — once `Read` + hypothesis-status update is done, the agent reports and stops.
 
 ### Skeleton-first
 
