@@ -95,6 +95,14 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
         out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai");
         break;
     }
+    // Streaming chat replies from reasoning-tuned models (claude-opus-4-7,
+    // o1-style, DeepSeek-R1, Qwen3) routinely exceed the AiClientConfig default
+    // of 120s. cpr's `cpr::Timeout` is a total-envelope cap and fires regardless
+    // of stream progress, so a 5-minute reply with 57 KB received gets killed
+    // mid-stream with `cpr code 8 - Operation timed out`. Bump to 10 minutes
+    // for the chat path; the user-driven Cancel atom is the right abort
+    // mechanism for a genuinely stuck stream.
+    out.TotalTimeoutMs = 600000;
     return out;
 }
 

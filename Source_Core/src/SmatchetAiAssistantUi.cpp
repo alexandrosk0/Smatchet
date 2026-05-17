@@ -432,7 +432,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
                 if (comboIdx == 0) {
                     d.assistantPerTurnModel.clear();
                 } else {
-                    d.assistantPerTurnModel = catalog[static_cast<std::size_t>(comboIdx - 1)].Id;
+                    d.assistantPerTurnModel = catalog.at(static_cast<std::size_t>(comboIdx - 1)).Id;
                 }
             }
             ImGui::SetItemTooltip("Per-turn model override. Pick <default model> to inherit the Preferences value.");
