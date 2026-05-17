@@ -70,6 +70,59 @@ Verify the environment supports the design before building.
 
 Deliverable: append a `## Phase 0 results` section to this document.
 
+### Phase 0 results (2026-05-17)
+
+All checks complete on `feat/git-ref-plan-locks` branch.
+
+#### Environment
+
+| Check | Result | Notes |
+|---|---|---|
+| `gh auth status` scopes | `gist, read:org, repo, workflow` | `repo` scope includes `contents: write` — sufficient for cleanup action and manual ref pushes |
+| Default branch | `develop` | Confirmed via `gh api repos/alexandrosk0/Smatchet` |
+| Repo visibility | **public** | Caveat below |
+| GitHub Rulesets | `[]` (none configured) | Phase 7 ruleset hardening is greenfield — no existing rules to preserve or migrate |
+
+#### Smoke test — `refs/locks/*` push lifecycle
+
+```
+$ git push origin b3e44f6:refs/locks/_smoke
+ * [new reference]   b3e44f6 -> refs/locks/_smoke
+
+$ git ls-remote origin 'refs/locks/*'
+b3e44f63123246e2fbf6f9f393a6d3b8da4189ed	refs/locks/_smoke
+
+$ git push origin :refs/locks/_smoke
+ - [deleted]         refs/locks/_smoke
+
+$ git ls-remote origin 'refs/locks/*'
+(empty)
+```
+
+PASS. Push of arbitrary commit sha to a custom `refs/locks/*` namespace, ls-remote discovery, and deletion all work end-to-end with the existing `repo`-scoped token. No branch-protection rule, ruleset, or workflow config blocked any step. Atomic CAS via the standard git ref-update protocol applies by default — no additional opt-in required.
+
+#### `_plan-locks.md` inventory baseline
+
+| Status | Count |
+|---|---|
+| `in-flight` | **1** |
+| `claimed` | **1** |
+| `shipped` | 36 |
+| `abandoned` | 3 |
+| **Total entries** | **41** |
+| File size | 727 lines |
+
+Phase 6 migration scope: **2 entries** (`in-flight` + `claimed`). 36 `shipped` entries already do not require coordination and can be deferred for cleanup or pruned outright pre-cutover. 3 `abandoned` entries are dead and ignored by `locks-migrate-from-markdown.sh`.
+
+#### New risks surfaced
+
+- **Public-repo metadata exposure** — `refs/locks/*` claim blobs are world-readable on a public Smatchet repo. Contents are slug + owner agent id + write set + timestamps. No secrets, but write-set paths could telegraph in-flight refactors to anyone watching the repo. Acceptable trade-off; documented here so it isn't a surprise later. Mitigation: do not embed sensitive context in claim blobs (no API keys, no internal URLs, no embargoed feature names).
+- **No existing rulesets** — Phase 7 ruleset work has zero migration cost but also zero existing safeguard. Until Phase 7 ships, any push with `repo` scope can create or delete any `refs/locks/*` ref. Mitigation: cleanup action source is short + reviewable; staleness sweep posts Issues on anomalies rather than silently mutating; agent-token scopes already gate write access at the org level.
+
+#### Decision
+
+Greenlight Phases 1–6. No environmental blockers. The optional Phase 7 ruleset item is also greenlight (no prior rules to merge with) but stays opportunistic.
+
 ### Phase 1 — Primitive scripts
 
 Build the claim primitive standalone. No agent reads it yet.
