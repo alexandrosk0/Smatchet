@@ -10,7 +10,7 @@
 
 - 2026-05-16 · build-doctor · [tooling] — Phase 9 `tests-out-of-band` GitHub label must be created at the repo
   Details: `.github/workflows/coverage-gate.yml` inspects PR labels via `gh pr view --json labels` and dismisses the test-delta gate when `tests-out-of-band` is present. The label is not created by default on GitHub — applying it via the PR sidebar requires the label to exist first. Proposal: run `gh label create tests-out-of-band --description "Bypass coverage delta gate for non-behavioural Source_Core/ changes (docs-only edits, include-shape fixes, sanitizer flag flips, build-system PRs)" --color C5DEF5` once at the repo level. Estimated cost: 30 seconds. Until then, every PR that touches `Source_Core/src/*.cpp` without a paired test delta will hit the gate with no maintainer escape hatch.
-  Status: open. Surfaced by Phase 9.
+  Status: applied — user created the `tests-out-of-band` label at the repo level on 2026-05-16. Coverage-gate override mechanism now functional.
 
 - 2026-05-16 · test-author · [tooling] — Phase 9 PR template documenting `tests-out-of-band` override label
   Details: `.github/pull_request_template.md` does not exist in the repo. Phase 9's `tests-out-of-band` label override is documented in `.github/workflows/coverage-gate.yml` and `scripts/dev/coverage-delta-gate.sh`, but PR authors won't see those by default. Proposal: add a minimal `.github/pull_request_template.md` with a `## Coverage gate override` section explaining when the `tests-out-of-band` label is appropriate (docs-only, include-shape fixes, sanitizer flag flips, build-system PRs), so PR authors know the escape hatch exists. Estimated cost: 15 min including a brief CI / coverage explainer suitable for first-time contributors.
