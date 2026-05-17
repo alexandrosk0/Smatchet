@@ -323,3 +323,13 @@ Three of four planned test TUs shipped under a new `SmatchetLuaTests` binary (ga
 - **Undefined-symbol audit**: `nm -u build/ninja-iter-msys2/CMakeFiles/SmatchetStandalone.dir/Source_Core/src/AppController_LuaBindingsCore.cpp.obj | grep -iE 'imgui\|glfw\|cpr\|httplib\|sqlite'` → empty. New TU has zero ImGui / GLFW / cpr / httplib / SQLite undefined refs.
 - **Sidecar suite**: `bash scripts/dev/test-all.sh` → 99 passed / 8 failed; the 8 failures are pre-existing `test-lint-hook-split` infra failures (worktree lacks `.claude/hooks/` setup, documented in PR #142). Unrelated to this slice.
 - **Behaviour-equivalence smoke**: deferred to manual residue (bucket-E ImGui Test Engine not yet wired — pillar 4 gap noted in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` category `context`). Behaviour-preservation is enforced by the byte-identical glue bodies (modulo cast site) + the LuaSandbox closure invariant.
+
+### Phase 6b (`test-phase-6b-lua-bindings-roundtrip`) — 2026-05-16
+
+Closes the Phase 6 split. The deferred `LuaBindings.test.cpp` now ships against the PR #144 interface lift; production untouched.
+
+- **Write set**: `tests/Lua/LuaBindings.test.cpp` (NEW), `tests/support/FakeLuaBindingHost.h` (NEW), `tests/Lua/CMakeLists.txt` (append-only — add the new test TU + `AppController_LuaBindingsCore.cpp` + ConfigManager / Logger / FieldEditAuditSource / Commands::* transitive .cpps, plus the `-mcmodel=large` source-property mirror).
+- **Coverage**: 13 cases on the round-trip surface — `smatchet.get_ticket` happy path + miss path (2 [high-risk]); `smatchet.get_active_tickets`; `log_info`; `decode_json` valid + invalid; `Ticket:set_field` accept + reject + unknown-field paths (1 [high-risk]); `Ticket:transition`; `mcp.register_tool`; `commands.invoke` unknown + routed paths; top-level table presence; `tracker.get_type` shape; sandbox-closure regression smoke.
+- **Fake design**: `FakeLuaBindingHost` implements the 8 `ILuaBindingHost` virtuals + `LuaCommands()` / `AppForCommandContext()`. Knobs (`TicketsById`, `FieldsById`, `SubmitFieldEditReturn` / `Error`, `CreateIssueScripter`) drive return values; recording fields (`LoggedInfo`, `SubmitFieldEditCalls`, `McpRegistrations`, `CreateIssueSpecKeys`) drive observability. Header-only; one fixture per `TEST_CASE`; no static leakage.
+- **Mutation-sanity**: 3 high-risk cases each carry an argue-from-shape comment naming the production line of `AppController_LuaBindingsCore.cpp` the assertion forces. Production-mutation deferred per backlog #48 taxonomy path 2.
+- **Build integration**: `tests/Lua/CMakeLists.txt` adds nlohmann_json + crypt32 (Windows) link deps. Production `AppController_LuaBindingsCore.cpp` compiles with `-mcmodel=large` in the test target too, mirroring `CMakeLists.txt:983-988`.

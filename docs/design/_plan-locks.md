@@ -98,9 +98,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — sandbox + timeout + stubs-compile shipped (14 cases / 99 assertions). LuaBindings.test.cpp deferred — unblocker (this slice) in flight.
 - **Cleared by**: PR `#143` merged at `ba1302e`.
 
-### test-suite-expansion-completion · Phase-6-unblocker · lua-bindings-host-interface-lift · status: in-flight
+### test-suite-expansion-completion · Phase-6-unblocker · lua-bindings-host-interface-lift · status: shipped (PR #144 merged at 7e6762d)
 
-- **Branch**: `feat/lua-bindings-host-interface-lift`
+- **Branch**: `feat/lua-bindings-host-interface-lift` (deleted)
 - **Owner agent**: `lua-binder`
 - **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
@@ -114,8 +114,25 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/src/AppController_LuaStubs.cpp`, `tests/Lua/LuaSandbox.test.cpp` (sandbox closure invariant regression gate)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#144](https://github.com/alexandrosk0/Smatchet/pull/144) opened against `develop`.
-- **Cleared by**: pending merge of [#144](https://github.com/alexandrosk0/Smatchet/pull/144).
+- **Last update**: 2026-05-16 — merged via PR #144 at sha 7e6762d. Phase 6b (LuaBindings.test.cpp round-trip) unblocked.
+- **Cleared by**: PR `#144` merged at `7e6762d`.
+
+### test-suite-expansion-completion · Phase-6b · lua-bindings-roundtrip · status: in-flight
+
+- **Branch**: `feat/test-phase-6b-lua-bindings-roundtrip`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
+- **Claimed write set**:
+  - `tests/Lua/LuaBindings.test.cpp` (NEW)
+  - `tests/support/FakeLuaBindingHost.h` (NEW)
+  - `tests/Lua/CMakeLists.txt` (append-only)
+  - `docs/design/_plan-locks.md`
+  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close any TBD PR placeholder left by PR #144)
+- **Read-only adjacency**: `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp`, `tests/support/LuaHostFixture.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — dispatched after PR #144 unblocker.
+- **Cleared by**: TBD PR.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)
 
