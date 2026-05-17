@@ -50,6 +50,25 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### git-ref-plan-locks · phase-0-1 · status: in-flight
+
+- **Branch**: `feat/git-ref-plan-locks`
+- **Owner agent**: `orchestrator`
+- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phase 0 + Phase 1)
+- **Claimed write set**:
+  - `docs/design/git-ref-plan-locks.md` (NEW — plan doc + phase results)
+  - `docs/design/_plan-locks.md` (MOD — this entry only)
+  - `scripts/dev/lock-claim.sh` (NEW)
+  - `scripts/dev/lock-claim-update.sh` (NEW)
+  - `scripts/dev/lock-release.sh` (NEW)
+  - `scripts/dev/locks-show.sh` (NEW)
+  - `scripts/dev/_lock-json.py` (NEW — internal helper)
+  - `scripts/dev/test-lock-primitives.sh` (NEW — sandbox test)
+- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery).
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — claimed (Phase 0 + 1 already shipped on branch).
+- **Cleared by**: TBD PR. Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
+
 ### h12-l16-m13-bundle · slice-1 · status: shipped (PR #196 merged at 1952e8b)
 
 - **Branch**: `feat/h12-l16-m13-bundle`
