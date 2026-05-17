@@ -1,21 +1,23 @@
-# Plan-locks — parallel-plan coordination scratchpad
+# Plan-locks — frozen historical archive
 
-> **Migration notice (added 2026-05-17)** — the [`git-ref-plan-locks`](./git-ref-plan-locks.md) plan
-> is replacing this markdown file with `refs/locks/*` as the atomic source of
-> truth. Phases 0–2 are live:
+> **🛑 FROZEN at Phase 6 cutover (2026-05-17).**
 >
-> - **Now**: hand-edit this file as before for new claims; the ref-based path
->   is opt-in via `bash scripts/dev/lock-claim.sh`.
-> - **Phase 5** (`feat/git-ref-plan-locks` branch): agent prompts migrate to
->   the script-driven flow; this file becomes secondary.
-> - **Phase 6**: cutover. Hand-edited content below the protocol section is
->   stripped; the file becomes auto-generated from refs. An auto-generated
->   preview lives at [`_plan-locks.generated.md`](./_plan-locks.generated.md).
-> - **Live ref query**: `bash scripts/dev/locks-show.sh`
+> This file is no longer the live coordination surface. New plan-lock claims
+> live in `refs/locks/<slug>` per the [`git-ref-plan-locks`](./git-ref-plan-locks.md) design.
+>
+> - **Live coordination state**: `bash scripts/dev/locks-show.sh` (canonical) or
+>   [`_plan-locks.generated.md`](./_plan-locks.generated.md) (snapshot, may lag up to 30 min).
+> - **Claim a new lock**: `bash scripts/dev/lock-claim.sh <slug> <write-set-file>`.
+> - **Update scope mid-slice**: `bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>`.
+> - **Release a lock (manual)**: `bash scripts/dev/lock-release.sh <slug>` — usually auto-handled by
+>   [`.github/workflows/lock-cleanup.yml`](../../.github/workflows/lock-cleanup.yml) on PR-merge.
+> - **Plan + rationale**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md).
+>
+> Hand-edits below the Protocol section are **no longer authoritative** and may be removed
+> in future archive cleanups. The Protocol section is retained for reference on the
+> entry-shape grammar still used by `claim.json`.
 
-Single source of truth for **which design plan is currently writing which files**. Every multi-phase or multi-PR plan in `docs/design/` claims its in-flight write set here so concurrent plans (and their delegated agents) can spot collisions before they happen.
-
-This file replaces ad-hoc "I'll edit the same file by accident" failures with an explicit, lightweight handshake. Append-only entries; status transitions in-place.
+This file preserves the audit trail of every plan-lock that existed between project inception and the 2026-05-17 cutover. Entries below are historical only.
 
 ## Protocol
 
@@ -61,33 +63,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 **Pruning:** `shipped` entries that are older than 14 days OR whose merge sha is already in `git log origin/develop` should be deleted in the next coordination PR. Keep this file shallow.
 
-## In-flight entries
+## Shipped + abandoned archive
 
-### git-ref-plan-locks · phase-0-1-2-3-4-5 · status: in-flight
-
-- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (PR #195, Phase 3), `feat/git-ref-plan-locks-phase-4` (PR #198, Phase 4), `feat/git-ref-plan-locks-phase-5` (stacked, Phase 5)
-- **Owner agent**: `orchestrator`
-- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2, 3, 4, 5)
-- **Claimed write set**:
-  - `docs/design/git-ref-plan-locks.md` (NEW — plan doc + phase results)
-  - `docs/design/_plan-locks.md` (MOD — this entry + Phase 2 banner)
-  - `docs/design/_plan-locks.generated.md` (NEW — Phase 2 derived view, initial empty-state render)
-  - `scripts/dev/lock-claim.sh` (NEW — Phase 1)
-  - `scripts/dev/lock-claim-update.sh` (NEW — Phase 1)
-  - `scripts/dev/lock-release.sh` (NEW — Phase 1)
-  - `scripts/dev/locks-show.sh` (NEW — Phase 1)
-  - `scripts/dev/locks-render-markdown.sh` (NEW — Phase 2)
-  - `scripts/dev/_lock-json.py` (NEW — internal helper, Phase 1)
-  - `scripts/dev/test-lock-primitives.sh` (NEW — sandbox test, Phase 1)
-  - `.github/workflows/locks-render.yml` (NEW — Phase 2 schedule + dispatch sync workflow)
-  - `.github/workflows/lock-cleanup.yml` (NEW — Phase 3 PR-merge auto-release workflow)
-  - `.github/PULL_REQUEST_TEMPLATE.md` (MOD — Phase 3 optional `lock-slug:` instruction)
-  - `.github/workflows/lock-staleness.yml` (NEW — Phase 4 daily cron sweep + Issue surface)
-  - `AGENTS.md` (MOD — Phase 5 § Orchestrator delegation packet migrated to script-driven flow)
-- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template), `agents/*.md` (no references found — no per-agent changes needed).
-- **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — scope expanded to include Phase 5 deliverables.
-- **Cleared by**: TBD PR(s). Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
+_Originally the in-flight section. The lone `git-ref-plan-locks` entry that lived here was migrated to `refs/locks/git-ref-plan-locks` at Phase 6 cutover (2026-05-17). The historical shipped + abandoned entries below remain for audit-trail reference._
 
 ### h12-l16-m13-bundle · slice-1 · status: shipped (PR #196 merged at 1952e8b)
 
