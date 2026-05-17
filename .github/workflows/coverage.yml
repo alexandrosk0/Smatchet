@@ -1,0 +1,91 @@
+name: Coverage (advisory)
+
+# Captures OpenCppCoverage line + branch coverage on every PR touching
+# Source_Core/ or tests/. Uploads coverage.xml as a workflow artifact and runs
+# in ADVISORY mode (no threshold, continue-on-error) for the first two weeks
+# after Phase 9 lands — pattern mirrors the Phase 7 screenshot-diff soak.
+#
+# Flip continue-on-error → false and pass --threshold 70 to coverage.sh once
+# two consecutive weeks of clean runs have built confidence. See
+# docs/design/test-suite-expansion-completion.md § Phase 9 + § End-state targets.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'Source_Core/**'
+      - 'Plugins/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/coverage.yml'
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-coverage:
+    name: Coverage (windows-2022 + OpenCppCoverage)
+    runs-on: windows-2022
+    timeout-minutes: 40
+    continue-on-error: true  # advisory soak until 2026-05-30; flip to false after
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # delta gate needs full history for merge-base
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Install OpenCppCoverage
+        shell: powershell
+        run: |
+          choco install opencppcoverage -y --no-progress
+          echo "C:\Program Files\OpenCppCoverage" >> $env:GITHUB_PATH
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: build/ninja-coverage-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-coverage-
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-coverage-msys2
+        run: cmake --preset ninja-coverage-msys2
+
+      - name: Build SmatchetTests + SmatchetLuaTests
+        run: cmake --build --preset ninja-coverage-msys2 --target SmatchetTests SmatchetLuaTests
+
+      - name: Run ctest (sanity — must pass under instrumentation)
+        working-directory: build/ninja-coverage-msys2
+        run: ctest --output-on-failure
+
+      - name: Capture coverage (advisory; --threshold 0)
+        run: bash scripts/dev/coverage.sh --xml-only --threshold 0
+
+      - name: Upload coverage.xml artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: coverage/coverage.xml
+          if-no-files-found: warn
