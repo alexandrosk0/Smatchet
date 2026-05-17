@@ -1341,6 +1341,30 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
         return MakeCommandPaletteFuzzyScenario();
     });
+    // perf-tooling-bundle scenarios — 5 perf scenarios surfaced by the
+    // perf-detective audit on develop@31e1893. Each verifies a previously-
+    // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the
+    // baseline floor against which other scenarios are compared.
+    scenarioRunner_->RegisterFactory("idle", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario();
+        return MakeIdleScenario();
+    });
+    scenarioRunner_->RegisterFactory("cell-edit-burst", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario();
+        return MakeCellEditBurstScenario();
+    });
+    scenarioRunner_->RegisterFactory("attachment-preview-open", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario();
+        return MakeAttachmentPreviewOpenScenario();
+    });
+    scenarioRunner_->RegisterFactory("preferences-slider-drag", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
+        return MakePreferencesSliderDragScenario();
+    });
+    scenarioRunner_->RegisterFactory("long-text-open-large-adf", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario();
+        return MakeLongTextOpenLargeAdfScenario();
+    });
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,

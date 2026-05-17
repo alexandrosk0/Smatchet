@@ -110,10 +110,10 @@ jobs:
         run: |
           bash scripts/dev/test-screenshot-diff.sh || echo "::warning::screenshot diff advisory step failed (acceptable during soak)"
 
-      - name: Upload SmatchetStandalone.exe on failure
+      - name: Upload Smatchet.exe on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: SmatchetStandalone-failure-${{ github.run_id }}
-          path: build/ninja-iter-msys2/SmatchetStandalone.exe
+          name: Smatchet-failure-${{ github.run_id }}
+          path: build/ninja-iter-msys2/Smatchet.exe
           if-no-files-found: ignore

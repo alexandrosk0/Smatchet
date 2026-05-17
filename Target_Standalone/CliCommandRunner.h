@@ -3,7 +3,7 @@
 
 // Standalone CLI front-end for the unified Command System.
 //
-// When SmatchetStandalone.exe is invoked with a `cmd <name>` subcommand, this
+// When Smatchet.exe is invoked with a `cmd <name>` subcommand, this
 // runner short-circuits the GUI boot and talks to a running Smatchet instance
 // over MCP HTTP (default discovery: SMATCHET_MCP_HOST/PORT env, then default
 // port). The full GUI / windowed paths are taken only in normal (non-`cmd`)

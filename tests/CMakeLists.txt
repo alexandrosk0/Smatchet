@@ -45,6 +45,7 @@ add_executable(SmatchetTests
     Source_Core/AiModelCatalog.test.cpp
     Source_Core/AiPrefsValidator.test.cpp
     Source_Core/AiEndpointSanitize.test.cpp
+    Source_Core/CliArgCoercion.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -94,11 +95,13 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
+    "${CMAKE_SOURCE_DIR}/Target_Standalone/CliArgCoercion.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
+    "${CMAKE_SOURCE_DIR}/Target_Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
 )
 

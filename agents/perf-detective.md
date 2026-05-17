@@ -56,6 +56,10 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 7. **Validate.** Win if the dominant row dropped ≥ 30%, or the user reports a clear FPS recovery. If FPS recovered but no marker shows the win, the markers don't cover the path the fix changed — add more, re-measure. If the target row didn't drop, iterate; don't claim success on a build pass or intuition.
 8. **Cleanup.** Hand off to `perf-instrument` to strip every `perf_temp:` marker. Verify zero matches in `Source_Core/`, `Plugins/`, `Target_Standalone/`.
 
+## Pre-flight scenario list
+
+Before composing a scenario list for an audit / sweep / spec doc, run `Smatchet.exe cmd scenario.list` (with `--spawn` if no instance is up) and intersect requested scenarios with registered ones. Flag missing scenarios as gaps in the report rather than failing the request — the orchestrator may route them to `command-system` for authoring or accept the smaller working set.
+
 ## Hard rules
 
 - **Never** add a cache without showing measured miss-rate and per-call cost.
