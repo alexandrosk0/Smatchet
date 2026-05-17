@@ -6,9 +6,32 @@
 >
 > **Live query**: `bash scripts/dev/locks-show.sh`
 >
-> **Snapshot taken**: 2026-05-17T21:52:29Z (UTC)
+> **Snapshot taken**: 2026-05-17T23:38:38Z (UTC)
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty â€” no slices currently claim a write set. New claims arrive via
-`bash scripts/dev/lock-claim.sh <slug> <write-set-file>`._
+### `git-ref-plan-locks`
+
+- **Owner**: `orchestrator`
+- **Branch**: `feat/git-ref-plan-locks-phase-6`
+- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](../../docs/design/git-ref-plan-locks.md)
+- **Started**: 2026-05-17T23:37:04Z
+- **Write set** (16 paths):
+  - `docs/design/git-ref-plan-locks.md`
+  - `docs/design/_plan-locks.md`
+  - `docs/design/_plan-locks-archive.md`
+  - `docs/design/_plan-locks.generated.md`
+  - `scripts/dev/lock-claim.sh`
+  - `scripts/dev/lock-claim-update.sh`
+  - `scripts/dev/lock-release.sh`
+  - `scripts/dev/locks-show.sh`
+  - `scripts/dev/locks-render-markdown.sh`
+  - `scripts/dev/_lock-json.py`
+  - `scripts/dev/test-lock-primitives.sh`
+  - `.github/workflows/locks-render.yml`
+  - `.github/workflows/lock-cleanup.yml`
+  - `.github/workflows/lock-staleness.yml`
+  - `.github/PULL_REQUEST_TEMPLATE.md`
+  - `AGENTS.md`
+- **Notes**: Phase 6 cutover — first real refs/locks claim
+
