@@ -95,6 +95,16 @@ jobs:
           bash scripts/dev/test-build-warnings.sh
           bash scripts/dev/test-markdown-lang-tag.sh
 
+      - name: Run bucket-C screenshot diff (advisory)
+        # ADVISORY until 2026-05-30 — windows-2022 runners may not have a
+        # usable GL context for the spawn-mode UI, in which case the captured
+        # PPM is empty and the script reports FAIL on its own. continue-on-error
+        # keeps that from gating the PR while we collect two consecutive weeks
+        # of clean runs. Flip to false (blocking) after the soak period.
+        continue-on-error: true
+        run: |
+          bash scripts/dev/test-screenshot-diff.sh || echo "::warning::screenshot diff advisory step failed (acceptable during soak)"
+
       - name: Upload SmatchetStandalone.exe on failure
         if: failure()
         uses: actions/upload-artifact@v4

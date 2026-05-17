@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# test-screenshot-diff.sh — Phase 7 bucket-C screenshot-diff driver.
+#
+# For each registered Phase-7 scenario:
+#   1. Launch an ephemeral `--spawn` Smatchet.
+#   2. `cmd scenario.run --name=<scen> --screenshotPath=<tmp>.ppm --spawn`
+#      drives the UI to a known state + triggers debug.window.screenshot.
+#   3. Sleep briefly to let the post-swap handler flush the PPM.
+#   4. Compare the captured PPM against tests/golden/<scen>.ppm using the
+#      g++-compiled screenshot_diff helper (per-channel L∞ tolerance = 4).
+#
+# Bootstrap mode (--bootstrap or first run when golden is missing): copies the
+# captured PPM into tests/golden/ so the next run has something to diff against.
+# Bootstrap runs always PASS — they're a one-time capture, not a regression
+# gate. Commit the new goldens by hand to make them authoritative.
+#
+# Env overrides:
+#   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msys2/...)
+#   SMATCHET_TEST_PORT      MCP port for --spawn (default 58733; non-default forces fresh spawn)
+#   PYTHON                  python interpreter (default `python`)
+#   SCREENSHOT_TOLERANCE    per-channel L∞ tolerance (default 4)
+#   SCREENSHOT_DIFF_BIN     pre-built diff helper path; if unset the script g++-compiles one
+#
+# Exit codes:
+#   0 — every scenario captured within tolerance (or bootstrap completed)
+#   1 — at least one diff exceeded tolerance / dimension mismatch / spawn failure
+#   2 — binary or build is missing
+#
+# Usage:
+#   bash scripts/dev/test-screenshot-diff.sh                # diff mode (gate)
+#   bash scripts/dev/test-screenshot-diff.sh --bootstrap    # write goldens from clean run
+
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+PY="${PYTHON:-python}"
+TEST_PORT="${SMATCHET_TEST_PORT:-58733}"
+TOL="${SCREENSHOT_TOLERANCE:-4}"
+GOLDEN_DIR="tests/golden"
+TMP_DIR="${TMPDIR:-/tmp}/smatchet-screenshot-diff-$$"
+mkdir -p "$TMP_DIR"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+BOOTSTRAP=0
+if [ "${1:-}" = "--bootstrap" ]; then
+    BOOTSTRAP=1
+    echo "[test-screenshot-diff] BOOTSTRAP mode — writing goldens from captured PPMs"
+fi
+
+if [ ! -f "$EXE" ]; then
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone" >&2
+    exit 2
+fi
+
+mkdir -p "$GOLDEN_DIR"
+
+# Build the diff helper once (TU-local; no CMake side-effects).
+DIFF_BIN="${SCREENSHOT_DIFF_BIN:-$TMP_DIR/screenshot_diff}"
+if [ -z "${SCREENSHOT_DIFF_BIN:-}" ]; then
+    # g++ is mandatory on the MSYS2/UCRT64 dev env — same toolchain as ninja-iter-msys2.
+    GXX="${CXX:-g++}"
+    if ! command -v "$GXX" >/dev/null 2>&1; then
+        echo "FAIL: $GXX not found. Set SCREENSHOT_DIFF_BIN to a prebuilt helper or install g++." >&2
+        exit 2
+    fi
+    echo "[test-screenshot-diff] compiling diff helper via $GXX..."
+    "$GXX" -std=c++14 -O2 -Wall -Wextra -Wpedantic \
+        -Itests/support \
+        -o "$DIFF_BIN" \
+        tests/support/ScreenshotDiffMain.cpp
+fi
+
+PASSED=0
+FAILED=0
+SCENARIOS=(
+    "dock-gap-sentinel"
+    "command-palette-fuzzy"
+)
+
+# Extract a JSON field from the CLI's text-wrapped output.
+extract() {
+    local field="$1"
+    "$PY" -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=json.loads(m.group(0)); print(json.dumps(d.get('data',{}).get('$field','MISSING')))"
+}
+
+assert() {
+    local label="$1" condition="$2"
+    if [ "$condition" = "ok" ]; then
+        echo "  PASS  $label"
+        PASSED=$((PASSED + 1))
+    else
+        echo "  FAIL  $label  — $condition"
+        FAILED=$((FAILED + 1))
+    fi
+}
+
+run_scenario() {
+    local scen="$1"
+    local captured="$TMP_DIR/$scen.ppm"
+    local golden="$GOLDEN_DIR/$scen.ppm"
+
+    echo
+    echo "=== Scenario: $scen ==="
+
+    # 20 warm-up frames keeps the docking + palette layout settled before the
+    # screenshot trigger. Frames argument feeds the spawn-mode timeout calc
+    # but also bounds the scenario's internal warm-up via --warmupFrames.
+    local out
+    out=$("$EXE" cmd scenario.run \
+        --name="$scen" \
+        --frames=20 \
+        --warmupFrames=16 \
+        --screenshotPath="$captured" \
+        --mcp-port="$TEST_PORT" \
+        --spawn --yes 2>&1 || true)
+    echo "$out" | tail -20
+
+    # Give the post-swap handler an extra moment to flush the PPM after the
+    # spawn-mode CLI returns — the JSON outPath fires from OnFinish, while the
+    # screenshot fires from the post-swap handler one frame later.
+    sleep 0.5
+
+    # Verify the JSON envelope reported captureRequested:true.
+    local req
+    req=$(echo "$out" | extract captureRequested 2>/dev/null || echo "MISSING")
+    if [ "$req" != "true" ]; then
+        assert "$scen captureRequested" "envelope missing captureRequested=true; got=$req"
+        return
+    fi
+
+    # Verify the captured PPM exists and is non-empty.
+    if [ ! -s "$captured" ]; then
+        assert "$scen captured PPM" "captured file missing or empty at $captured"
+        return
+    fi
+    assert "$scen captureRequested" "ok"
+
+    # Bootstrap mode: copy capture → golden. No diff, always PASS.
+    if [ "$BOOTSTRAP" -eq 1 ]; then
+        cp "$captured" "$golden"
+        echo "  BOOTSTRAP  wrote $golden ($(wc -c < "$golden") bytes)"
+        assert "$scen golden bootstrap" "ok"
+        return
+    fi
+
+    # First-run convenience: if the golden is missing AND we're not in
+    # bootstrap mode, write it anyway and warn the user — but DO mark a soft
+    # PASS so the gate doesn't fail on a fresh checkout that hasn't run
+    # bootstrap yet. The next run will diff against this golden.
+    if [ ! -f "$golden" ]; then
+        cp "$captured" "$golden"
+        echo "  WARN  $golden was missing — bootstrapped from this run."
+        echo "        Commit the new golden so future runs gate against it:"
+        echo "          git add $golden"
+        assert "$scen golden auto-bootstrapped" "ok"
+        return
+    fi
+
+    # Diff captured vs golden. Run the helper, capture stdout/stderr + rc
+    # explicitly (the rc of a command substitution doesn't propagate).
+    local diff_out diff_rc
+    set +e
+    diff_out=$("$DIFF_BIN" "$captured" "$golden" "$TOL" 2>&1)
+    diff_rc=$?
+    set -e
+    echo "  $diff_out"
+    if [ "$diff_rc" -eq 0 ]; then
+        assert "$scen L_inf <= $TOL" "ok"
+    else
+        assert "$scen L_inf <= $TOL" "$diff_out"
+    fi
+}
+
+for scen in "${SCENARIOS[@]}"; do
+    run_scenario "$scen"
+done
+
+echo
+echo "============================="
+echo "Passed: $PASSED  Failed: $FAILED"
+echo "============================="
+
+if [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi
+exit 0

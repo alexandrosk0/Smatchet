@@ -369,6 +369,17 @@ void SmatchetUI::Draw(AppController& app) {
     // sub-window draws so it can intercept key events first.
     // Skip while the first-launch tracker gate is active so the palette can't bypass it.
     if (g_ui.cfg.BackendHasBeenReachable) {
+        // Honour the bucket-C scenario request to open + pre-filter the palette
+        // before its Draw runs this frame. Consume-once: the scenario sets the
+        // flag, we drain it here. Subsequent frames render the steady palette
+        // state, which is what the screenshot diff golden captures.
+        if (g_ui.requestCommandPaletteOpen) {
+            g_ui.requestCommandPaletteOpen = false;
+            commandPalette_.Open();
+            if (!g_ui.requestCommandPaletteFilter.empty()) {
+                commandPalette_.SetFilterText(g_ui.requestCommandPaletteFilter.c_str());
+            }
+        }
         commandPalette_.Draw(app);
     }
 
