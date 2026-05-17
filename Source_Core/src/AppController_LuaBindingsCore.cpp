@@ -1,0 +1,400 @@
+// AppController_LuaBindingsCore.cpp -- ImGui-free portion of the Lua bindings.
+//
+// Hosts `smatchet::lua::InitLuaCore` plus the 11 glue functions whose receiver
+// is the `ILuaBindingHost` interface (not `AppController*`). The glues here
+// resolve `state["__smatchet_app"]` to `ILuaBindingHost*`, which means tests
+// can drop in a `FakeLuaBindingHost` without dragging ImGui / GLFW / cpr /
+// SQLite into the test binary -- a strict prerequisite for Phase 6b's
+// `LuaBindings.test.cpp` re-dispatch (see
+// docs/design/test-suite-expansion-completion.md § Phase 6).
+//
+// **Strict no-ImGui rule.** This TU must not include `<imgui.h>` or any
+// transitive ImGui surface. ImGui-touching glue (imgui.text / image / button /
+// progress_bar / same_line / separator / get_content_region_avail) lives in
+// AppController_LuaBindings.cpp::InitLuaUi where it stays UI-coupled.
+//
+// Behaviour-preservation contract: every glue body is byte-identical to the
+// pre-lift version, modulo the receiver cast:
+//   `AppController* app = lua["__smatchet_app"].get_or<AppController*>(nullptr);`
+// becomes
+//   `ILuaBindingHost* host = lua["__smatchet_app"].get_or<ILuaBindingHost*>(nullptr);`
+// and the existing AppController method names match the interface verbatim.
+
+#include "ILuaBindingHost.h"
+
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+#include "ConfigManager.h"
+#include "FieldEditAuditSource.h"
+#include "Logger.h"
+#include "StringUtil.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <ctime>
+#include <limits>
+#include <string>
+#include <tuple>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+namespace smatchet_lua_init_detail {
+
+// `ResolveHost` is the cast site that the slice exists to introduce. Every
+// glue calls this; nothing else reaches across the binding/test boundary.
+static ILuaBindingHost* ResolveHost(sol::this_state L) {
+    sol::state_view lua(L);
+    return lua["__smatchet_app"].get_or<ILuaBindingHost*>(nullptr);
+}
+
+// --- JSON <-> Lua marshalling -------------------------------------------------
+// Mirrors the helpers in AppController_LuaBindings.cpp. The bindings TU also
+// references LuaToJson / JsonToLua from non-glue code paths, so it keeps its
+// own private copy in its anonymous namespace -- duplication is cheap and the
+// no-ImGui isolation is the point.
+
+constexpr int kJsonToLuaMaxDepth = 64;
+
+static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth) {
+    if (depth > kJsonToLuaMaxDepth) {
+        return sol::make_object(luaView, sol::nil);
+    }
+    switch (j.type()) {
+    case nlohmann::json::value_t::null:
+        return sol::make_object(luaView, sol::nil);
+    case nlohmann::json::value_t::boolean:
+        return sol::make_object(luaView, j.get<bool>());
+    case nlohmann::json::value_t::number_integer:
+        return sol::make_object(luaView, static_cast<double>(j.get<std::int64_t>()));
+    case nlohmann::json::value_t::number_unsigned:
+        return sol::make_object(luaView, static_cast<double>(j.get<std::uint64_t>()));
+    case nlohmann::json::value_t::number_float:
+        return sol::make_object(luaView, j.get<double>());
+    case nlohmann::json::value_t::string:
+        return sol::make_object(luaView, j.get<std::string>());
+    case nlohmann::json::value_t::array: {
+        sol::table arr = luaView.create_table();
+        std::size_t idx = 1;
+        for (const auto& el : j) {
+            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1);
+        }
+        return arr;
+    }
+    case nlohmann::json::value_t::object: {
+        sol::table tbl = luaView.create_table();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1);
+        }
+        return tbl;
+    }
+    default:
+        return sol::make_object(luaView, sol::nil);
+    }
+}
+
+static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
+    return JsonToLuaImpl(luaView, j, 0);
+}
+
+static nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
+    if (depth > 64) return nullptr;
+    if (obj.get_type() == sol::type::lua_nil) return nullptr;
+    if (obj.is<bool>()) return obj.as<bool>();
+    if (obj.is<double>()) return obj.as<double>();
+    if (obj.is<std::string>()) return obj.as<std::string>();
+    if (obj.is<sol::table>()) {
+        sol::table t = obj.as<sol::table>();
+        bool is_array = true;
+        size_t max_idx = 0;
+        t.for_each([&](sol::object k, sol::object /*value*/) {
+            if (k.is<size_t>()) {
+                max_idx = (std::max)(max_idx, k.as<size_t>());
+            } else {
+                is_array = false;
+            }
+        });
+        if (is_array && max_idx > 0) {
+            nlohmann::json j = nlohmann::json::array();
+            for (size_t i = 1; i <= max_idx; ++i) {
+                j.push_back(LuaToJsonImpl(t[i], depth + 1));
+            }
+            return j;
+        } else {
+            nlohmann::json j = nlohmann::json::object();
+            t.for_each([&](sol::object k, sol::object v) {
+                if (k.is<std::string>()) {
+                    j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1);
+                }
+            });
+            return j;
+        }
+    }
+    return nullptr;
+}
+
+static nlohmann::json LuaToJson(sol::object obj) {
+    return LuaToJsonImpl(obj, 0);
+}
+
+// --- Glues with non-UI behaviour. Pre-lift home: AppController_LuaBindings.cpp
+// inside the same namespace. Each body is byte-identical except for the
+// AppController* -> ILuaBindingHost* cast site (`ResolveHost`).
+
+std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket& t, const std::string& fieldId,
+                                                  const std::string& val) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) {
+        return {false, "AppController not available for Ticket:set_field"};
+    }
+    LOG_TRACE("Lua Ticket:set_field audit_source=%s issue=%s field=%s val_len=%zu", FieldEditAuditSource::Current(),
+              t.id.c_str(), fieldId.c_str(), val.size());
+    const TrackerField* fieldMeta = host->FindFieldById(fieldId);
+    if (!fieldMeta) {
+        return {false, "Field not found in tracker catalog: " + fieldId};
+    }
+    std::string err;
+    std::vector<std::string> vals;
+    if (!val.empty()) {
+        vals.push_back(val);
+    }
+    const bool ok = host->SubmitFieldEdit(t.id, *fieldMeta, vals, err);
+    return {ok, err};
+}
+
+std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t,
+                                                    const std::string& statusName) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) {
+        return {false, "AppController not available for Ticket:transition"};
+    }
+    LOG_TRACE("Lua Ticket:transition audit_source=%s issue=%s status=%s", FieldEditAuditSource::Current(), t.id.c_str(),
+              statusName.c_str());
+    const TrackerField* statusField = host->FindFieldById("status");
+    if (!statusField) {
+        return {false, "Tracker 'status' field meta not found"};
+    }
+    std::string err;
+    const bool ok = host->SubmitFieldEdit(t.id, *statusField, {statusName}, err);
+    return {ok, err};
+}
+
+void LuaLogInfoGlue(sol::this_state L, std::string msg) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (host) host->LuaLogInfoBind(std::move(msg));
+}
+
+std::tuple<sol::object, std::string> LuaGetTicketGlue(sol::this_state L, const std::string& issueId) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) return {sol::object(), "AppController not available for get_ticket"};
+    return host->LuaGetTicketBind(issueId);
+}
+
+std::vector<CachedTicket> LuaGetActiveTicketsGlue(sol::this_state L) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) return {};
+    return host->LuaGetActiveTicketsBind();
+}
+
+std::tuple<sol::object, std::string> LuaDecodeJsonGlue(sol::this_state L, const std::string& s) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) return {sol::object(), "AppController not available for decode_json"};
+    return host->LuaDecodeJsonBind(s);
+}
+
+void LuaMcpRegisterToolGlue(sol::this_state L, sol::table toolDef, sol::function callback) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (host) host->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
+}
+
+std::tuple<sol::object, std::string> LuaCreateIssueGlue(sol::this_state L, sol::table spec) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) return {sol::object(), "AppController not available for create_issue"};
+    return host->LuaCreateIssueBind(std::move(spec));
+}
+
+// `tracker.get_type` is pure -- reads ConfigManager which has no transitive
+// ImGui / SQLite / cpr dependency.
+std::string LuaTrackerGetTypeGlue() {
+    return TrimCopy(ConfigManager::Load().TrackerType);
+}
+
+std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::this_state L, sol::table fields) {
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) {
+        return {std::string(), std::string("AppController not available for tracker.create_issue")};
+    }
+    std::tuple<sol::object, std::string> bindRet = host->LuaCreateIssueBind(std::move(fields));
+    const std::string& preflightErr = std::get<1>(bindRet);
+    const sol::object& resObj = std::get<0>(bindRet);
+    if (!preflightErr.empty()) {
+        return {std::string(), preflightErr};
+    }
+    if (!resObj.valid() || resObj.get_type() == sol::type::lua_nil) {
+        return {std::string(), std::string("create_issue returned no result")};
+    }
+    if (!resObj.is<sol::table>()) {
+        return {std::string(), std::string("create_issue returned unexpected type")};
+    }
+    sol::table r = resObj.as<sol::table>();
+    const sol::object oko = r["ok"];
+    const bool ok = oko.valid() && oko.is<bool>() && oko.as<bool>();
+    std::string key;
+    const sol::object keyo = r["issue_key"];
+    if (keyo.valid() && keyo.is<std::string>()) {
+        key = keyo.as<std::string>();
+    }
+    std::string err;
+    const sol::object erro = r["error"];
+    if (erro.valid() && erro.is<std::string>()) {
+        err = erro.as<std::string>();
+    }
+    if (ok && !key.empty()) {
+        return {std::move(key), std::string()};
+    }
+    if (!err.empty()) {
+        return {std::string(), std::move(err)};
+    }
+    return {std::string(), std::string("create_issue failed (no issue_key)")};
+}
+
+// commands.invoke -- wraps the host's CommandRegistry::Dispatch so Lua scripts
+// can call any registered command and receive a plain table {ok, data, error}.
+sol::table LuaCommandsInvokeGlue(sol::this_state L, const std::string& cmdName, sol::optional<sol::table> argsTable) {
+    sol::state_view sv(L);
+    sol::table result = sv.create_table();
+    ILuaBindingHost* host = ResolveHost(L);
+    if (!host) {
+        result["ok"] = false;
+        result["error"] = std::string("AppController not available");
+        return result;
+    }
+    nlohmann::json args = (argsTable) ? LuaToJson(argsTable.value()) : nlohmann::json::object();
+    smatchet::cmd::CommandContext ctx;
+    // Behaviour-preservation: pre-lift this was `ctx.App = app;` where `app` was the
+    // AppController*. ILuaBindingHost::AppForCommandContext() returns the same pointer
+    // in production (FakeLuaBindingHost returns nullptr -- test handlers ignore App).
+    ctx.App = host->AppForCommandContext();
+    ctx.Source = smatchet::cmd::CommandSource::Lua;
+    smatchet::cmd::CommandResult cr = host->LuaCommands().Dispatch(cmdName, args, ctx);
+    result["ok"] = cr.Ok;
+    if (cr.Ok) {
+        result["data"] = JsonToLua(sv, cr.Data);
+    } else {
+        sol::table errTbl = sv.create_table();
+        errTbl["code"] = std::string(smatchet::cmd::ErrorCodeString(cr.Error.Code));
+        errTbl["message"] = cr.Error.Message;
+        errTbl["hint"] = cr.Error.Hint;
+        result["error"] = errTbl;
+    }
+    return result;
+}
+
+} // namespace smatchet_lua_init_detail
+
+namespace smatchet {
+namespace lua {
+
+void InitLuaCore(sol::state& state, ILuaBindingHost* host) {
+    state.open_libraries(sol::lib::base);
+    state.open_libraries(sol::lib::string);
+    state.open_libraries(sol::lib::table);
+    // math is common in cell providers (math.floor for percent formatting). Without it,
+    // scripts hit "attempt to index a nil value (global 'math')" -- non-obvious if you
+    // assume a standard Lua env.
+    state.open_libraries(sol::lib::math);
+    // os: do NOT open the standard lib -- it ships with `os.execute`, `os.remove`,
+    // `os.rename`, `os.exit`, `os.getenv`, `os.setlocale`, `os.tmpname`, which let a
+    // script shell out, delete arbitrary files, read process env, or terminate the host.
+    // Expose only the safe time/date subset as a whitelist. A future Lua version
+    // adding a new dangerous os.* fn won't silently leak in (blacklist would).
+    sol::table osSafe = state.create_table();
+    osSafe.set_function("time",      []() -> std::time_t { return std::time(nullptr); });
+    osSafe.set_function("clock",     []() -> double      { return static_cast<double>(std::clock()) / CLOCKS_PER_SEC; });
+    osSafe.set_function("difftime",  [](std::time_t a, std::time_t b) -> double { return std::difftime(a, b); });
+    osSafe.set_function("date",      [](sol::optional<std::string> fmt, sol::optional<std::time_t> t) -> std::string {
+        const std::time_t when = t.value_or(std::time(nullptr));
+        const std::string format = fmt.value_or(std::string("%c"));
+        std::tm tmbuf{};
+#if defined(_WIN32)
+        localtime_s(&tmbuf, &when);
+#else
+        localtime_r(&when, &tmbuf);
+#endif
+        char out[256] = {};
+        std::strftime(out, sizeof(out), format.c_str(), &tmbuf);
+        return std::string(out);
+    });
+    state["os"] = osSafe;
+
+    // Store the host per-state so glue functions resolve it via sol::this_state without a
+    // process-wide pointer. Each state (main or background) holds its own entry -- no
+    // cross-state races and no lifetime hazard:
+    //   - For the main `lua` state: ClearLuaTicketContextGlue (called from ~AppController
+    //     before the lua dtor) nils the entry, so userdata that outlives the controller
+    //     resolves to null.
+    //   - For per-iteration `bgState` in AutomationWorkerLoop: bgState is a stack-local
+    //     destroyed at the end of each iteration. ~AppController joins automationWorker_
+    //     before any member destruction (see the automationWorker_ contract in
+    //     AppController.h), so the worker can never observe a half-destroyed AppController
+    //     through `__smatchet_app`.
+    state["__smatchet_app"] = host;
+
+    state.new_usertype<CachedTicket>("Ticket",
+        "id", &CachedTicket::id,
+        "get_field", &CachedTicket::GetFieldValue,
+        "set_field", &smatchet_lua_init_detail::TicketSetFieldGlue,
+        "transition", &smatchet_lua_init_detail::TicketTransitionGlue);
+
+    sol::table smatchet = state.create_table();
+    smatchet.set_function("get_ticket", &smatchet_lua_init_detail::LuaGetTicketGlue);
+    smatchet.set_function("get_active_tickets", &smatchet_lua_init_detail::LuaGetActiveTicketsGlue);
+    smatchet.set_function("create_issue", &smatchet_lua_init_detail::LuaCreateIssueGlue);
+    state["smatchet"] = smatchet;
+
+    sol::table tracker = state.create_table();
+    tracker.set_function("get_type", &smatchet_lua_init_detail::LuaTrackerGetTypeGlue);
+    tracker.set_function("create_issue", &smatchet_lua_init_detail::LuaTrackerCreateIssueGlue);
+    state["tracker"] = tracker;
+
+    state.set_function("log_info", &smatchet_lua_init_detail::LuaLogInfoGlue);
+    state.set_function("decode_json", &smatchet_lua_init_detail::LuaDecodeJsonGlue);
+
+    // UI-mutating bindings (cached renderers, icon maps, ui.* table) live in InitLuaUi for
+    // the main state. Background automation states re-run setup scripts in this minimal
+    // Core state to define helper functions/tables -- so the UI registrations need to be
+    // present as no-ops here, otherwise SmatchetHooks.lua throws "attempt to call nil"
+    // every time the worker spins up. The registrations are intentionally inert: the bgState
+    // is destroyed at the end of each job, so any registration on it would be discarded
+    // regardless. The real registrations happen against the main `lua` state via OnEarlyInit.
+    auto noop = []() {};
+    state.set_function("register_field_display_cached",         noop);
+    state.set_function("unregister_field_display_cached",       noop);
+    state.set_function("register_field_display_cached_by_name", noop);
+    state.set_function("unregister_field_display_cached_by_name", noop);
+    state.set_function("register_field_icon_map",               noop);
+    state.set_function("unregister_field_icon_map",             noop);
+    sol::table uiNoop = state.create_table();
+    uiNoop.set_function("register_window",            noop);
+    uiNoop.set_function("unregister_window",          noop);
+    uiNoop.set_function("invalidate_window",          noop);
+    uiNoop.set_function("invalidate_field_cache",     noop);
+    uiNoop.set_function("invalidate_field_cache_for", noop);
+    uiNoop.set_function("register_ticket_action",     noop);
+    uiNoop.set_function("register_global_action",     noop);
+    state["ui"] = uiNoop;
+
+    sol::table mcp = state.create_table();
+    mcp.set_function("register_tool", &smatchet_lua_init_detail::LuaMcpRegisterToolGlue);
+    state["mcp"] = mcp;
+
+    // Unified Command System: `commands.invoke("name", {arg=val})` -> `{ok, data, error}`.
+    // Lets Lua scripts call any registered command without needing direct AppController access.
+    sol::table commands = state.create_table();
+    commands.set_function("invoke", &smatchet_lua_init_detail::LuaCommandsInvokeGlue);
+    state["commands"] = commands;
+}
+
+} // namespace lua
+} // namespace smatchet

@@ -544,9 +544,11 @@ unset(_smatchet_cpp_syntax_idx)
 unset(_SMATCHET_CPP_SYNTAX)
 
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
 if(SMATCHET_WITH_LUA_AUTOMATION)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
 endif()
@@ -980,6 +982,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # this TU. The skip makes the fallback explicit and quiets the build.
         set_source_files_properties(
             "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
             PROPERTIES
                 COMPILE_OPTIONS "-mcmodel=large"
                 SKIP_PRECOMPILE_HEADERS ON)

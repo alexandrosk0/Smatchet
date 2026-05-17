@@ -9,6 +9,7 @@
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
+#include "ILuaBindingHost.h"
 #endif
 
 // 3. THE REST OF YOUR INCLUDES
@@ -87,7 +88,11 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController {
+class AppController
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    : public ILuaBindingHost
+#endif
+{
     /// `AppControllerDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController and forwards every method to AppController-private state (`Cache`,
     /// `Backend`, `AvailableFields`, the connectivity probe state, etc.). The previous
@@ -298,9 +303,9 @@ class AppController {
      * Lua InitLua uses one functor struct per binding (see AppController_LuaBindings.cpp) so sol2/GCC never
      * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
      */
-    void LuaLogInfoBind(const std::string& msg);
-    std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId);
-    std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s);
+    void LuaLogInfoBind(const std::string& msg) override;
+    std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId) override;
+    std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s) override;
     /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
     /// the C++ side replays every frame until one of the cache-key inputs changes. See
     /// docs/design/applied/lua-recorded-cmd-list.md.
@@ -319,11 +324,16 @@ class AppController {
     void LuaUiUnregisterWindowBind(const std::string& name);
     void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
     void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
-    void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback);
-    std::vector<CachedTicket> LuaGetActiveTicketsBind();
+    void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) override;
+    std::vector<CachedTicket> LuaGetActiveTicketsBind() override;
     /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
-    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec);
+    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec) override;
     void ClearLuaTicketContextGlue();
+
+    // --- ILuaBindingHost forwarders (interface required for the lifted InitLuaCore
+    // glue functions in AppController_LuaBindingsCore.cpp). ---
+    smatchet::cmd::CommandRegistry& LuaCommands() override { return Commands(); }
+    AppController* AppForCommandContext() override { return this; }
 
     struct McpToolDefinition {
         std::string name;
@@ -650,7 +660,11 @@ class AppController {
     void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const;
+    const TrackerField* FindFieldById(const std::string& fieldId) const
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        override
+#endif
+        ;
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
@@ -671,7 +685,11 @@ class AppController {
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
     bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError);
+                         const std::vector<std::string>& rawValues, std::string& outError)
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        override
+#endif
+        ;
     bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
                                     const std::string& originalEstimateSnapshot,

@@ -87,25 +87,32 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #142 at sha d0b1f12.
 - **Cleared by**: PR `#142` merged at `d0b1f12`.
 
-### test-suite-expansion-completion · Phase-6 · lua-bindings-rig · status: in-flight
+### test-suite-expansion-completion · Phase-6 · lua-bindings-rig · status: shipped (PR #143 merged at ba1302e)
 
-- **Branch**: `feat/test-phase-6-lua-bindings`
+- **Branch**: `feat/test-phase-6-lua-bindings` (merged)
 - **Owner agent**: `test-rig`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 6
-- **Claimed write set**:
-  - `tests/Lua/CMakeLists.txt` (NEW)
-  - `tests/Lua/lua_main.cpp` (NEW)
-  - `tests/Lua/LuaSandbox.test.cpp` (NEW)
-  - `tests/Lua/LuaTimeout.test.cpp` (NEW)
-  - `tests/Lua/LuaStubsCompile.test.cpp` (NEW)
-  - `tests/support/LuaHostFixture.h` (NEW)
-  - `CMakeLists.txt` (add `option(SMATCHET_BUILD_LUA_TESTS …)` + `add_subdirectory(tests/Lua)` gate)
-  - `CMakePresets.json` (add `SMATCHET_BUILD_LUA_TESTS=ON` to `ninja-test-msys2` cacheVariables)
-  - `docs/design/_plan-locks.md`
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (Phase 6 LuaBindings.test.cpp unblocker)
-  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
-- **Read-only adjacency**: `Source_Core/src/AppController_LuaBindings.cpp`, `Source_Core/src/AppController_LuaStubs.cpp`, `Source_Core/include/LuaAutomationHost.h`, `Source_Core/include/AppController.h`
+- **Claimed write set**: see prior entry (preserved for audit)
 - **InitLuaCore classification**: Class C — `AppController_LuaBindings.cpp:32` `#include "imgui.h"` + `:766` `state["__smatchet_app"] = this` + glue functions in `smatchet_lua_init_detail::` resolve `__smatchet_app` back to live `AppController*`. Binding TU is unusable as a test link target without production refactor. LuaBindings.test.cpp deferred; sandbox + timeout + stubs-compile shipped this slice.
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — sandbox + timeout + stubs-compile shipped (14 cases / 99 assertions). LuaBindings.test.cpp deferred — unblocker (this slice) in flight.
+- **Cleared by**: PR `#143` merged at `ba1302e`.
+
+### test-suite-expansion-completion · Phase-6-unblocker · lua-bindings-host-interface-lift · status: in-flight
+
+- **Branch**: `feat/lua-bindings-host-interface-lift`
+- **Owner agent**: `lua-binder`
+- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Claimed write set**:
+  - `Source_Core/include/ILuaBindingHost.h` (NEW)
+  - `Source_Core/src/AppController_LuaBindingsCore.cpp` (NEW)
+  - `Source_Core/src/AppController_LuaBindings.cpp` (lift out 11 glues + InitLuaCore body)
+  - `Source_Core/include/AppController.h` (add `: public ILuaBindingHost` + override declarations)
+  - `CMakeLists.txt` (register new TU + `-mcmodel=large` source-property)
+  - `docs/design/_plan-locks.md`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (flip top entry to applied)
+  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
+- **Read-only adjacency**: `Source_Core/src/AppController_LuaStubs.cpp`, `tests/Lua/LuaSandbox.test.cpp` (sandbox closure invariant regression gate)
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — dispatched.
 - **Cleared by**: TBD PR.
