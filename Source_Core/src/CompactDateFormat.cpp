@@ -125,15 +125,19 @@ std::string FormatShortLocalDate(const std::chrono::system_clock::time_point& tp
     }
 #endif
     char buf[64];
-#if defined(_WIN32)
-    const size_t n = std::strftime(buf, sizeof(buf), "%b %#d '%y", &tmLocal);
-#else
-    const size_t n = std::strftime(buf, sizeof(buf), "%b %-d '%y", &tmLocal);
-#endif
+    const size_t n = std::strftime(buf, sizeof(buf), "%b %d '%y", &tmLocal);
     if (n == 0) {
         return std::string();
     }
-    return std::string(buf, n);
+    // Strip the leading zero from the day field so output is e.g. "Jan 5 '26",
+    // not "Jan 05 '26". Avoids the MSVC-only %#d / GNU-only %-d strftime flags
+    // — GCC -Wformat trips on %#d under MinGW UCRT64.
+    std::string s(buf, n);
+    const size_t spc = s.find(' ');
+    if (spc != std::string::npos && spc + 1 < s.size() && s[spc + 1] == '0') {
+        s.erase(spc + 1, 1);
+    }
+    return s;
 }
 
 void AppendOffsetJira(std::string& out, int offsetSec) {
@@ -279,8 +283,7 @@ std::string FormatJiraDateOrDateTimeForApi(bool isDateField, const ParsedJiraDat
     return result;
 }
 
-std::string FormatCompactJiraDateForDisplay(const std::string& raw,
-                                            const std::string& formatOption,
+std::string FormatCompactJiraDateForDisplay(const std::string& raw, const std::string& formatOption,
                                             int thresholdDays) {
     SMATCHET_UI_PERF_SCOPE("FormatCompactJiraDateForDisplay");
 
@@ -300,14 +303,15 @@ std::string FormatCompactJiraDateForDisplay(const std::string& raw,
     if (formatIt != s_formatCache.end()) {
         CachedFormattedDate& entry = formatIt->second;
         // Within the same frame the date string cannot change: skip everything.
-        if (frameCount >= 0 && entry.lastFrameCount == frameCount &&
-            entry.formatOption == formatOption && entry.thresholdDays == thresholdDays) {
+        if (frameCount >= 0 && entry.lastFrameCount == frameCount && entry.formatOption == formatOption &&
+            entry.thresholdDays == thresholdDays) {
             return entry.formatted;
         }
         // Cross-frame: check 2-second TTL so relative labels ("-3d") stay fresh.
         const double nowSec = ctx ? ImGui::GetTime()
                                   : static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
-                                        std::chrono::steady_clock::now().time_since_epoch()).count());
+                                                            std::chrono::steady_clock::now().time_since_epoch())
+                                                            .count());
         if (entry.formatOption == formatOption && entry.thresholdDays == thresholdDays &&
             (nowSec - entry.lastUpdatedSec) < 2.0) {
             entry.lastFrameCount = frameCount;
@@ -337,7 +341,8 @@ std::string FormatCompactJiraDateForDisplay(const std::string& raw,
                         const int offsetSec = p.HasTimeZoneSuffix ? p.OffsetSec : 0;
                         const std::time_t wallAsUtcGuess = TimeGmPortable(&wall);
                         if (wallAsUtcGuess != static_cast<std::time_t>(-1)) {
-                            cp.Tp = std::chrono::system_clock::from_time_t(wallAsUtcGuess - static_cast<std::time_t>(offsetSec));
+                            cp.Tp = std::chrono::system_clock::from_time_t(wallAsUtcGuess -
+                                                                           static_cast<std::time_t>(offsetSec));
                             cp.HasWallTime = p.HasWallTime;
                             cp.Success = true;
                         }
@@ -386,19 +391,34 @@ std::string FormatCompactJiraDateForDisplay(const std::string& raw,
             }
         }
 
-        if (mag >= kYear)  { return sign + std::to_string(mag / kYear)  + "y";  }
-        if (mag >= kMonth) { return sign + std::to_string(mag / kMonth) + "mo"; }
-        if (mag >= kWeek)  { return sign + std::to_string(mag / kWeek)  + "w";  }
-        if (mag >= kDay)   { return sign + std::to_string(mag / kDay)   + "d";  }
-        if (mag >= kHour)  { return sign + std::to_string(mag / kHour)  + "h";  }
-        if (mag >= kMinute){ return sign + std::to_string(mag / kMinute) + "m"; }
-        if (mag > 0)       { return sign + "1m"; }
+        if (mag >= kYear) {
+            return sign + std::to_string(mag / kYear) + "y";
+        }
+        if (mag >= kMonth) {
+            return sign + std::to_string(mag / kMonth) + "mo";
+        }
+        if (mag >= kWeek) {
+            return sign + std::to_string(mag / kWeek) + "w";
+        }
+        if (mag >= kDay) {
+            return sign + std::to_string(mag / kDay) + "d";
+        }
+        if (mag >= kHour) {
+            return sign + std::to_string(mag / kHour) + "h";
+        }
+        if (mag >= kMinute) {
+            return sign + std::to_string(mag / kMinute) + "m";
+        }
+        if (mag > 0) {
+            return sign + "1m";
+        }
         return "0m";
     };
 
     const double nowSec = ctx ? ImGui::GetTime()
                               : static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch()).count());
+                                                        std::chrono::steady_clock::now().time_since_epoch())
+                                                        .count());
     std::string formattedVal = computeFormat();
     if (s_formatCache.size() > 8192) {
         s_formatCache.clear();
@@ -406,9 +426,3 @@ std::string FormatCompactJiraDateForDisplay(const std::string& raw,
     s_formatCache[raw] = CachedFormattedDate{formattedVal, nowSec, frameCount, formatOption, thresholdDays};
     return formattedVal;
 }
-
-
-
-
-
-
