@@ -1,5 +1,6 @@
 #include "AnthropicClient.h"
 
+#include "AiErrorRedact.h"
 #include "AiSseParser.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -193,6 +194,8 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
     }
 
     if (r.error.code != cpr::ErrorCode::OK && r.error.code != cpr::ErrorCode::REQUEST_CANCELLED) {
+        LOG_ERROR("AnthropicClient: transport error - cpr code %d, message: %s",
+                  static_cast<int>(r.error.code), r.error.message.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("transport: ") + r.error.message;
@@ -201,12 +204,19 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
     }
 
     if (r.status_code < 200 || r.status_code >= 300) {
+        // Provider HTTP error visibility: 4xx/5xx previously flowed silently
+        // to the UI's assistantLastError strip without ever touching the
+        // Logger. LOG_ERROR includes a redacted body excerpt (sanitised by
+        // AiErrorRedact - strips api keys / org ids / Authorization echoes
+        // plus length-cap) so users can diagnose without leaking secrets.
+        const std::string redactedBody = smatchet::ai::pure::RedactProviderErrorBody(r.text);
+        LOG_ERROR("AnthropicClient: HTTP %ld - body: %s", static_cast<long>(r.status_code), redactedBody.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
-        if (!r.text.empty()) {
+        if (!redactedBody.empty()) {
             err.Message.append(": ");
-            err.Message.append(r.text.substr(0, 600));
+            err.Message.append(redactedBody);
         }
         onError(err);
         return;
