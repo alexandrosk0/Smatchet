@@ -210,6 +210,12 @@ struct TrackerConfig {
     std::string AiModelOpenAi = "gpt-4o-mini";
     std::string AiModelAnthropic = "claude-sonnet-4-6";
     std::string AiModelOllama = "llama3";
+    /// Reasoning effort (OpenAI `reasoning_effort` parameter on o-series / reasoning-tuned
+    /// models; LM Studio passes it through to local reasoning models such as Qwen3 / gemma-3).
+    /// Allowed values: "auto" | "low" | "medium" | "high". "auto" means "do not send the
+    /// parameter — let the server decide". The default-applies-to-all-providers semantics
+    /// match the existing model field; providers that don't understand the param ignore it.
+    std::string AiReasoningEffort = "auto";
     bool AssistantPanelOpen = false;
     // Historical floating-window width; deprecated since the panel was dock-integrated.
     // The field is still serialized (additive default load + round-trip) so v6 configs

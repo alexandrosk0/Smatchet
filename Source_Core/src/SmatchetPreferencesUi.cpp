@@ -518,6 +518,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             // cancel atom so the posted callback short-circuits if Preferences
             // closes mid-probe.
             auto runProbe = [&app, &d](TrackerConfig probeCfg, AiProvider provider) {
+                LOG_INFO("Preferences: Test connection start providerKind=%d", static_cast<int>(provider));
                 d.assistantPrefsTestInFlight = true;
                 d.assistantPrefsTestResult = "Testing...";
                 d.assistantPrefsTestResultType = 0;
@@ -652,6 +653,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
                         g_ui.assistantPrefsTestInFlight = false;
                         if (errMsg.empty()) {
+                            LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
+                                     static_cast<int>(provider), defaultedBaseUrl.c_str());
                             g_ui.assistantPrefsTestResult = "Verified.";
                             g_ui.assistantPrefsTestResultType = 1;
                             // On success with a defaulted URL, persist the default into
@@ -667,6 +670,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 g_ui.assistantPrefsForceBufferReseed = true;
                             }
                         } else {
+                            LOG_ERROR("Preferences: Test connection FAILED providerKind=%d errMsg='%s'",
+                                      static_cast<int>(provider), errMsg.c_str());
                             g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
                             g_ui.assistantPrefsTestResultType = 2;
                         }
@@ -692,7 +697,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
                              static_cast<int>(providerLabels.size()))) {
-                d.cfg.AiProviderKind = static_cast<int>(providers[providerIdx].Kind);
+                const int newKind = static_cast<int>(providers[providerIdx].Kind);
+                LOG_INFO("Preferences: AiProviderKind %d -> %d", d.cfg.AiProviderKind, newKind);
+                d.cfg.AiProviderKind = newKind;
                 MarkPrefsDirty(d);
                 clearStaleTestResult();
             }
@@ -827,6 +834,38 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     MarkPrefsDirty(d);
                     clearStaleTestResult();
                 }
+            }
+
+            // --- Default reasoning effort (all providers) ---
+            // Stored as a string enum: "auto" | "low" | "medium" | "high". "auto"
+            // omits the wire parameter (server picks). Forwarded as the
+            // `reasoning_effort` body field by OpenAiClient; providers that
+            // don't understand it ignore it. The chat-window header has a per-
+            // turn Combo that overrides this default for one Send.
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            {
+                const char* kEffortLabels[] = {"Auto (server picks)", "Low", "Medium", "High"};
+                const char* kEffortIds[] = {"auto", "low", "medium", "high"};
+                int effortIdx = 0;
+                for (int i = 0; i < 4; ++i) {
+                    if (d.cfg.AiReasoningEffort == kEffortIds[i]) {
+                        effortIdx = i;
+                        break;
+                    }
+                }
+                if (ImGui::Combo("Default reasoning effort", &effortIdx, kEffortLabels, 4)) {
+                    LOG_INFO("Preferences: AiReasoningEffort %s -> %s", d.cfg.AiReasoningEffort.c_str(),
+                             kEffortIds[effortIdx]);
+                    d.cfg.AiReasoningEffort = kEffortIds[effortIdx];
+                    MarkPrefsDirty(d);
+                    clearStaleTestResult();
+                }
+                ImGui::SetItemTooltip("OpenAI `reasoning_effort` body parameter for o-series / reasoning-tuned "
+                                      "models. LM Studio + LocalAI pass it through to local reasoning models "
+                                      "(Qwen3, gemma-3, etc.). Providers that don't understand the parameter "
+                                      "ignore it.");
             }
 
             // --- agents.md harness (optional) ---

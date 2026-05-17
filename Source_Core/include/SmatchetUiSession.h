@@ -188,6 +188,13 @@ struct UiDrawSession {
     /// can drop stale tokens (Cancel + immediate Send must not let the first
     /// turn's tail bytes corrupt the second turn's stream).
     std::uint64_t assistantTurnGen = 0;
+    /// Per-session Model + Effort overrides (chat-window header Combos). Empty
+    /// = use Preferences-saved value. Not persisted across runs — the user
+    /// re-picks per session as a transient experiment. AiAssistantController
+    /// reads these via the Submit() overload's modelOverride/effortOverride
+    /// arguments at Send time.
+    std::string assistantPerTurnModel;
+    std::string assistantPerTurnEffort;
 
     // --- Assistant Preferences tab: Test-connection async probe state. ---
     // Mirrors Phase B's cancel-atom + MainThreadDispatcher hand-off shape. The

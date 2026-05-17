@@ -38,6 +38,12 @@ struct AiChatRequest {
     std::vector<AiMessage> History;
     float Temperature;
     int MaxTokens;
+    /// Reasoning effort for o-series / reasoning-tuned models. Empty or "auto"
+    /// = omit the wire parameter (server picks). Recognised values: "low",
+    /// "medium", "high". Providers that don't understand the param will ignore
+    /// it (OpenAi proper drops unknowns; LM Studio passes it through to local
+    /// reasoning models such as Qwen3 / gemma-3).
+    std::string ReasoningEffort;
     AiChatRequest() : Temperature(-1.0f), MaxTokens(0) {}
 };
 

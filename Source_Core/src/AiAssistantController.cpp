@@ -130,7 +130,8 @@ AiAssistantController::~AiAssistantController() {
     }
 }
 
-void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context) {
+void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
+                                   std::string modelOverride, std::string effortOverride) {
     if (!client_) {
         LOG_WARN("AiAssistantController::Submit dropped — no active client for provider '%s'.",
                  cachedProviderName_.c_str());
@@ -138,10 +139,17 @@ void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
         // caller's Send-button path sets that on the same UI tick when needed.
         return;
     }
+    LOG_INFO("AiAssistantController::Submit turnGen=%llu provider='%s' modelOverride='%s' effortOverride='%s' "
+             "promptLen=%zu contextBlocks=%zu",
+             static_cast<unsigned long long>(turnGen), cachedProviderName_.c_str(),
+             modelOverride.empty() ? "<cfg>" : modelOverride.c_str(),
+             effortOverride.empty() ? "<cfg>" : effortOverride.c_str(), prompt.size(), context.size());
     Request req;
     req.Prompt = std::move(prompt);
     req.Context = std::move(context);
     req.TurnGen = turnGen;
+    req.ModelOverride = std::move(modelOverride);
+    req.EffortOverride = std::move(effortOverride);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         if (shuttingDown_) {
@@ -195,23 +203,37 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
     }
 
     AiChatRequest chatReq;
-    chatReq.Model = []() -> std::string {
-        // Re-read the model each turn so a Preferences change while a turn is
-        // queued takes effect on the next Submit, without a per-turn config
-        // snapshot leaking into the request struct.
+    {
+        // Re-read model + reasoning effort each turn so a Preferences change
+        // while a turn is queued takes effect on the next Submit, without a
+        // per-turn config snapshot leaking into the request struct. Per-turn
+        // overrides (chat-window Model + Effort Combos) win when non-empty;
+        // otherwise the live Preferences value applies.
         const TrackerConfig cfg = ConfigManager::Load();
         const AiProvider provider = ProviderFromConfig(cfg);
-        switch (provider) {
-        case AiProvider::Anthropic:
-            return cfg.AiModelAnthropic;
-        case AiProvider::OllamaNative:
-        case AiProvider::OllamaOpenAiCompat:
-            return cfg.AiModelOllama;
-        case AiProvider::OpenAi:
-        default:
-            return cfg.AiModelOpenAi;
+        if (!req.ModelOverride.empty()) {
+            chatReq.Model = req.ModelOverride;
+        } else {
+            switch (provider) {
+            case AiProvider::Anthropic:
+                chatReq.Model = cfg.AiModelAnthropic;
+                break;
+            case AiProvider::OllamaNative:
+            case AiProvider::OllamaOpenAiCompat:
+                chatReq.Model = cfg.AiModelOllama;
+                break;
+            case AiProvider::OpenAi:
+            default:
+                chatReq.Model = cfg.AiModelOpenAi;
+                break;
+            }
         }
-    }();
+        chatReq.ReasoningEffort = req.EffortOverride.empty() ? cfg.AiReasoningEffort : req.EffortOverride;
+        LOG_INFO("AiAssistantController::RunRequest turnGen=%llu provider='%s' model='%s' effort='%s' "
+                 "systemPromptCap=64KB",
+                 static_cast<unsigned long long>(req.TurnGen), cachedProviderName_.c_str(), chatReq.Model.c_str(),
+                 chatReq.ReasoningEffort.c_str());
+    }
 
     // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
     // (when any block has content) + each enabled block wrapped in
@@ -354,8 +376,11 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
         const bool wasCancelled = err.WasCancelled;
         if (wasCancelled) {
             state_.store(State::Cancelled, std::memory_order_release);
+            LOG_INFO("AiAssistantController: turn %llu cancelled.", static_cast<unsigned long long>(turnGen));
         } else {
             state_.store(State::Errored, std::memory_order_release);
+            LOG_ERROR("AiAssistantController: turn %llu errored httpStatus=%d message='%s'",
+                      static_cast<unsigned long long>(turnGen), httpStatus, message.c_str());
         }
         app->mainThreadDispatcher.PostToMainThread([turnGen, httpStatus, message, wasCancelled]() {
             if (g_ui.assistantTurnGen != turnGen) {

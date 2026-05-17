@@ -64,7 +64,13 @@ class AiAssistantController {
     /// value and stashed it into the matching session field — the controller treats
     /// `turnGen` as opaque and forwards it back through every dispatcher callback so
     /// the UI side can drop stale deltas.
-    void Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context);
+    ///
+    /// `modelOverride` / `effortOverride` are per-turn overrides selected by the chat-
+    /// window header Combos. Empty strings mean "use the saved Preferences value for
+    /// the active provider". `effortOverride` accepts the same enum as
+    /// `TrackerConfig::AiReasoningEffort` ("auto" | "low" | "medium" | "high").
+    void Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
+                std::string modelOverride = std::string(), std::string effortOverride = std::string());
 
     /// UI-thread only. Sets the in-flight turn's cancel atom to `true`. cpr's
     /// `WriteCallback` polls the atom every chunk and returns `false`, which aborts
@@ -106,6 +112,10 @@ class AiAssistantController {
         std::string Prompt;
         std::vector<AiContextBlock> Context;
         uint64_t TurnGen;
+        /// Empty = use Preferences-saved value at RunRequest time. See
+        /// Submit() doc-comment for semantics.
+        std::string ModelOverride;
+        std::string EffortOverride;
     };
 
     void WorkerLoop();

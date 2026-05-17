@@ -212,6 +212,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["ai_model_openai"] = config.AiModelOpenAi;
     j["ai_model_anthropic"] = config.AiModelAnthropic;
     j["ai_model_ollama"] = config.AiModelOllama;
+    j["ai_reasoning_effort"] = config.AiReasoningEffort;
     j["assistant_panel_open"] = config.AssistantPanelOpen;
     j["assistant_panel_width"] = config.AssistantPanelWidth;
     j["assistant_panel_on_secondary_side"] = config.AssistantPanelOnSecondarySide;
@@ -580,8 +581,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.AiApiKey = j.value("ai_api_key", std::string{});
                 migrateLegacyPlaintextAiApiKey = !cfg.AiApiKey.empty();
             }
-            cfg.AiAnthropicApiKey = UnprotectSecretFieldFromConfig(
-                "ai_anthropic_api_key_enc", j.value("ai_anthropic_api_key_enc", std::string{}));
+            cfg.AiAnthropicApiKey = UnprotectSecretFieldFromConfig("ai_anthropic_api_key_enc",
+                                                                   j.value("ai_anthropic_api_key_enc", std::string{}));
             if (cfg.AiAnthropicApiKey.empty()) {
                 cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
                 migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
@@ -595,9 +596,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AiModelOpenAi = j.value("ai_model_openai", cfg.AiModelOpenAi);
             cfg.AiModelAnthropic = j.value("ai_model_anthropic", cfg.AiModelAnthropic);
             cfg.AiModelOllama = j.value("ai_model_ollama", cfg.AiModelOllama);
+            cfg.AiReasoningEffort = j.value("ai_reasoning_effort", cfg.AiReasoningEffort);
             cfg.AssistantPanelOpen = j.value("assistant_panel_open", cfg.AssistantPanelOpen);
-            cfg.AssistantPanelWidth = static_cast<float>(
-                j.value("assistant_panel_width", static_cast<double>(cfg.AssistantPanelWidth)));
+            cfg.AssistantPanelWidth =
+                static_cast<float>(j.value("assistant_panel_width", static_cast<double>(cfg.AssistantPanelWidth)));
             cfg.AssistantPanelOnSecondarySide =
                 j.value("assistant_panel_on_secondary_side", cfg.AssistantPanelOnSecondarySide);
             cfg.AgentsMdGlobalPath = j.value("agents_md_global_path", cfg.AgentsMdGlobalPath);
