@@ -4,6 +4,48 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · code-review · [retrospective] — Recent-PR audit findings (PRs #139–#148, #151)
+  Details: Retrospective `code-review` sweep across 13 merged PRs landed 2026-05-16/17 — four parallel `code-review` agents, read-only. Sorted by severity. Each entry cites PR + file:line.
+
+  **CRITICAL — silent data corruption / repo bloat:**
+  - PR #146 `.gitattributes:1` — `*.ppm` not declared `binary`. Combined with repo-wide `* text=auto eol=lf`, every Windows clone risks an LF/CRLF rewrite of the raw P6 byte payload → silent golden corruption, L∞ diff exceeds tolerance. Add `*.ppm binary` + `-text` immediately.
+  - PR #146 `tests/golden/*.ppm` — 2 × 2.76 MB raw PPMs committed (5.5 MB / ~191k lines). PNG equivalents are ~50–150 KB. Permanent pack bloat. Either wire Git LFS for `tests/golden/*.ppm`, or switch writer + reader to PNG via stb_image (already transitive via ImGui).
+
+  **HIGH — exploitable or load-bearing:**
+  - PR #140 `Source_Core/src/OpenAiClient.cpp:140-180` — API key leak risk: `r.text.substr(0,600)` appended to `err.Message` and surfaced via `onError`. Provider 401/403 bodies routinely echo `Authorization` headers / request body / org identifiers. Sanitise before append; add `RedactProviderErrorBody` next to `RedactUrlForLog`.
+  - PR #146 `Source_Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` — `cfg.BackendHasBeenReachable=true` flip happens *before* the `outErr` early-return guard. If `OnStart` errors out early, `savedBackendReachable_` is snapshotted but `OnCancel`/`OnFinish` may never run → latch persists for the session. Move flip *after* error-return guard.
+  - PR #146 `scripts/dev/test-screenshot-diff.sh:104` — `sleep 0.5` race between spawn-mode CLI return and PPM read. Replace with `for i in {1..40}; do [ -s "$captured" ] && break; sleep 0.05; done` deterministic wait.
+  - PR #148 `scripts/dev/coverage.sh:148` — second OpenCppCoverage run *overwrites* `coverage.xml`. SmatchetTests data is silently lost; advisory threshold reading reports Lua-only coverage. Use `--input_coverage` to merge or `--export_type binary:...` from run 1 fed into run 2.
+  - PR #148 `scripts/dev/coverage.sh:155` — `python -c "...open(r'$XML_OUT').read()..."` interpolates user-controlled `SMATCHET_COVERAGE_OUTPUT_DIR` into Python source. Path with `'` or `\` breaks the script or runs attacker-controlled Python. Pass via `sys.argv` or `os.environ`.
+  - PR #144 `Source_Core/include/AppController.h:660-693` — asymmetric `override` keyword: declarations themselves wrapped in `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` but some `override` keywords sit outside the guard. If `LUA_AUTOMATION=0` is ever exercised, compile break. Make `override` follow declaration's guard.
+
+  **MEDIUM — drift / hygiene / coverage gaps:**
+  - PR #140 `Source_Core/src/AiClientFactory.cpp:14,17,20` — `new OpenAiClient()` wrapped in `unique_ptr` instead of `std::make_unique`. Violates AGENTS.md § Quality "no raw `new`/`delete`".
+  - PR #140 `Source_Core/include/AiTypes.h:35,60` — `Temperature = -1.0f` and `MaxTokens = 0` as sentinels for "unset". Add a comment so next reader doesn't set `0.0f` thinking it's neutral.
+  - PR #140 `Source_Core/include/AiSseParser.h:38` + `.cpp:101` — `partial_` member + `emitIfReady` is a stub no-op. Delete or wire up before Phase B.
+  - PR #140 — no automated coverage of SSE parser (split-frame, `[DONE]`, malformed JSON, mid-frame cancel, `\r\n\r\n`). Critical for Phase A'; deferral already in commit message but verify the doctest TU lands.
+  - PR #139 `Source_Core/src/TicketSyncService.cpp:86` — guard is permanent. User who legitimately deletes the last ticket / filters all rows never reconverges (stale cache forever). Follow-up: timestamp + age-out, or require two consecutive empty full-syncs.
+  - PR #139 `Source_Core/src/PlaneIssueSearch.cpp:480` — asymmetric vs `JiraIssueSearch.cpp:393` (Jira requires `fetchedPages > 0`, Plane does not). The new TicketSyncService guard is now the only thing between a zero-page Plane response and a wipe.
+  - PR #139 `tests/Source_Core/TicketSyncService.test.cpp:118-140` — coverage gap: no test for partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting guard is bypassed on legitimate non-empty diff.
+  - PR #144 `Source_Core/src/AppController_LuaBindingsCore.cpp` — `LuaToJson` / `JsonToLua` + `kJsonToLuaMaxDepth` duplicated verbatim from `AppController_LuaBindings.cpp` (file comment names this as intentional). Drift risk on next marshalling change. Lift to shared internal header.
+  - PR #146 `tests/support/GoldenImage.h:67` — `std::strtol` parses `w`, `h`, `maxv` without overflow/negative checks. Crafted PPM `w=99999999 h=99999999` triggers overflow on 32-bit `size_t`; multi-GB resize on 64-bit. Cap dimensions (`w > 16384 || h > 16384`).
+  - PR #146 `Source_Core/src/Commands/Scenarios/*.cpp` — manual `extern UiDrawSession g_ui;` duplicated across `CommandPaletteFuzzyScenario.cpp` + `DockGapSentinelScenario.cpp` + `BuiltinCommands_Debug.cpp`. Promote to unconditional `extern` in `SmatchetUiSession.h`.
+  - PR #146 `scripts/dev/test-screenshot-diff.sh:24` — `SMATCHET_TEST_PORT=58733` hardcoded. Two parallel runs collide. Use ephemeral port or `$((40000 + RANDOM % 20000))`.
+  - PR #148 `scripts/dev/coverage-delta-gate.sh:69` — `tests/support/*.h` counts as a "test change", so a PR can add an empty `tests/support/foo.h` to dismiss the gate. Tighten to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/**/*.test.cpp` only.
+  - PR #148 `scripts/dev/coverage.sh:35` — `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing. Use `shift $(( $# < 2 ? $# : 2 ))` or guard.
+  - PR #148 `.github/workflows/coverage.yml:50` — `actions/cache@v4` key hashes `CMakeLists.txt` + `**/CMakeLists.txt` but **not** `CMakePresets.json`. Coverage-flag changes won't bust the FetchContent cache → stale gcov-instrumented `_deps`.
+
+  **LOW / NIT (filed for completeness, no triage required):**
+  - PR #140 `IAiClient.h:14` — `virtual ~IAiClient() {}` should be `= default`; add rule-of-three.
+  - PR #140 `AiClientFactory.cpp:34,47` — fallthrough returns after switch without `default:` will warn `-Wswitch` if `AiProvider` enum grows.
+  - PR #140 `OpenAiClient.cpp:18-22` — `JoinUrl` does not handle `base` ending `//` or non-leading-slash `path`. Call sites safe today; comment or `CHECK`.
+  - PR #140 `TrackerHttpUtils.cpp` — clang-format reflow churn mixed into behavioural commit; should have been separate `style:` commit.
+  - PR #141 `Plugins/Mcp/McpJsonRpcPure.cpp` — anon-namespace helpers (`BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs`) not exposed for Phase 5 dispatch tests. Consider `pure::detail::` namespace.
+  - PR #146 `tests/support/ScreenshotDiffMain.cpp:32` — three-positional CLI with no `--help`.
+  - PR #148 `CMakePresets.json:154` — `RelWithDebInfo` + `--coverage` may strip `gcov` notes via `-fdata-sections`. Verify with `*.gcno` existence acceptance test.
+
+  Status: open — punch list above is the authoritative remediation queue. Suggested merge order: CRITICAL (.gitattributes + LFS/PNG) → HIGH (key-leak sanitiser + scenario state guard + coverage.xml overwrite + python interpolation) → MEDIUM batch. Surfaced by retrospective code-review sweep 2026-05-17.
+
 - 2026-05-16 · build-doctor · [tooling] — Phase 9 coverage threshold (>=70%) advisory soak → blocking flip
   Details: Phase 9 (`test-phase-9-coverage-gates`) ships `scripts/dev/coverage.sh` + `.github/workflows/coverage.yml` running with `--threshold 0` and `continue-on-error: true` for the first two weeks. Parent plan's § End-state targets calls for >=70% line coverage on `Source_Core/src/` (excluding ImGui / UI files) as a hard gate. The numerical target needs to be tuned against a real two-week distribution before flipping to blocking — same advisory→blocking lifecycle as Phase 7's screenshot-diff. Proposal: after two consecutive green weeks of `coverage.yml` runs, flip (a) `coverage.yml` `continue-on-error: true` → `false`; (b) `coverage.sh` invocation from `--threshold 0` → `--threshold 70`; (c) consider adding `--threshold 90` carve-out for the high-risk units (IssueCreatePipeline, IssueDraft, TrackerFieldValueParser, CallstackParser, LocalCacheManager, TicketSyncService, ConfigManager migrations, MCP dispatch, Lua bindings) per parent plan. Estimated cost: 30 min once the soak baseline is collected.
   Status: open. Surfaced by Phase 9.
