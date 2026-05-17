@@ -3,14 +3,14 @@
 #
 # For each registered Phase-7 scenario:
 #   1. Launch an ephemeral `--spawn` Smatchet.
-#   2. `cmd scenario.run --name=<scen> --screenshotPath=<tmp>.ppm --spawn`
+#   2. `cmd scenario.run --name=<scen> --screenshotPath=<tmp>.png --spawn`
 #      drives the UI to a known state + triggers debug.window.screenshot.
-#   3. Sleep briefly to let the post-swap handler flush the PPM.
-#   4. Compare the captured PPM against tests/golden/<scen>.ppm using the
+#   3. Poll for the PNG to flush (deterministic; no fixed sleep).
+#   4. Compare the captured PNG against tests/golden/<scen>.png using the
 #      g++-compiled screenshot_diff helper (per-channel L∞ tolerance = 4).
 #
 # Bootstrap mode (--bootstrap or first run when golden is missing): copies the
-# captured PPM into tests/golden/ so the next run has something to diff against.
+# captured PNG into tests/golden/ so the next run has something to diff against.
 # Bootstrap runs always PASS — they're a one-time capture, not a regression
 # gate. Commit the new goldens by hand to make them authoritative.
 #
@@ -36,7 +36,8 @@ cd "$(dirname "$0")/../.."
 
 EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
 PY="${PYTHON:-python}"
-TEST_PORT="${SMATCHET_TEST_PORT:-58733}"
+# Ephemeral port keeps parallel runs from colliding on the default.
+TEST_PORT="${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}"
 TOL="${SCREENSHOT_TOLERANCE:-4}"
 GOLDEN_DIR="tests/golden"
 TMP_DIR="${TMPDIR:-/tmp}/smatchet-screenshot-diff-$$"
@@ -46,7 +47,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 BOOTSTRAP=0
 if [ "${1:-}" = "--bootstrap" ]; then
     BOOTSTRAP=1
-    echo "[test-screenshot-diff] BOOTSTRAP mode — writing goldens from captured PPMs"
+    echo "[test-screenshot-diff] BOOTSTRAP mode — writing goldens from captured PNGs"
 fi
 
 if [ ! -f "$EXE" ]; then
@@ -67,7 +68,7 @@ if [ -z "${SCREENSHOT_DIFF_BIN:-}" ]; then
     fi
     echo "[test-screenshot-diff] compiling diff helper via $GXX..."
     "$GXX" -std=c++14 -O2 -Wall -Wextra -Wpedantic \
-        -Itests/support \
+        -Itests/support -IThirdParty \
         -o "$DIFF_BIN" \
         tests/support/ScreenshotDiffMain.cpp
 fi
@@ -98,8 +99,8 @@ assert() {
 
 run_scenario() {
     local scen="$1"
-    local captured="$TMP_DIR/$scen.ppm"
-    local golden="$GOLDEN_DIR/$scen.ppm"
+    local captured="$TMP_DIR/$scen.png"
+    local golden="$GOLDEN_DIR/$scen.png"
 
     echo
     echo "=== Scenario: $scen ==="
@@ -117,10 +118,14 @@ run_scenario() {
         --spawn --yes 2>&1 || true)
     echo "$out" | tail -20
 
-    # Give the post-swap handler an extra moment to flush the PPM after the
-    # spawn-mode CLI returns — the JSON outPath fires from OnFinish, while the
-    # screenshot fires from the post-swap handler one frame later.
-    sleep 0.5
+    # Deterministic poll: the JSON outPath fires from OnFinish, while the
+    # screenshot fires from the post-swap handler one frame later. Wait up to
+    # 2 s for the PNG file to appear and reach a non-zero size — far snappier
+    # than a fixed sleep on fast hardware, safe on slow hardware.
+    for _ in $(seq 1 40); do
+        [ -s "$captured" ] && break
+        sleep 0.05
+    done
 
     # Verify the JSON envelope reported captureRequested:true.
     local req
@@ -130,9 +135,9 @@ run_scenario() {
         return
     fi
 
-    # Verify the captured PPM exists and is non-empty.
+    # Verify the captured PNG exists and is non-empty.
     if [ ! -s "$captured" ]; then
-        assert "$scen captured PPM" "captured file missing or empty at $captured"
+        assert "$scen captured PNG" "captured file missing or empty at $captured"
         return
     fi
     assert "$scen captureRequested" "ok"

@@ -109,6 +109,12 @@ done
 
 XML_OUT="$OUTPUT_DIR/coverage.xml"
 HTML_OUT="$OUTPUT_DIR/coverage-html"
+# Per-run binary intermediates so the second OpenCppCoverage run does not
+# overwrite the first run's data. The prior single-XML-export approach silently
+# dropped SmatchetTests coverage when SmatchetLuaTests ran second.
+BIN_TESTS="$OUTPUT_DIR/coverage-tests.bin"
+BIN_LUA="$OUTPUT_DIR/coverage-lua.bin"
+rm -f "$BIN_TESTS" "$BIN_LUA" "$XML_OUT"
 
 # OpenCppCoverage uses --source to include / exclude paths. We restrict to
 # Source_Core/ (excluding UI / ImGui-heavy bits is the threshold flip's job
@@ -116,7 +122,7 @@ HTML_OUT="$OUTPUT_DIR/coverage-html"
 SOURCE_INCLUDE="Source_Core"
 MODULE_INCLUDE="Smatchet"  # matches both SmatchetTests.exe and SmatchetLuaTests.exe
 
-OCC_COMMON_ARGS=(
+OCC_FILTER_ARGS=(
     --sources "$SOURCE_INCLUDE"
     --modules "$MODULE_INCLUDE"
     --excluded_sources "_deps"
@@ -124,31 +130,44 @@ OCC_COMMON_ARGS=(
     --excluded_sources "Plugins/Mcp/imgui"
     --excluded_sources "ImGui"
     --excluded_sources "imgui"
-    --export_type "cobertura:$XML_OUT"
 )
 
-if [ "$XML_ONLY" -eq 0 ]; then
-    OCC_COMMON_ARGS+=(--export_type "html:$HTML_OUT")
-fi
-
-# OpenCppCoverage runs each target in a separate child; we drive it twice and
-# rely on its merge behaviour by aggregating XML reports outside the tool when
-# CI needs it. For dev mode the second run overwrites — acceptable because the
-# user is iterating one target at a time; full coverage runs in CI.
+# Capture each target into its own binary intermediate, then merge both via a
+# third invocation that reads --input_coverage and exports the final Cobertura
+# XML + optional HTML. This is OpenCppCoverage's only merge surface — without
+# it, the second --export_type cobertura overwrites the first.
 echo "[coverage] capturing SmatchetTests via $OCC..."
 set +e
-"$OCC" "${OCC_COMMON_ARGS[@]}" -- "$TEST_EXE" --no-intro --no-version
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version
 RC_TESTS=$?
 set -e
 
 echo "[coverage] capturing SmatchetLuaTests..."
 set +e
-"$OCC" "${OCC_COMMON_ARGS[@]}" -- "$LUA_TEST_EXE" --no-intro --no-version
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version
 RC_LUA=$?
 set -e
 
 if [ "$RC_TESTS" -ne 0 ] || [ "$RC_LUA" -ne 0 ]; then
     echo "FAIL: OpenCppCoverage returned non-zero (SmatchetTests=$RC_TESTS, SmatchetLuaTests=$RC_LUA)" >&2
+    exit 1
+fi
+
+# Merge the two binaries into the final Cobertura (+ optional HTML) report.
+# OpenCppCoverage requires at least one runnable child even on a pure merge; we
+# attach `cmd.exe /c exit 0` as a no-op carrier so the tool runs without
+# re-executing either test exe a third time.
+MERGE_EXPORTS=(--export_type "cobertura:$XML_OUT")
+if [ "$XML_ONLY" -eq 0 ]; then
+    MERGE_EXPORTS+=(--export_type "html:$HTML_OUT")
+fi
+echo "[coverage] merging binaries -> $XML_OUT..."
+set +e
+"$OCC" --input_coverage "$BIN_TESTS" --input_coverage "$BIN_LUA" "${MERGE_EXPORTS[@]}" -- cmd.exe /c exit 0
+RC_MERGE=$?
+set -e
+if [ "$RC_MERGE" -ne 0 ]; then
+    echo "FAIL: OpenCppCoverage merge returned $RC_MERGE" >&2
     exit 1
 fi
 
@@ -159,8 +178,20 @@ fi
 
 # Extract the line-rate from Cobertura XML. Cobertura's <coverage line-rate="0.72" .../>
 # is a float in [0,1]; we surface a percentage for the threshold compare.
-LINE_RATE=$(python -c "import re,sys; t=open(r'$XML_OUT').read(); m=re.search(r'<coverage[^>]*line-rate=\"([0-9.]+)\"',t); print(m.group(1) if m else '0')")
-PCT=$(python -c "print(int(round(float('$LINE_RATE')*100)))")
+# Pass paths / values via os.environ (NOT string interpolation into `-c` source)
+# so a path / rate string cannot break the Python source or run attacker-
+# controlled code under set -euo pipefail.
+LINE_RATE=$(XML_OUT="$XML_OUT" python -c '
+import os, re
+with open(os.environ["XML_OUT"]) as f:
+    t = f.read()
+m = re.search(r"<coverage[^>]*line-rate=\"([0-9.]+)\"", t)
+print(m.group(1) if m else "0")
+')
+PCT=$(LINE_RATE="$LINE_RATE" python -c '
+import os
+print(int(round(float(os.environ["LINE_RATE"]) * 100)))
+')
 echo "[coverage] line coverage: ${PCT}% (rate=$LINE_RATE)"
 echo "[coverage] cobertura XML: $XML_OUT"
 if [ "$XML_ONLY" -eq 0 ]; then

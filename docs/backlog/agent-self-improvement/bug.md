@@ -7,21 +7,9 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-- 2026-05-17 · code-review · [bug] · P0 — `.gitattributes` does not declare `*.ppm binary`; raw P6 payload risks LF/CRLF rewrite on Windows clones
-  Details: `.gitattributes:1` carries repo-wide `* text=auto eol=lf` but does not exempt `*.ppm`. Combined, every Windows clone risks an LF/CRLF rewrite of the raw P6 byte payload → silent golden corruption, L∞ diff exceeds tolerance.
-  Concrete next action: add `*.ppm binary` + `-text` to `.gitattributes`. Verify with `git check-attr -a tests/golden/<sample>.ppm`. Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · code-review · [bug] · P1 — `CommandPaletteFuzzyScenario` flips `BackendHasBeenReachable=true` before `outErr` early-return guard; latch persists if OnStart errors
   Details: `Source_Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` snapshots `savedBackendReachable_` then flips `cfg.BackendHasBeenReachable=true` *before* the `outErr` early-return guard. If `OnStart` errors out early, `OnCancel`/`OnFinish` may never run → latch persists for the session.
   Concrete next action: move the flip *after* the error-return guard. Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
-
-- 2026-05-17 · code-review · [bug] · P1 — `scripts/dev/coverage.sh:148` second OpenCppCoverage run overwrites `coverage.xml`; SmatchetTests data silently lost
-  Details: Two OpenCppCoverage runs in sequence both target `coverage.xml`. Run 2 wipes run 1's data. Advisory threshold reading reports Lua-only coverage; SmatchetTests result is invisible.
-  Concrete next action: use `--input_coverage` to merge or `--export_type binary:...` from run 1 fed into run 2. Surfaced by retrospective code-review sweep on PR #148.
   Status: open
   Last-reviewed: 2026-05-17
 

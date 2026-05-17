@@ -127,6 +127,16 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
     return false;
 }
 
+// Per-line cap on input fed into TryParsePathLinePair. The three format regexes
+// above (MSVC path(line), Clang path:line, Unreal [File:Line]) are super-linear
+// in line length on libstdc++ / MinGW UCRT — empirical timings at -O2 against
+// the MSVC alternation: 1 KiB ~21 ms, 2 KiB ~101 ms, 4 KiB ~403 ms; >~32 KiB
+// stack-overflows the runner (0xC00000FD). Skip oversized lines wholesale so a
+// malicious paste cannot DoS the parser. 16 KiB exceeds any realistic
+// IDE-pasted frame; lines beyond it are almost certainly garbage or attacker-
+// crafted.
+static constexpr size_t kMaxLineLengthForRegex = 16384;
+
 } // namespace
 
 std::string ApplyPathRemaps(std::string path, const std::vector<PathRemapRule>& remaps) {
@@ -180,6 +190,9 @@ std::vector<ParsedCallstackFrame> ParseCallstackText(const std::string& text) {
         if (line.empty()) {
             continue;
         }
+        if (line.size() > kMaxLineLengthForRegex) {
+            continue;
+        }
 
         ParsedCallstackFrame f;
         f.RawLine = line;
@@ -195,9 +208,3 @@ std::vector<ParsedCallstackFrame> ParseCallstackText(const std::string& text) {
     }
     return out;
 }
-
-
-
-
-
-

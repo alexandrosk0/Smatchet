@@ -1,14 +1,18 @@
 # Golden screenshots — Phase 7 bucket-C verification
 
-Per-channel L∞ ≤ 4 reference PPMs consumed by
+Per-channel L∞ ≤ 4 reference PNGs consumed by
 [`scripts/dev/test-screenshot-diff.sh`](../../scripts/dev/test-screenshot-diff.sh).
+
+**Format migrated PPM → PNG on 2026-05-17** to cut repo bloat (~40× smaller
+post-compression). Bootstrap regenerates as `.png`; any leftover `.ppm` from a
+prior clone should be deleted and rebootstrapped.
 
 ## File map
 
 | File | Scenario | Captures |
 |---|---|---|
-| `dock-gap-sentinel.ppm` | `dock-gap-sentinel` | Standalone main window after dock-builder settle. Regression on any dock-gap leak, shell-chrome shift, theme retune. |
-| `command-palette-fuzzy.ppm` | `command-palette-fuzzy` | Command palette modal opened with the `scenario.` substring filter pre-applied. Regression on palette placement, fuzzy-match highlight, modal chrome. |
+| `dock-gap-sentinel.png` | `dock-gap-sentinel` | Standalone main window after dock-builder settle. Regression on any dock-gap leak, shell-chrome shift, theme retune. |
+| `command-palette-fuzzy.png` | `command-palette-fuzzy` | Command palette modal opened with the `scenario.` substring filter pre-applied. Regression on palette placement, fuzzy-match highlight, modal chrome. |
 
 ## Bootstrap protocol
 
@@ -20,13 +24,13 @@ remaining per-vendor variance.
 # First-time setup OR after intentional UI change:
 bash scripts/dev/test-screenshot-diff.sh --bootstrap
 
-# Inspect the captured PPMs (any image viewer that reads P6 PPM works):
+# Inspect the captured PNGs (any image viewer works):
 explorer tests/golden/        # Windows
 xdg-open tests/golden/        # Linux
 open tests/golden/            # macOS
 
 # Commit the new goldens so future runs gate against them:
-git add tests/golden/*.ppm
+git add tests/golden/*.png
 git commit -m "test(phase-7): refresh bucket-C goldens after <reason>"
 ```
 
@@ -56,8 +60,8 @@ before flipping to blocking. Backlog entry filed for
 1. Make the UI change (theme retune, dock reorganisation, palette redesign).
 2. `bash scripts/dev/test-screenshot-diff.sh --bootstrap` — overwrites the
    goldens with the post-change captures.
-3. Eyeball the new PPMs to confirm they match the intent.
-4. `git add tests/golden/*.ppm && git commit ...`.
+3. Eyeball the new PNGs to confirm they match the intent.
+4. `git add tests/golden/*.png && git commit ...`.
 
 ## Adding a new scenario
 

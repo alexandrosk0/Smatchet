@@ -43,6 +43,26 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "SmatchetImGuiFonts.h"
+
+// stb_image_write — single-TU implementation lives here so SmatchetStandalone
+// can encode PNGs for debug.window.screenshot output (replaces the prior raw
+// PPM dump that bloated tests/golden/* by ~40×). ThirdParty/ is on this
+// target's include path via smatchet_configure_opengl_core_impl_target.
+//
+// stb_image_write emits TGA / BMP / JPG / HDR helpers we never call —
+// suppress -Wunused-function for the impl block so the warnings don't drown
+// out real issues in main.cpp.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+#include <stb/stb_image_write.h>
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #if defined(SMATCHET_BUILD_UI_TESTS)
 // Pulls in the engine API (PostSwap) and the SmatchetActiveUiTestEngine accessor
 // without dragging nlohmann::json into main.cpp (UiTestScenario.h forward-declares
@@ -563,46 +583,46 @@ int main(int argc, char** argv) {
                 LOG_INFO("debug.window.resize: %dx%d", w, h);
             }
 
-            // Screenshot request from `debug.window.screenshot` — read framebuffer + write PPM.
-            // PPM is chosen over PNG because stb_image_write is not linked into the standalone
-            // target; PPM is uncompressed but readable by every image tool and by the harness.
+            // Screenshot request from `debug.window.screenshot` — read framebuffer + write PNG
+            // via stb_image_write. PNG keeps tests/golden/* repo bloat down (~40× smaller than
+            // raw PPM-P6 on typical UI captures) and is readable by every image tool.
             if (g_ui.requestScreenshot) {
                 g_ui.requestScreenshot = false;
                 const std::string screenshotPath = g_ui.requestScreenshotPath;
-                int fw = 0, fh = 0;
+                int fw = 0;
+                int fh = 0;
                 glfwGetFramebufferSize(window, &fw, &fh);
                 if (fw > 0 && fh > 0 && !screenshotPath.empty()) {
                     std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
                     // Read from the back buffer; we have just SwapBuffers'd, so front == previous frame.
-                    // GL_BACK after swap holds the freshly-presented frame on most drivers; use GL_FRONT
-                    // since we've already swapped — the front buffer is the most recently shown image.
                     glReadBuffer(GL_FRONT);
                     glPixelStorei(GL_PACK_ALIGNMENT, 1);
                     glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                     // Flip vertically: OpenGL origin is bottom-left, image files expect top-left.
-                    const size_t rowBytes = static_cast<size_t>(fw) * 4u;
-                    std::vector<unsigned char> flipped(pixels.size());
+                    // Drop the alpha channel — golden diffs only compare R/G/B.
+                    const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
+                    std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
                     for (int y = 0; y < fh; ++y) {
-                        std::memcpy(&flipped[static_cast<size_t>(y) * rowBytes],
-                                    &pixels[static_cast<size_t>(fh - 1 - y) * rowBytes], rowBytes);
-                    }
-                    FILE* fp = std::fopen(screenshotPath.c_str(), "wb");
-                    if (!fp) {
-                        LOG_ERROR("debug.window.screenshot: cannot open %s for writing", screenshotPath.c_str());
-                    } else {
-                        std::fprintf(fp, "P6\n%d %d\n255\n", fw, fh);
-                        for (int y = 0; y < fh; ++y) {
-                            for (int x = 0; x < fw; ++x) {
-                                const unsigned char* p = &flipped[(static_cast<size_t>(y) * static_cast<size_t>(fw) +
-                                                                   static_cast<size_t>(x)) *
-                                                                  4u];
-                                std::fputc(p[0], fp);
-                                std::fputc(p[1], fp);
-                                std::fputc(p[2], fp);
-                            }
+                        const unsigned char* src =
+                            &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
+                        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
+                        for (int x = 0; x < fw; ++x) {
+                            dst[0] = src[0];
+                            dst[1] = src[1];
+                            dst[2] = src[2];
+                            dst += 3;
+                            src += 4;
                         }
-                        std::fclose(fp);
-                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PPM)", screenshotPath.c_str(), fw, fh);
+                    }
+                    // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
+                    // dev hardware) while still cutting the file ~40× vs raw PPM.
+                    stbi_write_png_compression_level = 8;
+                    const int rc =
+                        stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), static_cast<int>(rowBytesRgb));
+                    if (rc == 0) {
+                        LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
+                    } else {
+                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
                     }
                 } else {
                     LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");

@@ -7,6 +7,24 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-17 · code-review · [bug] · P0 — `.gitattributes` did not declare `*.ppm binary`
+  Resolution: `.gitattributes` now declares `*.ppm binary` alongside existing image-binary rules. Defense in depth — the bulk PPM goldens that originally triggered the risk were migrated to PNG in the same batch so the rule applies only to any future bootstrap captures that get accidentally committed before the writer change is picked up.
+
+- 2026-05-17 · code-review · [infra] · P0 — `tests/golden/*.ppm` 5.5 MB raw PPMs bloat pack
+  Resolution: Migrated PNG via stb_image_write — vendored `ThirdParty/stb/stb_image_write.h` (single-TU impl in `Target_Standalone/main.cpp`), updated `tests/support/GoldenImage.h` + `ScreenshotDiffMain.cpp` to read PNG via stb_image, updated `scripts/dev/test-screenshot-diff.sh` to use `.png` extensions + ephemeral port + deterministic poll, refreshed `tests/golden/README.md`. Old PPMs deleted; new PNGs ~280-310 KB each (≈10× smaller than the 2.76 MB raw P6s). Bootstrap path tested end-to-end via `bash scripts/dev/test-all.sh`. lint-cpp hook adjusted to skip clang-tidy on `tests/support/*` (no compile_commands entry).
+
+- 2026-05-17 · code-review · [security] · P1 — `OpenAiClient.cpp:140-180` API key leak via raw provider error body
+  Resolution: Provider error body now flows through `smatchet::ai::pure::RedactProviderErrorBody` before being appended to `AiStreamError::Message`. Helper lives in a sibling Pure TU (`Source_Core/{include,src}/AiErrorRedact.{h,cpp}` — no cpr/httplib/SQLite includes) per AGENTS.md § Pure-helper TU-split recipe. Strips Bearer tokens, `api_key` / `apiKey` / `Authorization` / `authorization` JSON values, `sk-` / `sk_` / `org-` / `proj_` / `asst_` id prefixes; length-caps to 240 chars (down from the prior 600) with `…` suffix. Test coverage: `tests/Source_Core/AiErrorRedact.test.cpp` ships 5 `TEST_CASE`s / 20+ assertions across all redaction paths plus benign-input safety.
+
+- 2026-05-17 · code-review · [security] · P1 — `coverage.sh:155` python `-c` interpolation injection
+  Resolution: Both `python -c` invocations now pass values via `os.environ` (`XML_OUT` and `LINE_RATE`) instead of string-interpolation into the source. A path / rate containing `'` or `\` no longer breaks the script or can run attacker-controlled Python under `set -euo pipefail`.
+
+- 2026-05-17 · code-review · [bug] · P1 — `coverage.sh:148` second OpenCppCoverage run overwrote `coverage.xml`
+  Resolution: Each test exe now captures into its own binary intermediate (`coverage-tests.bin` + `coverage-lua.bin`); a third merge invocation reads both via `--input_coverage` and exports the final `coverage.xml` + optional HTML. SmatchetTests coverage is no longer silently dropped by the SmatchetLuaTests run.
+
+- 2026-05-17 · test-rig → p4-blame · [security] · P1 — `CallstackParser::ParseCallstackText` regex super-linear in line length
+  Resolution: Added a per-line length cap `kMaxLineLengthForRegex = 16384` in `Source_Core/src/CallstackParser.cpp`. Lines longer than the cap are skipped entirely without entering the three format regexes, so a malicious paste can no longer drive the parser into O(n^k) backtracking or stack-overflow the runner. New `[high-risk]` SUBCASE `64 KiB single line bypasses regex via length cap (DoS guard)` in `tests/Source_Core/CallstackParser.test.cpp` locks the contract (completes <50 ms; only the trailing real frame survives).
+
 - 2026-05-17 · code-review · [retrospective] — Recent-PR audit findings (PRs #139–#148, #151)
   Resolution: Retrospective `code-review` sweep across 13 merged PRs landed 2026-05-16/17 — four parallel `code-review` agents, read-only. Umbrella entry split into 29 per-finding atoms on 2026-05-17 (2 P0 / 6 P1 / 14 P2 / 7 P3) across bug / security / test / infra / tooling / process. See each category file for the individual entries.
 
