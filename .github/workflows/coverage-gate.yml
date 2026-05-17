@@ -1,0 +1,55 @@
+name: Coverage gate (test-delta)
+
+# Hard-blocking gate from day 1: any PR that touches Source_Core/src/*.cpp
+# without a paired test delta under tests/ is rejected. The `tests-out-of-band`
+# PR label dismisses the gate for legitimate non-behavioural changes
+# (docs-only edits, include-shape fixes, sanitizer flag flips, build-system
+# adjustments). Apply the label via the PR sidebar; any maintainer can do it.
+#
+# Why structural-not-threshold: this gate enforces "if you change behaviour,
+# add a test." The numerical coverage threshold (>=70%) is the separate
+# coverage.yml workflow's responsibility and stays advisory during the soak.
+#
+# See docs/design/test-suite-expansion-completion.md § Phase 9.
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: coverage-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  delta-gate:
+    name: Test-delta gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history for merge-base against develop
+
+      - name: Check for tests-out-of-band override label
+        id: label_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          labels=$(gh pr view "${{ github.event.pull_request.number }}" --json labels --jq '.labels[].name' | tr '\n' ',' || echo "")
+          echo "labels=$labels"
+          if echo ",$labels," | grep -q ',tests-out-of-band,'; then
+              echo "override=1" >> "$GITHUB_OUTPUT"
+              echo "::notice::tests-out-of-band label present — gate dismissed"
+          else
+              echo "override=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run delta gate
+        if: steps.label_check.outputs.override != '1'
+        env:
+          SMATCHET_COVERAGE_GATE_BASE: origin/${{ github.event.pull_request.base.ref }}
+        run: bash scripts/dev/coverage-delta-gate.sh

@@ -149,6 +149,25 @@
             }
         },
         {
+            "name": "ninja-coverage-msys2",
+            "inherits": [
+                "_smatchet-msys2-base"
+            ],
+            "displayName": "Ninja Coverage (MSYS2 UCRT64, gcov-instrumented)",
+            "description": "Coverage build for OpenCppCoverage / lcov+gcov. RelWithDebInfo + --coverage adds gcov instrumentation; OpenCppCoverage works against uninstrumented PDBs too but the instrumented build yields more accurate branch coverage on conditionals. Used by scripts/dev/coverage.sh.",
+            "binaryDir": "${sourceDir}/build/ninja-coverage-msys2",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_LUA_TESTS": "ON",
+                "CMAKE_C_FLAGS": "--coverage -fprofile-arcs -ftest-coverage",
+                "CMAKE_CXX_FLAGS": "--coverage -fprofile-arcs -ftest-coverage",
+                "CMAKE_EXE_LINKER_FLAGS": "--coverage",
+                "CMAKE_SHARED_LINKER_FLAGS": "--coverage"
+            }
+        },
+        {
             "name": "ninja-release",
             "inherits": [
                 "_smatchet-native-features"
@@ -270,6 +289,15 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-coverage-msys2",
+            "configurePreset": "ninja-coverage-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTests",
+                "SmatchetLuaTests"
             ]
         },
         {

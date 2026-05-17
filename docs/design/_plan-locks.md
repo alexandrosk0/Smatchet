@@ -134,9 +134,28 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — merged via PR #145 at sha d125b36. Phase 7 (screenshot diff) unblocked + dispatched.
 - **Cleared by**: PR `#145` merged at `d125b36`.
 
-### test-suite-expansion-completion · Phase-7 · screenshot-diff · status: in-flight
+### test-suite-expansion-completion · Phase-9 · coverage-gates · status: in-flight
 
-- **Branch**: `feat/test-phase-7-screenshot-diff`
+- **Branch**: `feat/test-phase-9-coverage-gates`
+- **Owner agent**: `build-doctor`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 9
+- **Claimed write set**:
+  - `scripts/dev/coverage.sh` (NEW — Windows-OpenCppCoverage-first wrapper; inline POSIX `lcov+gcov` fallback documented in header)
+  - `scripts/dev/coverage-delta-gate.sh` (NEW — per-PR `Source_Core/` change without test delta → exit 1)
+  - `.github/workflows/coverage.yml` (NEW — advisory coverage capture + Cobertura artifact)
+  - `.github/workflows/coverage-gate.yml` (NEW — hard-blocking test-delta gate from day 1; `tests-out-of-band` label dismisses)
+  - `CMakePresets.json` (append `ninja-coverage-msys2` extending `ninja-test-msys2` with gcov instrumentation)
+  - `docs/design/_plan-locks.md` (this self-status flip + Phase-7 flip)
+  - `docs/design/test-suite-expansion-completion.md` (impl-log + deviations + verification appendices)
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)
+- **Read-only adjacency**: `.github/workflows/build-and-test.yml` (pattern reference only), `cmake/Sanitizers.cmake` (helper convention reference)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — implemented + gates green. ninja-coverage-msys2 preset configures clean; 313/313 build; ctest 2/2 PASS under instrumentation; delta-gate PASS on this slice's diff (no Source_Core/src/ touch); ninja-iter-msys2 dual-target (Standalone+DX12) clean; test-all.sh 166 passed / 8 failed (same pre-existing bucket-E exclusions noted in Phase 6/7 verification). OpenCppCoverage absent locally → coverage.sh hit the documented exit-2 install-hint branch; CI runner installs via Chocolatey. PR pending.
+- **Cleared by**: TBD PR.
+
+### test-suite-expansion-completion · Phase-7 · screenshot-diff · status: shipped (PR #146 merged at d857310)
+
+- **Branch**: `feat/test-phase-7-screenshot-diff` (deleted)
 - **Owner agent**: `test-author`
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 7
 - **Claimed write set**:
@@ -159,8 +178,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (DX12 backbuffer readback follow-up + headless-CI display-server follow-up)
 - **Read-only adjacency**: `Source_Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` (debug.window.screenshot already wired), `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp`, `Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`, `Target_Standalone/main.cpp` (PPM writer already present at line 569).
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — dispatched. Both new scenarios fit the existing IScenario/ScenarioRunner contract; screenshot capture re-uses the pre-existing `debug.window.screenshot` flag pair (no new command surface — plan packet's BuiltinCommands_Debug.cpp delta was satisfied by prior infra).
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-16 — merged via PR #146 at sha d857310. 2 scenarios (`dock-gap-sentinel`, `command-palette-fuzzy`) + GoldenImage.h + bash driver + advisory CI step (`continue-on-error: true` until 2026-05-30). Auto-bootstrap on first run; subsequent runs gate at L∞ <= 4.
+- **Cleared by**: PR `#146` merged at `d857310`.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)
 
