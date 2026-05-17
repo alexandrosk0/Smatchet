@@ -460,6 +460,22 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — Phase A code committed locally (skeleton + OpenAiClient + NetworkUsageTracker re-fit + CMake option/shim). Both targets build clean. Push + PR pending. Phases B-E unscoped pending Phase A ship + Track-B / umbrella status check.
 - **Cleared by**: TBD.
 
+### callstack-cell-tooltip-hover-bucket-e · status: in-flight
+
+- **Branch**: `test/callstack-tooltip-hover-bucket-e` (off `fix/callstack-cell-tooltip-hover-group`)
+- **Owner agent**: `test-author`
+- **Originating plan**: PR [#147](https://github.com/alexandrosk0/Smatchet/pull/147) regression gate (bucket-E coverage for `RenderClippedFieldText` BeginGroup hover fix in `Source_Core/src/SmatchetFieldRender.cpp`)
+- **Claimed write set**:
+  - `tests/ui/callstack_tooltip_hover.test.cpp` (NEW)
+  - `tests/ui/CMakeLists.txt` (append-only — add the new TU)
+  - `tests/ui/ui_tests_registry.cpp` (append-only — register entry point)
+  - `scripts/dev/test-callstack-tooltip-hover.sh` (NEW — bucket-E driver)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/SmatchetFieldRender.h`, `Source_Core/src/SmatchetFieldRender.cpp` (under-test surface — must NOT edit)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — bucket-E regression gate for the `BeginGroup`/`EndGroup` wrap; sanity-check confirmed test fails if the wrap is removed.
+- **Cleared by**: TBD PR against `develop`.
+
 ## Shipped recent entries
 
 (Pruned after ~14 days. Kept here briefly to give concurrent agents recent context.)

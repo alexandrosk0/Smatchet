@@ -9,9 +9,11 @@
 #include "imgui_te_engine.h"
 
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
 
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
+    SmatchetRegisterCallstackTooltipHoverTests(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
