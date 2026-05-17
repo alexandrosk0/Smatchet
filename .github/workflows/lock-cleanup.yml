@@ -1,0 +1,90 @@
+name: Plan-lock cleanup
+
+# Auto-releases a refs/locks/<slug> ref when its associated PR is merged
+# to develop. The PR body must contain a single `lock-slug: <slug>` line
+# (typically pulled from the PR template). Without that line the workflow
+# is a no-op — the ref remains and will surface via the Phase 4 staleness
+# sweep eventually.
+#
+# Phase 3 of docs/design/git-ref-plan-locks.md.
+#
+# Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
+# Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub
+# App and is deferred to Phase 7 hardening. Mitigation today: this
+# workflow is short, single-purpose, and runs only on merged PRs.
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: plan-lock-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release refs/locks/<slug> on merge
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Parse lock-slug from PR body
+        id: parse
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # PR body may be empty for some PR shapes; treat as no slug.
+          if [ -z "${PR_BODY:-}" ]; then
+            echo "::notice::PR body empty; no lock-slug to release."
+            echo "slug=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Single-line match: `lock-slug: <slug>` with optional surrounding
+          # whitespace. First match wins. Slug must match the same regex
+          # the lock-claim.sh script enforces.
+          slug=$(printf '%s' "$PR_BODY" \
+            | grep -oE '^[[:space:]]*lock-slug:[[:space:]]*[a-z0-9][a-z0-9-]{0,63}[[:space:]]*$' \
+            | head -n1 \
+            | sed -E 's/^[[:space:]]*lock-slug:[[:space:]]*//; s/[[:space:]]*$//' \
+            || true)
+
+          if [ -z "$slug" ]; then
+            echo "::notice::No 'lock-slug: <slug>' line found in PR body; no release."
+            echo "slug=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Belt-and-braces validation (grep already gated this).
+          if ! printf '%s' "$slug" | grep -qE '^[a-z0-9][a-z0-9-]{0,63}$'; then
+            echo "::error::Parsed slug '$slug' does not match the lock-slug grammar; refusing to act."
+            exit 1
+          fi
+
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "::notice::Parsed lock-slug=$slug from PR #${{ github.event.pull_request.number }}."
+
+      - name: Delete refs/locks/<slug> if present
+        if: steps.parse.outputs.slug != ''
+        env:
+          SLUG: ${{ steps.parse.outputs.slug }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          ref="refs/locks/${SLUG}"
+          # Check existence via the REST API to avoid needing a checkout.
+          # `gh api` returns non-zero on 404.
+          if gh api "repos/${{ github.repository }}/git/${ref}" >/dev/null 2>&1; then
+            echo "::notice::Deleting ${ref}."
+            gh api -X DELETE "repos/${{ github.repository }}/git/${ref}"
+            echo "::notice::Deleted ${ref}."
+          else
+            echo "::notice::${ref} already absent on origin; no-op."
+          fi

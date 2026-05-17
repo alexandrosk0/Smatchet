@@ -241,6 +241,7 @@ Filled in during each phase.
 - Phase 0: results section appended below.
 - Phase 1: `bash scripts/dev/test-lock-primitives.sh` green (8/8). Also auto-discovered by `bash scripts/dev/test-all.sh --filter lock-primitives`.
 - Phase 2: local `bash scripts/dev/locks-render-markdown.sh` renders empty-state stub and the populated state of a temporary `tmp-render-smoke` claim correctly. Initial `docs/design/_plan-locks.generated.md` committed. Workflow `locks-render.yml` end-to-end run deferred to first dispatch post-merge — `act` simulation skipped due to GitHub-specific `gh` + permissions context.
+- Phase 3: workflow YAML lints clean under GitHub Actions parser conventions (manual review of the `gh api`-based delete path). End-to-end run deferred to first real merged PR carrying a `lock-slug:` line — exercised at Phase 6 cutover at the latest. Dry-run alternative: open a draft PR with a synthetic `lock-slug: tmp-cleanup-smoke` line + a corresponding `refs/locks/tmp-cleanup-smoke` ref, then close-and-merge the draft.
 - Phase 2: ref push triggers render PR within 5 min; merged PR produces matching `_plan-locks.md`.
 - Phase 3: synthetic merge → ref deleted within 60 s.
 - Phase 4: backdated ref → Issue opened within 24 h.
@@ -291,7 +292,8 @@ Phase 7 is reactive — ship each item when the corresponding pain surfaces.
 - 2026-05-17 · `773d42a` · Phase 0 pre-flight complete; environment greenlit Phases 1–6.
 - 2026-05-17 · `0d67b8e` · Phase 1 — primitive scripts + Python helper + sandboxed test (8/8). Live end-to-end smoke against `origin` for `refs/locks/tmp-smoke-live` PASS (claim → show → release → idempotent re-release).
 - 2026-05-17 · `84073bc` · post-Phase-1 audit: hostile-takeover risk row added to risk register; dogfood plan-lock entry added to `docs/design/_plan-locks.md`.
-- 2026-05-17 · Phase 2 landed locally on `feat/git-ref-plan-locks`: render script + workflow + banner + initial generated file. Live render against `origin` PASS (empty state + populated state via temporary `tmp-render-smoke` claim). Workflow not yet smoke-tested end-to-end — first dispatch happens after the branch lands.
+- 2026-05-17 · Phase 2 landed locally on `feat/git-ref-plan-locks`: render script + workflow + banner + initial generated file. Live render against `origin` PASS (empty state + populated state via temporary `tmp-render-smoke` claim). Workflow not yet smoke-tested end-to-end — first dispatch happens after the branch lands. PR [#194](https://github.com/alexandrosk0/Smatchet/pull/194) opened as draft.
+- 2026-05-17 · Phase 3 landed locally on `feat/git-ref-plan-locks-phase-3` (stacked on PR #194): cleanup workflow `.github/workflows/lock-cleanup.yml` parses `lock-slug:` line from PR body on merge and deletes the corresponding ref via `gh api DELETE`. PR template appended with optional `lock-slug:` instruction. End-to-end run deferred to first real PR-merge post-merge of this branch.
 
 ## Deviations from plan
 
