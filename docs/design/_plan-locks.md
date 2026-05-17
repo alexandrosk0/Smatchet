@@ -50,6 +50,29 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### test-suite-expansion-completion · Phase-5-preflight · mcp-jsonrpc-pure-tu-split · status: in-flight
+
+- **Branch**: `feat/mcp-jsonrpc-pure-tu-split`
+- **Owner agent**: `mcp-toolsmith`
+- **Originating plan**: backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol pure logic entombed in cpr/httplib-tainted lambda`.
+- **Claimed write set**:
+  - `Plugins/Mcp/McpJsonRpcPure.h` (NEW)
+  - `Plugins/Mcp/McpJsonRpcPure.cpp` (NEW)
+  - `Plugins/Mcp/McpPlugin.cpp` (move-out + using-decls only; zero semantic change)
+  - `CMakeLists.txt` (add `McpJsonRpcPure.cpp` to `SmatchetPlugin_Mcp` + `SmatchetPlugin_Mcp_DX12`)
+  - `docs/design/_plan-locks.md`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
+- **Read-only adjacency**: `Plugins/Mcp/McpPlugin.h`, `Source_Core/include/SmatchetDefaults.h`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — TU split landed locally on branch; gates green (standalone + DX12 + 284/1509 ctest).
+- **Cleared by**: TBD PR.
+
+### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)
+
+- **Originally claimed** by machine-A under the older `test-suite-expansion.md` umbrella. Superseded by `test-suite-expansion-completion.md` per-phase claims (Phase 1 / Phase 4 already shipped; Phase 5 abandoned + this pre-flight unblocker now in-flight). Pruned in coordination with the Phase 5 unblocker so the lock file reflects the real per-phase state.
+- **Cleared by**: superseded — see this plan's per-phase entries.
+
 ### test-suite-expansion-completion · Phase-4 · config-schema-migration · status: shipped (PR #134 merged at 3e19f93)
 
 - **Branch**: `feat/test-phase-4-config-migration` (deleted)
@@ -320,25 +343,13 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — PR `#103` opened against `develop`.
 - **Cleared by**: pending merge of [#103](https://github.com/alexandrosk0/Smatchet/pull/103).
 
-### test-suite-expansion · phases 2–9 · status: claimed
+### test-suite-expansion · phases 2–9 · status: abandoned (superseded by `test-suite-expansion-completion.md` per-phase claims)
 
-- **Branch**: TBD per phase (`feat/test-phase-{N}-{slug}`)
-- **Owner agent**: orchestrator (autonomous; see [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Execution contract)
-- **Originating plan**: [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Phases 2-9
-- **Claimed write set** (umbrella claim — narrows per phase as each kicks off):
-  - `Source_Core/src/TicketSyncService.cpp` (phase ~2 — `ApplyIssueFetchPack` tests)
-  - `Source_Core/src/LocalCacheManager.cpp` (phase ~3 — `SaveTicket` transaction tests)
-  - `Source_Core/src/ConfigManager*.cpp` (phase ~4 — config migration tests)
-  - `Source_Core/src/CallstackParser.cpp` (phase ~5 — blame-path tests)
-  - `Plugins/Mcp/**` (phase ~6 — JSON-RPC wire-protocol harness)
-  - `Plugins/LuaConsole/**` (phase ~7 — Lua sandbox / timeout tests)
-  - `tests/CMakeLists.txt` (every phase)
-  - `tests/Source_Core/**` (every phase, new files)
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix per phase)
-- **Read-only adjacency**: every Source_Core header used by tested code.
+- **Original Owner**: orchestrator (autonomous; see [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Execution contract).
+- **Superseded by**: Phase-by-phase claims under `test-suite-expansion-completion.md`. Phases 1 + 4 shipped; Phase 5 abandoned then unblocked by the `mcp-jsonrpc-pure-tu-split` slice above. The umbrella claim was never honoured across the 8 phases that actually shipped against develop.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — phase 1 in flight; downstream phases umbrella-claimed to block conflicting Track-B work on the same files.
-- **Cleared by**: TBD.
+- **Last update**: 2026-05-16 — converted `claimed` → `abandoned` by the Phase-5 pre-flight unblocker so the lock file matches reality.
+- **Cleared by**: superseded.
 
 ### large-files-and-phase-2 · Track B (B1–B3 + fix-up) · status: on-hold
 
