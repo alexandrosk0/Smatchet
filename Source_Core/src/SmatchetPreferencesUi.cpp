@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -405,8 +406,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s",
                               d.cfg.ProjectAgentsMdPath.c_str());
             }
-            const bool globalChanged = ImGui::InputText("Global agents.md path", s_agentsMdGlobalBuf,
-                                                        sizeof(s_agentsMdGlobalBuf));
+            const bool globalChanged =
+                ImGui::InputText("Global agents.md path", s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf));
             ImGui::SetItemTooltip("Default location is %LOCALAPPDATA%/Smatchet/agents.md (resolved at load time). "
                                   "Override to point at a checked-in shared file if your team keeps one.");
             const bool projectChanged = ImGui::InputText("Project agents.md path (optional override)",
@@ -451,14 +452,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             const std::vector<AiClientFactory::ProviderEntry> providers = AiClientFactory::EnumeratedProviders();
             std::vector<const char*> providerLabels;
             providerLabels.reserve(providers.size());
-            for (const auto& p : providers)
-                providerLabels.push_back(p.Display.c_str());
+            std::transform(providers.begin(), providers.end(), std::back_inserter(providerLabels),
+                           [](const AiClientFactory::ProviderEntry& p) { return p.Display.c_str(); });
             int providerIdx = 0;
-            for (std::size_t i = 0; i < providers.size(); ++i) {
-                if (static_cast<int>(providers[i].Kind) == d.cfg.AiProviderKind) {
-                    providerIdx = static_cast<int>(i);
-                    break;
-                }
+            auto providerIt =
+                std::find_if(providers.begin(), providers.end(), [&](const AiClientFactory::ProviderEntry& p) {
+                    return static_cast<int>(p.Kind) == d.cfg.AiProviderKind;
+                });
+            if (providerIt != providers.end()) {
+                providerIdx = static_cast<int>(std::distance(providers.begin(), providerIt));
             }
             if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
                              static_cast<int>(providerLabels.size()))) {
@@ -502,8 +504,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 // Falls back to a free-form InputText otherwise (OllamaOpenAi
                 // surfaces here, but its models are local + user-defined).
                 bool modelChanged = false;
-                const std::vector<smatchet::ai::ModelOption> catalog =
-                    smatchet::ai::KnownModels(selectedKind);
+                const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(selectedKind);
                 if (!catalog.empty()) {
                     std::vector<std::string> displays;
                     displays.reserve(catalog.size());
@@ -512,15 +513,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     }
                     std::vector<const char*> displayPtrs;
                     displayPtrs.reserve(displays.size());
-                    for (const auto& s : displays) {
-                        displayPtrs.push_back(s.c_str());
-                    }
+                    std::transform(displays.begin(), displays.end(), std::back_inserter(displayPtrs),
+                                   [](const std::string& s) { return s.c_str(); });
                     int selectedIdx = -1;
-                    for (std::size_t i = 0; i < catalog.size(); ++i) {
-                        if (catalog[i].Id == s_openAiModelBuf) {
-                            selectedIdx = static_cast<int>(i);
-                            break;
-                        }
+                    auto it = std::find_if(catalog.begin(), catalog.end(), [&](const smatchet::ai::ModelOption& m) {
+                        return m.Id == s_openAiModelBuf;
+                    });
+                    if (it != catalog.end()) {
+                        selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
                     }
                     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
                     if (ImGui::Combo("OpenAI model", &comboIdx, displayPtrs.data(),
@@ -534,8 +534,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         ImGui::TextDisabled("(custom: %s)", s_openAiModelBuf);
                     }
                     if (ImGui::CollapsingHeader("Custom OpenAI model ID (advanced)")) {
-                        if (ImGui::InputText("##openai_custom", s_openAiModelBuf,
-                                             sizeof(s_openAiModelBuf))) {
+                        if (ImGui::InputText("##openai_custom", s_openAiModelBuf, sizeof(s_openAiModelBuf))) {
                             modelChanged = true;
                         }
                     }
@@ -559,8 +558,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     "Anthropic API key (sk-ant-...). Stored DPAPI-protected at rest (Windows); plaintext fallback "
                     "on other OS.");
                 bool modelChanged = false;
-                const std::vector<smatchet::ai::ModelOption> catalog =
-                    smatchet::ai::KnownModels(AiProvider::Anthropic);
+                const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(AiProvider::Anthropic);
                 if (!catalog.empty()) {
                     std::vector<std::string> displays;
                     displays.reserve(catalog.size());
@@ -569,15 +567,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     }
                     std::vector<const char*> displayPtrs;
                     displayPtrs.reserve(displays.size());
-                    for (const auto& s : displays) {
-                        displayPtrs.push_back(s.c_str());
-                    }
+                    std::transform(displays.begin(), displays.end(), std::back_inserter(displayPtrs),
+                                   [](const std::string& s) { return s.c_str(); });
                     int selectedIdx = -1;
-                    for (std::size_t i = 0; i < catalog.size(); ++i) {
-                        if (catalog[i].Id == s_anthropicModelBuf) {
-                            selectedIdx = static_cast<int>(i);
-                            break;
-                        }
+                    auto it = std::find_if(catalog.begin(), catalog.end(), [&](const smatchet::ai::ModelOption& m) {
+                        return m.Id == s_anthropicModelBuf;
+                    });
+                    if (it != catalog.end()) {
+                        selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
                     }
                     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
                     if (ImGui::Combo("Anthropic model", &comboIdx, displayPtrs.data(),
@@ -591,14 +588,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         ImGui::TextDisabled("(custom: %s)", s_anthropicModelBuf);
                     }
                     if (ImGui::CollapsingHeader("Custom Anthropic model ID (advanced)")) {
-                        if (ImGui::InputText("##anthropic_custom", s_anthropicModelBuf,
-                                             sizeof(s_anthropicModelBuf))) {
+                        if (ImGui::InputText("##anthropic_custom", s_anthropicModelBuf, sizeof(s_anthropicModelBuf))) {
                             modelChanged = true;
                         }
                     }
                 } else {
-                    modelChanged = ImGui::InputText("Anthropic model", s_anthropicModelBuf,
-                                                    sizeof(s_anthropicModelBuf));
+                    modelChanged =
+                        ImGui::InputText("Anthropic model", s_anthropicModelBuf, sizeof(s_anthropicModelBuf));
                     ImGui::SetItemTooltip("Anthropic model identifier.");
                 }
                 const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
@@ -615,9 +611,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 const bool modelChanged = ImGui::InputText("Ollama model", s_ollamaModelBuf, sizeof(s_ollamaModelBuf));
                 ImGui::SetItemTooltip("Locally-installed model name. e.g. llama3, qwen2.5, mistral, "
                                       "deepseek-r1. Run `ollama list` to see what's installed.");
-                const bool baseChanged = ImGui::InputText("Ollama base URL", s_ollamaBaseUrlBuf,
-                                                          sizeof(s_ollamaBaseUrlBuf));
-                ImGui::SetItemTooltip("Default http://localhost:11434. Override for a remote Ollama daemon on the LAN.");
+                const bool baseChanged =
+                    ImGui::InputText("Ollama base URL", s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf));
+                ImGui::SetItemTooltip(
+                    "Default http://localhost:11434. Override for a remote Ollama daemon on the LAN.");
                 if (modelChanged || baseChanged) {
                     d.cfg.AiModelOllama = s_ollamaModelBuf;
                     d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
