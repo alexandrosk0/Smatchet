@@ -50,9 +50,33 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-side-panel · Phase C · agents-md-loader-and-context-builder · status: claimed
+### ai-assistant-side-panel · Phase D · clients-and-provider-combo · status: claimed
 
-- **Branch**: `feat/ai-assistant-side-panel-phase-c`
+- **Branch**: `feat/ai-assistant-side-panel-phase-d`
+- **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § Streaming protocol (Anthropic SSE + Ollama native) + § File-level changes (Phase D rows) + § Preferences extension
+- **Claimed write set**:
+  - `Source_Core/include/AiNdjsonParser.h` (NEW — line-buffered NDJSON sibling to `AiSseParser`)
+  - `Source_Core/src/AiNdjsonParser.cpp` (NEW)
+  - `Source_Core/include/AnthropicClient.h` (NEW — `IAiClient` impl driving `/v1/messages` Native Messages API)
+  - `Source_Core/src/AnthropicClient.cpp` (NEW)
+  - `Source_Core/include/OllamaClient.h` (NEW — `IAiClient` impl driving `/api/chat` NDJSON)
+  - `Source_Core/src/OllamaClient.cpp` (NEW)
+  - `Source_Core/src/AiClientFactory.cpp` (MOD — Anthropic + OllamaNative branches return non-null impls; drop Phase A placeholder LOG_WARN/nullptr)
+  - `tests/Source_Core/AiNdjsonParser.test.cpp` (NEW — ≥ 6 cases / ≥ 30 assertions, ≥ 1 `[high-risk]`)
+  - `tests/Source_Core/AiClientFactory.test.cpp` (MOD — flip 2 nullptr assertions to non-null + `GetProviderName()` match)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — complete Assistant group: provider Combo, masked OpenAI + Anthropic API key inputs, per-provider model inputs, base URL inputs)
+  - `tests/CMakeLists.txt` (MOD — append `AiNdjsonParser.test.cpp` + `AiNdjsonParser.cpp` + `AnthropicClient.cpp` + `OllamaClient.cpp`)
+  - `docs/design/ai-assistant-side-panel.md` (revise — append Implementation log row + Deviations + extend Verification)
+  - `docs/design/_plan-locks.md` (this entry + Phase C flip to shipped)
+- **Read-only adjacency**: `Source_Core/include/AiSseParser.h`, `Source_Core/src/AiSseParser.cpp`, `Source_Core/include/IAiClient.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/ConfigManager.h` (Ai field set already shipped Phase A'), `Source_Core/src/OpenAiClient.cpp` (template for cancel/WriteCallback/NetworkUsageTracker shape).
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched.
+- **Cleared by**: TBD PR.
+
+### ai-assistant-side-panel · Phase C · agents-md-loader-and-context-builder · status: shipped (PR #168 merged at 339eb24)
+
+- **Branch**: `feat/ai-assistant-side-panel-phase-c` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
 - **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
 - **Claimed write set**:
@@ -70,8 +94,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (this entry)
 - **Read-only adjacency**: `Source_Core/include/AiAssistantController.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/ConfigManager.h` (Ai field set + 5 context-block toggles + agents.md paths already shipped Phase A'), `Source_Core/include/AppController.h` (`GetActiveTicketsSnapshot` + `IsOnUiThread`), `Source_Core/include/SpreadsheetState.h` (`RectSel.Rows` + `ActiveIssueId`), `Source_Core/include/SmatchetUiSession.h` (`cachedSortedIndices` + `assistantContextBlock*` runtime mirror), `Source_Core/include/BackendAuditTrail.h` (`ReadRecentEvents`), `Source_Core/include/Views.h` + `ConfigManager::ViewDefinition` (active view + JQL + columns).
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — dispatched.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#168](https://github.com/alexandrosk0/Smatchet/pull/168) at sha `339eb24`. SmatchetTests aggregate post-Phase-C: 357 cases / 1836 assertions.
+- **Cleared by**: PR `#168` merged at `339eb24`.
 
 ### ai-assistant-side-panel · Phase B · side-panel-ui-and-controller · status: shipped (PR #163 merged at dd703ab)
 

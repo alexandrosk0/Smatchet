@@ -1,10 +1,10 @@
 // AiClientFactory pure-logic tests — exercises Source_Core/include/AiClientFactory.h.
 // Phase A' coverage: enum round-trip stability + factory branch-by-provider behaviour.
 //
-// MakeAiClient(OpenAi) returns a non-null OpenAiClient. MakeAiClient(Anthropic) and
-// MakeAiClient(OllamaNative) return nullptr until Phase D wires AnthropicClient +
-// OllamaClient. EnumeratedProviders() must list all four kinds in stable insertion order
-// so the Preferences Combo (Phase B / Phase D) renders deterministically.
+// MakeAiClient(OpenAi) returns a non-null OpenAiClient. Phase D flipped the Anthropic
+// and OllamaNative branches to return non-null AnthropicClient + OllamaClient instances.
+// EnumeratedProviders() must list all four kinds in stable insertion order so the
+// Preferences Combo (Phase B / Phase D) renders deterministically.
 
 #include "AiClientFactory.h"
 #include "AiTypes.h"
@@ -83,12 +83,14 @@ TEST_CASE("AiClientFactory: MakeAiClient(OllamaOpenAiCompat) also returns a non-
     CHECK(client->GetProviderName() == "openai");
 }
 
-TEST_CASE("AiClientFactory: MakeAiClient(Anthropic) returns nullptr until Phase D wires AnthropicClient") {
+TEST_CASE("AiClientFactory: MakeAiClient(Anthropic) returns a non-null AnthropicClient (Phase D)") {
     std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::Anthropic);
-    CHECK(client == nullptr);
+    REQUIRE(client != nullptr);
+    CHECK(client->GetProviderName() == "anthropic");
 }
 
-TEST_CASE("AiClientFactory: MakeAiClient(OllamaNative) returns nullptr until Phase D wires OllamaClient") {
+TEST_CASE("AiClientFactory: MakeAiClient(OllamaNative) returns a non-null OllamaClient (Phase D)") {
     std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::OllamaNative);
-    CHECK(client == nullptr);
+    REQUIRE(client != nullptr);
+    CHECK(client->GetProviderName() == "ollama");
 }

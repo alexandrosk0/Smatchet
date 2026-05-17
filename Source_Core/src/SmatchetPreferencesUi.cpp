@@ -1,5 +1,10 @@
 #include "SmatchetUI.h"
 
+#if defined(SMATCHET_WITH_AI)
+#include "AiClientFactory.h"
+#include "AiTypes.h"
+#endif
+
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
@@ -412,9 +417,106 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ConfigManager::Save(d.cfg);
             }
             ImGui::Spacing();
-            ImGui::TextDisabled(
-                "Provider, API keys, model selection, and base URLs land in this tab in a future phase. For now "
-                "edit smatchet_config.json directly to switch providers.");
+            ImGui::Separator();
+            ImGui::TextUnformatted("Provider");
+            ImGui::Spacing();
+
+            // Provider Combo — enumerated via AiClientFactory so display order stays
+            // stable across builds and matches the AiProvider enum (load-bearing for
+            // round-tripping persisted AiProviderKind int).
+            const std::vector<AiClientFactory::ProviderEntry> providers = AiClientFactory::EnumeratedProviders();
+            std::vector<const char*> providerLabels;
+            providerLabels.reserve(providers.size());
+            for (const auto& p : providers)
+                providerLabels.push_back(p.Display.c_str());
+            int providerIdx = 0;
+            for (std::size_t i = 0; i < providers.size(); ++i) {
+                if (static_cast<int>(providers[i].Kind) == d.cfg.AiProviderKind) {
+                    providerIdx = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(),
+                             static_cast<int>(providerLabels.size()))) {
+                d.cfg.AiProviderKind = static_cast<int>(providers[providerIdx].Kind);
+                ConfigManager::Save(d.cfg);
+            }
+            const AiProvider selectedKind = providers[providerIdx].Kind;
+
+            // Per-provider input buffers. Seeded once from cfg + reseeded whenever the
+            // provider changes (so a user can edit a buffer, switch providers, switch
+            // back, and see their persisted value rather than the unsaved buffer).
+            static char s_openAiKeyBuf[1024] = {};
+            static char s_anthropicKeyBuf[1024] = {};
+            static char s_openAiModelBuf[256] = {};
+            static char s_anthropicModelBuf[256] = {};
+            static char s_ollamaModelBuf[256] = {};
+            static char s_baseUrlBuf[512] = {};
+            static char s_ollamaBaseUrlBuf[512] = {};
+            static bool s_aiBufsSeeded = false;
+            static int s_lastSeededProvider = -1;
+            if (!s_aiBufsSeeded || s_lastSeededProvider != d.cfg.AiProviderKind) {
+                s_aiBufsSeeded = true;
+                s_lastSeededProvider = d.cfg.AiProviderKind;
+                std::snprintf(s_openAiKeyBuf, sizeof(s_openAiKeyBuf), "%s", d.cfg.AiApiKey.c_str());
+                std::snprintf(s_anthropicKeyBuf, sizeof(s_anthropicKeyBuf), "%s", d.cfg.AiAnthropicApiKey.c_str());
+                std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s", d.cfg.AiModelOpenAi.c_str());
+                std::snprintf(s_anthropicModelBuf, sizeof(s_anthropicModelBuf), "%s", d.cfg.AiModelAnthropic.c_str());
+                std::snprintf(s_ollamaModelBuf, sizeof(s_ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
+                std::snprintf(s_baseUrlBuf, sizeof(s_baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
+                std::snprintf(s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
+            }
+
+            ImGui::Spacing();
+            if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
+                const bool keyChanged = ImGui::InputText("OpenAI / compat API key", s_openAiKeyBuf,
+                                                         sizeof(s_openAiKeyBuf), ImGuiInputTextFlags_Password);
+                ImGui::SetItemTooltip(
+                    "OpenAI / Azure / Groq / Together / Ollama-OpenAI-compat key. Stored DPAPI-protected at rest "
+                    "(Windows); plaintext fallback on other OS.");
+                const bool modelChanged = ImGui::InputText("OpenAI model", s_openAiModelBuf, sizeof(s_openAiModelBuf));
+                ImGui::SetItemTooltip("e.g. gpt-4o-mini, gpt-4o, o1-mini, or any OpenAI-compatible model identifier.");
+                const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
+                ImGui::SetItemTooltip("Leave blank for https://api.openai.com. Override for Azure / Groq / Together "
+                                      "/ Ollama-OpenAI-compat endpoints. The /v1/chat/completions path is appended.");
+                if (keyChanged || modelChanged || baseChanged) {
+                    d.cfg.AiApiKey = s_openAiKeyBuf;
+                    d.cfg.AiModelOpenAi = s_openAiModelBuf;
+                    d.cfg.AiBaseUrl = s_baseUrlBuf;
+                    ConfigManager::Save(d.cfg);
+                }
+            } else if (selectedKind == AiProvider::Anthropic) {
+                const bool keyChanged = ImGui::InputText("Anthropic API key", s_anthropicKeyBuf,
+                                                         sizeof(s_anthropicKeyBuf), ImGuiInputTextFlags_Password);
+                ImGui::SetItemTooltip(
+                    "Anthropic API key (sk-ant-...). Stored DPAPI-protected at rest (Windows); plaintext fallback "
+                    "on other OS.");
+                const bool modelChanged = ImGui::InputText("Anthropic model", s_anthropicModelBuf,
+                                                            sizeof(s_anthropicModelBuf));
+                ImGui::SetItemTooltip("e.g. claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5.");
+                const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
+                ImGui::SetItemTooltip("Leave blank for https://api.anthropic.com. Override only if you're routing "
+                                      "through an Anthropic-compatible proxy.");
+                if (keyChanged || modelChanged || baseChanged) {
+                    d.cfg.AiAnthropicApiKey = s_anthropicKeyBuf;
+                    d.cfg.AiModelAnthropic = s_anthropicModelBuf;
+                    d.cfg.AiBaseUrl = s_baseUrlBuf;
+                    ConfigManager::Save(d.cfg);
+                }
+            } else if (selectedKind == AiProvider::OllamaNative) {
+                ImGui::TextDisabled("Ollama is local — no API key required.");
+                const bool modelChanged = ImGui::InputText("Ollama model", s_ollamaModelBuf, sizeof(s_ollamaModelBuf));
+                ImGui::SetItemTooltip("Locally-installed model name. e.g. llama3, qwen2.5, mistral, "
+                                      "deepseek-r1. Run `ollama list` to see what's installed.");
+                const bool baseChanged = ImGui::InputText("Ollama base URL", s_ollamaBaseUrlBuf,
+                                                          sizeof(s_ollamaBaseUrlBuf));
+                ImGui::SetItemTooltip("Default http://localhost:11434. Override for a remote Ollama daemon on the LAN.");
+                if (modelChanged || baseChanged) {
+                    d.cfg.AiModelOllama = s_ollamaModelBuf;
+                    d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
+                    ConfigManager::Save(d.cfg);
+                }
+            }
             ImGui::EndTabItem();
         }
 #endif

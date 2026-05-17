@@ -1,0 +1,192 @@
+#include "OllamaClient.h"
+
+#include "AiNdjsonParser.h"
+#include "Logger.h"
+#include "NetworkUsageTracker.h"
+
+#include <cpr/cpr.h>
+#include <nlohmann/json.hpp>
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+
+namespace {
+
+constexpr const char* kDefaultBaseUrl = "http://localhost:11434";
+
+std::string ResolveBaseUrl(const AiClientConfig& cfg) {
+    if (!cfg.BaseUrl.empty())
+        return cfg.BaseUrl;
+    return kDefaultBaseUrl;
+}
+
+std::string JoinUrl(const std::string& base, const char* path) {
+    if (base.empty())
+        return std::string(path);
+    if (base.back() == '/')
+        return base.substr(0, base.size() - 1) + path;
+    return base + path;
+}
+
+nlohmann::json BuildChatBody(const AiChatRequest& req) {
+    nlohmann::json body;
+    body["model"] = req.Model;
+    body["stream"] = true;
+    // Ollama native /api/chat consumes `system` either via a leading {role:"system"}
+    // message or via a top-level `system` field. Emit top-level for symmetry with
+    // the Anthropic + OpenAI clients.
+    if (!req.SystemPrompt.empty())
+        body["system"] = req.SystemPrompt;
+
+    // Ollama supports an `options` block for sampling parameters.
+    if (req.Temperature >= 0.0f) {
+        nlohmann::json options;
+        options["temperature"] = req.Temperature;
+        if (req.MaxTokens > 0)
+            options["num_predict"] = req.MaxTokens;
+        body["options"] = std::move(options);
+    } else if (req.MaxTokens > 0) {
+        nlohmann::json options;
+        options["num_predict"] = req.MaxTokens;
+        body["options"] = std::move(options);
+    }
+
+    nlohmann::json messages = nlohmann::json::array();
+    for (const auto& h : req.History) {
+        nlohmann::json m;
+        m["role"] = h.Role;
+        m["content"] = h.Content;
+        messages.push_back(std::move(m));
+    }
+    body["messages"] = std::move(messages);
+    return body;
+}
+
+void DispatchOllamaLine(const nlohmann::json& j, const IAiClient::DeltaCallback& onDelta, bool& sawFinal) {
+    if (!j.is_object())
+        return;
+
+    AiStreamDelta d;
+    if (j.contains("message") && j["message"].is_object()) {
+        const auto& msg = j["message"];
+        if (msg.contains("content") && msg["content"].is_string())
+            d.TokenChunk = msg["content"].get<std::string>();
+    }
+
+    bool done = false;
+    if (j.contains("done") && j["done"].is_boolean())
+        done = j["done"].get<bool>();
+    d.IsFinal = done;
+    if (done) {
+        if (j.contains("done_reason") && j["done_reason"].is_string())
+            d.FinishReason = j["done_reason"].get<std::string>();
+        else
+            d.FinishReason = "stop";
+        sawFinal = true;
+    }
+
+    if (!d.TokenChunk.empty() || d.IsFinal)
+        onDelta(d);
+}
+
+} // namespace
+
+std::string OllamaClient::GetProviderName() const { return "ollama"; }
+
+std::string OllamaClient::ProbeReachability(const AiClientConfig& cfg) {
+    // Ollama exposes a public unauthenticated `/api/tags` endpoint that lists
+    // installed models. A 200 with a JSON body confirms reachability.
+    const std::string url = JoinUrl(ResolveBaseUrl(cfg), "/api/tags");
+    cpr::Header headers{{"Accept", "application/json"}};
+    cpr::Response r =
+        cpr::Get(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
+    if (r.error.code != cpr::ErrorCode::OK)
+        return std::string("transport: ") + r.error.message;
+    if (r.status_code < 200 || r.status_code >= 300)
+        return std::string("HTTP ") + std::to_string(r.status_code);
+    return std::string();
+}
+
+void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest& req, const DeltaCallback& onDelta,
+                                 const ErrorCallback& onError, const CancelToken& cancel) {
+    const std::string url = JoinUrl(ResolveBaseUrl(cfg), "/api/chat");
+    const std::string body = BuildChatBody(req).dump();
+
+    cpr::Header headers{
+        {"Accept", "application/x-ndjson"},
+        {"Content-Type", "application/json"},
+    };
+    // Ollama is local; no API key.
+
+    AiNdjsonParser parser;
+    bool sawFinal = false;
+    bool cancelObserved = false;
+
+    auto onLine = [&](const nlohmann::json& j) {
+        if (cancelObserved || sawFinal)
+            return;
+        DispatchOllamaLine(j, onDelta, sawFinal);
+    };
+    auto onParseError = [](const std::string& rawLine) {
+        LOG_WARN("OllamaClient: NDJSON line not valid JSON: %.*s",
+                 static_cast<int>(rawLine.size() > 200 ? 200 : rawLine.size()), rawLine.c_str());
+    };
+
+    cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
+                               if (cancel && cancel->load(std::memory_order_relaxed)) {
+                                   cancelObserved = true;
+                                   return false;
+                               }
+                               parser.Feed(chunk.data(), chunk.size(), onLine, onParseError);
+                               if (cancel && cancel->load(std::memory_order_relaxed)) {
+                                   cancelObserved = true;
+                                   return false;
+                               }
+                               return !sawFinal;
+                           },
+                           0};
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, wcb, cpr::ConnectTimeout{cfg.ConnectTimeoutMs},
+                                cpr::Timeout{cfg.TotalTimeoutMs});
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, static_cast<std::uint64_t>(body.size()), r);
+
+    if (!sawFinal)
+        parser.Flush(onLine, onParseError);
+
+    if (cancelObserved) {
+        AiStreamError err;
+        err.WasCancelled = true;
+        err.Message = "Cancelled by user";
+        onError(err);
+        return;
+    }
+
+    if (r.error.code != cpr::ErrorCode::OK && r.error.code != cpr::ErrorCode::REQUEST_CANCELLED) {
+        AiStreamError err;
+        err.HttpStatus = r.status_code;
+        err.Message = std::string("transport: ") + r.error.message;
+        onError(err);
+        return;
+    }
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        AiStreamError err;
+        err.HttpStatus = r.status_code;
+        err.Message = std::string("HTTP ") + std::to_string(r.status_code);
+        if (!r.text.empty()) {
+            err.Message.append(": ");
+            err.Message.append(r.text.substr(0, 600));
+        }
+        onError(err);
+        return;
+    }
+
+    if (!sawFinal) {
+        AiStreamDelta d;
+        d.IsFinal = true;
+        d.FinishReason = "eof";
+        onDelta(d);
+    }
+}
