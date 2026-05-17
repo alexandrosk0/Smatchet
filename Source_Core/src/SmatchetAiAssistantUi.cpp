@@ -88,14 +88,52 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    for (const AiMessage& m : d.assistantHistory) {
+    // Per-message rendering: role label + a SmallButton "Copy" that pushes the
+    // full message text to the system clipboard, then a read-only selectable
+    // multiline view of the content so the user can also drag-select a sub-
+    // range and Ctrl+C the slice. `ImGuiInputTextFlags_ReadOnly` prevents
+    // modification; `const_cast` on the string buffer is the standard ImGui
+    // idiom when paired with that flag. Buffer height is line-count driven
+    // and capped at 30 visible rows; longer messages get a per-message
+    // scrollbar so the history view doesn't degenerate into a wall.
+    auto renderCopyableMessage = [](const char* label, const std::string& content, std::size_t key) {
+        ImGui::TextDisabled("%s", label);
+        ImGui::SameLine();
+        char btnId[48];
+        std::snprintf(btnId, sizeof(btnId), "Copy##ai_msg_%zu", key);
+        if (ImGui::SmallButton(btnId)) {
+            ImGui::SetClipboardText(content.c_str());
+        }
+        ImGui::SetItemTooltip("Copy message text to clipboard.");
+        if (content.empty()) {
+            return;
+        }
+        const std::size_t lineCount = static_cast<std::size_t>(std::count(content.begin(), content.end(), '\n')) + 1u;
+        const std::size_t cappedLines = (lineCount < 30u) ? lineCount : 30u;
+        const float h =
+            ImGui::GetTextLineHeight() * static_cast<float>(cappedLines) + ImGui::GetStyle().FramePadding.y * 2.0f;
+        char fieldId[48];
+        std::snprintf(fieldId, sizeof(fieldId), "##ai_msg_text_%zu", key);
+        ImGui::InputTextMultiline(fieldId, const_cast<char*>(content.c_str()), static_cast<int>(content.size() + 1),
+                                  ImVec2(-1.0f, h), ImGuiInputTextFlags_ReadOnly);
+    };
+    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
+        const AiMessage& m = d.assistantHistory[i];
         const char* role = (m.Role == "user") ? "You" : "Assistant";
-        ImGui::TextDisabled("%s", role);
-        ImGui::TextWrapped("%s", m.Content.c_str());
+        renderCopyableMessage(role, m.Content, i);
         ImGui::Separator();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
+        // While the turn is still streaming, render the partial as a normal
+        // wrapped text block — switching to InputTextMultiline mid-stream
+        // would steal keyboard focus + scroll. The Copy button still appears
+        // so a long-running answer can be copied before completion.
         ImGui::TextDisabled("Assistant (streaming...)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy##ai_stream")) {
+            ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
+        }
+        ImGui::SetItemTooltip("Copy the in-flight partial response to clipboard.");
         ImGui::TextWrapped("%s", d.assistantStreamBuf.c_str());
     }
 
