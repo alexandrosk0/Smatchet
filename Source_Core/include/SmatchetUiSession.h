@@ -477,6 +477,14 @@ struct UiDrawSession {
     int bulkExportFormatSel = 1;
     std::string bulkExportFeedback;
 
+    // Pillar 2 — bulk-tickets file I/O deferred via worker. The button stays disabled while a
+    // load/save is in flight; result is posted back through MainThreadDispatcher. Cancel atom
+    // is checked by the worker so a modal close (or app shutdown) short-circuits the post-back.
+    bool bulkImportLoadInFlight = false;
+    std::shared_ptr<std::atomic<bool>> bulkImportLoadCancel;
+    bool bulkExportSaveInFlight = false;
+    std::shared_ptr<std::atomic<bool>> bulkExportSaveCancel;
+
     std::mutex attachmentPreviewMutex;
     std::deque<AttachmentCollectionRequest> attachmentCollectionQueue;
     std::deque<AttachmentPreviewUpdate> attachmentPreviewUpdateQueue;

@@ -232,6 +232,40 @@ void ClearIconUrlFetchInFlight(const std::string& url) {
     IconUrlFetchInFlightSet().erase(url);
 }
 
+// In-flight file-read set. Mirrors the URL fetch set shape — the URL-disk-cache-hit branch and
+// the file-path branch both defer their ifstream off the UI thread; the worker's PostToMainThread
+// invokes GetOrLoadFromMemory on the bytes (GPU texture upload requires UI thread). Keyed by the
+// canonical texture-cache key (`url:` + url for cached URLs, `file:` + path for local files) so
+// each call site uses a stable handle.
+std::mutex& IconFileReadInFlightMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_set<std::string>& IconFileReadInFlightSet() {
+    static std::unordered_set<std::string> s;
+    return s;
+}
+
+bool IconFileReadInFlight(const std::string& cacheKey) {
+    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
+    return IconFileReadInFlightSet().count(cacheKey) > 0;
+}
+
+bool MarkIconFileReadInFlight(const std::string& cacheKey) {
+    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
+    auto& s = IconFileReadInFlightSet();
+    if (s.count(cacheKey) > 0) {
+        return false;
+    }
+    s.insert(cacheKey);
+    return true;
+}
+
+void ClearIconFileReadInFlight(const std::string& cacheKey) {
+    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
+    IconFileReadInFlightSet().erase(cacheKey);
+}
+
 /// Loads the URL-keyed icon texture. Returns:
 ///   - `true` + populated `out` when the texture is in the cache or on disk (decoded inline).
 ///   - `false` + `outDeferred=true` when a background fetch was scheduled (or one is already
@@ -257,19 +291,42 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
     }
     const std::string fileName = UrlToCacheFileName(url);
     const std::string diskPath = cacheDir + fileName;
-    // If we have the bytes on disk already, decode them and stash the texture under
-    // the URL key (not a "file:" key) so subsequent lookups via the URL hit.
+    // If the bytes are on disk, defer the read off the UI thread (Pillar 2 — disk-cache-hit was
+    // still ifstream-on-UI). Worker reads the file; PostToMainThread invokes GetOrLoadFromMemory
+    // which uploads the GPU texture (UI-thread-only). Caller sees outDeferred=true on this frame;
+    // the next frame's TryGetCached hits.
     std::error_code ec;
     if (fs::exists(fs::path(diskPath), ec) && fs::file_size(fs::path(diskPath), ec) > 0) {
-        std::ifstream ifs(diskPath.c_str(), std::ios::binary);
-        if (ifs) {
-            std::vector<unsigned char> buf((std::istreambuf_iterator<char>(ifs)),
-                                            std::istreambuf_iterator<char>());
-            if (!buf.empty()) {
-                return SmatchetImageTextureCache::GetOrLoadFromMemory(
-                    urlKey, buf.data(), buf.size(), out, outError);
-            }
+        if (IconFileReadInFlight(urlKey)) {
+            outDeferred = true;
+            return false;
         }
+        if (!MarkIconFileReadInFlight(urlKey)) {
+            outDeferred = true;
+            return false;
+        }
+        const std::string capturedDiskPath = diskPath;
+        const std::string capturedUrlKey = urlKey;
+        app.LaunchBackgroundTask([&app, capturedDiskPath, capturedUrlKey]() {
+            std::vector<unsigned char> bytes;
+            std::ifstream ifs(capturedDiskPath.c_str(), std::ios::binary);
+            if (ifs) {
+                bytes.assign((std::istreambuf_iterator<char>(ifs)),
+                             std::istreambuf_iterator<char>());
+            }
+            app.mainThreadDispatcher.PostToMainThread([capturedUrlKey, bytes]() {
+                ClearIconFileReadInFlight(capturedUrlKey);
+                if (bytes.empty()) {
+                    return;
+                }
+                SmatchetLoadedIconTexture loaded;
+                std::string err;
+                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
+                    capturedUrlKey, bytes.data(), bytes.size(), loaded, err);
+            });
+        });
+        outDeferred = true;
+        return false;
     }
     // No cache, no disk → defer HTTP fetch to a worker thread (Pillar 2 — finding #1).
     // The grid-render path was blocking up to 3s per priority icon on first frame.
@@ -325,7 +382,43 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
     if (resolved.rfind("https://", 0) == 0 || resolved.rfind("http://", 0) == 0) {
         return LoadOrFetchUrlImage(app, resolved, out, outError, outDeferred);
     }
-    return SmatchetImageTextureCache::GetOrLoadFromFile(std::string("file:") + resolved, resolved, out, outError);
+    // Pillar 2 — local-file branch: GetOrLoadFromFile internally ifstreams + decodes + uploads.
+    // Fast path: cache hit is cheap (no I/O). Slow path on cache miss is deferred to a worker —
+    // worker reads the bytes, posts back to UI thread for GPU texture upload via GetOrLoadFromMemory.
+    const std::string cacheKey = std::string("file:") + resolved;
+    if (SmatchetImageTextureCache::TryGetCached(cacheKey, out)) {
+        return true;
+    }
+    if (IconFileReadInFlight(cacheKey)) {
+        outDeferred = true;
+        return false;
+    }
+    if (!MarkIconFileReadInFlight(cacheKey)) {
+        outDeferred = true;
+        return false;
+    }
+    const std::string capturedResolved = resolved;
+    const std::string capturedCacheKey = cacheKey;
+    app.LaunchBackgroundTask([&app, capturedResolved, capturedCacheKey]() {
+        std::vector<unsigned char> bytes;
+        std::ifstream ifs(capturedResolved.c_str(), std::ios::binary);
+        if (ifs) {
+            bytes.assign((std::istreambuf_iterator<char>(ifs)),
+                         std::istreambuf_iterator<char>());
+        }
+        app.mainThreadDispatcher.PostToMainThread([capturedCacheKey, bytes]() {
+            ClearIconFileReadInFlight(capturedCacheKey);
+            if (bytes.empty()) {
+                return;
+            }
+            SmatchetLoadedIconTexture loaded;
+            std::string err;
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
+                capturedCacheKey, bytes.data(), bytes.size(), loaded, err);
+        });
+    });
+    outDeferred = true;
+    return false;
 }
 
 // Backwards-compat wrapper for the const-AppController call sites that don't need the deferred

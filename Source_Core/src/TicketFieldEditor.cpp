@@ -12,6 +12,7 @@
 #include "TrackerFieldPayload.h"
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
+#include "TicketFieldEditorLongTextPure.h"
 #include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
@@ -105,9 +106,9 @@ struct ActiveWorklogDialogState {
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
 
-/// Source format of the original rich payload (`OriginalRichValue`). Determines which converter
-/// seeds the Markdown buffer on open and which target format is expected by the payload layer.
-enum class LongTextRichKind { None, Adf, Html };
+/// Pure-helper aliases — definitions live in TicketFieldEditorLongTextPure.{h,cpp} so they are
+/// unit-testable without ImGui / AppController. The aliases keep call sites in this TU unchanged.
+using LongTextRichKind = TicketFieldEditorLongTextPure::LongTextRichKind;
 
 /// Singleton state for the long-text / ADF field modal editor. Decoupled from `SpreadsheetState`
 /// so the modal survives the originating cell scrolling out of view: the cell triggers
@@ -163,41 +164,33 @@ struct ActiveLongTextEditorState {
     /// RoundTripFireAt is reached so rapid keystrokes don't re-convert on every frame.
     bool RoundTripPending = false;
     std::chrono::steady_clock::time_point RoundTripFireAt{};
+    /// Pillar 2 — set while a worker thread is computing the Markdown seed from a large rich
+    /// value (above kAsyncRichSeedThresholdBytes). Buffer holds a placeholder until the worker
+    /// posts the real seed back via MainThreadDispatcher; modal stays interactive (Cancel works).
+    bool LoadingMarkdown = false;
+    /// Monotonically-increasing generation token. A worker captures the value at dispatch; on
+    /// post-back, the value is compared against the current LoadGen and discarded if the user
+    /// has opened a different long-text editor since (avoids race-overwrite of newer content).
+    int LoadGen = 0;
 };
 
 static ActiveLongTextEditorState s_ActiveLongTextState;
 
 static constexpr const char* kLongTextModalPopupId = "EditLongTextModal";
 
-/// Determine whether a stored rich payload looks like ADF JSON or HTML. Returns LongTextRichKind::None
-/// when the input is empty or unrecognizable (caller falls back to the stripped text).
-static LongTextRichKind ClassifyRichValue(const std::string& rich) {
-    if (rich.empty())
-        return LongTextRichKind::None;
-    // Cheap leading-whitespace skip.
-    size_t i = 0;
-    while (i < rich.size() && (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r'))
-        ++i;
-    if (i >= rich.size())
-        return LongTextRichKind::None;
-    if (rich[i] == '{') {
-        try {
-            auto parsed = nlohmann::json::parse(rich, nullptr, false);
-            if (parsed.is_object() && parsed.value("type", std::string()) == "doc") {
-                return LongTextRichKind::Adf;
-            }
-        } catch (...) {
-            // fall through
-        }
-    }
-    if (rich[i] == '<') {
-        return LongTextRichKind::Html;
-    }
-    return LongTextRichKind::None;
-}
+using TicketFieldEditorLongTextPure::ClassifyRichValue;
 
-static void OpenLongTextEditor(const std::string& issueId, const TrackerField& field, const std::string& label,
-                               const std::string& currentStrippedValue, const std::string& currentRichValue) {
+/// Pillar 2 — rich values above this size are parsed + converted on a worker thread. Typical
+/// Jira descriptions are well under 50 KB; the parse + AdfToMarkdown cost only crosses ~100 ms
+/// on very large ADF documents (>1 MB). 32 KB is a conservative cutoff: keeps normal cases on
+/// the sync path (no UX regression) and gates only the pathologically-large payloads.
+static constexpr size_t kAsyncRichSeedThresholdBytes = 32 * 1024;
+
+using TicketFieldEditorLongTextPure::ComputeLongTextSeed;
+
+static void OpenLongTextEditor(AppController& app, const std::string& issueId, const TrackerField& field,
+                               const std::string& label, const std::string& currentStrippedValue,
+                               const std::string& currentRichValue) {
     s_ActiveLongTextState.IssueId = issueId;
     s_ActiveLongTextState.Field = field;
     s_ActiveLongTextState.FieldLabel = label.empty() ? field.Id : label;
@@ -206,39 +199,68 @@ static void OpenLongTextEditor(const std::string& issueId, const TrackerField& f
     s_ActiveLongTextState.RichKind = ClassifyRichValue(currentRichValue);
     s_ActiveLongTextState.RawMode = false;
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
+    s_ActiveLongTextState.LoadingMarkdown = false;
+    ++s_ActiveLongTextState.LoadGen;
 
-    /// Compute the Markdown seed from the rich value when present; otherwise fall back to the
-    /// stripped text (legacy tickets pre-PR-B, or fields where the backend never returned rich).
-    std::string seed;
-    switch (s_ActiveLongTextState.RichKind) {
-    case LongTextRichKind::Adf: {
-        try {
-            const auto adf = nlohmann::json::parse(currentRichValue);
-            seed = MarkdownConvert::AdfToMarkdown(adf, &s_ActiveLongTextState.DroppedAdfNodeTypes);
-        } catch (...) {
-            seed = currentStrippedValue;
-        }
-        break;
-    }
-    case LongTextRichKind::Html: {
-        bool fellBack = false;
-        seed = MarkdownConvert::HtmlSubsetToMarkdown(currentRichValue, &fellBack);
-        if (fellBack) {
-            s_ActiveLongTextState.RawMode = true;
-            seed = currentRichValue; // edit the raw HTML directly so nothing is lost.
-        }
-        break;
-    }
-    case LongTextRichKind::None:
-        seed = currentStrippedValue;
-        break;
-    }
-    s_ActiveLongTextState.OriginalMarkdown = seed;
+    // Threshold-gated dispatch: large rich values are parsed on a worker; small ones stay inline.
+    // The threshold avoids an unnecessary worker round-trip for the common case (sub-KB descriptions)
+    // while keeping the UI thread responsive on pathological payloads (multi-MB ADF docs).
+    const bool deferSeed =
+        currentRichValue.size() > kAsyncRichSeedThresholdBytes &&
+        (s_ActiveLongTextState.RichKind == LongTextRichKind::Adf ||
+         s_ActiveLongTextState.RichKind == LongTextRichKind::Html);
 
-    s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-    const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
-    std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
-    s_ActiveLongTextState.Buffer[copyLen] = '\0';
+    if (!deferSeed) {
+        std::string seed = ComputeLongTextSeed(
+            s_ActiveLongTextState.RichKind, currentRichValue, currentStrippedValue,
+            s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
+        s_ActiveLongTextState.OriginalMarkdown = seed;
+        s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+        const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
+        std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
+        s_ActiveLongTextState.Buffer[copyLen] = '\0';
+    } else {
+        // Show a placeholder so the modal renders immediately; layout stays stable because the
+        // InputTextMultiline draws from this buffer. Worker replaces it on post-back.
+        const std::string placeholder = "Loading description...";
+        s_ActiveLongTextState.OriginalMarkdown.clear();
+        s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+        std::memcpy(s_ActiveLongTextState.Buffer.data(), placeholder.data(), placeholder.size());
+        s_ActiveLongTextState.Buffer[placeholder.size()] = '\0';
+        s_ActiveLongTextState.LoadingMarkdown = true;
+        const int capturedGen = s_ActiveLongTextState.LoadGen;
+        const std::string capturedIssueId = issueId;
+        const LongTextRichKind capturedKind = s_ActiveLongTextState.RichKind;
+        const std::string capturedRich = currentRichValue;
+        const std::string capturedStripped = currentStrippedValue;
+        app.LaunchBackgroundTask([&app, capturedGen, capturedIssueId, capturedKind, capturedRich,
+                                  capturedStripped]() {
+            std::vector<std::string> droppedNodes;
+            bool rawMode = false;
+            std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped,
+                                                   droppedNodes, rawMode);
+            app.mainThreadDispatcher.PostToMainThread(
+                [capturedGen, capturedIssueId, seed = std::move(seed),
+                 droppedNodes = std::move(droppedNodes), rawMode]() mutable {
+                    // Discard if the user opened a different editor (or closed this one) since
+                    // dispatch — LoadGen monotonically increases on every OpenLongTextEditor.
+                    if (!s_ActiveLongTextState.Active ||
+                        s_ActiveLongTextState.LoadGen != capturedGen ||
+                        s_ActiveLongTextState.IssueId != capturedIssueId) {
+                        return;
+                    }
+                    s_ActiveLongTextState.OriginalMarkdown = seed;
+                    s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
+                    s_ActiveLongTextState.RawMode = rawMode;
+                    s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+                    const size_t copyLen =
+                        (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
+                    std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
+                    s_ActiveLongTextState.Buffer[copyLen] = '\0';
+                    s_ActiveLongTextState.LoadingMarkdown = false;
+                });
+        });
+    }
     s_ActiveLongTextState.Active = true;
     s_ActiveLongTextState.JustOpened = true;
 }
@@ -444,7 +466,7 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
-void RenderTextEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                       const std::string& currentValue, SpreadsheetState& state,
                       std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, float availWidth) {
     // Widget-cell unique ID is provided by the CellIdScope pushed in RenderFieldCell
@@ -459,7 +481,7 @@ void RenderTextEditor(const AppController& app, const CachedTicket& ticket, cons
             if (state.EditJustStarted) {
                 const std::string& label = !field.Name.empty() ? field.Name : field.Id;
                 const std::string richValue = ticket.GetFieldRichValue(field.Id);
-                OpenLongTextEditor(ticket.id, field, label, currentValue, richValue);
+                OpenLongTextEditor(app, ticket.id, field, label, currentValue, richValue);
                 // Do NOT call ImGui::OpenPopup here — we are inside a table cell.
                 // ImGui requires OpenPopup and BeginPopupModal at the same window depth.
                 // RenderLongTextModal (called after EndTable) sees JustOpened=true and
@@ -1210,6 +1232,16 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", SmatchetLocalization::T("field.required_tooltip", "Required field"));
             }
+        }
+
+        // Pillar 2 — async-seed banner. While a worker computes the Markdown seed (large rich
+        // payloads above kAsyncRichSeedThresholdBytes), surface the wait so the user knows the
+        // placeholder is transient. Worker post-back swaps the real seed in within ~1 frame after
+        // it completes.
+        if (s_ActiveLongTextState.LoadingMarkdown) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.85f, 1.0f, 1.0f));
+            ImGui::TextUnformatted("Loading description...");
+            ImGui::PopStyleColor();
         }
 
         // Format-fidelity banners. RawMode is the strongest signal — fall back to editing
