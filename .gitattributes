@@ -3,6 +3,11 @@
 
 # Binaries (do not touch line endings)
 *.png binary
+# *.ppm — raw P6 byte payload; combined with `* text=auto eol=lf` above
+# Windows clones would silently rewrite the binary payload otherwise.
+# Goldens migrated to PNG on 2026-05-17 but the rule stays as defense in depth
+# for any bootstrapped capture or temp file that gets accidentally committed.
+*.ppm binary
 *.jpg binary
 *.jpeg binary
 *.gif binary

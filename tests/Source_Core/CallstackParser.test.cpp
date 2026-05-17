@@ -288,14 +288,11 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
 
     SUBCASE("1 KiB single line completes under 100 ms (ReDoS sentinel)") {
         // Build one line of 1 KiB 'a' chars followed by a real frame on the next line.
-        // The hostile line contains no path/line marker and must be rejected without catastrophic
-        // backtracking in the format regexes. Locks a regression ceiling, not a hard contract:
-        // the current parser regex set is super-linear in line length on MinGW UCRT, so the
-        // orchestrator-spec "≥64 KiB / 50 ms" combo is unachievable until the regex is rewritten
-        // or guarded by a length cap. Tracked under the backlog `code-review + security-review ·
-        // [test]` entry and queued for the `p4-blame` agent (CallstackParser.cpp regex hardening).
-        // 1 KiB at 100 ms budget keeps the assertion green on the current build while still
-        // failing fast on any new O(n^k>=3) regression that pushes the time above this ceiling.
+        // 1 KiB sits below the parser's per-line cap (kMaxLineLengthForRegex = 16 KiB in
+        // CallstackParser.cpp), so this case still flows through the regex set and exercises the
+        // worst-case backtracking ceiling for a realistic-but-noisy paste. The hostile line must
+        // not match any of the three format regexes; the trailing real frame may or may not be
+        // recovered but no frame may reference the 'a'-noise content.
         std::string noise(1 * 1024, 'a');
         const std::string text = noise + "\nC:\\real.cpp(7)\n";
         const auto t0 = std::chrono::steady_clock::now();
@@ -303,12 +300,32 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
         const auto t1 = std::chrono::steady_clock::now();
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
         CHECK(elapsedMs < 100);
-        // The noise line must not produce a frame; the trailing real frame may or may not be
-        // recovered, but at minimum no frame must reference the 'a'-noise content.
         for (size_t i = 0; i < frames.size(); ++i) {
             CHECK(frames[i].FilePath.find(noise) == std::string::npos);
             CHECK(frames[i].RawLine.find(noise) == std::string::npos);
         }
+    }
+
+    SUBCASE("64 KiB single line bypasses regex via length cap (DoS guard)") {
+        // Beyond kMaxLineLengthForRegex (16 KiB), the parser skips the line entirely without
+        // feeding it to std::regex_search. Pure stack-overflow / O(n^k) DoS prevention — the
+        // unbounded path would crash the doctest runner well before any timing budget mattered.
+        // 64 KiB proves the cap fires for anything ~4x past the threshold; a clean run on the
+        // same machine completes the parse in well under 50 ms because no regex executes.
+        std::string huge(64 * 1024, 'a');
+        const std::string text = huge + "\nC:\\real.cpp(7)\n";
+        const auto t0 = std::chrono::steady_clock::now();
+        const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        CHECK(elapsedMs < 50);
+        for (size_t i = 0; i < frames.size(); ++i) {
+            CHECK(frames[i].FilePath.find(huge) == std::string::npos);
+            CHECK(frames[i].RawLine.find(huge) == std::string::npos);
+        }
+        // Only the trailing real frame survives — the hostile line is dropped wholesale.
+        REQUIRE(frames.size() == 1);
+        CHECK(frames.front().LineNumber == 7);
     }
 
     SUBCASE("ApplyPathRemaps leaves ..-traversal path unchanged when no rule matches the prefix verbatim") {

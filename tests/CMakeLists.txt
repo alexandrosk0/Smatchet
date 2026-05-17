@@ -40,6 +40,7 @@ add_executable(SmatchetTests
     Source_Core/AiNdjsonParser.test.cpp
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiContextBuilder.test.cpp
+    Source_Core/AiErrorRedact.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -79,6 +80,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiSseParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiNdjsonParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiClientFactory.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiErrorRedact.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/OllamaClient.cpp"

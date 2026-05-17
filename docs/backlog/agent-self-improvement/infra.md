@@ -7,12 +7,6 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-- 2026-05-17 · code-review · [infra] · P0 — `tests/golden/*.ppm` 2 × 2.76 MB raw PPMs (5.5 MB / ~191k lines) bloat pack permanently
-  Details: PNG equivalents would be ~50-150 KB. Either wire Git LFS for `tests/golden/*.ppm`, or switch writer + reader to PNG via stb_image (already transitive via ImGui).
-  Concrete next action: choose LFS vs PNG migration; if PNG, route through stb_image_write + stb_image_read (no new dep). Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-16 · unreal-bridge · [infra] · P2 — DX12 backbuffer readback for screenshot diff (Phase 7 bucket C)
   Details: Phase 7 (`test-phase-7-screenshot-diff`) ships PPM capture wired into `Target_Standalone/main.cpp:569` via `glReadPixels(GL_FRONT, GL_RGBA, ...)`. The `debug.window.screenshot` flag pair (`UiDrawSession::requestScreenshot{,Path}`) flips on both Standalone and DX12 builds but DX12 never consumes it — Unreal owns the swap chain and has no equivalent backbuffer-readback path wired in `SmatchetCore_DX12`. Bucket-C verification therefore covers Standalone-only.
   Concrete next action: add a DX12-side equivalent in `UnrealPlugins/SmatchetImGuiPlugin/` (or wherever the swap-chain present hook lives) — `ID3D12GraphicsCommandList::CopyResource` from the backbuffer to a readback heap, then memcpy to the same PPM writer used by Standalone. Estimated cost ~4-6 h (DX12 resource-state transitions are fiddly). Until then, Phase 7 gates only run on Standalone — Unreal-shipped builds skip bucket-C without notice.
