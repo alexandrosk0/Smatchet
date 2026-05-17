@@ -1,0 +1,62 @@
+# CODEOWNERS — Smatchet sensitive-path review map.
+#
+# Format: <pattern> <owner>... — patterns follow .gitignore semantics, later
+# entries override earlier matches for the same path. See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-customization/customizing-your-repository/about-code-owners
+#
+# Today @alexandrosk0 is the sole owner. CODEOWNERS is INFORMATIONAL until
+# branch protection is reconfigured to require code-owner review — the file
+# documents what the project considers sensitive and gives a single edit
+# point when additional owners are added.
+#
+# Phase 7a of docs/design/git-ref-plan-locks.md.
+
+# ---------------------------------------------------------------------------
+# Plan-lock coordination infrastructure (git-ref-plan-locks)
+# ---------------------------------------------------------------------------
+
+# The primitive scripts + helpers that touch refs/locks/* on origin. A
+# malicious or buggy edit here can race-corrupt any in-flight slice's claim.
+scripts/dev/lock-claim.sh              @alexandrosk0
+scripts/dev/lock-claim-update.sh       @alexandrosk0
+scripts/dev/lock-release.sh            @alexandrosk0
+scripts/dev/locks-show.sh              @alexandrosk0
+scripts/dev/locks-render-markdown.sh   @alexandrosk0
+scripts/dev/_lock-json.py              @alexandrosk0
+scripts/dev/test-lock-primitives.sh    @alexandrosk0
+
+# Workflows that hold delete-ref + open-issue + open-PR privileges with the
+# default GITHUB_TOKEN. Self-modification risk: a PR could edit the workflow
+# itself to broaden its blast radius.
+.github/workflows/locks-render.yml     @alexandrosk0
+.github/workflows/lock-cleanup.yml     @alexandrosk0
+.github/workflows/lock-staleness.yml   @alexandrosk0
+
+# Plan-lock design + historical archive. Plan doc is the spec; archive is
+# the audit trail of every lock that ever existed pre-cutover.
+docs/design/git-ref-plan-locks.md      @alexandrosk0
+docs/design/_plan-locks-archive.md     @alexandrosk0
+
+# CODEOWNERS itself — modifying ownership requires owner approval (once
+# branch-protection enforces this rule).
+/.github/CODEOWNERS                    @alexandrosk0
+
+# ---------------------------------------------------------------------------
+# Cross-target invariants
+# ---------------------------------------------------------------------------
+
+# Build system — touching CMake / preset config affects every downstream
+# build target and the dual-target Standalone + Unreal contract.
+/CMakeLists.txt                        @alexandrosk0
+/CMakePresets.json                     @alexandrosk0
+/cmake/                                @alexandrosk0
+
+# Public C++ contracts whose ABI surface is consumed by both targets and
+# every tracker backend / command system / Lua binding.
+Source_Core/include/ITrackerClient.h   @alexandrosk0
+Source_Core/include/Commands/          @alexandrosk0
+
+# Top-level agent + project rules. AGENTS.md drives every agent's behaviour
+# in the canonical tree; CLAUDE.md mirrors for Claude Code's auto-load path.
+/AGENTS.md                             @alexandrosk0
+/.claude/CLAUDE.md                     @alexandrosk0

@@ -227,12 +227,33 @@ This is the single point of no return. Mitigations: (a) coordinate before merge,
 
 ### Phase 7 — Optional hardening (opportunistic)
 
-Build only if collision frequency warrants. Each is an independent micro-PR.
+Build each item only when its cost is paid back by observed friction. All four items are independent micro-PRs.
 
-- **CODEOWNERS** for sensitive paths (`Source_Core/include/ITrackerClient.h`, `Source_Core/include/Commands/`, `cmake/`).
-- **GitHub Ruleset** restricting `refs/locks/*` creation to authenticated push and deletion to the cleanup-action identity only.
-- **Fine-grained PAT** for the cleanup action narrowing scope to `refs/locks/*` deletion.
-- **GitHub merge queue** on develop for final collision catch.
+#### 7a — CODEOWNERS for sensitive paths (SHIPPED 2026-05-17)
+
+In-tree only. Adds `.github/CODEOWNERS` mapping the lock primitive scripts (`scripts/dev/lock-*.sh`, `scripts/dev/_lock-json.py`), the three workflow files (`.github/workflows/lock*.yml`, `locks-render.yml`), the plan doc, the archive, and the pre-existing cross-target invariant paths (`Source_Core/include/ITrackerClient.h`, `Source_Core/include/Commands/`, `cmake/`, `CMakeLists.txt`, `CMakePresets.json`, `AGENTS.md`, `.claude/CLAUDE.md`) to `@alexandrosk0`.
+
+**Status today**: informational only. Branch protection on develop must be reconfigured to require code-owner review for the file to be enforced. Owner approval-loop limitation in a single-owner repo (GitHub forbids self-approval depending on org settings); enforcement deferred until a second owner exists.
+
+**Recipe for enabling enforcement**: Settings → Branches → develop branch protection → "Require review from Code Owners" checkbox. No code change needed once the human + second-reviewer prerequisites are in place.
+
+#### 7b — GitHub Ruleset restricting `refs/locks/*` (recipe only)
+
+Build when: a `refs/locks/*` ref is mutated by an actor who shouldn't have (caught via reflog audit or anomalous Issue from staleness sweep).
+
+**Recipe**: Settings → Rules → Rulesets → New ruleset, target ref pattern `refs/locks/*`. Add bypass list = `github-actions[bot]` (so `lock-cleanup.yml` keeps working). Add "restrict creations" + "restrict updates" + "restrict deletions" rules. Alternatively, the same via API: `gh api repos/$REPO/rulesets -X POST -f name=plan-locks ...` (full body in `scripts/dev/lock-ruleset-template.json` if/when needed).
+
+#### 7c — Fine-grained PAT for cleanup action (recipe only)
+
+Build when: a security audit flags the default `GITHUB_TOKEN`'s broad `contents: write` scope as too wide for what `lock-cleanup.yml` actually needs.
+
+**Recipe**: create a fine-grained PAT scoped to `contents: write` on this single repo, restricted to `refs/locks/*` (the API supports per-ref scoping via repository content selection). Store as `LOCK_CLEANUP_PAT` repo secret. Replace `${{ secrets.GITHUB_TOKEN }}` with `${{ secrets.LOCK_CLEANUP_PAT }}` in `lock-cleanup.yml`. Rotation policy: 90 days, automated via `gh secret set` from a scheduled cron in a separate workflow.
+
+#### 7d — GitHub merge queue on develop (recipe only)
+
+Build when: a "merged green but broke develop" incident happens, OR PR throughput climbs past ~5 PRs / day.
+
+**Recipe**: Settings → Branches → develop → "Require merge queue". Configure required status checks list (`build-and-test`, `coverage-gate`, `lock-cleanup` if it has a job we want to gate on, plus any others). Merge queue auto-rebases each PR before final merge and re-runs the required checks. PR throughput trade-off: queue is single-threaded per branch, slow CI degrades throughput.
 
 ## Verification
 
@@ -302,6 +323,8 @@ Phase 7 is reactive — ship each item when the corresponding pain surfaces.
 - 2026-05-17 · Phase 5 landed locally on `feat/git-ref-plan-locks-phase-5` (stacked on PR #198): `AGENTS.md § Orchestrator delegation packet` migrated from "read `_plan-locks.md`" to "run `bash scripts/dev/locks-show.sh`". Updated wording specifies the claim path (`lock-claim.sh`), scope-growth path (`lock-claim-update.sh`), and the `lock-slug:` PR-body requirement for auto-release. Legacy markdown path stays valid during the transition window. Per-agent `agents/*.md` files contain no references to `_plan-locks` — no per-agent prompt changes needed. PR [#200](https://github.com/alexandrosk0/Smatchet/pull/200) opened as draft.
 - 2026-05-17 · Pre-Phase-6 truth audit: confirmed exactly **1** entry needs migration (`git-ref-plan-locks` itself); the earlier "1 claimed" count was a false positive matching protocol prose at `_plan-locks.md:46`. Two most-recent shipped PRs (#196, #197) verified merged on GitHub. One orphan feature branch on origin (`feat/h12-l16-m13-bundle`) unrelated to plan-locks. Live `refs/locks/*` greenfield (zero refs).
 - 2026-05-17 · Phase 6 landed locally on `feat/git-ref-plan-locks-phase-6` (stacked on PR #200) — **the cutover**. Chose option C from the audit (rename + archive) per user direction. Steps: (1) hand-migrated the lone in-flight entry to `refs/locks/git-ref-plan-locks` via `bash scripts/dev/lock-claim.sh git-ref-plan-locks /tmp/ws-cutover.txt` — claim sha `89c2520`; (2) `git mv docs/design/_plan-locks.md docs/design/_plan-locks-archive.md`; (3) stripped the in-flight section from the archive (only shipped + abandoned entries remain — 42 + 3); (4) replaced the banner with a FROZEN notice pointing readers at `locks-show.sh` + `_plan-locks.generated.md` + plan doc; (5) regenerated `_plan-locks.generated.md` to reflect the new live ref (1 active); (6) `AGENTS.md` updated to drop the "legacy markdown path stays valid" transition clause; (7) PR template extended to distinguish the `lock-slug:` trigger key (final cutover PR only) from `holds-lock:` (informational on stacked-intermediates).
+- 2026-05-17 · **Stack-merge to develop.** PR #194 squash-merged at `f703f6d`. Cascade-close of #195 occurred because GitHub auto-closes PRs whose base branch is deleted; recreated as new PR #203 with the same branch rebased onto develop via `git rebase --onto`. Pre-emptively retargeted #198 / #200 / #202 to develop before merging their predecessors to prevent further cascade-closes. Each remaining PR rebased onto develop via `git rebase --onto origin/develop HEAD~N` to skip duplicate (now-squashed) parent commits. Merge order: #194 (`f703f6d`) → #203 (`bc8b460`) → #198 (`60012c3`) → #200 (`eff5483`) → #202 (`21449f8`). `lock-cleanup.yml` fired on all 3 merges post-Phase-3 landing (`completed success` in ~8 s each); only #202 carried the trigger key `lock-slug:` and actually deleted `refs/locks/git-ref-plan-locks`. Post-merge `git ls-remote origin 'refs/locks/*'` returns empty — full lifecycle exercised end-to-end.
+- 2026-05-17 · Phase 7a — CODEOWNERS for lock infra. **First real claim via the new flow**: `bash scripts/dev/lock-claim.sh phase-7-codeowners /tmp/ws-phase-7.txt` (`AGENT_ID=orchestrator`, `LOCK_BRANCH=feat/git-ref-plan-locks-phase-7-codeowners`) at sha `c9ce331`. Wrote `.github/CODEOWNERS` mapping the 7 lock primitive scripts + 3 lock workflows + plan doc + archive + build system + `ITrackerClient.h` + `Commands/` + `AGENTS.md` + `CLAUDE.md` to `@alexandrosk0`. Informational until branch protection is reconfigured to require code-owner review; the file documents the project's notion of "sensitive" and gives a single edit point when additional owners arrive.
 
 ## Deviations from plan
 
