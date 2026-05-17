@@ -7,6 +7,18 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · orchestrator · [process] · P3 — `unique_ptr<incomplete-type>` footgun in AGENTS.md § C++14 invariants
+  Details: Phase B (PR #163) hit `invalid application of sizeof to incomplete type` errors from every TU that includes `AppController.h` (including `main.cpp` via the PCH) because `AppController.h` held `std::unique_ptr<AiAssistantController>` with only a forward-decl. The header compiled in isolation but failed at every consumer's implicit-dtor instantiation site. Resolution: include the full `AiAssistantController.h`. The general C++ pattern — `unique_ptr<T>` member in a header needs `T` complete at every consumer's implicit-dtor instantiation, NOT just at the owning class's dtor definition site — is non-obvious and bit Phase B. Worth one-line callout in AGENTS.md § Quality / § Project rules so future agents lift to the full include up-front instead of attempting the forward-decl + pImpl pattern that requires manual out-of-line dtor.
+  Concrete next action: add a single bullet to AGENTS.md § Quality (~line 92) stating "`std::unique_ptr<T>` member in a class declared in a header — include `T`'s full definition in that header. Forward-decl only works with an out-of-line dtor defined in a TU where `T` is complete; trying it without the out-of-line dtor fires sizeof-incomplete at every consumer." ~5 min doc edit.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · orchestrator · [process] · P3 — Plan packet pre-flight should check "shim wired? what links it?"
+  Details: Phase A (PR #140) added `SmatchetCoreAiShim` INTERFACE target to mirror the MCP shim pattern, but never linked it to any consuming target. Phase B (PR #163) discovered the gap when trying to compile AI code in `Source_Core/` — the shim's compile definitions weren't propagating because no `target_link_libraries(<target> SmatchetCoreAiShim)` existed. Phase B had to wire it (CMakeLists.txt +6 LoC). Same pattern likely to repeat for any future `INTERFACE` shim. The orchestrator's plan-time production-file existence check (per AGENTS.md § Orchestrator delegation packet) should be extended to "INTERFACE target linkage check" — for every `add_library(<X> INTERFACE)` named in the plan, confirm at least one `target_link_libraries(... <X>)` is also named, otherwise flag as incomplete.
+  Concrete next action: append a one-line bullet to AGENTS.md § Orchestrator delegation packet § Invariant decisions / Plan-time check list. ~5 min.
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · code-review · [process] · P3 — PR #140 `Source_Core/include/AiTypes.h:35,60` `Temperature = -1.0f` and `MaxTokens = 0` sentinels for "unset"
   Details: Future reader could set `0.0f` thinking it's a neutral value and not realise it's the sentinel for "unset".
   Concrete next action: add a comment at each constant naming the sentinel semantics. Surfaced by retrospective code-review sweep on PR #140.
