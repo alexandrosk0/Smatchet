@@ -50,9 +50,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### ai-assistant-side-panel · Phase B · side-panel-ui-and-controller · status: in-flight
+### ai-assistant-side-panel · Phase B · side-panel-ui-and-controller · status: shipped (PR #163 merged at dd703ab)
 
-- **Branch**: `feat/ai-assistant-side-panel-phase-b`
+- **Branch**: `feat/ai-assistant-side-panel-phase-b` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
 - **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
 - **Claimed write set**:
@@ -72,8 +72,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (this entry)
 - **Read-only adjacency**: `Source_Core/include/IAiClient.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/src/OpenAiClient.cpp`, `Source_Core/include/ConfigManager.h` (`AssistantPanelOpen` + `AssistantPanelWidth` + `AiProviderKind` + `AiApiKey` already shipped Phase A')
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — dispatched after Phase A' (#157) merged. Phase B is the first user-visible AI surface: right-anchored panel, worker thread, cancel button, persistent open/closed + width. No `agents.md` loader / context builder / Anthropic / Ollama / Lua glue (those land Phases C-E).
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#163](https://github.com/alexandrosk0/Smatchet/pull/163) at sha `dd703ab`. 4 new files (`AiAssistantController.{h,cpp}` worker controller + `SmatchetAiAssistantUi.{h,cpp}` right-anchored panel); 8 existing files modified (`AppController` member + ctor/dtor + always-on stubs; `SmatchetUI` Draw call + Ctrl+Shift+A keybinding; `SmatchetUI_MainMenu` View entry; `SmatchetUI_Layout` repair early-return; `SmatchetUiSession.h` 10 fields). `SMATCHET_WITH_AI` shim now linked to standalone-OpenGL core targets. ON + OFF builds both green. Threading invariants encoded: per-turn cancel atom, MainThreadDispatcher worker→UI hand-off, stale-callback drop via `assistantTurnGen`, dtor ordering `aiAssistant_.reset()` before `mainThreadDispatcher.BeginShutdown()`. Phase C (agents.md loader + context builder) unblocked.
+- **Cleared by**: PR `#163` merged at `dd703ab`.
 
 ### lua-host-friend-drop · slice-1 · status: shipped (PR #151 merged at 53b2881)
 
