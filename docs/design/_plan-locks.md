@@ -366,6 +366,34 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — held by user after parallel `test-suite-expansion` plan surfaced. Track A (5 mechanical splits) already shipped; Track B paused at the boundary.
 - **Cleared by**: TBD (gate above).
 
+### ai-assistant-side-panel · Phase A-narrowed · status: in-flight
+
+- **Branch**: `feat/ai-assistant-side-panel` (plan recovered from dangling 84913a8 → a39097c)
+- **Owner agent**: orchestrator (direct — provider-pluggable C++14 skeleton)
+- **Originating plan**: [`docs/design/ai-assistant-side-panel.md`](./ai-assistant-side-panel.md) § Phase A
+- **Claimed write set** (narrowed — ConfigManager fields + tests deferred to Phase A' until `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**`):
+  - `Source_Core/include/IAiClient.h` (NEW)
+  - `Source_Core/include/AiTypes.h` (NEW)
+  - `Source_Core/include/AiClientFactory.h` (NEW)
+  - `Source_Core/src/AiClientFactory.cpp` (NEW)
+  - `Source_Core/include/OpenAiClient.h` (NEW)
+  - `Source_Core/src/OpenAiClient.cpp` (NEW)
+  - `Source_Core/include/AiSseParser.h` (NEW)
+  - `Source_Core/src/AiSseParser.cpp` (NEW)
+  - `Source_Core/include/NetworkUsageTracker.h` (re-add `HttpTrafficKind::Ai` + `aiRequests/aiUploadBytes/aiDownloadBytes` snapshot fields)
+  - `Source_Core/src/NetworkUsageTracker.cpp`
+  - `Source_Core/src/TrackerHttpUtils.cpp` (one-line `Record(HttpTrafficKind::Tracker, …)` update)
+  - `Source_Core/src/JiraIssueMutation.cpp` (one-line `Record` update)
+  - `Source_Core/src/FieldCatalogCache.cpp` (one-line `Record` update)
+  - `CMakeLists.txt` (add `option(SMATCHET_WITH_AI "..." ON)` + new sources to `CORE_SOURCES`)
+- **Read-only adjacency**: `Source_Core/include/AppController.h`, `Source_Core/include/MainThreadDispatcher.h`
+- **Deferred to Phase A' (gated on test-suite-expansion umbrella release)**:
+  - `Source_Core/include/ConfigManager.h` + `Source_Core/src/ConfigManager.cpp` (Ai field set + DPAPI key protection)
+  - `tests/CMakeLists.txt` + `tests/Source_Core/AiSseParser.test.cpp` + `tests/Source_Core/AiClientFactory.test.cpp` (doctest coverage)
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — Phase A code committed locally (skeleton + OpenAiClient + NetworkUsageTracker re-fit + CMake option/shim). Both targets build clean. Push + PR pending. Phases B-E unscoped pending Phase A ship + Track-B / umbrella status check.
+- **Cleared by**: TBD.
+
 ## Shipped recent entries
 
 (Pruned after ~14 days. Kept here briefly to give concurrent agents recent context.)

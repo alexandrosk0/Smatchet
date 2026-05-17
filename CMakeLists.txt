@@ -150,6 +150,7 @@ option(SMATCHET_WARNINGS_AS_ERRORS
 
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
+option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
@@ -582,6 +583,13 @@ endif()
 if(SMATCHET_WITH_MCP)
     add_library(SmatchetCoreMcpShim INTERFACE)
     target_compile_definitions(SmatchetCoreMcpShim INTERFACE SMATCHET_WITH_MCP=1)
+endif()
+# AI assistant shim: keeps Unreal DX12 libs free of the define unless explicitly opted in.
+# Phase A is no-op at the call sites (skeleton only), but the shim is created now so Phases B-E
+# can compile-gate UI / Lua hooks without re-plumbing CMake.
+if(SMATCHET_WITH_AI)
+    add_library(SmatchetCoreAiShim INTERFACE)
+    target_compile_definitions(SmatchetCoreAiShim INTERFACE SMATCHET_WITH_AI=1)
 endif()
 
 function(smatchet_configure_core_impl_target _target)
