@@ -50,9 +50,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### lua-host-friend-drop · slice-1 · status: in-flight
+### lua-host-friend-drop · slice-1 · status: shipped (PR #151 merged at 53b2881)
 
-- **Branch**: `feat/lua-host-friend-drop`
+- **Branch**: `feat/lua-host-friend-drop` (deleted)
 - **Owner agent**: `lua-binder`
 - **Originating plan**: [`docs/design/applied/lua-host-friend-drop.md`](./applied/lua-host-friend-drop.md)
 - **Claimed write set**:
@@ -249,9 +249,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — shipped on develop at sha 8724b8b (branch deleted).
 - **Cleared by**: merged to develop at `8724b8b`.
 
-### code-review-backlog · A3 · required-field-glyph · status: in-flight
+### code-review-backlog · A3 · required-field-glyph · status: shipped (PR #113 merged at 42b18a4)
 
-- **Branch**: `feat/required-field-ui-glyph`
+- **Branch**: `feat/required-field-ui-glyph` (deleted)
 - **Owner agent**: `tracker-backend`
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § A3
 - **Claimed write set**:
@@ -261,12 +261,12 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip A3)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/TicketFieldEditor.h`, `Source_Core/include/SmatchetNewIssueDraftUi.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#113](https://github.com/alexandrosk0/Smatchet/pull/113) opened against `develop`.
-- **Cleared by**: pending merge of [#113](https://github.com/alexandrosk0/Smatchet/pull/113).
+- **Last update**: 2026-05-16 — merged via PR [#113](https://github.com/alexandrosk0/Smatchet/pull/113) at sha `42b18a4`.
+- **Cleared by**: PR `#113` merged at `42b18a4`.
 
-### code-review-backlog · C7 · grid-pushcliprect-audit · status: in-flight
+### code-review-backlog · C7 · grid-pushcliprect-audit · status: shipped (PR #115 merged at d6cb833)
 
-- **Branch**: `feat/grid-pushcliprect-audit`
+- **Branch**: `feat/grid-pushcliprect-audit` (deleted)
 - **Owner agent**: `grid-engine`
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C7
 - **Claimed write set**:
@@ -274,12 +274,12 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C7)
 - **Read-only adjacency**: `Source_Core/include/SmatchetActiveProjectGridUi.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#115](https://github.com/alexandrosk0/Smatchet/pull/115) opened against `develop`.
-- **Cleared by**: pending merge of [#115](https://github.com/alexandrosk0/Smatchet/pull/115).
+- **Last update**: 2026-05-16 — merged via PR [#115](https://github.com/alexandrosk0/Smatchet/pull/115) at sha `d6cb833`.
+- **Cleared by**: PR `#115` merged at `d6cb833`.
 
-### code-review-backlog · C2 · markdown-emitinlinetext-scratch · status: in-flight
+### code-review-backlog · C2 · markdown-emitinlinetext-scratch · status: shipped (PR #117 merged at 4eab183)
 
-- **Branch**: `feat/markdown-emitinlinetext-scratch`
+- **Branch**: `feat/markdown-emitinlinetext-scratch` (deleted)
 - **Owner agent**: orchestrator (direct — small allocator-only change, no header touch)
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C2
 - **Claimed write set**:
@@ -287,12 +287,12 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C2)
 - **Read-only adjacency**: none.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#117](https://github.com/alexandrosk0/Smatchet/pull/117) opened against `develop`.
-- **Cleared by**: pending merge of [#117](https://github.com/alexandrosk0/Smatchet/pull/117).
+- **Last update**: 2026-05-16 — merged via PR [#117](https://github.com/alexandrosk0/Smatchet/pull/117) at sha `4eab183`.
+- **Cleared by**: PR `#117` merged at `4eab183`.
 
-### code-review-backlog · C3 · plane-fetchissueeditmeta-broaden · status: in-flight
+### code-review-backlog · C3 · plane-fetchissueeditmeta-broaden · status: shipped (PR #118 merged at df3836b)
 
-- **Branch**: `feat/plane-fetchissueeditmeta-broaden`
+- **Branch**: `feat/plane-fetchissueeditmeta-broaden` (deleted)
 - **Owner agent**: orchestrator (direct — one-line list expansion)
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C3
 - **Claimed write set**:
@@ -300,12 +300,12 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C3 → 🟡 partial; real-permissions query deferred)
 - **Read-only adjacency**: `Source_Core/include/PlaneClient.h`.
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#118](https://github.com/alexandrosk0/Smatchet/pull/118) opened against `develop`.
-- **Cleared by**: pending merge of [#118](https://github.com/alexandrosk0/Smatchet/pull/118).
+- **Last update**: 2026-05-16 — merged via PR [#118](https://github.com/alexandrosk0/Smatchet/pull/118) at sha `df3836b`.
+- **Cleared by**: PR `#118` merged at `df3836b`.
 
-### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: in-flight
+### code-review-backlog · B4 · plane-fetchissuesforkeys-filter · status: shipped (PR #116 merged at 23afa9c)
 
-- **Branch**: `feat/plane-fetchissuesforkeys-filter`
+- **Branch**: `feat/plane-fetchissuesforkeys-filter` (deleted)
 - **Owner agent**: `tracker-backend` (orchestrator-direct after isolated worktrees thrashed twice on API 500)
 - **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § B4
 - **Claimed write set**:
@@ -313,8 +313,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4 → 🟡 partial; server-side `sequence_id__in` filter deferred as B4-v2)
 - **Read-only adjacency**: `Source_Core/include/PlaneClient.h`, `Source_Core/include/ITrackerClient.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR [#116](https://github.com/alexandrosk0/Smatchet/pull/116) opened against `develop`.
-- **Cleared by**: pending merge of [#116](https://github.com/alexandrosk0/Smatchet/pull/116).
+- **Last update**: 2026-05-16 — merged via PR [#116](https://github.com/alexandrosk0/Smatchet/pull/116) at sha `23afa9c`.
+- **Cleared by**: PR `#116` merged at `23afa9c`.
 
 ### test-suite-expansion-completion · wave-A1 · callstack-adversarial-subcases · status: shipped
 
@@ -451,7 +451,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-16 — agent errored API-500 mid-run; orchestrator recovered worktree state, verified gates, committed + pushed + merged.
 - **Cleared by**: see PR table below.
 
-### test-suite-expansion · phase 1 · status: in-flight
+### test-suite-expansion · phase 1 · status: shipped (PR #103 merged at fdac8ff)
 
 - **Branch**: `feat/test-phase-1-tracker-pure-logic`
 - **Owner agent**: orchestrator (autonomous multi-phase mode per the plan's § Execution contract)
@@ -471,8 +471,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/include/IssueDraft.h`, `Source_Core/include/TrackerFieldValueParser.h`, `Source_Core/include/IssueCreatePipeline.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — PR `#103` opened against `develop`.
-- **Cleared by**: pending merge of [#103](https://github.com/alexandrosk0/Smatchet/pull/103).
+- **Last update**: 2026-05-16 — merged via PR [#103](https://github.com/alexandrosk0/Smatchet/pull/103) at sha `fdac8ff`.
+- **Cleared by**: PR `#103` merged at `fdac8ff`.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded by `test-suite-expansion-completion.md` per-phase claims)
 
@@ -524,7 +524,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-17 — Phase A-narrowed shipped via PR #140 at sha eeea501. Phase A' (ConfigManager Ai fields + doctests) now dispatched on `feat/ai-config-fields-and-tests` after `test-suite-expansion` umbrella released (PR #149).
 - **Cleared by**: PR `#140` merged at `eeea501`.
 
-### ai-assistant-side-panel · Phase A' · ai-config-fields-and-tests · status: in-flight
+### ai-assistant-side-panel · Phase A' · ai-config-fields-and-tests · status: shipped (PR #157 merged at a7cd940)
 
 - **Branch**: `feat/ai-config-fields-and-tests`
 - **Owner agent**: `test-rig`
@@ -539,8 +539,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/ai-assistant-side-panel.md` (append Implementation log row + Deviations bullets + extend Verification)
 - **Read-only adjacency**: `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/include/IAiClient.h`, `Source_Core/src/AiClientFactory.cpp`, `Source_Core/src/AiSseParser.cpp`, `Source_Core/src/ConfigManager_PathUtils.cpp` (`GetPlatformSharedUserDataDirectory` reuse)
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — dispatched after test-suite-expansion umbrella release.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#157](https://github.com/alexandrosk0/Smatchet/pull/157) at sha `a7cd940`. SmatchetTests aggregate post-merge: 331 cases / 1745 assertions. ConfigManager Ai field set + DPAPI on `AiApiKey` + `AiAnthropicApiKey` + `AiSseParser` + `AiClientFactory` doctests landed. Phase B unblocked.
+- **Cleared by**: PR `#157` merged at `a7cd940`.
 
 ## Shipped recent entries
 
