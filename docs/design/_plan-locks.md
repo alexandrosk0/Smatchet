@@ -63,9 +63,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### git-ref-plan-locks · phase-0-1-2-3 · status: in-flight
+### git-ref-plan-locks · phase-0-1-2-3-4 · status: in-flight
 
-- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (stacked, Phase 3)
+- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (PR #195, Phase 3), `feat/git-ref-plan-locks-phase-4` (stacked, Phase 4)
 - **Owner agent**: `orchestrator`
 - **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2, 3)
 - **Claimed write set**:
@@ -82,6 +82,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `.github/workflows/locks-render.yml` (NEW — Phase 2 schedule + dispatch sync workflow)
   - `.github/workflows/lock-cleanup.yml` (NEW — Phase 3 PR-merge auto-release workflow)
   - `.github/PULL_REQUEST_TEMPLATE.md` (MOD — Phase 3 optional `lock-slug:` instruction)
+  - `.github/workflows/lock-staleness.yml` (NEW — Phase 4 daily cron sweep + Issue surface)
 - **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template).
 - **Started**: 2026-05-17
 - **Last update**: 2026-05-17 — scope expanded to include Phase 3 deliverables.
