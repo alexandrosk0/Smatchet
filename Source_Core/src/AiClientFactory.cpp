@@ -1,6 +1,8 @@
 #include "AiClientFactory.h"
 
+#include "AnthropicClient.h"
 #include "Logger.h"
+#include "OllamaClient.h"
 #include "OpenAiClient.h"
 
 #include <memory>
@@ -15,11 +17,9 @@ std::unique_ptr<IAiClient> MakeAiClient(AiProvider provider) {
     case AiProvider::OllamaOpenAiCompat:
         return std::unique_ptr<IAiClient>(new OpenAiClient());
     case AiProvider::Anthropic:
-        LOG_WARN("AiClientFactory: Anthropic provider not yet implemented (Phase D)");
-        return nullptr;
+        return std::unique_ptr<IAiClient>(new AnthropicClient());
     case AiProvider::OllamaNative:
-        LOG_WARN("AiClientFactory: OllamaNative provider not yet implemented (Phase D)");
-        return nullptr;
+        return std::unique_ptr<IAiClient>(new OllamaClient());
     }
     LOG_ERROR("AiClientFactory: unknown AiProvider enum value %d", static_cast<int>(provider));
     return nullptr;
