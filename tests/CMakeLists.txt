@@ -35,6 +35,11 @@ add_executable(SmatchetTests
     Source_Core/OfflineQueueServiceRuntime.test.cpp
     Source_Core/ConfigManager.test.cpp
     Source_Core/ConfigMigration.test.cpp
+    Plugins/Mcp/McpRequestParser.test.cpp
+    Plugins/Mcp/McpEnvelope.test.cpp
+    Plugins/Mcp/McpToolSchemas.test.cpp
+    Plugins/Mcp/McpDispatch.test.cpp
+    "${CMAKE_SOURCE_DIR}/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/TrackerLabelsPure.cpp"
@@ -70,6 +75,7 @@ add_executable(SmatchetTests
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
+    "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/tests/support"
 )
 

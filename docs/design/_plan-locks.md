@@ -50,9 +50,9 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### test-suite-expansion-completion · Phase-5-preflight · mcp-jsonrpc-pure-tu-split · status: in-flight
+### test-suite-expansion-completion · Phase-5-preflight · mcp-jsonrpc-pure-tu-split · status: shipped (PR #141 merged at cfab599)
 
-- **Branch**: `feat/mcp-jsonrpc-pure-tu-split`
+- **Branch**: `feat/mcp-jsonrpc-pure-tu-split` (deleted)
 - **Owner agent**: `mcp-toolsmith`
 - **Originating plan**: backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol pure logic entombed in cpr/httplib-tainted lambda`.
 - **Claimed write set**:
@@ -65,7 +65,26 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Plugins/Mcp/McpPlugin.h`, `Source_Core/include/SmatchetDefaults.h`
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — TU split landed locally on branch; gates green (standalone + DX12 + 284/1509 ctest).
+- **Last update**: 2026-05-16 — merged via PR #141 at sha cfab599. Pure JSON-RPC surface (12 exported helpers in `smatchet::mcp::pure`) is link-clean for Phase 5 tests.
+- **Cleared by**: PR `#141` merged at `cfab599`.
+
+### test-suite-expansion-completion · Phase-5-redispatch · mcp-json-rpc-harness · status: in-flight
+
+- **Branch**: `feat/test-phase-5-mcp-json-rpc`
+- **Owner agent**: `test-rig`
+- **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./test-suite-expansion-completion.md) § Phase 5
+- **Claimed write set**:
+  - `tests/Plugins/Mcp/McpRequestParser.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpEnvelope.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpToolSchemas.test.cpp` (NEW)
+  - `tests/Plugins/Mcp/McpDispatch.test.cpp` (NEW)
+  - `tests/CMakeLists.txt`
+  - `docs/design/_plan-locks.md`
+  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
+- **Read-only adjacency**: `Plugins/Mcp/McpJsonRpcPure.h`, `Plugins/Mcp/McpJsonRpcPure.cpp`
+- **Started**: 2026-05-16
+- **Last update**: 2026-05-16 — dispatched after PR #141 unblocker.
 - **Cleared by**: TBD PR.
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded umbrella)
