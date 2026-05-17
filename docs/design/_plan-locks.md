@@ -1,5 +1,18 @@
 # Plan-locks — parallel-plan coordination scratchpad
 
+> **Migration notice (added 2026-05-17)** — the [`git-ref-plan-locks`](./git-ref-plan-locks.md) plan
+> is replacing this markdown file with `refs/locks/*` as the atomic source of
+> truth. Phases 0–2 are live:
+>
+> - **Now**: hand-edit this file as before for new claims; the ref-based path
+>   is opt-in via `bash scripts/dev/lock-claim.sh`.
+> - **Phase 5** (`feat/git-ref-plan-locks` branch): agent prompts migrate to
+>   the script-driven flow; this file becomes secondary.
+> - **Phase 6**: cutover. Hand-edited content below the protocol section is
+>   stripped; the file becomes auto-generated from refs. An auto-generated
+>   preview lives at [`_plan-locks.generated.md`](./_plan-locks.generated.md).
+> - **Live ref query**: `bash scripts/dev/locks-show.sh`
+
 Single source of truth for **which design plan is currently writing which files**. Every multi-phase or multi-PR plan in `docs/design/` claims its in-flight write set here so concurrent plans (and their delegated agents) can spot collisions before they happen.
 
 This file replaces ad-hoc "I'll edit the same file by accident" failures with an explicit, lightweight handshake. Append-only entries; status transitions in-place.
@@ -50,23 +63,26 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### git-ref-plan-locks · phase-0-1 · status: in-flight
+### git-ref-plan-locks · phase-0-1-2 · status: in-flight
 
 - **Branch**: `feat/git-ref-plan-locks`
 - **Owner agent**: `orchestrator`
-- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phase 0 + Phase 1)
+- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2)
 - **Claimed write set**:
   - `docs/design/git-ref-plan-locks.md` (NEW — plan doc + phase results)
-  - `docs/design/_plan-locks.md` (MOD — this entry only)
-  - `scripts/dev/lock-claim.sh` (NEW)
-  - `scripts/dev/lock-claim-update.sh` (NEW)
-  - `scripts/dev/lock-release.sh` (NEW)
-  - `scripts/dev/locks-show.sh` (NEW)
-  - `scripts/dev/_lock-json.py` (NEW — internal helper)
-  - `scripts/dev/test-lock-primitives.sh` (NEW — sandbox test)
-- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery).
+  - `docs/design/_plan-locks.md` (MOD — this entry + Phase 2 banner)
+  - `docs/design/_plan-locks.generated.md` (NEW — Phase 2 derived view, initial empty-state render)
+  - `scripts/dev/lock-claim.sh` (NEW — Phase 1)
+  - `scripts/dev/lock-claim-update.sh` (NEW — Phase 1)
+  - `scripts/dev/lock-release.sh` (NEW — Phase 1)
+  - `scripts/dev/locks-show.sh` (NEW — Phase 1)
+  - `scripts/dev/locks-render-markdown.sh` (NEW — Phase 2)
+  - `scripts/dev/_lock-json.py` (NEW — internal helper, Phase 1)
+  - `scripts/dev/test-lock-primitives.sh` (NEW — sandbox test, Phase 1)
+  - `.github/workflows/locks-render.yml` (NEW — Phase 2 schedule + dispatch sync workflow)
+- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template).
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — claimed (Phase 0 + 1 already shipped on branch).
+- **Last update**: 2026-05-17 — scope expanded to include Phase 2 deliverables.
 - **Cleared by**: TBD PR. Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
 
 ### h12-l16-m13-bundle · slice-1 · status: shipped (PR #196 merged at 1952e8b)
