@@ -63,11 +63,11 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
-### git-ref-plan-locks · phase-0-1-2-3-4 · status: in-flight
+### git-ref-plan-locks · phase-0-1-2-3-4-5 · status: in-flight
 
-- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (PR #195, Phase 3), `feat/git-ref-plan-locks-phase-4` (stacked, Phase 4)
+- **Branches**: `feat/git-ref-plan-locks` (PR #194, Phases 0+1+2), `feat/git-ref-plan-locks-phase-3` (PR #195, Phase 3), `feat/git-ref-plan-locks-phase-4` (PR #198, Phase 4), `feat/git-ref-plan-locks-phase-5` (stacked, Phase 5)
 - **Owner agent**: `orchestrator`
-- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2, 3)
+- **Originating plan**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md) (Phases 0, 1, 2, 3, 4, 5)
 - **Claimed write set**:
   - `docs/design/git-ref-plan-locks.md` (NEW — plan doc + phase results)
   - `docs/design/_plan-locks.md` (MOD — this entry + Phase 2 banner)
@@ -83,9 +83,10 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `.github/workflows/lock-cleanup.yml` (NEW — Phase 3 PR-merge auto-release workflow)
   - `.github/PULL_REQUEST_TEMPLATE.md` (MOD — Phase 3 optional `lock-slug:` instruction)
   - `.github/workflows/lock-staleness.yml` (NEW — Phase 4 daily cron sweep + Issue surface)
-- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template).
+  - `AGENTS.md` (MOD — Phase 5 § Orchestrator delegation packet migrated to script-driven flow)
+- **Read-only adjacency**: `scripts/dev/test-all.sh` (confirmed test-*.sh auto-discovery), `.github/workflows/coverage-gate.yml` (style template), `agents/*.md` (no references found — no per-agent changes needed).
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — scope expanded to include Phase 3 deliverables.
+- **Last update**: 2026-05-17 — scope expanded to include Phase 5 deliverables.
 - **Cleared by**: TBD PR(s). Dogfood note — this entry IS the system being replaced; once Phase 6 cuts over, this entry will migrate into a `refs/locks/git-ref-plan-locks` and the markdown form will be auto-generated.
 
 ### h12-l16-m13-bundle · slice-1 · status: shipped (PR #196 merged at 1952e8b)
