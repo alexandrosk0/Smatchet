@@ -41,6 +41,8 @@ add_executable(SmatchetTests
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiContextBuilder.test.cpp
     Source_Core/AiErrorRedact.test.cpp
+    Source_Core/AiModelCatalog.test.cpp
+    Source_Core/AiPrefsValidator.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -86,6 +88,8 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/OllamaClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
 )
 
 target_include_directories(SmatchetTests PRIVATE

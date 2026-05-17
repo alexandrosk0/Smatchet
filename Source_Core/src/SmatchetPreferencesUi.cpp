@@ -2,6 +2,8 @@
 
 #if defined(SMATCHET_WITH_AI)
 #include "AiClientFactory.h"
+#include "AiModelCatalog.h"
+#include "AiPrefsValidator.h"
 #include "AiTypes.h"
 #endif
 
@@ -421,6 +423,28 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::TextUnformatted("Provider");
             ImGui::Spacing();
 
+            // Live validation - recomputed every frame (pure-logic, no I/O).
+            // Errors block save with a red banner; warnings inform with yellow.
+            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);
+            if (!validation.Errors.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                ImGui::TextWrapped("Save blocked - fix these errors:");
+                for (const auto& e : validation.Errors) {
+                    ImGui::BulletText("%s", e.c_str());
+                }
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+            if (!validation.Warnings.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f));
+                ImGui::TextWrapped("Warnings:");
+                for (const auto& w : validation.Warnings) {
+                    ImGui::BulletText("%s", w.c_str());
+                }
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
             // Provider Combo — enumerated via AiClientFactory so display order stays
             // stable across builds and matches the AiProvider enum (load-bearing for
             // round-tripping persisted AiProviderKind int).
@@ -474,8 +498,51 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip(
                     "OpenAI / Azure / Groq / Together / Ollama-OpenAI-compat key. Stored DPAPI-protected at rest "
                     "(Windows); plaintext fallback on other OS.");
-                const bool modelChanged = ImGui::InputText("OpenAI model", s_openAiModelBuf, sizeof(s_openAiModelBuf));
-                ImGui::SetItemTooltip("e.g. gpt-4o-mini, gpt-4o, o1-mini, or any OpenAI-compatible model identifier.");
+                // Model dropdown when the provider has a published catalog.
+                // Falls back to a free-form InputText otherwise (OllamaOpenAi
+                // surfaces here, but its models are local + user-defined).
+                bool modelChanged = false;
+                const std::vector<smatchet::ai::ModelOption> catalog =
+                    smatchet::ai::KnownModels(selectedKind);
+                if (!catalog.empty()) {
+                    std::vector<std::string> displays;
+                    displays.reserve(catalog.size());
+                    for (const auto& m : catalog) {
+                        displays.push_back(m.DisplayName);
+                    }
+                    std::vector<const char*> displayPtrs;
+                    displayPtrs.reserve(displays.size());
+                    for (const auto& s : displays) {
+                        displayPtrs.push_back(s.c_str());
+                    }
+                    int selectedIdx = -1;
+                    for (std::size_t i = 0; i < catalog.size(); ++i) {
+                        if (catalog[i].Id == s_openAiModelBuf) {
+                            selectedIdx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
+                    if (ImGui::Combo("OpenAI model", &comboIdx, displayPtrs.data(),
+                                     static_cast<int>(displayPtrs.size()))) {
+                        std::snprintf(s_openAiModelBuf, sizeof(s_openAiModelBuf), "%s",
+                                      catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
+                        modelChanged = true;
+                    }
+                    if (selectedIdx < 0 && s_openAiModelBuf[0] != '\0') {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(custom: %s)", s_openAiModelBuf);
+                    }
+                    if (ImGui::CollapsingHeader("Custom OpenAI model ID (advanced)")) {
+                        if (ImGui::InputText("##openai_custom", s_openAiModelBuf,
+                                             sizeof(s_openAiModelBuf))) {
+                            modelChanged = true;
+                        }
+                    }
+                } else {
+                    modelChanged = ImGui::InputText("OpenAI model", s_openAiModelBuf, sizeof(s_openAiModelBuf));
+                    ImGui::SetItemTooltip("OpenAI-compatible model identifier.");
+                }
                 const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
                 ImGui::SetItemTooltip("Leave blank for https://api.openai.com. Override for Azure / Groq / Together "
                                       "/ Ollama-OpenAI-compat endpoints. The /v1/chat/completions path is appended.");
@@ -491,9 +558,49 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip(
                     "Anthropic API key (sk-ant-...). Stored DPAPI-protected at rest (Windows); plaintext fallback "
                     "on other OS.");
-                const bool modelChanged = ImGui::InputText("Anthropic model", s_anthropicModelBuf,
-                                                            sizeof(s_anthropicModelBuf));
-                ImGui::SetItemTooltip("e.g. claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5.");
+                bool modelChanged = false;
+                const std::vector<smatchet::ai::ModelOption> catalog =
+                    smatchet::ai::KnownModels(AiProvider::Anthropic);
+                if (!catalog.empty()) {
+                    std::vector<std::string> displays;
+                    displays.reserve(catalog.size());
+                    for (const auto& m : catalog) {
+                        displays.push_back(m.DisplayName);
+                    }
+                    std::vector<const char*> displayPtrs;
+                    displayPtrs.reserve(displays.size());
+                    for (const auto& s : displays) {
+                        displayPtrs.push_back(s.c_str());
+                    }
+                    int selectedIdx = -1;
+                    for (std::size_t i = 0; i < catalog.size(); ++i) {
+                        if (catalog[i].Id == s_anthropicModelBuf) {
+                            selectedIdx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
+                    if (ImGui::Combo("Anthropic model", &comboIdx, displayPtrs.data(),
+                                     static_cast<int>(displayPtrs.size()))) {
+                        std::snprintf(s_anthropicModelBuf, sizeof(s_anthropicModelBuf), "%s",
+                                      catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
+                        modelChanged = true;
+                    }
+                    if (selectedIdx < 0 && s_anthropicModelBuf[0] != '\0') {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(custom: %s)", s_anthropicModelBuf);
+                    }
+                    if (ImGui::CollapsingHeader("Custom Anthropic model ID (advanced)")) {
+                        if (ImGui::InputText("##anthropic_custom", s_anthropicModelBuf,
+                                             sizeof(s_anthropicModelBuf))) {
+                            modelChanged = true;
+                        }
+                    }
+                } else {
+                    modelChanged = ImGui::InputText("Anthropic model", s_anthropicModelBuf,
+                                                    sizeof(s_anthropicModelBuf));
+                    ImGui::SetItemTooltip("Anthropic model identifier.");
+                }
                 const bool baseChanged = ImGui::InputText("Base URL (optional)", s_baseUrlBuf, sizeof(s_baseUrlBuf));
                 ImGui::SetItemTooltip("Leave blank for https://api.anthropic.com. Override only if you're routing "
                                       "through an Anthropic-compatible proxy.");

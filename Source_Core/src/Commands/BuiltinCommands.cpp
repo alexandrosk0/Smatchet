@@ -43,6 +43,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterAttachCommands(reg, app);
     RegisterScenarioCommands(reg, app);
     RegisterUiTestCommands(reg, app);
+    RegisterAiCommands(reg, app);
 
     RegisterViewToggleCommands(reg, app);
 

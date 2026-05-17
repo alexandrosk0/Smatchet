@@ -50,6 +50,34 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 
 ## In-flight entries
 
+### ai-debug-cli-and-prefs-validation · slice-1 · status: in-flight
+
+- **Branch**: `feat/ai-debug-cli-and-prefs-validation`
+- **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
+- **Originating plan**: orchestrator-direct (no design doc — investigation + tooling slice)
+- **Claimed write set**:
+  - `Source_Core/include/AiModelCatalog.h` (NEW)
+  - `Source_Core/src/AiModelCatalog.cpp` (NEW)
+  - `Source_Core/include/AiPrefsValidator.h` (NEW)
+  - `Source_Core/src/AiPrefsValidator.cpp` (NEW)
+  - `Source_Core/src/AnthropicClient.cpp` (MOD — LOG_ERROR on non-2xx)
+  - `Source_Core/src/OpenAiClient.cpp` (MOD — LOG_ERROR on non-2xx)
+  - `Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp` (NEW — 5 ai.* commands)
+  - `Source_Core/src/Commands/Builtin/BuiltinCommands_Internal.h` (MOD — declare RegisterAiCommands)
+  - `Source_Core/src/Commands/BuiltinCommands.cpp` (MOD — call RegisterAiCommands)
+  - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — validator banners + model dropdown)
+  - `tests/Source_Core/AiModelCatalog.test.cpp` (NEW)
+  - `tests/Source_Core/AiPrefsValidator.test.cpp` (NEW)
+  - `tests/CMakeLists.txt` (MOD — register 2 tests + 2 cpps)
+  - `scripts/dev/test-ai-prefs-validator.sh` (NEW — auto-enrolled)
+  - `scripts/dev/manual-ai-anthropic-probe.sh` (NEW — opt-out by name)
+  - `scripts/dev/manual-ai-anthropic-send.sh` (NEW — opt-out by name)
+  - `docs/design/_plan-locks.md` (this entry)
+- **Read-only adjacency**: `Source_Core/include/IAiClient.h`, `Source_Core/include/AiTypes.h`, `Source_Core/include/AiClientFactory.h`, `Source_Core/include/AiSseParser.h`, `Source_Core/src/AiClientFactory.cpp`, `Source_Core/include/ConfigManager.h`
+- **Started**: 2026-05-17
+- **Last update**: 2026-05-17 — dispatched.
+- **Cleared by**: TBD PR.
+
 ### ai-assistant-side-panel · Phase E · lua-glue-schema-bump-and-docs · status: shipped (PR #170 merged at f2d0933)
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-e` (deleted)

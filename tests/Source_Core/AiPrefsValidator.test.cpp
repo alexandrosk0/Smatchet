@@ -1,0 +1,193 @@
+// AiPrefsValidator pure-logic tests - per-provider field presence + format
+// sniff + catalog-known-model warnings. No network. No ConfigManager file I/O
+// (we construct TrackerConfig in-place).
+
+#include "AiPrefsValidator.h"
+
+#include "AiTypes.h"
+#include "ConfigManager.h"
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
+namespace {
+
+bool ContainsSubstring(const std::vector<std::string>& msgs, const std::string& needle) {
+    for (std::size_t i = 0; i < msgs.size(); ++i) {
+        if (msgs[i].find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TrackerConfig DefaultCfg() {
+    TrackerConfig cfg;
+    // Cfg ctor leaves AiApiKey / AiAnthropicApiKey empty. Models default to
+    // valid catalog IDs (gpt-4o-mini / claude-sonnet-4-6 / llama3) via the
+    // struct member initializers in ConfigManager.h.
+    return cfg;
+}
+
+} // namespace
+
+TEST_CASE("AiPrefsValidator: empty OpenAI config errors on missing key only") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;     // OpenAi
+    cfg.AiApiKey.clear();        // missing
+    cfg.AiAnthropicApiKey.clear();
+    // Anthropic key MISSING - but we are not the Anthropic provider, so no error.
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "OpenAI"));
+    CHECK(ContainsSubstring(v.Errors, "API key required"));
+    // The stale Anthropic key absence MUST NOT produce a separate error - the
+    // validator is per-active-provider, not all-providers.
+    CHECK_FALSE(ContainsSubstring(v.Errors, "Anthropic"));
+}
+
+TEST_CASE("AiPrefsValidator: empty Anthropic config errors on missing Anthropic key") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1; // Anthropic
+    cfg.AiAnthropicApiKey.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "Anthropic"));
+    CHECK(ContainsSubstring(v.Errors, "API key required"));
+}
+
+TEST_CASE("AiPrefsValidator: OpenAI with valid key + model passes") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-some-valid-looking-key";
+    cfg.AiModelOpenAi = "gpt-4o-mini";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Errors.empty());
+    CHECK(v.Warnings.empty());
+}
+
+TEST_CASE("AiPrefsValidator: Anthropic with valid key + valid model passes") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1;
+    cfg.AiAnthropicApiKey = "sk-ant-some-key";
+    cfg.AiModelAnthropic = "claude-sonnet-4-6";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Warnings.empty());
+}
+
+TEST_CASE("AiPrefsValidator: OpenAI key without 'sk-' prefix warns") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "definitely-not-sk-shape";
+    cfg.AiModelOpenAi = "gpt-4o-mini";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "OpenAI"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-"));
+}
+
+TEST_CASE("AiPrefsValidator: Anthropic key without 'sk-ant-' prefix warns") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1;
+    cfg.AiAnthropicApiKey = "sk-not-anthropic-shape";
+    cfg.AiModelAnthropic = "claude-sonnet-4-6";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "Anthropic"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-ant-"));
+}
+
+// [high-risk] Regression gate for the diagnostic case that motivated this
+// slice. claude-sonnet-4-6 IS a valid Anthropic ID today; the catalog must
+// include it so users persisting that value as their model don't get an
+// unknown-model warning. If a future PR drops the catalog entry, this test
+// fails loudly.
+TEST_CASE("[high-risk] AiPrefsValidator: Anthropic 'claude-sonnet-4-6' is in catalog (no warning)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1;
+    cfg.AiAnthropicApiKey = "sk-ant-fake";
+    cfg.AiModelAnthropic = "claude-sonnet-4-6";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    // Specifically: no unknown-model warning for this ID. Forces the catalog
+    // to keep claude-sonnet-4-6 listed; future Anthropic model lifecycle
+    // changes that drop this ID must add an explicit deviation entry here.
+    CHECK_FALSE(ContainsSubstring(v.Warnings, "claude-sonnet-4-6"));
+}
+
+TEST_CASE("AiPrefsValidator: invented Anthropic model warns") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1;
+    cfg.AiAnthropicApiKey = "sk-ant-fake";
+    cfg.AiModelAnthropic = "claude-fictional-100-xyz";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "claude-fictional-100-xyz"));
+    CHECK(ContainsSubstring(v.Warnings, "not in known catalog"));
+}
+
+TEST_CASE("AiPrefsValidator: bad base URL errors") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-test";
+    cfg.AiBaseUrl = "not-a-url";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "http"));
+}
+
+TEST_CASE("AiPrefsValidator: valid base URL passes URL check") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-test";
+    cfg.AiBaseUrl = "https://api.openai.com/";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+}
+
+TEST_CASE("AiPrefsValidator: empty model field errors") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-test";
+    cfg.AiModelOpenAi.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "model ID required"));
+}
+
+TEST_CASE("AiPrefsValidator: OllamaNative with blank base URL warns about default") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 3; // OllamaNative
+    cfg.AiOllamaBaseUrl.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "localhost:11434"));
+}
+
+TEST_CASE("AiPrefsValidator: OllamaNative bad base URL errors") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 3;
+    cfg.AiOllamaBaseUrl = "ftp://nope";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "Ollama"));
+    CHECK(ContainsSubstring(v.Errors, "http"));
+}
+
+TEST_CASE("AiPrefsValidator: out-of-range AiProviderKind clamps to OpenAI") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 99;     // out of enum
+    cfg.AiApiKey.clear();         // missing -> OpenAI error
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "OpenAI"));
+}
