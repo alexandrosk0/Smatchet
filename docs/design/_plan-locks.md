@@ -66,7 +66,7 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
 - **Last update**: 2026-05-17 — merged via PR [#190](https://github.com/alexandrosk0/Smatchet/pull/190) at sha `a3298ca`. 100 ms debounce; AI Assistant tab Save flow preserved.
 - **Cleared by**: PR `#190` merged at `a3298ca`.
 
-### pillar-2-top5-fixes · slice-1 · status: in-flight
+### pillar-2-top5-fixes · slice-1 · status: shipped (PR #191 merged at 8b779bc)
 
 - **Branch**: `feat/pillar-2-top5-fixes`
 - **Owner agent**: `claude` (orchestrator-dispatched)
@@ -85,8 +85,8 @@ Agent prompts must include the lock-file path explicitly. The standard wording a
   - `docs/design/_plan-locks.md` (this entry)
 - **Read-only adjacency**: `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (PR #186 pattern), `Source_Core/include/MainThreadDispatcher.h`
 - **Started**: 2026-05-17
-- **Last update**: 2026-05-17 — dispatched.
-- **Cleared by**: TBD PR.
+- **Last update**: 2026-05-17 — merged via PR [#191](https://github.com/alexandrosk0/Smatchet/pull/191) at sha `8b779bc`. All 9 sync HTTP/IO sites moved to worker threads via `LaunchBackgroundTask` + `MainThreadDispatcher`.
+- **Cleared by**: PR `#191` merged at `8b779bc`.
 
 ### grid-cell-edit-perf · slice-1 · status: shipped (PR #186 merged at 16e0611)
 
