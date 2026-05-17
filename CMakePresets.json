@@ -86,7 +86,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "SMATCHET_BUILD_TESTS": "ON"
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_LUA_TESTS": "ON"
             }
         },
         {
@@ -235,7 +236,8 @@
             "configurePreset": "ninja-test-msys2",
             "inheritConfigureEnvironment": true,
             "targets": [
-                "SmatchetTests"
+                "SmatchetTests",
+                "SmatchetLuaTests"
             ]
         },
         {

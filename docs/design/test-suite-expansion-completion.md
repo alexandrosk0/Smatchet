@@ -295,3 +295,13 @@ Test-rig totals on develop at session end: **284 cases / 1429 assertions**.
 - **Dual-target regression**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → clean (production untouched, smoke check).
 - **Sidecar suite**: `bash scripts/dev/test-all.sh` → green.
 - **Manual residue**: none (pure-logic harness, fully automated).
+
+### Phase 6 (`test-phase-6-lua-bindings`) — 2026-05-16
+
+Three of four planned test TUs shipped under a new `SmatchetLuaTests` binary (gated by `SMATCHET_BUILD_LUA_TESTS=ON`, auto-enabled in `ninja-test-msys2` preset). The fourth — `LuaBindings.test.cpp` — deferred behind a Class C production prerequisite.
+
+- **InitLuaCore classification**: Class C per `docs/design/_plan-locks.md`. `AppController_LuaBindings.cpp:32` `#include "imgui.h"` + `:766` `state["__smatchet_app"] = this` + the `smatchet_lua_init_detail::*Glue` functions resolving `__smatchet_app -> AppController*` at every call → cannot link the binding TU into a test target. Production-side TU split + interface lift required first (backlog entry `2026-05-16 · lua-binder · [infra]` filed with proposal).
+- **Shipped TUs**: `tests/Lua/LuaSandbox.test.cpp` (7 cases — sandbox closure invariant: denied globals are absent + allowed globals are present + os.* whitelist is exactly {time, clock, difftime, date} + safe-script error path returns recoverable result; 1 [high-risk]), `tests/Lua/LuaTimeout.test.cpp` (4 cases — count-hook abort + budget-respect + abort-not-panic + reinstall-across-scripts; 1 [high-risk]), `tests/Lua/LuaStubsCompile.test.cpp` (3 cases — public-surface symbol-name drift sentinel for the binding ↔ stub pair).
+- **Shared support**: `tests/support/LuaHostFixture.h` mirrors production `InitLuaCore`'s lib opens + os whitelist + panic-as-exception hook. Single source of truth for sandbox + timeout invariants on the test side.
+- **Build integration**: new `tests/Lua/CMakeLists.txt`. Links only `Smatchet_Lua_Internal` + `doctest::doctest`; NO ImGui, NO cpr, NO SQLite. Per-source `SOL_ALL_SAFETIES_ON=1` mirrors `AppController.h:10`.
+- **Mutation-sanity**: 2 high-risk cases (sandbox closure + timeout-abort-not-panic). Each ships an inline comment naming which production line/branch the assertion forces, per backlog #48 taxonomy path 2.
