@@ -587,6 +587,79 @@ void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, c
     if (app) app->LuaUiRegisterGlobalActionBind(name, cb);
 }
 
+// --- AI assistant glues (Phase E) ----------------------------------------------
+// Resolve via `__smatchet_app_ui` (AppController*) and call the always-on stubs
+// `AddAiContext` / `ClearAiContext` / `PromptAi` shipped Phase B. Those stubs
+// no-op when `SMATCHET_WITH_AI=0`, so the glues need no extra gating here.
+//
+// **Threading expectation**: Lua scripts driving `ai.*` are expected to run on
+// the UI thread (the main `lua` state). The background automation worker reuses
+// `__smatchet_app_ui` on its per-iteration `bgState` — calling `ai.*` from a
+// worker script will race-mutate `aiAssistant_->luaContext_`. That is a Phase B
+// design choice (no MainThreadDispatcher hop) inherited here, not introduced by
+// Phase E. SmatchetHooks.lua only calls `ai.*` from UI-event paths today.
+
+// Build an `AiContextBlock` from a Lua table { name=string, body=string,
+// kind=("active_ticket"|"multi_selected_tickets"|"visible_grid_rows"|
+//        "active_view"|"audit_trail") }. Missing/invalid kind defaults to
+// `ActiveTicket` (matches `AiContextBlock` default ctor).
+static AiContextBlock LuaTableToAiContextBlock(const sol::table& tbl) {
+    AiContextBlock block;
+    const sol::object nameObj = tbl["name"];
+    if (nameObj.valid() && nameObj.is<std::string>()) {
+        block.Name = nameObj.as<std::string>();
+    }
+    const sol::object bodyObj = tbl["body"];
+    if (bodyObj.valid() && bodyObj.is<std::string>()) {
+        block.Body = bodyObj.as<std::string>();
+    }
+    const sol::object kindObj = tbl["kind"];
+    if (kindObj.valid() && kindObj.is<std::string>()) {
+        const std::string k = kindObj.as<std::string>();
+        if (k == "multi_selected_tickets") {
+            block.Kind = AiContextBlockKind::MultiSelectedTickets;
+        } else if (k == "visible_grid_rows") {
+            block.Kind = AiContextBlockKind::VisibleGridRows;
+        } else if (k == "active_view") {
+            block.Kind = AiContextBlockKind::ActiveView;
+        } else if (k == "audit_trail") {
+            block.Kind = AiContextBlockKind::AuditTrail;
+        } else {
+            block.Kind = AiContextBlockKind::ActiveTicket; // also covers "active_ticket"
+        }
+    }
+    return block;
+}
+
+void LuaAiAddContextGlue(sol::this_state L, sol::table blockTbl) {
+    AppController* app = ResolveApp(L);
+    if (!app) return;
+    app->AddAiContext(LuaTableToAiContextBlock(blockTbl));
+}
+
+void LuaAiClearContextGlue(sol::this_state L) {
+    AppController* app = ResolveApp(L);
+    if (app) app->ClearAiContext();
+}
+
+void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional<sol::table> extraBlocks) {
+    AppController* app = ResolveApp(L);
+    if (!app) return;
+    // Optional extra context blocks: appended to the controller's context vector
+    // before Submit, matching the panel's "Send-with-context" path. Each element
+    // is treated as an `AiContextBlock` table.
+    if (extraBlocks) {
+        sol::table arr = extraBlocks.value();
+        for (std::size_t i = 1;; ++i) {
+            const sol::object el = arr[i];
+            if (!el.valid() || el.get_type() == sol::type::lua_nil) break;
+            if (!el.is<sol::table>()) break;
+            app->AddAiContext(LuaTableToAiContextBlock(el.as<sol::table>()));
+        }
+    }
+    app->PromptAi(prompt);
+}
+
 // LuaCommandsInvokeGlue / LuaMcpRegisterToolGlue / LuaCreateIssueGlue /
 // LuaTrackerGetTypeGlue / LuaTrackerCreateIssueGlue lifted to
 // AppController_LuaBindingsCore.cpp (ImGui-free TU).
@@ -672,6 +745,15 @@ void AppController::InitLuaUi(sol::state& state) {
     ui.set_function("register_ticket_action", &smatchet_lua_init_detail::LuaUiRegisterTicketActionGlue);
     ui.set_function("register_global_action", &smatchet_lua_init_detail::LuaUiRegisterGlobalActionGlue);
     state["ui"] = ui;
+
+    // Phase E: `ai.*` surface. Registered here (not in `InitLuaCore`) because the
+    // glues resolve through `__smatchet_app_ui` (an `AppController*`); the Core
+    // table only stores an `ILuaBindingHost*`. See `ResolveApp` note above.
+    sol::table aiTbl = state.create_table();
+    aiTbl.set_function("add_context", &smatchet_lua_init_detail::LuaAiAddContextGlue);
+    aiTbl.set_function("clear_context", &smatchet_lua_init_detail::LuaAiClearContextGlue);
+    aiTbl.set_function("prompt", &smatchet_lua_init_detail::LuaAiPromptGlue);
+    state["ai"] = aiTbl;
 }
 
 void AppController::LuaLogInfoBind(const std::string& msg) {

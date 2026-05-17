@@ -89,8 +89,14 @@ TEST_CASE("ConfigMigration fixture v5 loads with stable schema shape") {
     CHECK(cfg.ReadOnlyMode == false);
     // Avoid odr-use of the in-class static const int (no out-of-line definition); compare the
     // loaded value directly against the literal version baked into the fixture (v5).
+    // After the v5 → v6 bump (AI assistant feature, Phase E), `kCurrentLayoutSchemaVersion`
+    // moved past the fixture's frozen `5`. ConfigManager::Load() preserves the raw int
+    // (no auto-upgrade — the runtime callers in SmatchetUI / Target_Standalone main detect
+    // the < kCurrentLayoutSchemaVersion case and reset + bump there), so the fixture value
+    // remains `5` after Load. The drift assertion now asserts the OLD-fixture invariant
+    // rather than a stale "current == fixture" coincidence.
     CHECK(cfg.LayoutSchemaVersion == 5);
-    CHECK(cfg.LayoutSchemaVersion == +ConfigManager::kCurrentLayoutSchemaVersion);
+    CHECK(cfg.LayoutSchemaVersion < +ConfigManager::kCurrentLayoutSchemaVersion);
     // MigratedInheritIssueTypeV1 was true in the v5 fixture, so the one-shot inject is a no-op
     // and the persisted inherit list survives unchanged.
     CHECK(cfg.MigratedInheritIssueTypeV1 == true);
