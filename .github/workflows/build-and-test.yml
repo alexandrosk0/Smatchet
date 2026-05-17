@@ -70,12 +70,17 @@ jobs:
       - name: Configure ninja-test-msys2
         run: cmake --preset ninja-test-msys2
 
-      - name: Build SmatchetTests
-        run: cmake --build --preset ninja-test-msys2 --target SmatchetTests
+      - name: Build test binaries
+        # No explicit --target — let the build preset's `targets` list drive,
+        # which is `["SmatchetTests", "SmatchetLuaTests"]`. Passing --target
+        # SmatchetTests here would override the preset list and skip the Lua
+        # rig, causing ctest's smatchet_lua_tests to fail with "Could not find
+        # executable .../tests/Lua/SmatchetLuaTests.exe".
+        run: cmake --build --preset ninja-test-msys2
 
       - name: Run ctest
         # No CTest preset is wired (see build-doctor common causes); invoke ctest
-        # from the build directory directly.
+        # from the build directory directly. Runs smatchet_tests + smatchet_lua_tests.
         working-directory: build/ninja-test-msys2
         run: ctest --output-on-failure
 
