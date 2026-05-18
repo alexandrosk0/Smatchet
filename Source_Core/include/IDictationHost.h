@@ -43,3 +43,10 @@ class IDictationHost {
     /// Whisper-plugin Start / Stop boundaries (Phase E).
     virtual bool IsRecording() const = 0;
 };
+
+// Note: DictationInsertionRouter (concrete type in DictationInsertionRouter.h)
+// also exposes InsertIntoFocusedInputText(const std::string&) for the
+// UI-thread post-transcription path. That method is not on IDictationHost
+// because the host abstraction is a Phase D extension point — Phase B keeps
+// the interface stable while still landing the concrete signature on the
+// router class so call sites can wire up.

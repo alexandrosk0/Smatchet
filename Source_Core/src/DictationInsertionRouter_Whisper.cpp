@@ -69,6 +69,25 @@ bool DictationInsertionRouter::IsRecording() const {
     return false;
 }
 
+void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& text) {
+    // UI-thread-only contract: this method MUST be called from the main thread
+    // (worker threads post completions via MainThreadDispatcher::PostToMainThread).
+    // Phase B scaffold: signature lives so Phase D surfaces can wire register/
+    // unregister + the post-transcription callback without re-touching the
+    // router header. Full splice-at-cursor + ImGui::GetActiveID() probing
+    // lands in Phase D.
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (entries_.empty()) {
+        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target; "
+                  "dropping %zu bytes",
+                  text.size());
+        return;
+    }
+    LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: %zu bytes targeted at %zu "
+              "registered buffer(s) (scaffold - full splice lands Phase D)",
+              text.size(), entries_.size());
+}
+
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return entries_.size();
