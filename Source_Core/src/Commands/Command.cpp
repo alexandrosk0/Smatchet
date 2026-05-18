@@ -8,18 +8,30 @@ namespace cmd {
 
 const char* ErrorCodeString(ErrorCode c) {
     switch (c) {
-        case ErrorCode::None:                 return "ok";
-        case ErrorCode::UnknownCommand:       return "unknown-command";
-        case ErrorCode::MissingRequiredArg:   return "missing-required-arg";
-        case ErrorCode::ValidationError:      return "validation-error";
-        case ErrorCode::HandlerError:         return "handler-error";
-        case ErrorCode::ConfirmRequired:      return "confirm-required";
-        case ErrorCode::NotConnected:         return "not-connected";
-        case ErrorCode::AppendOnly:           return "append-only";
-        case ErrorCode::NotFound:             return "not-found";
-        case ErrorCode::BackendError:         return "backend-error";
-        case ErrorCode::DryRunUnsupported:    return "dry-run-unsupported";
-        case ErrorCode::Timeout:              return "timeout";
+    case ErrorCode::None:
+        return "ok";
+    case ErrorCode::UnknownCommand:
+        return "unknown-command";
+    case ErrorCode::MissingRequiredArg:
+        return "missing-required-arg";
+    case ErrorCode::ValidationError:
+        return "validation-error";
+    case ErrorCode::HandlerError:
+        return "handler-error";
+    case ErrorCode::ConfirmRequired:
+        return "confirm-required";
+    case ErrorCode::NotConnected:
+        return "not-connected";
+    case ErrorCode::AppendOnly:
+        return "append-only";
+    case ErrorCode::NotFound:
+        return "not-found";
+    case ErrorCode::BackendError:
+        return "backend-error";
+    case ErrorCode::DryRunUnsupported:
+        return "dry-run-unsupported";
+    case ErrorCode::Timeout:
+        return "timeout";
     }
     return "unknown";
 }
@@ -47,9 +59,7 @@ CommandResult CommandResult::Success(nlohmann::json data) {
     return r;
 }
 
-CommandResult CommandResult::Failure(ErrorCode code,
-                                     std::string message,
-                                     std::string hint,
+CommandResult CommandResult::Failure(ErrorCode code, std::string message, std::string hint,
                                      std::vector<std::string> suggestions) {
     CommandResult r;
     r.Ok = false;
@@ -77,11 +87,16 @@ nlohmann::json CommandResult::ToWireJson(const std::string& commandName, bool dr
 
 static const char* ParamTypeJsonName(ParamType t) {
     switch (t) {
-        case ParamType::String: return "string";
-        case ParamType::Int:    return "integer";
-        case ParamType::Bool:   return "boolean";
-        case ParamType::Number: return "number";
-        case ParamType::Json:   return "object";
+    case ParamType::String:
+        return "string";
+    case ParamType::Int:
+        return "integer";
+    case ParamType::Bool:
+        return "boolean";
+    case ParamType::Number:
+        return "number";
+    case ParamType::Json:
+        return "object";
     }
     return "string";
 }
@@ -117,18 +132,23 @@ nlohmann::json Command::BuildJsonSchema() const {
 
 static const char* ParamTypeHelpName(ParamType t) {
     switch (t) {
-        case ParamType::String: return "string";
-        case ParamType::Int:    return "int";
-        case ParamType::Bool:   return "bool";
-        case ParamType::Number: return "number";
-        case ParamType::Json:   return "json";
+    case ParamType::String:
+        return "string";
+    case ParamType::Int:
+        return "int";
+    case ParamType::Bool:
+        return "bool";
+    case ParamType::Number:
+        return "number";
+    case ParamType::Json:
+        return "json";
     }
     return "string";
 }
 
 std::string Command::BuildHelpText() const {
     std::ostringstream os;
-    os << Name << " \xE2\x80\x94 " << Summary << "\n\n";  // em-dash (UTF-8)
+    os << Name << " \xE2\x80\x94 " << Summary << "\n\n"; // em-dash (UTF-8)
     if (!Description.empty()) {
         os << Description << "\n\n";
     }
@@ -139,7 +159,8 @@ std::string Command::BuildHelpText() const {
     if (!Aliases.empty()) {
         os << "Aliases:   ";
         for (size_t i = 0; i < Aliases.size(); ++i) {
-            if (i) os << ", ";
+            if (i)
+                os << ", ";
             os << Aliases[i];
         }
         os << "\n";
@@ -148,34 +169,45 @@ std::string Command::BuildHelpText() const {
 
     bool anyRequired = false;
     for (const ParamSpec& p : Params) {
-        if (p.Required) { anyRequired = true; break; }
+        if (p.Required) {
+            anyRequired = true;
+            break;
+        }
     }
     if (anyRequired) {
         os << "Required:\n";
         for (const ParamSpec& p : Params) {
-            if (!p.Required) continue;
+            if (!p.Required)
+                continue;
             os << "  --" << p.Name << "=<" << ParamTypeHelpName(p.Type) << ">";
-            if (!p.Description.empty()) os << "  " << p.Description;
+            if (!p.Description.empty())
+                os << "  " << p.Description;
             os << "\n";
         }
     }
     bool anyOptional = false;
     for (const ParamSpec& p : Params) {
-        if (!p.Required) { anyOptional = true; break; }
+        if (!p.Required) {
+            anyOptional = true;
+            break;
+        }
     }
     if (anyOptional) {
         os << "Optional:\n";
         for (const ParamSpec& p : Params) {
-            if (p.Required) continue;
+            if (p.Required)
+                continue;
             os << "  --" << p.Name << "=<" << ParamTypeHelpName(p.Type) << ">";
-            if (!p.Default.is_null()) os << " (default: " << p.Default.dump() << ")";
-            if (!p.Description.empty()) os << "  " << p.Description;
+            if (!p.Default.is_null())
+                os << " (default: " << p.Default.dump() << ")";
+            if (!p.Description.empty())
+                os << "  " << p.Description;
             os << "\n";
         }
     }
 
     os << "\nExample:\n";
-    os << "  SmatchetStandalone.exe cmd " << Name;
+    os << "  Smatchet.exe cmd " << Name;
     for (const ParamSpec& p : Params) {
         if (p.Required) {
             os << " --" << p.Name << "=<" << ParamTypeHelpName(p.Type) << ">";
@@ -186,9 +218,9 @@ std::string Command::BuildHelpText() const {
     // Agent-friendly tip — humans see plain text here, but agents should fetch the
     // machine-readable JSON schema. This is the only documented stdout-non-JSON path.
     os << "\nFor JSON schema (agent-friendly):\n";
-    os << "  SmatchetStandalone.exe cmd commands.help --name=" << Name << "\n";
+    os << "  Smatchet.exe cmd commands.help --name=" << Name << "\n";
     return os.str();
 }
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet

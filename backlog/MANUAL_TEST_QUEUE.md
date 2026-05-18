@@ -37,7 +37,7 @@ Four runtime fixes, each needs an independent smoke.
 - ⏳ **M1 — MCP SSE heartbeat shutdown latency (item 9).**
   - **Setup**: Build standalone; enable MCP server (`Mcp` plugin started). Connect one (or several) SSE clients to `/mcp/sse`. The MCP Inspector tool or a `curl -N http://localhost:<port>/mcp/sse` works.
   - **Action**: While clients are connected, quit Smatchet (window close or `Alt+F4`).
-  - **Expected**: Process exits within ~100 ms of the quit. Watch the OS process list — `SmatchetStandalone.exe` should be gone almost immediately, not lingering for 1+ second per connected client.
+  - **Expected**: Process exits within ~100 ms of the quit. Watch the OS process list — `Smatchet.exe` should be gone almost immediately, not lingering for 1+ second per connected client.
   - **Pre-fix behaviour**: shutdown blocked up to 1 s per connected client (sleep-based heartbeat).
   - **Reaches**: also exercises the `Impl` member-order hardening from `fix(mcp): order Impl members so shutdown primitives outlive ~Server` (PR #12, commit `6053c09`) — workers complete cleanly during `~Server`'s join even if they're mid-lambda.
 

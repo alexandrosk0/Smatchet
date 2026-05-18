@@ -106,9 +106,9 @@ Do not demand a perfect repro if the user already has useful evidence. If the bu
 Good enough examples:
 
 ```bash
-SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
-SmatchetStandalone.exe cmd tickets.get --id=<id>
-SmatchetStandalone.exe 2> debug.log
+Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
+Smatchet.exe cmd tickets.get --id=<id>
+Smatchet.exe 2> debug.log
 ```
 
 For crashes, first collect:
@@ -265,7 +265,7 @@ If the build fails because of instrumentation, fix the instrumentation only. Do 
 After a successful build, verify the executable is fresh:
 
 ```bash
-ls -la <absolute-path-to-SmatchetStandalone.exe>
+ls -la <absolute-path-to-Smatchet.exe>
 ```
 
 Report the absolute executable path, size, and modified time so the user does not test a stale binary.
@@ -277,8 +277,8 @@ Report the absolute executable path, size, and modified time so the user does no
 **6a. Auto-repro path (preferred).** When the bug has a CLI command, `scenario.run` name, Lua snippet, or doctest case that triggers it deterministically, run it yourself. No user wait required for this step. Capture stderr + the NDJSON log file (§ 7) directly.
 
 ```bash
-SmatchetStandalone.exe cmd scenario.run --name=<repro> --frames=300 --yes 2> debug.log
-SmatchetStandalone.exe cmd tickets.get --id=<id>             2> debug.log
+Smatchet.exe cmd scenario.run --name=<repro> --frames=300 --yes 2> debug.log
+Smatchet.exe cmd tickets.get --id=<id>             2> debug.log
 ctest --preset ninja-test-msys2 -R <UnitName>                 # for pure-logic repros
 ```
 
@@ -296,9 +296,9 @@ Then the agent **stops** — next turn requires the user's log / screenshot / de
 **Unified CLI reference** (auto-repro path):
 
 ```bash
-SmatchetStandalone.exe cmd commands.list --category=<cat>
-SmatchetStandalone.exe cmd commands.help --name=<cmd>
-SmatchetStandalone.exe cmd commands.search --query=<q>
+Smatchet.exe cmd commands.list --category=<cat>
+Smatchet.exe cmd commands.help --name=<cmd>
+Smatchet.exe cmd commands.search --query=<q>
 ```
 
 Useful commands:
@@ -367,7 +367,7 @@ If `jq` isn't on PATH, fall back to text-search: `grep -n '"hypothesisId":"h1"' 
 ls "$LOCALAPPDATA/Smatchet"/*.log
 
 # if file sink not active, ask the user to relaunch with stderr captured:
-SmatchetStandalone.exe 2> debug.log
+Smatchet.exe 2> debug.log
 grep -n "\[temp-debug\]" debug.log
 ```
 

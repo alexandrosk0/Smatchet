@@ -36,7 +36,7 @@ Config must have `mcp_enabled: true`. **No running instance required** — `--sp
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 
 # 2. Run scenario end-to-end. --spawn handles launch + MCP wait + result file + app.quit.
-build/ninja-iter-msys2/SmatchetStandalone.exe cmd scenario.run \
+build/ninja-iter-msys2/Smatchet.exe cmd scenario.run \
   --name=<scenario> --frames=<N> --outPath=perf_<round>.json --spawn --yes
 
 # 3. Read the result file directly — perf.snapshot rows are already inside .data.rows.
@@ -55,10 +55,10 @@ Read("perf_<round>.json")
 Use only when no scenario exists yet or the path needs human-driven navigation. Prefer A3 (register a scenario) over repeated A2.
 
 ```bash
-SmatchetStandalone.exe cmd perf.reset                          # against the running instance
+Smatchet.exe cmd perf.reset                          # against the running instance
 # ← user reproduces the slow path for ~5 s
-SmatchetStandalone.exe cmd perf.snapshot --pretty
-SmatchetStandalone.exe cmd perf.snapshot \
+Smatchet.exe cmd perf.snapshot --pretty
+Smatchet.exe cmd perf.snapshot \
   | jq '[.data.rows[] | select(.name | startswith("perf_temp:"))]'
 ```
 

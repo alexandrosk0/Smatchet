@@ -27,24 +27,24 @@ The Smatchet CLI exposes the full [unified Command System](docs/design/applied/c
 # Requires a running Smatchet instance with MCP enabled (mcp_enabled: true in config).
 
 # List all available commands
-SmatchetStandalone.exe cmd commands.list --pretty
+Smatchet.exe cmd commands.list --pretty
 
 # Get full schema for one command
-SmatchetStandalone.exe cmd commands.help --name=tickets.search_active
+Smatchet.exe cmd commands.help --name=tickets.search_active
 
 # Search tickets
-SmatchetStandalone.exe cmd tickets.search_active --query=auth --limit=5
+Smatchet.exe cmd tickets.search_active --query=auth --limit=5
 
 # Pipe ticket IDs into a second command
-SmatchetStandalone.exe cmd tickets.list_active --quiet | head -10
+Smatchet.exe cmd tickets.list_active --quiet | head -10
 
 # Preview a config change without applying it
-SmatchetStandalone.exe cmd config.set --key=logMinLevel --value=debug --dry-run
+Smatchet.exe cmd config.set --key=logMinLevel --value=debug --dry-run
 
 # Run a perf benchmark scenario
-SmatchetStandalone.exe cmd perf.reset
-SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=600 --yes
-SmatchetStandalone.exe cmd perf.snapshot --pretty
+Smatchet.exe cmd perf.reset
+Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=600 --yes
+Smatchet.exe cmd perf.snapshot --pretty
 ```
 
 ---
@@ -65,7 +65,7 @@ The CLI attaches to a **running** Smatchet instance over its MCP HTTP endpoint. 
 **Enable MCP in the app** by setting `"mcp_enabled": true` in `smatchet_config.json`, or via:
 
 ```bash
-SmatchetStandalone.exe cmd config.set --key=mcpEnabled --value=true
+Smatchet.exe cmd config.set --key=mcpEnabled --value=true
 ```
 
 If no instance is reachable, the CLI exits with code **6** (`not-connected`) and prints a structured error to stderr.
@@ -92,10 +92,10 @@ All flags apply to every `cmd` invocation.
 
 ```bash
 # 1. Preview what would change
-SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --dry-run
+Smatchet.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --dry-run
 
 # 2. Execute only if the preview is acceptable
-SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --yes
+Smatchet.exe cmd ticket.set_field --id=PROJ-1 --field=status --value=Done --yes
 ```
 
 ---
@@ -153,9 +153,9 @@ Agent discovery entry points.
 | `commands.recents` | `limit?` | Most recently dispatched names |
 
 ```bash
-SmatchetStandalone.exe cmd commands.list --category=perf --quiet
-SmatchetStandalone.exe cmd commands.help --name=scenario.run --pretty
-SmatchetStandalone.exe cmd commands.search --query=sync
+Smatchet.exe cmd commands.list --category=perf --quiet
+Smatchet.exe cmd commands.help --name=scenario.run --pretty
+Smatchet.exe cmd commands.search --query=sync
 ```
 
 ---
@@ -201,25 +201,25 @@ Registered once `ViewState` is loaded (first render frame). Returns `{id, name, 
 
 ```bash
 # List existing views
-SmatchetStandalone.exe cmd view.list --quiet
+Smatchet.exe cmd view.list --quiet
 
 # Create a new view + trigger sync immediately
-SmatchetStandalone.exe cmd view.create --name="High priority" --jql="priority=High" --triggerSync=true
+Smatchet.exe cmd view.create --name="High priority" --jql="priority=High" --triggerSync=true
 
 # Preview a create without applying
-SmatchetStandalone.exe cmd view.create --name=blockers --jql="status=Blocked" --dry-run
+Smatchet.exe cmd view.create --name=blockers --jql="status=Blocked" --dry-run
 
 # Select (activate) a specific view — triggers sync from tracker
-SmatchetStandalone.exe cmd view.activate --id=high_priority
+Smatchet.exe cmd view.activate --id=high_priority
 
 # Update the currently active view's JQL
-SmatchetStandalone.exe cmd view.update --jql="priority in (High, Highest)"
+Smatchet.exe cmd view.update --jql="priority in (High, Highest)"
 
 # Update fields (must pass as JSON array)
-SmatchetStandalone.exe cmd view.update --fields='["summary","status","priority","assignee"]'
+Smatchet.exe cmd view.update --fields='["summary","status","priority","assignee"]'
 
 # Delete a view (requires --yes)
-SmatchetStandalone.exe cmd view.delete --id=high_priority --yes
+Smatchet.exe cmd view.delete --id=high_priority --yes
 ```
 
 ---
@@ -252,14 +252,14 @@ Mutations — all destructive (`--yes`), dry-run supported where noted.
 
 ```bash
 # Two-phase safe field edit
-SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=priority --value=High --dry-run
-SmatchetStandalone.exe cmd ticket.set_field --id=PROJ-1 --field=priority --value=High --yes
+Smatchet.exe cmd ticket.set_field --id=PROJ-1 --field=priority --value=High --dry-run
+Smatchet.exe cmd ticket.set_field --id=PROJ-1 --field=priority --value=High --yes
 
 # Bulk field update
-SmatchetStandalone.exe cmd ticket.set_fields --id=PROJ-1 --fields='{"priority":"High","labels":"needs-review"}' --yes
+Smatchet.exe cmd ticket.set_fields --id=PROJ-1 --fields='{"priority":"High","labels":"needs-review"}' --yes
 
 # Queue a create for later
-SmatchetStandalone.exe cmd ticket.create --projectKey=PROJ --summary="Fix auth bug" --offline=true --yes
+Smatchet.exe cmd ticket.create --projectKey=PROJ --summary="Fix auth bug" --offline=true --yes
 ```
 
 ---
@@ -340,8 +340,8 @@ Automated multi-frame test scenarios driven inside the render loop.
 Built-in scenario: **`priority-grid-scroll`** — drives the priority grid at 8 px/frame for N frames, collecting per-scope perf timings.
 
 ```bash
-SmatchetStandalone.exe cmd scenario.list
-SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
+Smatchet.exe cmd scenario.list
+Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
 ```
 
 ---
@@ -390,11 +390,11 @@ Keys that require a plugin or app restart to take effect are noted.
 
 ```bash
 # Change the JQL filter, then trigger a sync
-SmatchetStandalone.exe cmd config.set --key=jqlQuery --value="project=BLOOP AND status != Done"
-SmatchetStandalone.exe cmd sync.incremental --yes
+Smatchet.exe cmd config.set --key=jqlQuery --value="project=BLOOP AND status != Done"
+Smatchet.exe cmd sync.incremental --yes
 
 # Preview a change without applying
-SmatchetStandalone.exe cmd config.set --key=mcpPort --value=8765 --dry-run
+Smatchet.exe cmd config.set --key=mcpPort --value=8765 --dry-run
 ```
 
 ---
@@ -421,7 +421,7 @@ Applied by the app at startup. All are stable API — renaming is a breaking cha
 `config.path` lists which `SMATCHET_*` vars were observed at startup (token values redacted as `***`):
 
 ```bash
-SmatchetStandalone.exe cmd config.path --pretty
+Smatchet.exe cmd config.path --pretty
 ```
 
 ---
@@ -430,26 +430,26 @@ SmatchetStandalone.exe cmd config.path --pretty
 
 ```bash
 # Search active tickets then fetch full detail for each
-SmatchetStandalone.exe cmd tickets.search_active --query=auth --quiet \
-  | xargs -I{} SmatchetStandalone.exe cmd tickets.get --id={}
+Smatchet.exe cmd tickets.search_active --query=auth --quiet \
+  | xargs -I{} Smatchet.exe cmd tickets.get --id={}
 
 # Pre-check output size before pulling into agent context
-SmatchetStandalone.exe cmd tickets.list_active --limit=500 --tokens
+Smatchet.exe cmd tickets.list_active --limit=500 --tokens
 # stderr: {"tokens_estimate":12450,"bytes":49800}
 
 # Pipe command names into help
-SmatchetStandalone.exe cmd commands.list --category=perf --quiet \
-  | xargs -I{} SmatchetStandalone.exe cmd commands.help --name={}
+Smatchet.exe cmd commands.list --category=perf --quiet \
+  | xargs -I{} Smatchet.exe cmd commands.help --name={}
 
 # Machine-readable discovery — count all commands
-SmatchetStandalone.exe cmd commands.list | jq '.data.total'
+Smatchet.exe cmd commands.list | jq '.data.total'
 
 # Filter by category
-SmatchetStandalone.exe cmd commands.list | jq '.data.items[] | select(.category=="tickets") | .name'
+Smatchet.exe cmd commands.list | jq '.data.items[] | select(.category=="tickets") | .name'
 
 # Paginate through all tickets
-SmatchetStandalone.exe cmd tickets.list_active --limit=50 --offset=0 --quiet
-SmatchetStandalone.exe cmd tickets.list_active --limit=50 --offset=50 --quiet
+Smatchet.exe cmd tickets.list_active --limit=50 --offset=0 --quiet
+Smatchet.exe cmd tickets.list_active --limit=50 --offset=50 --quiet
 ```
 
 ---
@@ -464,18 +464,18 @@ Measure UI performance without a human driver.
 cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
 
 # 3. With app running — reset, run scenario, read results
-SmatchetStandalone.exe cmd perf.reset
-SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=600 --yes
-SmatchetStandalone.exe cmd perf.snapshot --pretty
+Smatchet.exe cmd perf.reset
+Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=600 --yes
+Smatchet.exe cmd perf.snapshot --pretty
 
 # Sort by dominant scope
-SmatchetStandalone.exe cmd perf.snapshot | jq '.data.rows | sort_by(-.lastTotalMs) | .[0:5]'
+Smatchet.exe cmd perf.snapshot | jq '.data.rows | sort_by(-.lastTotalMs) | .[0:5]'
 
 # Write to file
-SmatchetStandalone.exe cmd perf.dump --outPath=C:/tmp/perf-baseline.json
+Smatchet.exe cmd perf.dump --outPath=C:/tmp/perf-baseline.json
 
 # Confirm temp: markers removed after fix
-SmatchetStandalone.exe cmd perf.snapshot --quiet | grep temp:   # → no output expected
+Smatchet.exe cmd perf.snapshot --quiet | grep temp:   # → no output expected
 ```
 
 See [`.claude/PERF_WORKFLOW.md`](.claude/PERF_WORKFLOW.md) for the full profiling methodology.
