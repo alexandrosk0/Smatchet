@@ -167,6 +167,120 @@ class GitHubClient : public ITrackerClient {
      */
     bool StateTransition(const std::string& issueKey, const std::string& state, std::string& outError);
 
+    // ─── H7 PR-thread + workflow surface ─────────────────────────────────────
+    //
+    // Read methods share `FetchIssueComments` shape (PAT presence check, parse,
+    // redacted error compose, no audit-trail). Write methods share the five
+    // write methods above (audit Begin/Result, payload size cap, inline bearer).
+    //
+    // All shapes follow GitHub REST API v2022-11-28. Inline `// API:` comments
+    // point at the doc URL so future maintainers can verify wire formats
+    // without re-reading this header.
+
+    /**
+     * GET /repos/{owner}/{repo}/issues/{number}/comments — PR comments via the
+     * issues endpoint (GitHub treats PRs as a superset of issues, so the issue
+     * comments endpoint returns the PR's conversation thread; the
+     * `/pulls/{number}/comments` variant returns only diff-review comments and
+     * is NOT what we want for the H7 watcher). `prKey` uses the canonical
+     * `owner/repo#N` shape — same `ParseGitHubIssueKey` parser as the issue
+     * variant. Returned in API-default oldest-first order.
+     *
+     * Errors mirror `FetchIssueComments`.
+     */
+    bool FetchPrComments(const std::string& prKey, std::vector<TrackerIssueComment>& outComments,
+                         std::string& outError);
+
+    /// Request shape for `CreatePullRequest`. `draft` defaults to true — the
+    /// agentic flow never opens non-draft PRs (the operator marks ready
+    /// manually after audit). `baseBranch` defaults to `"develop"` at the
+    /// caller side (this struct keeps it explicit so the call site is self-
+    /// documenting).
+    struct CreatePullRequestRequest {
+        std::string owner;
+        std::string repo;
+        std::string headBranch;
+        std::string baseBranch; // empty -> GitHub rejects; caller defaults
+        std::string title;
+        std::string body;
+        bool draft = true;
+    };
+
+    /**
+     * POST /repos/{owner}/{repo}/pulls — create a pull request. The response
+     * carries the `html_url` of the new PR; `outPrUrl` is populated on 201.
+     * Audit action `"CreatePullRequest"`; payload is size-capped via the
+     * shared `ShouldRejectAsTooLarge` predicate.
+     *
+     * API: https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request
+     */
+    bool CreatePullRequest(const CreatePullRequestRequest& req, std::string& outPrUrl, std::string& outError);
+
+    /// One row of GitHub's check-run list response. Populated only with fields
+    /// the agentic loop needs; the full payload carries ~30 fields.
+    struct CheckRun {
+        std::int64_t id = 0;
+        std::string name;       // e.g. "build", "tests"
+        std::string status;     // queued | in_progress | completed
+        std::string conclusion; // success | failure | neutral | cancelled |
+                                // skipped | timed_out | action_required | empty (not yet concluded)
+        std::string detailsUrl; // browser-friendly URL of the check run
+        std::int64_t startedAtSec = 0;
+        std::int64_t completedAtSec = 0;
+    };
+
+    /**
+     * GET /repos/{owner}/{repo}/commits/{sha}/check-runs — list check runs for
+     * a commit. Returns the `check_runs` array of the response (the
+     * `total_count` field is discarded; callers infer size from `outRuns`).
+     *
+     * API: https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference
+     */
+    bool FetchCheckRuns(const std::string& owner, const std::string& repo, const std::string& headSha,
+                        std::vector<CheckRun>& outRuns, std::string& outError);
+
+    /// One annotation row from GitHub's check-run annotations endpoint.
+    struct CheckRunAnnotation {
+        std::string path; // file path relative to repo root
+        int startLine = 0;
+        int endLine = 0;
+        std::string annotationLevel; // notice | warning | failure
+        std::string message;
+        std::string title; // optional — empty when GitHub omits
+    };
+
+    /**
+     * GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations — list
+     * file-level annotations attached to a check run (compiler warnings, lint
+     * findings, etc).
+     *
+     * API: https://docs.github.com/en/rest/checks/runs#list-check-run-annotations
+     */
+    bool FetchCheckRunAnnotations(const std::string& owner, const std::string& repo, std::int64_t checkRunId,
+                                  std::vector<CheckRunAnnotation>& outAnnotations, std::string& outError);
+
+    /**
+     * GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs — fetch the raw log
+     * text for a workflow job. GitHub returns a 302 redirect to a presigned
+     * blob URL; cpr follows redirects by default. `tailLines > 0` clips the
+     * output to the last N lines (newline-delimited) so the result stays
+     * bounded; pass 0 for the full body. No audit-trail (read endpoint).
+     *
+     * API: https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run
+     */
+    bool FetchActionsJobLogs(const std::string& owner, const std::string& repo, std::int64_t jobId, int tailLines,
+                             std::string& outLogTail, std::string& outError);
+
+    /**
+     * POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun — re-run all
+     * failed jobs in a workflow run. Returns 201 with an empty body on
+     * success. Audit action `"RerunWorkflowRun"`. Body is `{}` so size cap
+     * never trips.
+     *
+     * API: https://docs.github.com/en/rest/actions/workflow-runs#re-run-a-workflow
+     */
+    bool RerunWorkflowRun(const std::string& owner, const std::string& repo, std::int64_t runId, std::string& outError);
+
   private:
     std::string baseUrl_; // e.g. https://api.github.com (no trailing slash).
     std::string pat_;

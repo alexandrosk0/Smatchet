@@ -1,0 +1,33 @@
+[
+  {
+    "path": "Source_Core/src/AppController.cpp",
+    "blob_href": "https://github.com/smatchet/example/blob/.../Source_Core/src/AppController.cpp",
+    "start_line": 1742,
+    "end_line": 1742,
+    "start_column": 5,
+    "end_column": 25,
+    "annotation_level": "warning",
+    "title": "Unused variable",
+    "message": "variable 'tempCount' is unused [unused-variable]",
+    "raw_details": null
+  },
+  {
+    "path": "Source_Core/src/GitHubClient.cpp",
+    "blob_href": "https://github.com/smatchet/example/blob/.../Source_Core/src/GitHubClient.cpp",
+    "start_line": 312,
+    "end_line": 315,
+    "annotation_level": "failure",
+    "title": "Test failed",
+    "message": "FetchPrComments_HappyPath: expected 3 comments but got 2",
+    "raw_details": "expected: 3\nactual: 2\n"
+  },
+  {
+    "path": ".github/workflows/ci.yml",
+    "blob_href": "https://github.com/smatchet/example/blob/.../.github/workflows/ci.yml",
+    "start_line": 0,
+    "end_line": 0,
+    "annotation_level": "notice",
+    "title": "",
+    "message": "CI workflow is using a deprecated action version (actions/checkout@v3)."
+  }
+]

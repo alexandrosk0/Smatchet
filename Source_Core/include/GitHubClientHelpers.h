@@ -138,6 +138,69 @@ nlohmann::json BuildLabelAddBody(const std::string& label);
 nlohmann::json BuildAssigneeSetBody(const std::string& user);
 nlohmann::json BuildStateTransitionBody(const std::string& state);
 
+// ─── H7 PR-thread + workflow URL builders ────────────────────────────────────
+//
+// Each builder returns the URL path appended to the GitHub REST root for a
+// specific endpoint. Splitting these off from `GitHubClient` makes them
+// doctest-covered without instantiating cpr. The shapes match the GitHub REST
+// API v2022-11-28 documentation linked from each method in `GitHubClient.h`.
+
+/**
+ * `/repos/{owner}/{repo}/pulls` — POST endpoint for creating a pull request.
+ * Owner/repo are NOT URL-encoded (GitHub disallows special chars in either).
+ */
+std::string BuildPullsCollectionSuffix(const std::string& owner, const std::string& repo);
+
+/**
+ * `/repos/{owner}/{repo}/commits/{sha}/check-runs` — GET endpoint for listing
+ * check runs against a commit SHA. The SHA is copied verbatim; the caller is
+ * responsible for ensuring it's a hex SHA (validated upstream by the
+ * watcher's git observer).
+ */
+std::string BuildCheckRunsForCommitSuffix(const std::string& owner, const std::string& repo, const std::string& sha);
+
+/**
+ * `/repos/{owner}/{repo}/check-runs/{id}/annotations` — GET endpoint for the
+ * file-level annotations attached to one check run.
+ */
+std::string BuildCheckRunAnnotationsSuffix(const std::string& owner, const std::string& repo, std::int64_t checkRunId);
+
+/**
+ * `/repos/{owner}/{repo}/actions/jobs/{id}/logs` — GET endpoint for a workflow
+ * job's raw log text. Returns 302 to a presigned blob; cpr follows.
+ */
+std::string BuildActionsJobLogsSuffix(const std::string& owner, const std::string& repo, std::int64_t jobId);
+
+/**
+ * `/repos/{owner}/{repo}/actions/runs/{id}/rerun` — POST endpoint to re-run
+ * a failed workflow run.
+ */
+std::string BuildActionsRunRerunSuffix(const std::string& owner, const std::string& repo, std::int64_t runId);
+
+/// JSON body for the `POST /pulls` create-pull-request call. Field shape
+/// mirrors the GitHub REST docs verbatim:
+///   {
+///     "title":  "...",
+///     "head":   "<headBranch>",
+///     "base":   "<baseBranch>",
+///     "body":   "...",      (omitted when empty)
+///     "draft":  true|false
+///   }
+nlohmann::json BuildCreatePullRequestBody(const std::string& title, const std::string& headBranch,
+                                          const std::string& baseBranch, const std::string& body, bool draft);
+
+/// Extract the `html_url` field from a GitHub create-pull-request response.
+/// Returns true + populates `outUrl` on the 201 happy path; returns false
+/// when the field is missing, empty, or not a string. The body itself may
+/// carry many other fields the caller doesn't need (id, node_id, state,
+/// etc) — we extract only the URL.
+bool ExtractCreatePullRequestHtmlUrl(const std::string& responseBody, std::string& outUrl, std::string& outError);
+
+/// Clip an arbitrarily long log body to the last `tailLines` lines (split on
+/// '\n'). `tailLines <= 0` returns the body verbatim. Pure helper — does not
+/// allocate when the input is already within the bound.
+std::string ClipLogTail(const std::string& body, int tailLines);
+
 /**
  * State-transition validator. The agentic-flow contract locks state to exactly
  * `"open"` or `"closed"` (per `agentic-flow-implementation.md` § Decisions

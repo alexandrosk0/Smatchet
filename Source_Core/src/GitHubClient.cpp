@@ -584,6 +584,316 @@ bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::st
     return true;
 }
 
+// ─── H7 PR-thread + workflow methods ────────────────────────────────────────
+//
+// FetchPrComments shares the issues-comments endpoint shape so reuses the
+// existing FetchIssueComments helper rather than re-fetching the same JSON
+// parser. The five remaining methods follow the same shape as the H6 writes:
+// PAT check → URL build → inline bearer header → status check + redacted
+// error compose → optional response parse + audit-trail entry.
+
+bool GitHubClient::FetchPrComments(const std::string& prKey, std::vector<TrackerIssueComment>& outComments,
+                                   std::string& outError) {
+    // GitHub treats PRs as a superset of issues — the issue-comments endpoint
+    // returns the PR's conversation thread. The /pulls/{n}/comments variant
+    // returns only diff-review comments, which is NOT what the watcher wants.
+    // Delegating to FetchIssueComments keeps wire-parsing logic in one place.
+    return FetchIssueComments(prKey, outComments, outError);
+}
+
+bool GitHubClient::CreatePullRequest(const CreatePullRequestRequest& req, std::string& outPrUrl,
+                                     std::string& outError) {
+    outPrUrl.clear();
+    outError.clear();
+    const std::string auditAction = "CreatePullRequest";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-create-pr");
+    // PR-context audit-key is `owner/repo` (no issue number — the PR doesn't
+    // exist yet). Distinguishable from issue-keyed audit rows by absence of `#`.
+    const std::string ctxKey = req.owner + "/" + req.repo;
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["head"] = req.headBranch;
+    beginData["base"] = req.baseBranch;
+    beginData["draft"] = req.draft;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, ctxKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+    if (req.owner.empty() || req.repo.empty() || req.headBranch.empty() || req.baseBranch.empty()) {
+        outError = "CreatePullRequest: owner/repo/headBranch/baseBranch are required.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+    if (req.title.empty()) {
+        outError = "CreatePullRequest: title is required.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildPullsCollectionSuffix(req.owner, req.repo);
+    const std::string url = baseUrl_ + suffix;
+    const nlohmann::json payload =
+        GitHubClientHelpers::BuildCreatePullRequestBody(req.title, req.headBranch, req.baseBranch, req.body, req.draft);
+    const std::string payloadDump = payload.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub CreatePullRequest: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::CreatePullRequest failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+
+    std::string urlErr;
+    if (!GitHubClientHelpers::ExtractCreatePullRequestHtmlUrl(r.text, outPrUrl, urlErr)) {
+        outError = std::string("CreatePullRequest succeeded but response is malformed: ") + urlErr;
+        LOG_WARN("GitHubClient::CreatePullRequest: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+    nlohmann::json resultData = nlohmann::json::object();
+    resultData["prUrl"] = outPrUrl;
+    BackendAuditTrail::AuditEvent ev;
+    ev.Action = auditAction;
+    ev.Source = kGitHubAuditSource;
+    ev.IssueKey = ctxKey;
+    ev.OperationId = auditOp;
+    ev.Success = true;
+    ev.Data = resultData;
+    ev.Phase = "result";
+    BackendAuditTrail::AppendEvent(ev);
+    return true;
+}
+
+bool GitHubClient::FetchCheckRuns(const std::string& owner, const std::string& repo, const std::string& headSha,
+                                  std::vector<CheckRun>& outRuns, std::string& outError) {
+    outRuns.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+    if (owner.empty() || repo.empty() || headSha.empty()) {
+        outError = "owner/repo/headSha are required.";
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildCheckRunsForCommitSuffix(owner, repo, headSha);
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchCheckRuns failed: %s", outError.c_str());
+        return false;
+    }
+
+    nlohmann::json obj;
+    try {
+        obj = nlohmann::json::parse(r.text);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("GitHub /check-runs response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!obj.is_object() || !obj.contains("check_runs") || !obj["check_runs"].is_array()) {
+        outError = "GitHub /check-runs response missing check_runs array.";
+        return false;
+    }
+    const auto& arr = obj["check_runs"];
+    outRuns.reserve(arr.size());
+    for (const auto& item : arr) {
+        if (!item.is_object()) {
+            continue;
+        }
+        CheckRun run;
+        if (item.contains("id") && item["id"].is_number_integer()) {
+            run.id = item["id"].get<std::int64_t>();
+        }
+        if (item.contains("name") && item["name"].is_string()) {
+            run.name = item["name"].get<std::string>();
+        }
+        if (item.contains("status") && item["status"].is_string()) {
+            run.status = item["status"].get<std::string>();
+        }
+        // GitHub returns `conclusion: null` while a run is still in progress.
+        if (item.contains("conclusion") && item["conclusion"].is_string()) {
+            run.conclusion = item["conclusion"].get<std::string>();
+        }
+        if (item.contains("details_url") && item["details_url"].is_string()) {
+            run.detailsUrl = item["details_url"].get<std::string>();
+        }
+        if (item.contains("started_at") && item["started_at"].is_string()) {
+            std::int64_t ts = 0;
+            std::string isoErr;
+            if (GitHubClientHelpers::ParseIso8601ToUnixSec(item["started_at"].get<std::string>(), ts, isoErr)) {
+                run.startedAtSec = ts;
+            }
+        }
+        if (item.contains("completed_at") && item["completed_at"].is_string()) {
+            std::int64_t ts = 0;
+            std::string isoErr;
+            if (GitHubClientHelpers::ParseIso8601ToUnixSec(item["completed_at"].get<std::string>(), ts, isoErr)) {
+                run.completedAtSec = ts;
+            }
+        }
+        outRuns.push_back(std::move(run));
+    }
+    return true;
+}
+
+bool GitHubClient::FetchCheckRunAnnotations(const std::string& owner, const std::string& repo,
+                                            std::int64_t checkRunId,
+                                            std::vector<CheckRunAnnotation>& outAnnotations, std::string& outError) {
+    outAnnotations.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+    if (owner.empty() || repo.empty() || checkRunId <= 0) {
+        outError = "owner/repo/checkRunId are required.";
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildCheckRunAnnotationsSuffix(owner, repo, checkRunId);
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchCheckRunAnnotations failed: %s", outError.c_str());
+        return false;
+    }
+
+    nlohmann::json arr;
+    try {
+        arr = nlohmann::json::parse(r.text);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("GitHub /annotations response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!arr.is_array()) {
+        outError = "GitHub /annotations response is not a JSON array.";
+        return false;
+    }
+    outAnnotations.reserve(arr.size());
+    for (const auto& item : arr) {
+        if (!item.is_object()) {
+            continue;
+        }
+        CheckRunAnnotation a;
+        if (item.contains("path") && item["path"].is_string()) {
+            a.path = item["path"].get<std::string>();
+        }
+        if (item.contains("start_line") && item["start_line"].is_number_integer()) {
+            a.startLine = item["start_line"].get<int>();
+        }
+        if (item.contains("end_line") && item["end_line"].is_number_integer()) {
+            a.endLine = item["end_line"].get<int>();
+        }
+        if (item.contains("annotation_level") && item["annotation_level"].is_string()) {
+            a.annotationLevel = item["annotation_level"].get<std::string>();
+        }
+        if (item.contains("message") && item["message"].is_string()) {
+            a.message = item["message"].get<std::string>();
+        }
+        if (item.contains("title") && item["title"].is_string()) {
+            a.title = item["title"].get<std::string>();
+        }
+        outAnnotations.push_back(std::move(a));
+    }
+    return true;
+}
+
+bool GitHubClient::FetchActionsJobLogs(const std::string& owner, const std::string& repo, std::int64_t jobId,
+                                       int tailLines, std::string& outLogTail, std::string& outError) {
+    outLogTail.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+    if (owner.empty() || repo.empty() || jobId <= 0) {
+        outError = "owner/repo/jobId are required.";
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildActionsJobLogsSuffix(owner, repo, jobId);
+    const std::string url = baseUrl_ + suffix;
+
+    // cpr follows redirects by default; GitHub returns 302 to a presigned S3
+    // URL that serves the raw log text as text/plain. The follow lands a 200
+    // with the raw body.
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchActionsJobLogs failed: %s", outError.c_str());
+        return false;
+    }
+    outLogTail = GitHubClientHelpers::ClipLogTail(r.text, tailLines);
+    return true;
+}
+
+bool GitHubClient::RerunWorkflowRun(const std::string& owner, const std::string& repo, std::int64_t runId,
+                                    std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "RerunWorkflowRun";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-rerun-workflow");
+    const std::string ctxKey = owner + "/" + repo;
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["runId"] = runId;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, ctxKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+    if (owner.empty() || repo.empty() || runId <= 0) {
+        outError = "owner/repo/runId are required.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildActionsRunRerunSuffix(owner, repo, runId);
+    const std::string url = baseUrl_ + suffix;
+    // GitHub accepts an empty `{}` body; an empty cpr::Body{} also works but a
+    // valid JSON object keeps Content-Type honest for downstream proxies.
+    const std::string payload = "{}";
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::RerunWorkflowRun failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, ctxKey, auditOp, true, "");
+    return true;
+}
+
 bool GitHubClient::StateTransition(const std::string& issueKey, const std::string& state, std::string& outError) {
     outError.clear();
     const std::string auditAction = "StateTransition";

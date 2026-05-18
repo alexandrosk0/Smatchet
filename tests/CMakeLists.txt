@@ -167,6 +167,17 @@ if(SMATCHET_WITH_AGENTIC)
         # lifecycle and asserts on the captured audit-sink trail.
         Source_Core/AgenticHandoffController.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticHandoffController.cpp"
+        # H7 — PR-thread + workflow surface on GitHubClient (the 6 new methods)
+        # exercised at the wire-format + helper level. Live HTTP not tested
+        # (bucket-E / scenario); the recorded-fixture parses pin the
+        # response shapes the live methods consume.
+        Source_Core/GitHubClient_PrSurface.test.cpp
+        # H7 — PrCommentWatcher unit tests against scripted seams + a real
+        # AgenticHandoffController(:memory: store). Asserts cursor
+        # advancement, bot-filter, iteration-budget enforcement, and
+        # empty-poll no-op behaviour.
+        Source_Core/PrCommentWatcher.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
@@ -188,6 +199,9 @@ target_sources(SmatchetTests PRIVATE
 target_sources(SmatchetTests PRIVATE
     _helpers/agent_frontmatter_parse.cpp
     Source_Core/HandoffAgentFrontmatter.test.cpp
+    # H7 — pr-iterator agent file frontmatter. Same parser as the H2 entry
+    # above; the assertions pin the second-stage delegate's contract.
+    Source_Core/PrIteratorAgentFrontmatter.test.cpp
 )
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE

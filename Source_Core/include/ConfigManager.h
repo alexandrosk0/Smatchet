@@ -271,6 +271,24 @@ struct TrackerConfig {
     // hermetically. Mirrors `HandoffHarnessBinPath` shape.
     std::string HandoffGitBinPath;
     std::string HandoffGhBinPath;
+
+    // H7 — PR-iteration loop tunables consumed by `PrCommentWatcher`. Both are
+    // additive; missing keys round-trip to these defaults via `j.value()` on
+    // Load. No schema bump.
+    //
+    // HandoffPrIterationBudget: how many times the harness may be respawned
+    // on a single PR before the watcher posts a "budget exhausted" comment
+    // + transitions the handoff to Failed. Clamped to [1, 50] on Load. The
+    // upper bound is generous; the lower bound prevents an infinite loop if
+    // a hand-edited config sets 0.
+    int HandoffPrIterationBudget = 10;
+    // HandoffPrCommentPollIntervalSec: documented separately from the H5
+    // clarification poll for future tuning, though today both share the
+    // `AgenticPollIntervalSec` cadence via the piggyback design. Clamped to
+    // [30, 600] on Load. Field is reserved — the watcher consults it only
+    // when a future H10 dedicated thread lands; the H7 wave reads the
+    // value but ignores it (the piggyback shares AgenticPollIntervalSec).
+    int HandoffPrCommentPollIntervalSec = 120;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;

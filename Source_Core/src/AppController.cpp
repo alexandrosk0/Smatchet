@@ -1808,6 +1808,77 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
                 SmatchetToastManager::Instance().Push("Agent handoff", message, ToastType::Success, 5000);
             };
             agenticHandoffController_->SetToastSink(std::move(toastSink));
+
+            // (H7) Construct + wire the PR-comment watcher. Same lifetime as
+            // the handoff controller; tick is invoked from the scheduled-poll
+            // worker (`AgenticPollWorkerLoop`) after PollClarificationAnswers.
+            agenticPrCommentWatcher_ = std::unique_ptr<smatchet::agentic::PrCommentWatcher>(
+                new smatchet::agentic::PrCommentWatcher(agenticHandoffController_.get(),
+                                                        cfg.HandoffPrIterationBudget));
+            // Fetcher binds to `GitHubClient::FetchPrComments` (delegates to
+            // FetchIssueComments since PRs share the issue-comments endpoint).
+            // Mirrors the H5 clarification-fetcher shape — capture `this`
+            // and resolve the client pointer on every call so a PAT
+            // configured AFTER controller construction lights up the seam.
+            smatchet::agentic::PrCommentFetcher prFetcher =
+                [this](const std::string& prKey, std::vector<smatchet::agentic::PostedComment>& outComments,
+                       std::string& outError) -> bool {
+                if (!agenticGithubClient_) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                std::vector<TrackerIssueComment> raw;
+                if (!agenticGithubClient_->FetchPrComments(prKey, raw, outError)) {
+                    return false;
+                }
+                outComments.clear();
+                outComments.reserve(raw.size());
+                for (const auto& c : raw) {
+                    smatchet::agentic::PostedComment pc;
+                    pc.id = c.Id;
+                    pc.author = c.Author;
+                    pc.body = c.Body;
+                    pc.createdAtSec = c.CreatedAtSec;
+                    outComments.push_back(std::move(pc));
+                }
+                return true;
+            };
+            // Poster binds to CommentAdd (same endpoint as issue-comment
+            // poster — PRs are issues from GitHub's REST API perspective).
+            smatchet::agentic::PrCommentPoster prPoster = [this](const std::string& prKey, const std::string& body,
+                                                                 std::string& outError) -> bool {
+                if (!agenticGithubClient_) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                return agenticGithubClient_->CommentAdd(prKey, body, outError);
+            };
+            // Respawn dispatcher — H7 captures the comment body but does
+            // not yet drive a full re-run of `Start`. The full respawn
+            // path (worktree carry-over, PR_URL.txt re-read, new SEED.json
+            // with the comment appended) lands in H9 cross-flow wiring.
+            // For now the dispatcher logs + returns true so iterationCount
+            // advances and the budget gate works — operators react to the
+            // PR comment manually, with the watcher emitting the
+            // budget-exhausted marker once the cap is hit.
+            //
+            // NOTE: this is the documented H7-vs-H9 split. The watcher's
+            // mechanics (cursor advance, budget enforcement, marker post)
+            // ship in H7; the actual `claude` re-spawn binding is the H9
+            // wave. Leaving the dispatcher seam wired-but-no-op keeps the
+            // contract testable today.
+            smatchet::agentic::HarnessRespawnDispatcher prDispatcher =
+                [](std::int64_t proposalId, const std::string& body, std::string& outError) -> bool {
+                (void)body;
+                (void)outError;
+                LOG_INFO("AppController: PrCommentWatcher noticed new PR comment on proposalId=%lld "
+                         "— full harness respawn lands in H9; iteration counter advanced",
+                         static_cast<long long>(proposalId));
+                return true;
+            };
+            agenticPrCommentWatcher_->SetPrCommentFetcher(std::move(prFetcher));
+            agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
+            agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
         });
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());
@@ -1959,6 +2030,21 @@ void AppController::AgenticPollWorkerLoop() {
             if (answered > 0) {
                 LOG_INFO("AppController::AgenticPollWorkerLoop: %d clarification answer(s) dispatched via GitHub",
                          answered);
+            }
+            // (H7) Tick the PR-comment watcher AFTER the clarification poll
+            // so a PR transition observed by the handoff controller (PrOpen
+            // emits inside the runner-callback path) is reflected in the
+            // PrOpen snapshot when the watcher reads it on this same wake.
+            // The watcher is constructed alongside the handoff controller
+            // in the same `std::call_once` block above, so it is always
+            // non-null when the controller is non-null.
+            if (agenticPrCommentWatcher_) {
+                const int prDispatched = agenticPrCommentWatcher_->Tick();
+                if (prDispatched > 0) {
+                    LOG_INFO("AppController::AgenticPollWorkerLoop: %d PR-comment respawn(s) / budget-exhaustion(s) "
+                             "processed",
+                             prDispatched);
+                }
             }
         }
 
