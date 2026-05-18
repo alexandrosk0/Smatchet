@@ -28,6 +28,8 @@
 #include "WhisperLocal.h"
 #include "WindowsAudioCapture.h"
 
+#include "imgui.h"
+
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>
@@ -776,7 +778,8 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
             localState->transcribeInFlight.store(false, std::memory_order_release);
             const std::string text = mock.text;
             app->mainThreadDispatcher.PostToMainThread([text]() {
-                g_dictationRouter.InsertIntoFocusedInputText(text);
+                const unsigned int activeId = static_cast<unsigned int>(::ImGui::GetActiveID());
+                g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
                 LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription",
                           text.size());
             });
@@ -840,7 +843,8 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         // cache) to pick up any Preferences toggle that landed between the
         // hotkey press and the transcription completing.
         app->mainThreadDispatcher.PostToMainThread([text]() {
-            g_dictationRouter.InsertIntoFocusedInputText(text);
+            const unsigned int activeId = static_cast<unsigned int>(::ImGui::GetActiveID());
+            g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
             LOG_DEBUG("Whisper hotkey: inserted %zu bytes of transcription", text.size());
             const TrackerConfig cfgPost = ConfigManager::Load();
             if (cfgPost.WhisperAutoSendOnPunctuation &&

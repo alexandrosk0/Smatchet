@@ -114,6 +114,9 @@ if(SMATCHET_WITH_WHISPER)
 else()
     target_sources(SmatchetTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+    # Explicit =0 so the test TU's value-based `#if SMATCHET_WITH_WHISPER` guard
+    # evaluates deterministically (matches the ON path's =1 shape).
+    target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_WHISPER=0)
 endif()
 
 # Agentic flow — pure helper test surfaces (T1). GitHubClientHelpers covers issue-key

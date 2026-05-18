@@ -30,6 +30,21 @@ class DictationInsertionRouter : public IDictationHost {
     void Insert(const std::string& text) override;
     bool IsRecording() const override;
 
+    /// Like `RegisterInputText` but additionally records the ImGui item id
+    /// (`ImGui::GetItemID()` for the just-drawn widget). Phase F+ uses the id
+    /// so `InsertIntoFocusedInputText` can pick the *actually-focused* entry
+    /// via `ImGui::GetActiveID()` instead of unconditionally splicing into
+    /// the first registered one. `itemId` is `unsigned int` to avoid pulling
+    /// `imgui.h` into this header — values come from `ImGui::GetItemID()`
+    /// which returns `ImGuiID` (a `typedef unsigned int`).
+    void RegisterInputTextWithItemId(char* buf, std::size_t cap, int* cursor, unsigned int itemId);
+
+    /// UI-thread variant of `InsertIntoFocusedInputText` that takes the
+    /// caller's snapshot of `ImGui::GetActiveID()`. Prefers the registered
+    /// entry whose `ItemId` matches `activeId` and falls back to the first
+    /// registered entry when no match exists (the legacy contract).
+    void InsertIntoFocusedInputText(const std::string& text, unsigned int activeId);
+
     /// UI-thread-only entry point: splice `text` into whichever registered
     /// InputText buffer currently has ImGui focus. No-op when no registered
     /// InputText is focused. Phase B adds the signature so Phase D surfaces
@@ -92,6 +107,11 @@ class DictationInsertionRouter : public IDictationHost {
         char* Buf = nullptr;
         std::size_t Cap = 0;
         int* Cursor = nullptr;
+        // ImGui::GetItemID() of the widget that registered this buf, or 0 for
+        // entries registered through the legacy `RegisterInputText(buf, cap, cursor)`
+        // call. `InsertIntoFocusedInputText(text, activeId)` prefers a matching
+        // ItemId over the first-registered fallback.
+        unsigned int ItemId = 0;
     };
 
     mutable std::mutex mutex_;

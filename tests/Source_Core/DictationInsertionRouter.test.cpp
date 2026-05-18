@@ -18,7 +18,7 @@
 #include <cstring>
 #include <string>
 
-#if defined(SMATCHET_WITH_WHISPER)
+#if SMATCHET_WITH_WHISPER
 
 TEST_CASE("DictationInsertionRouter: default state has no registered buffers") {
     DictationInsertionRouter router;

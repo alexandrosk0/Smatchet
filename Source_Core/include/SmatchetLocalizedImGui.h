@@ -99,7 +99,14 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
 // added (Phase E or later).
 inline void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
     if (::ImGui::IsItemActive() || ::ImGui::IsItemFocused()) {
-        g_dictationRouter.RegisterInputText(buf, buf_size, nullptr);
+        // Capture the just-drawn widget's ImGui id so the router can pick the
+        // correct entry from multiple registered surfaces when
+        // `InsertIntoFocusedInputText(text, ImGui::GetActiveID())` runs.
+        // ImGuiID is `unsigned int`; the router takes it through a plain
+        // `unsigned int` parameter to keep imgui.h out of the router header.
+        const ImGuiID itemId = ::ImGui::GetItemID();
+        g_dictationRouter.RegisterInputTextWithItemId(buf, buf_size, nullptr,
+                                                       static_cast<unsigned int>(itemId));
     } else {
         g_dictationRouter.UnregisterInputText(buf);
     }

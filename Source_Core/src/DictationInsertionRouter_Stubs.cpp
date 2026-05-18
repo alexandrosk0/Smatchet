@@ -45,6 +45,12 @@ float DictationInsertionRouter::GetLastPeakAmplitude() const {
 
 void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/) {}
 
+void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/,
+                                                          unsigned int /*activeId*/) {}
+
+void DictationInsertionRouter::RegisterInputTextWithItemId(char* /*buf*/, std::size_t /*cap*/,
+                                                            int* /*cursor*/, unsigned int /*itemId*/) {}
+
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
     return 0;
 }

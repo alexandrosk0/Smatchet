@@ -57,7 +57,7 @@ struct WhisperLocal::ContextImpl {
 
 #endif
 
-WhisperLocal::WhisperLocal() : impl_(std::unique_ptr<ContextImpl>(new ContextImpl())) {}
+WhisperLocal::WhisperLocal() : impl_(std::make_unique<ContextImpl>()) {}
 
 WhisperLocal::~WhisperLocal() = default;
 
@@ -147,7 +147,10 @@ bool WhisperLocal::Transcribe(const std::vector<float>& pcm,
     // produces transliterated nonsense — UX responsibility lives in
     // Preferences (only show non-"en" options when a multilingual model is
     // installed; that filter is itself a Phase G follow-up).
-    const std::string langArg = language.empty() ? std::string("en") : language;
+    // Empty language treated as "auto" per the overload contract (see header):
+    // empty == caller did not specify == ask whisper.cpp to autodetect. Concrete
+    // codes ("en", "fr", ...) bypass the detector and force the target language.
+    const std::string langArg = language.empty() ? std::string("auto") : language;
     wparams.language = (langArg == "auto") ? "auto" : langArg.c_str();
     const unsigned int hwThreads = std::thread::hardware_concurrency();
     wparams.n_threads = static_cast<int>(std::max(1u, hwThreads / 2u));

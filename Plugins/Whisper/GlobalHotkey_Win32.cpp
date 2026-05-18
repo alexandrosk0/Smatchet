@@ -305,6 +305,16 @@ bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& hk,
         outError = "hotkey has no key";
         return false;
     }
+    if (hk.mods == 0) {
+        // Refuse modifier-free hotkeys at registration time. A bare global key
+        // (e.g. just "Space") would steal every key event from the rest of the
+        // system; it is never what the user means even if they hand-edit the
+        // Preferences descriptor. The Preferences capture UI already refuses
+        // bare-key combos, but we belt-and-suspender it here so config-file or
+        // CLI callers cannot bypass.
+        outError = "hotkey must include at least one modifier (Ctrl / Alt / Shift / Win)";
+        return false;
+    }
     if (OwnerSlot().Get() != nullptr) {
         outError = "another GlobalHotkey_Win32 instance already owns the LL hook in this process";
         return false;
