@@ -1,6 +1,21 @@
 # git-ref plan-locks — atomic remote-agent coordination
 
-**Status**: draft (Phase 0 pending) · **Slug**: `git-ref-plan-locks` · **Owner**: orchestrator · **Created**: 2026-05-17
+**Status**: shipped (Phases 0-6 + 7a) · **Slug**: `git-ref-plan-locks` · **Owner**: orchestrator · **Created**: 2026-05-17
+
+## Pending operator actions
+
+The plan is fully shipped to develop. Four items below require a human action (UI click or admin command) before the system is in its final configured state. Each links to the section with full procedure.
+
+| # | Action | Status | Trigger | Where the procedure lives |
+|---|---|---|---|---|
+| 1 | **Create `LOCK_RENDER_PAT` fine-grained PAT + add as repo secret.** Without this the `locks-render.yml` workflow fails at the `gh pr create` step and leaves orphan `bot/plan-locks-sync` branches on origin every cron fire. | **OPEN — required for full operation** | Do this now. Symptom of skipping: orphan branches accumulate; `_plan-locks.generated.md` falls out of sync with `refs/locks/*` live state. | § Operational requirements → `LOCK_RENDER_PAT` secret |
+| 2 | **Calendar reminder to rotate `LOCK_RENDER_PAT` at +90 days** (the recommended expiry set at creation time). | OPEN — set after action #1 | At PAT expiry. Workflow will start failing again the day after expiry. | § Operational requirements → `LOCK_RENDER_PAT` secret → "Rotation" |
+| 3 | **Run `bash scripts/dev/setup-locks-ruleset.sh`** to enable Phase 7b ref-namespace hardening. | OPEN — opportunistic | Build when: (a) a `refs/locks/*` ref is mutated by an actor who shouldn't have (audit via reflog / staleness Issue), or (b) the repo gains a second collaborator with `push` access. | § Phase 7b |
+| 4 | **Enable GitHub merge queue on develop** (Phase 7d). | OPEN — opportunistic | Build when: (a) a "merged green broke develop" incident happens, or (b) PR throughput climbs past ~5 PRs/day. | § Phase 7d |
+
+Manual stop-gap available while item 1 is pending: `bash scripts/dev/manual-locks-render-sync.sh` (full lifecycle: regen → push → PR → merge → cleanup). Use sparingly; configuring the PAT is the real fix.
+
+Already-shipped items (no further action required): primitive scripts (Phase 1), render workflow (Phase 2), cleanup workflow (Phase 3), staleness workflow + sweep script (Phase 4), agent prompts migrated (Phase 5), markdown cutover to refs (Phase 6), CODEOWNERS (Phase 7a). Phase 7c (cleanup PAT) was deprioritised indefinitely after investigation showed it offered zero benefit over `GITHUB_TOKEN` — see § Phase 7c.
 
 ## Problem
 
