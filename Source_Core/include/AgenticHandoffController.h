@@ -32,8 +32,8 @@
 
 #if defined(SMATCHET_WITH_AGENTIC)
 
-#include "AgentProposal.h"           // AgentProposal
-#include "CodingHarnessTypes.h"      // Seed / ClarificationResponse / RunResult
+#include "AgentProposal.h"      // AgentProposal
+#include "CodingHarnessTypes.h" // Seed / ClarificationResponse / RunResult
 
 #include <nlohmann/json.hpp>
 
@@ -59,9 +59,8 @@ namespace agentic {
 // `BackendAuditTrail::AppendEvent`; the doctest rig captures entries to a
 // vector for assertion. The free-function namespace API of BackendAuditTrail
 // is not virtual, so a sink lambda is the cleanest seam.
-using AuditSink = std::function<void(const std::string& action, const std::string& source,
-                                     const std::string& issueKey, bool success,
-                                     const std::string& errorMessage, const nlohmann::json& data)>;
+using AuditSink = std::function<void(const std::string& action, const std::string& source, const std::string& issueKey,
+                                     bool success, const std::string& errorMessage, const nlohmann::json& data)>;
 
 // Worker dispatcher seam — production binds to
 // `AppController::LaunchBackgroundTask`; tests pass an empty function and
@@ -71,19 +70,62 @@ using AuditSink = std::function<void(const std::string& action, const std::strin
 // pulling AppController.cpp's whole transitive include set.
 using WorkerDispatcher = std::function<void(std::function<void()>)>;
 
+// GitHub-comment poster seam (H5) — production binds to a lambda calling
+// `GitHubClient::CommentAdd`; tests inject a fake that captures (issueKey,
+// body) pairs. The controller never depends on `GitHubClient` directly so
+// the test TU does not need to link cpr / the full GitHub stack. The seam
+// returns false + outError on transport failure; the controller LOG_WARNs
+// and continues — the worktree-file channel is the canonical path, the
+// GitHub comment is an audit-trail mirror that must not fail-stop the run.
+using GitHubCommentPoster =
+    std::function<bool(const std::string& /*issueKey*/, const std::string& /*body*/, std::string& /*outError*/)>;
+
+// GitHub-comment fetcher seam (H5) — production binds to a lambda calling
+// `GitHubClient::FetchIssueComments`. The piggyback poll worker uses this
+// to look for non-bot answers on in-flight AwaitingUser handoffs. Returns
+// false + outError on transport failure; the worker logs + skips that
+// iteration. Tests inject a fake that scripts the comment list per call.
+struct PostedComment {
+    std::string id;     // backend-stable comment id (for de-dupe)
+    std::string author; // user.login
+    std::string body;   // raw markdown
+    std::int64_t createdAtSec = 0;
+};
+using GitHubCommentFetcher = std::function<bool(
+    const std::string& /*issueKey*/, std::vector<PostedComment>& /*outComments*/, std::string& /*outError*/)>;
+
 class AgenticHandoffController {
   public:
     // One in-flight handoff record. Lives in-memory only for H4; H10 will
     // persist mirroring fields to SQLite (agent_pr_watch table).
     struct ActiveHandoff {
         std::int64_t proposalId = 0;
-        std::string worktreeDir;     // absolute path
-        std::string branchName;      // `agent/<proposalId>/<short-slug>`
+        std::string worktreeDir; // absolute path
+        std::string branchName;  // `agent/<proposalId>/<short-slug>`
+        std::string issueKey;    // mirror of AgentProposal.issueKey — populated on Start so
+                                 // the H5 GitHub-comment path + H8 panel don't have to re-fetch
+                                 // the proposal row from the store on every read.
         CodingHarness::RunState state = CodingHarness::RunState::Pending;
-        std::string lastError;       // populated when state is Failed
-        std::string prUrl;           // populated when state reaches PrOpen
+        std::string lastError; // populated when state is Failed
+        std::string prUrl;     // populated when state reaches PrOpen
         std::int64_t startedAtSec = 0;
         std::shared_ptr<std::atomic<bool>> cancelToken;
+
+        // (H5) Most recent clarification question observed by the runner —
+        // populated when the controller reads CLARIFICATION_NEEDED.json from
+        // the worktree on the AwaitingUser transition. The H8 UI panel reads
+        // this field on every frame to surface the prompt; cleared back to
+        // empty when ProvideClarification succeeds. Empty when the handoff
+        // has never been in AwaitingUser, or after the user replies.
+        std::string lastClarificationQuestion;
+        std::int64_t lastClarificationAtSec = 0;
+        // (H5) Bookkeeping for the piggyback poll worker — when the
+        // GitHub-comment poll loop scans this handoff's issue for non-bot
+        // replies, it advances this cursor on each iteration so the next
+        // iteration only inspects comments created strictly after the
+        // baseline. Defaults to startedAtSec on the AwaitingUser transition
+        // so the question we just posted is not mistaken for the answer.
+        std::int64_t clarificationCommentCursorSec = 0;
     };
 
     // Non-owning pointers — AppController owns `runner` / `proposalStore`
@@ -100,6 +142,20 @@ class AgenticHandoffController {
     AgenticHandoffController(WorkerDispatcher dispatcher, CodingHarness::IRunner* runner,
                              AgentProposalStore* proposalStore, AuditSink auditSink);
     ~AgenticHandoffController();
+
+    // (H5) Wire the GitHub-comment dual-channel seams. Both are optional —
+    // when either is null the controller operates worktree-only and writes
+    // a LOG_INFO at first opportunity so the operator knows. Call after
+    // construction; the setters are not thread-safe relative to in-flight
+    // handoffs (callers wire at AppController init before any Start).
+    void SetGitHubCommentPoster(GitHubCommentPoster poster);
+    void SetGitHubCommentFetcher(GitHubCommentFetcher fetcher);
+
+    // (H5) Toggle that mirrors `cfg.HandoffClarificationPostToGithub`.
+    // When false the poster is never invoked even if SetGitHubCommentPoster
+    // was wired — useful for private / non-GitHub work where the operator
+    // wants the audit trail purely local. Defaults to true.
+    void SetGitHubClarificationEnabled(bool enabled);
 
     AgenticHandoffController(const AgenticHandoffController&) = delete;
     AgenticHandoffController& operator=(const AgenticHandoffController&) = delete;
@@ -162,13 +218,71 @@ class AgenticHandoffController {
     //   `.claude/worktrees/agent-<proposalId>` (relative to repo root).
     static std::string BuildWorktreeDir(std::int64_t proposalId);
 
+    // ─── H5 bot-filter / formatting helpers ────────────────────────────────
+    //
+    // The HTML-comment marker `<!-- smatchet-handoff -->` is the bot-filter
+    // boundary — every comment Smatchet posts to a GitHub issue starts with
+    // this literal, and the poll loop discards any comment whose body starts
+    // with the same literal so we never treat our own posted question as a
+    // user reply. The same marker is reused by H7's `PrCommentWatcher` for
+    // PR-thread comments — keep the literal here so both watchers reference
+    // one source of truth. CRITICAL: changing the literal breaks every
+    // in-flight handoff's poll loop until the next start; flag in a backlog
+    // entry first.
+
+    /// The exact marker prefix used to fingerprint bot-authored comments.
+    /// Callers compare via `IsHandoffBotComment` rather than substring-match
+    /// directly so the comparison rules (whitespace tolerance, case) stay in
+    /// one place.
+    static const char* HandoffBotMarker();
+
+    /// True when the comment body begins with the marker (modulo leading
+    /// whitespace). Case-sensitive — the marker is literal HTML and GitHub
+    /// preserves its case verbatim.
+    static bool IsHandoffBotComment(const std::string& body);
+
+    /// Build the comment body posted when the runner emits AwaitingUser.
+    /// Shape:
+    ///   <!-- smatchet-handoff -->
+    ///
+    ///   **Agent question (proposal #<id>):**
+    ///
+    ///   {question}
+    ///
+    ///   Reply to this comment to answer.
+    static std::string BuildClarificationCommentBody(std::int64_t proposalId, const std::string& question);
+
+    /// Build the comment body posted on `ProvideClarification` so the GitHub
+    /// thread has an audit trail of what the user answered.
+    /// Shape:
+    ///   <!-- smatchet-handoff -->
+    ///
+    ///   **User answered (proposal #<id>):**
+    ///
+    ///   {answer}
+    static std::string BuildAnswerCommentBody(std::int64_t proposalId, const std::string& answer);
+
+    // ─── H5 poll-loop driver ─────────────────────────────────────────────
+    //
+    // Piggybacked on T7's existing scheduled-poll worker — every iteration
+    // the worker calls `PollClarificationAnswers()` which scans in-flight
+    // AwaitingUser handoffs and dispatches `ProvideClarification` when the
+    // GitHub-comment fetcher returns a non-bot comment newer than the
+    // handoff's clarificationCommentCursorSec. Returns the count of answers
+    // dispatched so the worker can LOG_INFO useful telemetry.
+    //
+    // Safe to call from any worker thread; takes the controller's mutex to
+    // snapshot AwaitingUser handoffs before walking each. Never touches
+    // ImGui state.
+    int PollClarificationAnswers();
+
   private:
     // Single source of truth for FSM transitions. Validates `from -> to`
     // against `HarnessRunState::IsTransitionAllowed`, emits an audit entry,
     // updates the in-memory record. Returns true on success; false +
     // LOG_WARN on disallowed transition (the runner emitted a bad state).
-    bool ControllerTransition(std::int64_t proposalId, CodingHarness::RunState toState,
-                              const std::string& errorMessage, const std::string& prUrl);
+    bool ControllerTransition(std::int64_t proposalId, CodingHarness::RunState toState, const std::string& errorMessage,
+                              const std::string& prUrl);
 
     // Worker entry point. Performs:
     //   Pending -> Spawning (audit)
@@ -182,14 +296,35 @@ class AgenticHandoffController {
     // Helper: emits an audit entry with the standard payload shape. The
     // payload always includes `{proposalId, fromState, toState}` plus any
     // additional fields (prUrl, errorMessage) the caller supplies.
-    void EmitAudit(const std::string& issueKey, CodingHarness::RunState fromState,
-                   CodingHarness::RunState toState, bool success, const std::string& errorMessage,
-                   const std::string& prUrl);
+    void EmitAudit(const std::string& issueKey, CodingHarness::RunState fromState, CodingHarness::RunState toState,
+                   bool success, const std::string& errorMessage, const std::string& prUrl);
+
+    // (H5) Parses CLARIFICATION_NEEDED.json from the named worktree and
+    // stashes the question on the handoff record. Called from the runner's
+    // state-change callback when toState == AwaitingUser. Best-effort: a
+    // missing or malformed file LOG_WARNs but leaves the field empty — the
+    // FSM transition still records normally so the H8 UI panel surfaces
+    // "AwaitingUser (no question text)" rather than blocking the state.
+    void ReadAndStashClarificationQuestion(std::int64_t proposalId);
+
+    // (H5) Posts the bot-filtered comment to the GitHub issue when both the
+    // poster seam is wired and the clarification-via-GitHub toggle is on.
+    // Failure to post is non-fatal — LOG_WARNs and returns false; the
+    // controller still operates worktree-only. Runs on whichever thread
+    // invokes the state callback (worker thread under production, the test
+    // thread under doctest).
+    bool PostClarificationToGitHub(const std::string& issueKey, std::int64_t proposalId, const std::string& question);
+    bool PostAnswerToGitHub(const std::string& issueKey, std::int64_t proposalId, const std::string& answer);
 
     WorkerDispatcher dispatcher_;
     CodingHarness::IRunner* runner_;
     AgentProposalStore* proposalStore_;
     AuditSink auditSink_;
+
+    // (H5) Wired post-construction. nullptr = local-only fallback.
+    GitHubCommentPoster githubPoster_;
+    GitHubCommentFetcher githubFetcher_;
+    std::atomic<bool> githubClarificationEnabled_{true};
 
     mutable std::mutex handoffsMu_;
     std::unordered_map<std::int64_t, ActiveHandoff> handoffs_;

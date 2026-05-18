@@ -1686,10 +1686,10 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
             // its sanity check (no separate cfg.GitHubBaseUrl today).
             agenticGithubClient_ = std::make_unique<GitHubClient>(std::string(), cfg.GitHubPat);
             agenticInferenceClient_ = std::make_unique<AgenticInferenceClient>();
-            agenticGithubReadAdapter_ = std::unique_ptr<smatchet::agentic::IGitHubReadClient>(
-                new GitHubReadAdapter(*agenticGithubClient_));
-            agenticInferenceAdapter_ = std::unique_ptr<smatchet::agentic::IInferenceClient>(
-                new InferenceAdapter(*agenticInferenceClient_));
+            agenticGithubReadAdapter_ =
+                std::unique_ptr<smatchet::agentic::IGitHubReadClient>(new GitHubReadAdapter(*agenticGithubClient_));
+            agenticInferenceAdapter_ =
+                std::unique_ptr<smatchet::agentic::IInferenceClient>(new InferenceAdapter(*agenticInferenceClient_));
             agenticTriageController_ = std::make_unique<smatchet::agentic::AgenticTriageController>(
                 agenticGithubReadAdapter_.get(), agenticInferenceAdapter_.get(), agentProposalStore_.get());
         });
@@ -1721,8 +1721,7 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // Production audit sink — forward verbatim to BackendAuditTrail.
             smatchet::agentic::AuditSink sink = [](const std::string& action, const std::string& source,
                                                    const std::string& issueKey, bool success,
-                                                   const std::string& errorMessage,
-                                                   const nlohmann::json& data) {
+                                                   const std::string& errorMessage, const nlohmann::json& data) {
                 BackendAuditTrail::AuditEvent ev;
                 ev.Action = action;
                 ev.Source = source;
@@ -1741,8 +1740,56 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
                 this->LaunchBackgroundTask(std::move(task));
             };
             agenticHandoffController_ = std::make_unique<smatchet::agentic::AgenticHandoffController>(
-                std::move(dispatcher), agenticHandoffRunner_.get(), agentProposalStore_.get(),
-                std::move(sink));
+                std::move(dispatcher), agenticHandoffRunner_.get(), agentProposalStore_.get(), std::move(sink));
+
+            // (H5) Wire the GitHub-comment dual-channel seams. The poster
+            // binds to `GitHubClient::CommentAdd`; the fetcher binds to
+            // `FetchIssueComments`. Both are no-ops if the agentic GitHub
+            // client failed to construct earlier — the controller logs +
+            // operates worktree-only. The toggle is mirrored from cfg so a
+            // Preferences flip takes effect after the next handoff start.
+            //
+            // NOTE: the triage-controller chain (which owns
+            // `agenticGithubClient_`) is constructed lazily by
+            // `GetAgenticTriageController` and may not have run yet. We
+            // tolerate that by capturing `this` and resolving the client
+            // pointer on every invocation — when the operator finally
+            // configures the PAT the seams light up without a controller
+            // restart.
+            smatchet::agentic::GitHubCommentPoster poster = [this](const std::string& issueKey, const std::string& body,
+                                                                   std::string& outError) -> bool {
+                if (!agenticGithubClient_) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                return agenticGithubClient_->CommentAdd(issueKey, body, outError);
+            };
+            smatchet::agentic::GitHubCommentFetcher fetcher =
+                [this](const std::string& issueKey, std::vector<smatchet::agentic::PostedComment>& outComments,
+                       std::string& outError) -> bool {
+                if (!agenticGithubClient_) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                std::vector<TrackerIssueComment> raw;
+                if (!agenticGithubClient_->FetchIssueComments(issueKey, raw, outError)) {
+                    return false;
+                }
+                outComments.clear();
+                outComments.reserve(raw.size());
+                for (const auto& c : raw) {
+                    smatchet::agentic::PostedComment pc;
+                    pc.id = c.Id;
+                    pc.author = c.Author;
+                    pc.body = c.Body;
+                    pc.createdAtSec = c.CreatedAtSec;
+                    outComments.push_back(std::move(pc));
+                }
+                return true;
+            };
+            agenticHandoffController_->SetGitHubCommentPoster(std::move(poster));
+            agenticHandoffController_->SetGitHubCommentFetcher(std::move(fetcher));
+            agenticHandoffController_->SetGitHubClarificationEnabled(cfg.HandoffClarificationPostToGithub);
         });
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());
@@ -1879,6 +1926,22 @@ void AppController::AgenticPollWorkerLoop() {
             }
         } else {
             LOG_WARN("AppController::AgenticPollWorkerLoop: triage controller unavailable — iteration skipped");
+        }
+
+        // (H5) Piggyback the clarification-answer poll on the same loop.
+        // The triage controller's lazy-construction already wired the GitHub
+        // client + the handoff controller's poster/fetcher seams (when the
+        // PAT is configured). The handoff controller is itself lazy — if no
+        // handoff has been started this session it will be null. Skip
+        // silently in that case; the next user-initiated handoff will
+        // light it up. Keep this BELOW the triage loop so a triage HTTP
+        // failure doesn't starve clarification answers.
+        if (auto* handoff = GetAgenticHandoffController()) {
+            const int answered = handoff->PollClarificationAnswers();
+            if (answered > 0) {
+                LOG_INFO("AppController::AgenticPollWorkerLoop: %d clarification answer(s) dispatched via GitHub",
+                         answered);
+            }
         }
 
         // Stamp the end-of-iteration time (for UI readout) before sleeping.
