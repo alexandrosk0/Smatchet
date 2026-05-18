@@ -5,6 +5,7 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,20 @@ namespace {
 int64_t NowEpochSec() {
     return static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+// Mirrors the helper in `LocalCacheManager.cpp` — used by the v1 -> v2
+// migration to add `handoff_status` only when it does not already exist
+// (ALTER TABLE ADD COLUMN throws if the column is already present).
+bool SqliteTableHasColumn(const SQLite::Database& db, const char* table, const char* col) {
+    const std::string sql = std::string("PRAGMA table_info(") + table + ")";
+    SQLite::Statement q(db, sql);
+    while (q.executeStep()) {
+        if (std::strcmp(q.getColumn(1).getText(), col) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // State machine: terminal Rejected/Applied/Failed never transitions out;
@@ -119,11 +134,34 @@ AgentProposalStore::AgentProposalStore(const std::string& dbPath)
               "last_seen_updated_at INTEGER NOT NULL, "
               "PRIMARY KEY (source_tracker, repo_key))");
 
+    // H10 — agent_pr_watch table. Mirrors PrCommentWatcher cursor state so a
+    // restart resumes the watch from the same comment id + iteration count
+    // instead of replaying every comment from the PrOpen transition forward.
+    // `proposal_id` is the PK because the watcher is per-handoff and at most
+    // one PR is open per proposal at a time.
+    db_->exec("CREATE TABLE IF NOT EXISTS agent_pr_watch ("
+              "proposal_id INTEGER NOT NULL, "
+              "pr_url TEXT NOT NULL, "
+              "last_seen_comment_id_str TEXT NOT NULL DEFAULT '', "
+              "iteration_count INTEGER NOT NULL DEFAULT 0, "
+              "last_polled_at_sec INTEGER NOT NULL DEFAULT 0, "
+              "PRIMARY KEY (proposal_id))");
+
     // Records the shipped schema version. AGENTS.md § Schema-version bumps
-    // requires exactly one shipped increment per feature increment; the agentic
-    // tables were additive across T4-T8 (new tables only) and only formally
-    // land their first shipped version here.
+    // requires exactly one shipped increment per feature increment; v1 shipped
+    // at T9, v2 ships here at H10 (agent_pr_watch + handoff_status column).
     EnsureSchemaVersion();
+
+    // H10 — the migration ladder runs BEFORE this point (EnsureSchemaVersion
+    // owns ALTER TABLE handoff_status). For NEW dbs the CREATE TABLE IF NOT
+    // EXISTS path above does NOT carry the handoff_status column (it was
+    // shipped as an ALTER, not a CREATE column, to keep the v1 schema text
+    // unchanged for archived state-replay tooling). We ensure the column
+    // exists here as a belt-and-braces idempotent guard so a fresh-db open
+    // path leaves the schema identical to a migrated-from-v1 path.
+    if (!SqliteTableHasColumn(*db_, "agent_proposals", "handoff_status")) {
+        db_->exec("ALTER TABLE agent_proposals ADD COLUMN handoff_status TEXT NOT NULL DEFAULT ''");
+    }
 
     LOG_INFO("AgentProposalStore: schema ready (version=%d)", kCurrentSchemaVersion);
 }
@@ -169,16 +207,25 @@ void AgentProposalStore::EnsureSchemaVersion() {
                                  " is newer than build version=" + std::to_string(kCurrentSchemaVersion));
     }
 
-    // current < kCurrentSchemaVersion: future migrations land here. Loop one
-    // step at a time so each migration body sees the exact prior state. For
-    // now (kCurrentSchemaVersion = 1) this branch is unreachable; kept so
-    // adding version 2 only requires writing one `if (current == 1) { … }`
-    // block plus bumping the constant.
+    // current < kCurrentSchemaVersion: apply migrations in numeric order.
+    // Each body must be idempotent (re-runnable without side-effects beyond
+    // the first run) so partial-apply recovery is safe.
     while (current < kCurrentSchemaVersion) {
-        // Placeholder: per-version migration bodies are inserted here as the
-        // schema grows. Each body must be idempotent (re-runnable without
-        // side-effects beyond the first run) so partial-apply recovery is
-        // safe.
+        if (current == 1) {
+            // v1 -> v2: add agent_pr_watch table + agent_proposals.handoff_status
+            // column. The CREATE TABLE in the ctor body has already executed
+            // (it sits above this call) so on a fresh v0 -> v2 jump the table
+            // exists at this point regardless; for a v1 -> v2 in-place upgrade
+            // the CREATE TABLE IF NOT EXISTS path is a no-op too (the ctor
+            // ran it before EnsureSchemaVersion). The only real work the
+            // migration must do is the ADD COLUMN — and only if the column
+            // is not already there (a v1 db will not have it; a partially-
+            // applied v2 db might).
+            if (!SqliteTableHasColumn(*db_, "agent_proposals", "handoff_status")) {
+                db_->exec("ALTER TABLE agent_proposals ADD COLUMN handoff_status TEXT NOT NULL DEFAULT ''");
+            }
+            LOG_INFO("AgentProposalStore: migrated schema v1 -> v2 (agent_pr_watch + handoff_status)");
+        }
         ++current;
     }
 
@@ -513,6 +560,99 @@ bool AgentProposalStore::GetPollCursor(const std::string& sourceTracker, const s
         return true;
     } catch (const std::exception& ex) {
         outError = std::string("AgentProposalStore::GetPollCursor: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::SetPrWatch(const PrWatchRow& row, std::string& outError) {
+    outError.clear();
+    try {
+        SQLite::Statement stmt(*db_, "INSERT OR REPLACE INTO agent_pr_watch "
+                                     "(proposal_id, pr_url, last_seen_comment_id_str, iteration_count, "
+                                     "last_polled_at_sec) VALUES (?, ?, ?, ?, ?)");
+        stmt.bind(1, static_cast<long long>(row.proposalId));
+        stmt.bind(2, row.prUrl);
+        stmt.bind(3, row.lastSeenCommentIdStr);
+        stmt.bind(4, row.iterationCount);
+        stmt.bind(5, static_cast<long long>(row.lastPolledAtSec));
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetPrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::GetPrWatch(std::int64_t proposalId, PrWatchRow& outRow, std::string& outError) const {
+    outError.clear();
+    outRow = PrWatchRow();
+    try {
+        SQLite::Statement q(*db_, "SELECT proposal_id, pr_url, last_seen_comment_id_str, iteration_count, "
+                                  "last_polled_at_sec FROM agent_pr_watch WHERE proposal_id=?");
+        q.bind(1, static_cast<long long>(proposalId));
+        if (q.executeStep()) {
+            outRow.proposalId = q.getColumn(0).getInt64();
+            outRow.prUrl = q.getColumn(1).getText();
+            outRow.lastSeenCommentIdStr = q.getColumn(2).getText();
+            outRow.iterationCount = q.getColumn(3).getInt();
+            outRow.lastPolledAtSec = q.getColumn(4).getInt64();
+        }
+        // Row absent -> defaulted outRow + ok=true (first-poll semantics).
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::GetPrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::DeletePrWatch(std::int64_t proposalId, std::string& outError) {
+    outError.clear();
+    try {
+        SQLite::Statement stmt(*db_, "DELETE FROM agent_pr_watch WHERE proposal_id=?");
+        stmt.bind(1, static_cast<long long>(proposalId));
+        stmt.exec();
+        // Missing row is not an error — DELETE on a non-existent row returns 0
+        // rows changed, which is the documented contract.
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::DeletePrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::SetHandoffStatus(std::int64_t proposalId, const std::string& status, std::string& outError) {
+    outError.clear();
+    try {
+        SQLite::Statement stmt(*db_, "UPDATE agent_proposals SET handoff_status=? WHERE id=?");
+        stmt.bind(1, status);
+        stmt.bind(2, static_cast<long long>(proposalId));
+        const int changed = stmt.exec();
+        if (changed == 0) {
+            outError = "row not found";
+            return false;
+        }
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetHandoffStatus: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::GetHandoffStatus(std::int64_t proposalId, std::string& outStatus,
+                                          std::string& outError) const {
+    outError.clear();
+    outStatus.clear();
+    try {
+        SQLite::Statement q(*db_, "SELECT handoff_status FROM agent_proposals WHERE id=?");
+        q.bind(1, static_cast<long long>(proposalId));
+        if (!q.executeStep()) {
+            outError = "row not found";
+            return false;
+        }
+        outStatus = q.getColumn(0).getText();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::GetHandoffStatus: ") + ex.what();
         return false;
     }
 }

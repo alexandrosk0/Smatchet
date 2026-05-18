@@ -12,6 +12,7 @@
 
 #if defined(SMATCHET_WITH_AGENTIC)
 
+#include "AgentProposalStore.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -53,6 +54,99 @@ void PrCommentWatcher::SetRespawnDispatcher(HarnessRespawnDispatcher dispatcher)
 
 void PrCommentWatcher::SetIterationBudget(int budget) { iterationBudget_.store(ClampBudget(budget)); }
 int PrCommentWatcher::GetIterationBudget() const { return iterationBudget_.load(); }
+
+void PrCommentWatcher::SetProposalStore(AgentProposalStore* store) { store_ = store; }
+
+int PrCommentWatcher::LoadCursorsFromStore() {
+    // H10 — hydrate the in-memory controller cursor + iteration count from
+    // persisted agent_pr_watch rows. Best-effort: failures LOG_WARN and the
+    // affected handoff falls back to "first poll" semantics (cursor=0,
+    // iterationCount=0). The watcher proceeds; the user sees at most one
+    // duplicate respawn dispatch on the first post-restart tick.
+    if (!controller_ || !store_) {
+        return 0;
+    }
+    const auto handoffs = controller_->SnapshotPrOpen();
+    if (handoffs.empty()) {
+        return 0;
+    }
+    int loaded = 0;
+    for (const auto& h : handoffs) {
+        AgentProposalStore::PrWatchRow row;
+        std::string err;
+        if (!store_->GetPrWatch(h.proposalId, row, err)) {
+            LOG_WARN("PrCommentWatcher::LoadCursorsFromStore: GetPrWatch failed for proposalId=%lld: %s",
+                     static_cast<long long>(h.proposalId), err.c_str());
+            continue;
+        }
+        if (row.proposalId == 0) {
+            // No persisted row yet — handoff was created since the last
+            // persistence pass. Start the in-memory cursor at zero (default).
+            continue;
+        }
+        // The controller's MarkHandoffIteration accepts an explicit cursor
+        // value + bumps iterationCount by 1; replaying it with the persisted
+        // count would double-count. Mirror the persisted count directly by
+        // looping the controller-side helper; since we hold the lock under
+        // MarkHandoffIteration, just call the helper iterationCount times to
+        // walk the count up. The cursor is set on the final call.
+        //
+        // Trade-off: this fires iterationCount audit-trail rows on startup.
+        // For typical budgets (<= 10) that is acceptable; future variants
+        // can expose a direct "hydrate from persisted row" helper that
+        // bypasses the audit fire.
+        const int targetCount = row.iterationCount;
+        const std::int64_t targetCursor = row.lastPolledAtSec;
+        std::string markErr;
+        for (int i = 0; i < targetCount; ++i) {
+            // Cursor only matters on the final call; pass targetCursor on
+            // the last iteration so the in-memory record matches the
+            // persisted snapshot.
+            const std::int64_t cursorThisCall =
+                (i == targetCount - 1) ? targetCursor : static_cast<std::int64_t>(0);
+            if (!controller_->MarkHandoffIteration(h.proposalId, cursorThisCall, markErr)) {
+                LOG_WARN("PrCommentWatcher::LoadCursorsFromStore: MarkHandoffIteration(%lld) failed: %s",
+                         static_cast<long long>(h.proposalId), markErr.c_str());
+                break;
+            }
+        }
+        ++loaded;
+        LOG_INFO("PrCommentWatcher::LoadCursorsFromStore: hydrated cursor for proposalId=%lld (count=%d, cursor=%lld)",
+                 static_cast<long long>(h.proposalId), targetCount, static_cast<long long>(targetCursor));
+    }
+    return loaded;
+}
+
+namespace {
+
+// (H10) Helper — persist the current in-memory state of a handoff to the
+// agent_pr_watch row so the cursor survives an app restart. Best-effort:
+// failures LOG_WARN and the in-memory state remains the source of truth
+// for the rest of the session.
+void PersistWatchRowBestEffort(AgentProposalStore* store, std::int64_t proposalId, const std::string& prUrl,
+                               std::int64_t cursorSec, int iterationCount) {
+    if (!store) {
+        return;
+    }
+    AgentProposalStore::PrWatchRow row;
+    row.proposalId = proposalId;
+    row.prUrl = prUrl;
+    // The watcher tracks comments by `createdAtSec` (unix-seconds), not by
+    // GitHub's `id`. We persist the cursor seconds as the id-string column
+    // so a future restart can re-derive the cursor without needing a second
+    // column; if a later wave switches to id-based dedup, this column
+    // becomes the canonical home for the id.
+    row.lastSeenCommentIdStr = std::to_string(cursorSec);
+    row.iterationCount = iterationCount;
+    row.lastPolledAtSec = cursorSec;
+    std::string err;
+    if (!store->SetPrWatch(row, err)) {
+        LOG_WARN("PrCommentWatcher: SetPrWatch best-effort failed for proposalId=%lld: %s",
+                 static_cast<long long>(proposalId), err.c_str());
+    }
+}
+
+} // namespace
 
 std::string PrCommentWatcher::BuildBudgetExhaustedCommentBody(std::int64_t proposalId, int iterationsUsed) {
     // Marker prefix matches AgenticHandoffController::HandoffBotMarker() so
@@ -183,6 +277,12 @@ int PrCommentWatcher::Tick() {
                 }
                 LOG_WARN("PrCommentWatcher::Tick: budget exhausted on proposalId=%lld (used=%d budget=%d)",
                          static_cast<long long>(h.proposalId), h.iterationCount, budget);
+                // H10 — handoff is terminal; clean up the persisted cursor row
+                // so the table does not accumulate dead entries. Best-effort.
+                if (store_) {
+                    std::string delErr;
+                    (void)store_->DeletePrWatch(h.proposalId, delErr);
+                }
                 ++dispatched;
             } else {
                 LOG_WARN("PrCommentWatcher::Tick: MarkHandoffBudgetExhausted failed: %s", transErr.c_str());
@@ -235,6 +335,10 @@ int PrCommentWatcher::Tick() {
                      markErr.c_str(), static_cast<long long>(h.proposalId));
             continue;
         }
+        // H10 — persist the post-Mark in-memory state to agent_pr_watch.
+        // After MarkHandoffIteration the in-memory iterationCount is
+        // (h.iterationCount + 1); we mirror that to the row.
+        PersistWatchRowBestEffort(store_, h.proposalId, h.prUrl, bodyTs, h.iterationCount + 1);
         if (!dispatcher_) {
             if (!dispatcherWarnLatched_.exchange(true)) {
                 LOG_INFO("PrCommentWatcher::Tick: respawn dispatcher not wired — recording iteration but cannot "
