@@ -30,6 +30,8 @@
 #include "SmatchetLocalization.h"
 #if defined(SMATCHET_WITH_WHISPER)
 #include "SmatchetWhisperSetupBanner.h"
+#include "SmatchetWhisperOverlayUi.h"
+#include "DictationInsertionRouter.h"
 #endif
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -516,6 +518,13 @@ void SmatchetUI::Draw(AppController& app) {
         if (smatchet::whisper::banner::Render(app, d.cfg)) {
             ConfigManager::Save(d.cfg);
         }
+    }
+    // Phase E — floating amplitude-meter overlay while push-to-talk capture is
+    // active. Cheap when idle (single atomic load + early return); when active
+    // draws one ImGui::ProgressBar + a Cancel button.
+    {
+        SMATCHET_UI_PERF_SCOPE("SmatchetWhisperOverlayUi::Render");
+        smatchet::whisper::overlay::Render(app);
     }
 #endif
     // Ctrl+Alt+D — toggle dock-node debug overlay.

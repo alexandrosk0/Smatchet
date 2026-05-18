@@ -596,9 +596,15 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Dicta
 # TU only on the ON path; the OFF build never compiles it (call site in
 # SmatchetUI.cpp is wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`).
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
+# Phase E — amplitude-meter overlay TU, source-list-conditional with the same
+# shape as the setup banner. Compiled only on the ON path; the OFF build
+# never visits it (call site in SmatchetUI.cpp is wrapped
+# `#if defined(SMATCHET_WITH_WHISPER) ... #endif`).
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
 if(SMATCHET_WITH_WHISPER)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()

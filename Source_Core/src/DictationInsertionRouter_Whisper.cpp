@@ -142,10 +142,31 @@ void DictationInsertionRouter::Insert(const std::string& text) {
 }
 
 bool DictationInsertionRouter::IsRecording() const {
-    // Reflects the live mic state set by the audio-capture thread. The
-    // Phase E hotkey + WhisperPlugin transitions wire this; until then the
-    // default-constructed router reports idle.
-    return false;
+    // Reflects the live mic state set by the WhisperPlugin hotkey hook
+    // (see Plugins/Whisper/WhisperPlugin.cpp). Hook thread flips this on
+    // press / release; UI thread polls every frame for the status-bar `REC`
+    // indicator + the floating amplitude-meter overlay.
+    return recording_.load(std::memory_order_acquire);
+}
+
+void DictationInsertionRouter::SetRecording(bool active) {
+    recording_.store(active, std::memory_order_release);
+    if (!active) {
+        // Drop the residual amplitude reading so the overlay doesn't show a
+        // stale peak after the hotkey is released.
+        lastPeakAmplitude_.store(0.0f, std::memory_order_release);
+    }
+}
+
+void DictationInsertionRouter::SetLastPeakAmplitude(float peak0to1) {
+    float clamped = peak0to1;
+    if (clamped < 0.0f) clamped = 0.0f;
+    if (clamped > 1.0f) clamped = 1.0f;
+    lastPeakAmplitude_.store(clamped, std::memory_order_release);
+}
+
+float DictationInsertionRouter::GetLastPeakAmplitude() const {
+    return lastPeakAmplitude_.load(std::memory_order_acquire);
 }
 
 void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& text) {

@@ -232,6 +232,7 @@ bool WindowsAudioCapture::Start(std::string& outError) {
         std::lock_guard<std::mutex> lk(errorMutex_);
         deferredError_.clear();
     }
+    lastPeakAmplitude_.store(0.0f, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     captureThread_ = std::thread([this]() { CaptureThreadMain(); });
     return true;
@@ -251,6 +252,7 @@ void WindowsAudioCapture::Stop() {
         captureThread_.join();
     }
     running_.store(false, std::memory_order_release);
+    lastPeakAmplitude_.store(0.0f, std::memory_order_release);
 #endif
 }
 
@@ -275,6 +277,10 @@ bool WindowsAudioCapture::DrainCapturedPcm(std::vector<std::int16_t>& out) {
 
 bool WindowsAudioCapture::IsCapturing() const noexcept {
     return running_.load(std::memory_order_acquire);
+}
+
+float WindowsAudioCapture::GetLastPeakAmplitude() const noexcept {
+    return lastPeakAmplitude_.load(std::memory_order_acquire);
 }
 
 #if defined(_WIN32)
@@ -411,9 +417,18 @@ void WindowsAudioCapture::CaptureThreadMain() {
             std::vector<std::int16_t> downmixed;
             downmixed.reserve(numFrames / 2 + 1);
             const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+            // Track |sample| across this chunk for the amplitude-meter
+            // overlay (Phase E). Cheap: one branch per frame, no extra
+            // allocation.
+            std::int32_t peakAbs = 0;
             for (UINT32 i = 0; i < numFrames; ++i) {
                 const BYTE* framePtr = data + (i * frameSize);
                 std::int16_t mono = silent ? 0 : MixToMonoInt16(framePtr, negotiated);
+                const std::int32_t magnitude =
+                    mono >= 0 ? static_cast<std::int32_t>(mono) : -static_cast<std::int32_t>(mono);
+                if (magnitude > peakAbs) {
+                    peakAbs = magnitude;
+                }
                 EmitDecimated(mono, decim, downmixed);
             }
             captureClient->ReleaseBuffer(numFrames);
@@ -421,6 +436,10 @@ void WindowsAudioCapture::CaptureThreadMain() {
                 std::lock_guard<std::mutex> lk(pcmMutex_);
                 pcmBuffer_.insert(pcmBuffer_.end(), downmixed.begin(), downmixed.end());
             }
+            // 32768.0 puts a full-scale int16 at exactly 1.0 — the meter UI
+            // expects [0, 1].
+            const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
+            lastPeakAmplitude_.store(peakNorm > 1.0f ? 1.0f : peakNorm, std::memory_order_release);
 
             hr = captureClient->GetNextPacketSize(&packetSize);
             if (FAILED(hr)) {

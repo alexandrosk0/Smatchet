@@ -63,6 +63,13 @@ class WindowsAudioCapture {
     /// True between a successful Start() and Stop() / destructor.
     bool IsCapturing() const noexcept;
 
+    /// Most recent peak |sample| / 32768 observed in the WASAPI capture loop,
+    /// normalised to [0, 1]. Updated on every drained chunk; safe to read
+    /// from the UI thread without a mutex (lock-free `std::atomic<float>`).
+    /// Returns 0.0 before the first chunk arrives and stays at 0.0 after
+    /// Stop() until the next Start().
+    float GetLastPeakAmplitude() const noexcept;
+
   private:
     // Capture thread loop entry. Holds the COM init for the entire lifetime
     // of the thread (single-thread apartment is fine for IAudioCaptureClient
@@ -82,6 +89,11 @@ class WindowsAudioCapture {
     // DrainCapturedPcm call so the CLI command can report it.
     std::mutex errorMutex_;
     std::string deferredError_;
+
+    // Live peak amplitude reading for the Phase E amplitude-meter overlay.
+    // Written by the capture worker after each drained chunk; read from the
+    // UI thread. Reset to 0.0 on Start() and Stop().
+    std::atomic<float> lastPeakAmplitude_{0.0f};
 };
 
 } // namespace whisper

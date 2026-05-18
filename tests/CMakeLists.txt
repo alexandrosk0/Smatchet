@@ -127,11 +127,14 @@ if(SMATCHET_WITH_WHISPER)
         Source_Core/ModelCatalog.test.cpp
         Source_Core/WhisperConsentGate.test.cpp
         Source_Core/WhisperModeRouter.test.cpp
+        # Phase E — pure hotkey-descriptor parser.
+        Source_Core/HotkeyParse.test.cpp
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/ModelCatalog.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperConsentGate.cpp"
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/HotkeyParse.cpp"
     )
     target_include_directories(SmatchetTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper")

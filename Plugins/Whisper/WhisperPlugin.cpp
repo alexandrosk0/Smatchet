@@ -13,7 +13,11 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
+#include "DictationInsertionRouter.h"
+#include "GlobalHotkey_Win32.h"
+#include "HotkeyParse.h"
 #include "Logger.h"
+#include "MainThreadDispatcher.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "WavWriter.h"
@@ -27,12 +31,40 @@
 
 #include <ghc/filesystem.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+// --- Phase E state struct definition ---
+//
+// Out-of-class definition of the WhisperPlugin::PhaseEState nested struct,
+// hoisted to the top of the TU so every anonymous-namespace command builder
+// + worker helper below sees the complete type. The struct itself is opaque
+// to consumers outside Plugins/Whisper/ — the gating-OFF build never visits
+// this TU.
+
+struct WhisperPlugin::PhaseEState {
+    AppController* app = nullptr;
+    smatchet::whisper::GlobalHotkey_Win32 hotkey;
+    smatchet::whisper::WindowsAudioCapture capture;
+
+    // Guard against re-entrant capture: a stuck hook (very rare) can in
+    // theory fire onPress while the previous press is still draining. The
+    // atomic gates the start path; the release path only runs when the
+    // start path observed the flip.
+    std::atomic<bool> captureActive{false};
+
+    // One-flight transcription dispatch. Set on press, cleared once the
+    // release worker has posted insertion (or given up). Prevents two
+    // hotkey rounds racing two worker pipelines.
+    std::atomic<bool> transcribeInFlight{false};
+};
 
 namespace {
 
@@ -110,7 +142,7 @@ bool ReadWavFile(const std::string& path, std::vector<std::uint8_t>& out, std::s
     return true;
 }
 
-smatchet::cmd::Command BuildStatusCommand() {
+smatchet::cmd::Command BuildStatusCommand(WhisperPlugin::PhaseEState* state) {
     using smatchet::cmd::Command;
     using smatchet::cmd::CommandResult;
     using smatchet::cmd::CommandContext;
@@ -123,13 +155,16 @@ smatchet::cmd::Command BuildStatusCommand() {
                     "ConfigManager.WhisperEnabled), `mode` (string — auto|local|cloud), "
                     "`model_present` (bool — whether the configured local model file exists on "
                     "disk), `setup_completed` (bool — whether the user has seen and answered "
-                    "the first-run setup dialog), and `api_key_resolved` (bool — whether the "
-                    "5-row API-key fallback rule produces a non-empty key). Read-only, no side effects.";
+                    "the first-run setup dialog), `api_key_resolved` (bool — whether the "
+                    "5-row API-key fallback rule produces a non-empty key), `is_recording` (bool "
+                    "— live Phase E push-to-talk capture state), and `hotkey_registered` (bool — "
+                    "whether the global hotkey listener is currently installed). Read-only, no "
+                    "side effects.";
     c.Destructive = false;
     c.Idempotent = true;
     c.AsyncSafe = true;
     c.DryRunSupported = false;
-    c.Handler = [](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+    c.Handler = [state](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
         const TrackerConfig cfg = ConfigManager::Load();
         nlohmann::json out;
         out["enabled"] = cfg.WhisperEnabled;
@@ -141,6 +176,8 @@ smatchet::cmd::Command BuildStatusCommand() {
         // SMATCHET_WHISPER_LOCAL_BACKEND). Lets consumers distinguish
         // "model file missing on disk" from "local backend stub".
         out["local_backend"] = smatchet::whisper::WhisperLocal::BackendBuildState();
+        out["is_recording"] = g_dictationRouter.IsRecording();
+        out["hotkey_registered"] = state != nullptr && state->hotkey.IsRegistered();
         return CommandResult::Success(std::move(out));
     };
     return c;
@@ -483,23 +520,312 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
     return c;
 }
 
+// Run the transcription pipeline for a buffer of int16 PCM captured by the
+// Phase E hotkey path. Worker-thread only — never call from UI. Handles the
+// same mode-router + consent + key-resolution branches as
+// `whisper.transcribe-once` but factored out so the hotkey path doesn't
+// duplicate ~100 LOC.
+//
+// Returns true + populates `outText` on success; returns false + sets
+// `outError` on any failure (consent denied, no API key, no model, HTTP
+// error, etc). All branches log so a user-reported "nothing happened on
+// release" has a single grep target.
+bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPcm,
+                                     std::string& outText,
+                                     std::string& outError) {
+    outText.clear();
+    outError.clear();
+    if (capturedPcm.empty()) {
+        outError = "no audio captured (release fired before any frames arrived)";
+        return false;
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    const std::string modelDir = ResolveWhisperModelDir();
+    const bool localPresent = !cfg.WhisperModel.empty() &&
+                              smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
+    const std::string requestedMode = cfg.WhisperMode.empty() ? std::string("auto") : cfg.WhisperMode;
+
+    std::string effectiveMode;
+    if (requestedMode == "cloud") {
+        effectiveMode = "cloud";
+    } else if (requestedMode == "local") {
+        if (!localPresent) {
+            outError = "local mode requested but no model installed; falling back to cloud";
+            effectiveMode = "cloud";
+        } else {
+            effectiveMode = "local";
+        }
+    } else {
+        effectiveMode = localPresent ? "local" : "cloud";
+    }
+
+    if (effectiveMode == "local") {
+        const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
+        smatchet::whisper::WhisperLocal local;
+        std::string loadErr;
+        if (!local.LoadModel(modelPath, loadErr)) {
+            outError = std::string("local model load failed: ") + loadErr;
+            return false;
+        }
+        std::string err;
+        if (!local.Transcribe(capturedPcm, outText, err)) {
+            outError = err;
+            return false;
+        }
+        return true;
+    }
+
+    // Cloud path.
+    const std::string apiKey = ResolveWhisperKeyFromConfig(cfg);
+    if (apiKey.empty()) {
+        outError = "no API key available - set WhisperApiKey or AiApiKey (provider=openai)";
+        return false;
+    }
+    if (!smatchet::whisper::consent::CanCallCloudApi(cfg, apiKey)) {
+        outError = "consent required: enable Whisper dictation in Preferences first";
+        return false;
+    }
+
+    const std::vector<std::uint8_t> wavBytes = smatchet::whisper::pure::EncodeWav(
+        capturedPcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
+        smatchet::whisper::WindowsAudioCapture::kCaptureChannels);
+    if (wavBytes.empty()) {
+        outError = "WAV payload is empty (zero captured samples)";
+        return false;
+    }
+
+    smatchet::whisper::WhisperApiClient client;
+    return client.Transcribe(wavBytes, apiKey, outText, outError);
+}
+
+// Hotkey-press path — worker-thread entry point. Starts capture if consent
+// allows + nothing is in flight; mirrors the recording flag to the router so
+// the UI indicator + overlay light up. NEVER touches ImGui state.
+void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
+    if (state == nullptr || state->app == nullptr) {
+        return;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (!smatchet::whisper::consent::CanCaptureMic(cfg)) {
+        LOG_WARN("Whisper hotkey: consent gate denied capture — Preferences->Whisper not enabled");
+        return;
+    }
+    bool expected = false;
+    if (!state->captureActive.compare_exchange_strong(expected, true,
+                                                      std::memory_order_acq_rel)) {
+        LOG_DEBUG("Whisper hotkey press ignored — capture already active");
+        return;
+    }
+    std::string capErr;
+    if (!state->capture.Start(capErr)) {
+        LOG_ERROR("Whisper hotkey: capture start failed: %s", capErr.c_str());
+        state->captureActive.store(false, std::memory_order_release);
+        return;
+    }
+    // SetRecording is lock-free atomic — safe from worker; UI thread polls it
+    // every frame for the indicator + overlay.
+    g_dictationRouter.SetRecording(true);
+    LOG_DEBUG("Whisper hotkey: capture started");
+}
+
+// Hotkey-release path — worker-thread entry point. Stops capture, drains
+// the PCM, runs transcription, and posts the resulting text into the
+// focused InputText on the UI thread.
+void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
+    if (state == nullptr || state->app == nullptr) {
+        return;
+    }
+    // Only proceed if WE flipped the active flag — guards against a release
+    // event for a press we never observed (rare; stuck-key recovery).
+    bool wasActive = state->captureActive.exchange(false, std::memory_order_acq_rel);
+    if (!wasActive) {
+        LOG_DEBUG("Whisper hotkey release ignored — no active capture");
+        return;
+    }
+
+    state->capture.Stop();
+    std::vector<std::int16_t> pcm;
+    state->capture.DrainCapturedPcm(pcm);
+    g_dictationRouter.SetRecording(false);
+
+    if (pcm.empty()) {
+        LOG_INFO("Whisper hotkey: 0 PCM samples captured (release within < 1 chunk)");
+        return;
+    }
+
+    bool expectedFlight = false;
+    if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true,
+                                                            std::memory_order_acq_rel)) {
+        LOG_DEBUG("Whisper hotkey release: prior transcription still in flight; dropping new audio");
+        return;
+    }
+
+    // Hand the actual transcription off to LaunchBackgroundTask so the hook
+    // thread returns to the OS message pump quickly. Worker captures pcm by
+    // value and `state` by raw pointer — state lives for the plugin's
+    // lifetime which outlives every worker (OnStop joins).
+    AppController* app = state->app;
+    WhisperPlugin::PhaseEState* localState = state;
+    std::vector<std::int16_t> pcmMove = std::move(pcm);
+    app->LaunchBackgroundTask([app, localState, pcmMove]() {
+        std::string text;
+        std::string err;
+        const bool ok = RunTranscriptionPipeline_Worker(pcmMove, text, err);
+        // Clear the in-flight flag inside the worker so the next press can
+        // start without waiting on the dispatcher drain.
+        localState->transcribeInFlight.store(false, std::memory_order_release);
+        if (!ok) {
+            LOG_WARN("Whisper hotkey: transcription failed: %s", err.c_str());
+            return;
+        }
+        if (text.empty()) {
+            LOG_INFO("Whisper hotkey: transcription returned empty string (silence?)");
+            return;
+        }
+        // UI-thread hand-off — the router splices into the focused InputText.
+        app->mainThreadDispatcher.PostToMainThread([text]() {
+            g_dictationRouter.InsertIntoFocusedInputText(text);
+            LOG_DEBUG("Whisper hotkey: inserted %zu bytes of transcription", text.size());
+        });
+    });
+}
+
+smatchet::cmd::Command BuildSimulatePressCommand(WhisperPlugin::PhaseEState* state) {
+    using smatchet::cmd::Command;
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::CommandContext;
+
+    Command c;
+    c.Name = "whisper.simulate-press";
+    c.Category = "whisper";
+    c.Summary = "Simulate a hotkey press for bucket-E testing (no hardware key required).";
+    c.Description =
+        "Test-helper that triggers the Phase E onPress callback directly. Does not require the "
+        "configured hotkey to be physically depressed. Pair with `whisper.simulate-release` to "
+        "exercise the full capture + transcribe + insert path without a real mic hold. Idempotent: "
+        "calling twice in a row is a no-op (the second press observes captureActive=true).";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    c.DryRunSupported = false;
+    c.Handler = [state](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+        if (state == nullptr) {
+            return CommandResult::Success(nlohmann::json{{"started", false},
+                                                          {"error", "Phase E state unavailable"}});
+        }
+        RunHotkeyPress_Worker(state);
+        nlohmann::json out;
+        out["started"] = state->captureActive.load(std::memory_order_acquire);
+        return CommandResult::Success(std::move(out));
+    };
+    return c;
+}
+
+smatchet::cmd::Command BuildSimulateReleaseCommand(WhisperPlugin::PhaseEState* state) {
+    using smatchet::cmd::Command;
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::CommandContext;
+
+    Command c;
+    c.Name = "whisper.simulate-release";
+    c.Category = "whisper";
+    c.Summary = "Simulate a hotkey release for bucket-E testing.";
+    c.Description =
+        "Test-helper that triggers the Phase E onRelease callback directly. Drains any PCM "
+        "captured since the matching `whisper.simulate-press` and runs the transcription + "
+        "insertion pipeline. Without a real mic, the captured PCM is empty and the pipeline "
+        "logs `0 PCM samples captured` then returns cleanly — useful for exercising the wire-up "
+        "without an audio device.";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    c.DryRunSupported = false;
+    c.Handler = [state](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+        if (state == nullptr) {
+            return CommandResult::Success(nlohmann::json{{"released", false},
+                                                          {"error", "Phase E state unavailable"}});
+        }
+        RunHotkeyRelease_Worker(state);
+        nlohmann::json out;
+        out["released"] = true;
+        return CommandResult::Success(std::move(out));
+    };
+    return c;
+}
+
 } // namespace
 
-WhisperPlugin::WhisperPlugin() = default;
+WhisperPlugin::WhisperPlugin() : phaseE_(new PhaseEState()) {}
 WhisperPlugin::~WhisperPlugin() = default;
 
 void WhisperPlugin::OnStart(AppController& app) {
+    if (!phaseE_) {
+        phaseE_.reset(new PhaseEState());
+    }
+    phaseE_->app = &app;
+
     smatchet::cmd::CommandRegistry& reg = app.Commands();
-    reg.Register(BuildStatusCommand());
+    reg.Register(BuildStatusCommand(phaseE_.get()));
     reg.Register(BuildTranscribeOnceCommand());
     reg.Register(BuildDownloadModelCommand());
     reg.Register(BuildModelProgressCommand());
     reg.Register(BuildCancelDownloadCommand());
-    LOG_INFO("WhisperPlugin: Phase C started; whisper.{status,transcribe-once,download-model,model-progress,"
-             "cancel-download} registered (local backend %s).",
+    reg.Register(BuildSimulatePressCommand(phaseE_.get()));
+    reg.Register(BuildSimulateReleaseCommand(phaseE_.get()));
+
+    // Phase E — install the push-to-talk hotkey. Parse failure / register
+    // failure both leave the plugin running so the CLI / palette flow still
+    // works; only the hardware-key path is lost.
+    const TrackerConfig cfg = ConfigManager::Load();
+    smatchet::whisper::hotkey::Hotkey hk;
+    std::string parseErr;
+    if (smatchet::whisper::hotkey::Parse(cfg.WhisperHotkey, hk, parseErr)) {
+        PhaseEState* state = phaseE_.get();
+        std::string regErr;
+        const bool ok = phaseE_->hotkey.Register(
+            hk,
+            [state]() {
+                // Hook thread — must not touch ImGui. Worker routines below
+                // are pure C++ / WASAPI; UI updates are routed via the
+                // dictation router atomic flag (polled on the UI thread).
+                RunHotkeyPress_Worker(state);
+            },
+            [state]() { RunHotkeyRelease_Worker(state); },
+            regErr);
+        if (!ok) {
+            LOG_WARN("WhisperPlugin: global hotkey '%s' registration failed: %s — push-to-talk "
+                     "disabled (CLI / palette commands still work)",
+                     cfg.WhisperHotkey.c_str(), regErr.c_str());
+        } else {
+            LOG_INFO("WhisperPlugin: global hotkey '%s' registered.", cfg.WhisperHotkey.c_str());
+        }
+    } else {
+        LOG_WARN("WhisperPlugin: hotkey descriptor '%s' failed to parse: %s — push-to-talk disabled",
+                 cfg.WhisperHotkey.c_str(), parseErr.c_str());
+    }
+
+    LOG_INFO("WhisperPlugin: Phase E started; whisper.{status,transcribe-once,download-model,"
+             "model-progress,cancel-download,simulate-press,simulate-release} registered "
+             "(local backend %s).",
              smatchet::whisper::WhisperLocal::BackendBuildState());
 }
 
 void WhisperPlugin::OnStop() {
+    if (phaseE_) {
+        // Tear down the hotkey FIRST — the hook thread must stop before the
+        // capture instance is destroyed, otherwise a late hook fire could
+        // touch a half-destructed WindowsAudioCapture.
+        phaseE_->hotkey.Unregister();
+        // Drain any active capture so the router's recording flag clears
+        // before SmatchetUI's last frame.
+        if (phaseE_->captureActive.exchange(false, std::memory_order_acq_rel)) {
+            phaseE_->capture.Stop();
+            std::vector<std::int16_t> drained;
+            phaseE_->capture.DrainCapturedPcm(drained);
+        }
+        g_dictationRouter.SetRecording(false);
+        phaseE_->app = nullptr;
+    }
     LOG_INFO("WhisperPlugin: stopped.");
 }
