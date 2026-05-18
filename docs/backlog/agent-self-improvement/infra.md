@@ -7,6 +7,18 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-17 · test-author · [infra] · P2 — Bucket-E `--spawn` ephemeral runner flakes intermittently (pre-existing)
+  Details: Empirically observed during `tests/ui/ai_assistant_panel_dock_swap.test.cpp` + `tests/ui/ai_prefs_autosave_flow.test.cpp` development that the existing `scripts/dev/test-ui-*.sh` runners (including the pre-PR `test-ui-views-columns-reorder.sh` and `callstack_tooltip_hover` paths) intermittently report `failed:N passed:0` on otherwise-clean runs that pass on subsequent retries with no source change. Reproducible by running any bucket-E runner ~4× back-to-back on sequential ports — at least one run typically flakes. The `callstack_tooltip_hover` runner has shipped this flake since before PR #210. New AI Assistant TUs in this PR (`ai_assistant_panel_dock_swap`, `ai_assistant_enter_send`, `ai_prefs_autosave_flow` V1) all pass deterministically when run individually + on a clean port; the flake is upstream of the test code, in the spawn/MCP-ready/test-queue lifecycle.
+  Concrete next action: diagnose root cause — leading hypotheses are (a) spawn warmup race where the test engine queues tests against an incomplete ImGuiContext, (b) MCP-ready signal racing with `ui_test.run` queue dispatch, (c) port-binding TIME_WAIT state on rapid back-to-back runs. Wire deterministic spawn-warmup gate (e.g. require N frames rendered before accepting queue) or add per-runner retry-once-on-spawn-warmup-failure mitigator. ~4 h diagnosis + fix.
+  Status: open
+  Last-reviewed: 2026-05-17
+
+- 2026-05-17 · test-author · [infra] · P2 — AiClientFactory has no test-injection seam for bucket-E success-path coverage
+  Details: `tests/ui/ai_prefs_autosave_flow.test.cpp` Variant 2 (`VerifyOnSave_TestConnection_SetsResult`) falls back to driving libcurl against `http://127.0.0.1:65530` (an unbound loopback port → immediate ECONNREFUSED) to exercise the Failed: branch of the Preferences Test-connection probe. This tests every layer EXCEPT the success-completion branch — `g_ui.assistantPrefsTestResult == "Verified."` + `assistantPrefsTestResultType == 1` is never reached. Adding a static test seam to `AiClientFactory` would let the variant assert the success path against an in-process stub `IAiClient` that returns immediately from `ProbeReachability` + emits a synthetic chat delta on `SendStreaming`.
+  Concrete next action: add `AiClientFactory::SetTestOverride(std::unique_ptr<IAiClient>)` + `ClearTestOverride()` statics gated on `#if defined(SMATCHET_BUILD_UI_TESTS)`. `MakeAiClient(...)` consults the override before the provider-kind switch. Stub `IAiClient` class lives under `tests/ui/support/`. Add Variant 4 `VerifyOnSave_TestConnection_StubSuccess_VerifiedLineLands` to the autosave-flow TU. ~3 h (seam + stub + variant + clear-on-test-end semantics).
+  Status: open
+  Last-reviewed: 2026-05-17
+
 - 2026-05-17 · code-review · [infra] · P3 — Worker-side per-chunk dispatcher post coalescing for AI stream
   Details: `AiAssistantController::RunRequest`'s `onDelta` posts one task to `MainThreadDispatcher` per provider chunk. OpenAI streams 5–10 chunks/s, Anthropic ~30/s, Ollama ~50+/s for fast local models. The dispatcher queue stays drained but the per-frame `assistantStreamBuf.append` cost + redraw cost is proportional to chunk rate. Coalesce on the worker into 50–100 ms windows before posting; one task per window appends the concatenated chunks.
   Concrete next action: add a small per-turn `std::string pendingChunks_` + `std::chrono::steady_clock::time_point lastPostAt_` on the worker side; flush when (a) pendingChunks_.size() > 4 KB OR (b) 80 ms elapsed since `lastPostAt_` OR (c) `isFinal`. Wire through `onDelta`. ~1 h.
