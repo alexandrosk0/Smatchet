@@ -502,6 +502,13 @@ if(SMATCHET_WITH_WHISPER AND SMATCHET_WHISPER_LOCAL_BACKEND)
     set(WHISPER_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
     set(GGML_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
     set(GGML_BUILD_TESTS       OFF CACHE BOOL "" FORCE)
+    # OpenMP off — MinGW UCRT64 ships without a libgomp the static link can
+    # find, so the default GGML_OPENMP=ON build fails with
+    # `undefined reference to GOMP_barrier`. ggml falls back to its own
+    # threadpool when GGML_OPENMP=OFF; we lose the small OpenMP scheduling
+    # win in exchange for a clean MinGW UCRT64 link. Re-evaluate if/when we
+    # add a libgomp shipping story (or migrate to clang's libomp).
+    set(GGML_OPENMP            OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(whisper_cpp
         GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
         GIT_TAG v1.7.4)
