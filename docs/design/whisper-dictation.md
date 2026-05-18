@@ -62,7 +62,7 @@ Two-tier dispatch behind a single user-visible feature:
 - **`Source_Core/src/DictationInsertionRouter_Stubs.cpp`** — no-op impl (compiled when `SMATCHET_WITH_WHISPER=OFF`). Mirrors `AppController_LuaStubs.cpp` precedent — keeps call sites in `SmatchetUI.cpp` / `SmatchetAiAssistantUi.cpp` / `TicketFieldEditor.cpp` / `SmatchetCommandPaletteUi.cpp` free of `#if defined(...)` blocks.
 - **`Plugins/Whisper/WhisperPlugin.cpp`** — plugin entry; owns audio capture + mode routing. All under `Plugins/Whisper/` is CMake-conditional, so no source-level ifdefs needed inside that subtree.
 - **`Plugins/Whisper/WhisperLocal.cpp`** — whisper.cpp wrapper.
-- **`Plugins/Whisper/WhisperApiClient.cpp`** — OpenAI `/v1/audio/transcriptions` client. Reuses `cpr` + existing `cfg.AiApiKey` (the OpenAI key already in `ConfigManager`). **Does not introduce a parallel `WhisperApiKey`** — single key for all OpenAI surfaces.
+- **`Plugins/Whisper/WhisperApiClient.cpp`** — OpenAI `/v1/audio/transcriptions` client. Uses its **own** `cfg.WhisperApiKey` field (DPAPI-encrypted). Falls back to `cfg.AiApiKey` only when `WhisperApiKey` is empty AND the AI Assistant's selected provider is OpenAI — that gives the "set OpenAI key once" UX for users who happen to use OpenAI for both, without coupling the two features. Separate field is the right shape because: (a) AI Assistant can run on Anthropic / LM Studio / Ollama with an empty / non-OpenAI `AiApiKey`, in which case Whisper needs its own key; (b) users may want billing separation between chat and transcription; (c) revoking one key without affecting the other is a real-world need.
 - **`Plugins/Whisper/WindowsAudioCapture.cpp`** — WASAPI ring-buffer capture, RAII for `IAudioClient` / `IAudioCaptureClient`.
 
 ## Conditional compilation (`SMATCHET_WITH_WHISPER`)
@@ -184,8 +184,19 @@ New fields on `ConfigManager` (additive; no schema bump per AGENTS.md schema-ver
 - `WhisperMode : string` — `"local" | "cloud" | "auto"`, default `"auto"`
 - `WhisperModel : string` — e.g. `"ggml-base.en"`, default `"ggml-base.en"`
 - `WhisperHotkey : string` — default `"Ctrl+Alt+Space"` (push-to-talk)
+- `WhisperApiKey : string (DPAPI)` — default empty; OpenAI key for `/v1/audio/transcriptions`
 
-**API key**: reuse existing `cfg.AiApiKey` (OpenAI key, already DPAPI-encrypted). **No parallel `WhisperApiKey` field** — single source of truth for OpenAI credentials across AI chat + Whisper.
+**API key fallback rule** (resolved in `WhisperApiClient::ResolveKey()`):
+
+| `WhisperApiKey` | `AiProvider` | `AiApiKey` | Resolved key |
+|---|---|---|---|
+| set | — | — | `WhisperApiKey` (explicit always wins) |
+| empty | `"openai"` | set | `AiApiKey` (convenience fallback — same OpenAI account) |
+| empty | `"openai"` | empty | no key → toast "Configure Whisper API key in Preferences" |
+| empty | `"anthropic"` | (irrelevant) | no key → same toast (Anthropic doesn't expose Whisper) |
+| empty | `"ollama" / "lmstudio"` | (irrelevant) | no key → same toast |
+
+The fallback exists for ergonomics (single-key UX when user happens to use OpenAI for both), but `WhisperApiKey` is the canonical field. AI Assistant changes never silently break Whisper.
 
 **Phase F (deferred until UI tab lands):**
 
@@ -257,7 +268,8 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 | File | Action | Gating layer |
 |---|---|---|
-| `Plugins/Whisper/WhisperApiClient.{h,cpp}` | NEW (`cpr::Post` multipart to `/v1/audio/transcriptions`, uses `cfg.AiApiKey`) | L6 |
+| `Plugins/Whisper/WhisperApiClient.{h,cpp}` | NEW (`cpr::Post` multipart to `/v1/audio/transcriptions`, key resolved via `cfg.WhisperApiKey` with `cfg.AiApiKey` fallback per § fallback table) | L6 |
+| `tests/Source_Core/WhisperApiKeyResolve.test.cpp` | NEW (pure: 5-row fallback decision table) | L1 |
 | `Plugins/Whisper/WindowsAudioCapture.{h,cpp}` | NEW (WASAPI mic capture, 16 kHz mono PCM int16) | L6 |
 | `Plugins/Whisper/WhisperPlugin.cpp` | MOD (wire audio + cloud path; register `whisper.transcribe-once <wav-path>` CLI) | L6 |
 | `Source_Core/src/DictationInsertionRouter_Whisper.cpp` | MOD (route transcription request through `app.LaunchBackgroundTask` + `MainThreadDispatcher::PostToMainThread`) | L2 |
@@ -443,6 +455,7 @@ tests/CMakeLists.txt
 Locales/en.json
 tests/Source_Core/DictationInsertionRouter.test.cpp
 tests/Source_Core/WhisperApiPayload.test.cpp
+tests/Source_Core/WhisperApiKeyResolve.test.cpp
 tests/Source_Core/WavWriter.test.cpp
 tests/Source_Core/WhisperModeRouter.test.cpp
 tests/Source_Core/ModelCatalog.test.cpp
