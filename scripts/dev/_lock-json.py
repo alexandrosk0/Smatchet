@@ -34,7 +34,10 @@ import sys
 
 
 def _utc_now_z():
-    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    # datetime.utcnow() is deprecated in Python 3.12+; emit timezone-aware
+    # then format with literal Z suffix to match Smatchet's claim-timestamp
+    # grammar (strftime('%z') would produce '+0000', not 'Z').
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def build_claim():
@@ -128,21 +131,52 @@ def iso_to_epoch():
 
 
 def format_table():
+    """Render a fixed-width table of claim records.
+
+    Columns auto-size to the widest value per column so long slugs
+    (up to the 64-char schema max) or unusual owner names don't break
+    alignment. Header row is "SLUG OWNER BRANCH STARTED PATHS
+    FIRST-PATH" — paths column is right-aligned integer, others
+    left-aligned.
+    """
     records = json.load(sys.stdin)
     if not records:
         print("(no plan-locks held)")
         return
-    fmt = "{:<32} {:<24} {:<32} {:<20} {:>5} {}"
-    print(fmt.format("SLUG", "OWNER", "BRANCH", "STARTED", "PATHS", "FIRST-PATH"))
-    print(fmt.format("----", "-----", "------", "-------", "-----", "----------"))
+
+    headers = ("SLUG", "OWNER", "BRANCH", "STARTED", "PATHS", "FIRST-PATH")
+    rows = []
     for r in records:
-        slug = r.get("_slug") or r.get("slug", "?")
+        slug = r.get("_slug") or r.get("slug") or "?"
         owner = r.get("owner") or "?"
         branch = r.get("branch") or "?"
         started = r.get("started") or "?"
         paths = r.get("write_set") or []
         first = paths[0] if paths else "—"
-        print(fmt.format(slug, owner, branch, started, len(paths), first))
+        rows.append((slug, owner, branch, started, str(len(paths)), first))
+
+    # Compute max width per column across header + every data row.
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        for i in range(len(headers))
+    ]
+    # Last column has no padding (lets long FIRST-PATH values trail off
+    # without right-padding the line). Paths column right-aligned for
+    # integer-style read.
+    fmt_parts = []
+    for i in range(len(headers)):
+        if i == len(headers) - 1:
+            fmt_parts.append("{}")
+        elif i == 4:  # PATHS — right-align
+            fmt_parts.append("{:>" + str(widths[i]) + "}")
+        else:
+            fmt_parts.append("{:<" + str(widths[i]) + "}")
+    fmt = " ".join(fmt_parts)
+
+    print(fmt.format(*headers))
+    print(fmt.format(*("-" * w for w in widths)))
+    for row in rows:
+        print(fmt.format(*row))
 
 
 def format_json():

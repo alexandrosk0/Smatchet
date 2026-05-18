@@ -274,23 +274,60 @@ In-tree only. Adds `.github/CODEOWNERS` mapping the lock primitive scripts (`scr
 
 **Recipe for enabling enforcement**: Settings → Branches → develop branch protection → "Require review from Code Owners" checkbox. No code change needed once the human + second-reviewer prerequisites are in place.
 
-#### 7b — GitHub Ruleset restricting `refs/locks/*` (recipe only)
+#### 7b — GitHub Ruleset restricting `refs/locks/*` (script shipped 2026-05-18, run-when-needed)
 
-Build when: a `refs/locks/*` ref is mutated by an actor who shouldn't have (caught via reflog audit or anomalous Issue from staleness sweep).
+Build when: any of (a) `refs/locks/*` ref is mutated by an actor who shouldn't have (caught via reflog audit or anomalous staleness-sweep Issue), (b) the repo gains a second collaborator with `push` access, (c) a security audit demands defence-in-depth beyond convention.
 
-**Recipe**: Settings → Rules → Rulesets → New ruleset, target ref pattern `refs/locks/*`. Add bypass list = `github-actions[bot]` (so `lock-cleanup.yml` keeps working). Add "restrict creations" + "restrict updates" + "restrict deletions" rules. Alternatively, the same via API: `gh api repos/$REPO/rulesets -X POST -f name=plan-locks ...` (full body in `scripts/dev/lock-ruleset-template.json` if/when needed).
+**Script**: `bash scripts/dev/setup-locks-ruleset.sh`. Idempotent — creates the ruleset on first run, updates in place on subsequent runs (look-up by name `plan-locks`).
 
-#### 7c — Fine-grained PAT for cleanup action (recipe only)
+**What the ruleset enforces**:
+- Target ref pattern `refs/locks/*`.
+- Restrict creations + updates + deletions to bypass-list actors only.
+- Bypass list: `RepositoryRole/admin` (the repo owner) + `Integration/github-actions` (so `lock-cleanup.yml` can still delete refs via the default `github-actions[bot]` identity on PR-merge).
 
-Build when: a security audit flags the default `GITHUB_TOKEN`'s broad `contents: write` scope as too wide for what `lock-cleanup.yml` actually needs.
+**Trade-off**: contributors with plain push access can no longer claim a plan-lock from their own clone via `lock-claim.sh`. Acceptable for "hard to bypass" stance; not acceptable if the workflow expects every contributor to self-serve claim. Single-owner repos today don't hit this trade-off.
 
-**Recipe**: create a fine-grained PAT scoped to `contents: write` on this single repo, restricted to `refs/locks/*` (the API supports per-ref scoping via repository content selection). Store as `LOCK_CLEANUP_PAT` repo secret. Replace `${{ secrets.GITHUB_TOKEN }}` with `${{ secrets.LOCK_CLEANUP_PAT }}` in `lock-cleanup.yml`. Rotation policy: 90 days, automated via `gh secret set` from a scheduled cron in a separate workflow.
+**Best-effort first-cut caveat**: the script uses the `target: branch` ruleset shape with a `refs/locks/*` ref-name condition. GitHub's docs nominally support arbitrary ref patterns this way but the live API behaviour for non-`refs/heads` / non-`refs/tags` targets has edge cases. Run the script + immediately attempt a `lock-claim.sh tmp-ruleset-test` from a non-bypass actor to verify the rule actually fires. If it doesn't, fall back to the UI path: Settings → Rules → Rulesets → New ruleset.
+
+**Rollback**: `gh api -X DELETE repos/$REPO/rulesets/<id>` where `<id>` comes from `gh api repos/$REPO/rulesets`.
+
+#### 7c — Fine-grained PAT for cleanup action (DEPRIORITIZED 2026-05-18)
+
+Originally planned to narrow `lock-cleanup.yml`'s `GITHUB_TOKEN`-wide `contents: write` scope. Investigation showed **GitHub fine-grained PATs cannot scope `contents: write` to a ref namespace** (no `refs/locks/*`-only permission exists; `contents` is whole-repo or nothing). A PAT for the cleanup workflow would therefore have the same trust surface as the default token, with extra rotation cost and zero benefit.
+
+The right tool for narrowing trust at the `refs/locks/*` level is **Phase 7b ruleset** (above), which restricts the operation at the server side regardless of which token attempts it.
+
+**Status**: deprioritized indefinitely. Reopen only if GitHub introduces ref-namespace-scoped content permissions in the fine-grained PAT model.
+
+**Aside**: Phase 7a's `LOCK_RENDER_PAT` is a different story — that PAT exists to bypass GitHub's default-deny on PR creation, not to narrow `contents` scope. PR-creation permission is a distinct grant the PAT model does support cleanly.
 
 #### 7d — GitHub merge queue on develop (recipe only)
 
 Build when: a "merged green but broke develop" incident happens, OR PR throughput climbs past ~5 PRs / day.
 
-**Recipe**: Settings → Branches → develop → "Require merge queue". Configure required status checks list (`build-and-test`, `coverage-gate`, `lock-cleanup` if it has a job we want to gate on, plus any others). Merge queue auto-rebases each PR before final merge and re-runs the required checks. PR throughput trade-off: queue is single-threaded per branch, slow CI degrades throughput.
+**Recipe** (UI path): Settings → Branches → develop → "Require merge queue". Configure required status checks list (`build-and-test`, `coverage-gate`, plus any others). Merge queue auto-rebases each PR against develop tip + re-runs required checks before final merge. PR throughput trade-off: queue is single-threaded per branch; slow CI degrades throughput.
+
+**Recipe** (API path):
+```bash
+gh api -X PATCH repos/alexandrosk0/Smatchet/branches/develop/protection \
+  -F required_status_checks.strict=true \
+  -F 'required_status_checks.contexts[]=build-and-test' \
+  -F 'required_status_checks.contexts[]=coverage-gate' \
+  -F required_linear_history=true \
+  -F enforce_admins=false \
+  -f restrictions= \
+  -f required_pull_request_reviews.dismiss_stale_reviews=true
+gh api -X PUT repos/alexandrosk0/Smatchet/rulesets \
+  --input <<<'{
+    "name": "develop-merge-queue",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["refs/heads/develop"], "exclude": []}},
+    "rules": [{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]
+  }'
+```
+
+(API shape may need adjusting per GitHub Actions API drift — verify the response.)
 
 ## Verification
 
@@ -363,7 +400,8 @@ Phase 7 is reactive — ship each item when the corresponding pain surfaces.
 - 2026-05-17 · **Stack-merge to develop.** PR #194 squash-merged at `f703f6d`. Cascade-close of #195 occurred because GitHub auto-closes PRs whose base branch is deleted; recreated as new PR #203 with the same branch rebased onto develop via `git rebase --onto`. Pre-emptively retargeted #198 / #200 / #202 to develop before merging their predecessors to prevent further cascade-closes. Each remaining PR rebased onto develop via `git rebase --onto origin/develop HEAD~N` to skip duplicate (now-squashed) parent commits. Merge order: #194 (`f703f6d`) → #203 (`bc8b460`) → #198 (`60012c3`) → #200 (`eff5483`) → #202 (`21449f8`). `lock-cleanup.yml` fired on all 3 merges post-Phase-3 landing (`completed success` in ~8 s each); only #202 carried the trigger key `lock-slug:` and actually deleted `refs/locks/git-ref-plan-locks`. Post-merge `git ls-remote origin 'refs/locks/*'` returns empty — full lifecycle exercised end-to-end.
 - 2026-05-17 · Phase 7a — CODEOWNERS for lock infra. **First real claim via the new flow**: `bash scripts/dev/lock-claim.sh phase-7-codeowners /tmp/ws-phase-7.txt` (`AGENT_ID=orchestrator`, `LOCK_BRANCH=feat/git-ref-plan-locks-phase-7-codeowners`) at sha `c9ce331`. Wrote `.github/CODEOWNERS` mapping the 7 lock primitive scripts + 3 lock workflows + plan doc + archive + build system + `ITrackerClient.h` + `Commands/` + `AGENTS.md` + `CLAUDE.md` to `@alexandrosk0`. Informational until branch protection is reconfigured to require code-owner review. PR #204 merged at `a390c2b`; cleanup workflow auto-deleted the ref in 8 s.
 - 2026-05-17 · **Hotfix `fix/lock-staleness-yaml-parse`** — post-merge audit showed `.github/workflows/lock-staleness.yml` had been silently failing every fire since Phase 4 landed. Root cause: the inline multi-line Python heredocs at column 1 inside a `run: |` block broke YAML literal block-scalar parsing (block scalar requires every content line ≥ block indent; the Python source was un-indented at column 1, so YAML treated those lines as top-level YAML and the workflow file failed parse). Symptom on GitHub: every run labelled by file path instead of `name:` field, empty `jobs[]`, conclusion `failure`. Fix: lifted all bash + python logic into `scripts/dev/lock-staleness-sweep.sh`, leaving the YAML as a thin invoker. Added two new subcommands to `scripts/dev/_lock-json.py`: `latest-ts` (max of started + updated) and `iso-to-epoch` (env-var passthrough, preserves the Phase 4 security fix against shell-into-python interpolation). Verified locally: all three workflow YAMLs parse clean; `latest-ts` + `iso-to-epoch` + RCE-attempt smoke all behave correctly; `test-lock-primitives.sh` still 8/8 green.
-- 2026-05-18 · **Hotfix `fix/locks-render-pat`** — first live `locks-render.yml` fire on develop failed at the `gh pr create` step with `GraphQL: GitHub Actions is not permitted to create or approve pull requests`. Root cause: GitHub disallows the default `GITHUB_TOKEN` from creating PRs since 2022 (security default). Fix: split the `Commit, push, open or update PR` step into two — `Commit + force-push sync branch` (uses `GITHUB_TOKEN` for `contents: write`) and `Open or update sync PR` (uses `LOCK_RENDER_PAT` fine-grained PAT for `pull-requests: write`). Workflow gracefully falls back with a `::warning::` log when the PAT secret is unset. Added `## Operational requirements` section with the one-time PAT setup procedure (least-privilege, 90-day rotation, repo-scoped). Cleaned up the orphan `bot/plan-locks-sync` branch left on origin by the failed run. End-to-end exercise of the fix happens on the next render-cron after the PAT secret is configured.
+- 2026-05-18 · **Hotfix `fix/locks-render-pat`** — first live `locks-render.yml` fire on develop failed at the `gh pr create` step with `GraphQL: GitHub Actions is not permitted to create or approve pull requests`. Root cause: GitHub disallows the default `GITHUB_TOKEN` from creating PRs since 2022 (security default). Fix: split the `Commit, push, open or update PR` step into two — `Commit + force-push sync branch` (uses `GITHUB_TOKEN` for `contents: write`) and `Open or update sync PR` (uses `LOCK_RENDER_PAT` fine-grained PAT for `pull-requests: write`). Workflow gracefully falls back with a `::warning::` log when the PAT secret is unset. Added `## Operational requirements` section with the one-time PAT setup procedure (least-privilege, 90-day rotation, repo-scoped). Cleaned up the orphan `bot/plan-locks-sync` branch left on origin by the failed run. PR #236 merged at `5bfc1d5`; end-to-end exercise of the fix happens on the next render-cron after the PAT secret is configured.
+- 2026-05-18 · **Backlog batch `chore/locks-backlog-batch`** — closes three remaining items. (1) `_lock-json.py` `_utc_now_z` switched from deprecated `datetime.datetime.utcnow()` to `datetime.datetime.now(datetime.timezone.utc)` — preserves the literal `Z` suffix via `strftime`. (2) `_lock-json.py` `format_table` rewritten to auto-size columns from the widest value in the data; no more 32-char SLUG truncation when a slug approaches the 64-char schema max. (3) `scripts/dev/setup-locks-ruleset.sh` ships Phase 7b as a one-shot idempotent script (creates or updates a `plan-locks` ruleset targeting `refs/locks/*`, bypass list = repo admins + `github-actions[bot]` Integration). Plan doc Phase 7 section rewritten: 7b ships as script + caveat about live-API edge cases for non-standard ref targets; 7c (cleanup PAT) deprioritised indefinitely (PAT model can't scope `contents` to a ref namespace — same trust surface as `GITHUB_TOKEN`, zero benefit); 7d (merge queue) gets both UI and API recipe paths.
 
 ## Deviations from plan
 
