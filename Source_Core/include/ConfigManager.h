@@ -289,6 +289,24 @@ struct TrackerConfig {
     // when a future H10 dedicated thread lands; the H7 wave reads the
     // value but ignores it (the piggyback shares AgenticPollIntervalSec).
     int HandoffPrCommentPollIntervalSec = 120;
+
+    // H9 — cross-flow auto-start gate. When true, approving an ImplementIssue
+    // proposal in `SmatchetAgentProposalsUi` fires `OnProposalApproved` which
+    // dispatches `AgenticHandoffController::Start` on a worker thread without
+    // further user action. When false (the shipped default per plan-locked
+    // decision #5 in `docs/design/agentic-coding-handoff.md` § "Approval &
+    // gating"), approval still moves the proposal to the Approved state but
+    // the handoff only starts when the user clicks `Start handoff` on the
+    // proposal row. The button is rendered ONLY on rows whose action is
+    // `ImplementIssue` — non-handoff proposals (CommentAdd / LabelAdd / etc)
+    // never expose it.
+    //
+    // CRITICAL: do not flip the default to true without user sign-off. The
+    // plan locks "manual approval + manual handoff start" as the trust
+    // baseline for the first shipped agentic flow; auto-start opt-in lives
+    // exclusively in Preferences. Round-trips through Load() via j.value()
+    // so a missing key in older configs hydrates to the safe default.
+    bool HandoffAutoStartOnApprove = false;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;

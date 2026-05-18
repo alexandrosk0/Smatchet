@@ -881,4 +881,198 @@ TEST_CASE("AgenticHandoffController H5 — poll loop is a no-op when fetcher is 
     CHECK(ctrl.PollClarificationAnswers() == 0);
 }
 
+// ─── H9 — cross-flow OnProposalApproved callback wiring ────────────────────
+//
+// The store fires `OnProposalApproved(id, action)` exactly on the
+// Pending->Approved edge. Plan-locked decision #5: auto_start defaults FALSE
+// — the callback decides whether to dispatch Start() based on a test-side
+// gate that mirrors the production cfg `HandoffAutoStartOnApprove`. These
+// tests assert four properties:
+//   1. Non-ImplementIssue approvals never dispatch a handoff.
+//   2. ImplementIssue approval with auto_start=false does NOT dispatch.
+//   3. ImplementIssue approval with auto_start=true DOES dispatch.
+//   4. Manual-button path (controller.Start invoked directly) appears in
+//      SnapshotActive — covers the [Start handoff] panel flow that the
+//      bucket-E test mirrors via stub controller.
+//
+// The four scenarios all use the same wiring pattern as AppController:
+//   store.SetOnProposalApproved([...](id, action) {
+//     if (action != ImplementIssue) return;
+//     if (!autoStartGate) return;
+//     ctrl.Start(id, ...);
+//   });
+// Tests bypass the worker dispatch by injecting an inline WorkerDispatcher
+// so Start() drives the FakeRunner synchronously inside the callback.
+
+TEST_CASE("AgenticHandoffController H9 — non-ImplementIssue approval does not start handoff") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertCommentAdd(store, "smatchet/example#h9-a");
+
+    FakeRunner runner(FakeRunner::Mode::HappyPath);
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    int callbackInvocations = 0;
+    int startInvocations = 0;
+    // auto_start=true on purpose — the callback should still no-op because
+    // the action is CommentAdd, not ImplementIssue. Mirrors the production
+    // AppController callback's first guard.
+    const bool autoStart = true;
+    store.SetOnProposalApproved([&](std::int64_t id, ProposedAction action) {
+        ++callbackInvocations;
+        if (action != ProposedAction::ImplementIssue) {
+            return;
+        }
+        if (!autoStart) {
+            return;
+        }
+        ++startInvocations;
+        AgenticHandoffController::ActiveHandoff out;
+        std::string serr;
+        (void)ctrl.Start(id, out, serr);
+    });
+
+    std::string err;
+    REQUIRE(store.Transition(pid, AgentProposalState::Approved, std::string(), err));
+    CHECK(callbackInvocations == 1);
+    CHECK(startInvocations == 0);
+    CHECK(runner.spawnCalls == 0);
+    CHECK(ctrl.SnapshotActive().empty());
+}
+
+TEST_CASE("AgenticHandoffController H9 — ImplementIssue approval + auto_start=false does NOT auto-start") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#h9-b");
+
+    FakeRunner runner(FakeRunner::Mode::HappyPath);
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    int callbackInvocations = 0;
+    int startInvocations = 0;
+    // The shipped default — decision #5. Approval still flips the row state
+    // but the handoff waits for the user's button press.
+    const bool autoStart = false;
+    store.SetOnProposalApproved([&](std::int64_t id, ProposedAction action) {
+        ++callbackInvocations;
+        if (action != ProposedAction::ImplementIssue) {
+            return;
+        }
+        if (!autoStart) {
+            return;
+        }
+        ++startInvocations;
+        AgenticHandoffController::ActiveHandoff out;
+        std::string serr;
+        (void)ctrl.Start(id, out, serr);
+    });
+
+    std::string err;
+    REQUIRE(store.Transition(pid, AgentProposalState::Approved, std::string(), err));
+    CHECK(callbackInvocations == 1);
+    CHECK(startInvocations == 0);
+    CHECK(runner.spawnCalls == 0);
+    CHECK(ctrl.SnapshotActive().empty());
+    CHECK(sink.Size() == 0); // no Start() => no audit transitions
+}
+
+TEST_CASE("AgenticHandoffController H9 — ImplementIssue approval + auto_start=true DOES auto-start") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#h9-c");
+
+    FakeRunner runner(FakeRunner::Mode::HappyPath);
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    int callbackInvocations = 0;
+    int startInvocations = 0;
+    const bool autoStart = true;
+    store.SetOnProposalApproved([&](std::int64_t id, ProposedAction action) {
+        ++callbackInvocations;
+        if (action != ProposedAction::ImplementIssue) {
+            return;
+        }
+        if (!autoStart) {
+            return;
+        }
+        ++startInvocations;
+        AgenticHandoffController::ActiveHandoff out;
+        std::string serr;
+        REQUIRE(ctrl.Start(id, out, serr));
+    });
+
+    std::string err;
+    REQUIRE(store.Transition(pid, AgentProposalState::Approved, std::string(), err));
+    CHECK(callbackInvocations == 1);
+    CHECK(startInvocations == 1);
+
+    // Start() bookkeeping landed: the handoff is registered with the
+    // controller in Spawning state (Pending -> Spawning was the first FSM
+    // transition the controller emitted).
+    const auto active = ctrl.SnapshotActive();
+    REQUIRE(active.size() == 1);
+    CHECK(active[0].proposalId == pid);
+    CHECK(active[0].issueKey == "smatchet/example#h9-c");
+    // Spawning is the post-Start, pre-RunSpawnSynchronouslyForTests state.
+    CHECK(active[0].state == RunState::Spawning);
+
+    // Drive the worker so we can also assert the FakeRunner actually picked
+    // up the seed (proves the cross-flow wiring reached spawn, not just the
+    // controller bookkeeping).
+    std::string drainErr;
+    REQUIRE(ctrl.RunSpawnSynchronouslyForTests(pid, drainErr));
+    CHECK(runner.spawnCalls == 1);
+    CHECK(runner.capturedSeed.proposalId == pid);
+}
+
+TEST_CASE("AgenticHandoffController H9 — manual button path: direct Start appears in SnapshotActive") {
+    // Mirrors the SmatchetAgentProposalsUi `[Start handoff]` button path:
+    // panel calls store.Transition(Approved) (auto-start callback is a no-op
+    // in manual mode) then calls ctrl.Start() directly. SnapshotActive
+    // surfaces the in-flight handoff so the H8 handoff panel can render it.
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#h9-d");
+
+    FakeRunner runner(FakeRunner::Mode::HappyPath);
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    // Manual mode — callback is wired (mirroring AppController) but the
+    // auto_start gate is false, so it intentionally no-ops on the approval.
+    int callbackInvocations = 0;
+    int autoStartInvocations = 0;
+    const bool autoStart = false;
+    store.SetOnProposalApproved([&](std::int64_t id, ProposedAction action) {
+        ++callbackInvocations;
+        if (action != ProposedAction::ImplementIssue) {
+            return;
+        }
+        if (!autoStart) {
+            return;
+        }
+        ++autoStartInvocations;
+        AgenticHandoffController::ActiveHandoff out;
+        std::string serr;
+        (void)ctrl.Start(id, out, serr);
+    });
+
+    std::string err;
+    REQUIRE(store.Transition(pid, AgentProposalState::Approved, std::string(), err));
+    CHECK(callbackInvocations == 1);
+    CHECK(autoStartInvocations == 0);
+    CHECK(ctrl.SnapshotActive().empty());
+
+    // Now the panel's button-press path: invoke Start() explicitly. The
+    // approve-and-start panel helper is the production analogue.
+    AgenticHandoffController::ActiveHandoff manual;
+    std::string startErr;
+    REQUIRE(ctrl.Start(pid, manual, startErr));
+    CHECK(manual.proposalId == pid);
+
+    const auto active = ctrl.SnapshotActive();
+    REQUIRE(active.size() == 1);
+    CHECK(active[0].proposalId == pid);
+    CHECK(active[0].state == RunState::Spawning);
+}
+
 #endif // SMATCHET_WITH_AGENTIC

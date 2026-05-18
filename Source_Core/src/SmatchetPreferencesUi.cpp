@@ -1057,6 +1057,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     }
                 });
             }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // (H9) Cross-flow auto-start gate — plan-locked decision #5.
+            // Default OFF; flipping ON only takes effect on the NEXT proposal
+            // approval (the store callback re-reads ConfigManager::Load() on
+            // every fire). Persistence rides MarkPrefsDirty's debounced save.
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.handoffSection", "Handoff (Implement)"));
+            if (ImGui::Checkbox(SmatchetLocalization::T(
+                                    "agent.prefs.handoffAutoStartOnApprove",
+                                    "Auto-start handoff when an ImplementIssue proposal is approved"),
+                                &d.cfg.HandoffAutoStartOnApprove)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextDisabled("%s",
+                                SmatchetLocalization::T("agent.prefs.handoffAutoStartHint",
+                                                        "Default OFF (recommended). Enable only for trusted "
+                                                        "upstream proposals — auto-spawns Claude Code on approval."));
+
             ImGui::EndTabItem();
         }
 #endif // SMATCHET_WITH_AGENTIC
