@@ -1,6 +1,8 @@
 # PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`)
 
-> **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it). Sits **after** `docs/design/agentic-triage-flow.md` (phases 0–2) and `docs/design/agentic-coding-handoff.md` (phases 0–7). Do not start phase 1 until both have shipped.
+> **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it).
+>
+> **Canonical implementation runbook:** [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) sequences `agentic-triage-flow` phases T0–T9 + `agentic-coding-handoff` phases H0–H10 with copy-paste-ready build / test / commit / push / PR commands. **As of HEAD: T0–T9 merged on `develop` (last commit `321589c feat(agentic): T9 …`); H0–H10 pending.** This plan sits **after H10** — do not start phase 1 until the handoff-half acceptance gate in the unified runbook is met.
 
 ## Context
 
@@ -16,12 +18,12 @@ User wants a **local** auto-react loop equivalent to "fix the things CodeRabbit 
 
 | Need | Already covered by |
 |---|---|
-| In-process PR-comment polling thread | `PrCommentWatcher` (`agentic-coding-handoff` phase 7) — polls `GET /repos/{o}/{r}/pulls/{n}/comments` + `GET /repos/{o}/{r}/issues/{n}/comments` every `pr_poll_interval_sec` (default 120 s), SQLite cursor `agent_pr_watch.last_seen_comment_id` |
+| In-process PR-comment polling thread | `PrCommentWatcher` (`agentic-coding-handoff` phase H7 in the unified runbook) — polls `GET /repos/{o}/{r}/pulls/{n}/comments` + `GET /repos/{o}/{r}/issues/{n}/comments` every `pr_poll_interval_sec` (default 120 s), SQLite cursor `agent_pr_watch.last_seen_comment_id` |
 | Subprocess spawn for local `claude` | `ClaudeCodeLocalRunner` (`agentic-coding-handoff` phase 3) using `SubprocessCapture` lifted from `P4Blame` (phase 1) |
 | Worktree creation per task | `ClaudeCodeLocalRunner::CreateWorktree` (`git worktree add .claude/worktrees/agent-<id> -b agent/<id>/<slug> origin/develop`) |
 | Sentinel-file IPC (`SEED.json`, `CLARIFICATION_NEEDED.json`, `USER_RESPONSE.json`, `RUN_RESULT.json`, `PR_URL.txt`) | `AGENTS.md § Handoff envelope` (phase 2) |
 | Iteration loop (re-spawn harness when new comments arrive) | `PrCommentWatcher` → `runner.Resume(proposalId, formattedComments + diff)` |
-| GitHub HTTP wrapper | `GitHubClient` (`agentic-triage-flow` phase 2) — `FetchPrComments`, `AddIssueCommentPlain` |
+| GitHub HTTP wrapper | `GitHubClient` (`AddIssueCommentPlain` from `agentic-triage-flow` T2; `FetchPrComments` + `CreatePullRequest` from `agentic-coding-handoff` H7) |
 | Audit trail per state transition | `BackendAuditTrail::AppendEvent` already wired by `AgenticHandoffController` (`agentic-coding-handoff` phase 4) |
 | Live-progress channel for the spawned harness | `.progress.log` tail surfaced in `SmatchetAgentHandoffUi` panel (`agentic-coding-handoff` phase 8) |
 | PR-iteration agent | `agents/pr-iterator.md` (`agentic-coding-handoff` phase 7) — classifies each unresolved comment (build / test / style / logic / design) and routes |
@@ -133,7 +135,7 @@ agentic-coding-handoff (already planned)            this plan adds
 |---|---|
 | `Source_Core/include/PrCommentWatcher.h` | Add `enum class WatchMode { OriginTracking, OpenPrScan }`; add classifier-registration API `void RegisterClassifier(std::unique_ptr<PrCommentClassifier>)`; default behaviour preserved when no classifier registered. **No longer owns OpenPrScan registration** — that lifted to `OpenPrRegistrar` |
 | `Source_Core/src/PrCommentWatcher.cpp` | In `OpenPrScan` mode, iterate `agent_pr_watch` rows where `origin = "open-pr-scan"` (rows populated by `OpenPrRegistrar`, not by this watcher anymore); inject classifier in the dispatch path |
-| `Source_Core/src/AgenticHandoffController.cpp` | Own the `OpenPrRegistrar` thread + the new `PrCheckRunWatcher`. Register `CoderabbitCommentClassifier` when `coderabbit_react.enabled = true`; register `CiFailureClassifier` when `ci_react.enabled = true`; gate the whole block by `#if SMATCHET_WITH_AI` |
+| `Source_Core/src/AgenticHandoffController.cpp` | Own the `OpenPrRegistrar` thread + the new `PrCheckRunWatcher`. Register `CoderabbitCommentClassifier` when `coderabbit_react.enabled = true`; register `CiFailureClassifier` when `ci_react.enabled = true`; gate the whole block by `#if SMATCHET_WITH_AGENTIC` |
 | `Source_Core/src/ClaudeCodeLocalRunner.cpp` | Add ad-hoc worktree path for PRs without handoff-origin worktree (resolved by lookup in `agent_pr_watch.origin` — if `"open-pr-scan"`, create `coderabbit-pr<N>/iter<n>` worktree off `origin/<headRefName>`). Same path is reused for CI-failure spawns (the worktree namespace stays `coderabbit-pr*` even when the trigger was CI — single worktree per PR per iteration regardless of which classifier dispatched, so the spawned harness can see all in-flight signal sources for the PR in one place) |
 | `Source_Core/include/ConfigManager.h` + `.cpp` | New blocks `coderabbit_react` + `ci_react` (no schema-version bump — held until phase 8 verification per AGENTS.md § "Schema-version bumps") |
 | `Source_Core/src/SmatchetPreferencesUi.cpp` | New "CodeRabbit react loop" toggle + interval; new "CI react loop" toggle + interval + transient-rerun toggle |
@@ -161,8 +163,13 @@ agentic-coding-handoff (already planned)            this plan adds
     "enabled": false,
     "poll_interval_sec": 600,
     "watched_base_branches": ["develop"],
-    "watched_check_names": ["build-and-test", "coverage-gate"],
-    "ignored_check_names": ["coverage"],
+    "watched_check_names": [
+      "Windows + MSYS2 UCRT64",
+      "Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)",
+      "Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)",
+      "Test-delta gate"
+    ],
+    "ignored_check_names": ["Coverage (windows-2022 + OpenCppCoverage)"],
     "auto_dispatch_build_doctor": true,
     "auto_dispatch_test_rig": true,
     "auto_dispatch_debug_detective": false,
@@ -188,8 +195,8 @@ agentic-coding-handoff (already planned)            this plan adds
 | Subprocess spawn | `SubprocessCapture::Run` (`agentic-coding-handoff` phase 1) |
 | Worktree creation | `ClaudeCodeLocalRunner::CreateWorktree` (`agentic-coding-handoff` phase 3) — extend to take a `WorktreeOrigin` enum; shared between CodeRabbit + CI-failure spawns |
 | Sentinel-file IPC | `AGENTS.md § Handoff envelope` (`agentic-coding-handoff` phase 2) — extend the sentinel vocabulary with `CHECK_RUN.json` (failure-cause payload from `CiFailureClassifier`, written into the worktree before the spawn so the harness reads it as its primary fact source) |
-| GitHub HTTP — PR comments | `GitHubClient::FetchPrComments` (`agentic-triage-flow` phase 2 + `agentic-coding-handoff` phase 7) |
-| GitHub HTTP — reply to comment | `GitHubClient::AddIssueCommentPlain` (`agentic-triage-flow` phase 2) — also used by short-circuit-reject path |
+| GitHub HTTP — PR comments | `GitHubClient::FetchPrComments` (added by `agentic-coding-handoff` H7 per its § Reused-utilities table — `agentic-triage-flow` T2 owns the write methods but NOT this read method, despite the line getting brushed against both plans during scoping) |
+| GitHub HTTP — reply to comment | `GitHubClient::AddIssueCommentPlain` (`agentic-triage-flow` T2 — confirmed at `docs/design/agentic-triage-flow.md:64`) — also used by short-circuit-reject path |
 | GitHub HTTP — check-runs | **New methods on `GitHubClient` added by this plan** — `FetchCheckRuns(headSha)`, `FetchCheckRunAnnotations(checkRunId)`, `FetchActionsJobLogs(jobId, tailLines)`, `RerunWorkflowRun(runId)`. All follow the `TrackerHttpRequestWithRetry` + `BackendAuditTrail` pattern that `GitHubClient`'s existing methods use. **Promote these to `agentic-triage-flow` phase 2 scope so they land alongside the other GitHub HTTP methods — this plan documents the surface but the implementation lives in the companion plan to keep `GitHubClient` cohesive.** |
 | Audit trail | `BackendAuditTrail::AppendEvent` (existing) |
 | Worker thread + cancel atomic | `AppController::LaunchBackgroundTask` (existing) |
@@ -258,7 +265,7 @@ Per AGENTS.md § "Verification automation — zero manual steps", `test-author` 
 
 - **Sanitizer build** — ASan/UBSan via `ninja-test-msys2`. Required because phase 1+ adds threading + subprocess + SQLite mutation paths to the new watchers + registrar.
 
-- **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` + `ci_react` surface is gated `#if SMATCHET_WITH_AI` (Standalone only); DX12 must compile cleanly without it.
+- **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` + `ci_react` surface is gated `#if SMATCHET_WITH_AGENTIC` (Standalone only); DX12 must compile cleanly without it.
 
 - **End-to-end happy-path probe** (phase 9, after automation passes):
   1. Configure both `coderabbit_react.enabled` + `ci_react.enabled = true`, intervals at 60 s for the probe.
@@ -283,12 +290,13 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - **Override-rule drift between agent prompt + C++ classifier.** Mitigation: the 18-rule table is the source of truth in `agents/coderabbit-triage.md`. The C++ classifier consumes the table at startup by reading the agent file from disk (the file is already at a known path because `bash scripts/setup-harness.sh claude-code` keeps it linked). Test asserts that every rule number quoted in the C++ table matches a rule in the agent file; CI gates on the agreement.
 - **CI-failure auto-fix loop on a real-but-not-fixable failure** (e.g. infra-side flake the classifier mis-categorises as a real build error). Mitigation: `ci_react.iteration_budget_per_pr` caps it; in addition, the dispatch path tracks "same check-run name failed N times in a row" — three consecutive same-name failures bypass the spawn and post a "this looks like a real environmental issue, not a code issue" comment requesting human review. Transient-rerun separately capped via `transient_rerun_max_per_pr`.
 - **`debug-detective` pause-loop interacts oddly with the auto-dispatch flag.** When `auto_dispatch_debug_detective = true`, the agent spawns and runs Clarify → Hypothesise → Instrument → Run → Read, then halts. The user must respond to the AwaitingUser state before the agent does anything irreversible. Mitigation: this is the agent's existing pause-loop contract — the react-loop just respects it. UI panel surfaces the `AWAITING USER FEEDBACK` line clearly so the user knows the loop is waiting on them, not stuck.
-- **Annotation/log fetch is heavy.** GitHub returns annotations + job logs that can be hundreds of KB per check-run; fetching for every failed check on every PR per tick is expensive. Mitigation: `ci_react.annotation_fetch_count` (default 20) caps annotations; `log_tail_lines` (default 200) caps log bytes. Fetch only the first failed check per workflow run, not every job. `LRUCache<check_run_id, parsed_payload>` skips re-parses across ticks.
+- **Annotation/log fetch is heavy.** GitHub returns annotations + job logs that can be hundreds of KB per check-run; fetching for every failed check on every PR per tick is expensive. Mitigation: `ci_react.annotation_fetch_count` (default 20) caps annotations; `log_tail_lines` (default 200) caps log bytes. Fetch only the first failed check per workflow run, not every job. Per-tick in-memory `std::unordered_map<int64_t check_run_id, ParsedFailure>` skips re-parses across ticks; capped at 128 entries with FIFO eviction on overflow (no `LRUCache` helper exists in Smatchet — manual eviction in the watcher's tick body).
 - **Check-run name table drift vs `.github/workflows/*.yml`.** Mitigation: phase 5 reads the workflow YAML files to build the name table — not hardcoded. If new workflows land, the classifier's "unknown name → log+skip" path triggers + the user gets a `Self-improvement` entry to extend the table.
 - **Short-circuit-reject reply tone.** Mitigation: reply body cites the override rule number + a one-line rationale. Single short paragraph, no judgement. Reviewed for tone by code-review at phase 3.
 - **`gh` rate-limit pressure.** Budget: CodeRabbit 30 min × 10 PRs × 3 endpoints = 60 req/hr; CI 10 min × 10 PRs × 4 endpoints (check-runs + annotations + logs + per-run lookups) = 240 req/hr; OpenPrRegistrar 10 min = 6 req/hr. Total ≈ 306 req/hr peak, well under the 5000/hr authenticated budget. Phase 4 + phase 6 each add a defensive `gh api rate_limit` probe before each tick; tick skips if remaining < 100.
 - **Pillar 1/2 regression.** All subprocess + GitHub HTTP + SQLite work on worker threads (inherited from `PrCommentWatcher`'s existing design + extended for the new sibling watcher + registrar). UI thread does panel render only. `perf-detective` runs on the standard scenario before phase 9 merge.
-- **Plan-lock collision.** Head files: `Source_Core/src/PrCommentWatcher.cpp`, `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp`, `Source_Core/include/ConfigManager.h`, `Source_Core/src/Commands/BuiltinCommands.cpp`, `agents/coderabbit-triage.md`, `agents/build-doctor.md`, `agents/debug-detective.md`, `agents/test-rig.md`, `AGENTS.md`. Phase 0 runs `locks-show.sh`; coordinate with the holder of `agentic-coding-handoff` if it is still active. The four agent files are extra-sensitive because they are read by every spawned harness — a mid-flight prompt edit triggers `agent_version` mismatch in telemetry.
+- **Plan-lock collision.** Head files: `Source_Core/src/PrCommentWatcher.cpp`, `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp`, `Source_Core/include/ConfigManager.h`, `Source_Core/src/Commands/BuiltinCommands.cpp`, `agents/coderabbit-triage.md`, `agents/build-doctor.md`, `agents/debug-detective.md`, `agents/test-rig.md`, `AGENTS.md`. Phase 0 runs `locks-show.sh`; coordinate with the holder of `agentic-coding-handoff` if it is still active (today's `locks-show.sh` returns "no plan-locks held on origin"). The four agent files are extra-sensitive because they are read by every spawned harness — a mid-flight prompt edit triggers `agent_version` mismatch in telemetry.
+- **Collision with `agent-contract-alignment` plan.** [`docs/design/agent-contract-alignment.md`](agent-contract-alignment.md) (sibling plan, not yet shipped) re-shapes `agents/build-doctor.md` + `agents/test-author.md` + the four `Maintenance`-class headings + every Implementer prompt's `## Outcome:` tail. **Overlap surface: `agents/build-doctor.md`** (this plan adds a `## CI-failure spawned-harness mode` paragraph; contract-alignment adds the four Maintenance headings + `## Outcome:` line). Sequencing rule: **let contract-alignment ship first**; then this plan's phase 8 addendum stacks cleanly on top of the new heading shape. If contract-alignment hasn't landed by phase 8, surface to user — the merge order matters because every spawned harness reads the post-merge agent file.
 - **CodeRabbit Pro / self-hosted bot login differs from `coderabbitai[bot]`.** Mitigation: `coderabbit_react.bot_logins` is a config list. First contact with a real CodeRabbit deployment in phase 9 logs the observed `user.login` for the user to add to the list if it differs.
 
 ## Open questions
@@ -299,4 +307,4 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 4. **Iteration budget interaction.** Three budgets now exist: `pr_iteration_budget` (handoff-origin PRs, `agentic-coding-handoff`), `coderabbit_react.iteration_budget_per_pr`, `ci_react.iteration_budget_per_pr`. Three counters, three semantic meanings. Could merge into a single `agentic.iteration_budget_per_pr` keyed by PR number — leaner but conflates "this PR has a chatty bot" with "this PR has flaky CI". Recommend keeping three; confirm at phase 8.
 5. **Reply posting identity.** Replies + transient-rerun invocations use the `gh auth status` user — same as the rest of `agentic-coding-handoff`. The auto-reject reply + the "transient failure detected, re-running" comment appear as the human user, not as a bot. Probably fine (the user owns the rejection decision via Smatchet's config-toggle) but worth noting in phase 7 + phase 6 docs.
 6. **Pillar-4 a11y for the new Preferences toggles.** Two new toggles + interval inputs land in phase 8. Same keyboard-nav contract as existing toggles (Tab cycles, Space toggles, Enter on focused input). Confirm at phase 8 against the pillar-4 in-scope list (keyboard nav / font scaling / WCAG AA contrast).
-7. **Coverage advisory cutoff.** `coverage.yml` is advisory until 2026-05-30 per the workflow YAML. Today's date is 2026-05-18. After 2026-05-30 the workflow becomes blocking — should `ci_react.ignored_check_names` drop `"coverage"` automatically? Recommend hardcoded list at phase 5, manual config flip at the cutoff; the user is in the loop for that decision because it changes blast radius. Document the date in `ConfigManager`'s comments.
+7. **Coverage advisory cutoff.** `coverage.yml` is advisory until 2026-05-30 per the workflow YAML. Today's date is 2026-05-18. After 2026-05-30 the workflow becomes blocking — should `ci_react.ignored_check_names` drop `"Coverage (windows-2022 + OpenCppCoverage)"` automatically? Recommend hardcoded list at phase 5, manual config flip at the cutoff; the user is in the loop for that decision because it changes blast radius. Document the date in `ConfigManager`'s comments.
