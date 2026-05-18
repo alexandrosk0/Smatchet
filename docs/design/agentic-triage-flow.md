@@ -57,6 +57,7 @@ The motivating split: the **GitHub-specific** part is a new `ITrackerClient` bac
 - Wraps the GitHub REST v3 / GraphQL v4 endpoints. Reuse `TrackerHttpRequestWithRetry`, `TrackerHttpResult` classification, and `BackendAuditTrail` per the existing `JiraClient` / `PlaneClient` template.
 - Method-by-method behaviour:
   - `FetchIssues(query)` → `GET /search/issues?q=<query>` (GitHub search syntax) or `GET /repos/{o}/{r}/issues` (label filter).
+  - `FetchIssueComments()` (new virtual on `ITrackerClient` — see "Interface additions" below) → `GET /repos/{o}/{r}/issues/{n}/comments`. Required by the companion `agentic-coding-handoff` plan for `SEED.json` (issue body + thread). Adding it to the interface (with a default `outError = "FetchIssueComments is not supported"` body) preserves the locked abstraction that agent core only ever talks through `ITrackerClient`.
   - `FetchFieldCatalog()` → returns a minimal catalog: labels, assignees, milestones, state (open/closed). No custom fields.
   - `UpdateIssueFields()` → maps to `PATCH /repos/{o}/{r}/issues/{n}` (labels, assignees, milestone, state, title, body).
   - `CreateIssue()` → `POST /repos/{o}/{r}/issues`.
@@ -66,6 +67,10 @@ The motivating split: the **GitHub-specific** part is a new `ITrackerClient` bac
   - `BuildBrowseUrl()` → `https://github.com/{o}/{r}/issues/{n}`.
   - `AddIssueToSprint()`, `AddWorklog()`, `AttachFilesToIssue()` (binary multipart), `ExtractProjectFromQuery()` → return per each method's signature a documented "unsupported" value: empty vector / default-constructed result struct / `false` for `bool` returns. Each unsupported branch logs `LOG_WARN("GitHub: <method> not supported")` exactly once (latching flag) and returns immediately without an HTTP call. Confirm each method's actual return shape against `Source_Core/include/ITrackerClient.h` during phase 1 — that read is part of the phase-1 work, not pre-decided here.
 
+**Interface additions to `ITrackerClient`** (phase 1):
+- New virtual `FetchIssueComments(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerIssueComment>& outComments, std::string& outError)` with a default body that sets `outError = "FetchIssueComments is not supported by this backend."` and returns `false`. `JiraClient` and `PlaneClient` inherit the default unsupported until a follow-up adds real impls (out of scope here). `GitHubClient` overrides to return the real comment thread.
+- New struct `TrackerIssueComment` in `Source_Core/include/ITrackerClient.h` adjacent to `TrackerIssueFetchSummary` — fields: `id`, `author`, `bodyPlain`, `createdAtIso`. Pure data; consumed by the companion plan's `CodingHarnessSeedBuilder`.
+
 **`AgenticInferenceClient`** — `Source_Core/{include,src}/AgenticInferenceClient.{h,cpp}` (new).
 - Single public method: `InferenceResult Run(const InferenceRequest&)` (blocking, called from a worker thread). `InferenceRequest` carries: model name, system prompt, user prompt, response-schema hint, timeout. `InferenceResult` carries: `nlohmann::json parsed` + `std::string rawText` + status enum.
 - Posts to the configured Ollama endpoint (`/api/chat`, `stream: false`). No NDJSON consumption — agent steps don't need streaming. Borrows `cpr` and reuses the cancel-atomic + timeout patterns from `OllamaClient.cpp:113-193`.
@@ -73,7 +78,8 @@ The motivating split: the **GitHub-specific** part is a new `ITrackerClient` bac
 - Redacts API key and any PII from error logs using `AiErrorRedact::RedactProviderErrorBody`.
 
 **`AgentProposal`** — `Source_Core/include/AgentProposal.h` (new).
-- POD struct: `id` (string, unique — generated as `"prop-" + std::to_string(epochMs) + "-" + std::to_string(monotonicCounter)`; no UUID dep added), `sourceTrackerType`, `sourceIssueKey`, `proposedAction` (enum: `CommentAdd | LabelAdd | LabelRemove | AssigneeSet | StateTransition | DerivedTicketCreate`), `payload` (`nlohmann::json`), `rationale` (text from LLM), `status` (`Pending | Approved | Rejected | Applied | Failed`), `createdAt`, `decidedAt`, `decidedBy`.
+- POD struct: `id` (string, unique — generated as `"prop-" + std::to_string(epochMs) + "-" + std::to_string(monotonicCounter)`; no UUID dep added), `sourceTrackerType`, `sourceIssueKey`, `proposedAction` (enum: `CommentAdd | LabelAdd | LabelRemove | AssigneeSet | StateTransition | DerivedTicketCreate | ImplementIssue`), `payload` (`nlohmann::json`), `rationale` (text from LLM), `status` (`Pending | Approved | Rejected | Applied | Failed`), `createdAt`, `decidedAt`, `decidedBy`.
+- **Handoff-eligibility filter** — `ImplementIssue` is the **only** action that consents to a coding-harness spawn. The companion plan (`agentic-coding-handoff`) subscribes to `OnProposalApproved` and filters on `proposedAction == ImplementIssue` before invoking `AgenticHandoffController::StartHandoff`. Triage-only actions (label / comment / assign / state / DerivedTicketCreate) apply via the triage controller's own `ITrackerClient` writes and **never** trigger a coding spawn.
 
 **`AgentProposalStore`** — `Source_Core/{include,src}/AgentProposalStore.{h,cpp}` (new).
 - SQLite-backed (reuse `SQLiteCpp` already linked via `LocalCacheManager`). One new table `agent_proposals` with the columns above. Migrations via the same versioning hook `LocalCacheManager` uses (`cache_meta` row). **Schema-version bump held until end-to-end verified** per AGENTS.md § "Schema-version bumps".
@@ -132,15 +138,15 @@ Each phase is one PR (one slice = one `cmake --build` + one `test-all` per AGENT
 | Phase | Scope | Key files | Gate |
 |---|---|---|---|
 | 0 | Plan-lock claim + ADR + glossary entries | `docs/design/agentic-triage-flow.md`, `docs/adr/00NN-github-as-itrackerclient.md`, `docs/CONTEXT.md` | doc-only, no build |
-| 1 | `GitHubClient` skeleton (read-only methods: `FetchIssues`, `FetchIssueComments`, `BuildBrowseUrl`, `GetTrackerType`). Factory registration. Doctest for pure helpers. | `Source_Core/{include,src}/GitHubClient.{h,cpp}`, `Source_Core/{include,src}/GitHubClientHelpers.{h,cpp}` (pure-helper TU per AGENTS.md "Pure-helper TU-split recipe"), `Source_Core/src/DefaultTrackerBackendFactory.cpp`, `tests/Source_Core/GitHubClientHelpers.test.cpp` | dual-target build + ctest |
+| 1 | `ITrackerClient` interface additions: `FetchIssueComments` virtual + `TrackerIssueComment` struct, default unsupported. `GitHubClient` skeleton (read-only methods: `FetchIssues`, `FetchIssueComments`, `BuildBrowseUrl`, `GetTrackerType`). Factory registration. Doctest for pure helpers. | `Source_Core/include/ITrackerClient.h` (additive virtual), `Source_Core/{include,src}/GitHubClient.{h,cpp}`, `Source_Core/{include,src}/GitHubClientHelpers.{h,cpp}` (pure-helper TU per AGENTS.md "Pure-helper TU-split recipe"), `Source_Core/src/DefaultTrackerBackendFactory.cpp`, `tests/Source_Core/GitHubClientHelpers.test.cpp` | dual-target build + ctest |
 | 2 | `GitHubClient` write methods (comment / label / assign / state). Audit-trail wiring. CLI smoke. | `Source_Core/src/GitHubClient.cpp`, `Source_Core/include/ConfigManager.h` (GitHub block), `Source_Core/src/Commands/Builtin/BuiltinCommands_*.cpp` (touch only if a smoke command lands here) | dual-target build + ctest + manual CLI smoke against real GitHub repo (deferred to bucket-D screenshot of CLI run by test-author) |
 | 3 | `AgenticInferenceClient` (POST + parse + schema validation). Pure-parse helpers in their own TU. Doctest. | `Source_Core/{include,src}/AgenticInferenceClient.{h,cpp}`, `Source_Core/{include,src}/AgenticInferenceClientPure.{h,cpp}`, `tests/Source_Core/AgenticInferenceClientPure.test.cpp` | build + ctest |
 | 4 | `AgentProposal` + `AgentProposalStore` (SQLite schema + audit-trail wiring). Doctest for store CRUD + redaction. | `Source_Core/include/AgentProposal.h`, `Source_Core/{include,src}/AgentProposalStore.{h,cpp}`, `tests/Source_Core/AgentProposalStore.test.cpp` | build + ctest |
 | 5 | `AgenticTriageController` (loop). Manual `agent.triage.run` command. Worker thread + `MainThreadDispatcher` plumbing. | `Source_Core/{include,src}/AgenticTriageController.{h,cpp}`, `Source_Core/src/Commands/Builtin/BuiltinCommands_Agentic.cpp`, `Source_Core/src/Commands/BuiltinCommands.cpp` (registration call), `Source_Core/src/AppController.cpp` (own the controller) | build + ctest + CLI smoke (`Smatchet.exe cmd agent.triage.run --source github --query "..."`) |
-| 6 | `SmatchetAgentProposalsUi` panel + approve/reject/edit commands + audit-trail UI surface. Keyboard nav + WCAG AA verified. | `Source_Core/src/SmatchetAgentProposalsUi.{h,cpp}`, `Source_Core/src/SmatchetUI.cpp` (draw hook), `Source_Core/src/SmatchetUI_MainMenu.cpp` (menu entry) | build + ctest + bucket-D screenshot diff |
+| 6 | `SmatchetAgentProposalsUi` panel + approve/reject/edit commands + audit-trail UI surface. Keyboard nav + WCAG AA verified. Bucket-E test for the Approve/Reject buttons (`tests/ui/agent_proposals_panel.test.cpp` + `scripts/dev/test-ui-agent-proposals.sh`). | `Source_Core/src/SmatchetAgentProposalsUi.{h,cpp}`, `Source_Core/src/SmatchetUI.cpp` (draw hook), `Source_Core/src/SmatchetUI_MainMenu.cpp` (menu entry), `tests/ui/agent_proposals_panel.test.cpp`, `tests/ui/ui_tests_registry.cpp` (registration), `scripts/dev/test-ui-agent-proposals.sh` | build + ctest + bucket-D screenshot diff + bucket-E (`ninja-ui-test-msys2`) |
 | 7 | Scheduled poll. `agent.triage.poll.start` / `.stop`. Timer thread. Config wiring + UI toggle. | `Source_Core/src/AgenticTriageController.cpp` (poll loop), `Source_Core/include/ConfigManager.h` (agentic block), `Source_Core/src/SmatchetPreferencesUi.cpp` (toggle row) | build + ctest + CLI smoke |
 | 8 | Scenario step. Recorded HTTP fixture for replay regression. | `Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp`, `tests/fixtures/github_issues_sample.json`, `tests/fixtures/ollama_chat_sample.json` | build + ctest + scenario replay |
-| 9 | Schema-version bump. End-to-end verification matrix. Plan revision (`## Implementation log` + `## Deviations from plan` + `## Verification`). | `Source_Core/include/ConfigManager.h` (schema version), `docs/design/agentic-triage-flow.md` (revision sections) | full regression: `scripts/dev/test-all.sh` + dual-target build + bucket-D + bucket-E (if wired by then) |
+| 9 | Schema-version bump (SQLite migration). End-to-end verification matrix. Plan revision (`## Implementation log` + `## Deviations from plan` + `## Verification`). | `Source_Core/src/AgentProposalStore.cpp` (CREATE TABLE + `cache_meta` `schema_version` row following the `LocalCacheManager.cpp` pattern at `LocalCacheManager.cpp:60-115`), `docs/design/agentic-triage-flow.md` (revision sections). Note: the `agentic.*` / `github.*` JSON blocks added to `ConfigManager.h` in phases 2 + 7 are **config blocks**, not the SQLite schema bump — they ship per-phase as additive fields, no version gate. | full regression: `scripts/dev/test-all.sh` + dual-target build + bucket-D + bucket-E (`ninja-ui-test-msys2`) |
 
 Phases 1+ all use the **full build + test-all + bucket-E** loop, **not** the trivial-visual-only envelope (this is C++ surface, not theme/locale).
 
@@ -171,8 +177,8 @@ Per AGENTS.md § "Verification automation — zero manual steps", `test-author` 
   - `test-agentic-approve-reject.sh` — runs triage, then approves the first proposal and rejects the second, asserts audit-trail contents.
 - **Screenshot diff** (existing screenshot-diff harness):
   - Proposals panel rendered with three fixture proposals — verify layout + contrast.
-- **ImGui Test Engine** (not wired today per AGENTS.md):
-  - Manual residue: clicking [Approve] / [Reject] in the panel. Flagged to `docs/backlog/agent-self-improvement/tooling.md` with a concrete action plan ("wire ImGui-Test-Engine coverage for SmatchetAgentProposalsUi"), not left as "out of scope".
+- **ImGui Test Engine (bucket E, wired)** per `agents/test-author.md` § Bucket E — `ninja-ui-test-msys2` preset, `SMATCHET_BUILD_UI_TESTS=ON`, registration via `IM_REGISTER_TEST` + `SmatchetRegisterAllUiTests`:
+  - `tests/ui/agent_proposals_panel.test.cpp` — `Approve` button click on a fixture proposal row asserts the store row transitions to `Approved` + an audit-trail row lands; `Reject` button asserts the symmetric `Rejected` path. Bash driver at `scripts/dev/test-ui-agent-proposals.sh` (auto-enrolled in `test-all.sh`). No manual residue.
 - **Sanitizer build** — ASan/UBSan via `ninja-test-msys2`. Required because the new code adds SQLite mutation paths + a worker thread.
 - **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. `AgenticInferenceClient` and `AgenticTriageController` gate behind `#if SMATCHET_WITH_AI` (Standalone only) — verify DX12 compiles without them.
 
@@ -185,7 +191,7 @@ End-to-end **happy-path manual probe** (phase 9, after all automation passes):
 5. Reject one comment-create proposal; verify no API call fires, audit trail records the rejection.
 6. Start the scheduled poll (`agent.triage.poll.start --interval-sec 300`), wait ~5 min, observe a fresh round of proposals.
 
-Manual residue from steps 3-6 → `test-author` handoff to wire bucket-E equivalents.
+Steps 3-6 are bucket-E covered (`scripts/dev/test-ui-agent-proposals.sh` + the CLI smokes above); the happy-path probe is a one-shot sanity check, not a recurring manual gate.
 
 ## Out of scope (deferred)
 
