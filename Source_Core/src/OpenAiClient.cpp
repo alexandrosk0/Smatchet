@@ -49,6 +49,14 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     // gemma-4-31b) don't burn their entire budget on `reasoning_content`
     // and never reach `content`. Mirrors AnthropicClient::kDefaultMaxTokens.
     body["max_tokens"] = (req.MaxTokens > 0) ? req.MaxTokens : kDefaultMaxTokens;
+    // Forward reasoning_effort only when the caller picked an explicit value.
+    // OpenAI's o-series + LM Studio's reasoning-model passthrough both accept
+    // "low" | "medium" | "high"; other providers silently ignore unknown
+    // parameters so it's safe to emit unconditionally per provider — we just
+    // skip the "auto" sentinel to keep the wire body minimal.
+    if (!req.ReasoningEffort.empty() && req.ReasoningEffort != "auto") {
+        body["reasoning_effort"] = req.ReasoningEffort;
+    }
 
     nlohmann::json messages = nlohmann::json::array();
     if (!req.SystemPrompt.empty()) {

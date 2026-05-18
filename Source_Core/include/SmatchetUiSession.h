@@ -188,6 +188,13 @@ struct UiDrawSession {
     /// can drop stale tokens (Cancel + immediate Send must not let the first
     /// turn's tail bytes corrupt the second turn's stream).
     std::uint64_t assistantTurnGen = 0;
+    /// Per-session Model + Effort overrides (chat-window header Combos). Empty
+    /// = use Preferences-saved value. Not persisted across runs — the user
+    /// re-picks per session as a transient experiment. AiAssistantController
+    /// reads these via the Submit() overload's modelOverride/effortOverride
+    /// arguments at Send time.
+    std::string assistantPerTurnModel;
+    std::string assistantPerTurnEffort;
 
     // --- Assistant Preferences tab: Test-connection async probe state. ---
     // Mirrors Phase B's cancel-atom + MainThreadDispatcher hand-off shape. The
@@ -208,15 +215,12 @@ struct UiDrawSession {
     /// (failure). UI consumes this directly; toast paths bypass it.
     int assistantPrefsTestResultType = 0; // 0 info, 1 success, 2 error
     std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
-    /// When true, the running probe is the "save-with-verify" flow rather than
-    /// the plain Test button: on success the posted callback commits the
-    /// `workingCopy` buffers to `g_ui.assistantPrefsSavePending*` cfg state and
-    /// calls `ConfigManager::Save`. On failure no commit happens.
-    bool assistantPrefsTestProbeSavesOnSuccess = false;
-    /// Snapshot of the buffer values to commit when the save-with-verify probe
-    /// completes successfully. Captured at click time so a concurrent edit
-    /// during the probe doesn't sneak unintended state in.
-    TrackerConfig assistantPrefsSavePendingCfg;
+    /// Set by the Test-connection success callback when the probe used a
+    /// fallback default URL (cfg base URL was empty). The next paint of the
+    /// Assistant tab reseeds the static InputText buffers from cfg so the
+    /// just-persisted default value shows up in the field, then clears this
+    /// flag. UI-thread-only.
+    bool assistantPrefsForceBufferReseed = false;
 #endif
 
     bool fieldCatalogFetchStarted = false;

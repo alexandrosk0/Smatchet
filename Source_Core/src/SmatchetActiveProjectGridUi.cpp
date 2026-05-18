@@ -1087,13 +1087,19 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         const ImGuiIO& io = ImGui::GetIO();
         const bool effShift = ImGuiEffectiveKeyShift();
         const bool effCtrl = ImGuiEffectiveKeyCtrl();
-        const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
-                                                          ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        // Strict hover: omit ImGuiHoveredFlags_AllowWhenBlockedByActiveItem so a
+        // click into a text input in another docked panel (e.g. the AI Assistant
+        // side panel input) doesn't satisfy this branch and clear the grid
+        // selection. The clear contract is "user clicked on empty space inside
+        // the Active Project window" — clicking another window is not that.
+        const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
         // Click outside any currently-selected cell (without Shift/Ctrl) clears
         // the entire selection. Ctrl preserves selection for toggling; Shift
-        // preserves it for range extension.
+        // preserves it for range extension. Skip when text input elsewhere is
+        // claiming the click — typing into the AI assistant / palette / filter
+        // bar must not nuke the grid selection.
         if ((sel.HasAnySelection() || !d.gridState.ActiveIssueId.empty()) && !effShift && !effCtrl && windowHovered &&
-            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !rectCellClickedThisFrame &&
+            !io.WantTextInput && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !rectCellClickedThisFrame &&
             !ticketGridLeftClickInsideTableHit) {
             sel.ClearAll();
             d.gridState.ActiveIssueId.clear();

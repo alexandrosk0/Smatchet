@@ -119,7 +119,11 @@ class AppController
     friend class AppControllerDepsAdapter;
 
   public:
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    ~AppController() override;
+#else
     ~AppController();
+#endif
 
     struct FieldEditResult {
         bool Ok = false;

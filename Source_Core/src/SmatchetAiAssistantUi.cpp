@@ -3,10 +3,13 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiAssistantController.h"
+#include "AiClientFactory.h"
 #include "AiContextBuilder.h"
+#include "AiModelCatalog.h"
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -85,14 +88,33 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    for (const AiMessage& m : d.assistantHistory) {
+    // Per-message rendering: role label + a SmallButton "Copy" that pushes the
+    // full message text to the system clipboard via ImGui::SetClipboardText,
+    // followed by a plain ImGui::TextWrapped of the content. Plain wrapped
+    // text reflows with the panel width and never steals keyboard focus; the
+    // Copy button is the single explicit copy mechanism (full-message,
+    // exact byte copy regardless of soft-wrap).
+    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
+        const AiMessage& m = d.assistantHistory[i];
         const char* role = (m.Role == "user") ? "You" : "Assistant";
         ImGui::TextDisabled("%s", role);
+        ImGui::SameLine();
+        char btnId[48];
+        std::snprintf(btnId, sizeof(btnId), "Copy##ai_msg_%zu", i);
+        if (ImGui::SmallButton(btnId)) {
+            ImGui::SetClipboardText(m.Content.c_str());
+        }
+        ImGui::SetItemTooltip("Copy message text to clipboard.");
         ImGui::TextWrapped("%s", m.Content.c_str());
         ImGui::Separator();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
         ImGui::TextDisabled("Assistant (streaming...)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy##ai_stream")) {
+            ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
+        }
+        ImGui::SetItemTooltip("Copy the in-flight partial response to clipboard.");
         ImGui::TextWrapped("%s", d.assistantStreamBuf.c_str());
     }
 
@@ -196,11 +218,10 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
     // semantics so a bare Enter submits and Ctrl+Enter inserts a line break — see
     // imgui.h flag docs. EnterReturnsTrue makes the call return true on submit.
-    const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue
-                                         | ImGuiInputTextFlags_CtrlEnterForNewLine;
-    const bool enterSubmitted = ImGui::InputTextMultiline(
-        "##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
-        ImVec2(-1.0f, inputH), inputFlags);
+    const ImGuiInputTextFlags inputFlags =
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine;
+    const bool enterSubmitted = ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(),
+                                                          s_inputCharBuf.size(), ImVec2(-1.0f, inputH), inputFlags);
     // Mirror char-buf back into the string field every frame so the Send-button click
     // below + the Lua glue see the latest value with no separate poke.
     d.assistantInputBuf.assign(s_inputCharBuf.data());
@@ -228,7 +249,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
             // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
             // — the controller skips empty-body entries when emitting tag wrappers.
             std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
-            ctrl->Submit(turnGen, std::move(snapshot), std::move(context));
+            ctrl->Submit(turnGen, std::move(snapshot), std::move(context), d.assistantPerTurnModel,
+                         d.assistantPerTurnEffort);
         }
         d.assistantAutoScrollAtTail = true;
     };
@@ -347,6 +369,100 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         }
         ImGui::SetItemTooltip(onRight ? "Move panel to the left primary side bar."
                                       : "Move panel to the right secondary side bar.");
+    }
+
+    // --- Per-turn Model + Effort overrides (chat-window header row 2). ---
+    //
+    // Empty `assistantPerTurnModel` / `assistantPerTurnEffort` mean "use the
+    // Preferences default for the active provider". The Combos write directly
+    // into the session strings; the next Send picks them up via Submit.
+    {
+        // Cast cfg int → AiProvider enum; clamp out-of-range to OpenAi (same
+        // pattern as AiPrefsValidator::ClampProvider — kept local since that
+        // helper lives in an anonymous namespace).
+        AiProvider activeProvider = AiProvider::OpenAi;
+        switch (d.cfg.AiProviderKind) {
+        case 1:
+            activeProvider = AiProvider::Anthropic;
+            break;
+        case 2:
+            activeProvider = AiProvider::OllamaOpenAiCompat;
+            break;
+        case 3:
+            activeProvider = AiProvider::OllamaNative;
+            break;
+        case 0:
+        default:
+            activeProvider = AiProvider::OpenAi;
+            break;
+        }
+        const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(activeProvider);
+        // Display list = [<default> sentinel, model 1, model 2, ...]. Picking the
+        // sentinel clears the per-turn override.
+        std::vector<std::string> displayStrings;
+        displayStrings.reserve(catalog.size() + 1);
+        displayStrings.push_back(std::string("<default model>"));
+        std::transform(catalog.begin(), catalog.end(), std::back_inserter(displayStrings),
+                       [](const smatchet::ai::ModelOption& m) { return m.DisplayName; });
+        std::vector<const char*> displayPtrs;
+        displayPtrs.reserve(displayStrings.size());
+        std::transform(displayStrings.begin(), displayStrings.end(), std::back_inserter(displayPtrs),
+                       [](const std::string& s) { return s.c_str(); });
+        int comboIdx = 0;
+        // When the saved per-turn override doesn't match any entry in the active
+        // provider's catalog (e.g. user switched providers leaving a stale id, or
+        // typed a custom name from another build), fall back to free-form input
+        // so the UI accurately reflects what the next Send will actually use —
+        // showing `<default model>` while a hidden non-catalog override is still
+        // active is a major UX trap (CodeRabbit comment 3255682299).
+        bool useFreeformModelInput = catalog.empty();
+        if (!d.assistantPerTurnModel.empty() && !catalog.empty()) {
+            auto it = std::find_if(catalog.begin(), catalog.end(),
+                                   [&](const smatchet::ai::ModelOption& m) { return m.Id == d.assistantPerTurnModel; });
+            if (it != catalog.end()) {
+                comboIdx = 1 + static_cast<int>(std::distance(catalog.begin(), it));
+            } else {
+                useFreeformModelInput = true;
+            }
+        }
+        ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 12.0f);
+        if (useFreeformModelInput) {
+            // Provider has no published catalog (Ollama variants). Free-form
+            // InputText sized to look like the Combo above.
+            char modelBuf[256] = {};
+            std::snprintf(modelBuf, sizeof(modelBuf), "%s", d.assistantPerTurnModel.c_str());
+            if (ImGui::InputTextWithHint("##AiTurnModel", "<default model>", modelBuf, sizeof(modelBuf))) {
+                d.assistantPerTurnModel = modelBuf;
+            }
+            ImGui::SetItemTooltip("Per-turn model override. Leave blank to use the Preferences-saved value for this "
+                                  "provider.");
+        } else {
+            if (ImGui::Combo("##AiTurnModel", &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
+                if (comboIdx == 0) {
+                    d.assistantPerTurnModel.clear();
+                } else {
+                    d.assistantPerTurnModel = catalog.at(static_cast<std::size_t>(comboIdx - 1)).Id;
+                }
+            }
+            ImGui::SetItemTooltip("Per-turn model override. Pick <default model> to inherit the Preferences value.");
+        }
+        ImGui::SameLine();
+        // Reasoning-effort Combo. Same 4-value enum as cfg.AiReasoningEffort.
+        const char* kEffortLabels[] = {"<default effort>", "Low", "Medium", "High"};
+        const char* kEffortIds[] = {"", "low", "medium", "high"};
+        int effortIdx = 0;
+        for (int i = 1; i < 4; ++i) {
+            if (d.assistantPerTurnEffort == kEffortIds[i]) {
+                effortIdx = i;
+                break;
+            }
+        }
+        ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 10.0f);
+        if (ImGui::Combo("##AiTurnEffort", &effortIdx, kEffortLabels, 4)) {
+            d.assistantPerTurnEffort = kEffortIds[effortIdx];
+        }
+        ImGui::SetItemTooltip("Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
+                              "providers that don't understand the param ignore it.");
     }
     ImGui::Separator();
 
