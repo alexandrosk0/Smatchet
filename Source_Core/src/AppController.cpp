@@ -18,6 +18,13 @@
 #include "AppController.h"
 #include "AppControllerDepsAdapter.h"
 
+#if defined(SMATCHET_WITH_AGENTIC)
+// Full definition for the AGENTIC build only — keeps SQLiteCpp out of the header.
+// In the OFF build the forward declaration in AppController.h is sufficient for
+// the unique_ptr<AgentProposalStore> member to be elided + accessor returns nullptr.
+#include "AgentProposalStore.h"
+#endif
+
 #include <algorithm>
 #include <array>
 
@@ -1063,6 +1070,32 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     Cache = std::make_unique<LocalCacheManager>(dbPath);
 
+#if defined(SMATCHET_WITH_AGENTIC)
+    // Agentic proposal store — sibling SQLite file next to the local cache. Resolves to
+    // <userdata>/agent_proposals.sqlite when the platform user-data dir is available;
+    // falls back to the cache's parent directory otherwise. Both DBs use SQLite's own
+    // per-connection locking, so colocating them on disk is safe.
+    try {
+        std::string agenticDbPath;
+        const std::string userDataDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+        if (!userDataDir.empty()) {
+            agenticDbPath = userDataDir + "agent_proposals.sqlite";
+        } else {
+            // Derive a sibling path from the cache db path so dev / portable runs still get
+            // a deterministic location without a user-data dir.
+            const auto slash = dbPath.find_last_of("/\\");
+            const std::string dir = (slash == std::string::npos) ? std::string() : dbPath.substr(0, slash + 1);
+            agenticDbPath = dir + "agent_proposals.sqlite";
+        }
+        agentProposalStore_ = std::unique_ptr<AgentProposalStore>(new AgentProposalStore(agenticDbPath));
+    } catch (const std::exception& ex) {
+        // Initialisation failure is non-fatal — the agentic flow degrades gracefully via the
+        // nullptr-accessor pattern. The user can still operate the app without triage.
+        LOG_WARN("AppController: AgentProposalStore init failed: %s", ex.what());
+        agentProposalStore_.reset();
+    }
+#endif
+
     // Construct the deps adapter eagerly so OfflineQueueService + TicketSyncService can capture
     // an interface reference at construction time. The adapter is owned by this AppController
     // and outlives both services (per the destructor ordering: ~AppController joins the
@@ -1499,6 +1532,16 @@ void AppController::PromptAi(const std::string& prompt) {
     }
 #else
     (void)prompt;
+#endif
+}
+
+AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
+#if defined(SMATCHET_WITH_AGENTIC)
+    return agentProposalStore_.get();
+#else
+    // OFF build: no member exists, so the only correct answer is nullptr. Callers using
+    // the documented `if (auto* s = app.GetAgentProposalStore())` pattern degrade silently.
+    return nullptr;
 #endif
 }
 

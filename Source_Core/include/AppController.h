@@ -41,6 +41,17 @@
 #include <nlohmann/json.hpp>
 
 class PluginHost;
+// AgentProposalStore — forward-declared in both builds so the accessor signature
+// `AgentProposalStore* GetAgentProposalStore()` is uniform across the gate. In the
+// AGENTIC=ON build we additionally include the full type so the implicit deleter of
+// `std::unique_ptr<AgentProposalStore>` (instantiated by every TU that creates/destroys
+// an AppController, e.g. Target_Standalone/main.cpp's stack-allocated instance) sees a
+// complete type. Same pattern as AiAssistantController above. The OFF build never has
+// the member, so the forward declaration alone is sufficient there.
+class AgentProposalStore;
+#if defined(SMATCHET_WITH_AGENTIC)
+#include "AgentProposalStore.h"
+#endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
 // stub methods take it by const-ref / return std::vector<AiContextBlock>.
@@ -232,6 +243,12 @@ class AppController
     /// Phase B safety probe — false during early init before the controller is wired.
     bool HasAiAssistantController() const { return aiAssistant_ != nullptr; }
 #endif
+
+    /// Agentic-flow proposal store (T4). Returns nullptr when SMATCHET_WITH_AGENTIC=OFF
+    /// or before Initialize has wired the store. Callers should always nullptr-check.
+    /// The accessor is declared unconditionally so call sites in T5+ can use a single
+    /// guard pattern (`if (auto* s = app.GetAgentProposalStore())`) in both gating states.
+    AgentProposalStore* GetAgentProposalStore() noexcept;
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
     /// Phase E Lua glue calls these unconditionally; the OFF build silently no-ops so the
@@ -1030,6 +1047,15 @@ class AppController
     // mainThreadDispatcher.BeginShutdown() fires, so any in-flight worker callback can
     // still post to the dispatcher during its shutdown drain.
     std::unique_ptr<AiAssistantController> aiAssistant_;
+#endif
+
+#if defined(SMATCHET_WITH_AGENTIC)
+    // Agentic-flow proposal store (T4). SQLite-backed; persists LLM-suggested actions
+    // and the per-repo poll cursor. Held in a unique_ptr<forward-declared> so the header
+    // never pulls SQLiteCpp transitively. Constructed in Initialize alongside the local
+    // cache (which already opens a SQLite handle via LocalCacheManager) — they target
+    // different DB files so there's no contention.
+    std::unique_ptr<AgentProposalStore> agentProposalStore_;
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
