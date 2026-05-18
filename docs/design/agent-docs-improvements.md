@@ -256,12 +256,33 @@ After implementation, each must pass:
 
 ## Implementation log
 
-_To be appended after each shipped commit per AGENTS.md § Plan revision after implementation._
+- **b1c6629b** · `chore(agents): autonomous ship-loop + post-ship protocol (Actions 1+5)` — Inserted `## Autonomous ship-loop default` section between § UX Pillars and § Project rules in AGENTS.md (34 lines, L72 onwards). Sub-section `### Post-ship turn-end protocol` ships in the same commit. Archived 2 backlog entries from process.md → applied.md (ship-loop P2 + post-ship P3).
+- **1324cc97** · `docs(agents): security-review AI + handoff attack surface (Action 4)` — Added two bullets to `agents/security-review.md` § Smatchet attack surface (after "Image fetches", before "Known crash classes"). Frontmatter `description:` field updated to mention "AI-assistant" + "coding-harness-handoff" surfaces. Archived 1 backlog entry from process.md → applied.md (AI feature surfaces P2).
+- **5be9ed33** · `chore(harness): worktree-spawn base — investigation outcome (Action 3)` — `git config --local` probe confirmed root cause is Claude Code SDK session-spawn using parent repo local HEAD as worktree base. ClaudeCodeLocalRunner path already correct per agentic-coding-handoff.md L143. Outcome: workaround documented in `docs/harness/SETUP.md` § Worktree base — known stale-HEAD pitfall (two-track: pre-session parent-on-develop, OR rebase-on-origin/develop first-move mid-session). External-blockers.md gained new entry escalating SDK base-selection upstream. Archived 1 backlog entry from process.md → applied.md (worktree bootstrap P2).
+- **031ea475** · `chore(backlog): tooling.md triage sweep — 27 → 26 entries (Action 2)` — Structural reorganisation only. New `## Triage log` block at top with sweep date 2026-05-18 + counts (before 27 / dedup-merged 1 / moved-to-parked 16 / escalated 0 / after 10 P2). New `## Parked` section at bottom holds 16 P3 entries. Dedup survivor: 2026-05-17 Bucket-E tooltip-content-identity helper carries `Supersedes: 2026-05-16` line. No applied.md archive — sweep is process hygiene, not feature ship.
+
+**Verification** (run 2026-05-18):
+
+- ✅ V1 `grep "Autonomous ship-loop default" AGENTS.md` → 1 hit
+- ✅ V2 `grep -E "\*\*(Manual verify|Review PR|Squash-merge|Done)\*\*" AGENTS.md` → 4 hits
+- ✅ V3 `grep -E "AiClient|AiAssistant|AiSseParser" agents/security-review.md` → ≥1 hit
+- ✅ V4 `grep "Coding-harness handoff surface" agents/security-review.md` → 1 hit
+- ✅ V5 `## Triage log` in tooling.md
+- ✅ V6 `## Parked` section in tooling.md (L84)
+- ✅ V7 applied.md gained 4 new 2026-05-18 entries (ship-loop, post-ship, AI surface, worktree-bootstrap)
+- ✅ V8 external-blockers.md gained 1 new entry (Claude Code SDK worktree base)
+- ✅ V9 docs/harness/SETUP.md § Worktree base — known stale-HEAD pitfall present
+- ✅ V10 process.md no longer contains the 4 archived ship-loop/post-ship/security-AI/worktree entries
+
+**Mid-flight recovery**: orchestrator initially wrote Action 1+5 edits to main-repo paths (`C:\Dev\Smatchet\...`) instead of worktree paths (`C:\Dev\Smatchet\.claude\worktrees\xenodochial-montalcini-4b9116\...`) — the exact wrong-worktree footgun documented in process.md 2026-05-16 test-rig P2. Edits stashed safely on main (`stash@{0}: agent-docs-improvements Action 1+5 wrong-worktree recovery`) and replayed against worktree paths. No data lost; cost ~5 min recovery + one stash to drop after PR merges.
 
 ## Deviations from plan
 
-_To be appended after implementation completes._
+- **Action 3 outcome ≠ config-knob patch**: plan envisioned either patching a Claude Code SDK config knob OR escalating to external-blocker. Investigation found NO patchable config knob — `extensions.worktreeconfig=true` is enabled but doesn't change base-selection behaviour (only enables per-worktree config files). Branch tracking (`branch.<claude-id>.merge=refs/heads/develop`) is set post-spawn. Outcome: escalation path taken. SETUP.md gained the workaround; external-blockers.md gained the upstream-owner entry.
+- **Action 4 expanded ahead of plan**: plan called out the expansion to two bullets (AI + Handoff) during the double-check pass; landed as-planned. No drift.
+- **Triage sweep count corrected**: plan estimated 27 → 26 after dedup. Final count exactly 26. No additional dedup candidates surfaced during the sweep.
+- **No build / ctest run**: per the revised plan, zero C++ touch across all 5 actions; build verification dropped. Confirmed in CI by per-file lint hooks only.
 
 ## Verification
 
-_To be appended with actual test results + dates._
+See **Verification** block under § Implementation log above. All 10 checks pass as of 2026-05-18.
