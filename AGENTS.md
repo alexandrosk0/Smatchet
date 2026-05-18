@@ -386,6 +386,56 @@ Each delegated agent gets a fresh context window — `tracker-backend` work does
 
 `high` is reserved for one-shot-or-lose decisions (design, build root cause, perf root cause, security review). `medium` covers careful reading-and-flagging where mistakes are recoverable (`code-review`). Subsystem specialists run `low` because the invariants are stated up-front in their prompts — they apply patterns, they don't derive them. `mechanic` is `low` because pattern application doesn't benefit from deeper thinking and the diff is verifiable at a glance.
 
+## Handoff envelope
+
+The agentic coding-handoff flow (see `docs/design/agentic-coding-handoff.md`) spawns a `claude` child process inside an isolated git worktree to implement an approved `AgentProposal` of action `ImplementIssue`. The runner side (`ClaudeCodeLocalRunner` from H3 onward) and the spawned harness's first delegate (`handoff-implementer`) communicate through a fixed set of **sentinel files** living at the worktree root. Vocabulary, write contracts, and env boundaries are pinned here so all agents in the canonical tree share one language.
+
+### Sentinel files
+
+Six files, one writer + one reader per file. None of them are committed to the git history — the runner writes them before / during the child's lifetime; the child writes its results back; the runner consumes the results on exit.
+
+| File | Writer | Reader | One-line role |
+|---|---|---|---|
+| `SEED.md` | runner | handoff-implementer | Human-readable handoff brief; weave into commit-message + PR-body prose. |
+| `SEED.json` | runner | handoff-implementer | Canonical payload (`CodingHarness::Seed` struct); first thing the child reads on entry. |
+| `CLARIFICATION_NEEDED.json` | handoff-implementer | runner + Smatchet UI | Written **only** when the child cannot proceed without user input; surfaces a single question, then the child stops. |
+| `USER_RESPONSE.json` | runner | handoff-implementer | Written by the runner (or the Smatchet UI, or the GitHub-comment poller) when the user answers; child reads on resume. |
+| `RUN_RESULT.json` | handoff-implementer | runner | Terminal signal — `{ ok, errorMessage, prUrl, filesChanged, linesAdded, linesRemoved, toolUseSummary }`. Runner watches for this file; its appearance flips the FSM to Complete or Failed. |
+| `PR_URL.txt` | handoff-implementer | runner + Smatchet UI | Single line containing the PR URL. Mirrors `RUN_RESULT.json.prUrl` so the UI has a cheap path before parsing the full result. |
+
+Write-once semantics: every sentinel except `USER_RESPONSE.json` (rewritten per clarification round) is written once per spawn. `RUN_RESULT.json` is the **last** write the child performs before exit — anything else can race, but the runner must observe `RUN_RESULT.json` strictly after `PR_URL.txt`.
+
+### Env allow-list
+
+The child process is spawned with a fresh environment block, NOT an inherited copy of the parent's. Allow-listed variables only:
+
+```
+PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY
+```
+
+No other variables inherit. In particular, **`SMATCHET_*` never inherits** — Smatchet config and any secrets/PATs stored in `SMATCHET_*` env vars stay in the parent process and are unavailable to the child. The runner asserts that at least one of `GH_TOKEN` / `GITHUB_TOKEN` is set before spawning so the child's `gh pr create --draft` invocation can authenticate.
+
+The env-list discipline is enforced by `ClaudeCodeLocalRunner` (lands in H3); the env-allow-list doctest in H3's test surface spawns the stub child with a poisoned `SMATCHET_SECRET=leak` and asserts the child's recorded env file shows the variable is absent.
+
+### Branch naming
+
+Worktree branches follow `agent/<proposalId>/<short-slug>` where `<short-slug>` is the first 32 characters of `kebab-case(issueTitle)` (truncated at a word boundary when possible). Two hard rules:
+
+- The branch must not equal `develop` or `main`; the runner asserts this before `git worktree add` and the agent re-asserts it before any push.
+- The branch must already exist in the worktree before the child is spawned; the child never runs `git checkout -b` itself.
+
+### Worktree layout
+
+Worktree root: `.claude/worktrees/agent-<proposalId>` (already gitignored via the existing `.claude/worktrees/` rule). One worktree per proposal; cleanup is a separate concern (`handoff.gc --older-than-days <n>` command, H4 onward).
+
+### PR draft requirement
+
+Every PR opened by the harness is `--draft`. The user marks ready-for-review only after auditing the diff. The harness never calls `gh pr merge`, never closes / reopens PRs, and never pushes to a non-`agent/*` branch.
+
+### Spawned-orchestrator first-move contract
+
+The spawned `claude` child's first move, if `SEED.json` exists at `$PWD`, is to delegate to `handoff-implementer` with the file as inline context. Do not re-read it; do not improvise routing. The delegate owns the diagnose → code → test → commit → push → PR loop and writes the terminal `RUN_RESULT.json` before exit.
+
 ## Self-improvement loop
 
 Every delegated agent ends its report with a `## Self-improvement` section. **Empty is the common case and explicitly fine** — agents only flag real friction, never make up suggestions.
