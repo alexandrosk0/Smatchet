@@ -10,12 +10,52 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace smatchet {
 namespace whisper {
+
+namespace {
+
+// Mock seam — see WhisperApiClient.h for the contract. Process-wide singleton
+// gated on an atomic so the fast-path read in Transcribe is lock-free when no
+// mock is installed.
+std::mutex& MockMutex() {
+    static std::mutex m;
+    return m;
+}
+std::atomic<bool>& MockActiveAtom() {
+    static std::atomic<bool> a{false};
+    return a;
+}
+std::string& MockTextStorage() {
+    static std::string s;
+    return s;
+}
+
+} // namespace
+
+void WhisperApiClient::SetMockResponse(const std::string& text) {
+    std::lock_guard<std::mutex> lk(MockMutex());
+    MockTextStorage() = text;
+    MockActiveAtom().store(true, std::memory_order_release);
+    LOG_INFO("WhisperApiClient: mock response armed (%zu bytes)", text.size());
+}
+
+void WhisperApiClient::ClearMockResponse() {
+    std::lock_guard<std::mutex> lk(MockMutex());
+    MockActiveAtom().store(false, std::memory_order_release);
+    MockTextStorage().clear();
+    LOG_INFO("WhisperApiClient: mock response cleared");
+}
+
+bool WhisperApiClient::MockResponseActive() {
+    return MockActiveAtom().load(std::memory_order_acquire);
+}
 
 namespace pure {
 
@@ -75,6 +115,17 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
                                   std::string& outError) {
     outText.clear();
     outError.clear();
+
+    // Mock seam — short-circuit before any input validation so tests can pin
+    // the response without supplying a non-empty WAV or a credential. See
+    // header for the test-only contract.
+    if (MockActiveAtom().load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lk(MockMutex());
+        outText = MockTextStorage();
+        LOG_DEBUG("WhisperApiClient: returning mock response (%zu bytes, language='%s')",
+                  outText.size(), language.c_str());
+        return true;
+    }
 
     if (apiKey.empty()) {
         outError = "no API key available - set WhisperApiKey or AiApiKey (provider=openai)";

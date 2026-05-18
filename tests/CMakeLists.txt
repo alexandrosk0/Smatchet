@@ -132,6 +132,7 @@ if(SMATCHET_WITH_WHISPER)
         # Phase F — silence-trim helper + config-fields round-trip.
         Source_Core/SilenceTrim.test.cpp
         Source_Core/WhisperPrefsFields.test.cpp
+        Source_Core/WhisperMockSeams.test.cpp
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"

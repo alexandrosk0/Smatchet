@@ -1366,6 +1366,17 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         return MakeLongTextOpenLargeAdfScenario();
     });
 
+#if defined(SMATCHET_WITH_WHISPER)
+    // Phase G — end-to-end whisper-dictation regression gate. The scenario
+    // TU is source-list-conditional (only added to CORE_SOURCES when the
+    // CMake option is ON), so the factory call must be ifdef-wrapped too:
+    // the OFF build has no symbol for MakeWhisperDictationScenario.
+    scenarioRunner_->RegisterFactory("whisper-dictation-roundtrip", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario();
+        return MakeWhisperDictationScenario();
+    });
+#endif
+
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
     // Lua host, offline queue, etc.). See docs/design/applied/command-system-plan.md.

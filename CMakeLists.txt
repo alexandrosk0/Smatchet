@@ -601,10 +601,17 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Smatc
 # never visits it (call site in SmatchetUI.cpp is wrapped
 # `#if defined(SMATCHET_WITH_WHISPER) ... #endif`).
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
+# Phase G — whisper-dictation-roundtrip scenario. Source-list conditional with
+# the same shape as the overlay + banner above: the TU references
+# WhisperPlugin::SetMockTranscription which lives behind the gate, so the OFF
+# build must not compile it. The matching RegisterFactory call in
+# AppController.cpp is also #ifdef'd on SMATCHET_WITH_WHISPER.
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp")
 if(SMATCHET_WITH_WHISPER)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
