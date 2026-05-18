@@ -661,7 +661,22 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
 
         const std::string host = "127.0.0.1";
-        const int readyTimeoutMs = 15000;
+        // Bumped 15s → 30s post Phase D/E AI merges (OpenAi + Anthropic + Ollama clients
+        // + AiNdjsonParser + Lua glue pushed startup over the prior 15s ready window;
+        // bucket-E gates regressed on develop tip). Env override SMATCHET_SPAWN_READY_MS
+        // allows tightening on faster runners or raising further on cold-cache CI.
+        // Lazy-loading AI clients is the architectural follow-up — entry remains open
+        // in docs/backlog/agent-self-improvement/tooling.md.
+        int readyTimeoutMs = 30000;
+        if (const char* envOverride = std::getenv("SMATCHET_SPAWN_READY_MS")) {
+            try {
+                int v = std::stoi(envOverride);
+                if (v > 0)
+                    readyTimeoutMs = v;
+            } catch (...) {
+                // Ignore malformed override; fall through to default.
+            }
+        }
         std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n", readyTimeoutMs / 1000);
         if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
             nlohmann::json env;

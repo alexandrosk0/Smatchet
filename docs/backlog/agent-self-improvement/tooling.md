@@ -7,9 +7,9 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-- 2026-05-17 · orchestrator · [tooling] · P1 — `--spawn` ephemeral MCP instance times out at 15s on develop tip (post Phase D/E AI merges)
-  Details: Post-merge regression gate on develop after #161+#162 shipped: `bash scripts/dev/test-callstack-tooltip-hover.sh` against fresh `build/ninja-ui-test-msys2/Smatchet.exe` returns `{"error":{"code":"timeout","message":"--spawn: ephemeral instance did not become reachable in time."}}`. Same script + same exe passed `Passed: 3 Failed: 0` against #162's branch pre-merge (which was #147+bucket-E test on a develop snapshot from before #169-#180 landed). The 15-second MCP-ready timeout is now too short — the additional AI client initialization (Phase D + E added AnthropicClient/OllamaClient/AiNdjsonParser + Lua glue) is plausibly pushing startup over the limit. Repro: `cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone && bash scripts/dev/test-callstack-tooltip-hover.sh` on `develop` at `71b3c9b`. The bucket-E gate is correct (verified pre-merge); the spawn handshake is the actual broken link. All other ctest paths (smatchet_tests, smatchet_lua_tests) pass 2/2 on the same exe, so it's only the MCP-server bring-up that's slow.
-  Concrete next action: either (a) raise `--spawn` ready-timeout from 15s → 30s in the `cmd ui_test.run --spawn` handler (cheap), or (b) profile the new AI-client init paths and lazy-load them so MCP server publishes ready faster (architectural). Affects every bucket-E runner under `scripts/dev/test-ui-*.sh` + `scripts/dev/test-callstack-tooltip-hover.sh` until fixed.
+- 2026-05-17 · orchestrator · [tooling] · P3 — Lazy-load AI clients to drop spawn-ready timeout (architectural follow-up)
+  Details: The cheap fix from the original P1 entry shipped — `--spawn` ready-timeout bumped 15s→30s with `SMATCHET_SPAWN_READY_MS` env override (`Target_Standalone/CliCommandRunner.cpp:670`). Bucket-E gates unblock. Architectural follow-up remains: profile AI-client init paths (`OpenAiClient`, `AnthropicClient`, `OllamaClient`, `AiNdjsonParser`, Lua glue) and lazy-load so MCP server publishes ready in <15s again, then drop the bump.
+  Concrete next action: instrument `AppController` ctor + `IAiClient` subclass init with `SMATCHET_UI_PERF_SCOPE` markers; identify which init paths can defer past MCP-ready; refactor. Once mean spawn-ready is <10s on dev machines, revert the timeout to 15s. ~3-4 h.
   Status: open
   Last-reviewed: 2026-05-17
 

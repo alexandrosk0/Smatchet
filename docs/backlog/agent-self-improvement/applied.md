@@ -7,6 +7,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-17 · orchestrator · [tooling] · P1 — `--spawn` ephemeral MCP instance times out at 15s on develop tip (post Phase D/E AI merges)
+  Resolution: Cheap-fix path (a) shipped. `--spawn` ready-timeout bumped 15s → 30s in `Target_Standalone/CliCommandRunner.cpp:670`. New env override `SMATCHET_SPAWN_READY_MS=<ms>` lets faster runners tighten or cold-cache CI raise further. Bucket-E gates (`scripts/dev/test-ui-*.sh`, `scripts/dev/test-callstack-tooltip-hover.sh`) unblock. Architectural follow-up (path (b) — lazy-load AI clients so MCP server publishes ready faster) split to a new P3 entry under `tooling.md` since the cheap fix removes the merge-block urgency.
+
 - 2026-05-17 · code-review · [tooling] · P3 — `ai.dump-request` debug body / URL drifted from OpenAi wire post PR #184
   Resolution: PR #184 (`batch 2`) updated `OpenAiClient::BuildChatBody` to always emit `max_tokens = 4096` and `OpenAiClient::ResolveBaseUrl` to strip a trailing `/v1` / `/v1/`. The parallel debug builders in `Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp` (`BuildOpenAiBody`, `ResolveEndpointUrl`) were not updated, so `ai.dump-request` for `openai` + `ollama-openai` misreported the wire — no `max_tokens` field, and `http://localhost:1234/v1` showed `/v1/v1/chat/completions`. Anthropic dumper was already correct. Fix mirrors the wire path: `BuildOpenAiBody` gains a `maxTokens` param defaulting to 4096; new `StripOpenAiV1Suffix` helper applied to the OpenAi / OllamaOpenAiCompat branch of `ResolveEndpointUrl`. Same TU also picked up four pre-existing cppcheck / clang-tidy nits (`uselessCallsSubstr`, two `useStlAlgorithm` raw-loops folded into nlohmann's vector-conversion, `PInt` / `PString` using-decls moved inside `#if defined(SMATCHET_WITH_AI)` so the stub build is clean).
 
