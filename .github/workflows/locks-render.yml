@@ -67,7 +67,23 @@ jobs:
             echo "Diff detected; will open or update the sync PR."
           fi
 
-      - name: Commit, push, open or update PR
+      # ---------------------------------------------------------------------
+      # Two-step split: branch push uses the default GITHUB_TOKEN (contents:
+      # write, always available). PR creation uses LOCK_RENDER_PAT, a fine-
+      # grained PAT scoped to `pull-requests: write` on this single repo.
+      #
+      # Why split: GitHub disallows GITHUB_TOKEN from creating or approving
+      # PRs by default since 2022 ("GitHub Actions is not permitted to create
+      # or approve pull requests" — the failure mode this PR fixes). The
+      # repo-wide "Allow GitHub Actions to create and approve pull requests"
+      # checkbox would also work but relaxes the default for every workflow.
+      # A fine-grained PAT keeps the relaxation surface to this one step.
+      #
+      # PAT setup procedure: see docs/design/git-ref-plan-locks.md
+      # § Operational requirements.
+      # ---------------------------------------------------------------------
+
+      - name: Commit + force-push sync branch
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +103,23 @@ jobs:
           git commit -m "chore(plan-locks): regenerate _plan-locks.generated.md from refs/locks/*"
           git push -u origin "$BRANCH" --force
 
-          # Open the PR only if one is not already open against develop.
+      - name: Open or update sync PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          # Prefer the fine-grained PAT when configured; fall back to the
+          # default token (which will fail PR-creation with the GraphQL
+          # "GitHub Actions is not permitted to create or approve pull
+          # requests" error — that failure is loud and actionable).
+          GH_TOKEN: ${{ secrets.LOCK_RENDER_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="bot/plan-locks-sync"
+
+          if [ -z "${{ secrets.LOCK_RENDER_PAT }}" ]; then
+            echo "::warning::LOCK_RENDER_PAT secret is not set. Falling back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If this step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/design/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
+          fi
+
           existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[].number' || true)
           if [ -z "$existing" ]; then
             gh pr create \
