@@ -149,9 +149,29 @@ if(SMATCHET_WITH_AGENTIC)
         # mapping rules + ISO-8601 helper; the scenario itself is bucket-A automated.
         Source_Core/AgentTriageScenarioFixtures.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentTriageScenarioFixtures.cpp"
+        # H2 — CodingHarnessSeedBuilder pure JSON + Markdown round-trip. The
+        # SEED.json shape produced here is the wire spec between the runner
+        # and the spawned harness's first delegate; the doctest snapshot is
+        # the canonical test for shape drift.
+        Source_Core/CodingHarnessSeedBuilder.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CodingHarnessSeedBuilder.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
+
+# H2 — agent-file frontmatter assertion. The HandoffAgentFrontmatter test
+# itself does NOT depend on SMATCHET_WITH_AGENTIC (the agent file lives in
+# the canonical agents/ tree regardless of build flavour), but it consumes
+# tests/_helpers/agent_frontmatter_parse.{h,cpp} which we always-compile so
+# both this test and H7's PrIteratorAgentFrontmatter.test.cpp share one
+# YAML-subset parser.
+target_sources(SmatchetTests PRIVATE
+    _helpers/agent_frontmatter_parse.cpp
+    Source_Core/HandoffAgentFrontmatter.test.cpp
+)
+target_include_directories(SmatchetTests PRIVATE _helpers)
+target_compile_definitions(SmatchetTests PRIVATE
+    "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
 # Whisper Phase B — pure helper test surfaces. WhisperApiKeyResolve + WavWriter
 # have no third-party deps; WhisperApiClient pulls cpr (already linked) +
