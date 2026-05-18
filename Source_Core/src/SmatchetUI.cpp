@@ -26,6 +26,7 @@
 #include "SmatchetAiAssistantUi.h"
 #endif
 #if defined(SMATCHET_WITH_AGENTIC)
+#include "SmatchetAgentHandoffUi.h"
 #include "SmatchetAgentProposalsUi.h"
 #endif
 #include "SmatchetToast.h"
@@ -715,6 +716,10 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetAgentProposalsUi::Render");
         SmatchetAgentProposalsUi::Render(app, d);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("SmatchetAgentHandoffUi::Render");
+        SmatchetAgentHandoffUi::Render(app, d);
     }
 #endif
     {
