@@ -171,10 +171,10 @@ class AgentTriageScenario : public IScenario {
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frameLimit_ = std::max(8, args.value("frames", 12));
         try {
-            github_.reset(new ScenarioMockGitHub());
-            inference_.reset(new ScenarioMockInference());
-            store_.reset(new AgentProposalStore(":memory:"));
-            ctrl_.reset(new AgenticTriageController(github_.get(), inference_.get(), store_.get()));
+            github_ = std::make_unique<ScenarioMockGitHub>();
+            inference_ = std::make_unique<ScenarioMockInference>();
+            store_ = std::make_unique<AgentProposalStore>(":memory:");
+            ctrl_ = std::make_unique<AgenticTriageController>(github_.get(), inference_.get(), store_.get());
         } catch (const std::exception& ex) {
             outErr = std::string("scenario setup failed: ") + ex.what();
             return;
@@ -188,14 +188,31 @@ class AgentTriageScenario : public IScenario {
 
     void OnFrame(AppController& /*app*/, int frameIndex) override {
         if (state_ == State::Done) return;
+        // Bundle C CR#233:207 — once a transition failed fatally, latch and
+        // refuse to advance the state machine. The previous shape kept stepping
+        // through subsequent OnFrame calls after RunBatch / a transition set
+        // state_ = State::Done due to an inserted error, which could re-fire
+        // assertions on a known-bad store + double-count `errors_`.
+        if (fatalFailureRecorded_) {
+            state_ = State::Done;
+            return;
+        }
 
         switch (state_) {
         case State::WaitingForBatch:
             RunBatch();
+            if (state_ == State::Done) {
+                fatalFailureRecorded_ = true;
+                return;
+            }
             state_ = State::WaitingForInitialQuery;
             break;
         case State::WaitingForInitialQuery:
             AssertInitialRows();
+            if (state_ == State::Done) {
+                fatalFailureRecorded_ = true;
+                return;
+            }
             state_ = State::WaitingForApproval;
             break;
         case State::WaitingForApproval:
@@ -387,6 +404,7 @@ class AgentTriageScenario : public IScenario {
     int64_t approvedId_ = 0;
     int64_t rejectedId_ = 0;
     bool stateTransitionsOk_ = true;
+    bool fatalFailureRecorded_ = false;
     std::vector<std::string> errors_;
 };
 
@@ -398,5 +416,8 @@ class AgentTriageScenario : public IScenario {
 /// CORE_SOURCES on the OFF build, so the extern in AppController.cpp must
 /// be ifdef-wrapped to match.
 std::unique_ptr<smatchet::cmd::IScenario> MakeAgentTriageScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AgentTriageScenario());
+    // Up-cast factory: construct the concrete scenario and hand it back through the
+    // IScenario base. `make_unique<Derived>()` returns a `unique_ptr<Derived>` which
+    // implicitly converts to `unique_ptr<Base>` on return via the converting ctor.
+    return std::make_unique<smatchet::cmd::AgentTriageScenario>();
 }

@@ -53,6 +53,25 @@ bool ParseGitHubIssueKey(const std::string& key, ParsedIssueKey& out, std::strin
 std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number);
 
 /**
+ * Parse the `owner/repo` query form used by the scheduled-poll worker and the
+ * `agent.triage.run --query` CLI surface. The shape is a strict subset of the
+ * issue-key parser above: no `#N` suffix, exactly one `/`, both halves
+ * non-empty, and no leading or trailing whitespace anywhere in the string.
+ *
+ * Rejects (returns false + populates outError):
+ *   - empty input
+ *   - missing `/` separator
+ *   - more than one `/`
+ *   - empty owner or empty repo segment
+ *   - any leading or trailing ASCII whitespace (' ', '\t', '\r', '\n') in the
+ *     overall string or either segment — strict so the CLI surfaces typos
+ *     rather than silently lopping spaces off the user's input
+ *
+ * On success out is populated and outError is left empty.
+ */
+bool ParseGitHubRepoKey(const std::string& query, std::string& outOwner, std::string& outRepo, std::string& outError);
+
+/**
  * Parse a GitHub ISO-8601 timestamp (`YYYY-MM-DDTHH:MM:SSZ`) to unix epoch
  * seconds (UTC). GitHub's REST API always returns the Z-suffixed form; the
  * parser rejects fractional seconds, alternate offsets (`+02:00`), and any
@@ -144,6 +163,40 @@ bool ExtractGitHubErrorMessage(const std::string& responseBody, std::string& out
  * Pure ASCII output.
  */
 std::string PercentEncodePathSegment(const std::string& segment);
+
+/**
+ * Validate the GitHub REST base URL used by `GitHubClient`. GitHub Enterprise
+ * deployments pass non-`api.github.com` hosts (e.g. `https://github.acme.com/api/v3`).
+ * Validation rules:
+ *   - non-empty
+ *   - exact `https://` scheme (case-sensitive — GitHub never serves over `http://`,
+ *     and dangerous schemes `javascript:`, `file:`, `data:`, `gopher:` etc. are
+ *     rejected explicitly so a hostile config write can't redirect traffic to a
+ *     non-HTTP destination)
+ *   - non-empty authority after the scheme (so `https://` alone fails)
+ *
+ * Returns true on a usable base URL. On failure populates `outError` with a
+ * one-line human-readable reason.
+ */
+bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError);
+
+/**
+ * Hard cap on the JSON body sent in any outbound `cpr::Post`/`cpr::Patch` to the
+ * GitHub REST API. GitHub's own per-endpoint payload limits sit in the
+ * 1-65 KiB range (comment body: 65 KiB; label/assignee bodies are much smaller).
+ * The agentic flow rejects bodies above this cap pre-HTTP so a hostile or
+ * malformed LLM proposal cannot cause an unbounded request — both as a Pillar 3
+ * defense and to keep the network round-trip predictable.
+ */
+constexpr std::size_t kMaxGitHubRequestBodyBytes = 256 * 1024;
+
+/**
+ * Pure predicate — true iff `bodyByteLength` exceeds the outbound request body
+ * cap. Lives in the pure-helper TU so the doctest rig can exercise the cap
+ * without instantiating cpr. Used by `GitHubClient` write methods to reject
+ * over-large payloads before any HTTP traffic is fired.
+ */
+bool ShouldRejectAsTooLarge(std::size_t bodyByteLength);
 
 } // namespace GitHubClientHelpers
 

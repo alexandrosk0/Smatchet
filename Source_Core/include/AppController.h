@@ -1124,11 +1124,19 @@ class AppController
     std::atomic<bool> agentProposalStoreReady_{false};
     std::unique_ptr<AgentProposalStore> agentProposalStore_;
 
-    // Agentic triage controller (T5) + its concrete dependencies (GitHubClient + inference).
-    // Lazy: all four are constructed by `GetAgenticTriageController()` on first call, once
+    // Agentic triage controller + its concrete dependencies (GitHubClient + inference).
+    // Lazy: constructed by `GetAgenticTriageController()` on first call, once
     // `cfg.GitHubPat` is known non-empty. The interface-adapter shims (impl-side, .cpp only)
     // bridge GitHubClient / AgenticInferenceClient to the IGitHubReadClient / IInferenceClient
     // virtuals so tests can swap concrete implementations.
+    //
+    // Bundle C CR#230:1612 — lazy construction is gated by `std::call_once` so concurrent
+    // first-callers (UI thread + scheduled-poll worker thread) cannot both observe the
+    // null state and double-construct the chain. The atomic + flag form is cleaner than a
+    // mutex+null-check, leaves the steady-state read uncontended, and propagates exceptions
+    // from the init lambda to every concurrent caller without the second one silently
+    // believing init succeeded.
+    std::once_flag agenticTriageControllerOnce_;
     std::unique_ptr<GitHubClient> agenticGithubClient_;
     std::unique_ptr<AgenticInferenceClient> agenticInferenceClient_;
     std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;

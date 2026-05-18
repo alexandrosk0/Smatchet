@@ -2,6 +2,7 @@
 
 #include "AgentProposal.h"
 #include "AgentProposalStore.h"
+#include "GitHubClientHelpers.h"
 #include "Logger.h"
 
 #include <utility>
@@ -11,33 +12,13 @@ namespace agentic {
 
 namespace {
 
-// Parse a `OWNER/REPO` query string into the two parts. Strict: rejects empty
-// halves, multiple slashes, embedded whitespace. The slash-count check keeps
-// us from accidentally accepting `org/team/repo` which GitHub would 404 on
-// anyway, but the early failure surfaces a clearer error to the CLI user.
+// Bundle C C-H1 — single OWNER/REPO parser via GitHubClientHelpers. The old
+// per-TU `ParseOwnerRepoQuery` here, the loosely-typed slash search in the
+// scheduled-poll worker, and the CLI surface had all drifted slightly; the
+// shared helper enforces a single rejection contract (empty / no-slash /
+// multi-slash / whitespace).
 bool ParseOwnerRepoQuery(const std::string& query, std::string& outOwner, std::string& outRepo, std::string& outError) {
-    if (query.empty()) {
-        outError = "query is empty (expected OWNER/REPO).";
-        return false;
-    }
-    const auto slash = query.find('/');
-    if (slash == std::string::npos) {
-        outError = "query must contain '/' separator (got '" + query + "').";
-        return false;
-    }
-    if (query.find('/', slash + 1) != std::string::npos) {
-        outError = "query must have exactly one '/' separator (got '" + query + "').";
-        return false;
-    }
-    outOwner = query.substr(0, slash);
-    outRepo = query.substr(slash + 1);
-    if (outOwner.empty() || outRepo.empty()) {
-        outError = "owner and repo must both be non-empty (got '" + query + "').";
-        outOwner.clear();
-        outRepo.clear();
-        return false;
-    }
-    return true;
+    return GitHubClientHelpers::ParseGitHubRepoKey(query, outOwner, outRepo, outError);
 }
 
 } // namespace
@@ -116,7 +97,7 @@ bool AgenticTriageController::TriageIssue(const std::string& issueKey, int& outP
 }
 
 bool AgenticTriageController::TriageBatch(const std::string& sourceTracker, const std::string& query,
-                                          BatchResult& outResult, std::string& outError) {
+                                          BatchResult& outResult, std::string& outError, int maxIssues) {
     outResult = BatchResult{};
     outError.clear();
 
@@ -140,6 +121,14 @@ bool AgenticTriageController::TriageBatch(const std::string& sourceTracker, cons
     if (!github_->ListOpenIssuesForRepo(owner, repo, keys, listErr)) {
         outError = "ListOpenIssuesForRepo failed: " + listErr;
         return false;
+    }
+
+    // Bundle C CR#230:111 — honour --limit. Discovery returned at most the
+    // source-side cap (30 issues per page); --limit further trims the working
+    // set so the CLI dry-run never burns more LLM round-trips than the user
+    // asked for. maxIssues == 0 disables the extra cap.
+    if (maxIssues > 0 && static_cast<int>(keys.size()) > maxIssues) {
+        keys.resize(static_cast<std::size_t>(maxIssues));
     }
 
     outResult.totalIssuesScanned = static_cast<int>(keys.size());

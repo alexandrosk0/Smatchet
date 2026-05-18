@@ -1,12 +1,11 @@
 // GitHubClient.h — GitHub-backed ITrackerClient.
 //
-// Scope (T1): skeleton with FetchIssueComments only.
-// Scope (T2): adds the 5 write methods CommentAdd / LabelAdd / LabelRemove /
-//             AssigneeSet / StateTransition. These are concrete on GitHubClient
-//             (not yet promoted to ITrackerClient virtuals — promoted only when
-//             a second agentic-write backend appears).
-// All other ITrackerClient virtuals return the documented "unsupported on
-// GitHub backend" sentinel. AgentProposal context plumbing follows in T5.
+// Surface: FetchIssueComments / FetchIssueBody / ListOpenIssuesForRepo (reads)
+// plus CommentAdd / LabelAdd / LabelRemove / AssigneeSet / StateTransition
+// (writes). The five write methods are concrete on GitHubClient (not yet
+// promoted to ITrackerClient virtuals — promoted only when a second
+// agentic-write backend appears). All other ITrackerClient virtuals return
+// the documented "unsupported on GitHub backend" sentinel.
 //
 // Build-time gating: the TU is source-list-conditional on SMATCHET_WITH_AGENTIC
 // in the root CMakeLists.txt. Callers that hold a `GitHubClient` reference
@@ -113,7 +112,7 @@ class GitHubClient : public ITrackerClient {
     bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
                                std::string& outError, std::int64_t sinceUnixSec = 0);
 
-    // ─── T2 write methods ────────────────────────────────────────────────────
+    // ─── Write methods ───────────────────────────────────────────────────────
     //
     // Every method:
     //   1. Parses the issue key via GitHubClientHelpers::ParseGitHubIssueKey.

@@ -23,6 +23,7 @@
 // In the OFF build the forward declaration in AppController.h is sufficient for
 // the unique_ptr<AgentProposalStore> member to be elided + accessor returns nullptr.
 #include "AgentProposalStore.h"
+#include "GitHubClientHelpers.h"
 #endif
 
 #include <algorithm>
@@ -1598,7 +1599,7 @@ void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
     // (UI-thread accessors would otherwise contend for the duration of init).
     std::unique_ptr<AgentProposalStore> store;
     try {
-        store.reset(new AgentProposalStore(dbPath));
+        store = std::make_unique<AgentProposalStore>(dbPath);
     } catch (const std::exception& ex) {
         // Initialisation failure is non-fatal — the agentic flow degrades gracefully via the
         // nullptr-accessor pattern. The user can still operate the app without triage.
@@ -1658,12 +1659,17 @@ class InferenceAdapter : public smatchet::agentic::IInferenceClient {
 } // namespace
 
 smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageController() noexcept {
-    if (agenticTriageController_) {
-        return agenticTriageController_.get();
-    }
+    // Bundle C CR#230:1612 — wrap lazy construction in `std::call_once` so two
+    // concurrent first-callers (UI thread on a Triage menu click + the
+    // scheduled-poll worker on its first wake) cannot both observe the null
+    // state, both decide to construct, and stomp each other's unique_ptr
+    // assignments. The pre-conditions (store + PAT) are re-checked inside the
+    // lambda so subsequent calls also surface the degraded-mode nullptr result
+    // when configuration changes (PAT cleared via Preferences); call_once only
+    // protects the construction itself, not the precondition check.
     if (!agentProposalStore_) {
-        // T4 store init failed (already logged at construction). Without a store there's
-        // nowhere to persist proposals, so triage degrades cleanly to nullptr.
+        // Store init failed at construction (already logged). Without a store
+        // there's nowhere to persist proposals — triage degrades to nullptr.
         return nullptr;
     }
     const TrackerConfig cfg = ConfigManager::Load();
@@ -1671,14 +1677,25 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
         // Degraded mode — caller surfaces a "configure GitHub PAT" message.
         return nullptr;
     }
-    // GitHub base URL is hard-defaulted by GitHubClient when the argument is empty;
-    // there's no separate cfg.GitHubBaseUrl today (GitHub Enterprise lands in a later phase).
-    agenticGithubClient_.reset(new GitHubClient(std::string(), cfg.GitHubPat));
-    agenticInferenceClient_.reset(new AgenticInferenceClient());
-    agenticGithubReadAdapter_.reset(new GitHubReadAdapter(*agenticGithubClient_));
-    agenticInferenceAdapter_.reset(new InferenceAdapter(*agenticInferenceClient_));
-    agenticTriageController_.reset(new smatchet::agentic::AgenticTriageController(
-        agenticGithubReadAdapter_.get(), agenticInferenceAdapter_.get(), agentProposalStore_.get()));
+    try {
+        std::call_once(agenticTriageControllerOnce_, [this, &cfg]() {
+            // GitHub base URL is hard-defaulted by GitHubClient when the
+            // argument is empty; the validator inside the ctor falls back to
+            // the canonical host if a future GitHub Enterprise base URL fails
+            // its sanity check (no separate cfg.GitHubBaseUrl today).
+            agenticGithubClient_ = std::make_unique<GitHubClient>(std::string(), cfg.GitHubPat);
+            agenticInferenceClient_ = std::make_unique<AgenticInferenceClient>();
+            agenticGithubReadAdapter_ = std::unique_ptr<smatchet::agentic::IGitHubReadClient>(
+                new GitHubReadAdapter(*agenticGithubClient_));
+            agenticInferenceAdapter_ = std::unique_ptr<smatchet::agentic::IInferenceClient>(
+                new InferenceAdapter(*agenticInferenceClient_));
+            agenticTriageController_ = std::make_unique<smatchet::agentic::AgenticTriageController>(
+                agenticGithubReadAdapter_.get(), agenticInferenceAdapter_.get(), agentProposalStore_.get());
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::GetAgenticTriageController: lazy init failed: %s", ex.what());
+        return nullptr;
+    }
     return agenticTriageController_.get();
 }
 
@@ -1735,27 +1752,37 @@ void AppController::AgenticPollWorkerLoop() {
             // Read the previous cursor BEFORE triaging so a per-iteration crash leaves the
             // cursor unmoved (the next poll re-fetches the same window). The cursor key
             // (sourceTracker, repoKey) — repo key is the user's query verbatim for source=github.
+            // Bundle C C-H2 — surface read failures via LOG_WARN so a silent SQLite error
+            // doesn't hide chronic 0-cursor regressions. Failures are still non-fatal: we
+            // fall through with prevCursor==0 (full first-page fetch on the next call).
             std::int64_t prevCursor = 0;
             std::string cursorErr;
-            agentProposalStore_->GetPollCursor("github", cfg.AgenticPollQuery, prevCursor, cursorErr);
-            // Errors reading the cursor are non-fatal — treat as 0 (full first-page fetch).
+            if (!agentProposalStore_->GetPollCursor("github", cfg.AgenticPollQuery, prevCursor, cursorErr)) {
+                LOG_WARN("AppController::AgenticPollWorkerLoop: GetPollCursor(github, %s) failed: %s — "
+                         "proceeding with prevCursor=0",
+                         cfg.AgenticPollQuery.c_str(), cursorErr.c_str());
+                prevCursor = 0;
+            }
 
             // Inject the cursor by routing the discovery through the adapter directly. The
             // controller's `TriageBatch` calls `ListOpenIssuesForRepo(owner, repo, keys, err)`
             // with the default sinceUnixSec=0 — to apply the cursor we'd need a controller-side
-            // overload, but for T7 the pragmatic shape is to invoke the adapter manually for
+            // overload, but the pragmatic shape is to invoke the adapter manually for
             // discovery + then funnel each key through TriageIssue. Keeps the cursor filter
             // entirely in the worker, not threaded through the controller API.
             //
-            // ParseOwnerRepoQuery duplicates the controller's strict parser; using the same
-            // shape locally avoids re-doing the controller's strict checks indirectly.
-            const auto slash = cfg.AgenticPollQuery.find('/');
-            if (slash == std::string::npos || slash == 0 || slash + 1 >= cfg.AgenticPollQuery.size()) {
-                LOG_WARN("AppController::AgenticPollWorkerLoop: malformed query '%s' — skipping iteration",
-                         cfg.AgenticPollQuery.c_str());
+            // Bundle C C-H1 — share the strict OWNER/REPO parser with the controller +
+            // upcoming CLI surface via GitHubClientHelpers::ParseGitHubRepoKey. The old
+            // hand-rolled slash-find rejected only `slash==npos` / `slash==0` / no chars
+            // after the slash; the shared helper additionally rejects whitespace and the
+            // `owner/team/repo` shape that GitHub would 404 on anyway.
+            std::string owner;
+            std::string repo;
+            std::string repoKeyErr;
+            if (!GitHubClientHelpers::ParseGitHubRepoKey(cfg.AgenticPollQuery, owner, repo, repoKeyErr)) {
+                LOG_WARN("AppController::AgenticPollWorkerLoop: malformed query '%s' (%s) — skipping iteration",
+                         cfg.AgenticPollQuery.c_str(), repoKeyErr.c_str());
             } else {
-                const std::string owner = cfg.AgenticPollQuery.substr(0, slash);
-                const std::string repo = cfg.AgenticPollQuery.substr(slash + 1);
                 std::vector<std::string> keys;
                 std::string listErr;
                 if (agenticGithubReadAdapter_ &&

@@ -68,8 +68,26 @@ std::string ComposeHttpErrorString(const std::string& verb, const std::string& u
 } // namespace
 
 GitHubClient::GitHubClient(std::string baseUrl, std::string personalAccessToken)
-    : baseUrl_(StripTrailingSlash(baseUrl.empty() ? std::string("https://api.github.com") : std::move(baseUrl))),
-      pat_(std::move(personalAccessToken)) {}
+    : pat_(std::move(personalAccessToken)) {
+    // Empty input → canonical `https://api.github.com`. Non-empty input is
+    // validated against `IsValidGitHubBaseUrl`; on failure we fall back to the
+    // default + LOG_WARN so a typo in a future GitHub Enterprise config does
+    // not silently rewrite outbound URLs to `javascript:` / `file:` / `data:`
+    // etc. The validator currently accepts only the `https://` scheme.
+    const std::string defaultUrl = "https://api.github.com";
+    if (baseUrl.empty()) {
+        baseUrl_ = defaultUrl;
+    } else {
+        std::string validationErr;
+        if (GitHubClientHelpers::IsValidGitHubBaseUrl(baseUrl, validationErr)) {
+            baseUrl_ = StripTrailingSlash(std::move(baseUrl));
+        } else {
+            LOG_WARN("GitHubClient: rejecting base URL ('%s') — falling back to '%s'",
+                     validationErr.c_str(), defaultUrl.c_str());
+            baseUrl_ = defaultUrl;
+        }
+    }
+}
 
 GitHubClient::~GitHubClient() = default;
 
@@ -234,7 +252,7 @@ bool GitHubClient::FetchIssueComments(const std::string& issueKey, std::vector<T
     return true;
 }
 
-// ─── T2 write methods ───────────────────────────────────────────────────────
+// ─── Write methods ──────────────────────────────────────────────────────────
 //
 // Common shape across the five methods, factored only by code clarity (not
 // behavioural variation):
@@ -281,8 +299,14 @@ bool GitHubClient::CommentAdd(const std::string& issueKey, const std::string& bo
     const std::string suffix = GitHubClientHelpers::BuildIssueCommentsSuffix(parsed);
     const std::string url = baseUrl_ + suffix;
     const nlohmann::json payload = GitHubClientHelpers::BuildCommentAddBody(body);
+    const std::string payloadDump = payload.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub CommentAdd: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
 
-    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
                                 cpr::Header{{"Content-Type", "application/json"}},
                                 cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
 
@@ -326,8 +350,14 @@ bool GitHubClient::LabelAdd(const std::string& issueKey, const std::string& labe
     const std::string suffix = GitHubClientHelpers::BuildIssueLabelsSuffix(parsed);
     const std::string url = baseUrl_ + suffix;
     const nlohmann::json payload = GitHubClientHelpers::BuildLabelAddBody(label);
+    const std::string payloadDump = payload.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub LabelAdd: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
 
-    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
                                 cpr::Header{{"Content-Type", "application/json"}},
                                 cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
 
@@ -414,8 +444,14 @@ bool GitHubClient::AssigneeSet(const std::string& issueKey, const std::string& u
     const std::string suffix = GitHubClientHelpers::BuildIssueAssigneesSuffix(parsed);
     const std::string url = baseUrl_ + suffix;
     const nlohmann::json payload = GitHubClientHelpers::BuildAssigneeSetBody(user);
+    const std::string payloadDump = payload.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub AssigneeSet: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
 
-    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
                                 cpr::Header{{"Content-Type", "application/json"}},
                                 cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
 
@@ -578,8 +614,14 @@ bool GitHubClient::StateTransition(const std::string& issueKey, const std::strin
     const std::string suffix = GitHubClientHelpers::BuildIssueRootSuffix(parsed);
     const std::string url = baseUrl_ + suffix;
     const nlohmann::json payload = GitHubClientHelpers::BuildStateTransitionBody(state);
+    const std::string payloadDump = payload.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub StateTransition: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
 
-    cpr::Response r = cpr::Patch(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+    cpr::Response r = cpr::Patch(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
                                  cpr::Header{{"Content-Type", "application/json"}},
                                  cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
 

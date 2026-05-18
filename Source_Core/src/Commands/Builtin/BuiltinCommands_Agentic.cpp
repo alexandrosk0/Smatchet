@@ -99,15 +99,17 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
             } else {
                 smatchet::agentic::AgenticTriageController::BatchResult result;
                 std::string err;
-                if (!ctrl->TriageBatch(source, query, result, err)) {
+                // Bundle C CR#230:111 — push the --limit cap into TriageBatch
+                // itself rather than relying on a post-hoc count adjustment.
+                // The previous shape parsed --limit, reported it via
+                // `issues_scanned`, but ran the full discovered set against
+                // the LLM regardless. Threading the limit into TriageBatch
+                // truncates the working keys vector pre-iteration so the CLI
+                // dry-run actually saves work.
+                if (!ctrl->TriageBatch(source, query, result, err, limit)) {
                     return CommandResult::Failure(ErrorCode::HandlerError, err);
                 }
-                // The discovery cap (30) is enforced source-side. `limit` further trims here so
-                // CLI users can do a smaller dry-run without burning the full quota. T7 replaces
-                // this with cursor-driven pagination so the cap is no longer load-bearing.
-                const int effectiveScanned = (limit > 0 && limit < result.totalIssuesScanned) ? limit
-                                                                                              : result.totalIssuesScanned;
-                data["issues_scanned"] = effectiveScanned;
+                data["issues_scanned"] = result.totalIssuesScanned;
                 data["proposals_inserted"] = result.proposalsInserted;
                 nlohmann::json errs = nlohmann::json::array();
                 for (const auto& kv : result.perIssueErrors) {

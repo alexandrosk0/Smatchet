@@ -24,6 +24,9 @@ std::set<std::string>& UnknownActionsSeen() {
     static std::set<std::string> s;
     return s;
 }
+// Once-latched warning for "too many proposals" — a runaway response should
+// surface in the log, but a steady-state misbehaving model should not spam.
+bool g_proposalCapWarned = false;
 std::mutex& LatchMutex() {
     static std::mutex m;
     return m;
@@ -272,8 +275,22 @@ bool ParseInferenceResponse(const std::string& jsonBody, std::vector<ProposalDra
         }
     }
 
-    outProposals.reserve(proposalsNode.size());
-    for (std::size_t i = 0; i < proposalsNode.size(); ++i) {
+    // Bundle C CR#228:275 — cap the reserve at kMaxProposalsPerResponse to keep
+    // a hostile / runaway LLM response from OOMing the process via the reserve
+    // hint alone. Indexes past the cap are skipped (the loop bound is the
+    // capped value). Once-latched warn so the operator sees the event but the
+    // log isn't spammed by a stuck-in-loop model.
+    const std::size_t capped = std::min(proposalsNode.size(), kMaxProposalsPerResponse);
+    if (proposalsNode.size() > kMaxProposalsPerResponse) {
+        std::lock_guard<std::mutex> g(LatchMutex());
+        if (!g_proposalCapWarned) {
+            LOG_WARN("AgenticInferenceClientPure: response carried %zu proposals — capped to %zu",
+                     proposalsNode.size(), kMaxProposalsPerResponse);
+            g_proposalCapWarned = true;
+        }
+    }
+    outProposals.reserve(capped);
+    for (std::size_t i = 0; i < capped; ++i) {
         const nlohmann::json& p = proposalsNode.at(i);
         if (!p.is_object()) {
             LOG_WARN("AgenticInferenceClientPure: proposal #%zu is not an object — dropping", i);
