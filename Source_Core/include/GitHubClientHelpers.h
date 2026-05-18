@@ -67,6 +67,19 @@ std::string FormatGitHubIssueKey(const std::string& owner, const std::string& re
 bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec, std::string& outError);
 
 /**
+ * Format a unix epoch second (UTC) as the canonical GitHub ISO-8601 form
+ * `YYYY-MM-DDTHH:MM:SSZ`. Inverse of `ParseIso8601ToUnixSec`. Used by the
+ * scheduled-poll cursor — GitHub's `/issues?since=<iso8601>` filter expects
+ * exactly this 20-char Z-suffixed UTC layout. Negative epochs are clamped to
+ * 0 (pre-1970 has no meaning for an "updated since" cursor).
+ *
+ * Round-trip guarantee: `Parse(Format(t)) == t` for every t in
+ * `[0, 253402300799]` (year 9999), provided `gmtime` is reentrant on the
+ * platform (it is on every platform Smatchet targets).
+ */
+std::string FormatUnixSecAsIso8601(std::int64_t unixSec);
+
+/**
  * URL-suffix builders. Each returns the URL path appended to
  * `/repos/{owner}/{repo}/issues/{N}` for a given GitHub REST endpoint. Splitting
  * these off from the live `GitHubClient` makes the suffixes doctest-covered

@@ -18,6 +18,7 @@ using GitHubClientHelpers::BuildLabelAddBody;
 using GitHubClientHelpers::BuildStateTransitionBody;
 using GitHubClientHelpers::ExtractGitHubErrorMessage;
 using GitHubClientHelpers::FormatGitHubIssueKey;
+using GitHubClientHelpers::FormatUnixSecAsIso8601;
 using GitHubClientHelpers::IsValidStateTransitionTarget;
 using GitHubClientHelpers::ParsedIssueKey;
 using GitHubClientHelpers::ParseGitHubIssueKey;
@@ -183,6 +184,60 @@ TEST_CASE("ParseIso8601ToUnixSec — error cases") {
         std::int64_t lts = 0;
         std::string lerr;
         CHECK(ParseIso8601ToUnixSec("2024-01-15T12:34:60Z", lts, lerr));
+    }
+}
+
+// ─── T7: FormatUnixSecAsIso8601 round-trip ──────────────────────────────────
+//
+// The scheduled-poll cursor uses Format(t) to construct GitHub's `since=<iso>`
+// query param. Parse(Format(t)) must equal t for every realistic cursor value
+// the worker writes (wall-clock seconds since epoch). The error inverse —
+// Format(Parse(s)) — is tested implicitly by the round-trip identity below.
+
+TEST_CASE("FormatUnixSecAsIso8601 — happy path shape") {
+    SUBCASE("epoch") { CHECK(FormatUnixSecAsIso8601(0) == "1970-01-01T00:00:00Z"); }
+    SUBCASE("year 2024 mid-day") {
+        // 2024-01-15T12:34:56Z — same vector ParseIso8601ToUnixSec uses.
+        std::int64_t parsed = 0;
+        std::string err;
+        CHECK(ParseIso8601ToUnixSec("2024-01-15T12:34:56Z", parsed, err));
+        CHECK(FormatUnixSecAsIso8601(parsed) == "2024-01-15T12:34:56Z");
+    }
+    SUBCASE("year 2000 midnight") {
+        std::int64_t parsed = 0;
+        std::string err;
+        CHECK(ParseIso8601ToUnixSec("2000-01-01T00:00:00Z", parsed, err));
+        CHECK(FormatUnixSecAsIso8601(parsed) == "2000-01-01T00:00:00Z");
+    }
+    SUBCASE("negative epoch clamps to zero") {
+        CHECK(FormatUnixSecAsIso8601(-1) == "1970-01-01T00:00:00Z");
+        CHECK(FormatUnixSecAsIso8601(-86400) == "1970-01-01T00:00:00Z");
+    }
+}
+
+TEST_CASE("FormatUnixSecAsIso8601 — round-trip identity") {
+    // Every cursor value the scheduled-poll worker writes survives
+    // Parse(Format(t)) == t. Coverage spans epoch + leap years + year 2024..2030.
+    const std::int64_t vectors[] = {
+        0LL,
+        1LL,          // 1970-01-01T00:00:01Z
+        86399LL,      // 1970-01-01T23:59:59Z
+        86400LL,      // 1970-01-02T00:00:00Z
+        946684800LL,  // 2000-01-01T00:00:00Z
+        951782400LL,  // 2000-02-29T00:00:00Z (leap year)
+        1705320896LL, // 2024-01-15T12:14:56Z
+        1735689599LL, // 2024-12-31T23:59:59Z
+        1893456000LL, // 2030-01-01T00:00:00Z
+    };
+    for (std::int64_t t : vectors) {
+        const std::string iso = FormatUnixSecAsIso8601(t);
+        CHECK(iso.size() == 20);
+        CHECK(iso[19] == 'Z');
+        std::int64_t parsed = 0;
+        std::string err;
+        CHECK(ParseIso8601ToUnixSec(iso, parsed, err));
+        CHECK(err.empty());
+        CHECK(parsed == t);
     }
 }
 

@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-18 · orchestrator · [tooling] · P3 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
+  Details: T7 (PR pending) ships the scheduled-poll worker + Preferences "Agentic" tab (`SmatchetPreferencesUi.cpp` master toggle / interval / source / query / GitHub PAT / Run-now button). The worker thread itself is unit-test-hostile (std::thread + condition variable + 60..3600 s sleeps); we lean on `scripts/dev/test-agentic-triage-cli.sh` for the synchronous triage path the worker calls. The Preferences UI variants (toggle flip → RestartAgenticPoll, Run-now → LaunchBackgroundTask, last-poll/next-poll readout updates) are not exercised by any bucket — manual click verification today.
+  Concrete next action: add `tests/ui/agentic_prefs_tab.test.cpp` (bucket-E) parallel to `tests/ui/agent_proposals_panel.test.cpp` covering: toggle-on-without-PAT (no thread spawned), toggle-on-with-PAT (thread spawned + joined on Stop), Run-now button (dispatches a background task), last-poll readout transition from "never" → time-ago string. Runner: `scripts/dev/test-ui-agentic-prefs.sh`. ~2 h.
+  Status: open
+  Last-reviewed: 2026-05-18
+
 - 2026-05-17 · orchestrator · [tooling] · P3 — Lazy-load AI clients to drop spawn-ready timeout (architectural follow-up)
   Details: The cheap fix from the original P1 entry shipped — `--spawn` ready-timeout bumped 15s→30s with `SMATCHET_SPAWN_READY_MS` env override (`Target_Standalone/CliCommandRunner.cpp:670`). Bucket-E gates unblock. Architectural follow-up remains: profile AI-client init paths (`OpenAiClient`, `AnthropicClient`, `OllamaClient`, `AiNdjsonParser`, Lua glue) and lazy-load so MCP server publishes ready in <15s again, then drop the bump.
   Concrete next action: instrument `AppController` ctor + `IAiClient` subclass init with `SMATCHET_UI_PERF_SCOPE` markers; identify which init paths can defer past MCP-ready; refactor. Once mean spawn-ready is <10s on dev machines, revert the timeout to 15s. ~3-4 h.

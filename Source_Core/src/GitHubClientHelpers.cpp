@@ -228,6 +228,62 @@ bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec,
     return true;
 }
 
+std::string FormatUnixSecAsIso8601(std::int64_t unixSec) {
+    // The scheduled-poll cursor only walks forward in time, so pre-epoch values
+    // are not a meaningful "updated since" filter. Clamp to 0 so GitHub sees
+    // `1970-01-01T00:00:00Z` instead of a negative-year URL.
+    if (unixSec < 0) {
+        unixSec = 0;
+    }
+    const std::time_t t = static_cast<std::time_t>(unixSec);
+    std::tm utc;
+    std::memset(&utc, 0, sizeof(utc));
+#if defined(_WIN32)
+    // Windows ships gmtime_s with reversed param order; both POSIX and MSVCR
+    // variants are reentrant. The non-_s gmtime returns a pointer to a static
+    // buffer — not safe for the worker-thread cursor invocation.
+    gmtime_s(&utc, &t);
+#else
+    gmtime_r(&t, &utc);
+#endif
+    // Manual 20-char layout (snprintf would format-flag-route through locale on
+    // some libc builds). Year is clamped at 9999 — the cursor will not see a
+    // larger value in any conceivable runtime.
+    int year = utc.tm_year + 1900;
+    if (year < 0)
+        year = 0;
+    if (year > 9999)
+        year = 9999;
+    const int month = utc.tm_mon + 1;
+    const int day = utc.tm_mday;
+    const int hour = utc.tm_hour;
+    const int minute = utc.tm_min;
+    const int second = utc.tm_sec;
+    char buf[21];
+    buf[0] = static_cast<char>('0' + (year / 1000) % 10);
+    buf[1] = static_cast<char>('0' + (year / 100) % 10);
+    buf[2] = static_cast<char>('0' + (year / 10) % 10);
+    buf[3] = static_cast<char>('0' + year % 10);
+    buf[4] = '-';
+    buf[5] = static_cast<char>('0' + (month / 10) % 10);
+    buf[6] = static_cast<char>('0' + month % 10);
+    buf[7] = '-';
+    buf[8] = static_cast<char>('0' + (day / 10) % 10);
+    buf[9] = static_cast<char>('0' + day % 10);
+    buf[10] = 'T';
+    buf[11] = static_cast<char>('0' + (hour / 10) % 10);
+    buf[12] = static_cast<char>('0' + hour % 10);
+    buf[13] = ':';
+    buf[14] = static_cast<char>('0' + (minute / 10) % 10);
+    buf[15] = static_cast<char>('0' + minute % 10);
+    buf[16] = ':';
+    buf[17] = static_cast<char>('0' + (second / 10) % 10);
+    buf[18] = static_cast<char>('0' + second % 10);
+    buf[19] = 'Z';
+    buf[20] = '\0';
+    return std::string(buf, 20);
+}
+
 std::string PercentEncodePathSegment(const std::string& segment) {
     static const char kHex[] = "0123456789ABCDEF";
     std::string out;

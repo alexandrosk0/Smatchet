@@ -100,13 +100,18 @@ class GitHubClient : public ITrackerClient {
      * first page of open issues in `owner/repo`. Each issue is formatted into
      * Smatchet's canonical `owner/repo#N` key shape and appended to `outKeys`.
      * Capped at 30 issues per call to keep the downstream LLM inference cost
-     * predictable; T7's scheduled-poll path replaces this with a cursor-based
-     * pagination loop driven by `agent_poll_cursor`.
+     * predictable.
+     *
+     * Cursor: when `sinceUnixSec > 0`, the request appends GitHub's `since=<iso>`
+     * filter so only issues whose `updated_at` is strictly newer are returned.
+     * The scheduled-poll worker passes the previous cursor read from
+     * `agent_poll_cursor.last_seen_updated_at`; the first poll passes 0 (no
+     * filter, full first page). Bounded API cost + predictable LLM token spend.
      *
      * Errors mirror `FetchIssueComments`. Read endpoint — no audit-trail.
      */
     bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
-                               std::string& outError);
+                               std::string& outError, std::int64_t sinceUnixSec = 0);
 
     // ─── T2 write methods ────────────────────────────────────────────────────
     //

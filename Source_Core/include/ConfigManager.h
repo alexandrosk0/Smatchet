@@ -209,6 +209,25 @@ struct TrackerConfig {
     // DPAPI-encrypted on Win32; same legacy-plaintext migration shape as `AiApiKey`.
     // Empty disables the GitHub backend (every API call returns "PAT not configured").
     std::string GitHubPat;
+
+    // T7 scheduled-poll worker — opt-in master switch. The worker spawns from
+    // `AppController::Initialize` only when this is true AND `GitHubPat` is non-empty.
+    // Flipping at runtime via Preferences calls `AppController::RestartAgenticPoll()`
+    // which joins the live worker (if any) and re-starts under the new settings.
+    bool AgenticPollEnabled = false;
+    // Sleep duration between consecutive poll iterations. Clamped to [60, 3600] on Load
+    // — 60s lower bound keeps GitHub's rate limit comfortable; 3600s upper bound keeps
+    // user-perceived triage latency in the same order of magnitude as the previous-poll
+    // cursor's "since" filter resolution.
+    int AgenticPollIntervalSec = 300;
+    // Tracker source. Only "github" supported in T7; the UI Combo is greyed out today.
+    // The field is plumbed as a string for the same reason `TrackerType` is — the next
+    // backend (Plane / Linear) lands without a schema bump.
+    std::string AgenticPollSource = "github";
+    // For source=github: `OWNER/REPO` of the repository to poll. Empty disables the
+    // worker (it logs the precondition miss and exits cleanly) — same shape as the
+    // PAT-empty case so users get one consistent "configure agentic poll" prompt.
+    std::string AgenticPollQuery;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;

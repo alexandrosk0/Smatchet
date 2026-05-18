@@ -18,6 +18,7 @@
 
 // 3. THE REST OF YOUR INCLUDES
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -265,6 +266,26 @@ class AppController
     /// message instead of crashing. Owned by AppController; pointer is stable
     /// for the lifetime of the controller.
     smatchet::agentic::AgenticTriageController* GetAgenticTriageController() noexcept;
+
+    /// (T7) Apply the current `cfg.AgenticPoll*` settings to the worker thread:
+    /// joins the existing worker (if any), then re-launches when the master
+    /// toggle is on and preconditions (PAT + non-empty query) are met. Safe to
+    /// call from the UI thread — the join blocks the caller for at most one
+    /// loop iteration (worst case: `cfg.AgenticPollIntervalSec` seconds, but
+    /// the stop atom + condition-variable cuts that to milliseconds in practice).
+    void RestartAgenticPoll();
+
+    /// (T7) Manual trigger — runs one `TriageBatch` cycle synchronously on the
+    /// caller's thread. UI callers must wrap in `LaunchBackgroundTask` to keep
+    /// the > 100 ms operation off the main thread (per Pillar 2). On success
+    /// returns true; on degraded preconditions (no controller, empty query)
+    /// returns false and writes a short cause to outError.
+    bool RunAgenticTriageOnce(std::string& outError);
+
+    /// (T7) UI readout — seconds-since-epoch of the most recent poll iteration's
+    /// completion (regardless of success / failure). 0 means "never polled this
+    /// session". Atomic; safe to read from any thread.
+    std::int64_t GetAgenticLastPollAtSec() const noexcept;
 #endif
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
@@ -1084,6 +1105,25 @@ class AppController
     std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;
     std::unique_ptr<smatchet::agentic::IInferenceClient> agenticInferenceAdapter_;
     std::unique_ptr<smatchet::agentic::AgenticTriageController> agenticTriageController_;
+
+    // Scheduled-poll worker (T7). Lifetime: started by `StartAgenticPollIfEnabled`
+    // (called from Initialize end-of-init + Preferences-toggle handler), joined by
+    // `StopAgenticPoll` (called from destructor + Preferences-toggle-off). The
+    // condition variable lets `Stop` wake the worker immediately when the user
+    // disables the toggle without waiting out the current sleep window.
+    std::thread agenticPollThread_;
+    std::atomic<bool> agenticPollShouldStop_{false};
+    std::atomic<bool> agenticPollRunning_{false};
+    std::condition_variable agenticPollCv_;
+    std::mutex agenticPollMu_;
+    // Updated by the worker on every cycle (immediately before sleeping). The UI
+    // tab reads this to render "Last poll: Nm Ns ago / Next poll: ~in …".
+    std::atomic<std::int64_t> agenticPollLastAtSec_{0};
+
+    void StartAgenticPollIfEnabled();
+    void StopAgenticPoll();
+    // Worker entry point — lives on `agenticPollThread_`.
+    void AgenticPollWorkerLoop();
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)

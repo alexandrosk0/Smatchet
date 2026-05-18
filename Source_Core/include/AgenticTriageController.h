@@ -30,6 +30,7 @@
 #include "AgenticInferenceClientPure.h" // ProposalDraft
 #include "ITrackerClient.h"             // TrackerIssueComment
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,8 +57,12 @@ class IGitHubReadClient {
                                     std::string& outError) = 0;
 
     // GET /repos/{owner}/{repo}/issues?state=open — first page only (per_page=30).
+    // `sinceUnixSec > 0` appends GitHub's `since=<iso8601>` filter; the scheduled-poll
+    // worker passes the previous cursor read from `agent_poll_cursor.last_seen_updated_at`
+    // so each poll only fetches issues updated since the last successful run.
     virtual bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo,
-                                       std::vector<std::string>& outKeys, std::string& outError) = 0;
+                                       std::vector<std::string>& outKeys, std::string& outError,
+                                       std::int64_t sinceUnixSec = 0) = 0;
 };
 
 // LLM inference seam. Mirrors `AgenticInferenceClient::RequestProposals` 1:1

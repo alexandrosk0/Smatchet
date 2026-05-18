@@ -225,6 +225,15 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
     j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
     j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
+#if defined(SMATCHET_WITH_AGENTIC)
+    // Agentic flow scheduled-poll preferences (T7). Master toggle defaults off — the
+    // user must explicitly opt in via Preferences > Agentic. All four fields are
+    // additive; missing keys round-trip back to the construct-time defaults.
+    j["agentic_poll_enabled"] = config.AgenticPollEnabled;
+    j["agentic_poll_interval_sec"] = config.AgenticPollIntervalSec;
+    j["agentic_poll_source"] = config.AgenticPollSource;
+    j["agentic_poll_query"] = config.AgenticPollQuery;
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
     // here; WhisperApiKey is DPAPI-encrypted alongside AiApiKey below.
@@ -628,8 +637,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
             }
 #if defined(SMATCHET_WITH_AGENTIC)
-            cfg.GitHubPat =
-                UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
+            cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
             if (cfg.GitHubPat.empty()) {
                 cfg.GitHubPat = j.value("github_pat", std::string{});
             }
@@ -659,8 +667,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.WhisperMode = j.value("whisper_mode", cfg.WhisperMode);
             cfg.WhisperModel = j.value("whisper_model", cfg.WhisperModel);
             cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
-            cfg.WhisperConsentTimestampSec =
-                j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
+            cfg.WhisperConsentTimestampSec = j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
             // Phase F — language / trim / max-clip / auto-send (additive; defaults
             // survive when the field is missing from older config files).
             cfg.WhisperLanguage = j.value("whisper_language", cfg.WhisperLanguage);
@@ -703,6 +710,21 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AssistantContextBlockAuditTrail =
                 j.value("assistant_context_block_audit_trail", cfg.AssistantContextBlockAuditTrail);
             cfg.AiPrefsVerifyOnSave = j.value("ai_prefs_verify_on_save", cfg.AiPrefsVerifyOnSave);
+#if defined(SMATCHET_WITH_AGENTIC)
+            // Agentic flow scheduled-poll preferences (T7). Additive — missing keys keep
+            // the construct-time defaults (master toggle off, 300 s, source=github, query="").
+            cfg.AgenticPollEnabled = j.value("agentic_poll_enabled", cfg.AgenticPollEnabled);
+            cfg.AgenticPollIntervalSec = j.value("agentic_poll_interval_sec", cfg.AgenticPollIntervalSec);
+            cfg.AgenticPollSource = j.value("agentic_poll_source", cfg.AgenticPollSource);
+            cfg.AgenticPollQuery = j.value("agentic_poll_query", cfg.AgenticPollQuery);
+            // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
+            // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
+            if (cfg.AgenticPollIntervalSec < 60) {
+                cfg.AgenticPollIntervalSec = 60;
+            } else if (cfg.AgenticPollIntervalSec > 3600) {
+                cfg.AgenticPollIntervalSec = 3600;
+            }
+#endif
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
             cfg.DateCompactRelativeThresholdDays =
