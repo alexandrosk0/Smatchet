@@ -6,6 +6,7 @@
 #include "AppController.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/FuzzyMatch.h"
+#include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetTheme.h"
 
@@ -23,12 +24,19 @@ void CommandPaletteUi::Open() {
     selected_ = 0;
     argFormStep_ = -1;
     std::memset(filterBuf_, 0, sizeof(filterBuf_));
+    // Register the filter buffer with the dictation router for the duration
+    // of the palette being open. The palette's ::ImGui::InputText call below
+    // bypasses the SmatchetLocalizedImGui wrapper (raw ImGui by design — the
+    // palette label is its own translation surface), so this explicit
+    // register / unregister is the only path that wires dictation up here.
+    g_dictationRouter.RegisterInputText(filterBuf_, sizeof(filterBuf_), nullptr);
 }
 
 void CommandPaletteUi::Close() {
     open_ = false;
     argFormStep_ = -1;
     argFormBufs_.clear();
+    g_dictationRouter.UnregisterInputText(filterBuf_);
 }
 
 void CommandPaletteUi::SetFilterText(const char* query) {

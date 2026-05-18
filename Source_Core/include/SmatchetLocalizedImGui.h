@@ -1,9 +1,11 @@
 #pragma once
 
+#include "DictationInsertionRouter.h"
 #include "SmatchetLocalization.h"
 #include "imgui.h"
 
 #include <cstdarg>
+#include <cstddef>
 
 namespace SmatchetLocalizedImGui {
 
@@ -84,24 +86,50 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
                           popup_max_height_in_items);
 }
 
+// Dictation hook (Phase D): every routed InputText / InputTextMultiline /
+// InputTextWithHint call registers its buffer with the dictation router for
+// the lifetime of the widget's focus. Registration is idempotent (re-asserting
+// each frame is cheap) and the router's stub TU exports the same symbol as a
+// no-op shell, so call sites need no SMATCHET_WITH_WHISPER ifdefs. Cursor is
+// passed as nullptr — ImGui does not expose a per-widget byte cursor through
+// the C++14 surface; insertion lands at end-of-content, which is correct for
+// the four target surfaces (AI Assistant input, Command Palette filter,
+// long-text editor, focused-InputText catch-all). Tighter splice-at-cursor
+// for the multiline editor lands when an ImGuiInputTextCallback wire-up is
+// added (Phase E or later).
+inline void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
+    if (::ImGui::IsItemActive() || ::ImGui::IsItemFocused()) {
+        g_dictationRouter.RegisterInputText(buf, buf_size, nullptr);
+    } else {
+        g_dictationRouter.UnregisterInputText(buf);
+    }
+}
+
 inline bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0,
                       ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr) {
-    return ::ImGui::InputText(SmatchetLocalization::LabelFromSource(label), buf, buf_size, flags, callback, user_data);
+    const bool result =
+        ::ImGui::InputText(SmatchetLocalization::LabelFromSource(label), buf, buf_size, flags, callback, user_data);
+    HookDictationOnLastItem(buf, buf_size);
+    return result;
 }
 
 inline bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size = ImVec2(0, 0),
                                ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr,
                                void* user_data = nullptr) {
-    return ::ImGui::InputTextMultiline(SmatchetLocalization::LabelFromSource(label), buf, buf_size, size, flags,
-                                       callback, user_data);
+    const bool result = ::ImGui::InputTextMultiline(SmatchetLocalization::LabelFromSource(label), buf, buf_size, size,
+                                                    flags, callback, user_data);
+    HookDictationOnLastItem(buf, buf_size);
+    return result;
 }
 
 inline bool InputTextWithHint(const char* label, const char* hint, char* buf, size_t buf_size,
                               ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = nullptr,
                               void* user_data = nullptr) {
-    return ::ImGui::InputTextWithHint(SmatchetLocalization::LabelFromSource(label),
-                                      SmatchetLocalization::TranslateSource(hint), buf, buf_size, flags, callback,
-                                      user_data);
+    const bool result = ::ImGui::InputTextWithHint(SmatchetLocalization::LabelFromSource(label),
+                                                   SmatchetLocalization::TranslateSource(hint), buf, buf_size, flags,
+                                                   callback, user_data);
+    HookDictationOnLastItem(buf, buf_size);
+    return result;
 }
 
 inline bool InputInt(const char* label, int* v, int step = 1, int step_fast = 100, ImGuiInputTextFlags flags = 0) {
