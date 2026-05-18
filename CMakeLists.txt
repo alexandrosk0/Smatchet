@@ -648,6 +648,33 @@ if(SMATCHET_WITH_AI)
     target_compile_definitions(SmatchetCoreAiShim INTERFACE SMATCHET_WITH_AI=1)
 endif()
 
+# Configure-time guard for the plugin shim-link discipline documented in
+# docs/adr/0002-plugin-shim-link-discipline.md. Every standalone plugin lib that
+# includes Source_Core headers must link the matching `Smatchet*Shim` libraries
+# or `UiDrawSession` member offsets diverge at runtime (SIGSEGV inside
+# std::string::clear() from a plugin TU is the canonical crash signature).
+function(smatchet_assert_plugin_shim_links _target)
+    if(NOT TARGET ${_target})
+        return()
+    endif()
+    get_target_property(_libs ${_target} INTERFACE_LINK_LIBRARIES)
+    if(NOT _libs)
+        get_target_property(_libs ${_target} LINK_LIBRARIES)
+    endif()
+    if(SMATCHET_WITH_AI AND NOT "SmatchetCoreAiShim" IN_LIST _libs)
+        message(FATAL_ERROR
+            "Plugin '${_target}' includes Source_Core headers but does not link SmatchetCoreAiShim. "
+            "Add `target_link_libraries(${_target} PUBLIC SmatchetCoreAiShim)` inside an "
+            "`if(SMATCHET_WITH_AI)` guard. See docs/adr/0002-plugin-shim-link-discipline.md.")
+    endif()
+    if(SMATCHET_WITH_MCP AND NOT "SmatchetCoreMcpShim" IN_LIST _libs)
+        message(FATAL_ERROR
+            "Plugin '${_target}' includes Source_Core headers but does not link SmatchetCoreMcpShim. "
+            "Add `target_link_libraries(${_target} PUBLIC SmatchetCoreMcpShim)` inside an "
+            "`if(SMATCHET_WITH_MCP)` guard. See docs/adr/0002-plugin-shim-link-discipline.md.")
+    endif()
+endfunction()
+
 function(smatchet_configure_core_impl_target _target)
     target_link_libraries("${_target}" PUBLIC SmatchetCoreInterface)
     target_include_directories("${_target}" PRIVATE Source_Core/src
@@ -739,6 +766,7 @@ if(SMATCHET_WITH_MCP)
         target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreAiShim)
     endif()
     smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
+    smatchet_assert_plugin_shim_links(SmatchetPlugin_Mcp)
 endif()
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
@@ -770,6 +798,7 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
         target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreAiShim)
     endif()
     smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
+    smatchet_assert_plugin_shim_links(SmatchetPlugin_LuaConsole)
     if(MSVC)
         set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -28,11 +28,15 @@ target_link_libraries(SmatchetPlugin_Whisper PUBLIC
     SmatchetCoreInterface
 )
 
-# See AI-shim note on SmatchetPlugin_LuaConsole in the root CMakeLists.txt — UiDrawSession
-# layout depends on SMATCHET_WITH_AI. Plugins including Source_Core headers must match the
-# Source_Core define state to avoid silent member-offset drift.
+# See docs/adr/0002-plugin-shim-link-discipline.md — every gated `#if SMATCHET_WITH_*` block
+# inside `SmatchetUiSession.h` (and any other Source_Core header that grows them) shifts
+# member offsets. Plugins must match the Source_Core define state to avoid silent ABI drift.
+# Configure-time guard `smatchet_assert_plugin_shim_links` fires below if either shim is missing.
 if(SMATCHET_WITH_AI)
     target_link_libraries(SmatchetPlugin_Whisper PUBLIC SmatchetCoreAiShim)
+endif()
+if(SMATCHET_WITH_MCP)
+    target_link_libraries(SmatchetPlugin_Whisper PUBLIC SmatchetCoreMcpShim)
 endif()
 
 # Link ghc::filesystem for the model-presence probe in WhisperPlugin.cpp.
@@ -73,3 +77,4 @@ if(SMATCHET_WHISPER_LOCAL_BACKEND)
 endif()
 
 smatchet_apply_strict_warnings(SmatchetPlugin_Whisper)
+smatchet_assert_plugin_shim_links(SmatchetPlugin_Whisper)
