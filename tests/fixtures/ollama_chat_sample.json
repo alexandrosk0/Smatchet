@@ -1,0 +1,56 @@
+{
+  "proposals": [
+    {
+      "action": "CommentAdd",
+      "rationale": "Issue is missing reproduction steps; ask the reporter for a minimal repro before triaging further.",
+      "payload": {
+        "body": "Could you provide a minimal reproduction case (steps + expected vs actual output)? That would help narrow the root cause."
+      }
+    },
+    {
+      "action": "LabelAdd",
+      "rationale": "The stack trace points at the SQLite cache layer; tag for the offline-sync subsystem owner.",
+      "payload": {
+        "label": "subsystem:offline-sync"
+      }
+    },
+    {
+      "action": "LabelRemove",
+      "rationale": "The 'needs-investigation' label is stale now that the cause is identified.",
+      "payload": {
+        "label": "needs-investigation"
+      }
+    },
+    {
+      "action": "AssigneeSet",
+      "rationale": "Alex owns the offline-queue replay path; assign to keep ownership clear.",
+      "payload": {
+        "user": "alexandrosk0"
+      }
+    },
+    {
+      "action": "StateTransition",
+      "rationale": "Reporter confirmed the workaround restores correct behaviour; close pending fix landing on develop.",
+      "payload": {
+        "state": "closed"
+      }
+    },
+    {
+      "action": "DerivedTicketCreate",
+      "rationale": "The follow-up perf-regression in the same code path deserves its own Jira ticket for SLA tracking.",
+      "payload": {
+        "targetTracker": "jira",
+        "summary": "Offline queue replay p99 regression after dead-letter cap landed",
+        "description": "Replay p99 lifted from 18ms to 41ms in the post-PR-148 nightly perf gate. Likely related to the new dead-letter inspector lock contention; needs profiling on the standard scenario."
+      }
+    },
+    {
+      "action": "ImplementIssue",
+      "rationale": "Bug is well-scoped and the fix is localised; queue for the handoff coding loop.",
+      "payload": {
+        "complexityHint": "medium",
+        "approachOutline": "Switch the dead-letter inspector to a shared_mutex; reads dominate by ~20:1 on the standard scenario. Add a microbench to lock the regression."
+      }
+    }
+  ]
+}
