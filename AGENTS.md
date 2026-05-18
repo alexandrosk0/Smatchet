@@ -99,6 +99,16 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 **Plan-doc safety**: as soon as a plan is written to `docs/design/<slug>.md`, `git add` + commit it immediately with a `wip(plan): <slug>` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
 
+**Destructive git ops in shared worktrees**: before running any destructive git op (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) against a worktree the orchestrator did not personally check out earlier in the same session, run a mandatory 5-step pre-flight via `git -C <path>` from the orchestrator's main worktree (do not `cd`). Parallel agents in other worktrees can — and do — switch the target worktree's HEAD to a different branch between sessions; a stale assumption about "the develop worktree" is what destroys uncommitted work.
+
+1. `git -C <path> branch --show-current` — verify the actual current branch matches the user-named target. If it doesn't, **stop**; the worktree has been reassigned.
+2. `git -C <path> status --short` — inventory tracked-modified + untracked files. Any non-empty result means the worktree is load-bearing for a parallel agent; treat as a refusal condition unless explicitly authorised.
+3. `git -C <path> stash push -m "<reason>" -- <modified-files>` for any tracked-modified files, regardless of apparent relevance to the asked task. Untracked files survive `reset --hard` but `clean -f` is fatal — pass `--include-untracked` when `clean -f` is part of the plan.
+4. Run the destructive op only after 1-3 succeed.
+5. Decide whether to `stash pop` (recovers the user's work), leave the stash for the human (when unrelated to current PR), or report the stash hash so the human can pop manually if conflicts arise.
+
+`reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
+
 **Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
 
 - `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.

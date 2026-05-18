@@ -58,10 +58,10 @@ without movement.
 | Category | Live count | File |
 |---|---|---|
 | bug         | 6  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
-| process     | 18 | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
+| process     | 17 | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
 | tooling     | 25 | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
 | infra       | 9  | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
 | test        | 9  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
 | security    | 6  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
 | external    | 3  | [agent-self-improvement/external-blockers.md](agent-self-improvement/external-blockers.md) |
-| applied (archive) | 74 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |
+| applied (archive) | 75 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |

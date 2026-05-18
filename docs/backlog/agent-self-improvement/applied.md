@@ -7,6 +7,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-18 · orchestrator · [process] · P1 — `git reset --hard origin/develop` via `git -C <worktree>` reset the worktree's *current* branch, not `develop`; destroyed 5 uncommitted modified files of a parallel agent
+  Resolution: Mandatory 5-step pre-flight (branch verify → status inventory → stash → execute → decide on pop) landed in `AGENTS.md` as a new sub-section **"Destructive git ops in shared worktrees"** under § Project rules, directly after § Plan-doc safety. The rule names the four destructive ops (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) and the `git -C <path>` discipline. Cross-link added to `agents/git-janitor.md` § Hard refusals (the agent most likely to hit this case) calling back to AGENTS.md for the authoritative checklist. Root cause documented inline: parallel agents reassign worktree HEADs between sessions, so the path name (e.g. "develop-worktree") is **not** authoritative for which branch is currently checked out — `git -C <path> branch --show-current` first, every time. Underscored fact: `reset --hard` permanently destroys uncommitted tracked-modified content (not in reflog); branch pointers recover, working-tree content does not.
+
 - 2026-05-17 · orchestrator · [tooling] · P1 — `--spawn` ephemeral MCP instance times out at 15s on develop tip (post Phase D/E AI merges)
   Resolution: Cheap-fix path (a) shipped. `--spawn` ready-timeout bumped 15s → 30s in `Target_Standalone/CliCommandRunner.cpp:670`. New env override `SMATCHET_SPAWN_READY_MS=<ms>` lets faster runners tighten or cold-cache CI raise further. Bucket-E gates (`scripts/dev/test-ui-*.sh`, `scripts/dev/test-callstack-tooltip-hover.sh`) unblock. Architectural follow-up (path (b) — lazy-load AI clients so MCP server publishes ready faster) split to a new P3 entry under `tooling.md` since the cheap fix removes the merge-block urgency.
 
