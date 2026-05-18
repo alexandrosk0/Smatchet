@@ -73,8 +73,8 @@ void RepairLuaWindowLayout() {
     const ImVec2 pos = ImGui::GetWindowPos();
     const bool tooSmall = size.x < 420.0f || size.y < 360.0f;
     const bool offscreen = pos.x > vp->WorkPos.x + vp->WorkSize.x - 96.0f ||
-                           pos.y > vp->WorkPos.y + vp->WorkSize.y - 72.0f ||
-                           pos.x + size.x < vp->WorkPos.x + 96.0f || pos.y + size.y < vp->WorkPos.y + 72.0f;
+                           pos.y > vp->WorkPos.y + vp->WorkSize.y - 72.0f || pos.x + size.x < vp->WorkPos.x + 96.0f ||
+                           pos.y + size.y < vp->WorkPos.y + 72.0f;
     if (!tooSmall && !offscreen) {
         return;
     }
@@ -85,9 +85,7 @@ void RepairLuaWindowLayout() {
     ImGui::SetWindowSize(size, ImGuiCond_Always);
 }
 
-void ReloadSmatchetHooksSetupScript(AppController& app) {
-    app.RunLuaSetupScript("SmatchetHooks.lua");
-}
+void ReloadSmatchetHooksSetupScript(AppController& app) { app.RunLuaSetupScript("SmatchetHooks.lua"); }
 
 bool ReadFileAll(const std::string& path, std::string& out) {
     std::ifstream f(path, std::ios::binary);
@@ -118,10 +116,18 @@ static std::vector<std::string> BuildAutocompleteCandidates(const std::vector<st
     std::vector<std::string> out;
     const TextEditor::LanguageDefinition& def = TextEditor::LanguageDefinition::Lua();
     std::copy_if(def.mKeywords.begin(), def.mKeywords.end(), std::back_inserter(out),
-                  [](const std::string& kw) { return !kw.empty(); });
-    static const char* kApi[] = {"smatchet", "tracker", "ui", "log_info", "create_issue", "process_ticket", "ticket",
-                                 "register_global_action", "require", "pairs", "ipairs", "type", "tostring", "tonumber",
-                                 "string", "table", "math", "os", "io", "error", "pcall", "xpcall"};
+                 [](const std::string& kw) { return !kw.empty(); });
+    static const char* kApi[] = {"smatchet",     "tracker",
+                                 "ui",           "log_info",
+                                 "create_issue", "process_ticket",
+                                 "ticket",       "register_global_action",
+                                 "require",      "pairs",
+                                 "ipairs",       "type",
+                                 "tostring",     "tonumber",
+                                 "string",       "table",
+                                 "math",         "os",
+                                 "io",           "error",
+                                 "pcall",        "xpcall"};
     std::transform(std::begin(kApi), std::end(kApi), std::back_inserter(out),
                    [](const char* s) { return std::string(s); });
     std::copy(scriptNames.begin(), scriptNames.end(), std::back_inserter(out));
@@ -144,9 +150,7 @@ static bool AsciiCaseInsensitivePrefix(const std::string& s, const std::string& 
 
 } // namespace
 
-bool LuaConsolePlugin::IsHooksFile(const std::string& rel) {
-    return rel == "SmatchetHooks.lua";
-}
+bool LuaConsolePlugin::IsHooksFile(const std::string& rel) { return rel == "SmatchetHooks.lua"; }
 
 int LuaConsolePlugin::TryParseLuaErrorLine(const std::string& err) {
     // Hand-parser replaces std::regex_search (§5.2): avoids backtracking stall on malformed input
@@ -155,11 +159,16 @@ int LuaConsolePlugin::TryParseLuaErrorLine(const std::string& err) {
     for (size_t i = 0; i < n; ++i) {
         if (err[i] == ':') {
             size_t j = i + 1;
-            if (j >= n || err[j] < '0' || err[j] > '9') continue;
+            if (j >= n || err[j] < '0' || err[j] > '9')
+                continue;
             size_t k = j;
-            while (k < n && err[k] >= '0' && err[k] <= '9') ++k;
+            while (k < n && err[k] >= '0' && err[k] <= '9')
+                ++k;
             if (k < n && err[k] == ':' && k > j) {
-                try { return std::stoi(err.substr(j, k - j)); } catch (...) {}
+                try {
+                    return std::stoi(err.substr(j, k - j));
+                } catch (...) {
+                }
             }
         }
     }
@@ -173,8 +182,9 @@ void LuaConsolePlugin::EnsureLuaLanguageDef() {
     luaLangWithApi_ = TextEditor::LanguageDefinition::Lua();
     TextEditor::Identifier id;
     id.mDeclaration = "Smatchet / Lua API";
-    static const char* kExtra[] = {"smatchet", "tracker", "ui", "log_info", "create_issue", "process_ticket", "ticket",
-                                   "register_global_action", "imgui", "require"};
+    static const char* kExtra[] = {"smatchet",     "tracker",        "ui",     "log_info",
+                                   "create_issue", "process_ticket", "ticket", "register_global_action",
+                                   "imgui",        "require"};
     for (const char* s : kExtra) {
         luaLangWithApi_.mIdentifiers[std::string(s)] = id;
     }
@@ -260,9 +270,7 @@ void LuaConsolePlugin::ApplyErrorMarkersFromMessage(const std::string& errMsg) {
     luaEditor_.SetErrorMarkers(markers);
 }
 
-void LuaConsolePlugin::ClearErrorMarkers() {
-    luaEditor_.SetErrorMarkers(TextEditor::ErrorMarkers());
-}
+void LuaConsolePlugin::ClearErrorMarkers() { luaEditor_.SetErrorMarkers(TextEditor::ErrorMarkers()); }
 
 void LuaConsolePlugin::DrawAutocompletePopup() {
     if (!ImGui::BeginPopup("lua_ac")) {
@@ -383,8 +391,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         if (!onToolsTabLastFrame_) {
             scriptPaneHeightBeforeToolsTab_ = luaAutomationScriptPaneUserPx_;
             if (luaAutomationScriptPaneUserPx_ <= 0.0f) {
-                luaAutomationScriptPaneUserPx_ =
-                    (std::max)(kMinScriptH, splitStackTotalH - kToolsLogH - kSplitGrabH);
+                luaAutomationScriptPaneUserPx_ = (std::max)(kMinScriptH, splitStackTotalH - kToolsLogH - kSplitGrabH);
             }
         }
         onToolsTabLastFrame_ = true;
@@ -401,8 +408,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     }
     const float minLogH = onToolsTab ? kToolsLogH : kMinLogH;
     const float maxScriptH = (std::max)(kMinScriptH, splitStackTotalH - minLogH - kSplitGrabH);
-    luaAutomationScriptPaneHeightPx_ =
-        (std::min)(maxScriptH, (std::max)(kMinScriptH, luaAutomationScriptPaneUserPx_));
+    luaAutomationScriptPaneHeightPx_ = (std::min)(maxScriptH, (std::max)(kMinScriptH, luaAutomationScriptPaneUserPx_));
 
     ImGui::BeginChild("##lua_script_pane", ImVec2(-1.0f, luaAutomationScriptPaneHeightPx_), ImGuiChildFlags_None);
     if (ImGui::BeginTabBar("##lua_main_tabs", ImGuiTabBarFlags_None)) {
@@ -494,10 +500,15 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
             if (isHooks) {
                 ImGui::SameLine();
                 if (ImGui::Button("Run", ImVec2(70, 0))) {
-                    LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
-                    ReloadSmatchetHooksSetupScript(app);
-                    g_ui.gridEditSuccess = "Hooks reloaded";
-                    ClearErrorMarkers();
+                    std::string e;
+                    if (SaveCurrentScript(app, e)) {
+                        LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
+                        ReloadSmatchetHooksSetupScript(app);
+                        g_ui.gridEditSuccess = "Hooks reloaded";
+                        ClearErrorMarkers();
+                    } else {
+                        g_ui.gridEditError = e;
+                    }
                 }
             } else {
                 ImGui::SameLine();
@@ -530,7 +541,8 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
                             }
                             std::sort(selectedIds.begin(), selectedIds.end());
                             selectedIds.erase(std::unique(selectedIds.begin(), selectedIds.end()), selectedIds.end());
-                            LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(), selectedIds.size());
+                            LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(),
+                                      selectedIds.size());
                             app.RunAutoScript(curName, selectedIds);
                             ClearErrorMarkers();
                         } else {
@@ -574,8 +586,29 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
                 }
             }
 
+            {
+                // Live registered-action row — refreshed every frame from
+                // `GetLuaGlobalActionNames()`. Surfaces what user scripts have registered
+                // via `ui.register_global_action(...)` without forcing a tab switch to
+                // "Tools & Actions".
+                const auto liveNames = app.GetLuaGlobalActionNames();
+                if (liveNames.empty()) {
+                    ImGui::TextDisabled("Registered actions: 0");
+                } else {
+                    std::string joined;
+                    for (size_t i = 0; i < liveNames.size(); ++i) {
+                        if (i)
+                            joined += ", ";
+                        joined += liveNames[i];
+                    }
+                    ImGui::TextDisabled("Registered actions (%zu):", liveNames.size());
+                    ImGui::TextWrapped("  %s", joined.c_str());
+                }
+            }
+
             ImGui::Spacing();
-            const float editorH = (std::max)(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
+            const float editorH =
+                (std::max)(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
             luaEditor_.Render("##lua_text_editor", ImVec2(-1.0f, editorH), false);
 
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -585,7 +618,8 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
             DrawAutocompletePopup();
 
             ImGui::Spacing();
-            ImGui::TextDisabled("Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
+            ImGui::TextDisabled(
+                "Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
 
             ImGui::EndTabItem();
         } else {
@@ -605,7 +639,8 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
             if (globalNames.empty()) {
                 ImGui::TextDisabled("No global actions registered.");
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-                ImGui::TextWrapped("Global actions are defined in SmatchetHooks.lua using 'ui.register_global_action(name, callback)'.");
+                ImGui::TextWrapped("Global actions are defined in SmatchetHooks.lua using "
+                                   "'ui.register_global_action(name, callback)'.");
                 ImGui::PopStyleColor();
             } else {
                 for (const auto& name : globalNames) {
@@ -614,7 +649,8 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
                         app.ExecuteLuaGlobalAction(name);
                         g_ui.gridEditSuccess = "Queued: " + name;
                     }
-                    if (ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x * 0.48f < ImGui::GetContentRegionMax().x) {
+                    if (ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x * 0.48f <
+                        ImGui::GetContentRegionMax().x) {
                         ImGui::SameLine();
                     }
                     ImGui::PopID();
@@ -628,10 +664,30 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     ImGui::EndChild();
 
     ImGui::InvisibleButton("##lua_script_log_split", ImVec2(ImGui::GetContentRegionAvail().x, kSplitGrabH));
-    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+    const bool splitHot = ImGui::IsItemHovered();
+    const bool splitActive = ImGui::IsItemActive();
+    if (splitHot || splitActive) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    {
+        // Visible splitter — `InvisibleButton` alone was unfindable, especially when the
+        // window was docked short at the bottom and only a 6 px transparent strip remained
+        // between editor and log.
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 rMin = ImGui::GetItemRectMin();
+        const ImVec2 rMax = ImGui::GetItemRectMax();
+        const ImU32 lineCol = ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
+                                                 : splitHot  ? ImGuiCol_SeparatorHovered
+                                                             : ImGuiCol_Separator);
+        const float midY = (rMin.y + rMax.y) * 0.5f;
+        dl->AddLine(ImVec2(rMin.x + 4.0f, midY), ImVec2(rMax.x - 4.0f, midY), lineCol, 1.5f);
+        const float cx = (rMin.x + rMax.x) * 0.5f;
+        const ImU32 dotCol = ImGui::GetColorU32(splitHot || splitActive ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        for (int i = -2; i <= 2; ++i) {
+            dl->AddCircleFilled(ImVec2(cx + static_cast<float>(i) * 6.0f, midY), 1.5f, dotCol);
+        }
+    }
+    if (splitActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         const float next = luaAutomationScriptPaneHeightPx_ + ImGui::GetIO().MouseDelta.y;
         const float localMinLogH = onToolsTab ? kToolsLogH : kMinLogH;
         const float localMaxScriptH = (std::max)(kMinScriptH, splitStackTotalH - localMinLogH - kSplitGrabH);
