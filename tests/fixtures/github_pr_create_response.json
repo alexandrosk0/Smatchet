@@ -1,0 +1,33 @@
+{
+  "id": 1542030001,
+  "node_id": "PR_kwDOAaB_d85ZxxYz",
+  "url": "https://api.github.com/repos/smatchet/example/pulls/512",
+  "html_url": "https://github.com/smatchet/example/pull/512",
+  "diff_url": "https://github.com/smatchet/example/pull/512.diff",
+  "patch_url": "https://github.com/smatchet/example/pull/512.patch",
+  "issue_url": "https://api.github.com/repos/smatchet/example/issues/512",
+  "number": 512,
+  "state": "open",
+  "locked": false,
+  "title": "feat(agentic): H7 PrCommentWatcher + GitHubClient PR/check-run surface",
+  "user": {
+    "login": "smatchet-bot",
+    "id": 9003,
+    "type": "Bot"
+  },
+  "body": "<!-- smatchet-handoff -->\n\nDraft PR opened by Smatchet agentic handoff (proposal #42).",
+  "draft": true,
+  "head": {
+    "ref": "agent/42/h7-pr-comment-watcher",
+    "sha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "base": {
+    "ref": "develop",
+    "sha": "fedcba9876543210fedcba9876543210fedcba98"
+  },
+  "merged": false,
+  "mergeable": null,
+  "mergeable_state": "unknown",
+  "created_at": "2026-05-10T13:55:00Z",
+  "updated_at": "2026-05-10T13:55:00Z"
+}

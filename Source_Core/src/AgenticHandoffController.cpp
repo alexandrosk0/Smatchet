@@ -799,6 +799,77 @@ int AgenticHandoffController::PollClarificationAnswers() {
     return dispatched;
 }
 
+// ─── H7 PR-watcher integration ────────────────────────────────────────────
+
+std::vector<AgenticHandoffController::ActiveHandoff> AgenticHandoffController::SnapshotPrOpen() const {
+    std::vector<ActiveHandoff> out;
+    std::lock_guard<std::mutex> lk(handoffsMu_);
+    for (const auto& kv : handoffs_) {
+        // Only include handoffs that have reached PrOpen but have not been
+        // already flagged budget-exhausted. Terminal states (Complete /
+        // Failed / Cancelled) are out — those handoffs are done with PR
+        // iteration. A handoff that re-enters Running on a respawn briefly
+        // leaves this set; the next tick picks it back up after the runner
+        // re-reaches PrOpen.
+        if (kv.second.state == CodingHarness::RunState::PrOpen && !kv.second.budgetExhausted &&
+            !kv.second.prUrl.empty()) {
+            out.push_back(kv.second);
+        }
+    }
+    return out;
+}
+
+bool AgenticHandoffController::MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec,
+                                                   std::string& outError) {
+    std::lock_guard<std::mutex> lk(handoffsMu_);
+    auto it = handoffs_.find(proposalId);
+    if (it == handoffs_.end()) {
+        outError = "Unknown proposalId.";
+        return false;
+    }
+    if (newCursorSec > it->second.prCommentCursorSec) {
+        it->second.prCommentCursorSec = newCursorSec;
+    }
+    ++it->second.iterationCount;
+    return true;
+}
+
+bool AgenticHandoffController::MarkHandoffBudgetExhausted(std::int64_t proposalId, int iterationBudget,
+                                                          std::string& outError) {
+    // Lookup + idempotency flip under the mutex, then drop the lock before
+    // calling ControllerTransition (which takes the same mutex when it
+    // updates `it->second.state`). The state read under the lock is the
+    // pre-transition value — we use it to decide whether the FSM call is
+    // even legal.
+    bool alreadyExhausted = false;
+    CodingHarness::RunState fromState = CodingHarness::RunState::Pending;
+    {
+        std::lock_guard<std::mutex> lk(handoffsMu_);
+        auto it = handoffs_.find(proposalId);
+        if (it == handoffs_.end()) {
+            outError = "Unknown proposalId.";
+            return false;
+        }
+        alreadyExhausted = it->second.budgetExhausted;
+        fromState = it->second.state;
+        it->second.budgetExhausted = true;
+    }
+    if (alreadyExhausted) {
+        // Subsequent ticks: idempotent no-op. The state was already flipped
+        // by the first invocation; nothing more to do.
+        return true;
+    }
+    if (CodingHarness::IsTerminal(fromState)) {
+        // Already terminal — leave the budget flag set but skip the
+        // transition (the FSM would reject `Failed -> Failed`).
+        return true;
+    }
+    std::ostringstream oss;
+    oss << "PR-iteration budget exhausted (" << iterationBudget
+        << " respawns). Operator must intervene to continue.";
+    return ControllerTransition(proposalId, CodingHarness::RunState::Failed, oss.str(), std::string());
+}
+
 // ─── Snapshot ────────────────────────────────────────────────────────────
 
 std::vector<AgenticHandoffController::ActiveHandoff> AgenticHandoffController::SnapshotActive() const {

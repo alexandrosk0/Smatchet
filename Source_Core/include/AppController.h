@@ -62,6 +62,7 @@ class AgentProposalStore;
 #include "ClaudeCodeLocalRunner.h"
 #include "GitHubClient.h"
 #include "ICodingHarnessRunner.h"
+#include "PrCommentWatcher.h"
 #endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
@@ -1165,6 +1166,12 @@ class AppController
     std::once_flag agenticHandoffControllerOnce_;
     std::unique_ptr<CodingHarness::IRunner> agenticHandoffRunner_;
     std::unique_ptr<smatchet::agentic::AgenticHandoffController> agenticHandoffController_;
+    // (H7) PR-comment watcher — owned by AppController so the lifetime
+    // matches the handoff controller. Lazily constructed inside the same
+    // `std::call_once` block as `agenticHandoffController_`; the
+    // scheduled-poll worker's `AgenticPollWorkerLoop` ticks it after the
+    // H5 clarification-poll path on every iteration.
+    std::unique_ptr<smatchet::agentic::PrCommentWatcher> agenticPrCommentWatcher_;
 
     // Scheduled-poll worker (T7). Lifetime: started by `StartAgenticPollIfEnabled`
     // (called from Initialize end-of-init + Preferences-toggle handler), joined by

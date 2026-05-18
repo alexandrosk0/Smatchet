@@ -420,6 +420,158 @@ bool IsValidStateTransitionTarget(const std::string& state) {
     return state == "open" || state == "closed";
 }
 
+// ─── H7 URL builders ─────────────────────────────────────────────────────────
+
+std::string BuildPullsCollectionSuffix(const std::string& owner, const std::string& repo) {
+    std::string out;
+    out.reserve(8 + owner.size() + 1 + repo.size() + 7);
+    out.append("/repos/");
+    out.append(owner);
+    out.push_back('/');
+    out.append(repo);
+    out.append("/pulls");
+    return out;
+}
+
+std::string BuildCheckRunsForCommitSuffix(const std::string& owner, const std::string& repo, const std::string& sha) {
+    std::string out;
+    out.reserve(8 + owner.size() + 1 + repo.size() + 9 + sha.size() + 12);
+    out.append("/repos/");
+    out.append(owner);
+    out.push_back('/');
+    out.append(repo);
+    out.append("/commits/");
+    out.append(sha);
+    out.append("/check-runs");
+    return out;
+}
+
+std::string BuildCheckRunAnnotationsSuffix(const std::string& owner, const std::string& repo,
+                                           std::int64_t checkRunId) {
+    std::string out;
+    out.reserve(8 + owner.size() + 1 + repo.size() + 12 + 22);
+    out.append("/repos/");
+    out.append(owner);
+    out.push_back('/');
+    out.append(repo);
+    out.append("/check-runs/");
+    out.append(Int64ToDecimal(checkRunId));
+    out.append("/annotations");
+    return out;
+}
+
+std::string BuildActionsJobLogsSuffix(const std::string& owner, const std::string& repo, std::int64_t jobId) {
+    std::string out;
+    out.append("/repos/");
+    out.append(owner);
+    out.push_back('/');
+    out.append(repo);
+    out.append("/actions/jobs/");
+    out.append(Int64ToDecimal(jobId));
+    out.append("/logs");
+    return out;
+}
+
+std::string BuildActionsRunRerunSuffix(const std::string& owner, const std::string& repo, std::int64_t runId) {
+    std::string out;
+    out.append("/repos/");
+    out.append(owner);
+    out.push_back('/');
+    out.append(repo);
+    out.append("/actions/runs/");
+    out.append(Int64ToDecimal(runId));
+    out.append("/rerun");
+    return out;
+}
+
+nlohmann::json BuildCreatePullRequestBody(const std::string& title, const std::string& headBranch,
+                                          const std::string& baseBranch, const std::string& body, bool draft) {
+    nlohmann::json obj = nlohmann::json::object();
+    obj["title"] = title;
+    obj["head"] = headBranch;
+    obj["base"] = baseBranch;
+    // Empty body is a valid PR — GitHub renders an empty description rather
+    // than rejecting the call. Omit the key in that case so the wire payload
+    // stays minimal.
+    if (!body.empty()) {
+        obj["body"] = body;
+    }
+    obj["draft"] = draft;
+    return obj;
+}
+
+bool ExtractCreatePullRequestHtmlUrl(const std::string& responseBody, std::string& outUrl, std::string& outError) {
+    outUrl.clear();
+    outError.clear();
+    if (responseBody.empty()) {
+        outError = "Empty response body.";
+        return false;
+    }
+    nlohmann::json obj;
+    try {
+        obj = nlohmann::json::parse(responseBody);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("create-pr response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!obj.is_object()) {
+        outError = "create-pr response is not a JSON object.";
+        return false;
+    }
+    if (!obj.contains("html_url") || !obj["html_url"].is_string()) {
+        outError = "create-pr response missing html_url.";
+        return false;
+    }
+    outUrl = obj["html_url"].get<std::string>();
+    if (outUrl.empty()) {
+        outError = "create-pr html_url is empty.";
+        return false;
+    }
+    return true;
+}
+
+std::string ClipLogTail(const std::string& body, int tailLines) {
+    if (tailLines <= 0 || body.empty()) {
+        return body;
+    }
+    // Newline-boundary scan from the back. The semantics:
+    //   - If `body` ends with '\n', each '\n' terminates one line; "last N
+    //     lines" means scan past N '\n' boundaries.
+    //   - If `body` does NOT end with '\n', the trailing unterminated chunk
+    //     counts as one line; we still need (N-1) '\n' boundaries beyond it.
+    // The cleanest implementation: scan from the end, decrement `remaining`
+    // each time we cross a '\n', and stop just past the (remaining==0)
+    // boundary so the substring includes exactly `tailLines` lines.
+    int remaining = tailLines;
+    // Pre-decrement when the body lacks a trailing newline: the trailing
+    // unterminated chunk is itself one of the lines we want.
+    if (body.back() != '\n') {
+        --remaining;
+    }
+    if (remaining <= 0) {
+        // The trailing unterminated chunk alone fulfils the request.
+        const std::size_t lastNewline = body.find_last_of('\n');
+        if (lastNewline == std::string::npos) {
+            return body;
+        }
+        return body.substr(lastNewline + 1);
+    }
+    std::size_t cut = 0;
+    for (std::size_t i = body.size(); i > 0; --i) {
+        if (body[i - 1] == '\n') {
+            --remaining;
+            if (remaining < 0) {
+                cut = i;
+                break;
+            }
+        }
+    }
+    if (cut == 0) {
+        return body;
+    }
+    return body.substr(cut);
+}
+
 bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
     outError.clear();
     if (baseUrl.empty()) {

@@ -137,6 +137,28 @@ class AgenticHandoffController {
         // baseline. Defaults to startedAtSec on the AwaitingUser transition
         // so the question we just posted is not mistaken for the answer.
         std::int64_t clarificationCommentCursorSec = 0;
+
+        // (H7) Per-handoff PR-iteration bookkeeping. Populated when the
+        // controller transitions to PrOpen — the watcher (PrCommentWatcher)
+        // then polls the PR's comment thread for non-bot replies and, on
+        // detection, increments iterationCount + dispatches a respawn of
+        // the harness against the same branch so the spawned `claude` can
+        // iterate on the feedback.
+        //
+        // Cursor uses the unix-second `createdAtSec` of the most recent
+        // comment seen by the watcher. Defaults to the PrOpen-transition
+        // timestamp so the marker comment Smatchet posts (if any) is not
+        // mistaken for a user reply.
+        std::int64_t prCommentCursorSec = 0;
+        // Iteration count grows on every dispatched respawn. The watcher
+        // refuses to dispatch once this hits the configured iteration
+        // budget; a final "budget exhausted" comment is posted and the
+        // handoff is marked Failed.
+        int iterationCount = 0;
+        // True after the watcher has emitted the budget-exhausted comment
+        // for this handoff. Idempotency guard — we never post the marker
+        // twice nor flip the state more than once.
+        bool budgetExhausted = false;
     };
 
     // Non-owning pointers — AppController owns `runner` / `proposalStore`
@@ -278,6 +300,35 @@ class AgenticHandoffController {
     ///
     ///   {answer}
     static std::string BuildAnswerCommentBody(std::int64_t proposalId, const std::string& answer);
+
+    // ─── H7 PR-watcher integration points ────────────────────────────────
+    //
+    // `PrCommentWatcher` (Source_Core/src/PrCommentWatcher.cpp) owns the
+    // per-iteration poll over PrOpen handoffs. It snapshots active handoffs,
+    // fetches each PR's comment thread, and on a new non-bot comment calls
+    // `MarkHandoffIteration` to advance the cursor + bump iterationCount.
+    // On iteration-budget exhaustion the watcher calls
+    // `MarkHandoffBudgetExhausted` to transition the handoff to Failed.
+    //
+    // Both helpers are thread-safe (take the same `handoffsMu_` as the
+    // existing snapshot methods). They are no-ops on unknown / already-
+    // terminal handoffs.
+
+    /// Snapshot of handoffs currently in `PrOpen` state. Same lock contract
+    /// as `SnapshotActive` — cheap deep copy under the mutex. The H7
+    /// watcher uses this once per tick.
+    std::vector<ActiveHandoff> SnapshotPrOpen() const;
+
+    /// Bump iterationCount + advance prCommentCursorSec atomically. Called
+    /// by the watcher after dispatching a respawn. Returns false if the
+    /// handoff id is unknown (already cleaned up).
+    bool MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec, std::string& outError);
+
+    /// Flip the budget-exhausted flag + transition the handoff to Failed
+    /// with the canonical error message. Idempotent: subsequent calls on
+    /// a handoff already flagged exhausted return true without re-emitting
+    /// the FSM transition. Returns false on unknown handoff.
+    bool MarkHandoffBudgetExhausted(std::int64_t proposalId, int iterationBudget, std::string& outError);
 
     // ─── H5 poll-loop driver ─────────────────────────────────────────────
     //

@@ -1,0 +1,53 @@
+{
+  "total_count": 3,
+  "check_runs": [
+    {
+      "id": 88123456,
+      "node_id": "CR_kwDOAaB_d84AAQ0w",
+      "head_sha": "0123456789abcdef0123456789abcdef01234567",
+      "external_id": "build-001",
+      "url": "https://api.github.com/repos/smatchet/example/check-runs/88123456",
+      "details_url": "https://github.com/smatchet/example/runs/88123456",
+      "html_url": "https://github.com/smatchet/example/runs/88123456",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-05-10T14:00:00Z",
+      "completed_at": "2026-05-10T14:05:30Z",
+      "name": "build",
+      "check_suite": { "id": 9001 },
+      "app": { "id": 15368, "name": "GitHub Actions" }
+    },
+    {
+      "id": 88123457,
+      "node_id": "CR_kwDOAaB_d84AAQ0x",
+      "head_sha": "0123456789abcdef0123456789abcdef01234567",
+      "external_id": "tests-001",
+      "url": "https://api.github.com/repos/smatchet/example/check-runs/88123457",
+      "details_url": "https://github.com/smatchet/example/runs/88123457",
+      "html_url": "https://github.com/smatchet/example/runs/88123457",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-05-10T14:00:10Z",
+      "completed_at": "2026-05-10T14:09:00Z",
+      "name": "tests",
+      "check_suite": { "id": 9001 },
+      "app": { "id": 15368, "name": "GitHub Actions" }
+    },
+    {
+      "id": 88123458,
+      "node_id": "CR_kwDOAaB_d84AAQ0y",
+      "head_sha": "0123456789abcdef0123456789abcdef01234567",
+      "external_id": "lint-001",
+      "url": "https://api.github.com/repos/smatchet/example/check-runs/88123458",
+      "details_url": "https://github.com/smatchet/example/runs/88123458",
+      "html_url": "https://github.com/smatchet/example/runs/88123458",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-05-10T14:00:20Z",
+      "completed_at": null,
+      "name": "lint",
+      "check_suite": { "id": 9001 },
+      "app": { "id": 15368, "name": "GitHub Actions" }
+    }
+  ]
+}
