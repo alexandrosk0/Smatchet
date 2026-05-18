@@ -18,6 +18,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_panel.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_handoff_panel.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_handoff_button.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12

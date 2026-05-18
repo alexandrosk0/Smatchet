@@ -498,6 +498,72 @@ TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: shadow ItemId i
     router.UnregisterInputText(ai);
 }
 
+TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: AI Assistant composite flow") {
+    // PR #249 (bf9ce67f) regression — composite check that mirrors what the
+    // production AI Assistant panel does on each frame the panel is open:
+    //   1. RegisterAiAssistantInputText (panel-level mirror, ItemId=0).
+    //   2. RegisterInputTextWithItemId (wrapper-level, real ItemId).
+    //   3. InsertIntoFocusedInputText with matching activeId.
+    //   4. Drain ConsumePendingReloadItemId on the next frame.
+    // Without the fix, step 4 would observe 0 and ImGui would overwrite the
+    // splice. With the fix, step 4 observes the real ItemId so the AI panel
+    // can call ImGuiInputTextState::ReloadUserBufAndMoveToEnd before its
+    // InputTextMultiline draw.
+    DictationInsertionRouter router;
+    char ai[64] = {0};
+    constexpr unsigned int kAiId = 0xA1A551ADu;
+
+    // (1) Panel-level mirror — sets aiAssistantBuf_ but the entry's ItemId
+    //     is still 0 because the wrapper-level register hasn't run.
+    router.RegisterAiAssistantInputText(ai, sizeof(ai), nullptr);
+    // (2) Wrapper-level register — same buf pointer but with the real ImGui
+    //     item id. The router de-duplicates by buf so we end up with ONE
+    //     entry whose ItemId is now kAiId.
+    router.RegisterInputTextWithItemId(ai, sizeof(ai), nullptr, kAiId);
+    REQUIRE(router.RegisteredCountForTest() == 1u);
+    REQUIRE(router.IsFocusedTargetAiAssistant());
+
+    // Pre-condition: no reload pending before any splice.
+    CHECK(router.ConsumePendingReloadItemId() == 0u);
+
+    // (3) Splice — matches activeId, arms the reload slot.
+    router.InsertIntoFocusedInputText("hello.", kAiId);
+    CHECK(std::string(ai) == "hello.");
+
+    // (4) Drain — production AI panel does this BEFORE InputTextMultiline,
+    //     calls ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd() so
+    //     ImGui re-reads ai instead of clobbering it with stale state->TextA.
+    CHECK(router.ConsumePendingReloadItemId() == kAiId);
+    // Test-and-clear semantics — a second drain reads 0 (no reload pending).
+    CHECK(router.ConsumePendingReloadItemId() == 0u);
+
+    router.UnregisterInputText(ai);
+}
+
+TEST_CASE("DictationInsertionRouter::auto-send callback fires only when registered + triggered") {
+    // PR #249 (bf9ce67f) and PR #246 wiring — the auto-send callback the AI
+    // Assistant panel registers must be a strict pass-through gate. We pin:
+    //   - TriggerAiAssistantSend with no callback registered is a no-op.
+    //   - SetAiAssistantSendCallback({}) clears the callback (scenarios use
+    //     this on teardown to prevent stale observer leakage).
+    //   - The callback fires on TriggerAiAssistantSend.
+    DictationInsertionRouter router;
+    int fires = 0;
+    router.TriggerAiAssistantSend(); // no callback yet — no-op + no crash.
+    CHECK(fires == 0);
+
+    router.SetAiAssistantSendCallback([&fires]() { ++fires; });
+    router.TriggerAiAssistantSend();
+    CHECK(fires == 1);
+    router.TriggerAiAssistantSend();
+    CHECK(fires == 2);
+
+    // Clearing the callback prevents further fires (e.g. scenario teardown).
+    router.SetAiAssistantSendCallback({});
+    router.TriggerAiAssistantSend();
+    CHECK(fires == 2);
+}
+
 TEST_CASE("DictationInsertionRouter::IsFocusedTargetAiAssistant: false when another buf is the front entry") {
     // If a different widget is the focused/front entry, even with the AI
     // buffer still registered (panel open but AI input not focused), the

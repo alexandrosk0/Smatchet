@@ -776,6 +776,13 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
         AppController* app = state->app;
         WhisperPlugin::PhaseEState* localState = state;
+        // Mirror the production indicator wire-up — the menu-bar "REC" → amber
+        // "Transcribing..." switchover (SmatchetUI_MainMenu.cpp:492-499) keys
+        // off this flag pair. Without it, the mock seam couldn't exercise cell 4
+        // (Transcribing indicator) at all. Cleared inside the post-back on the
+        // UI thread so the splice and indicator-clear land in the same frame,
+        // matching the production semantics at WhisperPlugin.cpp:874-876.
+        g_dictationRouter.SetTranscribing(true);
         app->LaunchBackgroundTask([app, localState, mock]() {
             // Simulate the wall-clock delay a real round-trip would incur so
             // the scenario observes the same press → asynchronous-post → insert
@@ -791,6 +798,20 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
                 g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
                 LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription",
                           text.size());
+                // Mirror production auto-send-on-punctuation gate
+                // (WhisperPlugin.cpp:867-873) — required for scenario coverage
+                // of the AI Assistant hands-free chat round-trip. Config is
+                // re-read here so the scenario can flip the pref between
+                // press and release without restarting the plugin.
+                const TrackerConfig cfgPost = ConfigManager::Load();
+                const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
+                const bool endsPunct = EndsWithSentencePunctuation(text);
+                if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
+                    LOG_DEBUG("Whisper hotkey (mock): auto-send on punctuation triggered for AI "
+                              "Assistant");
+                    g_dictationRouter.TriggerAiAssistantSend();
+                }
+                g_dictationRouter.SetTranscribing(false);
             });
         });
         return;

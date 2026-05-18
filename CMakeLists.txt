@@ -616,11 +616,13 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Smatc
 # build must not compile it. The matching RegisterFactory call in
 # AppController.cpp is also #ifdef'd on SMATCHET_WITH_WHISPER.
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp")
 if(SMATCHET_WITH_WHISPER)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()

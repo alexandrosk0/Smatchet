@@ -1427,6 +1427,15 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario();
         return MakeWhisperDictationScenario();
     });
+    // PR #249 (bf9ce67f) regression gate — focuses the AI Assistant chat
+    // input via router registration + non-zero ItemId so the
+    // ReloadUserBufAndMoveToEnd half of the fix is exercised end-to-end.
+    // Source-list conditional (CMakeLists.txt) + ifdef-wrapped here for the
+    // same reason as the dictation-roundtrip factory.
+    scenarioRunner_->RegisterFactory("whisper-ai-assistant-autosend", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperAiAssistantAutosendScenario();
+        return MakeWhisperAiAssistantAutosendScenario();
+    });
 #endif
 
 #if defined(SMATCHET_WITH_AGENTIC)
