@@ -165,6 +165,12 @@ struct UiDrawSession {
     /// AgentProposalStore::Query at ~1 Hz while open. Not persisted across
     /// process restarts — agentic flow is a per-session inspect-and-act tool.
     bool showAgentProposals = false;
+
+    /// Agent handoffs panel (H8). Toggled from the View menu; the panel polls
+    /// AgenticHandoffController::SnapshotActive at ~1 Hz while open. Same
+    /// non-persistence rationale as showAgentProposals — handoff state is a
+    /// per-session inspect-and-act tool.
+    bool showAgentHandoffs = false;
 #endif
 
 #if defined(SMATCHET_WITH_AI)

@@ -16,6 +16,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_prefs_autosave_flow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_panel.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/agent_handoff_panel.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12
