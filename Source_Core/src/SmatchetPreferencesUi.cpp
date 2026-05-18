@@ -1444,9 +1444,21 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 if (inFlight) {
                     ImGui::BeginDisabled(true);
                 }
-                if (ImGui::Button(
-                        SmatchetLocalization::T("whisper.preferences.testMic.button",
-                                                "Test microphone (3 s)"))) {
+                const char* micSpinnerGlyph = "|";
+                if (inFlight) {
+                    const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
+                    micSpinnerGlyph = (slot == 0)   ? "|"
+                                      : (slot == 1) ? "/"
+                                      : (slot == 2) ? "-"
+                                                    : "\\";
+                }
+                char micLabel[128];
+                std::snprintf(micLabel, sizeof(micLabel),
+                              inFlight ? "%s  %s" : "%s",
+                              SmatchetLocalization::T("whisper.preferences.testMic.button",
+                                                      "Test microphone (3 s)"),
+                              micSpinnerGlyph);
+                if (ImGui::Button(micLabel)) {
                     s_micTestInFlight.store(true, std::memory_order_release);
                     s_micTestResult = "Capturing...";
                     s_micTestResultType = 0;
@@ -1539,9 +1551,26 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 if (inFlight) {
                     ImGui::BeginDisabled(true);
                 }
-                if (ImGui::Button(
-                        SmatchetLocalization::T("whisper.preferences.testE2E.button",
-                                                "Test end-to-end (capture 4 s + transcribe)"))) {
+                // Cheap rotating glyph spinner so the disabled-button state
+                // doesn't look frozen during the multi-second local-model
+                // transcribe pipeline. ImGui::GetTime() is in seconds; pick
+                // one of four glyphs per ~120 ms.
+                const char* spinnerGlyph = "|";
+                if (inFlight) {
+                    const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
+                    spinnerGlyph = (slot == 0)   ? "|"
+                                   : (slot == 1) ? "/"
+                                   : (slot == 2) ? "-"
+                                                 : "\\";
+                }
+                char e2eLabel[128];
+                std::snprintf(e2eLabel, sizeof(e2eLabel),
+                              inFlight ? "%s  %s"
+                                       : "%s",
+                              SmatchetLocalization::T("whisper.preferences.testE2E.button",
+                                                      "Test end-to-end (capture 4 s + transcribe)"),
+                              spinnerGlyph);
+                if (ImGui::Button(e2eLabel)) {
                     s_e2eInFlight.store(true, std::memory_order_release);
                     s_e2eResult = "Recording 4 s — speak now...";
                     s_e2eResultType = 0;
@@ -1617,6 +1646,16 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
 
                         // --- Capture once, route by effectiveMode below.
+                        // Per-phase status updates keep the user informed —
+                        // local-model transcription on medium.en can take
+                        // 5+ seconds, and the "button disabled, nothing
+                        // visible" silence was confusing.
+                        const std::string modeForUi = effectiveMode;
+                        dispatcher.PostToMainThread([modeForUi]() {
+                            s_e2eResult = std::string("[1/3] Capturing 4 s (route=") +
+                                          modeForUi + ") — speak now...";
+                            s_e2eResultType = 0;
+                        });
                         smatchet::whisper::WindowsAudioCapture cap;
                         std::string err;
                         if (!cap.Start(err)) {
@@ -1633,6 +1672,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         cap.Stop();
                         std::vector<std::int16_t> pcm;
                         cap.DrainCapturedPcm(pcm);
+                        dispatcher.PostToMainThread([modeForUi]() {
+                            s_e2eResult = std::string("[2/3] Captured; transcribing via ") +
+                                          modeForUi + "...";
+                            s_e2eResultType = 0;
+                        });
                         if (pcm.empty()) {
                             dispatcher.PostToMainThread([]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
@@ -1685,18 +1729,20 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             char buf[1024];
                             if (!ok) {
                                 std::snprintf(buf, sizeof(buf),
-                                              "Failed (%s, transcribe): captured %zu samples; %s",
+                                              "[3/3] Failed (%s, transcribe): captured %zu "
+                                              "samples; %s",
                                               mode.c_str(), samples, txErr.c_str());
                                 s_e2eResultType = 2;
                             } else if (text.empty()) {
                                 std::snprintf(buf, sizeof(buf),
-                                              "Warn (%s): captured %zu samples + transcribe ok, "
-                                              "but empty result (silence at recogniser)",
+                                              "[3/3] Warn (%s): captured %zu samples + "
+                                              "transcribe ok, but empty result (silence at "
+                                              "recogniser)",
                                               mode.c_str(), samples);
                                 s_e2eResultType = 2;
                             } else {
                                 std::snprintf(buf, sizeof(buf),
-                                              "OK (%s, %zu samples): \"%s\"",
+                                              "[3/3] OK (%s, %zu samples): \"%s\"",
                                               mode.c_str(), samples, text.c_str());
                                 s_e2eResultType = 1;
                             }
