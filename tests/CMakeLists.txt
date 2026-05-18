@@ -130,6 +130,11 @@ if(SMATCHET_WITH_AGENTIC)
         # interfaces. The fakes carry no HTTP / SQLite; AgentProposalStore is :memory:.
         Source_Core/AgenticTriageController.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticTriageController.cpp"
+        # T6 — pure UTF-8 preview-truncation helper extracted from SmatchetAgentProposalsUi
+        # so the test-delta gate covers the panel's text-formatting rule. UI behaviour
+        # itself stays bucket-E only.
+        Source_Core/SmatchetAgentProposalsUiPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

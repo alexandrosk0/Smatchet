@@ -1,5 +1,7 @@
 #include "SmatchetAgentProposalsUi.h"
 
+#include "SmatchetAgentProposalsUiPure.h"
+
 #include "AgentProposal.h"
 #include "AgentProposalStore.h"
 #include "AgenticInferenceClientPure.h"
@@ -30,7 +32,8 @@ const auto kRefreshInterval = std::chrono::milliseconds(1000);
 // Truncation threshold for the rationale preview line. The full text lives in
 // the CollapsingHeader's "Rationale" body; the header just shows the first
 // kRationalePreviewBytes for at-a-glance scan.
-const size_t kRationalePreviewBytes = 200;
+using SmatchetAgentProposalsUiPure::kRationalePreviewBytes;
+using SmatchetAgentProposalsUiPure::TruncatePreview;
 
 // TU-static cache + last-refresh timestamp. Lives at TU scope (not UiDrawSession)
 // because the panel owns its own polling cadence — a stray Render path with no
@@ -75,20 +78,6 @@ bool ShouldRefresh() {
         return true;
     }
     return (std::chrono::steady_clock::now() - g_lastRefreshAt) >= kRefreshInterval;
-}
-
-std::string TruncatePreview(const std::string& s) {
-    if (s.size() <= kRationalePreviewBytes) {
-        return s;
-    }
-    // Avoid splitting a UTF-8 continuation byte by walking back to the start
-    // of a code point. Per Smatchet's C++14 baseline we can't use string_view;
-    // a manual scan keeps the cost trivial vs the I/O it gates.
-    size_t cut = kRationalePreviewBytes;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) {
-        --cut;
-    }
-    return s.substr(0, cut) + std::string("...");
 }
 
 void TransitionAndToast(AppController& app, AgentProposal& row, AgentProposalState target) {
