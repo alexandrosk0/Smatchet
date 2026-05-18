@@ -47,6 +47,10 @@ add_executable(SmatchetTests
     Source_Core/AiEndpointSanitize.test.cpp
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
+    Source_Core/SubprocessCapturePure.test.cpp
+    Source_Core/SubprocessCapture.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -221,5 +225,27 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         -static
     )
 endif()
+
+# Helper executables for SubprocessCapture.test.cpp (H1 — agentic-flow
+# handoff). These are tiny stdlib-only binaries the doctest spawns to
+# exercise exit codes, timeouts, cancel tokens, and stdout caps without
+# depending on platform shell builtins. The resolved binary directory is
+# threaded into SmatchetTests as a compile-time string so the test
+# discovers the helpers without env vars (per the H1 plan's locked
+# decision #10 in agentic-coding-handoff.md).
+add_executable(subproc_helper_exit _helpers/subproc_helper_exit.cpp)
+add_executable(subproc_helper_sleep _helpers/subproc_helper_sleep.cpp)
+add_executable(subproc_helper_flood _helpers/subproc_helper_flood.cpp)
+target_compile_features(subproc_helper_exit PRIVATE cxx_std_14)
+target_compile_features(subproc_helper_sleep PRIVATE cxx_std_14)
+target_compile_features(subproc_helper_flood PRIVATE cxx_std_14)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(subproc_helper_exit PRIVATE -static-libgcc -static-libstdc++ -static)
+    target_link_options(subproc_helper_sleep PRIVATE -static-libgcc -static-libstdc++ -static)
+    target_link_options(subproc_helper_flood PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
+add_dependencies(SmatchetTests subproc_helper_exit subproc_helper_sleep subproc_helper_flood)
+target_compile_definitions(SmatchetTests PRIVATE
+    "SMATCHET_TEST_HELPER_DIR=\"$<TARGET_FILE_DIR:subproc_helper_exit>\"")
 
 add_test(NAME smatchet_tests COMMAND SmatchetTests)
