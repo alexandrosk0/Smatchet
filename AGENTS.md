@@ -69,6 +69,40 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
 
+## Autonomous ship-loop default
+
+**Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
+
+```
+diagnose → fix → build → commit → push → open PR → squash-merge → git-janitor cleanup → backlog entry
+```
+
+All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
+
+**Why a default**: harnesses that drip-step every stage create N round-trips for a task that needs one. The user already chose the task; the loop is the cheapest way to deliver it. Other harnesses (Codex / Cursor / Aider) read AGENTS.md and need the rule too — user-private memory is not portable.
+
+**Exceptions** (loop pauses or stops):
+
+1. **Debug-mode pause-loop** — user prompt matches the `debug-detective` trigger row (see § Delegation § Trigger auto-activation). The pause-loop in § Debug-mode pause-loop **overrides** the ship-loop for the duration of the investigation.
+2. **Destructive ops outside loop** — `git reset --hard`, `git push --force` to a shared branch, `git branch -D`, `gh pr merge` of a non-self PR, `rm -rf` outside the worktree, schema drops. These require explicit confirmation per § Project rules § Destructive git ops in shared worktrees.
+3. **Cross-repo or external-service mutations** — anything that writes outside the current repo or calls a third-party API with side effects (posting to Slack, sending email, modifying a Jira ticket the user didn't ask for). Confirm before acting.
+4. **Anything not previously authorised in a durable rule** — durable = recorded in AGENTS.md, CLAUDE.md, or this session's explicit user instructions. Verbal "ok in this conversation" doesn't bind future turns; encode it as a memory or doc edit if it should.
+
+### Post-ship turn-end protocol
+
+After the loop reaches PR-opened (or the equivalent terminal state for the task), end the turn with `AskUserQuestion` offering the four canonical next steps as discrete options:
+
+1. **Manual verify** — user wants to drive the change manually before merge.
+2. **Review PR** — user wants to read the diff / comment on GitHub.
+3. **Squash-merge** — user is satisfied; orchestrator merges + cleans up.
+4. **Done** — no further action; PR stays draft for later.
+
+Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
+
+**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and hand off to `git-janitor` directly.
+
+Cross-link: ship-loop reference in § Delegation; pause-loop override in § Delegation § Debug-mode pause-loop.
+
 ## Project rules
 
 **Build**: `cmake --build --preset ninja-iter-msys2` (iter), `ninja-debug-msys2` (debug), `ninja-publish-msys2` (publish). Exe at `build/<preset>/Smatchet.exe` (the CMake target is `SmatchetStandalone` but `OUTPUT_NAME` ships as `Smatchet`).

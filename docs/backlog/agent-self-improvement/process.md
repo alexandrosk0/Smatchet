@@ -13,21 +13,9 @@
   Status: open
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · orchestrator · [process] · P2 — Autonomous ship-loop policy lives only in private user memory; not in `AGENTS.md`
-  Details: User-private memory `feedback_autonomous_ship_loop.md` encodes the orchestrator-wide default — diagnose → fix → build → commit → push → open PR → squash-merge → `git-janitor` cleanup → backlog entry, all in one turn, with clarifications batched once at the start via `AskUserQuestion`. Other harnesses (Codex / Cursor / Aider) reading `AGENTS.md` get none of this and default to drip-step behaviour. Origin friction: PR #79 (user asked "why didn't the initial prompt trigger the whole sequence autonomously?"). Mitigated for Claude Code via user memory but the repo has no source of truth — losing the user memory loses the rule.
-  Concrete next action: add a new top-level section to `AGENTS.md` (suggested anchor `## Autonomous ship-loop default`) stating the full sequence + front-loaded-`AskUserQuestion` discipline + the exception list (debug-mode pause-loop, destructive ops outside loop, cross-repo / external-service mutations, anything not previously authorised in a durable rule). Cross-link from `§ Delegation` and from the debug-mode pause-loop carve-out (already added in PR #178). ~20 min doc edit.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · perf-measure · [process] · P2 — "extend the CLI / scenarios if missing, never ask user to run UI manually" rule not encoded in `agents/perf-measure.md`
   Details: User-private memory `feedback_perf_automation.md` (rooted in PR #66 lua-recorded-cmd-list perf friction — `priority-grid-scroll` scenario didn't cover the Lua provider path, manual `SmatchetHooks.lua` edit was required) encodes the rule "if a needed scenario does not exist, extend the CLI / scenario registry first; do not skip the measurement; never fall back to asking the user to run a live UI session". `agents/perf-measure.md` describes the happy-path `perf.reset → scenario.run → perf.snapshot` loop but neither it nor `agents/perf-detective.md` / `agents/spike-hunter.md` state the "extend or fail, never ask user manually" clause. Same gap as ship-loop policy — other harnesses get none of this.
   Concrete next action: add a Hard Rule to `agents/perf-measure.md` and a § Verification automation contract bullet to `agents/perf-detective.md` + `agents/spike-hunter.md`. Suggested wording: "If the validating scenario does not exist, extend `Source_Core/src/Commands/Scenarios/` (and the scenario-arg surface, if needed) as part of the same PR. Never substitute a manual UI session for a missing scenario — the measurement is the deliverable." ~15 min doc edit.
-  Status: open
-  Last-reviewed: 2026-05-17
-
-- 2026-05-17 · orchestrator · [process] · P3 — Post-ship next-step prompt rule (`AskUserQuestion` not bulleted list) not encoded in `AGENTS.md`
-  Details: User-private memory `feedback_post_ship_prompt.md` encodes the rule "after PR opens / fix verified / tests green, end the turn with `AskUserQuestion` offering Manual verify / Review PR / Squash-merge / Done — not a bulleted Next-steps list". The pattern lets the user advance the workflow with a single click instead of free-text composition. `AGENTS.md` mentions `AskUserQuestion` twice (parallel-plan overlap escalation L158, debug-mode clarify L279) but no post-ship discipline. Other harnesses default to bulleted prose.
-  Concrete next action: add a § Post-ship turn-end protocol bullet to `AGENTS.md` (under the autonomous ship-loop section once that lands per the P2 entry above). One paragraph naming the four canonical options (Manual verify / Review PR / Squash-merge / Done) and the skip-condition ("the user has already said 'no more changes' or 'ship it and stop'"). ~5 min doc edit, ideally batched with the ship-loop section. ~5 min.
   Status: open
   Last-reviewed: 2026-05-17
 
