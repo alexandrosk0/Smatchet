@@ -188,29 +188,24 @@ LRESULT CALLBACK HotkeyMsgWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 }
 
 bool EnsureMessageWindowClass() {
-    static bool s_registered = false;
-    static bool s_failure = false;
-    if (s_registered) {
-        return true;
-    }
-    if (s_failure) {
-        return false;
-    }
-    WNDCLASSEXW wc;
-    ZeroMemory(&wc, sizeof(wc));
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = HotkeyMsgWindowProc;
-    wc.hInstance = GetModuleHandleW(nullptr);
-    wc.lpszClassName = kMessageWindowClass;
-    if (RegisterClassExW(&wc) == 0) {
-        const DWORD err = GetLastError();
-        if (err != ERROR_CLASS_ALREADY_EXISTS) {
-            s_failure = true;
-            return false;
+    // Race-free one-shot registration. Multiple threads can hit Register() at
+    // once (Preferences rebind triggers ReregisterHotkey on the UI thread while
+    // the legacy hook thread is unwinding); call_once guarantees a single
+    // RegisterClassExW call and consistent visibility of the s_ok result.
+    static std::once_flag s_once;
+    static bool s_ok = false;
+    std::call_once(s_once, []() {
+        WNDCLASSEXW wc;
+        ZeroMemory(&wc, sizeof(wc));
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = HotkeyMsgWindowProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = kMessageWindowClass;
+        if (RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+            s_ok = true;
         }
-    }
-    s_registered = true;
-    return true;
+    });
+    return s_ok;
 }
 
 void HookThreadMain(GlobalHotkey_Win32::Impl* impl) {

@@ -91,7 +91,11 @@ class ModelDownloader {
 
   private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    // shared_ptr so the detached worker dispatched by Start() can co-own Impl
+    // until the task exits. The destructor only flips the cancel atom; the
+    // worker captures its own shared_ptr<Impl> and tears down on its own
+    // thread once cancellation is observed between HTTP chunks.
+    std::shared_ptr<Impl> impl_;
 };
 
 } // namespace whisper
