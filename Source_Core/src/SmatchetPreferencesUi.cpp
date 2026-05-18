@@ -1483,15 +1483,22 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     s_micTestInFlight.store(true, std::memory_order_release);
                     s_micTestResult = "Capturing...";
                     s_micTestResultType = 0;
-                    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
-                    std::thread([&dispatcher]() {
+                    // Use the app-owned background task pool instead of raw
+                    // std::thread().detach() so AppController::JoinBackgroundTasks
+                    // can join us at shutdown. PostToMainThread is itself
+                    // shutdown-safe (no-ops once the dispatcher's
+                    // shuttingDown_ atomic flips), but the worker thread
+                    // dangling on a dead dispatcher would still UB on the
+                    // captured-by-reference access — the LaunchBackgroundTask
+                    // contract eliminates both halves.
+                    app.LaunchBackgroundTask([&app]() {
                         smatchet::whisper::WindowsAudioCapture cap;
                         std::string startErr;
                         if (!cap.Start(startErr)) {
                             const std::string err = startErr.empty()
                                                        ? std::string("capture start failed")
                                                        : startErr;
-                            dispatcher.PostToMainThread([err]() {
+                            app.mainThreadDispatcher.PostToMainThread([err]() {
                                 s_micTestInFlight.store(false, std::memory_order_release);
                                 s_micTestResult = std::string("Failed: ") + err;
                                 s_micTestResultType = 2;
@@ -1513,7 +1520,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
                         const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
                         const std::size_t samples = pcm.size();
-                        dispatcher.PostToMainThread([samples, peakAbs, peakNorm]() {
+                        app.mainThreadDispatcher.PostToMainThread([samples, peakAbs, peakNorm]() {
                             s_micTestInFlight.store(false, std::memory_order_release);
                             char buf[256];
                             if (samples == 0) {
@@ -1543,7 +1550,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             }
                             s_micTestResult = buf;
                         });
-                    }).detach();
+                    });
                 }
                 if (inFlight) {
                     ImGui::EndDisabled();
@@ -1595,9 +1602,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     s_e2eInFlight.store(true, std::memory_order_release);
                     s_e2eResult = "Recording 4 s — speak now...";
                     s_e2eResultType = 0;
-                    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
                     TrackerConfig cfgSnap = d.cfg;
-                    std::thread([cfgSnap, &dispatcher]() {
+                    // App-owned background task (see Test microphone block
+                    // above for rationale): JoinBackgroundTasks at shutdown
+                    // waits for the worker, and PostToMainThread is
+                    // shutdown-safe via the dispatcher's shuttingDown_
+                    // atomic. No more dangling-reference UAF.
+                    app.LaunchBackgroundTask([cfgSnap, &app]() {
                         // --- Resolve route BEFORE spending 4 s capturing,
                         // so cloud-only with no key / local-only with no
                         // model fail fast.
@@ -1658,7 +1669,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             }
                         }
                         if (!fastFail.empty()) {
-                            dispatcher.PostToMainThread([fastFail]() {
+                            app.mainThreadDispatcher.PostToMainThread([fastFail]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
                                 s_e2eResult = std::string("Failed: ") + fastFail;
                                 s_e2eResultType = 2;
@@ -1672,7 +1683,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         // 5+ seconds, and the "button disabled, nothing
                         // visible" silence was confusing.
                         const std::string modeForUi = effectiveMode;
-                        dispatcher.PostToMainThread([modeForUi]() {
+                        app.mainThreadDispatcher.PostToMainThread([modeForUi]() {
                             s_e2eResult = std::string("[1/3] Capturing 4 s (route=") +
                                           modeForUi + ") — speak now...";
                             s_e2eResultType = 0;
@@ -1682,7 +1693,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (!cap.Start(err)) {
                             const std::string e =
                                 err.empty() ? std::string("capture start failed") : err;
-                            dispatcher.PostToMainThread([e]() {
+                            app.mainThreadDispatcher.PostToMainThread([e]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
                                 s_e2eResult = std::string("Failed (capture): ") + e;
                                 s_e2eResultType = 2;
@@ -1693,13 +1704,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         cap.Stop();
                         std::vector<std::int16_t> pcm;
                         cap.DrainCapturedPcm(pcm);
-                        dispatcher.PostToMainThread([modeForUi]() {
+                        app.mainThreadDispatcher.PostToMainThread([modeForUi]() {
                             s_e2eResult = std::string("[2/3] Captured; transcribing via ") +
                                           modeForUi + "...";
                             s_e2eResultType = 0;
                         });
                         if (pcm.empty()) {
-                            dispatcher.PostToMainThread([]() {
+                            app.mainThreadDispatcher.PostToMainThread([]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
                                 s_e2eResult =
                                     "Failed: 0 PCM samples (mic / consent / format issue — "
@@ -1745,7 +1756,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         }
 
                         const std::string mode = effectiveMode;
-                        dispatcher.PostToMainThread([ok, txErr, text, samples, mode]() {
+                        app.mainThreadDispatcher.PostToMainThread([ok, txErr, text, samples, mode]() {
                             s_e2eInFlight.store(false, std::memory_order_release);
                             char buf[1024];
                             if (!ok) {
@@ -1769,7 +1780,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             }
                             s_e2eResult = buf;
                         });
-                    }).detach();
+                    });
                 }
                 if (inFlight) {
                     ImGui::EndDisabled();
