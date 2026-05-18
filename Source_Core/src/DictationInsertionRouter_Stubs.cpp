@@ -48,3 +48,17 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*t
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
     return 0;
 }
+
+void DictationInsertionRouter::RegisterAiAssistantInputText(char* /*buf*/, std::size_t /*cap*/,
+                                                            int* /*cursor*/) {
+    // Same no-op rationale as RegisterInputText — drift between this TU and
+    // the real impl is caught at CI link time by build-windows-no-whisper.
+}
+
+bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
+    return false;
+}
+
+void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> /*cb*/) {}
+
+void DictationInsertionRouter::TriggerAiAssistantSend() {}

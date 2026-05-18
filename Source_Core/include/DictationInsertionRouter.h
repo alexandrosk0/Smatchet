@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -60,6 +61,32 @@ class DictationInsertionRouter : public IDictationHost {
     /// Returns 0 when no capture has run since the last `Reset` / startup.
     float GetLastPeakAmplitude() const;
 
+    /// Register `buf` as the AI Assistant chat-input buffer. Same shape as
+    /// `RegisterInputText` but additionally records the buf pointer in an
+    /// `aiAssistantBuf_` slot so `IsFocusedTargetAiAssistant` can answer
+    /// truthfully. Phase F — wires the auto-send-on-punctuation flow without
+    /// teaching the generic InputText hook about the AI Assistant.
+    void RegisterAiAssistantInputText(char* buf, std::size_t cap, int* cursor);
+
+    /// Returns true when the splice target the next `InsertIntoFocusedInputText`
+    /// would use is the AI Assistant chat input. Today the router picks the
+    /// first registered entry, so this returns whether that entry's buffer
+    /// pointer matches the registered AI Assistant buffer. Cheap; safe to
+    /// call after every insertion on the UI thread.
+    bool IsFocusedTargetAiAssistant() const;
+
+    /// Register a one-time send callback the router fires on auto-send. The
+    /// callback runs on the UI thread (caller is responsible for being on
+    /// the UI thread before invoking via the worker → MainThreadDispatcher
+    /// path). Stored under the same mutex as `entries_`; copying a
+    /// `std::function` is cheap.
+    void SetAiAssistantSendCallback(std::function<void()> cb);
+
+    /// Trigger the AI Assistant send callback, if one is registered. Used by
+    /// the post-insertion auto-send-on-punctuation path. No-op when no
+    /// callback was registered (e.g. AI panel never opened this session).
+    void TriggerAiAssistantSend();
+
   private:
     struct Entry {
         char* Buf = nullptr;
@@ -69,6 +96,13 @@ class DictationInsertionRouter : public IDictationHost {
 
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
+
+    // Phase F — AI Assistant identification + auto-send hook. The router stores
+    // the AI Assistant's char-buffer pointer separately from the generic
+    // entries list; equality on the buf pointer is the cheap "is the focused
+    // splice target the AI Assistant?" answer.
+    char* aiAssistantBuf_ = nullptr;
+    std::function<void()> aiAssistantSendCb_;
 
     // Set/read across threads — no mutex round-trip on the UI poll path.
     std::atomic<bool> recording_{false};

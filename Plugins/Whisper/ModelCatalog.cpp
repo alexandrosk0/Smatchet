@@ -55,6 +55,17 @@ const std::vector<Entry>& BuildCatalog() {
         small.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
         v.push_back(small);
 
+        // Phase F addition — opt-in highest-accuracy model. CPU-heavy and ~1.5 GB on
+        // disk; surfaced through Preferences only (the first-run banner sticks to
+        // tiny / base / small for guided selection).
+        Entry medium;
+        medium.Id = "ggml-medium.en";
+        medium.DisplayName = "Highest accuracy (1.5 GB) — CPU-heavy";
+        medium.SizeBytes = 1533763059ull; // ~1.43 GiB on disk; rounded "~1.5 GB" in UI
+        medium.Sha256 = "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e8faa4eccc8d0b5f";
+        medium.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin";
+        v.push_back(medium);
+
         return v;
     }();
     return kEntries;

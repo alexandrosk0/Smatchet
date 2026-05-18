@@ -44,6 +44,15 @@ constexpr int kInputBufCap = 8 * 1024;
 std::array<char, kInputBufCap> s_inputCharBuf{};
 bool s_inputCharBufSeeded = false;
 
+// Phase F — auto-send-on-punctuation hand-off slot. The dictation router calls
+// the registered send callback from `RunHotkeyRelease_Worker`'s UI-thread
+// post-insertion path (MainThreadDispatcher drain); the callback flips this
+// atomic. The next AI-assistant panel draw observes the flag and invokes
+// `dispatchSend()` with the just-inserted text. Atomic so a flip-and-poll race
+// across frames is well-defined; the actual send still runs on the UI thread.
+std::atomic<bool> s_pendingAutoSend{false};
+bool s_autoSendCallbackRegistered = false;
+
 // UX pillar 2: ConfigManager::Save performs a synchronous JSON encode + atomic
 // file replace; even when the user is only toggling a checkbox the resulting
 // disk write can easily breach the 6.94 ms per-frame UI budget on a slow disk.
@@ -274,6 +283,18 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         submittedByKey = true;
     }
 
+    // Phase F — auto-send-on-punctuation hand-off. `s_pendingAutoSend` is set
+    // by the dictation router callback (registered in
+    // SmatchetDrawAiAssistantPanel) after a Whisper transcription lands on the
+    // AI Assistant input AND ends with sentence-final punctuation. Defer the
+    // dispatch by one frame (we observe the flag here, AFTER the InputText
+    // call this frame, so the buffer mirror in `d.assistantInputBuf` is fresh).
+    if (s_pendingAutoSend.exchange(false, std::memory_order_acq_rel) && !sendDisabled) {
+        dispatchSend();
+        ImGui::SetKeyboardFocusHere(-1);
+        submittedByKey = true;
+    }
+
     if (sendDisabled) {
         ImGui::BeginDisabled();
     }
@@ -316,8 +337,19 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     }
     // Register the chat-input buffer with the dictation router for the
     // duration of the panel being open. Re-registering each frame is cheap
-    // (router treats the buf pointer as an idempotent key).
-    g_dictationRouter.RegisterInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
+    // (router treats the buf pointer as an idempotent key). Phase F — uses
+    // the AI-Assistant flavour so the post-insertion auto-send-on-punctuation
+    // check can identify this splice target. The callback is registered once
+    // (idempotent flag); it simply flips a static atomic that the next panel
+    // draw observes — keeps the work on the UI thread without re-entering
+    // ImGui state from the dispatcher drain context.
+    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(),
+                                                   nullptr);
+    if (!s_autoSendCallbackRegistered) {
+        s_autoSendCallbackRegistered = true;
+        g_dictationRouter.SetAiAssistantSendCallback(
+            []() { s_pendingAutoSend.store(true, std::memory_order_release); });
+    }
 
     // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
     // owns layout, sizing, and the resize/swap chrome. The panel attaches to the

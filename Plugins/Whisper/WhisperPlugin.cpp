@@ -20,6 +20,7 @@
 #include "MainThreadDispatcher.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
+#include "SilenceTrim.h"
 #include "WavWriter.h"
 #include "WhisperApiClient.h"
 #include "WhisperApiKeyResolve.h"
@@ -541,6 +542,32 @@ bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPc
     }
 
     const TrackerConfig cfg = ConfigManager::Load();
+
+    // Phase F audio-shaping pass — trim leading/trailing silence (when
+    // WhisperTrim is on) and clamp to WhisperMaxClipSec seconds. Both steps
+    // run on the captured PCM before mode routing so cloud payload + local
+    // inference both see the same shaped buffer. Pure helpers; cheap (< 1 ms
+    // on 10 s clips at 16 kHz).
+    std::vector<std::int16_t> shapedPcm = capturedPcm;
+    if (cfg.WhisperTrim) {
+        shapedPcm = smatchet::whisper::pure::TrimLeadingTrailingSilence(
+            shapedPcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate);
+    }
+    if (cfg.WhisperMaxClipSec > 0) {
+        const std::size_t maxSamples =
+            static_cast<std::size_t>(cfg.WhisperMaxClipSec) *
+            static_cast<std::size_t>(smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate);
+        if (shapedPcm.size() > maxSamples) {
+            LOG_WARN("Whisper: clip exceeded WhisperMaxClipSec=%d (had %zu samples, capping to %zu)",
+                     cfg.WhisperMaxClipSec, shapedPcm.size(), maxSamples);
+            shapedPcm = smatchet::whisper::pure::CapClipSamples(shapedPcm, maxSamples);
+        }
+    }
+    if (shapedPcm.empty()) {
+        outError = "audio buffer empty after trim (entire clip below silence threshold)";
+        return false;
+    }
+
     const std::string modelDir = ResolveWhisperModelDir();
     const bool localPresent = !cfg.WhisperModel.empty() &&
                               smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
@@ -560,6 +587,12 @@ bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPc
         effectiveMode = localPresent ? "local" : "cloud";
     }
 
+    // Phase F — forward cfg.WhisperLanguage to whichever backend runs.
+    // Default "en" matches the ggml-*.en models we ship; "auto" / empty
+    // asks the backend to autodetect (only useful with a multilingual model
+    // or against the cloud endpoint).
+    const std::string langArg = cfg.WhisperLanguage.empty() ? std::string("en") : cfg.WhisperLanguage;
+
     if (effectiveMode == "local") {
         const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
         smatchet::whisper::WhisperLocal local;
@@ -569,7 +602,7 @@ bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPc
             return false;
         }
         std::string err;
-        if (!local.Transcribe(capturedPcm, outText, err)) {
+        if (!local.Transcribe(shapedPcm, langArg, outText, err)) {
             outError = err;
             return false;
         }
@@ -588,7 +621,7 @@ bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPc
     }
 
     const std::vector<std::uint8_t> wavBytes = smatchet::whisper::pure::EncodeWav(
-        capturedPcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
+        shapedPcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
         smatchet::whisper::WindowsAudioCapture::kCaptureChannels);
     if (wavBytes.empty()) {
         outError = "WAV payload is empty (zero captured samples)";
@@ -596,7 +629,21 @@ bool RunTranscriptionPipeline_Worker(const std::vector<std::int16_t>& capturedPc
     }
 
     smatchet::whisper::WhisperApiClient client;
-    return client.Transcribe(wavBytes, apiKey, outText, outError);
+    return client.Transcribe(wavBytes, apiKey, langArg, outText, outError);
+}
+
+// Phase F — true when `text` ends with sentence-final punctuation, ignoring
+// trailing whitespace. Pure helper; the auto-send-on-punctuation post-insertion
+// path uses it to decide whether to fire the AI Assistant Send action.
+bool EndsWithSentencePunctuation(const std::string& text) {
+    for (std::size_t i = text.size(); i > 0; --i) {
+        const char c = text[i - 1];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            continue;
+        }
+        return c == '.' || c == '!' || c == '?';
+    }
+    return false;
 }
 
 // Hotkey-press path — worker-thread entry point. Starts capture if consent
@@ -684,9 +731,23 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
             return;
         }
         // UI-thread hand-off — the router splices into the focused InputText.
+        // Phase F — if the splice target is the AI Assistant chat input AND
+        // the transcription ends with sentence-final punctuation AND the
+        // cfg.WhisperAutoSendOnPunctuation toggle is on, fire the AI Assistant
+        // Send action so hands-free chat round-trips work. Configuration is
+        // re-read on the UI thread (cheap; ConfigManager has an in-memory
+        // cache) to pick up any Preferences toggle that landed between the
+        // hotkey press and the transcription completing.
         app->mainThreadDispatcher.PostToMainThread([text]() {
             g_dictationRouter.InsertIntoFocusedInputText(text);
             LOG_DEBUG("Whisper hotkey: inserted %zu bytes of transcription", text.size());
+            const TrackerConfig cfgPost = ConfigManager::Load();
+            if (cfgPost.WhisperAutoSendOnPunctuation &&
+                g_dictationRouter.IsFocusedTargetAiAssistant() &&
+                EndsWithSentencePunctuation(text)) {
+                LOG_DEBUG("Whisper hotkey: auto-send on punctuation triggered for AI Assistant");
+                g_dictationRouter.TriggerAiAssistantSend();
+            }
         });
     });
 }
@@ -756,14 +817,63 @@ smatchet::cmd::Command BuildSimulateReleaseCommand(WhisperPlugin::PhaseEState* s
 
 } // namespace
 
+// Phase F — process-wide singleton accessor. Set inside OnStart, cleared
+// inside OnStop. The Preferences UI uses this to call ReregisterHotkey
+// without threading the plugin pointer through AppController. Mutating two
+// callers race-free is not a concern: OnStart / OnStop run on the main
+// thread, and ReregisterHotkey is invoked from the UI thread Preferences
+// callback — strictly sequenced.
+namespace {
+WhisperPlugin* g_whisperPluginInstance = nullptr;
+} // namespace
+
+WhisperPlugin* WhisperPlugin::InstanceForUi() {
+    return g_whisperPluginInstance;
+}
+
 WhisperPlugin::WhisperPlugin() : phaseE_(new PhaseEState()) {}
 WhisperPlugin::~WhisperPlugin() = default;
+
+bool WhisperPlugin::ReregisterHotkey(const std::string& descriptor, std::string& outError) {
+    outError.clear();
+    if (!phaseE_) {
+        outError = "WhisperPlugin not started yet";
+        return false;
+    }
+    smatchet::whisper::hotkey::Hotkey hk;
+    std::string parseErr;
+    if (!smatchet::whisper::hotkey::Parse(descriptor, hk, parseErr)) {
+        outError = std::string("parse: ") + parseErr;
+        return false;
+    }
+    // Tear down the existing hook before installing the new one — the Win32
+    // global-hotkey hook owns a thread + message pump, so re-Register-ing
+    // without Unregister-ing first leaks the prior thread and leaves the
+    // stale combo firing. Unregister is idempotent.
+    phaseE_->hotkey.Unregister();
+    PhaseEState* state = phaseE_.get();
+    std::string regErr;
+    const bool ok = phaseE_->hotkey.Register(
+        hk,
+        [state]() { RunHotkeyPress_Worker(state); },
+        [state]() { RunHotkeyRelease_Worker(state); },
+        regErr);
+    if (!ok) {
+        outError = std::string("register: ") + regErr;
+        LOG_WARN("WhisperPlugin::ReregisterHotkey: failed to re-install hotkey '%s': %s",
+                 descriptor.c_str(), regErr.c_str());
+        return false;
+    }
+    LOG_INFO("WhisperPlugin::ReregisterHotkey: hotkey re-registered as '%s'", descriptor.c_str());
+    return true;
+}
 
 void WhisperPlugin::OnStart(AppController& app) {
     if (!phaseE_) {
         phaseE_.reset(new PhaseEState());
     }
     phaseE_->app = &app;
+    g_whisperPluginInstance = this;
 
     smatchet::cmd::CommandRegistry& reg = app.Commands();
     reg.Register(BuildStatusCommand(phaseE_.get()));
@@ -826,6 +936,9 @@ void WhisperPlugin::OnStop() {
         }
         g_dictationRouter.SetRecording(false);
         phaseE_->app = nullptr;
+    }
+    if (g_whisperPluginInstance == this) {
+        g_whisperPluginInstance = nullptr;
     }
     LOG_INFO("WhisperPlugin: stopped.");
 }

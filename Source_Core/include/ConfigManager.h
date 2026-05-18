@@ -292,6 +292,26 @@ struct TrackerConfig {
     // invariants. Persisted so a future Preferences "re-run setup" flow can
     // observe whether the user has ever consented.
     std::int64_t WhisperConsentTimestampSec = 0;
+    // Phase F — language hint forwarded to whisper.cpp (`whisper_full_params.language`)
+    // and to OpenAI's multipart `language` field. `"en"` selects English (default — the
+    // ggml-*.en models are English-only anyway); `"auto"` (or empty) asks the backend
+    // to autodetect from the 80+ supported language codes.
+    std::string WhisperLanguage = "en";
+    // Phase F — strip leading/trailing silence from captured PCM before insertion / upload.
+    // Implementation in Plugins/Whisper/SilenceTrim.cpp (peak-relative amplitude gate over
+    // 100 ms windows). Off-by-default for users who prefer raw audio; on by default for new
+    // installs because it tightens both latency (smaller cloud payload) and noise.
+    bool WhisperTrim = true;
+    // Phase F — hard cap on captured-clip length in seconds. 0 disables the cap; positive
+    // values clamp the captured PCM (post-trim) to `WhisperMaxClipSec` seconds before the
+    // worker dispatches transcription. Cap is clamped at <= 600 s (10 min) to guard
+    // against runaway cloud cost (~$0.006/minute on OpenAI Whisper API).
+    int WhisperMaxClipSec = 60;
+    // Phase F — when true, a transcription that lands on the AI Assistant chat input AND
+    // ends with sentence-final punctuation (".", "!", "?") triggers the same Send action
+    // a user clicking the Send button would. Off-by-default; opt-in because hands-free
+    // chat is a power-user shape and accidental sends are expensive.
+    bool WhisperAutoSendOnPunctuation = false;
 #endif
 
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---

@@ -15,12 +15,16 @@
 
 namespace cat = smatchet::whisper::catalog;
 
-TEST_CASE("ModelCatalog::All returns three English-only entries in ascending size") {
+TEST_CASE("ModelCatalog::All returns four English-only entries in ascending size") {
+    // Phase F: catalog grew from 3 -> 4 entries (added ggml-medium.en as the
+    // opt-in highest-accuracy Preferences-only row). Ascending-size invariant
+    // still holds across the full list.
     const auto& entries = cat::All();
-    CHECK(entries.size() == 3u);
-    if (entries.size() >= 3u) {
+    CHECK(entries.size() == 4u);
+    if (entries.size() >= 4u) {
         CHECK(entries[0].SizeBytes < entries[1].SizeBytes);
         CHECK(entries[1].SizeBytes < entries[2].SizeBytes);
+        CHECK(entries[2].SizeBytes < entries[3].SizeBytes);
     }
 }
 
@@ -39,8 +43,10 @@ TEST_CASE("ModelCatalog::All every entry has non-empty url + sha256 + display na
             CHECK(isHex);
         }
         CHECK(entries[i].SizeBytes > 0u);
-        // Smoke: url points at the canonical huggingface mirror.
-        CHECK(entries[i].Url.find("huggingface.co") != std::string::npos);
+        // Smoke: url points at the canonical huggingface mirror with the
+        // expected `ggml-` filename prefix.
+        CHECK(entries[i].Url.find(
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-") == 0u);
     }
 }
 
@@ -48,6 +54,9 @@ TEST_CASE("ModelCatalog::Find returns the matching entry for known ids") {
     CHECK(cat::Find("ggml-tiny.en") != nullptr);
     CHECK(cat::Find("ggml-base.en") != nullptr);
     CHECK(cat::Find("ggml-small.en") != nullptr);
+    // Phase F — medium.en is now a catalog entry. Surfaced through Preferences
+    // only; the first-run banner filters it out at the radio-button loop.
+    CHECK(cat::Find("ggml-medium.en") != nullptr);
     const auto* base = cat::Find("ggml-base.en");
     CHECK(base != nullptr);
     if (base != nullptr) {
@@ -57,8 +66,8 @@ TEST_CASE("ModelCatalog::Find returns the matching entry for known ids") {
 
 TEST_CASE("ModelCatalog::Find returns nullptr on miss / empty / unknown id") {
     CHECK(cat::Find(std::string()) == nullptr);
-    CHECK(cat::Find("ggml-medium.en") == nullptr); // not in Phase C catalog
-    CHECK(cat::Find("GGML-BASE.EN") == nullptr);   // case-sensitive match
+    CHECK(cat::Find("ggml-large.v3") == nullptr); // not in catalog (yet)
+    CHECK(cat::Find("GGML-BASE.EN") == nullptr);  // case-sensitive match
 }
 
 TEST_CASE("ModelCatalog::IsModelPresent returns false on empty inputs") {

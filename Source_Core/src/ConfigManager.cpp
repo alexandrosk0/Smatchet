@@ -235,6 +235,11 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["whisper_model"] = config.WhisperModel;
     j["whisper_hotkey"] = config.WhisperHotkey;
     j["whisper_consent_timestamp_sec"] = config.WhisperConsentTimestampSec;
+    // Phase F — language / trim / max-clip / auto-send. All additive; no schema bump.
+    j["whisper_language"] = config.WhisperLanguage;
+    j["whisper_trim"] = config.WhisperTrim;
+    j["whisper_max_clip_sec"] = config.WhisperMaxClipSec;
+    j["whisper_auto_send_on_punctuation"] = config.WhisperAutoSendOnPunctuation;
 #endif
     j["mcp_enabled"] = config.McpEnabled;
     j["mcp_port"] = config.McpPort;
@@ -634,6 +639,21 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
             cfg.WhisperConsentTimestampSec =
                 j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
+            // Phase F — language / trim / max-clip / auto-send (additive; defaults
+            // survive when the field is missing from older config files).
+            cfg.WhisperLanguage = j.value("whisper_language", cfg.WhisperLanguage);
+            cfg.WhisperTrim = j.value("whisper_trim", cfg.WhisperTrim);
+            cfg.WhisperMaxClipSec = j.value("whisper_max_clip_sec", cfg.WhisperMaxClipSec);
+            cfg.WhisperAutoSendOnPunctuation =
+                j.value("whisper_auto_send_on_punctuation", cfg.WhisperAutoSendOnPunctuation);
+            // Clamp WhisperMaxClipSec into the documented range so a hand-edited
+            // config can't drive runaway cloud cost. 0 disables; positive values
+            // clamp at 600 s.
+            if (cfg.WhisperMaxClipSec < 0) {
+                cfg.WhisperMaxClipSec = 0;
+            } else if (cfg.WhisperMaxClipSec > 600) {
+                cfg.WhisperMaxClipSec = 600;
+            }
 #endif
             cfg.AiOllamaBaseUrl = j.value("ai_ollama_base_url", cfg.AiOllamaBaseUrl);
             cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);

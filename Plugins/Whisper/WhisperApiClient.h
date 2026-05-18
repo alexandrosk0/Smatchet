@@ -49,6 +49,16 @@ class WhisperApiClient {
                     const std::string& apiKey,
                     std::string& outText,
                     std::string& outError);
+
+    /// Phase F language-aware overload. `language` is a two-letter ISO code
+    /// (e.g. "en", "fr") forwarded to OpenAI's multipart `language` field;
+    /// "auto" / empty omit the field so Whisper autodetects. All other
+    /// semantics match the no-arg `Transcribe` above.
+    bool Transcribe(const std::vector<std::uint8_t>& wavBytes,
+                    const std::string& apiKey,
+                    const std::string& language,
+                    std::string& outText,
+                    std::string& outError);
 };
 
 namespace pure {

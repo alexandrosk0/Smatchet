@@ -64,6 +64,15 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
                                   const std::string& apiKey,
                                   std::string& outText,
                                   std::string& outError) {
+    // Legacy entry point — no language hint, server-side autodetect.
+    return Transcribe(wavBytes, apiKey, std::string(), outText, outError);
+}
+
+bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
+                                  const std::string& apiKey,
+                                  const std::string& language,
+                                  std::string& outText,
+                                  std::string& outError) {
     outText.clear();
     outError.clear();
 
@@ -87,6 +96,10 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
     // can safely fall out of scope after this Post returns. Content-Type for
     // the file part is "audio/wav" so Whisper's audio-format auto-detect
     // takes the fast path.
+    //
+    // Phase F — append a `language` multipart part when the caller supplied a
+    // concrete ISO code. "auto" / empty omit the field so the server
+    // autodetects from its supported language set.
     const char* wavStart = reinterpret_cast<const char*>(wavBytes.data());
     const char* wavEnd = wavStart + wavBytes.size();
     cpr::Multipart multipart{
@@ -94,6 +107,9 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
         cpr::Part{"model", "whisper-1"},
         cpr::Part{"response_format", "json"},
     };
+    if (!language.empty() && language != "auto") {
+        multipart.parts.push_back(cpr::Part{"language", language});
+    }
 
     // Connect timeout: short so a hung DNS / TCP handshake doesn't freeze the
     // CLI for the user. Total timeout: 60s — Whisper API quotes p99 < 30s for
