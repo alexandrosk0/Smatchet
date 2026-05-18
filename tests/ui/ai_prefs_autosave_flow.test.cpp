@@ -37,6 +37,7 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "ConfigManager.h"
 #include "IAiClient.h"
+#include "MainThreadDispatcher.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -204,6 +205,11 @@ void ResetPrefsTestState() {
     g_ui.assistantPrefsTestResult.clear();
     g_ui.assistantPrefsTestResultType = 0;
     g_ui.assistantPrefsTestCancel.reset();
+    // SmatchetDrawPreferencesPanel's close-handler clears these fields every
+    // frame when showPreferences=false (cancel-on-close path,
+    // SmatchetPreferencesUi.cpp:197-206). Force it true so the probe flow
+    // can land its result.
+    g_ui.showPreferences = true;
 }
 
 void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
@@ -228,6 +234,7 @@ void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
         }
 
         AiClientFactory::SetTestOverride(nullptr);
+        g_ui.showPreferences = false;
 
         IM_CHECK(!g_ui.assistantPrefsTestInFlight);
         IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 1);
@@ -260,8 +267,12 @@ void RegisterVerifyOnSaveCancelOnCloseVariant(ImGuiTestEngine* engine) {
         g_ui.assistantPrefsTestInFlight = false;
 
         AiClientFactory::SetTestOverride(nullptr);
+        g_ui.showPreferences = false;
 
         IM_CHECK(!g_ui.assistantPrefsTestInFlight);
+        // Dispatcher callback short-circuited at the cancel guard, so the
+        // result line stays as the initial "Testing..." TriggerProbe set
+        // (type=0). The success branch's "Verified." (type=1) is NOT reached.
         IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 0);
     };
 }
