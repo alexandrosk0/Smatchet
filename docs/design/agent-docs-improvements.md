@@ -55,7 +55,7 @@ Validated against `docs/design/agentic-coding-handoff.md`, `agentic-flow-impleme
 **Source**: trigger when category > ~20 (per `docs/backlog/AGENT_SELF_IMPROVEMENT.md` triage spec). Current count: 27.
 
 **Procedure**:
-- Add `## Triage log` at top of `tooling.md` with sweep date 2026-05-18 + outcome counts
+- Add `## Triage log` at top of `tooling.md` with sweep date 2026-05-18 + outcome counts: `before` / `moved-to-parked` / `dedup-merged` / `escalated-to-external-blockers` / `after`. `dedup-merged` count covers entries that restate or near-duplicate an earlier item (e.g. the 2026-05-17 + 2026-05-16 Bucket-E tooltip-helper pair). Each dedup merge writes the survivor's entry with a `Supersedes: <date>` line referencing the dropped sibling so the audit trail is preserved without keeping both rows.
 - Reorder: P0 / P1 / P2-with-owner at top; stale P3 to a new `## Parked` section at bottom
 - 5 P2 items needing assignment (dated 2026-05-17):
   - test-author — `test-all.sh` worktree baseline drift (8 false fails)
@@ -207,8 +207,8 @@ After implementation, each must pass:
 - [ ] `process.md` no longer contains the 4 archived entries
 - [ ] `applied.md` gained 5 entries dated 2026-05-18
 - [ ] Action 3 outcome documented either in `docs/harness/SETUP.md` or `external-blockers.md`
-- [ ] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` still succeeds
-- [ ] `bash scripts/dev/test-all.sh` baseline unchanged
+- [ ] No C++ build verification needed — zero `Source_Core/` / `Plugins/` / `Target_Standalone/` touch across all 5 actions. Docs / agent prompts / backlog markdown only.
+- [ ] `tooling.md` `## Triage log` block shows non-zero `dedup-merged` count if any duplicate-pair entries were merged (e.g. the two Bucket-E tooltip-helper entries dated 2026-05-17 + 2026-05-16).
 
 ---
 
@@ -226,14 +226,31 @@ After implementation, each must pass:
 
 ---
 
-## Execution Order
+## Branch + PR strategy — single PR, four commits
 
-1. Actions 1+5 (batched commit) — ~25 min, clears 2 backlog entries
-2. Action 4 (security-review) — ~30 min, independent commit, clears 1 backlog entry + adds 1 new applied entry
-3. Action 3 (worktree-spawn investigation) — ~30 min, independent commit + probe outcome, clears 1 backlog entry
-4. Action 2 (`tooling.md` sweep) — ~60 min, independent commit, structural-only
+**Decision**: one PR (branch `chore/agent-docs-improvements`), four logical commits. Rationale:
 
-All four commits can ship in one PR or split into four PRs; orchestrator's call.
+- All five actions touch only docs / agent prompts / backlog markdown — zero C++. Reviewer cognitive load is dominated by reading prose, not auditing code paths; bundling avoids four separate review-cycle ramp-ups.
+- Each commit is independently reverable (clean per-action scope) so cherry-pick / partial revert remains cheap if one action proves wrong.
+- Single CI cycle vs four (no build cost — pure docs — but still saves CI minutes on coverage / lint runs).
+- Single applied.md commit set in one PR keeps the backlog-archive audit trail contiguous.
+
+**Branch**: `chore/agent-docs-improvements` off `origin/develop`.
+
+**Commit sequence**:
+
+1. **`chore(agents): autonomous ship-loop + post-ship protocol (Actions 1+5)`** — ~25 min, clears 2 backlog entries (process.md ship-loop P2 + post-ship P3). Single commit because Action 5 is a sub-bullet under Action 1's new section.
+2. **`docs(agents): security-review AI + handoff attack surface (Action 4)`** — ~30 min, clears 1 backlog entry, adds 1 new applied entry for the handoff surface.
+3. **`chore(harness): worktree-spawn base investigation outcome (Action 3)`** — ~30 min, clears 1 backlog entry. Commit either patches `docs/harness/SETUP.md` (config-knob path) or appends to `external-blockers.md` (escalation path) — final commit message reflects which.
+4. **`chore(backlog): tooling.md triage sweep — 27 entries (Action 2)`** — ~60 min, structural-only reorder + `## Triage log` + `## Parked` block + dedup merges.
+
+**PR title**: `chore(agents): clear 4 P2/P3 backlog entries + tooling.md triage sweep`
+
+**PR body**: cross-link this design doc (`docs/design/agent-docs-improvements.md`) + list the 4 archived backlog entry titles + dedup count from the triage sweep.
+
+**No bucket-E / build verification** — pure docs PR. CI runs lint / coverage on touched files only; no `cmake --build` invocation needed.
+
+**Lock claim**: this plan's write set (AGENTS.md, agents/security-review.md, docs/backlog/agent-self-improvement/*, docs/harness/SETUP.md, docs/design/agent-docs-improvements.md) — claim via `bash scripts/dev/lock-claim.sh agent-docs-improvements <write-set-file>` before the first commit; release auto-runs on PR merge per the `lock-slug:` line in the PR body.
 
 ---
 
