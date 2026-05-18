@@ -228,6 +228,15 @@ struct TrackerConfig {
     // worker (it logs the precondition miss and exits cleanly) — same shape as the
     // PAT-empty case so users get one consistent "configure agentic poll" prompt.
     std::string AgenticPollQuery;
+
+    // H3 — coding-harness runner selection + binary path. Empty `HandoffHarnessBinPath`
+    // resolves the runner-specific CLI from PATH (`claude` for `claude-code-local`).
+    // Tests override the absolute path to `stub_claude.exe` here so the doctest rig
+    // exercises `ClaudeCodeLocalRunner` without depending on a live Claude Code
+    // install. `HandoffRunnerName` matches `IRunner::Name()` of the active runner;
+    // future Codex / Aider runners drop in by string-renaming, no controller change.
+    std::string HandoffHarnessBinPath;
+    std::string HandoffRunnerName = "claude-code-local";
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;
