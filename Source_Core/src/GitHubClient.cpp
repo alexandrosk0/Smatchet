@@ -1,6 +1,7 @@
 #include "GitHubClient.h"
 
 #include "AiErrorRedact.h"
+#include "BackendAuditTrail.h"
 #include "GitHubClientHelpers.h"
 #include "Logger.h"
 
@@ -14,6 +15,11 @@ namespace {
 constexpr int kGitHubConnectTimeoutMs = 5000;
 constexpr int kGitHubOverallTimeoutMs = 15000;
 
+// Per agentic-flow-implementation.md § Decisions locked #2 — bearer-auth header
+// is constructed inline INSIDE each write method, not promoted to a shared
+// helper. The audit-trail source string is shared so audit consumers can filter.
+constexpr const char* kGitHubAuditSource = "github_client";
+
 std::string StripTrailingSlash(std::string s) {
     while (!s.empty() && s.back() == '/') {
         s.pop_back();
@@ -24,8 +30,39 @@ std::string StripTrailingSlash(std::string s) {
 // PAT must never reach user-visible surfaces verbatim. The redactor is intentionally
 // shared with the AI provider error path (defense-in-depth — provider 4xx bodies have
 // been observed echoing the Authorization header).
-std::string RedactForLog(const std::string& body) {
-    return smatchet::ai::pure::RedactProviderErrorBody(body);
+std::string RedactForLog(const std::string& body) { return smatchet::ai::pure::RedactProviderErrorBody(body); }
+
+// Build the standard GitHub header set with an inline bearer auth token. The
+// `Authorization: Bearer <pat>` line is constructed at the call site and never
+// logged verbatim — the redactor strips it from any error body before logging.
+cpr::Header MakeGitHubAuthHeaders(const std::string& pat) {
+    return cpr::Header{
+        {"Accept", "application/vnd.github+json"},
+        {"X-GitHub-Api-Version", "2022-11-28"},
+        {"User-Agent", "Smatchet/agentic-flow"},
+        {"Authorization", std::string("Bearer ") + pat},
+    };
+}
+
+// Single-line failure string assembled from the response status + GitHub's
+// structured `{"message": "..."}` (if present) + the redacted body. Keeps the
+// PAT out of every surface — the Authorization header substring would otherwise
+// echo back through nginx-style upstream 401 pages.
+std::string ComposeHttpErrorString(const std::string& verb, const std::string& urlSuffix, long statusCode,
+                                   const std::string& cprErrorMessage, const std::string& responseBody) {
+    std::ostringstream oss;
+    oss << "GitHub " << verb << ' ' << urlSuffix << ": HTTP " << statusCode;
+    if (!cprErrorMessage.empty()) {
+        oss << " (" << cprErrorMessage << ")";
+    }
+    std::string structured;
+    if (GitHubClientHelpers::ExtractGitHubErrorMessage(responseBody, structured)) {
+        oss << ": " << structured;
+    } else if (!responseBody.empty()) {
+        const std::string redacted = RedactForLog(responseBody);
+        oss << ": " << redacted;
+    }
+    return oss.str();
 }
 
 } // namespace
@@ -36,9 +73,7 @@ GitHubClient::GitHubClient(std::string baseUrl, std::string personalAccessToken)
 
 GitHubClient::~GitHubClient() = default;
 
-std::string GitHubClient::GetTrackerType() const {
-    return "GitHub";
-}
+std::string GitHubClient::GetTrackerType() const { return "GitHub"; }
 
 TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConfig& /*cfg*/) {
     TrackerReachabilityProbeResult out;
@@ -48,8 +83,8 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
 }
 
 std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* /*configOverride*/,
-                                                   const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
-                                                   std::string* /*outWarning*/) {
+                                                    const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
+                                                    std::string* /*outWarning*/) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -110,8 +145,8 @@ bool GitHubClient::FetchIssueComments(const std::string& issueKey, std::vector<T
 
     std::ostringstream numOss;
     numOss << parsed.Number;
-    const std::string url = baseUrl_ + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + numOss.str() +
-                            "/comments";
+    const std::string url =
+        baseUrl_ + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + numOss.str() + "/comments";
 
     cpr::Header headers{
         {"Accept", "application/vnd.github+json"},
@@ -119,8 +154,7 @@ bool GitHubClient::FetchIssueComments(const std::string& issueKey, std::vector<T
         {"User-Agent", "Smatchet/agentic-flow"},
         {"Authorization", std::string("Bearer ") + pat_},
     };
-    cpr::Response resp = cpr::Get(cpr::Url{url}, headers,
-                                  cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+    cpr::Response resp = cpr::Get(cpr::Url{url}, headers, cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
                                   cpr::Timeout{kGitHubOverallTimeoutMs});
 
     if (resp.status_code != 200) {
@@ -197,5 +231,245 @@ bool GitHubClient::FetchIssueComments(const std::string& issueKey, std::vector<T
         }
         outComments.push_back(std::move(c));
     }
+    return true;
+}
+
+// ─── T2 write methods ───────────────────────────────────────────────────────
+//
+// Common shape across the five methods, factored only by code clarity (not
+// behavioural variation):
+//   - PAT presence check        →  "GitHub PAT not configured (set cfg.GitHubPat)."
+//   - Issue-key parse           →  parser's outError verbatim
+//   - Action-specific validation (state transition target)
+//   - BackendAuditTrail::AppendBegin
+//   - cpr call with inline bearer header
+//   - Status check + redacted error compose on failure
+//   - BackendAuditTrail::AppendResult (both success and failure)
+//
+// Audit-trail entries carry the issue key as the `IssueKey` field. The action
+// name maps 1:1 to the AgentProposal.proposedAction enum value so triage-side
+// consumers can join proposals to applied audit events.
+//
+// The functions deliberately do not parse response bodies for success — the
+// agentic-flow contract only needs success/fail + audit. If a future caller
+// needs the resulting comment/label id, extend the audit entry's `Data` field
+// rather than thread a new out-parameter.
+
+bool GitHubClient::CommentAdd(const std::string& issueKey, const std::string& body, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "CommentAdd";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-comment-add");
+    // Body content is sensitive — audit-trail redactor handles `body` keys.
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["body"] = body;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, issueKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueCommentsSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+    const nlohmann::json payload = GitHubClientHelpers::BuildCommentAddBody(body);
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::CommentAdd failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::LabelAdd(const std::string& issueKey, const std::string& label, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "LabelAdd";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-label-add");
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["label"] = label;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, issueKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (label.empty()) {
+        outError = "Label name is empty.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueLabelsSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+    const nlohmann::json payload = GitHubClientHelpers::BuildLabelAddBody(label);
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::LabelAdd failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::LabelRemove(const std::string& issueKey, const std::string& label, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "LabelRemove";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-label-remove");
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["label"] = label;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, issueKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (label.empty()) {
+        outError = "Label name is empty.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueLabelRemoveSuffix(parsed, label);
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Delete(cpr::Url{url}, MakeGitHubAuthHeaders(pat_),
+                                  cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("DELETE", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::LabelRemove failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::AssigneeSet(const std::string& issueKey, const std::string& user, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "AssigneeSet";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-assignee-set");
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["user"] = user;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, issueKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (user.empty()) {
+        outError = "Assignee user is empty.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueAssigneesSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+    const nlohmann::json payload = GitHubClientHelpers::BuildAssigneeSetBody(user);
+
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::AssigneeSet failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::StateTransition(const std::string& issueKey, const std::string& state, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = "StateTransition";
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-state-transition");
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["state"] = state;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, issueKey, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    if (!GitHubClientHelpers::IsValidStateTransitionTarget(state)) {
+        outError = "GitHub state must be exactly 'open' or 'closed' (got '" + state + "').";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueRootSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+    const nlohmann::json payload = GitHubClientHelpers::BuildStateTransitionBody(state);
+
+    cpr::Response r = cpr::Patch(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payload.dump()},
+                                 cpr::Header{{"Content-Type", "application/json"}},
+                                 cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("PATCH", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::StateTransition failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, false, outError);
+        return false;
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
     return true;
 }

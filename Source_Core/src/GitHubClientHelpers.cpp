@@ -5,14 +5,51 @@
 #include <cctype>
 #include <ctime>
 #include <cstring>
+#include <sstream>
 #include <string>
 
 namespace GitHubClientHelpers {
 
 namespace {
 
-bool IsAsciiDigit(char c) {
-    return c >= '0' && c <= '9';
+bool IsAsciiDigit(char c) { return c >= '0' && c <= '9'; }
+
+// Manual int64 → decimal string. Used by the URL-suffix builders so they don't
+// pull <sstream> into every consuming TU. Negative numbers format with a leading
+// `-`; `ParseGitHubIssueKey` rejects them upstream, so the URL builders should
+// never see them in practice.
+std::string Int64ToDecimal(std::int64_t n) {
+    if (n == 0) {
+        return "0";
+    }
+    const bool negative = n < 0;
+    unsigned long long magnitude =
+        negative ? (static_cast<unsigned long long>(-(n + 1)) + 1ULL) : static_cast<unsigned long long>(n);
+    std::string digits;
+    while (magnitude > 0) {
+        digits.push_back(static_cast<char>('0' + (magnitude % 10)));
+        magnitude /= 10;
+    }
+    std::string out;
+    if (negative) {
+        out.push_back('-');
+    }
+    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
+        out.push_back(*it);
+    }
+    return out;
+}
+
+std::string BuildIssueRootPrefix(const ParsedIssueKey& parsed) {
+    std::string out;
+    out.reserve(8 + parsed.Owner.size() + 1 + parsed.Repo.size() + 8 + 6);
+    out.append("/repos/");
+    out.append(parsed.Owner);
+    out.push_back('/');
+    out.append(parsed.Repo);
+    out.append("/issues/");
+    out.append(Int64ToDecimal(parsed.Number));
+    return out;
 }
 
 } // namespace
@@ -134,8 +171,8 @@ bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec,
         outError = "ISO-8601 timestamp is not 20 chars (expected YYYY-MM-DDTHH:MM:SSZ).";
         return false;
     }
-    if (iso8601[4] != '-' || iso8601[7] != '-' || iso8601[10] != 'T' ||
-        iso8601[13] != ':' || iso8601[16] != ':' || iso8601[19] != 'Z') {
+    if (iso8601[4] != '-' || iso8601[7] != '-' || iso8601[10] != 'T' || iso8601[13] != ':' || iso8601[16] != ':' ||
+        iso8601[19] != 'Z') {
         outError = "ISO-8601 timestamp has malformed separators.";
         return false;
     }
@@ -157,8 +194,7 @@ bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec,
     int minute = 0;
     int second = 0;
     if (!digitsTo(iso8601, 0, 4, year) || !digitsTo(iso8601, 5, 2, month) || !digitsTo(iso8601, 8, 2, day) ||
-        !digitsTo(iso8601, 11, 2, hour) || !digitsTo(iso8601, 14, 2, minute) ||
-        !digitsTo(iso8601, 17, 2, second)) {
+        !digitsTo(iso8601, 11, 2, hour) || !digitsTo(iso8601, 14, 2, minute) || !digitsTo(iso8601, 17, 2, second)) {
         outError = "ISO-8601 timestamp contains non-digit in numeric field.";
         return false;
     }
@@ -190,6 +226,92 @@ bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec,
     }
     outUnixSec = static_cast<std::int64_t>(t);
     return true;
+}
+
+std::string PercentEncodePathSegment(const std::string& segment) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(segment.size());
+    for (unsigned char c : segment) {
+        // RFC 3986 unreserved: ALPHA / DIGIT / "-" / "." / "_" / "~"
+        const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                                c == '-' || c == '.' || c == '_' || c == '~';
+        if (unreserved) {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[c >> 4]);
+            out.push_back(kHex[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
+std::string BuildIssueCommentsSuffix(const ParsedIssueKey& parsed) {
+    return BuildIssueRootPrefix(parsed) + "/comments";
+}
+
+std::string BuildIssueLabelsSuffix(const ParsedIssueKey& parsed) { return BuildIssueRootPrefix(parsed) + "/labels"; }
+
+std::string BuildIssueLabelRemoveSuffix(const ParsedIssueKey& parsed, const std::string& labelName) {
+    return BuildIssueRootPrefix(parsed) + "/labels/" + PercentEncodePathSegment(labelName);
+}
+
+std::string BuildIssueAssigneesSuffix(const ParsedIssueKey& parsed) {
+    return BuildIssueRootPrefix(parsed) + "/assignees";
+}
+
+std::string BuildIssueRootSuffix(const ParsedIssueKey& parsed) { return BuildIssueRootPrefix(parsed); }
+
+nlohmann::json BuildCommentAddBody(const std::string& body) {
+    nlohmann::json obj = nlohmann::json::object();
+    obj["body"] = body;
+    return obj;
+}
+
+nlohmann::json BuildLabelAddBody(const std::string& label) {
+    // GitHub's POST /labels endpoint accepts either a top-level array of label
+    // names or an object `{"labels": [...]}`. The array form is shorter and the
+    // shape GitHub's docs lead with — use it.
+    nlohmann::json arr = nlohmann::json::array();
+    arr.push_back(label);
+    return arr;
+}
+
+nlohmann::json BuildAssigneeSetBody(const std::string& user) {
+    nlohmann::json obj = nlohmann::json::object();
+    nlohmann::json arr = nlohmann::json::array();
+    arr.push_back(user);
+    obj["assignees"] = arr;
+    return obj;
+}
+
+nlohmann::json BuildStateTransitionBody(const std::string& state) {
+    nlohmann::json obj = nlohmann::json::object();
+    obj["state"] = state;
+    return obj;
+}
+
+bool IsValidStateTransitionTarget(const std::string& state) {
+    // Enum-strict per agentic-flow-implementation.md § Decisions locked #3.
+    return state == "open" || state == "closed";
+}
+
+bool ExtractGitHubErrorMessage(const std::string& responseBody, std::string& outMessage) {
+    outMessage.clear();
+    if (responseBody.empty()) {
+        return false;
+    }
+    try {
+        const auto parsed = nlohmann::json::parse(responseBody);
+        if (parsed.is_object() && parsed.contains("message") && parsed["message"].is_string()) {
+            outMessage = parsed["message"].get<std::string>();
+            return !outMessage.empty();
+        }
+    } catch (const nlohmann::json::parse_error&) {
+        // Not JSON — fine; caller falls back to the status-code summary.
+    }
+    return false;
 }
 
 } // namespace GitHubClientHelpers

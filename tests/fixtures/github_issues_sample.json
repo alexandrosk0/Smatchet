@@ -1,0 +1,44 @@
+[
+  {
+    "id": 1001,
+    "node_id": "IC_kwDOAaB_d84AAOg5",
+    "user": {
+      "login": "alice",
+      "id": 9001,
+      "type": "User"
+    },
+    "created_at": "2026-05-10T14:23:11Z",
+    "updated_at": "2026-05-10T14:23:11Z",
+    "author_association": "MEMBER",
+    "body": "+1 — repros for me on macOS 14.",
+    "reactions": { "total_count": 1, "+1": 1 }
+  },
+  {
+    "id": 1002,
+    "node_id": "IC_kwDOAaB_d84AAOg6",
+    "user": {
+      "login": "bob",
+      "id": 9002,
+      "type": "User"
+    },
+    "created_at": "2026-05-10T15:01:42Z",
+    "updated_at": "2026-05-10T15:05:00Z",
+    "author_association": "CONTRIBUTOR",
+    "body": "Looks like a duplicate of #98. Should we close in favour of that?",
+    "reactions": { "total_count": 0 }
+  },
+  {
+    "id": 1003,
+    "node_id": "IC_kwDOAaB_d84AAOg7",
+    "user": {
+      "login": "smatchet-bot",
+      "id": 9003,
+      "type": "Bot"
+    },
+    "created_at": "2026-05-10T16:30:00Z",
+    "updated_at": "2026-05-10T16:30:00Z",
+    "author_association": "NONE",
+    "body": "<!-- smatchet-handoff --> Iteration 1: opened PR https://github.com/smatchet/example/pull/512",
+    "reactions": { "total_count": 0 }
+  }
+]
