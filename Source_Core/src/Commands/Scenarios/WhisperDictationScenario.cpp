@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <string>
 
 namespace smatchet {
@@ -84,21 +85,31 @@ class WhisperDictationScenario : public IScenario {
         mock.delay = std::chrono::milliseconds(delayMs_);
         WhisperPlugin::SetMockTranscription(mock);
 
-        CommandContext ctx;
-        ctx.App = &app;
-        ctx.Source = CommandSource::Internal;
-        const CommandResult pressRes =
-            app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
-        if (pressRes.Error.Code != ErrorCode::None) {
-            outErr = "whisper.simulate-press failed: " + pressRes.Error.Message;
-            return;
-        }
-        LOG_INFO("WhisperDictationScenario: armed mock + dispatched simulate-press (expected text "
-                 "size=%zu)", expectedText_.size());
-        state_ = State::WaitingForReleaseFrame;
+        LOG_INFO("WhisperDictationScenario: armed mock (expected text size=%zu, pressFrame=%d, "
+                 "releaseFrame=%d, delayMs=%d)",
+                 expectedText_.size(), pressFrame_, releaseFrame_, delayMs_);
+        // Press is now deferred to OnFrame so caller-supplied pressFrame_ values
+        // actually take effect. Previously simulate-press was dispatched here
+        // unconditionally on OnStart, which made pressFrame_ a no-op.
+        state_ = State::Initial;
     }
 
     void OnFrame(AppController& app, int frameIndex) override {
+        if (state_ == State::Initial && frameIndex >= pressFrame_) {
+            CommandContext ctx;
+            ctx.App = &app;
+            ctx.Source = CommandSource::Internal;
+            const CommandResult pressRes =
+                app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
+            if (pressRes.Error.Code != ErrorCode::None) {
+                LOG_WARN("WhisperDictationScenario: simulate-press dispatch failed: %s",
+                         pressRes.Error.Message.c_str());
+                state_ = State::Asserted; // bail with passed_ = false
+                return;
+            }
+            state_ = State::WaitingForReleaseFrame;
+            return;
+        }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
             CommandContext ctx;
             ctx.App = &app;
@@ -198,5 +209,5 @@ class WhisperDictationScenario : public IScenario {
 /// `#if defined(SMATCHET_WITH_WHISPER)` at the call site so the OFF build
 /// (which excludes this TU from CORE_SOURCES) has no dangling extern.
 std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::WhisperDictationScenario());
+    return std::make_unique<smatchet::cmd::WhisperDictationScenario>();
 }

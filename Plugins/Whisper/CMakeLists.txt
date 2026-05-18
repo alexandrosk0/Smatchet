@@ -51,14 +51,29 @@ target_link_libraries(SmatchetPlugin_Whisper PRIVATE
     ghc_filesystem
 )
 
+# ImGui include path for WhisperPlugin.cpp — the post-transcription splice
+# now snapshots `ImGui::GetActiveID()` so the router can pick the focused
+# entry instead of the front of the list. Header-only consume; ImGuiLib's
+# PUBLIC includes propagate via this link.
+target_link_libraries(SmatchetPlugin_Whisper PRIVATE
+    ImGuiLib
+)
+
 # Win32 WASAPI symbols (CoInitializeEx, MMDeviceEnumerator, IAudioClient, ...).
-# Phase B introduces WindowsAudioCapture.cpp; the libs below resolve the COM
-# imports it uses. Plugin subtree is only entered on Windows builds with
-# SMATCHET_WITH_WHISPER=ON, so the link list is unconditional.
+# Phase B introduces WindowsAudioCapture.cpp, which compiles cross-platform
+# (non-Windows builds get a stub) but requires the COM / WASAPI libraries on
+# Windows. The plugin subtree itself is entered whenever SMATCHET_WITH_WHISPER
+# is ON regardless of platform; the if(WIN32) guard scopes ONLY the Windows-only
+# link list.
 #
-# Phase C adds bcrypt for ModelDownloader's streaming SHA-256 (BCryptHash with
+# Phase C adds bcrypt for ModelDownloader's streaming SHA-256
+# (BCryptCreateHash + BCryptHashData + BCryptFinishHash chain with
 # BCRYPT_SHA256_ALGORITHM) — no extra third-party hash dep needed since the
-# plugin is already Windows-gated.
+# Windows link path covers it.
+#
+# avrt (MMCSS) intentionally omitted — WindowsAudioCapture.cpp does not call
+# AvSetMmThreadCharacteristics / AvRevertMmThreadCharacteristics and does not
+# include <avrt.h>. Re-add only when MMCSS thread-priority promotion is wired in.
 if(WIN32)
     # avrt (MMCSS) intentionally omitted — WindowsAudioCapture.cpp does not call
     # AvSetMmThreadCharacteristics / AvRevertMmThreadCharacteristics and does not

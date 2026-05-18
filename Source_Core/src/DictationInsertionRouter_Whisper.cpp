@@ -82,6 +82,15 @@ DictationInsertionRouter::DictationInsertionRouter() = default;
 DictationInsertionRouter::~DictationInsertionRouter() = default;
 
 void DictationInsertionRouter::RegisterInputText(char* buf, std::size_t cap, int* cursor) {
+    // Legacy entry point — leaves ItemId at its existing value (0 for fresh
+    // entries) so callers that don't carry an ImGui item id behave exactly as
+    // before. Callers from ImGui wrappers should use
+    // `RegisterInputTextWithItemId` to enable focused-target dispatch.
+    RegisterInputTextWithItemId(buf, cap, cursor, 0);
+}
+
+void DictationInsertionRouter::RegisterInputTextWithItemId(char* buf, std::size_t cap, int* cursor,
+                                                            unsigned int itemId) {
     if (buf == nullptr || cap == 0) {
         return;
     }
@@ -92,6 +101,13 @@ void DictationInsertionRouter::RegisterInputText(char* buf, std::size_t cap, int
         if (entries_[i].Buf == buf) {
             entries_[i].Cap = cap;
             entries_[i].Cursor = cursor;
+            // Only overwrite ItemId if the caller supplied a non-zero one;
+            // preserves the legacy "registered without id" entry's value when
+            // mixed with another caller (defensive — should not happen in
+            // practice since each buf has one owner).
+            if (itemId != 0) {
+                entries_[i].ItemId = itemId;
+            }
             return;
         }
     }
@@ -99,6 +115,7 @@ void DictationInsertionRouter::RegisterInputText(char* buf, std::size_t cap, int
     e.Buf = buf;
     e.Cap = cap;
     e.Cursor = cursor;
+    e.ItemId = itemId;
     entries_.push_back(e);
 }
 
@@ -107,6 +124,14 @@ void DictationInsertionRouter::UnregisterInputText(char* buf) {
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    // Clear the AI Assistant slot if its buffer is the one being unregistered.
+    // Otherwise the next `IsFocusedTargetAiAssistant()` call would compare
+    // against a freed/reused buffer address — `char*` allocators routinely
+    // reuse the same address after free, which would silently misroute the
+    // auto-send-on-punctuation flow to a non-AI-Assistant input.
+    if (aiAssistantBuf_ == buf) {
+        aiAssistantBuf_ = nullptr;
+    }
     auto it = std::remove_if(entries_.begin(), entries_.end(),
                              [buf](const Entry& e) { return e.Buf == buf; });
     entries_.erase(it, entries_.end());
@@ -192,20 +217,22 @@ float DictationInsertionRouter::GetLastPeakAmplitude() const {
 }
 
 void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& text) {
+    // Legacy entry point — no caller-supplied active id; fall through to the
+    // explicit overload with activeId=0 (entries_.front() fallback path).
+    InsertIntoFocusedInputText(text, 0);
+}
+
+void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& text, unsigned int activeId) {
     // UI-thread-only contract: callers post worker-thread completions back to
     // the main thread via MainThreadDispatcher::PostToMainThread before
     // invoking this method. Splices `text` into whichever registered buffer
     // currently has ImGui focus; when no focused buffer is registered the
     // call is a silent drop (the user will retry; no error toast).
     //
-    // Phase D scope: ImGui doesn't expose a per-widget byte cursor on the
-    // C++14 surface we target, so insertion lands at the existing logical
-    // end-of-content unless the caller supplied an explicit cursor pointer
-    // on register. Tighter splice-at-cursor for the multiline editor lands
-    // when an ImGuiInputTextCallback wire-up is added (Phase E or later).
-    //
-    // The first registered entry is used as a fall-through when no focus
-    // signal is available (e.g. headless test driver / scenario runner).
+    // Selection: prefer the registered entry whose ItemId matches `activeId`
+    // (caller passes `ImGui::GetActiveID()`); fall back to `entries_.front()`
+    // when no entry matches (legacy contract — headless test driver, scenario
+    // runner, or pre-#246 callers passing activeId=0).
     std::lock_guard<std::mutex> lock(mutex_);
     if (entries_.empty()) {
         LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target; "
@@ -213,7 +240,19 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
                   text.size());
         return;
     }
-    Entry& e = entries_.front();
+    Entry* selected = nullptr;
+    if (activeId != 0) {
+        for (Entry& candidate : entries_) {
+            if (candidate.ItemId == activeId) {
+                selected = &candidate;
+                break;
+            }
+        }
+    }
+    if (selected == nullptr) {
+        selected = &entries_.front();
+    }
+    Entry& e = *selected;
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
     }

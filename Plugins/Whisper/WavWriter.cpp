@@ -42,8 +42,13 @@ std::vector<std::uint8_t> EncodeWav(const std::vector<std::int16_t>& pcm,
     std::memset(out.data(), 0, kHeaderBytes);
 
     // Reject pathological inputs without aborting. A 44-byte zero header is a
-    // legal (if useless) blob; the caller decides whether to ship it.
-    if (sampleRate <= 0 || channels < 1 || channels > 2) {
+    // legal (if useless) blob; the caller decides whether to ship it. Frame
+    // alignment must also hold — `pcm.size()` must be a multiple of `channels`
+    // or stereo callers would produce a half-frame at the end (left sample
+    // without a paired right sample), which most decoders surface as audible
+    // noise rather than a clean error.
+    if (sampleRate <= 0 || channels < 1 || channels > 2 ||
+        (pcm.size() % static_cast<std::size_t>(channels)) != 0u) {
         return out;
     }
 

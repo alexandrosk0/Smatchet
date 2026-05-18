@@ -546,6 +546,13 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     // (see lines around 941 below).
     bool migrateLegacyPlaintextGitHubPat = false;
 #endif
+#if defined(SMATCHET_WITH_WHISPER)
+    // Mirror of the AiApiKey / GitHubPat migration shapes — when Load() falls
+    // back to plaintext `whisper_api_key` (because `whisper_api_key_enc` was
+    // absent or undecryptable), flag for re-save so the next on-disk state
+    // holds the value under `whisper_api_key_enc` and removes the plaintext.
+    bool migrateLegacyPlaintextWhisperApiKey = false;
+#endif
 #endif
 
     if (!j.empty()) {
@@ -669,6 +676,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
             if (cfg.WhisperApiKey.empty()) {
                 cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
+                migrateLegacyPlaintextWhisperApiKey = !cfg.WhisperApiKey.empty();
             }
 #endif
 #else
@@ -969,11 +977,17 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #if defined(SMATCHET_WITH_AGENTIC)
     migrateAny = migrateAny || migrateLegacyPlaintextGitHubPat;
 #endif
+#if defined(SMATCHET_WITH_WHISPER)
+    migrateAny = migrateAny || migrateLegacyPlaintextWhisperApiKey;
+#endif
     if (migrateAny) {
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
                  "(mcp=%d ai=%d anthropic=%d"
 #if defined(SMATCHET_WITH_AGENTIC)
                  " github_pat=%d"
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+                 " whisper=%d"
 #endif
                  ")",
                  migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
@@ -981,6 +995,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #if defined(SMATCHET_WITH_AGENTIC)
                  ,
                  migrateLegacyPlaintextGitHubPat ? 1 : 0
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+                 ,
+                 migrateLegacyPlaintextWhisperApiKey ? 1 : 0
 #endif
         );
         Save(cfg);
