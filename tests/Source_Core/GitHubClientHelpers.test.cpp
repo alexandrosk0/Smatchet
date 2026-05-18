@@ -5,10 +5,24 @@
 #include <cstdint>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
+using GitHubClientHelpers::BuildAssigneeSetBody;
+using GitHubClientHelpers::BuildCommentAddBody;
+using GitHubClientHelpers::BuildIssueAssigneesSuffix;
+using GitHubClientHelpers::BuildIssueCommentsSuffix;
+using GitHubClientHelpers::BuildIssueLabelRemoveSuffix;
+using GitHubClientHelpers::BuildIssueLabelsSuffix;
+using GitHubClientHelpers::BuildIssueRootSuffix;
+using GitHubClientHelpers::BuildLabelAddBody;
+using GitHubClientHelpers::BuildStateTransitionBody;
+using GitHubClientHelpers::ExtractGitHubErrorMessage;
 using GitHubClientHelpers::FormatGitHubIssueKey;
+using GitHubClientHelpers::IsValidStateTransitionTarget;
+using GitHubClientHelpers::ParsedIssueKey;
 using GitHubClientHelpers::ParseGitHubIssueKey;
 using GitHubClientHelpers::ParseIso8601ToUnixSec;
-using GitHubClientHelpers::ParsedIssueKey;
+using GitHubClientHelpers::PercentEncodePathSegment;
 
 TEST_CASE("ParseGitHubIssueKey — happy path") {
     SUBCASE("canonical owner/repo#N") {
@@ -145,9 +159,7 @@ TEST_CASE("ParseIso8601ToUnixSec — error cases") {
         CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-15T12:34:56", ts, err));
         CHECK_FALSE(ParseIso8601ToUnixSec("", ts, err));
     }
-    SUBCASE("non-Z suffix (timezone offset)") {
-        CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-15T12:34:56+", ts, err));
-    }
+    SUBCASE("non-Z suffix (timezone offset)") { CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-15T12:34:56+", ts, err)); }
     SUBCASE("fractional seconds (rejected — wrong length)") {
         CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-15T12:34:56.789Z", ts, err));
     }
@@ -155,9 +167,7 @@ TEST_CASE("ParseIso8601ToUnixSec — error cases") {
         CHECK_FALSE(ParseIso8601ToUnixSec("2024/01/15T12:34:56Z", ts, err));
         CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-15 12:34:56Z", ts, err));
     }
-    SUBCASE("non-digit in numeric field") {
-        CHECK_FALSE(ParseIso8601ToUnixSec("abcd-01-15T12:34:56Z", ts, err));
-    }
+    SUBCASE("non-digit in numeric field") { CHECK_FALSE(ParseIso8601ToUnixSec("abcd-01-15T12:34:56Z", ts, err)); }
     SUBCASE("month out of range") {
         CHECK_FALSE(ParseIso8601ToUnixSec("2024-13-15T12:34:56Z", ts, err));
         CHECK_FALSE(ParseIso8601ToUnixSec("2024-00-15T12:34:56Z", ts, err));
@@ -174,4 +184,164 @@ TEST_CASE("ParseIso8601ToUnixSec — error cases") {
         std::string lerr;
         CHECK(ParseIso8601ToUnixSec("2024-01-15T12:34:60Z", lts, lerr));
     }
+}
+
+// ─── T2: URL-suffix builders ────────────────────────────────────────────────
+
+TEST_CASE("BuildIssue*Suffix — canonical shapes") {
+    ParsedIssueKey k;
+    k.Owner = "smatchet";
+    k.Repo = "example";
+    k.Number = 42;
+    CHECK(BuildIssueCommentsSuffix(k) == "/repos/smatchet/example/issues/42/comments");
+    CHECK(BuildIssueLabelsSuffix(k) == "/repos/smatchet/example/issues/42/labels");
+    CHECK(BuildIssueAssigneesSuffix(k) == "/repos/smatchet/example/issues/42/assignees");
+    CHECK(BuildIssueRootSuffix(k) == "/repos/smatchet/example/issues/42");
+    // Round-trips on large issue numbers (10-digit int64 path).
+    k.Number = 1234567890;
+    CHECK(BuildIssueRootSuffix(k) == "/repos/smatchet/example/issues/1234567890");
+}
+
+TEST_CASE("BuildIssueLabelRemoveSuffix — URL-encodes the label name") {
+    ParsedIssueKey k;
+    k.Owner = "acme";
+    k.Repo = "repo";
+    k.Number = 7;
+    SUBCASE("ASCII alphanum — no encoding") {
+        CHECK(BuildIssueLabelRemoveSuffix(k, "bug") == "/repos/acme/repo/issues/7/labels/bug");
+    }
+    SUBCASE("contains space + colon (prio: P0 shape)") {
+        const std::string s = BuildIssueLabelRemoveSuffix(k, "prio: P0");
+        CHECK(s == "/repos/acme/repo/issues/7/labels/prio%3A%20P0");
+    }
+    SUBCASE("contains slash — separator-injection guard") {
+        // Hostile label "../" must not collapse into a parent path. Percent-encoding
+        // every reserved char keeps the slash inside the segment.
+        const std::string s = BuildIssueLabelRemoveSuffix(k, "../etc/passwd");
+        CHECK(s == "/repos/acme/repo/issues/7/labels/..%2Fetc%2Fpasswd");
+    }
+    SUBCASE("unreserved chars (RFC 3986 set) pass through") {
+        const std::string s = BuildIssueLabelRemoveSuffix(k, "A-Z.a-z_0-9~");
+        CHECK(s == "/repos/acme/repo/issues/7/labels/A-Z.a-z_0-9~");
+    }
+}
+
+TEST_CASE("PercentEncodePathSegment — RFC 3986 unreserved set") {
+    // Unreserved: [A-Za-z0-9-._~]
+    CHECK(PercentEncodePathSegment("Abc") == "Abc");
+    CHECK(PercentEncodePathSegment("-._~") == "-._~");
+    CHECK(PercentEncodePathSegment("0123456789") == "0123456789");
+    // Reserved + sub-delims all encoded.
+    CHECK(PercentEncodePathSegment("/") == "%2F");
+    CHECK(PercentEncodePathSegment(" ") == "%20");
+    CHECK(PercentEncodePathSegment("?#&=") == "%3F%23%26%3D");
+    // Empty in → empty out.
+    CHECK(PercentEncodePathSegment("") == "");
+}
+
+// ─── T2: JSON body builders ─────────────────────────────────────────────────
+
+TEST_CASE("BuildCommentAddBody — {body:string}") {
+    const auto j = BuildCommentAddBody("Hello, world.");
+    REQUIRE(j.is_object());
+    CHECK(j.size() == 1);
+    REQUIRE(j.contains("body"));
+    CHECK(j["body"].get<std::string>() == "Hello, world.");
+    // Round-trip through dump() since that's what the live HTTP path serialises.
+    CHECK(j.dump() == "{\"body\":\"Hello, world.\"}");
+}
+
+TEST_CASE("BuildLabelAddBody — top-level array per GitHub docs") {
+    const auto j = BuildLabelAddBody("bug");
+    REQUIRE(j.is_array());
+    CHECK(j.size() == 1);
+    CHECK(j[0].get<std::string>() == "bug");
+    CHECK(j.dump() == "[\"bug\"]");
+}
+
+TEST_CASE("BuildAssigneeSetBody — {assignees:[user]}") {
+    const auto j = BuildAssigneeSetBody("alice");
+    REQUIRE(j.is_object());
+    REQUIRE(j.contains("assignees"));
+    REQUIRE(j["assignees"].is_array());
+    CHECK(j["assignees"].size() == 1);
+    CHECK(j["assignees"][0].get<std::string>() == "alice");
+    CHECK(j.dump() == "{\"assignees\":[\"alice\"]}");
+}
+
+TEST_CASE("BuildStateTransitionBody — {state:string}") {
+    const auto open = BuildStateTransitionBody("open");
+    CHECK(open.dump() == "{\"state\":\"open\"}");
+    const auto closed = BuildStateTransitionBody("closed");
+    CHECK(closed.dump() == "{\"state\":\"closed\"}");
+    // Builder is intentionally permissive — caller validates with
+    // IsValidStateTransitionTarget BEFORE building, so the builder doesn't
+    // need to enum-check. Audit-test that the body honours arbitrary strings.
+    const auto bogus = BuildStateTransitionBody("draft");
+    CHECK(bogus.dump() == "{\"state\":\"draft\"}");
+}
+
+// ─── T2: state-transition validator ─────────────────────────────────────────
+
+TEST_CASE("IsValidStateTransitionTarget — enum-strict") {
+    CHECK(IsValidStateTransitionTarget("open"));
+    CHECK(IsValidStateTransitionTarget("closed"));
+    CHECK_FALSE(IsValidStateTransitionTarget(""));
+    CHECK_FALSE(IsValidStateTransitionTarget("OPEN"));   // case-sensitive
+    CHECK_FALSE(IsValidStateTransitionTarget("Closed")); // case-sensitive
+    CHECK_FALSE(IsValidStateTransitionTarget("draft"));
+    CHECK_FALSE(IsValidStateTransitionTarget("reopened"));
+    CHECK_FALSE(IsValidStateTransitionTarget("open "));   // no trailing space
+    CHECK_FALSE(IsValidStateTransitionTarget(" closed")); // no leading space
+}
+
+// ─── T2: GitHub structured-error message extraction ─────────────────────────
+
+TEST_CASE("ExtractGitHubErrorMessage — surfaces .message when present") {
+    std::string msg;
+    SUBCASE("typical 401 body") {
+        const std::string body = "{\"message\":\"Bad credentials\",\"documentation_url\":\"https://docs.github.com\"}";
+        CHECK(ExtractGitHubErrorMessage(body, msg));
+        CHECK(msg == "Bad credentials");
+    }
+    SUBCASE("422 validation error") {
+        const std::string body = "{\"message\":\"Validation Failed\",\"errors\":[{\"resource\":\"Issue\"}]}";
+        CHECK(ExtractGitHubErrorMessage(body, msg));
+        CHECK(msg == "Validation Failed");
+    }
+    SUBCASE("body is not JSON — returns false, msg empty") {
+        CHECK_FALSE(ExtractGitHubErrorMessage("<html>nginx 502</html>", msg));
+        CHECK(msg.empty());
+    }
+    SUBCASE("body is empty — returns false") {
+        CHECK_FALSE(ExtractGitHubErrorMessage("", msg));
+        CHECK(msg.empty());
+    }
+    SUBCASE("body is JSON but no message field") {
+        CHECK_FALSE(ExtractGitHubErrorMessage("{\"errors\":[]}", msg));
+        CHECK(msg.empty());
+    }
+    SUBCASE("message field present but empty — returns false (no surfaceable cause)") {
+        CHECK_FALSE(ExtractGitHubErrorMessage("{\"message\":\"\"}", msg));
+        CHECK(msg.empty());
+    }
+    SUBCASE("message field is not a string — returns false") {
+        CHECK_FALSE(ExtractGitHubErrorMessage("{\"message\":42}", msg));
+    }
+}
+
+// ─── T2: recorded-fixture parse against the sample github_issues_sample.json ─
+
+// The fixture is a recorded GET /comments response. We round-trip a comment body
+// through BuildCommentAddBody to confirm the shape we'd send back is round-trip
+// compatible with the shape we receive — i.e. `body` is a string in both
+// directions. Full HTTP-path testing is deferred to bucket-E (manual probe).
+TEST_CASE("Fixture round-trip — comment body shape") {
+    const std::string recordedCommentBody = "+1 — repros for me on macOS 14.";
+    const auto outgoing = BuildCommentAddBody(recordedCommentBody);
+    CHECK(outgoing["body"].get<std::string>() == recordedCommentBody);
+    // A response body shape (server echoes the comment) has the same "body" key.
+    const nlohmann::json serverEcho = nlohmann::json::parse(
+        "{\"id\":42,\"body\":\"+1 — repros for me on macOS 14.\",\"user\":{\"login\":\"alice\"}}");
+    CHECK(serverEcho["body"].get<std::string>() == recordedCommentBody);
 }

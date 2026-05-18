@@ -1,9 +1,12 @@
 // GitHubClient.h — GitHub-backed ITrackerClient.
 //
-// Scope (T1): skeleton with FetchIssueComments only. All other ITrackerClient
-// virtuals return the documented "unsupported on GitHub backend" sentinel.
-// Write methods (CommentAdd, LabelAdd, AssigneeSet, StateTransition) land in
-// the next slice; AgentProposal context plumbing follows after that.
+// Scope (T1): skeleton with FetchIssueComments only.
+// Scope (T2): adds the 5 write methods CommentAdd / LabelAdd / LabelRemove /
+//             AssigneeSet / StateTransition. These are concrete on GitHubClient
+//             (not yet promoted to ITrackerClient virtuals — promoted only when
+//             a second agentic-write backend appears).
+// All other ITrackerClient virtuals return the documented "unsupported on
+// GitHub backend" sentinel. AgentProposal context plumbing follows in T5.
 //
 // Build-time gating: the TU is source-list-conditional on SMATCHET_WITH_AGENTIC
 // in the root CMakeLists.txt. Callers that hold a `GitHubClient` reference
@@ -56,11 +59,10 @@ class GitHubClient : public ITrackerClient {
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;
 
-    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields,
-                           std::string& outError) override;
+    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
 
-    bool UpdateField(const std::string& issueId, const TrackerField& field,
-                     const std::vector<std::string>& values, std::string& outError) override;
+    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
+                     std::string& outError) override;
 
     bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
                            nlohmann::json& outPayload, std::string& outError) override;
@@ -80,6 +82,61 @@ class GitHubClient : public ITrackerClient {
      */
     bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
                             std::string& outError) override;
+
+    // ─── T2 write methods ────────────────────────────────────────────────────
+    //
+    // Every method:
+    //   1. Parses the issue key via GitHubClientHelpers::ParseGitHubIssueKey.
+    //      Fail-early on bad input.
+    //   2. Builds the URL via the matching GitHubClientHelpers::BuildIssue*Suffix.
+    //   3. Constructs the bearer-auth header INLINE (plan-locked decision #2 in
+    //      agentic-flow-implementation.md — do not promote to BuildTrackerHeaders
+    //      until a second bearer-auth backend exists). The PAT is never logged.
+    //   4. Audits via BackendAuditTrail::AppendBegin/AppendResult with
+    //      source="github_client". Both success and failure produce an audit row.
+    //   5. Returns true on HTTP 2xx; otherwise outError carries a redacted
+    //      one-line cause (status + GitHub's structured "message" if present).
+
+    /**
+     * POST /repos/{owner}/{repo}/issues/{number}/comments — add a comment to an
+     * issue. Body shape: `{"body":"..."}`. GitHub-side audit-entry source is
+     * `"github_client"`, action `"CommentAdd"`.
+     */
+    bool CommentAdd(const std::string& issueKey, const std::string& body, std::string& outError);
+
+    /**
+     * POST /repos/{owner}/{repo}/issues/{number}/labels — add a single label.
+     * Body shape: `["label-name"]`. GitHub creates the label on the repo if it
+     * doesn't already exist (caller responsibility to keep label vocabulary
+     * sane). Audit action `"LabelAdd"`.
+     */
+    bool LabelAdd(const std::string& issueKey, const std::string& label, std::string& outError);
+
+    /**
+     * DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name} — remove a
+     * single label from an issue. The label name is URL-encoded in the path
+     * (labels can contain `:`, ` `, etc). GitHub returns 200 + the remaining
+     * label set when the label was present, 404 when it wasn't on the issue.
+     * Audit action `"LabelRemove"`.
+     */
+    bool LabelRemove(const std::string& issueKey, const std::string& label, std::string& outError);
+
+    /**
+     * POST /repos/{owner}/{repo}/issues/{number}/assignees — add a single
+     * assignee. Body shape: `{"assignees":["user"]}`. GitHub silently drops
+     * users without write permission on the repo; the API still returns 201
+     * in that case, so callers cannot rely on success implying assignment.
+     * Audit action `"AssigneeSet"`.
+     */
+    bool AssigneeSet(const std::string& issueKey, const std::string& user, std::string& outError);
+
+    /**
+     * PATCH /repos/{owner}/{repo}/issues/{number} — transition issue state to
+     * `"open"` or `"closed"`. Any other state string is rejected pre-HTTP via
+     * `GitHubClientHelpers::IsValidStateTransitionTarget`. Audit action
+     * `"StateTransition"`.
+     */
+    bool StateTransition(const std::string& issueKey, const std::string& state, std::string& outError);
 
   private:
     std::string baseUrl_; // e.g. https://api.github.com (no trailing slash).

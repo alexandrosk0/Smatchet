@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 namespace GitHubClientHelpers {
 
 struct ParsedIssueKey {
@@ -63,6 +65,72 @@ std::string FormatGitHubIssueKey(const std::string& owner, const std::string& re
  * parse (the body is still useful to the prompt builder).
  */
 bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec, std::string& outError);
+
+/**
+ * URL-suffix builders. Each returns the URL path appended to
+ * `/repos/{owner}/{repo}/issues/{N}` for a given GitHub REST endpoint. Splitting
+ * these off from the live `GitHubClient` makes the suffixes doctest-covered
+ * without instantiating cpr. Format is exactly what GitHub's REST docs prescribe.
+ *
+ * Examples (for parsed.Owner="smatchet", parsed.Repo="example", parsed.Number=42):
+ *   BuildIssueCommentsSuffix(parsed)  → "/repos/smatchet/example/issues/42/comments"
+ *   BuildIssueLabelsSuffix(parsed)    → "/repos/smatchet/example/issues/42/labels"
+ *   BuildIssueLabelRemoveSuffix(parsed, "bug")
+ *                                     → "/repos/smatchet/example/issues/42/labels/bug"
+ *   BuildIssueAssigneesSuffix(parsed) → "/repos/smatchet/example/issues/42/assignees"
+ *   BuildIssueRootSuffix(parsed)      → "/repos/smatchet/example/issues/42"
+ *
+ * `BuildIssueLabelRemoveSuffix` URL-encodes the label name (RFC 3986 unreserved
+ * set + percent-encoded everything else) so a label like `"prio: P0"` lands as
+ * `prio%3A%20P0`. Other suffixes take no user-supplied path segment.
+ */
+struct ParsedIssueKey; // forward — defined above; redeclared for builders' signatures.
+
+std::string BuildIssueCommentsSuffix(const ParsedIssueKey& parsed);
+std::string BuildIssueLabelsSuffix(const ParsedIssueKey& parsed);
+std::string BuildIssueLabelRemoveSuffix(const ParsedIssueKey& parsed, const std::string& labelName);
+std::string BuildIssueAssigneesSuffix(const ParsedIssueKey& parsed);
+std::string BuildIssueRootSuffix(const ParsedIssueKey& parsed);
+
+/**
+ * JSON body builders for the GitHub issues REST write methods. Each returns a
+ * `nlohmann::json` shape exactly as GitHub's REST API expects. Pure, doctested.
+ *
+ *   BuildCommentAddBody("hello")            → {"body":"hello"}
+ *   BuildLabelAddBody("bug")                → ["bug"]    (GitHub takes an array)
+ *   BuildAssigneeSetBody("alice")           → {"assignees":["alice"]}
+ *   BuildStateTransitionBody("closed")      → {"state":"closed"}
+ */
+nlohmann::json BuildCommentAddBody(const std::string& body);
+nlohmann::json BuildLabelAddBody(const std::string& label);
+nlohmann::json BuildAssigneeSetBody(const std::string& user);
+nlohmann::json BuildStateTransitionBody(const std::string& state);
+
+/**
+ * State-transition validator. The agentic-flow contract locks state to exactly
+ * `"open"` or `"closed"` (per `agentic-flow-implementation.md` § Decisions
+ * locked #3, `StateTransition` payload shape). Any other input must be rejected
+ * before any HTTP traffic is fired.
+ */
+bool IsValidStateTransitionTarget(const std::string& state);
+
+/**
+ * Extract GitHub's structured error `message` (`{"message": "...", ...}`) from
+ * a 4xx/5xx response body. Returns the message string when present, empty
+ * otherwise. Used to surface a one-line cause to the caller in addition to the
+ * status-code summary. Body itself is run through the AI redactor at the call
+ * site — `outMessage` is the same redacted-safe substring; no extra redaction.
+ */
+bool ExtractGitHubErrorMessage(const std::string& responseBody, std::string& outMessage);
+
+/**
+ * Percent-encode a single URL path segment (RFC 3986 unreserved). Used by
+ * `BuildIssueLabelRemoveSuffix` since label names can contain `:`, ` `, `/`,
+ * Unicode, etc. The set kept unencoded is `[A-Za-z0-9-._~]`; everything else
+ * (including the `/` separator a hostile label might inject) is `%HH`-encoded.
+ * Pure ASCII output.
+ */
+std::string PercentEncodePathSegment(const std::string& segment);
 
 } // namespace GitHubClientHelpers
 
