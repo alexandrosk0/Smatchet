@@ -71,14 +71,14 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/h12-l16-m13-bundle`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
-- **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
+- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
 - **Claimed write set**:
   - `Source_Core/src/SmatchetBulkTicketsUi.cpp` (H12 — Load file + Save to file buttons)
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (L16 — URL-disk-cache-hit branch + file-path branch)
   - `Source_Core/src/TicketFieldEditor.cpp` (M13 — OpenLongTextEditor threshold-gated worker dispatch)
   - `Source_Core/include/SmatchetUiSession.h` (transient in-flight state for H12 bulk load/save)
   - `docs/design/_plan-locks.md` (this entry)
-  - `docs/backlog/pillar-1-2-audit-2026-05-17.md` (Shipped + Watch list section)
+  - `docs/design/applied/pillar-1-2-audit-2026-05-17.md` (Shipped + Watch list section)
 - **Read-only adjacency**: `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (PR #186 pattern reference), `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AppController.h`
 - **Started**: 2026-05-17
 - **Last update**: 2026-05-17 — merged via PR [#196](https://github.com/alexandrosk0/Smatchet/pull/196) at sha `1952e8b`. Pure-helper `TicketFieldEditorLongTextPure` TU added in follow-up commit `d7da177` to satisfy the test-delta gate.
@@ -88,7 +88,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/configmanager-save-coalesce` (deleted)
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
+- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (MOD — add `prefsDirty` + `prefsSaveDueAt` + `MarkPrefsDirty` helper)
   - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — 31 sites replaced with `MarkPrefsDirty(d)`; 3 AI Assistant tab sites preserved at lines 953/1024/1048)
@@ -104,7 +104,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/pillar-2-top5-fixes`
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/backlog/pillar-1-2-audit-2026-05-17.md`](../backlog/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
+- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
 - **Claimed write set**:
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (finding #1 — icon fetch worker dispatch + loading sentinel)
   - `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` (finding #2 — attachment download worker dispatch)
