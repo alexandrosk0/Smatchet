@@ -485,6 +485,15 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("MainThreadDispatcher::Drain");
         app.mainThreadDispatcher.Drain();
     }
+#if defined(SMATCHET_WITH_AGENTIC)
+    {
+        // (Bundle A) Drain any detached agentic-poll worker that has actually exited.
+        // Steady-state cost is one atomic load (no-op when nothing is detached); the
+        // join only fires once per Preferences toggle when the previous worker stops.
+        SMATCHET_UI_PERF_SCOPE("AgenticPoll::JoinDetached");
+        app.JoinDetachedAgenticPollIfReady();
+    }
+#endif
     {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);

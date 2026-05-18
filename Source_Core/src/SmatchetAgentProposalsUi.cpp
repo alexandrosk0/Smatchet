@@ -5,8 +5,11 @@
 #include "AgentProposal.h"
 #include "AgentProposalStore.h"
 #include "AgenticInferenceClientPure.h"
+#include "AgenticProposalAuditPure.h"
 #include "AppController.h"
+#include "BackendAuditTrail.h"
 #include "Logger.h"
+#include "MainThreadDispatcher.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -48,10 +51,17 @@ bool g_initialFetchDone = false;
 void RefreshFromStore(AppController& app) {
     auto* store = app.GetAgentProposalStore();
     if (store == nullptr) {
+        // (Bundle A) Store init is deferred to a background thread — accessor is
+        // nullptr for the brief window between AppController::Initialize and the
+        // worker stamping `agentProposalStoreReady_`. Surface a non-error
+        // "Initializing..." line to the user instead of the "not available"
+        // wording (which now implies a real failure: AGENTIC=OFF or DB-open
+        // exception). Leave `g_initialFetchDone` false so `ShouldRefresh()` keeps
+        // probing until the store lands.
         g_proposalsCache.clear();
-        g_lastRefreshError = "Agent proposal store is not available.";
+        g_lastRefreshError = SmatchetLocalization::T("agent.proposals.initializing",
+                                                     "Initializing agent proposal store...");
         g_lastRefreshAt = std::chrono::steady_clock::now();
-        g_initialFetchDone = true;
         return;
     }
     AgentProposalStore::Filter filter;
@@ -75,29 +85,80 @@ void RefreshFromStore(AppController& app) {
 
 bool ShouldRefresh() {
     if (!g_initialFetchDone) {
-        return true;
+        // (Bundle A) Throttle initial-refresh attempts the same as steady-state
+        // (1 Hz) so a still-initialising store doesn't get hammered every frame.
+        // The first call (g_lastRefreshAt is epoch) trips the interval immediately.
+        if (g_lastRefreshAt == std::chrono::steady_clock::time_point{}) {
+            return true;
+        }
+        return (std::chrono::steady_clock::now() - g_lastRefreshAt) >= kRefreshInterval;
     }
     return (std::chrono::steady_clock::now() - g_lastRefreshAt) >= kRefreshInterval;
 }
 
 void TransitionAndToast(AppController& app, AgentProposal& row, AgentProposalState target) {
-    auto* store = app.GetAgentProposalStore();
-    if (store == nullptr) {
-        SmatchetToastManager::Instance().Push("Agent proposals", "Proposal store unavailable.", ToastType::Error, 4000);
-        return;
+    // Pillar 2 (AGENTS.md): SQLite::Database::Transition is sub-ms under no
+    // contention, but the T7 scheduled-poll worker holds WAL writers and a
+    // 5 s busy-timeout — a click during a mid-batch poll would freeze the UI
+    // thread for seconds. Punt the write to a worker thread; the panel
+    // optimistically removes the row on the next 1 Hz refresh tick (or sooner
+    // if the worker posts a refresh-now back via the dispatcher).
+    //
+    // Audit-trail wiring (SH2): every Approve / Reject emits a Begin + Result
+    // pair under the agentic_proposals source so a local SQLite UPDATE is
+    // distinguishable from a "real backend write" by audit-log consumers. The
+    // entry shape is built by AgenticProposalAuditPure (doctest-covered).
+    const std::int64_t proposalId = row.id;
+    const std::string issueKey = row.issueKey;
+    const AgentProposalState fromState = row.state;
+    const std::string operationId = BackendAuditTrail::MakeOperationId("agentic-proposals");
+
+    BackendAuditTrail::AppendEvent(
+        smatchet::agentic::pure::MakeBeginEvent(proposalId, issueKey, fromState, target, operationId));
+
+    app.LaunchBackgroundTask([&app, proposalId, issueKey, fromState, target, operationId]() {
+        auto* store = app.GetAgentProposalStore();
+        if (store == nullptr) {
+            BackendAuditTrail::AppendEvent(smatchet::agentic::pure::MakeResultEvent(
+                proposalId, issueKey, fromState, target, operationId, /*success*/ false,
+                /*error*/ "Proposal store unavailable."));
+            app.mainThreadDispatcher.PostToMainThread([]() {
+                SmatchetToastManager::Instance().Push("Agent proposals", "Proposal store unavailable.",
+                                                      ToastType::Error, 4000);
+            });
+            return;
+        }
+        std::string err;
+        const bool ok = store->Transition(proposalId, target, std::string(), err);
+        BackendAuditTrail::AppendEvent(smatchet::agentic::pure::MakeResultEvent(
+            proposalId, issueKey, fromState, target, operationId, ok, ok ? std::string() : err));
+        if (!ok) {
+            LOG_WARN("SmatchetAgentProposalsUi: Transition id=%lld -> %s failed: %s",
+                     static_cast<long long>(proposalId), AgentProposalStateToString(target), err.c_str());
+            const std::string toastErr = err;
+            app.mainThreadDispatcher.PostToMainThread([toastErr]() {
+                SmatchetToastManager::Instance().Push("Agent proposals", toastErr, ToastType::Error, 5000);
+            });
+            return;
+        }
+        LOG_INFO("SmatchetAgentProposalsUi: proposal id=%lld transitioned to %s",
+                 static_cast<long long>(proposalId), AgentProposalStateToString(target));
+        // Force a refresh on the next frame so the row disappears immediately
+        // rather than waiting for the 1 Hz tick. Touching the TU-static via
+        // the dispatcher keeps the mutation on the UI thread (the only writer
+        // for `g_initialFetchDone`).
+        app.mainThreadDispatcher.PostToMainThread([]() { g_initialFetchDone = false; });
+    });
+
+    // Optimistic local prune so the user sees their click stick at human
+    // latency even while the worker still runs. The next refresh tick
+    // reconciles against the SQLite truth — on worker failure the row
+    // reappears + a toast surfaces.
+    const auto it = std::find_if(g_proposalsCache.begin(), g_proposalsCache.end(),
+                                 [proposalId](const AgentProposal& p) { return p.id == proposalId; });
+    if (it != g_proposalsCache.end()) {
+        g_proposalsCache.erase(it);
     }
-    std::string err;
-    if (!store->Transition(row.id, target, std::string(), err)) {
-        LOG_WARN("SmatchetAgentProposalsUi: Transition id=%lld -> %s failed: %s", static_cast<long long>(row.id),
-                 AgentProposalStateToString(target), err.c_str());
-        SmatchetToastManager::Instance().Push("Agent proposals", err, ToastType::Error, 5000);
-        return;
-    }
-    LOG_INFO("SmatchetAgentProposalsUi: proposal id=%lld transitioned to %s", static_cast<long long>(row.id),
-             AgentProposalStateToString(target));
-    // Force a refresh on the next frame so the row disappears immediately
-    // rather than waiting for the 1 Hz tick.
-    g_initialFetchDone = false;
 }
 
 } // namespace
@@ -190,8 +251,9 @@ void Render(AppController& app, UiDrawSession& d) {
 
             // Buttons. Green Approve, red Reject. Push/Pop the colour state
             // around each so the rest of the panel stays on the standard
-            // theme. The buttons drive AgentProposalStore::Transition on the
-            // UI thread — sub-ms SQLite UPDATE makes the inline call safe.
+            // theme. The buttons delegate to TransitionAndToast which fires
+            // the SQLite UPDATE on a worker thread (Pillar 2 — never block
+            // the UI on contention with the T7 poll worker).
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.30f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.65f, 0.36f, 1.0f));

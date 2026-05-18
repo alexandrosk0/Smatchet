@@ -366,6 +366,16 @@ AppController::~AppController() {
     // with mainThreadDispatcher / AiAssistantController; ordering relative to those is loose.
     // Joining here guarantees no worker iteration is in flight while later members destruct.
     StopAgenticPoll();
+    // (Bundle A) Reap any thread that was detached for async-drain but has not yet been
+    // joined by `JoinDetachedAgenticPollIfReady`. After `StopAgenticPoll` returns, any
+    // detached thread is by definition a previous-incarnation worker that observed the
+    // stop atom long ago — its join is near-free.
+    {
+        std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+        if (agenticPollDetachedThread_.joinable()) {
+            agenticPollDetachedThread_.join();
+        }
+    }
 #endif
 #if defined(SMATCHET_WITH_AI)
     // Drop the AI assistant first — its worker may still be inside SendStreaming. The
@@ -1082,8 +1092,13 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // <userdata>/agent_proposals.sqlite when the platform user-data dir is available;
     // falls back to the cache's parent directory otherwise. Both DBs use SQLite's own
     // per-connection locking, so colocating them on disk is safe.
-    try {
-        std::string agenticDbPath;
+    // (Bundle A) AgentProposalStore construction (SQLite open + WAL pragmas +
+    // 2-table create + version check + migration ladder) is multi-ms on slow
+    // disks and a code-review CRITICAL on the UI thread per Pillar 2. Defer to
+    // a worker thread so `Initialize` returns fast; callers null-check the
+    // accessor and degrade gracefully for the brief init window.
+    std::string agenticDbPath;
+    {
         const std::string userDataDir = ConfigManager::GetPlatformSharedUserDataDirectory();
         if (!userDataDir.empty()) {
             agenticDbPath = userDataDir + "agent_proposals.sqlite";
@@ -1094,13 +1109,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
             const std::string dir = (slash == std::string::npos) ? std::string() : dbPath.substr(0, slash + 1);
             agenticDbPath = dir + "agent_proposals.sqlite";
         }
-        agentProposalStore_ = std::unique_ptr<AgentProposalStore>(new AgentProposalStore(agenticDbPath));
-    } catch (const std::exception& ex) {
-        // Initialisation failure is non-fatal — the agentic flow degrades gracefully via the
-        // nullptr-accessor pattern. The user can still operate the app without triage.
-        LOG_WARN("AppController: AgentProposalStore init failed: %s", ex.what());
-        agentProposalStore_.reset();
     }
+    LaunchBackgroundTask([this, agenticDbPath]() { this->InitAgentProposalStoreOnWorker(agenticDbPath); });
 #endif
 
     // Construct the deps adapter eagerly so OfflineQueueService + TicketSyncService can capture
@@ -1564,6 +1574,14 @@ void AppController::PromptAi(const std::string& prompt) {
 
 AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
 #if defined(SMATCHET_WITH_AGENTIC)
+    // Fast path: once the ready atom flips, the unique_ptr is stable for the
+    // lifetime of AppController (cleared only in the destructor after every
+    // worker that could touch the store has been joined). Probing the atom
+    // first lets the common steady-state case skip the mutex.
+    if (!agentProposalStoreReady_.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lk(agentProposalStoreMutex_);
     return agentProposalStore_.get();
 #else
     // OFF build: no member exists, so the only correct answer is nullptr. Callers using
@@ -1571,6 +1589,32 @@ AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
     return nullptr;
 #endif
 }
+
+#if defined(SMATCHET_WITH_AGENTIC)
+void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
+    // Worker-thread entry: opens the SQLite store, runs migrations, then publishes
+    // the unique_ptr under the mutex and flips the ready atom. The unique_ptr is
+    // constructed outside the mutex so the multi-ms SQLite open never holds the lock
+    // (UI-thread accessors would otherwise contend for the duration of init).
+    std::unique_ptr<AgentProposalStore> store;
+    try {
+        store.reset(new AgentProposalStore(dbPath));
+    } catch (const std::exception& ex) {
+        // Initialisation failure is non-fatal — the agentic flow degrades gracefully via the
+        // nullptr-accessor pattern. The user can still operate the app without triage.
+        LOG_WARN("AppController: AgentProposalStore init failed: %s", ex.what());
+        // Mark ready anyway so callers stop probing — accessor still returns nullptr.
+        agentProposalStoreReady_.store(true, std::memory_order_release);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(agentProposalStoreMutex_);
+        agentProposalStore_ = std::move(store);
+    }
+    agentProposalStoreReady_.store(true, std::memory_order_release);
+    LOG_INFO("AppController: AgentProposalStore init complete (path=%s)", dbPath.c_str());
+}
+#endif
 
 #if defined(SMATCHET_WITH_AGENTIC)
 namespace {
@@ -1662,6 +1706,17 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
 
 void AppController::AgenticPollWorkerLoop() {
     LOG_INFO("AppController::AgenticPollWorkerLoop: started");
+    // (Bundle A) Wait for the deferred AgentProposalStore init to finish before the
+    // first iteration. Without this guard the worker would race a still-constructing
+    // store and surface "store unavailable" log spam on the first wake-up after a
+    // fresh launch. Short-circuit on stop so a UI-thread shutdown during the wait
+    // exits cleanly.
+    while (!agenticPollShouldStop_.load() && !agentProposalStoreReady_.load(std::memory_order_acquire)) {
+        std::unique_lock<std::mutex> lk(agenticPollMu_);
+        agenticPollCv_.wait_for(lk, std::chrono::milliseconds(200), [this]() {
+            return agenticPollShouldStop_.load() || agentProposalStoreReady_.load(std::memory_order_acquire);
+        });
+    }
     while (!agenticPollShouldStop_.load()) {
         TrackerConfig cfg = ConfigManager::Load();
         // Re-check the preconditions every iteration so a runtime config edit (Preferences
@@ -1760,8 +1815,8 @@ void AppController::AgenticPollWorkerLoop() {
 }
 
 void AppController::StartAgenticPollIfEnabled() {
-    // Already running? Caller (RestartAgenticPoll) must Stop first; this guard is a safety
-    // net for callers that forget — never spawn a second worker.
+    // (Bundle A) Caller holds `agenticPollLifecycleMutex_` (Restart / RestartAsync /
+    // RunAgenticTriageOnce). Internal-only entry; do not call without the lock.
     if (agenticPollRunning_.load() || agenticPollThread_.joinable()) {
         LOG_DEBUG("AppController::StartAgenticPollIfEnabled: worker already running — no-op");
         return;
@@ -1792,6 +1847,10 @@ void AppController::StartAgenticPollIfEnabled() {
 }
 
 void AppController::StopAgenticPoll() {
+    // (Bundle A) Synchronous join — safe from non-UI threads (destructor, scenarios).
+    // UI callers must route through `DetachAgenticPoll()` to avoid a multi-minute
+    // freeze when a poll batch is mid-LLM-call.
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
     if (!agenticPollThread_.joinable()) {
         return;
     }
@@ -1806,7 +1865,19 @@ void AppController::StopAgenticPoll() {
 }
 
 void AppController::RestartAgenticPoll() {
-    StopAgenticPoll();
+    // (Bundle A) Synchronous restart — safe from non-UI threads. Holds the lifecycle
+    // lock across both phases so a UI toggle mid-restart can't race a duplicate
+    // worker into existence.
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+    if (agenticPollThread_.joinable()) {
+        {
+            std::lock_guard<std::mutex> lk(agenticPollMu_);
+            agenticPollShouldStop_.store(true);
+        }
+        agenticPollCv_.notify_all();
+        agenticPollThread_.join();
+        agenticPollRunning_.store(false);
+    }
     // Drop the cached triage controller so the next start picks up a fresh GitHubPat /
     // base URL — Preferences may have changed both behind us. The next GetAgenticTriageController()
     // call from the worker rebuilds the chain (cheap — no HTTP traffic until TriageIssue runs).
@@ -1818,8 +1889,70 @@ void AppController::RestartAgenticPoll() {
     StartAgenticPollIfEnabled();
 }
 
+void AppController::DetachAgenticPoll() {
+    // (Bundle A) UI-thread-safe shutdown: flip the stop atom + notify, then move the
+    // (still-running) thread into the detached-handle slot so the dispatcher drain
+    // can join it once it has actually exited. Joining a finished thread is
+    // near-free — the cost the UI saves is the wait-for-LLM-timeout window.
+    //
+    // If a previous detach is already pending (worker still running), join it first
+    // synchronously — at this point it is almost certainly finished (a long-detached
+    // worker by definition observed the stop atom before the new detach call). In
+    // the worst case this adds a few ms to the toggle response, vs the original
+    // multi-minute freeze.
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+    if (agenticPollDetachedThread_.joinable()) {
+        agenticPollDetachedThread_.join();
+    }
+    if (!agenticPollThread_.joinable()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(agenticPollMu_);
+        agenticPollShouldStop_.store(true);
+    }
+    agenticPollCv_.notify_all();
+    // Hand the running thread off to the detached slot — `JoinDetachedAgenticPollIfReady`
+    // (called every frame) joins it once `agenticPollRunning_` reads false.
+    agenticPollDetachedThread_ = std::move(agenticPollThread_);
+    LOG_INFO("AppController::DetachAgenticPoll: stop signalled, join deferred to dispatcher drain");
+}
+
+void AppController::RestartAgenticPollAsync() {
+    // (Bundle A) UI-thread-safe restart: detaches the current worker (returns
+    // immediately) then immediately starts a new one. The detached worker drains
+    // off-band; the new one only blocks behind the lifecycle mutex which is held
+    // exclusively here for the start phase.
+    DetachAgenticPoll();
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+    // Drop the cached triage controller chain — same rationale as RestartAgenticPoll.
+    agenticTriageController_.reset();
+    agenticGithubReadAdapter_.reset();
+    agenticInferenceAdapter_.reset();
+    agenticGithubClient_.reset();
+    agenticInferenceClient_.reset();
+    StartAgenticPollIfEnabled();
+}
+
+void AppController::JoinDetachedAgenticPollIfReady() {
+    // (Bundle A) Per-frame helper — fast atomic load + branch. The lifecycle lock is
+    // only taken when the detached thread is actually finished (i.e. running atom
+    // false + thread joinable), so the steady-state cost is one atomic load.
+    if (agenticPollRunning_.load(std::memory_order_acquire)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+    if (agenticPollDetachedThread_.joinable() && !agenticPollRunning_.load(std::memory_order_acquire)) {
+        agenticPollDetachedThread_.join();
+        LOG_DEBUG("AppController::JoinDetachedAgenticPollIfReady: detached worker joined");
+    }
+}
+
 bool AppController::RunAgenticTriageOnce(std::string& outError) {
     outError.clear();
+    // (Bundle A) Hold the lifecycle lock for the duration of the controller fetch +
+    // batch run so a UI checkbox toggle can't tear down the controller chain mid-batch.
+    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
     auto* triage = GetAgenticTriageController();
     if (triage == nullptr) {
         outError = "Agentic triage unavailable — configure GitHub PAT in Preferences.";

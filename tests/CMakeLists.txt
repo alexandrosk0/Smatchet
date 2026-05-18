@@ -135,6 +135,11 @@ if(SMATCHET_WITH_AGENTIC)
         # itself stays bucket-E only.
         Source_Core/SmatchetAgentProposalsUiPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp"
+        # Bundle A — pure audit-entry construction lifted from
+        # SmatchetAgentProposalsUi.cpp so the doctest rig covers the
+        # Approve/Reject audit-trail shape that the worker-thread path emits.
+        Source_Core/AgenticProposalAuditPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticProposalAuditPure.cpp"
         # T8 — pure scenario-fixture loaders (GitHub comments array + Ollama proposals
         # envelope) used by the agent-triage-roundtrip scenario. Doctest covers the
         # mapping rules + ISO-8601 helper; the scenario itself is bucket-A automated.

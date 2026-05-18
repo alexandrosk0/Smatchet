@@ -269,11 +269,34 @@ class AppController
 
     /// (T7) Apply the current `cfg.AgenticPoll*` settings to the worker thread:
     /// joins the existing worker (if any), then re-launches when the master
-    /// toggle is on and preconditions (PAT + non-empty query) are met. Safe to
-    /// call from the UI thread — the join blocks the caller for at most one
-    /// loop iteration (worst case: `cfg.AgenticPollIntervalSec` seconds, but
-    /// the stop atom + condition-variable cuts that to milliseconds in practice).
+    /// toggle is on and preconditions (PAT + non-empty query) are met.
+    ///
+    /// Bundle A safety: must NOT be called from the UI thread — synchronous
+    /// `join()` of the poll worker can block multi-minutes mid-batch (per-issue
+    /// LLM call timeouts × N issues). UI callers use `DetachAgenticPoll()` +
+    /// `RestartAgenticPollAsync()` instead, which signal stop + defer the join
+    /// to the next dispatcher drain. This entry point is still safe from
+    /// worker threads (background tasks, scenario steps) and from the
+    /// destructor.
     void RestartAgenticPoll();
+
+    /// (Bundle A) UI-thread-safe poll shutdown: flips the stop atom + notifies
+    /// the condition variable, leaving the thread joinable. The pending join
+    /// drains automatically inside `JoinDetachedAgenticPollIfReady()` (called
+    /// every frame from `MainThreadDispatcher::Drain`) once the worker has
+    /// actually exited, which is near-free at that point.
+    void DetachAgenticPoll();
+
+    /// (Bundle A) UI-thread-safe restart: detaches the current worker then
+    /// starts a new one under the lifecycle mutex. Pairs with the Preferences
+    /// checkbox toggle path; the in-flight worker is joined off-band by the
+    /// dispatcher drain.
+    void RestartAgenticPollAsync();
+
+    /// (Bundle A) Per-frame helper — joins the detached poll thread iff it has
+    /// actually exited. Cheap (atomic load + maybe a free join). Called by the
+    /// UI loop alongside `mainThreadDispatcher.Drain()`.
+    void JoinDetachedAgenticPollIfReady();
 
     /// (T7) Manual trigger — runs one `TriageBatch` cycle synchronously on the
     /// caller's thread. UI callers must wrap in `LaunchBackgroundTask` to keep
@@ -1090,9 +1113,15 @@ class AppController
 #if defined(SMATCHET_WITH_AGENTIC)
     // Agentic-flow proposal store (T4). SQLite-backed; persists LLM-suggested actions
     // and the per-repo poll cursor. Held in a unique_ptr<forward-declared> so the header
-    // never pulls SQLiteCpp transitively. Constructed in Initialize alongside the local
-    // cache (which already opens a SQLite handle via LocalCacheManager) — they target
-    // different DB files so there's no contention.
+    // never pulls SQLiteCpp transitively.
+    //
+    // Bundle A: store construction (open + WAL pragmas + 2-table create + version check
+    // + migration) is tens-to-hundreds of ms on slow disks. Deferred to a worker thread
+    // launched from `Initialize`; `GetAgentProposalStore()` returns nullptr until the
+    // worker assigns the unique_ptr under `agentProposalStoreMutex_`. The scheduled-poll
+    // worker (T7) gates on `agentProposalStoreReady_` before its first iteration.
+    mutable std::mutex agentProposalStoreMutex_;
+    std::atomic<bool> agentProposalStoreReady_{false};
     std::unique_ptr<AgentProposalStore> agentProposalStore_;
 
     // Agentic triage controller (T5) + its concrete dependencies (GitHubClient + inference).
@@ -1120,10 +1149,27 @@ class AppController
     // tab reads this to render "Last poll: Nm Ns ago / Next poll: ~in …".
     std::atomic<std::int64_t> agenticPollLastAtSec_{0};
 
+    // (Bundle A) Serialises lifecycle transitions on the poll worker. Held during
+    // Start / Stop / Restart / Detach / RunAgenticTriageOnce so a UI toggle mid-restart
+    // cannot race with a manual triage trigger into a duplicate-worker or abandoned-
+    // worker state. Short critical sections — never held across SQLite / HTTP I/O.
+    std::mutex agenticPollLifecycleMutex_;
+
+    // (Bundle A) Detached worker handle — set by `DetachAgenticPoll()` when the UI
+    // thread asks for an async shutdown. `JoinDetachedAgenticPollIfReady()` joins the
+    // thread on the next dispatcher drain after the worker has actually exited
+    // (`agenticPollRunning_ == false`). Guarded by `agenticPollLifecycleMutex_`.
+    std::thread agenticPollDetachedThread_;
+
     void StartAgenticPollIfEnabled();
     void StopAgenticPoll();
     // Worker entry point — lives on `agenticPollThread_`.
     void AgenticPollWorkerLoop();
+
+    // (Bundle A) Background-only — opens + migrates the SQLite store + flips
+    // `agentProposalStoreReady_`. Called from `LaunchBackgroundTask` so the
+    // tens-to-hundreds-ms init never lands on the UI thread.
+    void InitAgentProposalStoreOnWorker(const std::string& dbPath);
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
