@@ -112,6 +112,18 @@ else()
         "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
 
+# Agentic flow — pure helper test surfaces (T1). GitHubClientHelpers covers issue-key
+# parse/format/round-trip and ISO-8601 → unix epoch conversion. No HTTP / SQLite / ImGui.
+# (TrackerDateTimePure.cpp is already linked above — GitHubClientHelpers consumes its
+#  TimeGmPortable wrapper.)
+if(SMATCHET_WITH_AGENTIC)
+    target_sources(SmatchetTests PRIVATE
+        Source_Core/GitHubClientHelpers.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
+    )
+    target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
+endif()
+
 # Whisper Phase B — pure helper test surfaces. WhisperApiKeyResolve + WavWriter
 # have no third-party deps; WhisperApiClient pulls cpr (already linked) +
 # AiErrorRedact (already in CORE sources above) for the multipart Post path.

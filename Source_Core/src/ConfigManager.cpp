@@ -352,6 +352,14 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("ai_anthropic_api_key");
     }
     j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
+#if defined(SMATCHET_WITH_AGENTIC)
+    // GitHubPat — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
+    const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
+    if (config.GitHubPat.empty() || !githubPatEnc.empty()) {
+        j.erase("github_pat");
+    }
+    j["github_pat_enc"] = githubPatEnc;
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
     // WhisperApiKey — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
     const std::string whisperApiKeyEnc = ProtectSecretForConfig(config.WhisperApiKey);
@@ -371,6 +379,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["mcp_auth_token"] = config.McpAuthToken;
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
+#if defined(SMATCHET_WITH_AGENTIC)
+    j.erase("github_pat_enc");
+    j["github_pat"] = config.GitHubPat;
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
     j.erase("whisper_api_key_enc");
     j["whisper_api_key"] = config.WhisperApiKey;
@@ -615,6 +627,13 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
                 migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
             }
+#if defined(SMATCHET_WITH_AGENTIC)
+            cfg.GitHubPat =
+                UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
+            if (cfg.GitHubPat.empty()) {
+                cfg.GitHubPat = j.value("github_pat", std::string{});
+            }
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
             cfg.WhisperApiKey =
                 UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
@@ -625,6 +644,9 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #else
             cfg.AiApiKey = j.value("ai_api_key", std::string{});
             cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+#if defined(SMATCHET_WITH_AGENTIC)
+            cfg.GitHubPat = j.value("github_pat", std::string{});
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
             cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
 #endif
