@@ -894,6 +894,15 @@ class AppController
     bool inDrawLuaWindows_ = false;
     std::vector<McpToolDefinition> luaMcpTools_;
     mutable std::mutex luaMcpToolsMutex_;
+    /// Guards `luaTicketActions_` and `luaGlobalActions_`. Both vectors are mutated from
+    /// the worker thread when `AutomationWorkerLoop` re-executes setup scripts (e.g.
+    /// `SmatchetHooks.lua`) which call `ui.register_ticket_action` / `ui.register_global_action`
+    /// — these resolve `__smatchet_app_ui` on the worker `bgState` and call
+    /// `LuaUiRegister{Ticket,Global}ActionBind` on the worker thread. Meanwhile UI thread reads
+    /// them every frame via `Get{Ticket,Global}ActionNames()` (LuaConsolePlugin). Without this
+    /// lock the std::vector erase/push_back reallocates concurrently with std::transform — UB,
+    /// crash. Mirrors the `luaMcpToolsMutex_` pattern for the same shape on `luaMcpTools_`.
+    mutable std::mutex luaActionsMutex_;
     std::vector<std::pair<std::string, std::string>> luaTicketActions_;
     std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
     mutable std::mutex fieldIconMapsMutex_;
