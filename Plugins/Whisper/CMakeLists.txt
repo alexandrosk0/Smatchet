@@ -51,6 +51,14 @@ target_link_libraries(SmatchetPlugin_Whisper PRIVATE
     ghc_filesystem
 )
 
+# ImGui include path for WhisperPlugin.cpp — the post-transcription splice
+# now snapshots `ImGui::GetActiveID()` so the router can pick the focused
+# entry instead of the front of the list. Header-only consume; ImGuiLib's
+# PUBLIC includes propagate via this link.
+target_link_libraries(SmatchetPlugin_Whisper PRIVATE
+    ImGuiLib
+)
+
 # Win32 WASAPI symbols (CoInitializeEx, MMDeviceEnumerator, IAudioClient, ...).
 # Phase B introduces WindowsAudioCapture.cpp, which compiles cross-platform
 # (non-Windows builds get a stub) but requires the COM / WASAPI libraries on
