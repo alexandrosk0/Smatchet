@@ -6,7 +6,7 @@
 >
 > **Live query**: `bash scripts/dev/locks-show.sh`
 >
-> **Snapshot taken**: 2026-05-18T17:10:41Z (UTC)
+> **When was this last regenerated?** Run `git log -1 --format=%cI docs/design/_plan-locks.generated.md`.
 
 ## No active plan-locks
 
