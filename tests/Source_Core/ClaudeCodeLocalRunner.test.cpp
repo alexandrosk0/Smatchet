@@ -44,6 +44,13 @@
 #error "SMATCHET_STUB_CLAUDE_DIR must be defined via target_compile_definitions"
 #endif
 
+#ifndef SMATCHET_STUB_GIT_DIR
+#error "SMATCHET_STUB_GIT_DIR must be defined via target_compile_definitions"
+#endif
+#ifndef SMATCHET_STUB_GH_DIR
+#error "SMATCHET_STUB_GH_DIR must be defined via target_compile_definitions"
+#endif
+
 namespace {
 
 #ifdef _WIN32
@@ -56,6 +63,22 @@ std::string StubClaudePath() {
     std::string p = SMATCHET_STUB_CLAUDE_DIR;
     p.push_back('/');
     p.append("stub_claude");
+    p.append(kExeSuffix);
+    return p;
+}
+
+std::string StubGitPath() {
+    std::string p = SMATCHET_STUB_GIT_DIR;
+    p.push_back('/');
+    p.append("stub_git");
+    p.append(kExeSuffix);
+    return p;
+}
+
+std::string StubGhPath() {
+    std::string p = SMATCHET_STUB_GH_DIR;
+    p.push_back('/');
+    p.append("stub_gh");
     p.append(kExeSuffix);
     return p;
 }
@@ -289,6 +312,191 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(ok);
         CHECK_FALSE(out.ok);
         CHECK(out.errorMessage.find("cancel") != std::string::npos);
+
+        SetEnvPortable("STUB_CLAUDE_MODE", "");
+        RmTreeBestEffort(dir);
+    }
+
+    // ===== H6 PR-open fallback =====
+    //
+    // Sentinel-file path is already covered by "Spawn happy path" above —
+    // stub_claude writes PR_URL.txt, runner picks it up, no fallback fires.
+    // These cases drive the fallback branch by selecting STUB_CLAUDE_MODE=no-pr
+    // (writes RUN_RESULT.json with ok=true but no PR_URL.txt), forcing the
+    // runner to invoke `git push` + `gh pr create` itself.
+
+    TEST_CASE("H6 fallback path: gh pr create succeeds + prUrl carries through") {
+        const std::string dir = MakeTempDir("h6ok");
+        REQUIRE_FALSE(dir.empty());
+        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+        SetEnvPortable("STUB_GIT_MODE", "default");
+        SetEnvPortable("STUB_GH_MODE", "default");
+        SetEnvPortable("STUB_GH_URL", "https://github.com/owner/repo/pull/123");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.autoCreatePrIfMissing = true;
+        opts.gitBinPath = StubGitPath();
+        opts.ghBinPath = StubGhPath();
+        opts.prBaseBranch = "develop";
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        const auto seed = MakeFixtureSeed(dir);
+        std::vector<std::string> states;
+        auto onState = [&states](const std::string& s) { states.push_back(s); };
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        CodingHarness::RunResult out;
+        std::string err;
+        const bool ok = r.Spawn(seed, dir, nullptr, onState, cancel, out, err);
+        CHECK_MESSAGE(ok, err);
+        CHECK(out.ok);
+        CHECK(out.prUrl == "https://github.com/owner/repo/pull/123");
+
+        // PR_URL.txt should have been written by the fallback path so future
+        // restart-from-disk inspection sees the same URL.
+        std::string urlOnDisk;
+        REQUIRE(ReadFileText(dir + "/PR_URL.txt", urlOnDisk));
+        CHECK(urlOnDisk.find("https://github.com/owner/repo/pull/123") != std::string::npos);
+
+        // State callback should have emitted "PrOpen" before "Complete".
+        bool sawPrOpen = false;
+        bool sawCompleteAfterPrOpen = false;
+        for (const auto& s : states) {
+            if (s == "PrOpen") sawPrOpen = true;
+            if (s == "Complete" && sawPrOpen) sawCompleteAfterPrOpen = true;
+        }
+        CHECK(sawPrOpen);
+        CHECK(sawCompleteAfterPrOpen);
+
+        SetEnvPortable("STUB_CLAUDE_MODE", "");
+        SetEnvPortable("STUB_GIT_MODE", "");
+        SetEnvPortable("STUB_GH_MODE", "");
+        SetEnvPortable("STUB_GH_URL", "");
+        RmTreeBestEffort(dir);
+    }
+
+    TEST_CASE("H6 fallback path: gh pr create failure surfaces ok=false") {
+        const std::string dir = MakeTempDir("h6gherr");
+        REQUIRE_FALSE(dir.empty());
+        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+        SetEnvPortable("STUB_GIT_MODE", "default");
+        SetEnvPortable("STUB_GH_MODE", "create-fail");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.autoCreatePrIfMissing = true;
+        opts.gitBinPath = StubGitPath();
+        opts.ghBinPath = StubGhPath();
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        const auto seed = MakeFixtureSeed(dir);
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        CodingHarness::RunResult out;
+        std::string err;
+        const bool ok = r.Spawn(seed, dir, nullptr, nullptr, cancel, out, err);
+        CHECK_FALSE(ok);
+        CHECK_FALSE(out.ok);
+        CHECK(out.errorMessage.find("gh pr create") != std::string::npos);
+
+        SetEnvPortable("STUB_CLAUDE_MODE", "");
+        SetEnvPortable("STUB_GIT_MODE", "");
+        SetEnvPortable("STUB_GH_MODE", "");
+        RmTreeBestEffort(dir);
+    }
+
+    TEST_CASE("H6 fallback path: git push failure surfaces ok=false") {
+        const std::string dir = MakeTempDir("h6pusherr");
+        REQUIRE_FALSE(dir.empty());
+        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+        SetEnvPortable("STUB_GIT_MODE", "push-fail");
+        SetEnvPortable("STUB_GH_MODE", "default");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.autoCreatePrIfMissing = true;
+        opts.gitBinPath = StubGitPath();
+        opts.ghBinPath = StubGhPath();
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        const auto seed = MakeFixtureSeed(dir);
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        CodingHarness::RunResult out;
+        std::string err;
+        const bool ok = r.Spawn(seed, dir, nullptr, nullptr, cancel, out, err);
+        CHECK_FALSE(ok);
+        CHECK_FALSE(out.ok);
+        CHECK(out.errorMessage.find("git push") != std::string::npos);
+
+        SetEnvPortable("STUB_CLAUDE_MODE", "");
+        SetEnvPortable("STUB_GIT_MODE", "");
+        SetEnvPortable("STUB_GH_MODE", "");
+        RmTreeBestEffort(dir);
+    }
+
+    TEST_CASE("H6 fallback path: bad-URL output rejected") {
+        const std::string dir = MakeTempDir("h6badurl");
+        REQUIRE_FALSE(dir.empty());
+        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+        SetEnvPortable("STUB_GIT_MODE", "default");
+        SetEnvPortable("STUB_GH_MODE", "bad-url");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.autoCreatePrIfMissing = true;
+        opts.gitBinPath = StubGitPath();
+        opts.ghBinPath = StubGhPath();
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        const auto seed = MakeFixtureSeed(dir);
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        CodingHarness::RunResult out;
+        std::string err;
+        const bool ok = r.Spawn(seed, dir, nullptr, nullptr, cancel, out, err);
+        CHECK_FALSE(ok);
+        CHECK_FALSE(out.ok);
+        CHECK(out.errorMessage.find("non-PR URL") != std::string::npos);
+
+        SetEnvPortable("STUB_CLAUDE_MODE", "");
+        SetEnvPortable("STUB_GIT_MODE", "");
+        SetEnvPortable("STUB_GH_MODE", "");
+        RmTreeBestEffort(dir);
+    }
+
+    TEST_CASE("H6 fallback disabled: harness without PR_URL.txt leaves prUrl empty") {
+        // autoCreatePrIfMissing=false → runner must NOT invoke git/gh. The
+        // harness succeeded so ok=true with empty prUrl is the documented
+        // outcome (the operator opted out of implicit PR creation).
+        const std::string dir = MakeTempDir("h6off");
+        REQUIRE_FALSE(dir.empty());
+        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.autoCreatePrIfMissing = false;
+        // Intentionally do NOT set git/gh paths — if the fallback fired it
+        // would shell out to PATH and probably succeed on dev machines,
+        // which would mask the regression. Leaving them empty + autoCreate
+        // off keeps the test hermetic.
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        const auto seed = MakeFixtureSeed(dir);
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        CodingHarness::RunResult out;
+        std::string err;
+        const bool ok = r.Spawn(seed, dir, nullptr, nullptr, cancel, out, err);
+        CHECK_MESSAGE(ok, err);
+        CHECK(out.ok);
+        CHECK(out.prUrl.empty());
 
         SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);

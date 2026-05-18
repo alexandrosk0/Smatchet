@@ -56,6 +56,31 @@ std::string KebabCase(const std::string& s) {
 void NoopAuditSink(const std::string&, const std::string&, const std::string&, bool, const std::string&,
                    const nlohmann::json&) {}
 
+// (H5/H6) File-read helpers — shared between PrOpen URL resolution + the
+// clarification question stash. Lift into the top anonymous namespace so
+// ControllerTransition can call them without forward declarations.
+std::string ReadFileText(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        return std::string();
+    }
+    std::ostringstream os;
+    os << f.rdbuf();
+    return os.str();
+}
+
+std::string JoinPathLocal(const std::string& dir, const char* name) {
+    if (dir.empty()) {
+        return std::string(name);
+    }
+    std::string out = dir;
+    if (out.back() != '/' && out.back() != '\\') {
+        out.push_back('/');
+    }
+    out.append(name);
+    return out;
+}
+
 } // namespace
 
 // ─── Static helpers ────────────────────────────────────────────────────────
@@ -152,6 +177,8 @@ void AgenticHandoffController::SetGitHubClarificationEnabled(bool enabled) {
     githubClarificationEnabled_.store(enabled);
 }
 
+void AgenticHandoffController::SetToastSink(ToastSink sink) { toastSink_ = std::move(sink); }
+
 // ─── Audit + transition core ──────────────────────────────────────────────
 
 void AgenticHandoffController::EmitAudit(const std::string& issueKey, CodingHarness::RunState fromState,
@@ -214,6 +241,42 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
         }
     }
 
+    // (H6) Pre-audit PR-URL resolution. The runner emits "PrOpen" via the
+    // bare `(string newState)` state callback which has no slot for a URL.
+    // Read PR_URL.txt from the worktree here so the audit payload + toast
+    // sink both see the URL on the first transition. The worker-thread
+    // final transition path passes the URL directly (line ~568) so this
+    // branch is a no-op for that case.
+    std::string resolvedPrUrl = prUrl;
+    if (toState == CodingHarness::RunState::PrOpen && resolvedPrUrl.empty()) {
+        std::string worktree;
+        {
+            std::lock_guard<std::mutex> lk(handoffsMu_);
+            auto it = handoffs_.find(proposalId);
+            if (it != handoffs_.end()) {
+                worktree = it->second.worktreeDir;
+            }
+        }
+        if (!worktree.empty()) {
+            const std::string urlPath = JoinPathLocal(worktree, "PR_URL.txt");
+            std::string body = ReadFileText(urlPath);
+            while (!body.empty() && (body.back() == '\n' || body.back() == '\r' || body.back() == ' ' ||
+                                      body.back() == '\t')) {
+                body.pop_back();
+            }
+            resolvedPrUrl = body;
+        }
+        if (!resolvedPrUrl.empty()) {
+            // Backfill the in-memory record so the H8 UI panel reads the
+            // URL on the next snapshot.
+            std::lock_guard<std::mutex> lk(handoffsMu_);
+            auto it = handoffs_.find(proposalId);
+            if (it != handoffs_.end()) {
+                it->second.prUrl = resolvedPrUrl;
+            }
+        }
+    }
+
     // success flag passed to audit: every successful transition (including
     // transitions INTO Failed) records success=true at the audit-row level
     // (the row was successfully appended) but carries the errorMessage in
@@ -222,11 +285,19 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
     // so downstream queries can filter. Cancelled is also false (operator
     // cancelled — not a success).
     const bool auditSuccess = (toState == CodingHarness::RunState::Complete);
-    EmitAudit(issueKey, fromState, toState, auditSuccess, errorMessage, prUrl);
+    EmitAudit(issueKey, fromState, toState, auditSuccess, errorMessage, resolvedPrUrl);
 
     LOG_INFO("AgenticHandoffController: proposalId=%lld %s -> %s", static_cast<long long>(proposalId),
              CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState));
     (void)snap;
+
+    // (H6) PrOpen toast — fires after audit so a sink-side failure does not
+    // roll back the FSM transition. Skipped on a degenerate URL (transition
+    // fired with no file + no URL) — the audit row still records the
+    // transition for downstream queries.
+    if (toState == CodingHarness::RunState::PrOpen && toastSink_ && !resolvedPrUrl.empty()) {
+        toastSink_(std::string("Agent PR opened: ") + resolvedPrUrl);
+    }
 
     // (H5) AwaitingUser side-effect — read CLARIFICATION_NEEDED.json from the
     // worktree and post the question as a GitHub comment when wired. Side-effects
@@ -254,32 +325,8 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
 }
 
 // ─── H5 helpers ──────────────────────────────────────────────────────────
-
-namespace {
-
-std::string ReadFileText(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f.is_open()) {
-        return std::string();
-    }
-    std::ostringstream os;
-    os << f.rdbuf();
-    return os.str();
-}
-
-std::string JoinPathLocal(const std::string& dir, const char* name) {
-    if (dir.empty()) {
-        return std::string(name);
-    }
-    std::string out = dir;
-    if (out.back() != '/' && out.back() != '\\') {
-        out.push_back('/');
-    }
-    out.append(name);
-    return out;
-}
-
-} // namespace
+// (ReadFileText + JoinPathLocal lifted to the top anonymous namespace so
+// ControllerTransition can use them — see top-of-file.)
 
 void AgenticHandoffController::ReadAndStashClarificationQuestion(std::int64_t proposalId) {
     // Snapshot the worktree dir under the lock; the file read happens
@@ -563,8 +610,14 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
         ControllerTransition(proposalId, CodingHarness::RunState::Failed, err, result.prUrl);
         return;
     }
-    // The runner reports Complete via its state callback already; this is a
-    // belt-and-braces transition that no-ops on the already-terminal record.
+    // The runner reports PrOpen via its state callback (sentinel-file poll OR
+    // the H6 fallback path's explicit emit). The controller-side PrOpen handler
+    // resolves the URL from PR_URL.txt for the audit + toast emission, so by
+    // the time we get here the record already has prUrl set. The Complete
+    // transition is the terminal — `Running` is no longer the from-state
+    // (the FSM rejects Running -> Complete); we transition PrOpen -> Complete
+    // for the URL-carrying success path or stay in Running for the rare
+    // never-emitted-PrOpen case (which surfaces Failed below).
     ControllerTransition(proposalId, CodingHarness::RunState::Complete, std::string(), result.prUrl);
 }
 

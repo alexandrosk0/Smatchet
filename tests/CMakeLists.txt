@@ -297,4 +297,14 @@ add_dependencies(SmatchetTests stub_claude)
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_STUB_CLAUDE_DIR=\"$<TARGET_FILE_DIR:stub_claude>\"")
 
+# H6 — stub_git + stub_gh masquerade as `git` and `gh` for the PR-open
+# fallback cases in ClaudeCodeLocalRunner.test.cpp. Built unconditionally
+# (same rationale as stub_claude). The runner test injects their absolute
+# paths via Options::gitBinPath / ghBinPath.
+add_subdirectory(fixtures/stub-git-gh)
+add_dependencies(SmatchetTests stub_git stub_gh)
+target_compile_definitions(SmatchetTests PRIVATE
+    "SMATCHET_STUB_GIT_DIR=\"$<TARGET_FILE_DIR:stub_git>\""
+    "SMATCHET_STUB_GH_DIR=\"$<TARGET_FILE_DIR:stub_gh>\"")
+
 add_test(NAME smatchet_tests COMMAND SmatchetTests)

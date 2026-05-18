@@ -94,6 +94,17 @@ struct PostedComment {
 using GitHubCommentFetcher = std::function<bool(
     const std::string& /*issueKey*/, std::vector<PostedComment>& /*outComments*/, std::string& /*outError*/)>;
 
+// (H6) Toast sink seam — production binds to a lambda calling
+// `SmatchetToastManager::Instance().Push(...)`. Decoupled via a function-typed
+// seam so the controller TU does not pull `SmatchetToast.cpp` (which depends
+// on ImGui) into the test rig. Null = no-op (the doctest path).
+//
+// The controller invokes the sink once per PrOpen transition with a short
+// human-readable string carrying the PR URL. Future callers may extend the
+// arity (toast type, body, duration) — keep this minimal until a real
+// requirement appears.
+using ToastSink = std::function<void(const std::string& /*message*/)>;
+
 class AgenticHandoffController {
   public:
     // One in-flight handoff record. Lives in-memory only for H4; H10 will
@@ -156,6 +167,12 @@ class AgenticHandoffController {
     // was wired — useful for private / non-GitHub work where the operator
     // wants the audit trail purely local. Defaults to true.
     void SetGitHubClarificationEnabled(bool enabled);
+
+    // (H6) Wire the toast sink. Optional — null leaves the controller silent
+    // on PrOpen (the audit-trail entry still records the URL). Setter is not
+    // thread-safe relative to in-flight handoffs; wire at AppController init
+    // before any Start.
+    void SetToastSink(ToastSink sink);
 
     AgenticHandoffController(const AgenticHandoffController&) = delete;
     AgenticHandoffController& operator=(const AgenticHandoffController&) = delete;
@@ -325,6 +342,9 @@ class AgenticHandoffController {
     GitHubCommentPoster githubPoster_;
     GitHubCommentFetcher githubFetcher_;
     std::atomic<bool> githubClarificationEnabled_{true};
+
+    // (H6) Optional toast sink. nullptr = silent (audit-trail only).
+    ToastSink toastSink_;
 
     mutable std::mutex handoffsMu_;
     std::unordered_map<std::int64_t, ActiveHandoff> handoffs_;
