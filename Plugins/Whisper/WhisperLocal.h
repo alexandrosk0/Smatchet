@@ -64,6 +64,19 @@ class WhisperLocal {
     /// frames map to exact 0.0f without rounding noise.
     bool Transcribe(const std::vector<std::int16_t>& pcmInt16, std::string& outText, std::string& outError);
 
+    /// Phase F language-aware overloads. `language` is the ISO code forwarded
+    /// to whisper.cpp's `whisper_full_params.language` (e.g. "en", "fr").
+    /// "auto" / empty asks whisper.cpp to autodetect. Same threading
+    /// contract as the no-language overloads.
+    bool Transcribe(const std::vector<float>& pcm,
+                    const std::string& language,
+                    std::string& outText,
+                    std::string& outError);
+    bool Transcribe(const std::vector<std::int16_t>& pcmInt16,
+                    const std::string& language,
+                    std::string& outText,
+                    std::string& outError);
+
     bool IsModelLoaded() const noexcept;
 
     /// Returns "ON" / "OFF" depending on the SMATCHET_WHISPER_LOCAL_BACKEND

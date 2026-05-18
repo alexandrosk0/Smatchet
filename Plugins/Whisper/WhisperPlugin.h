@@ -25,6 +25,7 @@
 #include "IPlugin.h"
 
 #include <memory>
+#include <string>
 
 class WhisperPlugin : public IPlugin {
   public:
@@ -35,6 +36,24 @@ class WhisperPlugin : public IPlugin {
 
     void OnStart(AppController& app) override;
     void OnStop() override;
+
+    /// Phase F — hot-rebind the global push-to-talk hotkey at runtime.
+    /// `descriptor` is a HotkeyParse-compatible string (e.g. "Ctrl+Alt+Space");
+    /// the existing hook is unregistered first, then the new descriptor is
+    /// parsed + re-registered. Returns false (and sets `outError`) on parse
+    /// failure / register failure; the previous hook stays unregistered in
+    /// that case so a bad rebind leaves the user without push-to-talk rather
+    /// than firing on the stale combo. Safe to call from the UI thread
+    /// (Preferences); the underlying Win32 hook re-installation is fast.
+    bool ReregisterHotkey(const std::string& descriptor, std::string& outError);
+
+    /// Phase F — process-wide accessor used by the Preferences UI to call
+    /// ReregisterHotkey without threading the plugin pointer through
+    /// AppController. Returns the live instance set during OnStart, or
+    /// nullptr when the plugin is not currently constructed (gating-OFF
+    /// build, OnStop already ran, or before OnStart). The stubs TU does not
+    /// link this symbol; UI call sites guard with `#if defined(SMATCHET_WITH_WHISPER)`.
+    static WhisperPlugin* InstanceForUi();
 
     // Phase E state — global hotkey + capture lifetime + worker-callback
     // bookkeeping. Held behind a forward-declared struct so this header stays

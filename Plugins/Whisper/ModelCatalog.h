@@ -6,9 +6,15 @@
 // docs/design/whisper-dictation.md § Phase C / ModelCatalog.
 //
 // Entries describe English-only models in ascending size order:
-//   - ggml-tiny.en   ~39 MB   "Smaller, faster"
-//   - ggml-base.en   ~148 MB  "Recommended"     (default cfg.WhisperModel)
-//   - ggml-small.en  ~466 MB  "Higher accuracy"
+//   - ggml-tiny.en   ~39 MB    "Smaller, faster"
+//   - ggml-base.en   ~148 MB   "Recommended"          (default cfg.WhisperModel)
+//   - ggml-small.en  ~466 MB   "Higher accuracy"
+//   - ggml-medium.en ~1.5 GB   "Highest accuracy"     (Phase F — Preferences-only)
+//
+// `ggml-medium.en` is intentionally hidden from the first-run setup banner
+// (the banner shows tiny / base / small for guided selection); users opt in
+// to the medium model via the Preferences advanced row knowing the CPU /
+// disk cost up-front.
 //
 // SHA-256 hashes come from the ggerganov/whisper.cpp huggingface mirror at
 // https://huggingface.co/ggerganov/whisper.cpp/resolve/main/<model>.bin and

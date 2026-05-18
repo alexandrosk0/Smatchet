@@ -42,10 +42,15 @@
 
 #if defined(SMATCHET_WITH_WHISPER)
 #include "HotkeyParse.h"
+#include "MainThreadDispatcher.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SmatchetWhisperSetupBanner.h"
+#include "WhisperApiClient.h"
+#include "WhisperApiKeyResolve.h"
 #include "WhisperConsentGate.h"
+#include "WhisperPlugin.h"
+#include <cpr/cpr.h>
 #endif
 
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
@@ -1147,6 +1152,29 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                     std::snprintf(s_hotkeyDisplay, sizeof(s_hotkeyDisplay), "%s",
                                                   newDescriptor.c_str());
                                     s_hotkeyError.clear();
+                                    // Phase F — live hot-rebind: re-register the
+                                    // Win32 global hook against the new descriptor
+                                    // immediately so users don't need to restart.
+                                    // On register-failure surface the error inline
+                                    // (the previous hook is already torn down by
+                                    // ReregisterHotkey on its way through; user is
+                                    // left without push-to-talk until they pick a
+                                    // working combo or restart).
+                                    WhisperPlugin* plug = WhisperPlugin::InstanceForUi();
+                                    if (plug != nullptr) {
+                                        std::string rebindErr;
+                                        if (!plug->ReregisterHotkey(newDescriptor, rebindErr)) {
+                                            s_hotkeyError = std::string(SmatchetLocalization::T(
+                                                                "whisper.preferences.hotkeyErrorRebind",
+                                                                "Hotkey rebind failed: ")) +
+                                                            rebindErr;
+                                            LOG_WARN("Whisper preferences: hot rebind failed: %s",
+                                                     rebindErr.c_str());
+                                        } else {
+                                            LOG_INFO("Whisper preferences: hot rebind applied to '%s'",
+                                                     newDescriptor.c_str());
+                                        }
+                                    }
                                 }
                                 s_capturing = false;
                             }
@@ -1180,6 +1208,165 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                                   "(uses AI Assistant OpenAI key when empty)"));
             }
 
+            // Phase F — Test connection button. Dispatches a tiny worker that
+            // hits OpenAI's /v1/models with the resolved key (via
+            // WhisperApiKeyResolve::Resolve fallback rule) and reports
+            // success/failure inline. Mirrors the AI Assistant tab's pattern
+            // (LaunchBackgroundTask + MainThreadDispatcher post-back); the
+            // status string lives in two file-scope statics so the result
+            // survives the user navigating other tabs while the probe runs.
+            {
+                static std::atomic<bool> s_whisperTestInFlight{false};
+                static std::string s_whisperTestResult; // empty | success | failure
+                static int s_whisperTestResultType = 0; // 0=neutral, 1=ok, 2=fail
+                const bool inFlight = s_whisperTestInFlight.load(std::memory_order_acquire);
+                if (inFlight) {
+                    ImGui::BeginDisabled(true);
+                }
+                if (ImGui::Button(SmatchetLocalization::T(
+                        "whisper.preferences.apiKey.testButton", "Test connection"))) {
+                    // Resolve the key with the same 5-row fallback the runtime
+                    // uses (WhisperApiKey > AiApiKey when provider=openai).
+                    const std::string providerStr =
+                        (d.cfg.AiProviderKind == 0) ? std::string("openai") : std::string("anthropic");
+                    const std::string resolvedKey = smatchet::whisper::pure::ResolveWhisperApiKey(
+                        d.cfg.WhisperApiKey, providerStr, d.cfg.AiApiKey);
+                    if (resolvedKey.empty()) {
+                        s_whisperTestResult = std::string(SmatchetLocalization::T(
+                            "whisper.preferences.testConnection.failure", "x ")) +
+                                              "no API key configured";
+                        s_whisperTestResultType = 2;
+                    } else {
+                        s_whisperTestInFlight.store(true, std::memory_order_release);
+                        s_whisperTestResult = "Testing...";
+                        s_whisperTestResultType = 0;
+                        MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
+                        // Worker — minimal GET to /v1/models. cpr is already
+                        // linked; reuse WhisperApiClient's transport idioms
+                        // (5 s connect, 15 s total) so a hung DNS doesn't
+                        // freeze the result for a minute.
+                        std::thread([resolvedKey, &dispatcher]() {
+                            std::string okMsg;
+                            std::string errMsg;
+                            try {
+                                cpr::Response r = cpr::Get(
+                                    cpr::Url{"https://api.openai.com/v1/models"},
+                                    cpr::Header{{"Authorization", std::string("Bearer ") + resolvedKey}},
+                                    cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+                                if (r.error.code != cpr::ErrorCode::OK) {
+                                    errMsg = std::string("transport: ") + r.error.message;
+                                } else if (r.status_code < 200 || r.status_code >= 300) {
+                                    errMsg = std::string("HTTP ") + std::to_string(r.status_code);
+                                } else {
+                                    okMsg = "Connected.";
+                                }
+                            } catch (const std::exception& ex) {
+                                errMsg = std::string("internal: ") + ex.what();
+                            } catch (...) {
+                                errMsg = "internal: unknown exception";
+                            }
+                            dispatcher.PostToMainThread([okMsg, errMsg]() {
+                                s_whisperTestInFlight.store(false, std::memory_order_release);
+                                if (errMsg.empty()) {
+                                    s_whisperTestResult = std::string(SmatchetLocalization::T(
+                                        "whisper.preferences.testConnection.success",
+                                        "Connected")) +
+                                                          " (" + okMsg + ")";
+                                    s_whisperTestResultType = 1;
+                                } else {
+                                    s_whisperTestResult = std::string(SmatchetLocalization::T(
+                                        "whisper.preferences.testConnection.failure",
+                                        "Failed: ")) +
+                                                          errMsg;
+                                    s_whisperTestResultType = 2;
+                                }
+                            });
+                        }).detach();
+                    }
+                }
+                if (inFlight) {
+                    ImGui::EndDisabled();
+                }
+                if (!s_whisperTestResult.empty()) {
+                    ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
+                    if (s_whisperTestResultType == 1) {
+                        col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
+                    } else if (s_whisperTestResultType == 2) {
+                        col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextColored(col, "%s", s_whisperTestResult.c_str());
+                }
+            }
+
+            // --- Phase F language / trim / max-clip / auto-send rows. ---
+            ImGui::Separator();
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.language.label",
+                                                           "Language:"));
+            ImGui::SameLine();
+            {
+                // Static set of common ISO codes the bundled English models +
+                // multilingual cloud both understand. "auto" asks the backend
+                // to detect. Users with a multilingual local model can add
+                // more codes via direct config edit; the dropdown captures
+                // the common 80 % rather than enumerating every supported tag.
+                static const char* kLanguageCodes[] = {
+                    "en", "auto", "fr", "de", "es", "it", "pt", "nl",
+                    "ja", "zh", "ko", "ru", "pl", "ar", "hi", "tr",
+                };
+                int langIdx = 0;
+                for (int i = 0; i < static_cast<int>(sizeof(kLanguageCodes) / sizeof(kLanguageCodes[0])); ++i) {
+                    if (d.cfg.WhisperLanguage == kLanguageCodes[i]) {
+                        langIdx = i;
+                        break;
+                    }
+                }
+                if (ImGui::Combo("##WhisperLanguage", &langIdx, kLanguageCodes,
+                                 static_cast<int>(sizeof(kLanguageCodes) / sizeof(kLanguageCodes[0])))) {
+                    d.cfg.WhisperLanguage = kLanguageCodes[langIdx];
+                    MarkPrefsDirty(d);
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.language.autoHint",
+                                                              "(or \"auto\" for autodetect)"));
+
+            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.trim.label",
+                                                        "Trim leading/trailing silence"),
+                                &d.cfg.WhisperTrim)) {
+                MarkPrefsDirty(d);
+            }
+
+            // Max clip length: int input with explicit clamp on edit. 0 = unlimited.
+            {
+                int maxClip = d.cfg.WhisperMaxClipSec;
+                ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.maxClipSec.label",
+                                                               "Max clip length:"));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f);
+                if (ImGui::InputInt("##WhisperMaxClipSec", &maxClip, 0, 0)) {
+                    if (maxClip < 0) maxClip = 0;
+                    if (maxClip > 600) maxClip = 600;
+                    d.cfg.WhisperMaxClipSec = maxClip;
+                    MarkPrefsDirty(d);
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s",
+                                    SmatchetLocalization::T("whisper.preferences.maxClipSec.unit",
+                                                            "seconds"));
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s",
+                                    SmatchetLocalization::T("whisper.preferences.maxClipSec.hint",
+                                                            "(0 = unlimited; max 600)"));
+            }
+
+            if (ImGui::Checkbox(SmatchetLocalization::T(
+                                    "whisper.preferences.autoSend.label",
+                                    "Auto-send AI chat on punctuation (\".\", \"!\", \"?\")"),
+                                &d.cfg.WhisperAutoSendOnPunctuation)) {
+                MarkPrefsDirty(d);
+            }
+
             // Privacy disclosure — three-bullet list.
             ImGui::Separator();
             ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading",
@@ -1193,6 +1380,25 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyDisabled",
                                                             "Disabled: no microphone access, no "
                                                             "network call, no model download."));
+
+            // Phase F — "Re-run setup banner" debug helper. Flips
+            // WhisperSetupCompleted back to false so the first-run banner
+            // appears on next launch. Useful for QA / repro flows; not for
+            // routine users (no harm if pressed — the banner just re-asks
+            // the consent question).
+            ImGui::Separator();
+            if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.rerunSetup.button",
+                                                      "Re-run setup banner"))) {
+                d.cfg.WhisperSetupCompleted = false;
+                d.cfg.WhisperSetupChoice.clear();
+                MarkPrefsDirty(d);
+                LOG_INFO("Whisper preferences: Re-run setup banner pressed — "
+                         "WhisperSetupCompleted reset; banner returns next launch");
+            }
+            ImGui::SetItemTooltip("%s",
+                                  SmatchetLocalization::T("whisper.preferences.rerunSetup.tooltip",
+                                                          "Forces WhisperSetupCompleted=false; "
+                                                          "banner appears next launch"));
 
             ImGui::EndTabItem();
         }

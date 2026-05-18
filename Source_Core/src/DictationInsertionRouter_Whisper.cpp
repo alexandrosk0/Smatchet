@@ -226,3 +226,39 @@ std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return entries_.size();
 }
+
+void DictationInsertionRouter::RegisterAiAssistantInputText(char* buf, std::size_t cap, int* cursor) {
+    // Same register path as the generic InputText hook; the additional state is
+    // a stored buffer pointer the post-insertion auto-send check uses to
+    // identify the splice target as the AI Assistant input. AI Assistant calls
+    // this every frame the panel is open (idempotent on re-register).
+    RegisterInputText(buf, cap, cursor);
+    std::lock_guard<std::mutex> lock(mutex_);
+    aiAssistantBuf_ = buf;
+}
+
+bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (entries_.empty() || aiAssistantBuf_ == nullptr) {
+        return false;
+    }
+    // `InsertIntoFocusedInputText` uses entries_.front() as the splice target;
+    // mirror that pick here so callers see consistent answers.
+    return entries_.front().Buf == aiAssistantBuf_;
+}
+
+void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> cb) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    aiAssistantSendCb_ = std::move(cb);
+}
+
+void DictationInsertionRouter::TriggerAiAssistantSend() {
+    std::function<void()> cb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cb = aiAssistantSendCb_;
+    }
+    if (cb) {
+        cb();
+    }
+}

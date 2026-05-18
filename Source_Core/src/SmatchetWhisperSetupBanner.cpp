@@ -192,6 +192,12 @@ bool Render(AppController& app, TrackerConfig& cfg) {
         const auto& all = smatchet::whisper::catalog::All();
         for (std::size_t i = 0; i < all.size(); ++i) {
             const std::string id = all[i].Id;
+            // Phase F — ggml-medium.en is a power-user / Preferences-only model.
+            // The first-run banner intentionally only surfaces tiny / base / small
+            // to keep the guided pick fast and the disk-cost surprise small.
+            if (id == "ggml-medium.en") {
+                continue;
+            }
             int& sel = s.selectedIndex;
             const bool selected = (static_cast<int>(i) == sel);
             if (::ImGui::RadioButton(TranslatedDisplayName(id, all[i].DisplayName.c_str()), selected)) {

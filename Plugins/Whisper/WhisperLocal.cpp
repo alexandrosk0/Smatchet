@@ -114,6 +114,14 @@ bool WhisperLocal::LoadModel(const std::string& modelPath, std::string& outError
 }
 
 bool WhisperLocal::Transcribe(const std::vector<float>& pcm, std::string& outText, std::string& outError) {
+    // Legacy entry point — default to English (matches Phase C ggml-*.en models).
+    return Transcribe(pcm, std::string("en"), outText, outError);
+}
+
+bool WhisperLocal::Transcribe(const std::vector<float>& pcm,
+                              const std::string& language,
+                              std::string& outText,
+                              std::string& outError) {
     outError.clear();
     outText.clear();
 #if defined(SMATCHET_WHISPER_LOCAL_BACKEND) && SMATCHET_WHISPER_LOCAL_BACKEND
@@ -132,7 +140,15 @@ bool WhisperLocal::Transcribe(const std::vector<float>& pcm, std::string& outTex
     wparams.print_special = false;
     wparams.print_timestamps = false;
     wparams.translate = false;
-    wparams.language = "en"; // Phase C ships English models only.
+    // Phase F — caller-supplied language code. "auto" / empty asks whisper.cpp
+    // to autodetect from its supported set; concrete codes ("en", "fr", ...)
+    // bypass the detector and force the target language. The ggml-*.en models
+    // remain English-only; passing a non-"en" code with an English model
+    // produces transliterated nonsense — UX responsibility lives in
+    // Preferences (only show non-"en" options when a multilingual model is
+    // installed; that filter is itself a Phase G follow-up).
+    const std::string langArg = language.empty() ? std::string("en") : language;
+    wparams.language = (langArg == "auto") ? "auto" : langArg.c_str();
     const unsigned int hwThreads = std::thread::hardware_concurrency();
     wparams.n_threads = static_cast<int>(std::max(1u, hwThreads / 2u));
     wparams.no_context = true;
@@ -157,12 +173,20 @@ bool WhisperLocal::Transcribe(const std::vector<float>& pcm, std::string& outTex
     return true;
 #else
     (void)pcm;
+    (void)language;
     outError = "local backend not built (set SMATCHET_WHISPER_LOCAL_BACKEND=ON to link whisper.cpp)";
     return false;
 #endif
 }
 
 bool WhisperLocal::Transcribe(const std::vector<std::int16_t>& pcmInt16, std::string& outText, std::string& outError) {
+    return Transcribe(pcmInt16, std::string("en"), outText, outError);
+}
+
+bool WhisperLocal::Transcribe(const std::vector<std::int16_t>& pcmInt16,
+                              const std::string& language,
+                              std::string& outText,
+                              std::string& outError) {
     if (pcmInt16.empty()) {
         outError = "empty PCM payload";
         outText.clear();
@@ -177,7 +201,7 @@ bool WhisperLocal::Transcribe(const std::vector<std::int16_t>& pcmInt16, std::st
     for (std::size_t i = 0; i < pcmInt16.size(); ++i) {
         floats[i] = static_cast<float>(pcmInt16[i]) * scale;
     }
-    return Transcribe(floats, outText, outError);
+    return Transcribe(floats, language, outText, outError);
 }
 
 } // namespace whisper

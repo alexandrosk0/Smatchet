@@ -21,6 +21,8 @@ add_library(SmatchetPlugin_Whisper STATIC
     # Phase E — push-to-talk hotkey parsing + Win32 global hotkey hook.
     HotkeyParse.cpp
     GlobalHotkey_Win32.cpp
+    # Phase F — pure-helper silence trim + clip-length cap (worker-thread).
+    SilenceTrim.cpp
 )
 
 target_include_directories(SmatchetPlugin_Whisper PUBLIC
