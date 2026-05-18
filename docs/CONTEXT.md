@@ -13,3 +13,5 @@
 - **Coding harness runner** — implementer of `ICodingHarnessRunner`. Phase-1 concrete is `ClaudeCodeLocalRunner`; cloud / Codex / Aider runners are deferred.
 - **Sentinel files** — single-writer single-reader JSON files in the harness's worktree (`SEED.json`, `CLARIFICATION_NEEDED.json`, `USER_RESPONSE.json`, `RUN_RESULT.json`, `ERROR.json`, `PR_URL.txt`). Vocabulary defined in `AGENTS.md § Handoff envelope`.
 - **Handoff envelope** — the contract between the Smatchet-side `ClaudeCodeLocalRunner` and the spawned-harness-side first delegate (`handoff-implementer`). Documented in `AGENTS.md § Handoff envelope`.
+- **HarnessRunState** — FSM tracking a single handoff lifecycle. States: `Pending → Spawning → Running → AwaitingUser ↔ Running → PrOpen ↔ Iterating → Complete | Failed | Cancelled`.
+- **PR iteration budget** — `pr_iteration_budget = 10`; cap on how many times `PrCommentWatcher` re-spawns the harness in response to PR comments before forcing user attention.
