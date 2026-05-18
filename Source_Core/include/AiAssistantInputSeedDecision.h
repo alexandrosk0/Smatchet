@@ -27,7 +27,8 @@
 
 #include <cstddef>
 
-namespace smatchet::ai {
+namespace smatchet {
+namespace ai {
 
 /// Returns true when the AI Assistant input frame should copy
 /// `model -> buf` before InputTextMultiline draws. `seeded` is the
@@ -55,4 +56,5 @@ inline bool ShouldSeedAssistantInputFromModel(bool seeded, std::size_t bufLen,
     return modelSize > bufLen;
 }
 
-} // namespace smatchet::ai
+} // namespace ai
+} // namespace smatchet

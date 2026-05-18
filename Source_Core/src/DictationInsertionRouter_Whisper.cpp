@@ -346,10 +346,15 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     // stale internal `state->TextA` later in the same frame, silently erasing
     // the splice. See header comment on `pendingReloadItemId_`. We prefer
     // `e.ItemId` (the entries_ id, real ImGui id when the wrapper hook
-    // captured it), falling back to `shadowItemId_` for the shadow-fallback
-    // path. A zero result means no consumer-side reload is needed (test driver
-    // or scenario runner with no live ImGui frame).
-    const unsigned int reloadId = (e.ItemId != 0u) ? e.ItemId : shadowItemId_;
+    // captured it). `shadowItemId_` is only used as fallback when we actually
+    // selected via the shadow path — otherwise a stale shadow id could trigger
+    // an erroneous reload on a different widget that just happens to share the
+    // entries_.front() slot with ItemId=0 (panel-level idempotent register).
+    // A zero result means no consumer-side reload is needed (test driver or
+    // scenario runner with no live ImGui frame).
+    const bool usedShadowTarget = (selected == &shadowEntry);
+    const unsigned int reloadId =
+        (e.ItemId != 0u) ? e.ItemId : (usedShadowTarget ? shadowItemId_ : 0u);
     if (reloadId != 0u) {
         pendingReloadItemId_.store(reloadId, std::memory_order_release);
     }

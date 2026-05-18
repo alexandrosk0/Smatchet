@@ -1082,6 +1082,11 @@ void WhisperPlugin::OnStop() {
             phaseE_->capture.DrainCapturedPcm(drained);
         }
         g_dictationRouter.SetRecording(false);
+        // Clear the in-flight transcription indicator too. If a release worker
+        // is mid-pipeline when the plugin tears down (shutdown / hot-reload),
+        // its post-back will never run; the menu bar would otherwise stay on
+        // the amber "Transcribing..." label forever.
+        g_dictationRouter.SetTranscribing(false);
         phaseE_->app = nullptr;
     }
     if (g_whisperPluginInstance == this) {
