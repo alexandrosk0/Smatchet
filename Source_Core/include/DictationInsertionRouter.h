@@ -28,6 +28,14 @@ class DictationInsertionRouter : public IDictationHost {
     void Insert(const std::string& text) override;
     bool IsRecording() const override;
 
+    /// UI-thread-only entry point: splice `text` into whichever registered
+    /// InputText buffer currently has ImGui focus. No-op when no registered
+    /// InputText is focused. Phase B adds the signature so Phase D surfaces
+    /// (focused InputText, AI Assistant chat, grid long-text editor, Command
+    /// Palette) can wire up without re-touching the router header; full
+    /// splice-at-cursor + ImGui::GetActiveID() probing lands in Phase D.
+    void InsertIntoFocusedInputText(const std::string& text);
+
     /// Count of currently-registered InputText buffers. Test-only convenience.
     std::size_t RegisteredCountForTest() const;
 

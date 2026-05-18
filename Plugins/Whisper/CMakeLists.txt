@@ -9,6 +9,10 @@
 
 add_library(SmatchetPlugin_Whisper STATIC
     WhisperPlugin.cpp
+    WhisperApiClient.cpp
+    WhisperApiKeyResolve.cpp
+    WavWriter.cpp
+    WindowsAudioCapture.cpp
 )
 
 target_include_directories(SmatchetPlugin_Whisper PUBLIC
@@ -25,5 +29,18 @@ target_link_libraries(SmatchetPlugin_Whisper PUBLIC
 target_link_libraries(SmatchetPlugin_Whisper PRIVATE
     ghc_filesystem
 )
+
+# Win32 WASAPI symbols (CoInitializeEx, MMDeviceEnumerator, IAudioClient, ...).
+# Phase B introduces WindowsAudioCapture.cpp; the libs below resolve the COM
+# imports it uses. Plugin subtree is only entered on Windows builds with
+# SMATCHET_WITH_WHISPER=ON, so the link list is unconditional.
+if(WIN32)
+    target_link_libraries(SmatchetPlugin_Whisper PRIVATE
+        ole32
+        oleaut32
+        uuid
+        avrt
+    )
+endif()
 
 smatchet_apply_strict_warnings(SmatchetPlugin_Whisper)

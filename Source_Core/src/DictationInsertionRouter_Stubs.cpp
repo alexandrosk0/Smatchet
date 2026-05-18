@@ -28,6 +28,8 @@ bool DictationInsertionRouter::IsRecording() const {
     return false;
 }
 
+void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/) {}
+
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
     return 0;
 }

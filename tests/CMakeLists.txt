@@ -112,6 +112,25 @@ else()
         "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
 
+# Whisper Phase B — pure helper test surfaces. WhisperApiKeyResolve + WavWriter
+# have no third-party deps; WhisperApiClient pulls cpr (already linked) +
+# AiErrorRedact (already in CORE sources above) for the multipart Post path.
+# Tests cover the pure helpers only — Transcribe() itself is exercised by the
+# CLI smoke + future bucket-E scenario, not by ctest (the doctest rig doesn't
+# fire live HTTP).
+if(SMATCHET_WITH_WHISPER)
+    target_sources(SmatchetTests PRIVATE
+        Source_Core/WhisperApiKeyResolve.test.cpp
+        Source_Core/WhisperApiPayload.test.cpp
+        Source_Core/WavWriter.test.cpp
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"
+    )
+    target_include_directories(SmatchetTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper")
+endif()
+
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
