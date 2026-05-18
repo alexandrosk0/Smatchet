@@ -161,3 +161,27 @@ After PR merges, append to this file:
 - `## Deviations from plan` — what changed.
 - `## Verification` — actual runner outputs.
 - `## Follow-up PR tracking` — link to the inline-lambda → free-fn rewire PR once it lands.
+
+## Implementation log
+
+- `9193d7c` · wip(plan): ai-client-test-override (this file)
+- `6f79c54` · feat(ai): test seam in AiClientFactory + extract runProbe into AiPrefsTestConnection — seam + extraction + V2/V3 lift + UiTestScenario AppController accessor
+- `fa0089b` · fix(ai-prefs-test): set showPreferences=true before TriggerProbe — V2/V3 were racing the close-handler clearing state every frame
+
+## Deviations from plan
+
+- **showPreferences=true gotcha.** Plan didn't anticipate that `SmatchetDrawPreferencesPanel`'s close-handler (`SmatchetPreferencesUi.cpp:197-206`) clears `assistantPrefsTest{InFlight,Result,ResultType}` every frame when `showPreferences=false`. V2/V3 originally raced this: probe set Result="Verified.", next frame close-handler cleared it before the assertion ran. Fix in `fa0089b` — `ResetPrefsTestState()` now sets `g_ui.showPreferences = true`; V2 and V3 reset to false at end-of-test.
+- **No doctest unit for the seam.** Plan mentioned a possible `tests/Source_Core/AiClientFactoryOverride.test.cpp`. Skipped — bucket-E V2/V3 lift provides equivalent coverage and the seam is one branch in `MakeAiClient`.
+
+## Verification
+
+- Build: `cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone` — PASS.
+- TU#3 V1 Autosave_DebouncesThenSaves: PASS (deterministic).
+- TU#3 V2 VerifyOnSave_TestConnection_SetsResult: PASS (individual fresh-port runs; mass runs subject to the pre-existing bucket-E spawn-runner flake, P2 infra entry).
+- TU#3 V3 VerifyOnSave_CancelOnClose_ShortCircuits: PASS (individual fresh-port runs; same flake).
+- `bash scripts/dev/test-ui-ai-prefs-autosave-flow.sh`: PASS on 3rd retry (1st + 2nd attempts hit the spawn flake; 3rd: `Passed: 3 Failed: 0`).
+
+## Follow-up PR tracking
+
+After `whisper-dictation-phase-f` (PR #219) merges:
+- 5-line rewire: replace `runProbe` inline lambda in `SmatchetPreferencesUi.cpp:528-688` with `AiPrefsTestConnection::TriggerProbe(d, app, selectedKind)` call. Remove the lambda + add `#include "AiPrefsTestConnection.h"`. Drift-warning comment in `AiPrefsTestConnection.h` updated to "WAS-IN-LOCK-STEP-WITH inline lambda; now canonical".
