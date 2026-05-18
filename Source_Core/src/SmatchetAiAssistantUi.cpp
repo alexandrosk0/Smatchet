@@ -224,7 +224,16 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     const std::size_t bufLen = std::strlen(s_inputCharBuf.data());
     const bool divergedFromModel = (d.assistantInputBuf.size() != bufLen) ||
                                    (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
-    if (!s_inputCharBufSeeded || divergedFromModel) {
+    // Direction-aware re-seed: only copy model -> buf when the model has MORE
+    // content than the buf. Otherwise buf is the newer side (e.g. the
+    // dictation router just spliced transcribed text directly into
+    // s_inputCharBuf between frames) and we let the buf -> model mirror at
+    // line below propagate the change. Without this check, splicing text
+    // into s_inputCharBuf was silently clobbered next frame because diverge
+    // == true and the unconditional copy overwrote the splice with the
+    // still-stale model.
+    if (!s_inputCharBufSeeded ||
+        (divergedFromModel && d.assistantInputBuf.size() > bufLen)) {
         s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);
