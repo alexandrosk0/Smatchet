@@ -141,3 +141,15 @@
   Concrete next action: small C++ refactor — bundle into the next PR that touches `SaveFieldCatalogSnapshot`. Don't open a standalone refactor PR; the win shows up only when adding the next per-axis arg, which is when the bundling decision gets reviewed in context.
   Status: deferred
   Last-reviewed: 2026-05-17
+
+- 2026-05-18 · orchestrator · [process] · P1 — `git reset --hard origin/develop` via `git -C <worktree>` reset the worktree's *current* branch, not `develop`; destroyed 5 uncommitted modified files of a parallel agent
+  Details: User asked "get develop to the latest". Orchestrator ran `git -C <develop-worktree-path> reset --hard origin/develop`, assuming the path-named "develop worktree" still had `develop` checked out. Reality: between sessions a parallel agent had switched that worktree's HEAD to `feat/ai-client-test-override` (via `git checkout -b`). The reset moved `feat/ai-client-test-override` (not `develop`) to `origin/develop`, wiping 5 uncommitted modified files (`AiClientFactory.h/cpp`, `UiTestScenario.h/cpp`, `tests/ui/ai_prefs_autosave_flow.test.cpp`) that sat on top of the plan commit `9193d7c`. The plan commit (`9193d7c`) survived in reflog + on `origin/feat/ai-client-test-override`; untracked `AiPrefsTestConnection.{h,cpp}` survived because `reset --hard` ignores untracked. Five tracked-modified files of in-progress implementation were lost permanently. Branch pointer recovered via `git reset --hard 9193d7c` once the loss was diagnosed.
+  Concrete next action: encode a mandatory pre-flight before any destructive git op (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) targeting a worktree the orchestrator did not personally check out in this session. Steps (all via `git -C <path>` from the orchestrator's main worktree, not by `cd`-ing):
+    1. `git -C <path> branch --show-current` — confirm the actual current branch matches the user's named target.
+    2. `git -C <path> status --short` — inventory tracked-modified + untracked files; if non-empty, treat the worktree as load-bearing.
+    3. `git -C <path> stash push -m "<reason>" -- <modified-files>` for any tracked-modified files, regardless of apparent relevance. Untracked survive `reset --hard` but `clean -f` is fatal — stash with `--include-untracked` if `clean -f` is part of the plan.
+    4. Run the destructive op only after steps 1-3.
+    5. After the op: decide whether to `stash pop`, leave the stash for the human, or report the stash hash so the human can pop manually if conflicts arise.
+  Land in AGENTS.md § Executing actions with care as a new sub-section "Destructive git ops in shared worktrees". Estimated cost: 15 min doc edit + ~30 s pre-flight per future destructive op. Cross-link from agent prompts that touch git (`git-janitor`, `build-doctor`, `mechanic`) so the rule surfaces wherever a destructive op is plausible.
+  Status: open
+  Last-reviewed: 2026-05-18
