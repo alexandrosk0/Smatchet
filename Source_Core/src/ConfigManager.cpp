@@ -233,6 +233,12 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["agentic_poll_interval_sec"] = config.AgenticPollIntervalSec;
     j["agentic_poll_source"] = config.AgenticPollSource;
     j["agentic_poll_query"] = config.AgenticPollQuery;
+    // H3 — coding-harness runner selection. Additive; both fields round-trip
+    // with `j.value()` defaults on Load (no schema bump). Production callers
+    // leave bin-path empty so the runner resolves the CLI from PATH; tests
+    // inject the stub_claude path here.
+    j["handoff_harness_bin_path"] = config.HandoffHarnessBinPath;
+    j["handoff_runner_name"] = config.HandoffRunnerName;
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -733,6 +739,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AgenticPollIntervalSec = j.value("agentic_poll_interval_sec", cfg.AgenticPollIntervalSec);
             cfg.AgenticPollSource = j.value("agentic_poll_source", cfg.AgenticPollSource);
             cfg.AgenticPollQuery = j.value("agentic_poll_query", cfg.AgenticPollQuery);
+            // H3 — coding-harness runner selection. Both keys default to empty / the
+            // canonical runner name; older configs round-trip cleanly.
+            cfg.HandoffHarnessBinPath = j.value("handoff_harness_bin_path", cfg.HandoffHarnessBinPath);
+            cfg.HandoffRunnerName = j.value("handoff_runner_name", cfg.HandoffRunnerName);
             // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
             // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
             if (cfg.AgenticPollIntervalSec < 60) {
