@@ -1545,6 +1545,74 @@ AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
 #endif
 }
 
+#if defined(SMATCHET_WITH_AGENTIC)
+namespace {
+
+// Concrete-to-interface bridges. Live in an anonymous namespace inside the
+// AGENTIC=ON build of AppController.cpp because they are an implementation
+// detail of `AppController::GetAgenticTriageController` — no other TU should
+// see them. The bridges are thin: each virtual is a one-line forward.
+class GitHubReadAdapter : public smatchet::agentic::IGitHubReadClient {
+  public:
+    explicit GitHubReadAdapter(GitHubClient& impl) : impl_(impl) {}
+    bool FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError) override {
+        return impl_.FetchIssueBody(issueKey, outBody, outError);
+    }
+    bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
+                            std::string& outError) override {
+        return impl_.FetchIssueComments(issueKey, outComments, outError);
+    }
+    bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
+                               std::string& outError) override {
+        return impl_.ListOpenIssuesForRepo(owner, repo, outKeys, outError);
+    }
+
+  private:
+    GitHubClient& impl_;
+};
+
+class InferenceAdapter : public smatchet::agentic::IInferenceClient {
+  public:
+    explicit InferenceAdapter(AgenticInferenceClient& impl) : impl_(impl) {}
+    bool RequestProposals(const std::string& issueBody, const std::vector<TrackerIssueComment>& comments,
+                          std::vector<AgenticInferenceClientPure::ProposalDraft>& outDrafts,
+                          std::string& outError) override {
+        return impl_.RequestProposals(issueBody, comments, outDrafts, outError);
+    }
+
+  private:
+    AgenticInferenceClient& impl_;
+};
+
+} // namespace
+
+smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageController() noexcept {
+    if (agenticTriageController_) {
+        return agenticTriageController_.get();
+    }
+    if (!agentProposalStore_) {
+        // T4 store init failed (already logged at construction). Without a store there's
+        // nowhere to persist proposals, so triage degrades cleanly to nullptr.
+        return nullptr;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.GitHubPat.empty()) {
+        // Degraded mode — caller surfaces a "configure GitHub PAT" message.
+        return nullptr;
+    }
+    // GitHub base URL is hard-defaulted by GitHubClient when the argument is empty;
+    // there's no separate cfg.GitHubBaseUrl today (GitHub Enterprise lands in a later phase).
+    agenticGithubClient_.reset(new GitHubClient(std::string(), cfg.GitHubPat));
+    agenticInferenceClient_.reset(new AgenticInferenceClient());
+    agenticGithubReadAdapter_.reset(new GitHubReadAdapter(*agenticGithubClient_));
+    agenticInferenceAdapter_.reset(new InferenceAdapter(*agenticInferenceClient_));
+    agenticTriageController_.reset(new smatchet::agentic::AgenticTriageController(
+        agenticGithubReadAdapter_.get(), agenticInferenceAdapter_.get(), agentProposalStore_.get()));
+    return agenticTriageController_.get();
+}
+
+#endif // SMATCHET_WITH_AGENTIC
+
 smatchet::cmd::CommandRegistry& AppController::Commands() {
     if (!commandRegistry_) {
         // Lazy fallback — caller invoked us before Initialize (tests, embedded hosts).

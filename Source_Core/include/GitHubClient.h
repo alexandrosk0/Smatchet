@@ -83,6 +83,31 @@ class GitHubClient : public ITrackerClient {
     bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
                             std::string& outError) override;
 
+    /**
+     * GET /repos/{owner}/{repo}/issues/{number} — returns the issue body
+     * (markdown) only. The full payload contains many more fields; the agentic
+     * triage path needs just the body to seed the LLM prompt. Same auth-header
+     * construction as `FetchIssueComments`. This is a READ; per the existing
+     * Jira/Plane read-path precedent, no audit-trail entry is emitted (the
+     * AppendBegin/AppendResult pair is reserved for write methods).
+     *
+     * Errors mirror `FetchIssueComments`.
+     */
+    bool FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError);
+
+    /**
+     * GET /repos/{owner}/{repo}/issues?state=open&per_page=30 — returns the
+     * first page of open issues in `owner/repo`. Each issue is formatted into
+     * Smatchet's canonical `owner/repo#N` key shape and appended to `outKeys`.
+     * Capped at 30 issues per call to keep the downstream LLM inference cost
+     * predictable; T7's scheduled-poll path replaces this with a cursor-based
+     * pagination loop driven by `agent_poll_cursor`.
+     *
+     * Errors mirror `FetchIssueComments`. Read endpoint — no audit-trail.
+     */
+    bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
+                               std::string& outError);
+
     // ─── T2 write methods ────────────────────────────────────────────────────
     //
     // Every method:
