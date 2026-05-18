@@ -275,6 +275,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | build, cmake, preset, link, packaging, lld, LTO | `build-doctor` |
 | automate testing, manual verification, headless test | `test-author` |
 | end of session, merge open PRs, tidy up, post-merge cleanup | `git-janitor` |
+| coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments | `coderabbit-triage` |
 | stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 
@@ -333,6 +334,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 | `security-review` | high · read-only | Pre-merge security review. Runs flawfinder / semgrep / gitleaks (when available) + Smatchet attack-surface map. Wraps the standard pre-merge security skill. |
 | `test-author` | medium · read-edit | Verification automation — converts every "user opens X and observes Y" plan item into a deterministic CLI / scenario / screenshot / sanitizer / ImGui Test Engine assertion. Invoke at plan time, after first verification round, and after every agent that hands back a manual step. Writes `scripts/dev/test-<feature>.sh`; the unified runner is `scripts/dev/test-all.sh`. Goal is zero manual steps. |
 | `git-janitor` | medium · read-edit | End-of-session git maintenance — squash-merge open PRs in dependency order, delete merged branches, run regression build + `scripts/dev/test-all.sh` as the final gate. Refuses on uncommitted user work, force-push to develop/main, revert authoring, direct push to develop. Invoke after the last PR of a session lands and the user signals "no more changes coming". |
+| `coderabbit-triage` | medium · read-only | Ingests CodeRabbit (or other PR-bot) feedback via `gh api`, filters by bot login, classifies severity, rejects suggestions that collide with Smatchet invariants (C++14-hard, dual-target, UI-thread non-blocking, RAII, `LOG_*`), routes the survivors to subsystem specialists as per-finding handoff packets. Never edits product code, never posts to the PR. Baseline config at `.coderabbit.yaml`. |
 | `mechanic` | low · read-edit | Fully-specified mechanical work: renames, clang-format passes, doc / comment fixes, copyright bumps, localization key renames. Resolve ambiguity before delegating. |
 
 ### Subsystem specialists

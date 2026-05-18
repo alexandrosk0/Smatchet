@@ -1,0 +1,156 @@
+## CodeRabbit configuration for Smatchet.
+##
+## Authoritative project rules live in `AGENTS.md` at the repo root — the
+## `path_instructions` below cite those rules so CodeRabbit's reviewer
+## agrees with them instead of suggesting C++17 features, GLFW headers in
+## shared core, etc.
+##
+## Triage + routing of CodeRabbit feedback into Smatchet subsystem agents
+## is owned by `agents/coderabbit-triage.md`.
+
+language: en-US
+early_access: false
+tone_instructions: |
+  Terse. Drop pleasantries. Cite file:line. One-line per finding when possible.
+  Never suggest C++17/20 features in this repo (see C++14 hard rule).
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - develop
+      - main
+
+  ## Skip vendored / generated / lock-render artefacts — reviewing them is
+  ## pure noise.
+  path_filters:
+    - '!build/**'
+    - '!**/.fetchcontent-src/**'
+    - '!**/*-build-dir/**'
+    - '!UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**'
+    - '!docs/design/_plan-locks.generated.md'
+    - '!docs/design/_plan-locks-archive.md'
+    - '!.session-context*'
+    - '!.claude/**'
+    - '!.codex/**'
+    - '!.cursor/**'
+    - '!**/*.min.js'
+    - '!**/*.lock'
+
+  ## Per-path review rules. The body of each instruction is read by the
+  ## CodeRabbit reviewer agent verbatim — keep them concrete and citable.
+  path_instructions:
+    - path: 'Source_Core/**/*.{cpp,h}'
+      instructions: |
+        C++14 hard (must build on MSVC + MinGW UCRT). Do NOT suggest any of:
+        `std::string_view`, `std::optional`, `std::variant`, structured
+        bindings (`auto [a,b] = ...`), `if constexpr`, designated
+        initialisers. Logging uses `LOG_DEBUG/INFO/WARN/ERROR/TRACE` from
+        `Logger.h` only — flag (or reject) any `printf` / `std::cerr` /
+        `std::cout` / `fprintf(stderr,...)`. RAII strict: no raw `new` /
+        `delete` outside the documented sol2 / ImGui-callback edge cases —
+        require `std::unique_ptr` + `make_unique`. nlohmann json:
+        `obj["k"] = v` style only — `obj = {...}` brace-list reassignment
+        does not compile. Prefer `const&` for non-trivial params,
+        `std::move` on last owning use (no use-after-move).
+    - path: 'Source_Core/include/**/*.h'
+      instructions: |
+        Shared header — also compiled into the DX12 / Unreal target. Do NOT
+        suggest adding GLFW, glad, OpenGL, or any window-system include
+        here. Do NOT redefine `IMGUI_USE_WCHAR32` (it is PUBLIC on
+        `ImGuiLib`). Platform-specific code must be gated on
+        `SMATCHET_EMBEDDED_IN_UNREAL`, `SMATCHET_WITH_MCP`, or
+        `SMATCHET_WITH_LUA_AUTOMATION`.
+    - path: 'Source_Core/{src,include}/Commands/**'
+      instructions: |
+        Unified command system (CLI + Palette + MCP + Lua + Scenarios).
+        Every command takes `const CommandContext&`, returns the structured
+        error envelope, defaults `args` to `{}`. Routes go through
+        `CommandRegistry` — flag any bypass.
+    - path: 'Source_Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}'
+      instructions: |
+        Backend-specific code (`Jira*`, `Plane*`) MUST NOT leak into
+        `ITrackerClient.h` or other shared interfaces. HTTP goes through
+        `TrackerHttpClient` — flag direct `cpr::` usage in feature files.
+        Field-value flow: catalog → parser → payload (no bypasses).
+        Tracker writes must wire to `OfflineQueueService` +
+        `BackendAuditTrail` / `FieldEditAuditSource`.
+    - path: 'Source_Core/**/{LocalCacheManager,OfflineQueueService,TicketSyncService,BackendAuditTrail}*.{cpp,h}'
+      instructions: |
+        SQLite schema changes are additive only — flag drops, renames, or
+        type changes. Offline-queue replay must remain idempotent + survive
+        partial replay on crash.
+    - path: 'Source_Core/**/Smatchet*Ui*.{cpp,h}'
+      instructions: |
+        UI thread is render-only — flag any synchronous `cpr::Get/Post`,
+        `SQLite::Database` call, `p4` subprocess, `std::ifstream`-on-disk,
+        `std::thread::join` (outside shutdown), or `std::mutex::lock` that
+        is reachable from `ImGui::*` frame. Workers post results back via
+        `MainThreadDispatcher::PostToMainThread`. Budget = 6.94 ms / frame
+        (144 Hz target).
+    - path: 'Plugins/Mcp/**'
+      instructions: |
+        MCP wire protocol = JSON-RPC. Tool schemas live in `Plugins/Mcp/`
+        and `SmatchetMcpServerUi`. Tools added here must also flow through
+        `CommandRegistry` — flag direct registration.
+    - path: 'Source_Core/src/AppController_Lua*.cpp'
+      instructions: |
+        `AppController_LuaBindings.cpp` (ON) and `AppController_LuaStubs.cpp`
+        (OFF) MUST stay in shape-parity — every binding added on one side
+        needs the matching stub on the other.
+    - path: 'scripts/**/*.lua'
+      instructions: |
+        Lua runs inside `LuaAutomationHost` sandbox. Hot-path Lua calls
+        cost ~50–60× the C++ equivalent — flag per-frame sol2 bindings.
+    - path: 'tests/**'
+      instructions: |
+        Pure-logic doctest rig only (`SMATCHET_BUILD_TESTS`,
+        `ninja-test-msys2` preset). No UI / HTTP / SQLite / ImGui / cpr
+        surfaces — those route to bucket-E (ImGui Test Engine) or stay
+        deferred.
+    - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source_Core/CMakeLists.txt,Plugins/**/CMakeLists.txt,UnrealPlugins/**/CMakeLists.txt}'
+      instructions: |
+        `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — do NOT
+        suggest changes there unless the diff explicitly targets them.
+        Available FetchContent libs: nlohmann/json, cpr, SQLiteCpp,
+        cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2,
+        ghc::filesystem — do NOT propose adding new dependencies.
+
+  ## CodeRabbit's static-analysis tools are mostly redundant with the
+  ## deferred-lint pipeline (cppcheck + clang-tidy + clang-format run on
+  ## every edited file at end-of-turn via `.claude/hooks/lint-cpp-drain.sh`).
+  ## Leave them on for the rare miss but suppress noise.
+  tools:
+    ast-grep:
+      essential_rules: true
+    cppcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto

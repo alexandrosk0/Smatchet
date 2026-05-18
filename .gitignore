@@ -72,6 +72,11 @@ skills-lock.json
 .session-context.md
 .session-context.archive/
 
+# Per-run coderabbit-triage temp dumps (see agents/coderabbit-triage.md)
+.triage-reviews.json
+.triage-review-comments.json
+.triage-issue-comments.json
+
 # Per-investigation debug-detective artifacts (see agents/debug-detective.md)
 debug-*.log
 Smatchet-debug-*.log
