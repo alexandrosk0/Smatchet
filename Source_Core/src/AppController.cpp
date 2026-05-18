@@ -60,6 +60,7 @@
 
 #include <vector>
 
+#include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 
 #include "Commands/BuiltinCommands.h"
@@ -1697,6 +1698,57 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
         return nullptr;
     }
     return agenticTriageController_.get();
+}
+
+// (H4) Lazy-construct the handoff controller. Backed by a
+// `ClaudeCodeLocalRunner`. Wraps the construction in `std::call_once` for the
+// same race-avoidance rationale as `GetAgenticTriageController` above —
+// concurrent first-callers (CLI thread + future UI panel) cannot both observe
+// a null pointer and double-construct. The proposal store precondition is
+// re-checked outside the once-block so subsequent failures (store dropped via
+// reinit) still surface a nullptr.
+smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffController() noexcept {
+    if (!agentProposalStore_) {
+        return nullptr;
+    }
+    try {
+        std::call_once(agenticHandoffControllerOnce_, [this]() {
+            const TrackerConfig cfg = ConfigManager::Load();
+            CodingHarness::ClaudeCodeLocalRunner::Options opts;
+            opts.binPath = cfg.HandoffHarnessBinPath; // empty == PATH resolve
+            agenticHandoffRunner_ =
+                std::unique_ptr<CodingHarness::IRunner>(new CodingHarness::ClaudeCodeLocalRunner(opts));
+            // Production audit sink — forward verbatim to BackendAuditTrail.
+            smatchet::agentic::AuditSink sink = [](const std::string& action, const std::string& source,
+                                                   const std::string& issueKey, bool success,
+                                                   const std::string& errorMessage,
+                                                   const nlohmann::json& data) {
+                BackendAuditTrail::AuditEvent ev;
+                ev.Action = action;
+                ev.Source = source;
+                ev.IssueKey = issueKey;
+                ev.OperationId = BackendAuditTrail::MakeOperationId("handoff");
+                ev.Success = success;
+                ev.Error = errorMessage;
+                ev.Data = data;
+                ev.Phase = "result";
+                BackendAuditTrail::AppendEvent(ev);
+            };
+            // Worker dispatcher binds the controller's worker to the
+            // AppController's LaunchBackgroundTask path so Spawn() runs off
+            // the UI thread (pillar 2).
+            smatchet::agentic::WorkerDispatcher dispatcher = [this](std::function<void()> task) {
+                this->LaunchBackgroundTask(std::move(task));
+            };
+            agenticHandoffController_ = std::make_unique<smatchet::agentic::AgenticHandoffController>(
+                std::move(dispatcher), agenticHandoffRunner_.get(), agentProposalStore_.get(),
+                std::move(sink));
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());
+        return nullptr;
+    }
+    return agenticHandoffController_.get();
 }
 
 // ─── T7 scheduled-poll worker ──────────────────────────────────────────────
