@@ -50,6 +50,29 @@ TEST_CASE("ModelCatalog::All every entry has non-empty url + sha256 + display na
     }
 }
 
+TEST_CASE("ModelCatalog: SHA-256 hashes pinned to the live huggingface mirror") {
+    // Regression gate against catalog-hash drift. The pre-fix catalog shipped
+    // stale hashes for ggml-small.en and ggml-medium.en — every download
+    // produced a SHA-256 mismatch and never landed. Pin the live X-Linked-ETag
+    // values here so a future hash bump is a knowing edit, not silent breakage.
+    //
+    // To refresh after a deliberate upstream rotation:
+    //   curl -sIL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/<id>.bin
+    //     | grep X-Linked-ETag
+    auto findHash = [](const std::string& id) -> std::string {
+        const auto* e = cat::Find(id);
+        return e ? e->Sha256 : std::string();
+    };
+    CHECK(findHash("ggml-tiny.en") ==
+          "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f");
+    CHECK(findHash("ggml-base.en") ==
+          "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002");
+    CHECK(findHash("ggml-small.en") ==
+          "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d");
+    CHECK(findHash("ggml-medium.en") ==
+          "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356");
+}
+
 TEST_CASE("ModelCatalog::Find returns the matching entry for known ids") {
     CHECK(cat::Find("ggml-tiny.en") != nullptr);
     CHECK(cat::Find("ggml-base.en") != nullptr);

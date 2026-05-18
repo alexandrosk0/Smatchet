@@ -148,15 +148,17 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     const ImVec2 workPos = vp->WorkPos;
     const ImVec2 workSize = vp->WorkSize;
 
-    // Compute banner height by phase.
+    // Compute banner height by phase. The taller heights below give the text
+    // + buttons room to breathe at the larger background contrast we use now —
+    // a too-tight banner looked indistinguishable from the menu bar.
     const ModelDownloader::Progress prog = OwnedDownloader().GetProgress();
     const bool downloading = (prog.state == ModelDownloader::State::Downloading) ||
                              (prog.state == ModelDownloader::State::Verifying);
-    float bannerHeight = 52.0f;
+    float bannerHeight = 64.0f;
     if (downloading) {
-        bannerHeight = 70.0f;
+        bannerHeight = 84.0f;
     } else if (s.pickerExpanded) {
-        bannerHeight = 120.0f;
+        bannerHeight = 140.0f;
     }
 
     ::ImGui::SetNextWindowPos(workPos);
@@ -166,10 +168,22 @@ bool Render(AppController& app, TrackerConfig& cfg) {
                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoDocking;
 
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    // Distinct accent-blue background + a visible bottom border so the banner
+    // reads as a notification strip rather than blending into the chrome.
+    // The colors are picked to remain legible on both light and dark ImGui
+    // themes (high-saturation blue background, white text, contrasting border).
+    const ImVec4 bgColor(0.10f, 0.42f, 0.78f, 1.00f);        // saturated blue
+    const ImVec4 borderColor(0.95f, 0.78f, 0.20f, 1.00f);    // amber attention bar
+    const ImVec4 textColor(1.00f, 1.00f, 1.00f, 1.00f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+    ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+    ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 8.0f));
     if (!::ImGui::Begin("##WhisperSetupBanner", nullptr, flags)) {
         ::ImGui::End();
-        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
         return false;
     }
 
@@ -225,7 +239,12 @@ bool Render(AppController& app, TrackerConfig& cfg) {
             ::ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", s.lastError.c_str());
         }
     } else {
-        ::ImGui::TextUnformatted(
+        // TextWrapped lets the long copy fit on narrow viewports without being
+        // truncated to a single line. The leading dot-prefix substitutes for a
+        // missing icon glyph in the default ImGui font; the banner color +
+        // border already do most of the attention-grabbing work.
+        ::ImGui::TextWrapped(
+            "* %s",
             SmatchetLocalization::T("whisper.banner.title",
                                     "Enable voice dictation? Push-to-talk transcribes into any text field. "
                                     "Optional, off by default. No audio leaves your machine when the local "
@@ -260,7 +279,8 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     }
 
     ::ImGui::End();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(3);
     return cfgChanged;
 #endif
 }

@@ -133,18 +133,68 @@ constexpr REFERENCE_TIME kRefTimesPerMs = 10000;
 // small enough that Stop() responds within the buffer drain window.
 constexpr REFERENCE_TIME kBufferDuration = 200 * kRefTimesPerMs;
 
-// Convert a single captured frame (interleaved float / int16 / int24) into an
-// int16 mono sample. Best-effort: handles the two formats we actually expect
-// (WAVE_FORMAT_PCM int16 and WAVE_FORMAT_IEEE_FLOAT float32). Anything else
-// falls back to mid-channel silence (and the capture path is logged so a
-// debug build surfaces the unsupported format).
+// KSDATAFORMAT_SUBTYPE GUIDs for WAVEFORMATEXTENSIBLE. Reproduced locally so
+// we don't have to drag <ksmedia.h> in (same rationale as the IID locals
+// above). Both GUIDs share the trailing 14 bytes `0000-0010-8000-00aa00389b71`
+// — the first 4 bytes encode the format tag (PCM=1, IEEE_FLOAT=3).
+const GUID kSubFormatPcm = {0x00000001, 0x0000, 0x0010,
+                            {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+const GUID kSubFormatIeeeFloat = {0x00000003, 0x0000, 0x0010,
+                                  {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+
+bool GuidEqual(const GUID& a, const GUID& b) noexcept {
+    return std::memcmp(&a, &b, sizeof(GUID)) == 0;
+}
+
+// Resolve `fmt` to a pair (effectiveTag, effectiveBits) handling
+// WAVE_FORMAT_EXTENSIBLE by unwrapping its SubFormat GUID. Returns true on
+// success. Falls through to the original tag/bits when fmt is not the
+// extensible wrapper.
+bool ResolveFormat(const WAVEFORMATEX& fmt, WORD& outTag, WORD& outBits) noexcept {
+    if (fmt.wFormatTag != WAVE_FORMAT_EXTENSIBLE) {
+        outTag = fmt.wFormatTag;
+        outBits = fmt.wBitsPerSample;
+        return true;
+    }
+    // WAVEFORMATEXTENSIBLE layout: WAVEFORMATEX followed by Samples (WORD),
+    // dwChannelMask (DWORD), SubFormat (GUID). cbSize must be at least
+    // sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) (22 bytes).
+    if (fmt.cbSize < 22) {
+        return false;
+    }
+    const WAVEFORMATEXTENSIBLE* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&fmt);
+    if (GuidEqual(ext->SubFormat, kSubFormatPcm)) {
+        outTag = WAVE_FORMAT_PCM;
+        outBits = fmt.wBitsPerSample;
+        return true;
+    }
+    if (GuidEqual(ext->SubFormat, kSubFormatIeeeFloat)) {
+        outTag = WAVE_FORMAT_IEEE_FLOAT;
+        outBits = fmt.wBitsPerSample;
+        return true;
+    }
+    return false;
+}
+
+// Convert a single captured frame (interleaved float / int16) into an
+// int16 mono sample. Handles WAVE_FORMAT_PCM int16, WAVE_FORMAT_IEEE_FLOAT
+// float32, and WAVE_FORMAT_EXTENSIBLE wrapping either (the WASAPI mix
+// engine ships float32 inside EXTENSIBLE on most Windows 10/11 mics —
+// tag=65534=0xFFFE in the logs). Anything else falls back to mid-channel
+// silence (logged once per Start by the caller).
 std::int16_t MixToMonoInt16(const BYTE* framePtr, const WAVEFORMATEX& fmt) {
     const int channels = static_cast<int>(fmt.nChannels);
     if (channels < 1) {
         return 0;
     }
 
-    if (fmt.wFormatTag == WAVE_FORMAT_PCM && fmt.wBitsPerSample == 16) {
+    WORD effTag = 0;
+    WORD effBits = 0;
+    if (!ResolveFormat(fmt, effTag, effBits)) {
+        return 0;
+    }
+
+    if (effTag == WAVE_FORMAT_PCM && effBits == 16) {
         const std::int16_t* samples = reinterpret_cast<const std::int16_t*>(framePtr);
         std::int32_t accum = 0;
         for (int c = 0; c < channels; ++c) {
@@ -158,7 +208,7 @@ std::int16_t MixToMonoInt16(const BYTE* framePtr, const WAVEFORMATEX& fmt) {
 
     // Float32 is the WASAPI mix-engine default. Convert by averaging channels
     // then scaling to int16 with a hard clamp.
-    if (fmt.wFormatTag == WAVE_FORMAT_IEEE_FLOAT && fmt.wBitsPerSample == 32) {
+    if (effTag == WAVE_FORMAT_IEEE_FLOAT && effBits == 32) {
         const float* samples = reinterpret_cast<const float*>(framePtr);
         double accum = 0.0;
         for (int c = 0; c < channels; ++c) {
@@ -171,8 +221,6 @@ std::int16_t MixToMonoInt16(const BYTE* framePtr, const WAVEFORMATEX& fmt) {
         return static_cast<std::int16_t>(scaled);
     }
 
-    // WAVE_FORMAT_EXTENSIBLE wraps the same underlying SubFormat we check
-    // above; full enumeration is deferred to a Phase G follow-up.
     return 0;
 }
 

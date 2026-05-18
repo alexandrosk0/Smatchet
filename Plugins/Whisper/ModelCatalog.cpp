@@ -50,8 +50,13 @@ const std::vector<Entry>& BuildCatalog() {
         Entry small;
         small.Id = "ggml-small.en";
         small.DisplayName = "Higher accuracy";
-        small.SizeBytes = 487601967ull; // ~465 MiB on disk; rounded "~500 MB" in UI
-        small.Sha256 = "f953ad0fd29cacd07d5a9eef5c1e3c4f48996b2dac0a8a3f25ad434ea0d10cc3";
+        small.SizeBytes = 487614201ull; // matches X-Linked-Size at huggingface (Nov 2025)
+        // Pinned to the X-Linked-ETag the huggingface CDN serves for the
+        // resolve/main/ggml-small.en.bin pointer. The pre-Phase-F catalog
+        // entry shipped a stale hash from an older upload that no longer
+        // matches the bytes the mirror returns — every download verifies as
+        // mismatch. Bump to the live value.
+        small.Sha256 = "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d";
         small.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
         v.push_back(small);
 
@@ -61,8 +66,11 @@ const std::vector<Entry>& BuildCatalog() {
         Entry medium;
         medium.Id = "ggml-medium.en";
         medium.DisplayName = "Highest accuracy (1.5 GB) — CPU-heavy";
-        medium.SizeBytes = 1533763059ull; // ~1.43 GiB on disk; rounded "~1.5 GB" in UI
-        medium.Sha256 = "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e8faa4eccc8d0b5f";
+        medium.SizeBytes = 1533774781ull; // matches X-Linked-Size at huggingface (Nov 2025)
+        // See small.en note above — same hash-drift root cause. The Phase F
+        // ship value differed from the live mirror in the last four bytes;
+        // bump to the live X-Linked-ETag value.
+        medium.Sha256 = "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356";
         medium.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin";
         v.push_back(medium);
 
