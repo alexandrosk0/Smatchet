@@ -2,25 +2,35 @@
 #define SMATCHET_AGENT_PROPOSAL_STORE_H
 
 // AgentProposalStore — SQLite persistence for AgentProposal (per
-// agentic-flow plan decisions #4 + #14). Three tables:
+// agentic-flow plan decisions #4 + #14). Four tables (post-H10):
 //
 //   agent_proposals   — one row per LLM-suggested action, lifecycle-tracked
-//                       through AgentProposalState transitions.
+//                       through AgentProposalState transitions. Schema v2
+//                       adds the `handoff_status` column so the proposal
+//                       row surfaces the in-flight / terminal handoff state
+//                       to the AgentProposalsUi panel without a join into
+//                       the in-memory handoff table.
 //   agent_poll_cursor — durability for the GitHub poll cursor (per
 //                       (source_tracker, repo_key) tuple) so a restart never
 //                       re-triages the same issues.
-//   schema_version    — single-row migration ledger; version 1 is the first
-//                       shipped state of the agentic SQLite surface. Older
-//                       databases (unversioned, created on a build before
-//                       this row landed) auto-upgrade to version 1 on open
-//                       since the agent_* tables are additive; the open
-//                       path stamps version=1 idempotently and never
-//                       double-bumps on subsequent re-opens.
+//   agent_pr_watch    — H10. Per-proposal PR-iteration cursor state — last
+//                       seen PR comment id + iteration count + last-poll
+//                       wall-clock. Persists `PrCommentWatcher` state across
+//                       restarts (H7 left it in-memory); a re-armed handoff
+//                       resumes from the same cursor instead of replaying
+//                       every comment from the PrOpen transition forward.
+//   schema_version    — single-row migration ledger; version 1 was the first
+//                       shipped state of the agentic SQLite surface (T9).
+//                       Version 2 (H10) adds `agent_pr_watch` + the
+//                       `agent_proposals.handoff_status` column; the open
+//                       path migrates v1 dbs in place. New dbs are stamped
+//                       at the current version directly.
 //
 // Migration policy: when an older shipped version exists, AgentProposalStore
 // applies migrations in numeric order on open. Migrations are pure SQL +
-// idempotent — re-running them must be safe. Version 1 has no migration body
-// (it is the first recorded shipped state); future bumps add a step.
+// idempotent — re-running them must be safe. Each version's body MUST be
+// safe to re-run on a db that has already been bumped (defense in depth
+// against partial-apply recovery).
 
 #include "AgentProposal.h"
 #include "AgenticInferenceClientPure.h"
@@ -114,14 +124,61 @@ class AgentProposalStore {
     // The shipped schema version. Bumped exactly once per shipped feature
     // increment (AGENTS.md § Schema-version bumps). Increment in lock-step
     // with EnsureSchemaVersion's migration ladder whenever a real migration
-    // body lands.
-    static constexpr int kCurrentSchemaVersion = 1;
+    // body lands. H10 ships v2 (adds `agent_pr_watch` + handoff_status).
+    static constexpr int kCurrentSchemaVersion = 2;
 
-    // Returns the schema_version recorded in the database. Stamped at version
-    // 1 on first open (whether the db is brand-new or an older unversioned
-    // db) and never double-bumps on subsequent opens. Returns false + sets
-    // outError on DB-read failure.
+    // Returns the schema_version recorded in the database. Stamped at the
+    // current shipped version on first open (whether the db is brand-new or
+    // an older unversioned db) and migrated forward in-place for v1 dbs that
+    // have not yet been bumped. Idempotent on already-current dbs. Returns
+    // false + sets outError on DB-read failure.
     bool GetSchemaVersion(int& outVersion, std::string& outError) const;
+
+    // ─── H10 agent_pr_watch persistence ───────────────────────────────────
+    //
+    // The H7 `PrCommentWatcher` cursor + iteration count must survive an
+    // app restart so a half-processed PR comment thread does not double-fire
+    // a respawn (or, worse, miss every comment between restarts). The
+    // `agent_pr_watch` table mirrors the in-memory fields on
+    // `AgenticHandoffController::ActiveHandoff` that the watcher reads on
+    // every Tick: the last seen comment id (string — GitHub's `id` is a 64-
+    // bit int that we round-trip as decimal text to avoid signed-overflow
+    // ambiguity), the iteration count, and the wall-clock of the last
+    // successful poll.
+
+    struct PrWatchRow {
+        std::int64_t proposalId = 0;
+        std::string prUrl;
+        std::string lastSeenCommentIdStr; // stringified GitHub comment id, "" = never seen
+        int iterationCount = 0;
+        std::int64_t lastPolledAtSec = 0; // 0 = never polled
+    };
+
+    // Upsert the PR-watch row for `proposalId`. Idempotent — calling twice
+    // overwrites the prior row. Returns false + outError on DB error.
+    bool SetPrWatch(const PrWatchRow& row, std::string& outError);
+
+    // Reads the PR-watch row for `proposalId`. Returns true + populates
+    // `outRow` when a row exists; returns true + leaves `outRow` defaulted
+    // when no row exists (first-poll semantics — same shape as
+    // GetPollCursor). Returns false on DB error.
+    bool GetPrWatch(std::int64_t proposalId, PrWatchRow& outRow, std::string& outError) const;
+
+    // Deletes the PR-watch row for `proposalId`. Idempotent — missing row
+    // is not an error. Called when a handoff terminates (Complete / Failed
+    // / Cancelled) so the table does not grow unbounded.
+    bool DeletePrWatch(std::int64_t proposalId, std::string& outError);
+
+    // ─── H10 agent_proposals.handoff_status column ────────────────────────
+    //
+    // Mirrors `CodingHarness::RunState` as a string so the
+    // AgentProposalsUi panel can surface the in-flight handoff state on the
+    // proposal row without joining against the in-memory controller table.
+    // Empty string = no handoff started. Updated by
+    // `AgenticHandoffController` after each FSM transition.
+
+    bool SetHandoffStatus(std::int64_t proposalId, const std::string& status, std::string& outError);
+    bool GetHandoffStatus(std::int64_t proposalId, std::string& outStatus, std::string& outError) const;
 
     // H9 — cross-flow notification hook. Fired by Transition() each time a
     // row's state advances Pending -> Approved AND the row's UPDATE commits

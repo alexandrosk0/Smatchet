@@ -1440,6 +1440,15 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeAgentTriageScenario();
         return MakeAgentTriageScenario();
     });
+    // H10 — agentic handoff end-to-end regression. Drives the full
+    // Pending->Spawning->Running->PrOpen->Complete FSM against a scripted
+    // FakeRunner so no real `claude` install, GitHub PAT, or HTTP traffic
+    // is required. Factory call is ifdef-wrapped because the OFF build
+    // excludes the controller + runner symbols.
+    scenarioRunner_->RegisterFactory("agent-handoff-roundtrip", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAgentHandoffScenario();
+        return MakeAgentHandoffScenario();
+    });
 #endif
 
     // Unified Command System — register the catalog last so handlers can capture
