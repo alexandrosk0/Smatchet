@@ -25,6 +25,9 @@
 #include "SmatchetMcpServerUi.h"
 #include "SmatchetAiAssistantUi.h"
 #endif
+#if defined(SMATCHET_WITH_AGENTIC)
+#include "SmatchetAgentProposalsUi.h"
+#endif
 #include "SmatchetToast.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
@@ -697,6 +700,12 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawAiAssistantPanel");
         drawAiAssistantPanel(app, d);
+    }
+#endif
+#if defined(SMATCHET_WITH_AGENTIC)
+    {
+        SMATCHET_UI_PERF_SCOPE("SmatchetAgentProposalsUi::Render");
+        SmatchetAgentProposalsUi::Render(app, d);
     }
 #endif
     {

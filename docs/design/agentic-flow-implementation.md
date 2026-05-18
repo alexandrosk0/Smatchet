@@ -423,3 +423,18 @@ Phase H0 appends:
 - **`docs/adr/0004-pluggable-coding-harness-runner.md`** — why `ICodingHarnessRunner` is an interface with `ClaudeCodeLocalRunner` as phase-1 concrete. Allows later cloud / Codex / Aider drop-ins without controller changes. Documents that `bypassPermissions` is not an OS sandbox and the runner's env + cwd are the only boundary.
 
 Both ADRs follow the `docs/adr/0001-…` / `0002-…` template (decision, context, consequences).
+
+## Implementation log
+
+Append-only record per AGENTS.md § Plan revision after implementation. One bullet per shipped phase.
+
+- **T6** (PR pending) · `feat(agentic): T6 SmatchetAgentProposalsUi + bucket-E test` — new ImGui panel `SmatchetAgentProposalsUi::Render` renders Pending rows from `AgentProposalStore::Query` with green Approve / red Reject buttons (drive `Transition` on the UI thread; SQLite UPDATE is sub-ms so no worker). Menu toggle wired into View under `SMATCHET_WITH_AGENTIC`. Bucket-E coverage in `tests/ui/agent_proposals_panel.test.cpp` (Empty / ListsPending / Approve / Reject variants). Runner: `scripts/dev/test-ui-agent-proposals.sh`.
+
+## Deviations from plan
+
+- **T6 — issue-title omitted from row header.** The plan-locked decision (#5) allowed deferring issue-title rendering pending T7's `FetchIssueBody` integration. Row header therefore shows `<issueKey>  [<action>]` only. Re-evaluate when T7 lands if the title becomes worth a per-row HTTP fetch (probably not — `issueKey` is already disambiguating for triage scan).
+- **T6 — refresh cadence is TU-static, not a UiDrawSession field.** The panel owns its own polling cadence (1 Hz steady-clock gate) at TU scope to avoid leaking polling state into `UiDrawSession` for a feature with no other consumers. A future poll-driven update (T7) may move this into session state if shared with another caller.
+
+## Verification
+
+- **T6**: dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) under `ninja-iter-msys2`; `SMATCHET_WITH_AGENTIC=OFF` build of `SmatchetStandalone` confirms the panel + menu item + Draw call fully drop out; `ninja-test-msys2` ctest green (no new doctest — UI logic is bucket-E); `bash scripts/dev/test-ui-agent-proposals.sh` runs the four bucket-E variants against the ephemeral `ninja-ui-test-msys2` exe; `bash scripts/dev/test-all.sh` full sweep.
