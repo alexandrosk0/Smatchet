@@ -234,6 +234,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["whisper_mode"] = config.WhisperMode;
     j["whisper_model"] = config.WhisperModel;
     j["whisper_hotkey"] = config.WhisperHotkey;
+    j["whisper_consent_timestamp_sec"] = config.WhisperConsentTimestampSec;
 #endif
     j["mcp_enabled"] = config.McpEnabled;
     j["mcp_port"] = config.McpPort;
@@ -631,6 +632,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.WhisperMode = j.value("whisper_mode", cfg.WhisperMode);
             cfg.WhisperModel = j.value("whisper_model", cfg.WhisperModel);
             cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
+            cfg.WhisperConsentTimestampSec =
+                j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
 #endif
             cfg.AiOllamaBaseUrl = j.value("ai_ollama_base_url", cfg.AiOllamaBaseUrl);
             cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);

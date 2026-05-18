@@ -14,9 +14,13 @@
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "ModelCatalog.h"
+#include "ModelDownloader.h"
 #include "WavWriter.h"
 #include "WhisperApiClient.h"
 #include "WhisperApiKeyResolve.h"
+#include "WhisperConsentGate.h"
+#include "WhisperLocal.h"
 #include "WindowsAudioCapture.h"
 
 #include <nlohmann/json.hpp>
@@ -133,6 +137,170 @@ smatchet::cmd::Command BuildStatusCommand() {
         out["model_present"] = ResolveLocalModelPresent(cfg);
         out["setup_completed"] = cfg.WhisperSetupCompleted;
         out["api_key_resolved"] = !ResolveWhisperKeyFromConfig(cfg).empty();
+        // Surface whether whisper.cpp was linked into this build (sub-option
+        // SMATCHET_WHISPER_LOCAL_BACKEND). Lets consumers distinguish
+        // "model file missing on disk" from "local backend stub".
+        out["local_backend"] = smatchet::whisper::WhisperLocal::BackendBuildState();
+        return CommandResult::Success(std::move(out));
+    };
+    return c;
+}
+
+// --- Phase C additions: model download / progress / cancel + local mode. ---
+//
+// A single ModelDownloader instance is owned at file scope so download state
+// survives a CLI re-invocation (the user issues `whisper.download-model` and
+// then `whisper.model-progress` repeatedly on the same process). The setup
+// banner has its own instance (SmatchetWhisperSetupBanner.cpp); banner vs.
+// CLI are intentionally distinct so the banner is not interrupted by a CLI
+// poll that happens to land on the same model.
+
+smatchet::whisper::ModelDownloader& PluginOwnedDownloader() {
+    static smatchet::whisper::ModelDownloader d;
+    return d;
+}
+
+const char* DownloaderStateToString(smatchet::whisper::ModelDownloader::State st) {
+    using State = smatchet::whisper::ModelDownloader::State;
+    switch (st) {
+    case State::Idle:
+        return "Idle";
+    case State::Downloading:
+        return "Downloading";
+    case State::Verifying:
+        return "Verifying";
+    case State::Complete:
+        return "Complete";
+    case State::Failed:
+        return "Failed";
+    case State::Cancelled:
+        return "Cancelled";
+    }
+    return "Unknown";
+}
+
+std::string ResolveWhisperModelDir() {
+    const std::string sharedDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+    if (sharedDir.empty()) {
+        return std::string();
+    }
+    std::string out = sharedDir;
+    if (!out.empty() && out.back() != '/' && out.back() != '\\') {
+        out.push_back('/');
+    }
+    out += "whisper";
+    return out;
+}
+
+smatchet::cmd::Command BuildDownloadModelCommand() {
+    using smatchet::cmd::Command;
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::CommandContext;
+    using smatchet::cmd::ErrorCode;
+    using smatchet::cmd::ParamSpec;
+    using smatchet::cmd::ParamType;
+
+    Command c;
+    c.Name = "whisper.download-model";
+    c.Category = "whisper";
+    c.Summary = "Download a Whisper ggml model from the huggingface mirror to <userData>/whisper/<id>.bin.";
+    c.Description =
+        "Pattern A worker; returns immediately with {started: bool, model, url}. Poll "
+        "`whisper.model-progress` for {state, bytes_received, bytes_expected, error}. Cancel "
+        "via `whisper.cancel-download`. Requires fresh consent: the caller stamps "
+        "cfg.WhisperConsentTimestampSec via the setup banner / Preferences first. SHA-256 "
+        "verified against the catalog hash before the partial is renamed onto the final path.";
+    c.Destructive = false;
+    c.Idempotent = false;
+    c.AsyncSafe = true;
+    c.DryRunSupported = false;
+
+    ParamSpec nameParam;
+    nameParam.Name = "name";
+    nameParam.Type = ParamType::String;
+    nameParam.Required = true;
+    nameParam.Description = "Model id (ggml-tiny.en | ggml-base.en | ggml-small.en).";
+    c.Params = {std::move(nameParam)};
+
+    c.Handler = [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+        const std::string modelId = args.value("name", std::string());
+        if (modelId.empty()) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "--name is required");
+        }
+        const smatchet::whisper::catalog::Entry* e = smatchet::whisper::catalog::Find(modelId);
+        if (e == nullptr) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "unknown model id: " + modelId);
+        }
+        const std::string destDir = ResolveWhisperModelDir();
+        if (destDir.empty()) {
+            return CommandResult::Failure(ErrorCode::HandlerError,
+                                          "platform shared user-data directory unavailable");
+        }
+        if (ctx.App == nullptr) {
+            return CommandResult::Failure(ErrorCode::HandlerError, "AppController unavailable");
+        }
+        std::string err;
+        if (!PluginOwnedDownloader().Start(*ctx.App, modelId, destDir, err)) {
+            return CommandResult::Failure(ErrorCode::HandlerError, err);
+        }
+        nlohmann::json out;
+        out["started"] = true;
+        out["model"] = modelId;
+        out["url"] = e->Url;
+        return CommandResult::Success(std::move(out));
+    };
+    return c;
+}
+
+smatchet::cmd::Command BuildModelProgressCommand() {
+    using smatchet::cmd::Command;
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::CommandContext;
+
+    Command c;
+    c.Name = "whisper.model-progress";
+    c.Category = "whisper";
+    c.Summary = "Snapshot of the active model download (state + bytes received / expected).";
+    c.Description =
+        "Returns {state: Idle|Downloading|Verifying|Complete|Failed|Cancelled, bytes_received, "
+        "bytes_expected, error, model}. Cheap; safe to poll at UI frame rate.";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    c.DryRunSupported = false;
+    c.Handler = [](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+        const auto prog = PluginOwnedDownloader().GetProgress();
+        nlohmann::json out;
+        out["state"] = DownloaderStateToString(prog.state);
+        out["bytes_received"] = static_cast<std::int64_t>(prog.bytesReceived);
+        out["bytes_expected"] = static_cast<std::int64_t>(prog.bytesExpected);
+        out["error"] = prog.error;
+        out["model"] = prog.modelId;
+        return CommandResult::Success(std::move(out));
+    };
+    return c;
+}
+
+smatchet::cmd::Command BuildCancelDownloadCommand() {
+    using smatchet::cmd::Command;
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::CommandContext;
+
+    Command c;
+    c.Name = "whisper.cancel-download";
+    c.Category = "whisper";
+    c.Summary = "Cancel an in-flight Whisper model download; partial file is preserved for resume.";
+    c.Description =
+        "Flips the worker's cancel atom. Returns {cancelled: true}. Idempotent — safe to call "
+        "when no download is running.";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    c.DryRunSupported = false;
+    c.Handler = [](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+        PluginOwnedDownloader().Cancel();
+        nlohmann::json out;
+        out["cancelled"] = true;
         return CommandResult::Success(std::move(out));
     };
     return c;
@@ -185,21 +353,53 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
 
     c.Handler = [](const nlohmann::json& args, const CommandContext& /*ctx*/) -> CommandResult {
         const std::string mode = args.value("mode", std::string("cloud"));
-        if (mode == "local") {
-            return CommandResult::Failure(ErrorCode::ValidationError,
-                                          "local mode arrives in Phase C; pass --mode cloud or --mode auto");
-        }
-        // `auto` and `cloud` both reach the cloud path in Phase B.
-
         const TrackerConfig cfg = ConfigManager::Load();
-        const std::string apiKey = ResolveWhisperKeyFromConfig(cfg);
-        if (apiKey.empty()) {
-            return CommandResult::Failure(
-                ErrorCode::ValidationError,
-                "no API key available - set WhisperApiKey or AiApiKey (provider=openai)");
+
+        // Phase C mode-router decision tree (see docs/design/whisper-dictation.md
+        // § Mode router decision tree). `auto` prefers local-if-present, else
+        // falls back to cloud. `local` is hard-gated on a present model. `cloud`
+        // unconditionally takes the cloud path. Cloud-on-fallback after a local
+        // failure is handled at the higher Phase E layer; CLI is one-shot.
+        const std::string modelDir = ResolveWhisperModelDir();
+        const bool localPresent = !cfg.WhisperModel.empty() &&
+                                  smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
+        std::string effectiveMode;
+        if (mode == "cloud") {
+            effectiveMode = "cloud";
+        } else if (mode == "local") {
+            if (!localPresent) {
+                return CommandResult::Failure(ErrorCode::ValidationError,
+                                              "local mode requires a downloaded model; run "
+                                              "whisper.download-model --name <id> first");
+            }
+            effectiveMode = "local";
+        } else { // auto
+            effectiveMode = localPresent ? "local" : "cloud";
+        }
+
+        std::string apiKey;
+        if (effectiveMode == "cloud") {
+            apiKey = ResolveWhisperKeyFromConfig(cfg);
+            if (apiKey.empty()) {
+                return CommandResult::Failure(
+                    ErrorCode::ValidationError,
+                    "no API key available - set WhisperApiKey or AiApiKey (provider=openai)");
+            }
+            // Phase C consent invariant #3 — no cloud API call without
+            // explicit opt-in. The CLI smoke command is exempt in Phase B
+            // because there was no opt-in surface; now that the banner +
+            // Preferences exist, the gate is the same one the Phase E hotkey
+            // path will use. The CLI consent bypass is removed.
+            if (!smatchet::whisper::consent::CanCallCloudApi(cfg, apiKey)) {
+                return CommandResult::Failure(
+                    ErrorCode::ValidationError,
+                    "consent required: enable Whisper dictation via the setup banner or "
+                    "Preferences first");
+            }
         }
 
         std::vector<std::uint8_t> wavBytes;
+        std::vector<std::int16_t> capturedPcm; // populated on capture path only
         std::size_t capturedSamples = 0;
         const std::string filePath = args.value("file", std::string());
         if (!filePath.empty()) {
@@ -221,40 +421,61 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
             }
             std::this_thread::sleep_for(std::chrono::seconds(seconds));
             cap.Stop();
-            std::vector<std::int16_t> pcm;
-            if (!cap.DrainCapturedPcm(pcm)) {
+            if (!cap.DrainCapturedPcm(capturedPcm)) {
                 return CommandResult::Failure(ErrorCode::HandlerError,
                                               "no audio captured (mic permission denied or no default device)");
             }
-            capturedSamples = pcm.size();
+            capturedSamples = capturedPcm.size();
             wavBytes = smatchet::whisper::pure::EncodeWav(
-                pcm,
+                capturedPcm,
                 smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
                 smatchet::whisper::WindowsAudioCapture::kCaptureChannels);
         }
-        if (wavBytes.empty()) {
-            return CommandResult::Failure(ErrorCode::HandlerError, "WAV payload is empty");
-        }
 
-        smatchet::whisper::WhisperApiClient client;
         const auto t0 = std::chrono::steady_clock::now();
         std::string text;
         std::string err;
-        const bool ok = client.Transcribe(wavBytes, apiKey, text, err);
+        bool ok = false;
+
+        if (effectiveMode == "local") {
+            if (capturedPcm.empty()) {
+                // --file input to local mode is intentionally out of scope for
+                // Phase C — we don't ship a WAV decoder yet. Use captured audio
+                // or `--mode cloud` for file input.
+                return CommandResult::Failure(
+                    ErrorCode::ValidationError,
+                    "local mode currently only accepts captured audio (omit --file). A WAV decoder "
+                    "for --file lands with the Phase D scenario harness.");
+            }
+            const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
+            smatchet::whisper::WhisperLocal local;
+            std::string loadErr;
+            if (!local.LoadModel(modelPath, loadErr)) {
+                return CommandResult::Failure(ErrorCode::HandlerError,
+                                              std::string("local model load failed: ") + loadErr);
+            }
+            ok = local.Transcribe(capturedPcm, text, err);
+        } else {
+            if (wavBytes.empty()) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "WAV payload is empty");
+            }
+            smatchet::whisper::WhisperApiClient client;
+            ok = client.Transcribe(wavBytes, apiKey, text, err);
+        }
         const auto t1 = std::chrono::steady_clock::now();
         const long long elapsedMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
         if (!ok) {
-            // ErrorCode::HandlerError for transport / HTTP / parse — surface the
-            // redacted error message Transcribe assembled.
+            // ErrorCode::HandlerError for transport / HTTP / parse / local — surface
+            // the redacted error message the inner client assembled.
             return CommandResult::Failure(ErrorCode::HandlerError, err);
         }
 
         nlohmann::json out;
         out["text"] = text;
         out["elapsed_ms"] = elapsedMs;
-        out["mode"] = (mode == "auto") ? std::string("cloud") : mode;
+        out["mode"] = effectiveMode;
         out["captured_samples"] = static_cast<std::int64_t>(capturedSamples);
         return CommandResult::Success(std::move(out));
     };
@@ -271,7 +492,12 @@ void WhisperPlugin::OnStart(AppController& app) {
     smatchet::cmd::CommandRegistry& reg = app.Commands();
     reg.Register(BuildStatusCommand());
     reg.Register(BuildTranscribeOnceCommand());
-    LOG_INFO("WhisperPlugin: Phase B started; whisper.status + whisper.transcribe-once registered.");
+    reg.Register(BuildDownloadModelCommand());
+    reg.Register(BuildModelProgressCommand());
+    reg.Register(BuildCancelDownloadCommand());
+    LOG_INFO("WhisperPlugin: Phase C started; whisper.{status,transcribe-once,download-model,model-progress,"
+             "cancel-download} registered (local backend %s).",
+             smatchet::whisper::WhisperLocal::BackendBuildState());
 }
 
 void WhisperPlugin::OnStop() {

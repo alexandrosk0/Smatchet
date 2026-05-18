@@ -123,9 +123,15 @@ if(SMATCHET_WITH_WHISPER)
         Source_Core/WhisperApiKeyResolve.test.cpp
         Source_Core/WhisperApiPayload.test.cpp
         Source_Core/WavWriter.test.cpp
+        # Phase C — local backend, downloader catalog, consent gate, mode router.
+        Source_Core/ModelCatalog.test.cpp
+        Source_Core/WhisperConsentGate.test.cpp
+        Source_Core/WhisperModeRouter.test.cpp
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/ModelCatalog.cpp"
+        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperConsentGate.cpp"
     )
     target_include_directories(SmatchetTests PRIVATE
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper")
