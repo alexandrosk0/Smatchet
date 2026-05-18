@@ -50,6 +50,35 @@ class ClaudeCodeLocalRunner : public IRunner {
         /// hands this to `SubprocessCapture::CaptureOptions::timeoutMs` for
         /// the child; the runner's own loop adds nothing on top.
         int timeoutMs = 0;
+
+        /// PR-open fallback: when the harness exits with `ok=true` but
+        /// `PR_URL.txt` is absent, the runner invokes `git push -u origin
+        /// <branch>` followed by `gh pr create --draft --base <prBaseBranch>`
+        /// itself, parses the resulting URL from `gh`'s stdout, and writes
+        /// it to `PR_URL.txt` so the controller's FSM transition to PrOpen
+        /// carries a URL. False disables the fallback — operators who
+        /// require harness-written sentinels can flip this off.
+        /// Maps to `TrackerConfig::HandoffAutoCreatePrIfMissing`.
+        bool autoCreatePrIfMissing = true;
+
+        /// Base branch passed to `gh pr create --base <X>` in the fallback
+        /// path. Empty = `develop` (the Smatchet default). Maps to
+        /// `TrackerConfig::HandoffPrBaseBranch`.
+        std::string prBaseBranch = "develop";
+
+        /// Optional PR body template. Empty = use the built-in template
+        /// (carries the `<!-- smatchet-handoff -->` bot-marker). Non-empty
+        /// replaces the template; `{proposalId}` / `{issueKey}` /
+        /// `{sourceTracker}` placeholders are substituted before passing to
+        /// `gh pr create --body`. Maps to `TrackerConfig::HandoffPrBodyTemplate`.
+        std::string prBodyTemplate;
+
+        /// Absolute path overrides for `git` and `gh` used by the fallback.
+        /// Empty = resolve from PATH (production default). Tests inject the
+        /// absolute path of `stub_git.exe` / `stub_gh.exe`. Maps to
+        /// `TrackerConfig::HandoffGitBinPath` / `HandoffGhBinPath`.
+        std::string gitBinPath;
+        std::string ghBinPath;
     };
 
     explicit ClaudeCodeLocalRunner(Options opts);

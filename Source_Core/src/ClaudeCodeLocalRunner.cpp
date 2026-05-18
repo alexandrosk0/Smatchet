@@ -13,7 +13,9 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
@@ -214,6 +216,129 @@ bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, in
     outStdout = res.stdoutText;
     outStderr = res.stderrText;
     return res.exitCode == 0 && !res.timedOut && !res.cancelled;
+}
+
+// Same as RunQuick but pins cwd to a specific directory. The fallback path
+// pushes from the worktree dir (so `git` picks up the right remote / branch
+// context) and creates the PR against the same worktree.
+bool RunQuickInDir(const std::string& argv0, const std::vector<std::string>& args, const std::string& cwd,
+                   int timeoutMs, std::string& outStderr, std::string& outStdout, int& outExitCode) {
+    SubprocessCapture::CaptureOptions opts;
+    opts.argv0 = argv0;
+    opts.args = args;
+    opts.cwd = cwd;
+    opts.timeoutMs = timeoutMs;
+    SubprocessCapture::CaptureResult res;
+    std::string err;
+    outExitCode = -1;
+    if (!SubprocessCapture::Run(opts, res, err)) {
+        outStderr = err;
+        return false;
+    }
+    outStdout = res.stdoutText;
+    outStderr = res.stderrText;
+    outExitCode = res.exitCode;
+    return res.exitCode == 0 && !res.timedOut && !res.cancelled;
+}
+
+// In-place placeholder substitution for the PR body template. The three
+// substitutions are intentional and minimal — opening this to arbitrary
+// `{key}` expansion creates a content-injection surface (the seed's issueKey
+// would otherwise pass through user-controlled text). Keep this list narrow.
+std::string SubstituteTemplate(const std::string& tmpl, std::int64_t proposalId, const std::string& issueKey,
+                                const std::string& sourceTracker) {
+    std::string out = tmpl;
+    auto replaceAll = [&out](const std::string& needle, const std::string& replacement) {
+        if (needle.empty()) {
+            return;
+        }
+        std::string::size_type pos = 0;
+        while ((pos = out.find(needle, pos)) != std::string::npos) {
+            out.replace(pos, needle.size(), replacement);
+            pos += replacement.size();
+        }
+    };
+    replaceAll("{proposalId}", std::to_string(proposalId));
+    replaceAll("{issueKey}", issueKey);
+    replaceAll("{sourceTracker}", sourceTracker);
+    return out;
+}
+
+// Build the default PR body. Carries the `<!-- smatchet-handoff -->`
+// bot-marker so PR-thread comment watchers (H7) can fingerprint our own PRs
+// the same way `AgenticHandoffController::IsHandoffBotComment` already
+// fingerprints issue-thread comments.
+std::string BuildDefaultPrBody(std::int64_t proposalId, const std::string& issueKey, const std::string& sourceTracker) {
+    std::ostringstream os;
+    os << "Closes " << sourceTracker << "#" << issueKey << "\n\n"
+       << "Agent handoff PR. Implements proposal #" << proposalId << ".\n\n"
+       << "<!-- smatchet-handoff -->\n";
+    return os.str();
+}
+
+// Strip the trailing newline from `gh pr create`'s URL output and validate
+// it looks like a GitHub PR URL. The cheap regex form ("https://github.com/
+// .../pull/<n>") is enough — anything else (`gh` returned the issue URL,
+// the user is on a fork, a localhost mirror) should not auto-fingerprint as
+// a successful PR-open.
+std::string TrimSpace(const std::string& s) {
+    const std::string ws = " \t\r\n";
+    const auto first = s.find_first_not_of(ws);
+    if (first == std::string::npos) {
+        return std::string();
+    }
+    const auto last = s.find_last_not_of(ws);
+    return s.substr(first, last - first + 1);
+}
+
+bool LooksLikeGithubPrUrl(const std::string& url) {
+    // Minimum shape: scheme + host + "/pull/" + a digit. Trailing slash /
+    // querystring tolerated. Reject empty + whitespace-only outright.
+    if (url.empty()) {
+        return false;
+    }
+    if (url.find("https://") != 0 && url.find("http://") != 0) {
+        return false;
+    }
+    // Must contain "/pull/" — distinguishes issue URLs from PR URLs even
+    // when both share the same repo prefix.
+    const auto pullPos = url.find("/pull/");
+    if (pullPos == std::string::npos) {
+        return false;
+    }
+    // At least one digit must follow "/pull/" before whatever comes next.
+    const auto digitStart = pullPos + 6;
+    if (digitStart >= url.size()) {
+        return false;
+    }
+    return std::isdigit(static_cast<unsigned char>(url[digitStart])) != 0;
+}
+
+// Title heuristic for the fallback PR. The contract is: first line of the
+// last commit (the harness's own commit message), else `proposal.issueTitle`,
+// else `proposal.issueKey`, else a sentinel. Never empty — `gh pr create`
+// rejects an empty `--title`.
+std::string ResolvePrTitle(const std::string& worktreeDir, const std::string& gitBin, const std::string& issueTitle,
+                            const std::string& issueKey) {
+    std::vector<std::string> args;
+    args.push_back("log");
+    args.push_back("-1");
+    args.push_back("--pretty=%s");
+    std::string err, out;
+    int exitCode = 0;
+    if (RunQuickInDir(gitBin, args, worktreeDir, 10000, err, out, exitCode)) {
+        const std::string first = TrimSpace(out);
+        if (!first.empty()) {
+            return first;
+        }
+    }
+    if (!issueTitle.empty()) {
+        return issueTitle;
+    }
+    if (!issueKey.empty()) {
+        return "Agent handoff: " + issueKey;
+    }
+    return std::string("Agent handoff PR");
 }
 
 // Convert a parsed JSON object into a StreamEvent. Tolerant: unknown shapes
@@ -463,6 +588,108 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
         }
     }
 
+    // PR-open fallback: harness may exit with ok=true without writing
+    // PR_URL.txt (e.g. early-failure mode that recovered, or a harness
+    // build that never learned the contract). Run `git push` + `gh pr
+    // create` ourselves so the controller can still reach PrOpen with a
+    // valid URL. Failure here is a hard stop — we tried, the result
+    // surfaces to the audit trail via outResult.errorMessage. Skipped
+    // when the run already failed (no PR to open for a broken branch).
+    if (outResult.ok && outResult.prUrl.empty() && m_opts.autoCreatePrIfMissing) {
+        const std::string prUrlSentinel = JoinPath(worktreeDir, kPrUrlName);
+        if (FileExists(prUrlSentinel)) {
+            // Sentinel showed up between the file check above and this
+            // branch — read it like the canonical path would have. This
+            // narrow race covers the case where the poll thread saw the
+            // file ~simultaneously with our parse of RUN_RESULT.json.
+            outResult.prUrl = TrimSpace(ReadFileText(prUrlSentinel));
+        }
+        if (outResult.prUrl.empty()) {
+            const std::string gitBin = m_opts.gitBinPath.empty() ? std::string("git") : m_opts.gitBinPath;
+            const std::string ghBin  = m_opts.ghBinPath.empty() ? std::string("gh") : m_opts.ghBinPath;
+            const std::string baseBranch = m_opts.prBaseBranch.empty() ? std::string("develop") : m_opts.prBaseBranch;
+
+            // 1. `git push -u origin <branch>` from the worktree dir.
+            std::vector<std::string> pushArgs;
+            pushArgs.push_back("push");
+            pushArgs.push_back("-u");
+            pushArgs.push_back("origin");
+            pushArgs.push_back(seed.targetBranch);
+            std::string pushErr, pushOut;
+            int pushExit = 0;
+            const bool pushed = RunQuickInDir(gitBin, pushArgs, worktreeDir, 60000, pushErr, pushOut, pushExit);
+            if (!pushed) {
+                outError = "PR-open fallback: git push failed (exit=" + std::to_string(pushExit) + "): " + pushErr;
+                outResult.ok = false;
+                outResult.errorMessage = outError;
+                if (onStateChange) onStateChange("Failed");
+                LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                return false;
+            }
+
+            // 2. `gh pr create --draft --base <base> --title ... --body ...`.
+            const std::string title = ResolvePrTitle(worktreeDir, gitBin, seed.issueTitle, seed.issueKey);
+            std::string body;
+            if (m_opts.prBodyTemplate.empty()) {
+                body = BuildDefaultPrBody(seed.proposalId, seed.issueKey, seed.sourceTracker);
+            } else {
+                body = SubstituteTemplate(m_opts.prBodyTemplate, seed.proposalId, seed.issueKey, seed.sourceTracker);
+            }
+            std::vector<std::string> ghArgs;
+            ghArgs.push_back("pr");
+            ghArgs.push_back("create");
+            ghArgs.push_back("--draft");
+            ghArgs.push_back("--base");
+            ghArgs.push_back(baseBranch);
+            ghArgs.push_back("--title");
+            ghArgs.push_back(title);
+            ghArgs.push_back("--body");
+            ghArgs.push_back(body);
+            std::string ghErr, ghOut;
+            int ghExit = 0;
+            const bool created = RunQuickInDir(ghBin, ghArgs, worktreeDir, 60000, ghErr, ghOut, ghExit);
+            if (!created) {
+                outError = "PR-open fallback: gh pr create failed (exit=" + std::to_string(ghExit) + "): " + ghErr;
+                outResult.ok = false;
+                outResult.errorMessage = outError;
+                if (onStateChange) onStateChange("Failed");
+                LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                return false;
+            }
+
+            // 3. Parse + validate the URL `gh` printed to stdout.
+            const std::string urlCandidate = TrimSpace(ghOut);
+            if (!LooksLikeGithubPrUrl(urlCandidate)) {
+                outError = "PR-open fallback: gh pr create returned non-PR URL: '" + urlCandidate + "'";
+                outResult.ok = false;
+                outResult.errorMessage = outError;
+                if (onStateChange) onStateChange("Failed");
+                LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                return false;
+            }
+            outResult.prUrl = urlCandidate;
+
+            // 4. Write PR_URL.txt so the runner-side sentinel is uniform with
+            // the harness-written path; downstream watchers / restart paths
+            // pick up the same file. Failure here is non-fatal — the prUrl
+            // is already on outResult and the controller transitions on that.
+            std::string writeErr;
+            if (!WriteFileText(prUrlSentinel, urlCandidate + "\n", writeErr)) {
+                LOG_WARN("ClaudeCodeLocalRunner: PR-open fallback succeeded but PR_URL.txt write failed: %s",
+                         writeErr.c_str());
+            }
+            LOG_INFO("ClaudeCodeLocalRunner: PR-open fallback created PR: %s", urlCandidate.c_str());
+        }
+    }
+
+    if (outResult.ok && !outResult.prUrl.empty() && onStateChange) {
+        // Belt-and-braces emit: the poll thread may have raced ahead and
+        // emitted PrOpen already; the controller's FSM no-ops a duplicate
+        // terminal-direction transition. This call ensures the fallback path
+        // surfaces PrOpen even when the poll thread missed it (which it does
+        // when we wrote PR_URL.txt above after stopPoll flipped).
+        onStateChange("PrOpen");
+    }
     if (onStateChange) {
         onStateChange(outResult.ok ? "Complete" : "Failed");
     }

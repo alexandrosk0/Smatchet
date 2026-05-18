@@ -246,6 +246,31 @@ struct TrackerConfig {
     // be the only channel. The poll cadence reuses `AgenticPollIntervalSec` — H5
     // piggybacks on T7's loop rather than spawning a 4th poll thread.
     bool HandoffClarificationPostToGithub = true;
+
+    // H6 — PR-open fallback. The harness is responsible for writing `PR_URL.txt` to its
+    // worktree on success; when it doesn't (early-failure mode, or a harness build that
+    // never learned that contract), the runner invokes `git push -u origin <branch>`
+    // followed by `gh pr create --draft` itself and writes the resulting URL back to
+    // the worktree so the FSM transition to PrOpen carries a URL. Operators who require
+    // a harness-written sentinel (no implicit PR creation) flip this false. Default
+    // true matches the documented fallback shape from the handoff plan H6 row.
+    bool HandoffAutoCreatePrIfMissing = true;
+    // Base branch passed to `gh pr create --base <X>`. Default `develop` matches the
+    // Smatchet repo's main integration branch; downstream projects override per-repo
+    // via Preferences > Agentic. Empty round-trips to the default.
+    std::string HandoffPrBaseBranch = "develop";
+    // Optional body template for the fallback `gh pr create` invocation. Empty (default)
+    // selects the runner's built-in template. Non-empty replaces it verbatim with
+    // `{proposalId}` / `{issueKey}` / `{sourceTracker}` placeholder substitution applied
+    // on the runner side. The default template carries the `<!-- smatchet-handoff -->`
+    // bot-marker so PR-thread comment watchers (H7) can fingerprint our own PRs.
+    std::string HandoffPrBodyTemplate;
+    // Absolute path overrides for `git` and `gh` binaries used by the PR-open fallback
+    // path. Empty = resolve from PATH (the production default). Tests inject the
+    // absolute path of `stub_git.exe` / `stub_gh.exe` here so the fallback runs
+    // hermetically. Mirrors `HandoffHarnessBinPath` shape.
+    std::string HandoffGitBinPath;
+    std::string HandoffGhBinPath;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;
