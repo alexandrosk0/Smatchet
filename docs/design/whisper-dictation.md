@@ -2,28 +2,70 @@
 
 ## Status: Shipped end-to-end (Phase G — 2026-05-18)
 
-All 7 phases shipped:
+All 7 phases shipped (merged into `develop`):
 
-- Phase A (PR #207) — plugin shell + bindings/stubs split + config schema + dictation router skeleton
-- Phase B (PR #209) — cloud transcription (OpenAI Whisper API) + WASAPI capture
-- Phase C (PR #212) — local whisper.cpp + model downloader + setup banner + Preferences skeleton
-- Phase D (PR #213) — generic ImGui InputText hook + four insertion targets
-- Phase E (PR #216) — push-to-talk hotkey + mic-active indicator + amplitude overlay
-- Phase F (PR #219) — polished Preferences tab + 4 deferred config fields + hot rebind + auto-send-on-punctuation
-- Phase G (PR pending) — automated end-to-end scenario + auto-enrolled regression gate
+| Phase | PR | sha | Summary |
+|---|---|---|---|
+| Plan | #206 | `d08a0bb` | Design doc with 6-layer gating discipline |
+| A | #207 | `5006fcd` | Plugin shell + bindings/stubs split + 7 config fields + `WHISPER=OFF` CI sentinel |
+| B | #209 | `9565b9c` | Cloud transcription (OpenAI Whisper API) + WASAPI capture + key-fallback resolver |
+| C | #212 | `b6f3511` | Local backend API (whisper.cpp behind `SMATCHET_WHISPER_LOCAL_BACKEND` sub-option) + model downloader + setup banner |
+| D | #213 | `1dcbeef` | Generic ImGui InputText hook + 4 insertion targets + UTF-8-safe splice |
+| E | #216 | `0149c19` | Push-to-talk hotkey (`RegisterHotKey` + `WH_KEYBOARD_LL`) + mic indicator + amplitude overlay |
+| F | #219 | `d91d317` | Polished Preferences tab + 4 deferred config fields + hot-rebind + ModelCatalog medium entry + auto-send-on-punctuation |
+| G | #223 | `bcffa37` | End-to-end `whisper-dictation-roundtrip` scenario + mock-transcription seams + `test-whisper-roundtrip.sh` auto-enrolled gate |
 
-Feature works end-to-end: user holds `Ctrl+Alt+Space`, speaks, releases → text appears in any focused ImGui InputText. First-launch setup banner. Local-default mode with cloud fallback. Test-injection seam (`WhisperPlugin::SetMockTranscription`) lets the `whisper-dictation-roundtrip` scenario exercise the full press → capture → transcribe → insert pipeline without mic hardware or OpenAI credits — auto-enrolled in `scripts/dev/test-all.sh`.
+**Default user flow**: first launch → non-blocking banner ("Enable voice dictation?"). User picks Enable + size → ~150 MB model downloads with progress + cancel. Subsequent launches: hold `Ctrl+Alt+Space`, speak, release → text lands at end-of-buffer in whichever ImGui InputText was focused (AI Assistant chat / grid long-text editor / Command Palette / any focused InputText via the wrapper).
 
-Bucket-E gaps remain for real-mic eyeball tests (visual cue latency under load, hotkey rebind round-trip across launches, real-network /v1/models Test Connection). Recipes documented per phase in the Verification section + each phase PR body.
+**CI matrix**: `Windows + MSYS2 UCRT64` and `Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)` jobs run on every PR — bindings/stubs drift catches itself.
 
-## Status
+## Followups + open items
 
-- **Phase**: planning (this doc)
+Tracked outside this plan; this section consolidates pointers so future agents don't have to dig through Deviations + Verification.
+
+### Open architectural decisions
+
+- **`SMATCHET_WHISPER_LOCAL_BACKEND` default flip (OFF → ON?)** — backlog/agent-self-improvement/infra.md (2026-05-18, P2). Current default OFF means user's "local default, cloud fallback" UX requires a build-time opt-in for the actual local backend. Three resolution paths: flip default ON (accept binary growth), refactor to runtime-loaded DLL, or downgrade the locked UX decision to "cloud default, local available via rebuild". Decision cost: 30 min binary-size measurement + decision.
+
+### Open code gaps
+
+- **`AppController_LuaBindings.cpp:1816` raw `ImGui::InputText`** — backlog/agent-self-improvement/process.md (2026-05-18, P3). The sol2 binding that lets Lua scripts spawn dynamic InputText widgets bypasses the `SmatchetLocalizedImGui` wrapper, so Lua-authored widgets don't pick up dictation. Built-in surfaces unaffected. Fix: explicit `g_dictationRouter.RegisterInputText` adjacent to the raw call. ~1 h.
+
+### Bucket-E manual gaps (no ImGui Test Engine wiring yet)
+
+1. **Real-mic end-to-end push-to-talk** — hold `Ctrl+Alt+Space`, speak, release; text appears in focused InputText. Requires audio hardware + a foreground build of `Smatchet.exe`. Recipe in Phase D/E Verification entries.
+2. **Visual cue latency under load** — confirm mic indicator appears within 100 ms of hotkey press (Pillar 2 contract). Requires an eyeball test at 144 Hz.
+3. **Hotkey rebind round-trip across app launches** — capture a new combo in Preferences, restart the app, confirm the new combo fires the global hook. Verifies persistence + plugin-OnStart re-registration.
+4. **Visual eyeball polish of the four UI surfaces** — setup banner, Preferences Whisper tab, status-bar mic indicator, amplitude-meter overlay.
+5. **Test connection button against real OpenAI API key** — verify the "Verified" / "HTTP 4xx" result paths in Preferences.
+6. **Auto-send-on-punctuation flow** — focus AI Assistant chat, dictate a sentence ending in `.` / `!` / `?`, confirm Send fires.
+
+All six are documented in the per-phase Verification entries; the new `whisper-dictation-roundtrip` scenario covers the press → schedule-worker → MainThreadDispatcher → InsertIntoFocusedInputText half of the pipeline without any of the above hardware/network dependencies.
+
+### Explicit non-goals (deferred to future plans, NOT regressions)
+
+- Real-time streaming partial results (`whisper.cpp` supports it; v2 of this plan)
+- Cross-platform audio (Linux ALSA / macOS CoreAudio) — Windows-first ship
+- Unreal / DX12 path — plugin gated OFF under `SMATCHET_EMBEDDED_IN_UNREAL`
+- GPU acceleration (CUDA / Vulkan / Metal)
+- Resampler upgrade — current integer-decimation downsampler is documented in Phase B deviations; future `libsamplerate` / `soxr` swap when accuracy matters
+
+### Resolved (closed during the plan; kept here for audit-trail)
+
+- Phase E's "hot-rebind deferred to Phase F follow-up" deviation — **RESOLVED by Phase F** via `WhisperPlugin::InstanceForUi()->ReregisterHotkey(...)`. Live hot-rebind works end-to-end without a process restart.
+- `WhisperApiKey` vs `AiApiKey` shared-key concern — **RESOLVED** during planning (Phase B + Phase F): separate field with documented 5-row fallback table, no silent breakage when AI Assistant switches providers.
+- Phase D agent-completion notification race — **RESOLVED** during Phase D: orchestrator took ownership of the agent's uncommitted work, shipped as PR #213; the agent's late duplicate PR #218 was closed.
+
+## Origin (planning record, kept for posterity)
+
+- **Phase at time of writing**: planning (this doc)
 - **Originating request**: user — "Make a plan on how to re-add whisper. Check the git history"
 - **Git history result**: zero whisper / voice / speech-to-text history in repo (`git log --all --grep`, deleted-file diff, branch + reflog scans all empty). Feature has never existed here despite the "re-add" framing. Plan written from scratch.
 - **User-confirmed scope** (via AskUserQuestion, 2026-05-17):
-  - Backend mode: **Both — local default, cloud fallback**.
+  - Backend mode: **Both — local default, cloud fallback** (see Followups for the `SMATCHET_WHISPER_LOCAL_BACKEND` default-flip question).
   - Insertion targets: **all four** — focused ImGui InputText, AI Assistant chat box, grid long-text editor, Command Palette.
+  - Build-time default: `SMATCHET_WITH_WHISPER=ON` (mirrors `SMATCHET_WITH_LUA_AUTOMATION` / `SMATCHET_WITH_MCP`).
+  - Setup UX: **non-blocking banner at top of UI** (not modal).
 
 ## Goal
 
