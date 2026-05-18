@@ -95,6 +95,14 @@ void DictationInsertionRouter::RegisterInputTextWithItemId(char* buf, std::size_
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    // Update the sticky shadow — survives the wrapper's blur-time
+    // unregister so a slow transcription post-back still has a target.
+    shadowBuf_ = buf;
+    shadowCap_ = cap;
+    shadowCursor_ = cursor;
+    if (itemId != 0) {
+        shadowItemId_ = itemId;
+    }
     // Update-in-place when re-registering an already-tracked buffer — common in
     // ImGui frames where the same widget re-asserts its registration each draw.
     for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -205,6 +213,14 @@ void DictationInsertionRouter::SetRecording(bool active) {
     }
 }
 
+bool DictationInsertionRouter::IsTranscribing() const {
+    return transcribing_.load(std::memory_order_acquire);
+}
+
+void DictationInsertionRouter::SetTranscribing(bool active) {
+    transcribing_.store(active, std::memory_order_release);
+}
+
 void DictationInsertionRouter::SetLastPeakAmplitude(float peak0to1) {
     float clamped = peak0to1;
     if (clamped < 0.0f) clamped = 0.0f;
@@ -234,12 +250,6 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     // when no entry matches (legacy contract — headless test driver, scenario
     // runner, or pre-#246 callers passing activeId=0).
     std::lock_guard<std::mutex> lock(mutex_);
-    if (entries_.empty()) {
-        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target; "
-                  "dropping %zu bytes",
-                  text.size());
-        return;
-    }
     Entry* selected = nullptr;
     if (activeId != 0) {
         for (Entry& candidate : entries_) {
@@ -249,8 +259,29 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
             }
         }
     }
-    if (selected == nullptr) {
+    if (selected == nullptr && !entries_.empty()) {
         selected = &entries_.front();
+    }
+    // Sticky-shadow fallback when entries_ is empty (wrapper-hook blur
+    // unregistered the widget between hotkey-release and transcription
+    // completion). Materialise into a local Entry so the splice math
+    // below works unchanged. See header for the dangling-pointer
+    // discussion — risk is bounded because every Smatchet dictation
+    // surface uses caller-static buffers.
+    Entry shadowEntry;
+    if (selected == nullptr && shadowBuf_ != nullptr && shadowCap_ > 0) {
+        shadowEntry.Buf = shadowBuf_;
+        shadowEntry.Cap = shadowCap_;
+        shadowEntry.Cursor = shadowCursor_;
+        shadowEntry.ItemId = shadowItemId_;
+        selected = &shadowEntry;
+        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: entries_ empty, "
+                  "using shadow target (buf=%p)", static_cast<const void*>(shadowEntry.Buf));
+    }
+    if (selected == nullptr) {
+        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target "
+                  "and no shadow; dropping %zu bytes", text.size());
+        return;
     }
     Entry& e = *selected;
     if (e.Buf == nullptr || e.Cap == 0) {

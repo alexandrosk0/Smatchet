@@ -828,6 +828,11 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     AppController* app = state->app;
     WhisperPlugin::PhaseEState* localState = state;
     std::vector<std::int16_t> pcmMove = std::move(pcm);
+    // Tell the UI that a transcription is now in flight — the menu-bar +
+    // overlay indicators flip from "REC" to "Transcribing..." until the
+    // post-back below clears it. Cleared in every exit path (success,
+    // failure, empty-text) so the indicator never gets stuck on.
+    g_dictationRouter.SetTranscribing(true);
     app->LaunchBackgroundTask([app, localState, pcmMove]() {
         std::string text;
         std::string err;
@@ -837,10 +842,12 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         localState->transcribeInFlight.store(false, std::memory_order_release);
         if (!ok) {
             LOG_WARN("Whisper hotkey: transcription failed: %s", err.c_str());
+            g_dictationRouter.SetTranscribing(false);
             return;
         }
         if (text.empty()) {
             LOG_INFO("Whisper hotkey: transcription returned empty string (silence?)");
+            g_dictationRouter.SetTranscribing(false);
             return;
         }
         // UI-thread hand-off — the router splices into the focused InputText.
@@ -864,6 +871,9 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
                 LOG_DEBUG("Whisper hotkey: auto-send on punctuation triggered for AI Assistant");
                 g_dictationRouter.TriggerAiAssistantSend();
             }
+            // Indicator cleared here on the success path so the user sees
+            // the splice land + the indicator vanish in the same frame.
+            g_dictationRouter.SetTranscribing(false);
         });
     });
 }

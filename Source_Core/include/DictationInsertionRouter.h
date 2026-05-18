@@ -102,6 +102,20 @@ class DictationInsertionRouter : public IDictationHost {
     /// callback was registered (e.g. AI panel never opened this session).
     void TriggerAiAssistantSend();
 
+    /// Reflects whether a transcription worker is currently in flight (i.e.
+    /// the user has released the hotkey, audio is queued, but text has not
+    /// yet been spliced). UI uses this to draw a "Transcribing..." indicator
+    /// next to the existing "REC" red text — closes the visual gap between
+    /// recording stop and text insertion (multiple seconds for local-model
+    /// inference). Backed by `std::atomic<bool>` so workers can flip it
+    /// without taking the entries mutex.
+    bool IsTranscribing() const;
+
+    /// Set/clear the transcription-in-flight flag. Producer is the
+    /// WhisperPlugin release worker (sets true on dispatch, false on
+    /// post-back); consumer is the UI thread polling for the indicator.
+    void SetTranscribing(bool active);
+
   private:
     struct Entry {
         char* Buf = nullptr;
@@ -117,6 +131,20 @@ class DictationInsertionRouter : public IDictationHost {
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
 
+    // "Sticky shadow" of the most-recently-focused widget. The wrapper hook
+    // in SmatchetLocalizedImGui calls UnregisterInputText every frame the
+    // widget is blurred — that's correct for the per-frame entries_ vector
+    // but causes silent text-drop when a multi-second transcription pipeline
+    // finishes AFTER the wrapper has already blurred the widget. The shadow
+    // mirrors the last register so InsertIntoFocusedInputText can fall back
+    // to it when entries_ is empty / activeId no longer matches. Cleared
+    // only when the shadow's buf is the one being explicitly unregistered
+    // (panel-close paths) so dangling-pointer aliasing is impossible.
+    char* shadowBuf_ = nullptr;
+    std::size_t shadowCap_ = 0;
+    int* shadowCursor_ = nullptr;
+    unsigned int shadowItemId_ = 0;
+
     // Phase F — AI Assistant identification + auto-send hook. The router stores
     // the AI Assistant's char-buffer pointer separately from the generic
     // entries list; equality on the buf pointer is the cheap "is the focused
@@ -126,6 +154,7 @@ class DictationInsertionRouter : public IDictationHost {
 
     // Set/read across threads — no mutex round-trip on the UI poll path.
     std::atomic<bool> recording_{false};
+    std::atomic<bool> transcribing_{false};
     std::atomic<float> lastPeakAmplitude_{0.0f};
 };
 

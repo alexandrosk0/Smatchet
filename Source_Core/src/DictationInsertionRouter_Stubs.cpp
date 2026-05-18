@@ -37,6 +37,10 @@ void DictationInsertionRouter::SetRecording(bool /*active*/) {
     // need no per-callsite SMATCHET_WITH_WHISPER guards on the setter.
 }
 
+bool DictationInsertionRouter::IsTranscribing() const { return false; }
+
+void DictationInsertionRouter::SetTranscribing(bool /*active*/) {}
+
 void DictationInsertionRouter::SetLastPeakAmplitude(float /*peak0to1*/) {}
 
 float DictationInsertionRouter::GetLastPeakAmplitude() const {
