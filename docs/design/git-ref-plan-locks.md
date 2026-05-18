@@ -55,6 +55,43 @@ No single point of trust. Each layer is independently reversible.
 - Cross-repo coordination (single-repo scope).
 - Replacing the planning workflow itself — only the locking primitive changes.
 
+## Operational requirements
+
+One-time repo configuration that must exist for the workflows to function correctly. These are intentionally NOT auto-applied — they require human approval of the trust boundary they cross.
+
+### `LOCK_RENDER_PAT` secret — required by `locks-render.yml`
+
+GitHub disallows the default `GITHUB_TOKEN` from creating or approving pull requests since 2022 (security default). The render workflow needs `pull-requests: write` to open or update the `bot/plan-locks-sync` PR. Two compliant paths exist; we use the fine-grained PAT path so the relaxation surface stays narrow to a single workflow step.
+
+**One-time setup procedure:**
+
+1. Go to **https://github.com/settings/personal-access-tokens** (user-level, not org-level).
+2. Click **Generate new token** → **Fine-grained tokens**.
+3. **Token name**: `Smatchet locks-render PR creation`.
+4. **Expiration**: 90 days. Set a calendar reminder to rotate.
+5. **Resource owner**: `alexandrosk0` (the repo owner).
+6. **Repository access** → **Only select repositories** → **Smatchet**.
+7. **Repository permissions**:
+   - **Pull requests**: **Read and write**.
+   - Leave every other permission at **No access** (least privilege — the PAT cannot push code, merge PRs, delete refs, edit Issues, etc.; it can only create / read PRs).
+8. **Generate token**. Copy the `github_pat_*` string immediately (it is shown only once).
+9. Go to **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** → **New repository secret**.
+10. **Name**: `LOCK_RENDER_PAT`. **Value**: paste the token. Save.
+
+The workflow auto-detects the secret. Without it, the `Open or update sync PR` step logs a warning and falls back to `GITHUB_TOKEN` (which then fails loudly with the GraphQL error — same failure mode the user would have hit before this section existed, just now with an actionable warning).
+
+**Rotation**: at PAT expiry, generate a new token under the same name and overwrite the secret value. The workflow picks up the new value on its next fire.
+
+**Why not the repo-wide "Allow GitHub Actions to create and approve pull requests" checkbox?** That checkbox flips the default for every workflow with `pull-requests: write`. Smatchet has only one such workflow today (`locks-render.yml`), but the PAT approach future-proofs against accidentally widening the trust surface when a future workflow gets the same permission.
+
+### Branch protection on `develop` — left as-is
+
+The plan-locks system does not require changes to develop's existing branch protection. Phase 7d (merge queue) would add a separate gate but is opportunistic.
+
+### Public-repo metadata exposure — known, accepted
+
+`refs/locks/*` claim blobs are world-readable on a public repo. Contents are slug + owner + branch + write set + timestamps. No secrets. Do not embed sensitive context (API keys, internal URLs, embargoed feature names) in claim payloads. Documented at Phase 0 results.
+
 ## Phased rollout
 
 Each phase is shippable independently and reversible by revert.
@@ -326,6 +363,7 @@ Phase 7 is reactive — ship each item when the corresponding pain surfaces.
 - 2026-05-17 · **Stack-merge to develop.** PR #194 squash-merged at `f703f6d`. Cascade-close of #195 occurred because GitHub auto-closes PRs whose base branch is deleted; recreated as new PR #203 with the same branch rebased onto develop via `git rebase --onto`. Pre-emptively retargeted #198 / #200 / #202 to develop before merging their predecessors to prevent further cascade-closes. Each remaining PR rebased onto develop via `git rebase --onto origin/develop HEAD~N` to skip duplicate (now-squashed) parent commits. Merge order: #194 (`f703f6d`) → #203 (`bc8b460`) → #198 (`60012c3`) → #200 (`eff5483`) → #202 (`21449f8`). `lock-cleanup.yml` fired on all 3 merges post-Phase-3 landing (`completed success` in ~8 s each); only #202 carried the trigger key `lock-slug:` and actually deleted `refs/locks/git-ref-plan-locks`. Post-merge `git ls-remote origin 'refs/locks/*'` returns empty — full lifecycle exercised end-to-end.
 - 2026-05-17 · Phase 7a — CODEOWNERS for lock infra. **First real claim via the new flow**: `bash scripts/dev/lock-claim.sh phase-7-codeowners /tmp/ws-phase-7.txt` (`AGENT_ID=orchestrator`, `LOCK_BRANCH=feat/git-ref-plan-locks-phase-7-codeowners`) at sha `c9ce331`. Wrote `.github/CODEOWNERS` mapping the 7 lock primitive scripts + 3 lock workflows + plan doc + archive + build system + `ITrackerClient.h` + `Commands/` + `AGENTS.md` + `CLAUDE.md` to `@alexandrosk0`. Informational until branch protection is reconfigured to require code-owner review. PR #204 merged at `a390c2b`; cleanup workflow auto-deleted the ref in 8 s.
 - 2026-05-17 · **Hotfix `fix/lock-staleness-yaml-parse`** — post-merge audit showed `.github/workflows/lock-staleness.yml` had been silently failing every fire since Phase 4 landed. Root cause: the inline multi-line Python heredocs at column 1 inside a `run: |` block broke YAML literal block-scalar parsing (block scalar requires every content line ≥ block indent; the Python source was un-indented at column 1, so YAML treated those lines as top-level YAML and the workflow file failed parse). Symptom on GitHub: every run labelled by file path instead of `name:` field, empty `jobs[]`, conclusion `failure`. Fix: lifted all bash + python logic into `scripts/dev/lock-staleness-sweep.sh`, leaving the YAML as a thin invoker. Added two new subcommands to `scripts/dev/_lock-json.py`: `latest-ts` (max of started + updated) and `iso-to-epoch` (env-var passthrough, preserves the Phase 4 security fix against shell-into-python interpolation). Verified locally: all three workflow YAMLs parse clean; `latest-ts` + `iso-to-epoch` + RCE-attempt smoke all behave correctly; `test-lock-primitives.sh` still 8/8 green.
+- 2026-05-18 · **Hotfix `fix/locks-render-pat`** — first live `locks-render.yml` fire on develop failed at the `gh pr create` step with `GraphQL: GitHub Actions is not permitted to create or approve pull requests`. Root cause: GitHub disallows the default `GITHUB_TOKEN` from creating PRs since 2022 (security default). Fix: split the `Commit, push, open or update PR` step into two — `Commit + force-push sync branch` (uses `GITHUB_TOKEN` for `contents: write`) and `Open or update sync PR` (uses `LOCK_RENDER_PAT` fine-grained PAT for `pull-requests: write`). Workflow gracefully falls back with a `::warning::` log when the PAT secret is unset. Added `## Operational requirements` section with the one-time PAT setup procedure (least-privilege, 90-day rotation, repo-scoped). Cleaned up the orphan `bot/plan-locks-sync` branch left on origin by the failed run. End-to-end exercise of the fix happens on the next render-cron after the PAT secret is configured.
 
 ## Deviations from plan
 
