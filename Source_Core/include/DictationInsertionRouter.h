@@ -49,3 +49,13 @@ class DictationInsertionRouter : public IDictationHost {
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
 };
+
+/// Process-wide router instance. Defined exactly once — in
+/// DictationInsertionRouter_Whisper.cpp when SMATCHET_WITH_WHISPER=ON, or in
+/// DictationInsertionRouter_Stubs.cpp when OFF. UI call sites (the
+/// SmatchetLocalizedImGui::InputText wrapper plus the four explicit
+/// registration sites — AI Assistant input, long-text editor buffer, Command
+/// Palette filter, focused-InputText catch-all) reach the router through this
+/// symbol; the stubs TU exports the same name as a no-op shell so call sites
+/// need zero per-callsite `#if defined(SMATCHET_WITH_WHISPER)` guards.
+extern DictationInsertionRouter g_dictationRouter;

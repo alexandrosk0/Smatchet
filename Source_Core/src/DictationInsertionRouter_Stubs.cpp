@@ -15,6 +15,8 @@
 #include <cstddef>
 #include <string>
 
+DictationInsertionRouter g_dictationRouter;
+
 DictationInsertionRouter::DictationInsertionRouter() = default;
 DictationInsertionRouter::~DictationInsertionRouter() = default;
 

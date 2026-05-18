@@ -9,6 +9,7 @@
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
@@ -34,6 +35,14 @@ namespace {
 
 constexpr float kInputRowsTall = 4.0f;
 constexpr int kInputBufCap = 8 * 1024;
+
+// Process-static char buffer for the chat input. Hoisted to namespace scope
+// (originally a function-static inside DrawInputAndButtons) so the panel-level
+// dictation register / unregister can address it without exposing a getter.
+// Lifetime is for the life of the process; explicit clearing happens on Send
+// and on panel close.
+std::array<char, kInputBufCap> s_inputCharBuf{};
+bool s_inputCharBufSeeded = false;
 
 // UX pillar 2: ConfigManager::Save performs a synchronous JSON encode + atomic
 // file replace; even when the user is only toggling a checkbox the resulting
@@ -190,23 +199,24 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
 // Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
 // the keyboard path matches the Send button click; the input buffer is cleared + focus restored.
 bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
-    // Use a process-static char buffer for InputTextMultiline. Mirroring through a
-    // std::string per-frame keeps the rest of the codepaths (Send-button snapshot,
-    // Lua glue) free of ImGui-specific resizable callbacks. Pre-seeded from
-    // d.assistantInputBuf the first time the panel renders so Lua-supplied text
-    // (Phase E) survives a panel reopen.
-    static std::array<char, kInputBufCap> s_inputCharBuf{};
-    static bool s_seeded = false;
+    // Char buffer for InputTextMultiline lives at namespace scope so the
+    // panel-open / panel-close path can drive dictation register / unregister
+    // without exposing a getter. Mirroring through a std::string per-frame
+    // keeps the rest of the codepaths (Send-button snapshot, Lua glue) free
+    // of ImGui-specific resizable callbacks. Pre-seeded from
+    // d.assistantInputBuf the first time the panel renders so Lua-supplied
+    // text (Phase E) survives a panel reopen.
+    //
     // Re-seed when (a) first frame, or (b) the model-side `assistantInputBuf`
-    // diverged from the char buffer (e.g. Lua glue poked it between frames, or
-    // the panel was closed + reopened and external code edited the field).
-    // Without this check, the char buffer kept the previous session's text and
-    // Lua-supplied input on Phase E was silently lost.
+    // diverged from the char buffer (e.g. Lua glue poked it between frames,
+    // or the panel was closed + reopened and external code edited the field).
+    // Without this check, the char buffer kept the previous session's text
+    // and Lua-supplied input on Phase E was silently lost.
     const std::size_t bufLen = std::strlen(s_inputCharBuf.data());
     const bool divergedFromModel = (d.assistantInputBuf.size() != bufLen) ||
                                    (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
-    if (!s_seeded || divergedFromModel) {
-        s_seeded = true;
+    if (!s_inputCharBufSeeded || divergedFromModel) {
+        s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);
         s_inputCharBuf[copy] = '\0';
@@ -295,10 +305,19 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     HydrateFromConfigOnce(d);
     if (!d.assistantPanelOpen) {
+        // Drop the chat-input registration with the dictation router so the
+        // panel-closed state never receives transcribed text. The wrapper-level
+        // hook would unregister on blur anyway, but the panel-level explicit
+        // call is the belt to the wrapper's suspenders.
+        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
         // Persist a closed state at most once per close event (idempotent if already false).
         PersistOpenStateImmediate(d);
         return;
     }
+    // Register the chat-input buffer with the dictation router for the
+    // duration of the panel being open. Re-registering each frame is cheap
+    // (router treats the buf pointer as an idempotent key).
+    g_dictationRouter.RegisterInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
 
     // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
     // owns layout, sizing, and the resize/swap chrome. The panel attaches to the
@@ -330,6 +349,8 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         if (d.requestAssistantFocus) {
             d.requestAssistantFocus = false;
         }
+        // Panel hidden (collapsed / docked-tab inactive) — drop dictation registration.
+        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
         PersistOpenStateImmediate(d);
         return;
     }

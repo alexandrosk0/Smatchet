@@ -10,6 +10,7 @@
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldPayload.h"
+#include "DictationInsertionRouter.h"
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
 #include "TicketFieldEditorLongTextPure.h"
@@ -263,9 +264,24 @@ static void OpenLongTextEditor(AppController& app, const std::string& issueId, c
     }
     s_ActiveLongTextState.Active = true;
     s_ActiveLongTextState.JustOpened = true;
+
+    // Wire the editor's text buffer into the dictation router so transcribed
+    // text from the push-to-talk path splices into the focused long-text
+    // editor when the modal is open. Unregistered in CloseLongTextEditor
+    // below; re-registering on subsequent Opens picks up the freshly-resized
+    // Buffer in s_ActiveLongTextState.
+    if (!s_ActiveLongTextState.Buffer.empty()) {
+        g_dictationRouter.RegisterInputText(s_ActiveLongTextState.Buffer.data(),
+                                            ActiveLongTextEditorState::kBufferSize, nullptr);
+    }
 }
 
-static void CloseLongTextEditor() { s_ActiveLongTextState = ActiveLongTextEditorState{}; }
+static void CloseLongTextEditor() {
+    if (!s_ActiveLongTextState.Buffer.empty()) {
+        g_dictationRouter.UnregisterInputText(s_ActiveLongTextState.Buffer.data());
+    }
+    s_ActiveLongTextState = ActiveLongTextEditorState{};
+}
 
 struct EditCbUser {
     SpreadsheetState* state;
