@@ -122,6 +122,10 @@ if(SMATCHET_WITH_AGENTIC)
         "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
         Source_Core/AgenticInferenceClientPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp"
+        # T4 — AgentProposalStore round-trip + state machine. Uses ":memory:" SQLite so
+        # no fixture file is required. Pulls AgenticInferenceClientPure already linked above.
+        Source_Core/AgentProposalStore.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentProposalStore.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
