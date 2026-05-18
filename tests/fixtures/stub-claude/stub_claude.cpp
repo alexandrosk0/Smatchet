@@ -239,6 +239,15 @@ int main(int argc, char** argv) {
         return 124;
     }
 
+    if (mode == "no-pr") {
+        // (H6) Success path that emits RUN_RESULT.json with prUrl="" + does
+        // NOT write PR_URL.txt. Used by the PR-open fallback test to drive
+        // the runner's `git push` + `gh pr create` branch.
+        EmitHappyEvents(positional);
+        WriteRunResult(true, std::string(), std::string());
+        return 0;
+    }
+
     if (mode == "clarification") {
         // Emit opening, write CLARIFICATION_NEEDED.json, poll for
         // USER_RESPONSE.json, then complete.

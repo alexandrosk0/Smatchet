@@ -243,6 +243,13 @@ void ConfigManager::Save(const TrackerConfig& config) {
     // true on Load via `j.value()` so existing configs gain the field with
     // the expected behaviour. No schema bump.
     j["handoff_clarification_post_to_github"] = config.HandoffClarificationPostToGithub;
+    // H6 — PR-open fallback knobs. All additive; missing keys round-trip to
+    // the construct-time defaults via `j.value()` on Load. No schema bump.
+    j["handoff_auto_create_pr_if_missing"] = config.HandoffAutoCreatePrIfMissing;
+    j["handoff_pr_base_branch"] = config.HandoffPrBaseBranch;
+    j["handoff_pr_body_template"] = config.HandoffPrBodyTemplate;
+    j["handoff_git_bin_path"] = config.HandoffGitBinPath;
+    j["handoff_gh_bin_path"] = config.HandoffGhBinPath;
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -759,6 +766,13 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             // key get the default. Operators flip false to suppress all GitHub posts.
             cfg.HandoffClarificationPostToGithub =
                 j.value("handoff_clarification_post_to_github", cfg.HandoffClarificationPostToGithub);
+            // H6 — PR-open fallback. Additive; older configs gain the defaults.
+            cfg.HandoffAutoCreatePrIfMissing =
+                j.value("handoff_auto_create_pr_if_missing", cfg.HandoffAutoCreatePrIfMissing);
+            cfg.HandoffPrBaseBranch = j.value("handoff_pr_base_branch", cfg.HandoffPrBaseBranch);
+            cfg.HandoffPrBodyTemplate = j.value("handoff_pr_body_template", cfg.HandoffPrBodyTemplate);
+            cfg.HandoffGitBinPath = j.value("handoff_git_bin_path", cfg.HandoffGitBinPath);
+            cfg.HandoffGhBinPath = j.value("handoff_gh_bin_path", cfg.HandoffGhBinPath);
             // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
             // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
             if (cfg.AgenticPollIntervalSec < 60) {

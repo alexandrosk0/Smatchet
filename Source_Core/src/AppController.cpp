@@ -1716,6 +1716,15 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             const TrackerConfig cfg = ConfigManager::Load();
             CodingHarness::ClaudeCodeLocalRunner::Options opts;
             opts.binPath = cfg.HandoffHarnessBinPath; // empty == PATH resolve
+            // (H6) PR-open fallback knobs. autoCreatePrIfMissing defaults to
+            // true; operators flip false to require a harness-written PR_URL.txt.
+            // gitBinPath / ghBinPath / prBaseBranch / prBodyTemplate plumb from
+            // the same TrackerConfig block.
+            opts.autoCreatePrIfMissing = cfg.HandoffAutoCreatePrIfMissing;
+            opts.prBaseBranch = cfg.HandoffPrBaseBranch;
+            opts.prBodyTemplate = cfg.HandoffPrBodyTemplate;
+            opts.gitBinPath = cfg.HandoffGitBinPath;
+            opts.ghBinPath = cfg.HandoffGhBinPath;
             agenticHandoffRunner_ =
                 std::unique_ptr<CodingHarness::IRunner>(new CodingHarness::ClaudeCodeLocalRunner(opts));
             // Production audit sink — forward verbatim to BackendAuditTrail.
@@ -1790,6 +1799,15 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticHandoffController_->SetGitHubCommentPoster(std::move(poster));
             agenticHandoffController_->SetGitHubCommentFetcher(std::move(fetcher));
             agenticHandoffController_->SetGitHubClarificationEnabled(cfg.HandoffClarificationPostToGithub);
+
+            // (H6) Toast sink — fires on PrOpen transitions so the operator
+            // sees the new PR URL surface immediately. The toast manager is
+            // a process-singleton; the lambda lives as long as the
+            // controller's `toastSink_` member.
+            smatchet::agentic::ToastSink toastSink = [](const std::string& message) {
+                SmatchetToastManager::Instance().Push("Agent handoff", message, ToastType::Success, 5000);
+            };
+            agenticHandoffController_->SetToastSink(std::move(toastSink));
         });
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());
