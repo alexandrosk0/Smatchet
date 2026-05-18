@@ -38,6 +38,12 @@ namespace {
 // Per-banner UI state — persists across frames while the banner is open.
 struct BannerState {
     bool pickerExpanded = false; // user has clicked "Enable ▾"
+    // Set when user clicks "Decide later" — suppresses the banner for the
+    // rest of this process so the user isn't blocked while they think
+    // about it. WhisperSetupCompleted stays false so the banner returns
+    // on next launch (the documented "decide later" contract). Cleared
+    // when Preferences "Re-run setup banner" toggles the cfg flag.
+    bool dismissedThisSession = false;
     int selectedIndex = 1;       // default to "Recommended" (ggml-base.en, index 1)
     std::string lastError;       // last download error surfaced to the banner
     // True once the banner has observed an active download transition this
@@ -153,10 +159,13 @@ bool Render(AppController& app, TrackerConfig& cfg) {
         s.sawActiveDownloadThisSession = false;
         s.pickerExpanded = false;
         s.lastError.clear();
+        // Re-run banner also clears the session dismiss so the user sees
+        // the banner again in the same process.
+        s.dismissedThisSession = false;
     }
     s.lastCfgSetupCompleted = cfg.WhisperSetupCompleted;
 
-    if (cfg.WhisperSetupCompleted) {
+    if (cfg.WhisperSetupCompleted || s.dismissedThisSession) {
         return false;
     }
 
@@ -280,7 +289,12 @@ bool Render(AppController& app, TrackerConfig& cfg) {
         }
         ::ImGui::SameLine();
         if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.later", "Decide later"))) {
-            // No state change — banner reappears next launch.
+            // Session-only dismiss. WhisperSetupCompleted stays false so the
+            // banner returns next launch; the dismissedThisSession flag
+            // hides it for the rest of the current process so the user can
+            // get on with their work.
+            s.dismissedThisSession = true;
+            LOG_INFO("Whisper banner: user picked 'Decide later' — hidden until next launch");
         }
         ::ImGui::SameLine();
         if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.disable", "No thanks"))) {

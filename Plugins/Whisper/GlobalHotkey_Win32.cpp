@@ -131,6 +131,7 @@ struct GlobalHotkey_Win32::Impl {
 namespace {
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    bool swallow = false;
     if (nCode == HC_ACTION) {
         const KBDLLHOOKSTRUCT* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
         if (k != nullptr) {
@@ -151,6 +152,18 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                                     LOG_ERROR("GlobalHotkey_Win32: onPress threw");
                                 }
                             }
+                            // Swallow the down event so the OS doesn't see e.g.
+                            // Alt+Space and pop the system menu (which steals
+                            // focus from the currently-focused InputText and
+                            // leaves the dictation router with no target on
+                            // post-back). Auto-repeat downs are also swallowed
+                            // to keep the keystroke fully contained.
+                            swallow = true;
+                        } else if (autoRepeat) {
+                            // Already-pressed repeat of the hotkey vk while
+                            // we own the press — swallow to avoid leaking
+                            // duplicate Space presses to the foreground app.
+                            swallow = true;
                         }
                     } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
                         const bool wasPressed =
@@ -161,11 +174,19 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                             } catch (...) {
                                 LOG_ERROR("GlobalHotkey_Win32: onRelease threw");
                             }
+                            // Swallow the up event so the matched-pair
+                            // contract holds — anything downstream that
+                            // expected the up only sees it if it also saw
+                            // the down (which we just swallowed).
+                            swallow = true;
                         }
                     }
                 }
             }
         }
+    }
+    if (swallow) {
+        return 1;
     }
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
