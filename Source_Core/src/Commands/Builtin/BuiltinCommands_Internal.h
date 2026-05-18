@@ -68,6 +68,7 @@ void RegisterUiTestCommands(CommandRegistry& reg, AppController& app);
 void RegisterAttachCommands(CommandRegistry& reg, AppController& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
 void RegisterAgenticCommands(CommandRegistry& reg, AppController& app);
+void RegisterHandoffCommands(CommandRegistry& reg, AppController& app);
 void RegisterAutomationCommands(CommandRegistry& reg, AppController& app);
 
 } // namespace cmd
