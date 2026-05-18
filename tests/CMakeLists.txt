@@ -155,6 +155,12 @@ if(SMATCHET_WITH_AGENTIC)
         # the canonical test for shape drift.
         Source_Core/CodingHarnessSeedBuilder.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/CodingHarnessSeedBuilder.cpp"
+        # H3 — ClaudeCodeLocalRunner against the stub_claude exe. Exercises
+        # the env-allow-list, stream-json line dispatch, RUN_RESULT.json
+        # parse, and Resume(USER_RESPONSE.json) sentinel path. The runner
+        # is dual-platform; the test runs on every CI matrix.
+        Source_Core/ClaudeCodeLocalRunner.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/ClaudeCodeLocalRunner.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
@@ -267,5 +273,14 @@ endif()
 add_dependencies(SmatchetTests subproc_helper_exit subproc_helper_sleep subproc_helper_flood)
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TEST_HELPER_DIR=\"$<TARGET_FILE_DIR:subproc_helper_exit>\"")
+
+# H3 — stub_claude masquerades as the Claude Code CLI for
+# ClaudeCodeLocalRunner.test.cpp. Built unconditionally when tests are
+# enabled (the runner test itself is AGENTIC-gated above but building the
+# stub on AGENTIC=OFF keeps the regression matrix uniform).
+add_subdirectory(fixtures/stub-claude)
+add_dependencies(SmatchetTests stub_claude)
+target_compile_definitions(SmatchetTests PRIVATE
+    "SMATCHET_STUB_CLAUDE_DIR=\"$<TARGET_FILE_DIR:stub_claude>\"")
 
 add_test(NAME smatchet_tests COMMAND SmatchetTests)

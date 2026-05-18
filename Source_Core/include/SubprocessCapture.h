@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -39,6 +40,15 @@ struct CaptureOptions {
     std::vector<std::string> args;
     /// Empty = inherit parent's environment.
     std::vector<std::pair<std::string, std::string>> env;
+    /// When true AND `env` is non-empty, the child sees ONLY the entries in
+    /// `env` — every other variable inherited from the parent is dropped.
+    /// On Windows this is the natural CreateProcessW behaviour (envPtr is the
+    /// child's full block). On POSIX the runner calls `clearenv()` before
+    /// `setenv()` so the same allow-list semantic holds. False (the H1
+    /// default) keeps the additive-merge behaviour the P4Blame call sites
+    /// expect; `ClaudeCodeLocalRunner` flips this on to enforce the agentic-
+    /// flow env allow-list (decision #7 in docs/design/agentic-flow-implementation.md).
+    bool replaceParentEnv = false;
     /// Empty = inherit parent's working directory.
     std::string cwd;
     /// 0 = no timeout. > 0 = wall-clock budget in milliseconds.
@@ -50,6 +60,18 @@ struct CaptureOptions {
     /// Optional cancel token. When set and the atom flips to true, the
     /// child is terminated and CaptureResult::cancelled is set.
     std::shared_ptr<std::atomic<bool>> cancelToken;
+
+    /// Optional line-streaming callback. When set, invoked once per
+    /// newline-terminated line read from the child's stdout — the line
+    /// argument has the trailing '\n' stripped. Lines that exceed the
+    /// `stdoutByteCap` (after which output is truncated) are NOT delivered
+    /// past the cap. The callback fires on the same thread that called
+    /// Run(); never marshal directly to ImGui (pillar 2). Lines are also
+    /// appended to `CaptureResult::stdoutText` as usual — the callback is
+    /// additive, not a redirect. Used by `ClaudeCodeLocalRunner` for
+    /// stream-json NDJSON parsing; an unset callback is the P4Blame
+    /// buffered-capture path (the H1 contract).
+    std::function<void(const std::string&)> onStdoutLine;
 };
 
 /// Run a subprocess, capturing stdout / stderr. Returns true on a

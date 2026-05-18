@@ -44,6 +44,48 @@ void AppendCapped(std::string& dst, const char* src, size_t count, size_t cap, b
     }
 }
 
+// Newline-terminated line dispatcher. Accumulates inter-chunk bytes in
+// `pending` and fires `cb` once per complete line (trailing '\n' stripped).
+// CR before LF is also stripped so Windows children that emit "\r\n" deliver
+// the same logical line shape as POSIX children. Final unterminated bytes
+// stay in `pending` for the FlushLinesEof tail call after the child exits.
+void DispatchLines(const char* src, size_t count, std::string& pending,
+                   const std::function<void(const std::string&)>& cb) {
+    if (!cb || count == 0) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const char c = src[i];
+        if (c == '\n') {
+            if (!pending.empty() && pending.back() == '\r') {
+                pending.pop_back();
+            }
+            cb(pending);
+            pending.clear();
+        } else {
+            pending.push_back(c);
+        }
+    }
+}
+
+// At end-of-stream emit any trailing unterminated line so callers that hand
+// the runner a child that exits without a final newline still receive every
+// JSON object (the stream-json spec emits NDJSON but treat-as-best-effort is
+// the safer contract).
+void FlushLinesEof(std::string& pending, const std::function<void(const std::string&)>& cb) {
+    if (!cb || pending.empty()) {
+        pending.clear();
+        return;
+    }
+    if (pending.back() == '\r') {
+        pending.pop_back();
+    }
+    if (!pending.empty()) {
+        cb(pending);
+    }
+    pending.clear();
+}
+
 #ifdef _WIN32
 
 std::wstring Utf8ToWide(const std::string& s) {
@@ -119,11 +161,72 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
         CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
     si.hStdInput = (hNullInput != INVALID_HANDLE_VALUE) ? hNullInput : GetStdHandle(STD_INPUT_HANDLE);
 
-    // Env block. Empty options.env means "inherit parent" — pass null.
+    // Env block. Empty options.env → inherit parent (envPtr=nullptr). Non-empty
+    // env with replaceParentEnv=true → child sees ONLY the supplied entries
+    // (the agentic-flow allow-list shape). Non-empty env with
+    // replaceParentEnv=false → merge supplied entries on top of the parent's
+    // env (mimic POSIX additive `setenv` semantic so the H1 contract holds
+    // cross-platform for P4Blame-style overrides).
     std::string envBlock;
     LPVOID envPtr = nullptr;
     if (!opts.env.empty()) {
-        envBlock = SubprocessCapturePure::BuildEnvBlockWindows(opts.env);
+        std::vector<std::pair<std::string, std::string>> effectiveEnv = opts.env;
+        if (!opts.replaceParentEnv) {
+            // Pull parent env, drop entries shadowed by opts.env, then prepend.
+            // The Windows env block is case-insensitive at name lookup so
+            // dedupe on a lowercased key.
+            auto toLower = [](std::string s) {
+                for (size_t i = 0; i < s.size(); ++i) {
+                    if (s[i] >= 'A' && s[i] <= 'Z') {
+                        s[i] = static_cast<char>(s[i] + ('a' - 'A'));
+                    }
+                }
+                return s;
+            };
+            std::vector<std::string> overrideKeys;
+            overrideKeys.reserve(opts.env.size());
+            for (size_t i = 0; i < opts.env.size(); ++i) {
+                overrideKeys.push_back(toLower(opts.env[i].first));
+            }
+            std::vector<std::pair<std::string, std::string>> merged;
+            LPWCH parentBlock = GetEnvironmentStringsW();
+            if (parentBlock != nullptr) {
+                for (LPWCH p = parentBlock; *p != L'\0';) {
+                    const size_t entryLen = wcslen(p);
+                    // Convert each NAME=VAL to UTF-8, split on first '='.
+                    const int u8len = WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen),
+                                                          nullptr, 0, nullptr, nullptr);
+                    if (u8len > 0) {
+                        std::string entry(static_cast<size_t>(u8len), '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen), &entry[0], u8len,
+                                            nullptr, nullptr);
+                        const size_t eq = entry.find('=');
+                        if (eq != std::string::npos && eq > 0) {
+                            std::string name = entry.substr(0, eq);
+                            std::string value = entry.substr(eq + 1);
+                            const std::string lname = toLower(name);
+                            bool shadowed = false;
+                            for (size_t i = 0; i < overrideKeys.size(); ++i) {
+                                if (overrideKeys[i] == lname) {
+                                    shadowed = true;
+                                    break;
+                                }
+                            }
+                            if (!shadowed) {
+                                merged.emplace_back(std::move(name), std::move(value));
+                            }
+                        }
+                    }
+                    p += entryLen + 1;
+                }
+                FreeEnvironmentStringsW(parentBlock);
+            }
+            for (size_t i = 0; i < opts.env.size(); ++i) {
+                merged.push_back(opts.env[i]);
+            }
+            effectiveEnv = std::move(merged);
+        }
+        envBlock = SubprocessCapturePure::BuildEnvBlockWindows(effectiveEnv);
         envPtr = static_cast<LPVOID>(&envBlock[0]);
     }
 
@@ -163,21 +266,30 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     bool timedOut = false;
     bool cancelled = false;
     bool sawAnyRead = false;
+    // Per-stream line accumulator — only stdout dispatches lines. stderr stays
+    // in the buffered capture for the caller to inspect on completion.
+    std::string stdoutLinePending;
     const auto startTp = std::chrono::steady_clock::now();
-    auto drain = [&buf, &n, &sawAnyRead](HANDLE h, std::string& dst, size_t cap, bool& capped) {
+    auto drain = [&buf, &n, &sawAnyRead](HANDLE h, std::string& dst, size_t cap, bool& capped,
+                                          std::string* linePending,
+                                          const std::function<void(const std::string&)>* lineCb) {
         DWORD avail = 0;
         if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) {
             return;
         }
         if (ReadFile(h, buf, sizeof(buf), &n, nullptr) && n > 0) {
             AppendCapped(dst, buf, static_cast<size_t>(n), cap, capped);
+            if (linePending && lineCb && *lineCb) {
+                DispatchLines(buf, static_cast<size_t>(n), *linePending, *lineCb);
+            }
             sawAnyRead = true;
         }
     };
     for (;;) {
         sawAnyRead = false;
-        drain(rdOut, out.stdoutText, opts.stdoutByteCap, out.stdoutCapped);
-        drain(rdErr, out.stderrText, opts.stderrByteCap, out.stderrCapped);
+        drain(rdOut, out.stdoutText, opts.stdoutByteCap, out.stdoutCapped,
+              &stdoutLinePending, &opts.onStdoutLine);
+        drain(rdErr, out.stderrText, opts.stderrByteCap, out.stderrCapped, nullptr, nullptr);
         if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
             break;
         }
@@ -217,6 +329,7 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
             break;
         }
         AppendCapped(out.stdoutText, buf, static_cast<size_t>(n), opts.stdoutByteCap, out.stdoutCapped);
+        DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
     }
     for (;;) {
         DWORD avail = 0;
@@ -228,6 +341,7 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
         }
         AppendCapped(out.stderrText, buf, static_cast<size_t>(n), opts.stderrByteCap, out.stderrCapped);
     }
+    FlushLinesEof(stdoutLinePending, opts.onStdoutLine);
 
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
@@ -290,6 +404,28 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
         // than rebuilding envp — execvpe() is glibc-only, while setenv() +
         // execvp() works on every POSIX. Empty opts.env means "inherit
         // parent's environment unchanged" (the P4Blame contract).
+        // When replaceParentEnv is set AND env is non-empty, the child sees
+        // ONLY the supplied entries — the agentic-flow allow-list path
+        // (decision #7). clearenv() is POSIX.1-2024 / glibc; on systems
+        // without it the additive path remains the documented fallback.
+        if (opts.replaceParentEnv && !opts.env.empty()) {
+#if defined(__GLIBC__) || (defined(_POSIX_VERSION) && _POSIX_VERSION >= 202405L)
+            clearenv();
+#else
+            // Best-effort manual purge: walk environ and unset every name we
+            // can read. Less robust than clearenv() but the runner runs
+            // Windows-first today; this path is only exercised under tests.
+            extern char** environ;
+            while (environ && environ[0]) {
+                const char* eq = std::strchr(environ[0], '=');
+                if (!eq) {
+                    break;
+                }
+                std::string name(environ[0], eq);
+                unsetenv(name.c_str());
+            }
+#endif
+        }
         for (size_t i = 0; i < opts.env.size(); ++i) {
             setenv(opts.env[i].first.c_str(), opts.env[i].second.c_str(), 1);
         }
@@ -307,6 +443,11 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
     bool timedOut = false;
     bool cancelled = false;
     char buf[4096];
+    // Line-dispatcher accumulator for opts.onStdoutLine (POSIX merges stdout
+    // + stderr into one pipe; ClaudeCodeLocalRunner runs Windows-first today
+    // but the line semantics stay identical so cross-platform consumers see
+    // one shape).
+    std::string stdoutLinePending;
     for (;;) {
         int childStatus = 0;
         const pid_t waitRes = waitpid(child, &childStatus, WNOHANG);
@@ -332,6 +473,7 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
             const ssize_t n = read(pipeFds[0], buf, sizeof(buf));
             if (n > 0) {
                 AppendCapped(out.stdoutText, buf, static_cast<size_t>(n), opts.stdoutByteCap, out.stdoutCapped);
+                DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
             }
         }
 
@@ -370,7 +512,9 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
             break;
         }
         AppendCapped(out.stdoutText, buf, static_cast<size_t>(n), opts.stdoutByteCap, out.stdoutCapped);
+        DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
     }
+    FlushLinesEof(stdoutLinePending, opts.onStdoutLine);
 
     close(pipeFds[0]);
     out.timedOut = timedOut;
