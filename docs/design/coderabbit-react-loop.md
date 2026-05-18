@@ -1,6 +1,6 @@
-# CodeRabbit react loop — slim extension on `agentic-coding-handoff`
+# PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`)
 
-> **Slug:** `coderabbit-react-loop`. Sits **after** `docs/design/agentic-triage-flow.md` (phases 0–2) and `docs/design/agentic-coding-handoff.md` (phases 0–7). Do not start phase 1 until both have shipped.
+> **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it). Sits **after** `docs/design/agentic-triage-flow.md` (phases 0–2) and `docs/design/agentic-coding-handoff.md` (phases 0–7). Do not start phase 1 until both have shipped.
 
 ## Context
 
@@ -10,7 +10,7 @@ Earlier this session two new artefacts shipped:
 
 User wants a **local** auto-react loop equivalent to "fix the things CodeRabbit flagged" without a cloud Claude CLI. Initial draft proposed an out-of-Smatchet bash daemon + Windows Task Scheduler + SessionStart-hook surface.
 
-**Rereading the existing design docs invalidates most of that draft.** The two in-flight plans collectively cover the polling, the worktree spawn, the sentinel-file IPC, the iteration loop, the agent file layout — every primitive the daemon shape would have re-implemented. This plan therefore **shrinks to a thin extension** that wires the already-planned `PrCommentWatcher` to CodeRabbit feedback specifically.
+**Rereading the existing design docs invalidates most of that draft.** The two in-flight plans collectively cover the polling, the worktree spawn, the sentinel-file IPC, the iteration loop, the agent file layout — every primitive the daemon shape would have re-implemented. This plan therefore **shrinks to a thin extension** that wires the already-planned `PrCommentWatcher` to CodeRabbit feedback specifically, **and adds a sibling `PrCheckRunWatcher` + `CiFailureClassifier` so the same machinery also auto-fixes red CI** (build-doctor for cmake/link, debug-detective for ctest failures, test-rig for coverage-gate). The marginal cost of folding CI in is ~one phase — the polling + sentinel + spawn plumbing is already justified by CodeRabbit, so the second classifier is essentially free.
 
 ### What already exists in the in-flight plans
 
@@ -32,12 +32,19 @@ User wants a **local** auto-react loop equivalent to "fix the things CodeRabbit 
 
 ### What is **NOT** yet covered (this plan adds)
 
-1. **Open-PR registration scan.** `PrCommentWatcher` only watches PRs in `agent_pr_watch` — populated when `AgenticHandoffController` opens a PR via a handoff. **PRs the user hand-pushed are never watched.** CodeRabbit-react must register every open PR (whether handoff-origin or hand-pushed) so the watcher polls all of them.
+1. **Open-PR registration scan.** `PrCommentWatcher` only watches PRs in `agent_pr_watch` — populated when `AgenticHandoffController` opens a PR via a handoff. **PRs the user hand-pushed are never watched.** CodeRabbit-react must register every open PR (whether handoff-origin or hand-pushed) so the watcher polls all of them. Lifted to a shared `OpenPrRegistrar` periodic task because both the comment watcher and the new check-run watcher need the same PR list.
 2. **Comment-source classifier hook.** `PrCommentWatcher`'s default behaviour is "skip bot comments, dispatch non-bot comments to `pr-iterator`". CodeRabbit feedback is bot-authored — needs an inclusive filter for `user.login == "coderabbitai[bot]"` plus dispatch to `coderabbit-triage` (not `pr-iterator`).
-3. **Ad-hoc worktree for non-handoff PRs.** Hand-pushed PRs have no `ClaudeCodeLocalRunner`-owned worktree. Need on-demand worktree creation (`git worktree add .claude/worktrees/coderabbit-pr<N> -b coderabbit/pr<N>/iter<n> origin/<headRefName>`) plus cleanup on PR close/merge.
+3. **Ad-hoc worktree for non-handoff PRs.** Hand-pushed PRs have no `ClaudeCodeLocalRunner`-owned worktree. Need on-demand worktree creation (`git worktree add .claude/worktrees/coderabbit-pr<N> -b coderabbit/pr<N>/iter<n> origin/<headRefName>`) plus cleanup on PR close/merge. Same ad-hoc worktree is reused by the CI-failure dispatch path (one worktree per PR per iteration, regardless of trigger source).
 4. **`coderabbit-triage` v2 — spawned-harness mode.** Today the agent emits handoff packets to a parent orchestrator. When invoked **inside** a spawned `claude` subprocess (no parent orchestrator), it must act as orchestrator itself: run override-rules, dispatch fixes directly to specialists, run the slice-boundary build + test, write `RUN_RESULT.json`, push back to the PR.
 5. **Short-circuit reject for invariant violations.** Most CodeRabbit suggestions that violate Smatchet rules (use `std::optional`, etc.) can be rejected **without** spawning a harness — pure C++ classifier + 1-line PR reply via `GitHubClient::AddIssueCommentPlain`. Saves the cost of every full spawn for trivially-rejectable suggestions.
-6. **`coderabbit-react.*` command surface + config block** alongside the existing `handoff.*` commands.
+6. **`coderabbit-react.*` + `ci-react.*` command surfaces + config blocks** alongside the existing `handoff.*` commands.
+7. **CI-failure auto-fix path.** Sibling to the CodeRabbit path. New `PrCheckRunWatcher` polls `GET /repos/{o}/{r}/commits/{head_sha}/check-runs` per tracked PR each tick; on `conclusion == "failure"`, `CiFailureClassifier` reads the check-run name + first N annotations + last N log lines, classifies (build / link / ctest / coverage-gate / unknown), routes:
+    - `build-and-test` failing with cmake/link/MSYS2/lld error → spawn `build-doctor` as first delegate
+    - `build-and-test` failing with ctest assertion / sanitizer hit → spawn `debug-detective` as first delegate (pause-loop applies — debug-detective halts at round boundary for user review per AGENTS.md § Debug-mode pause-loop)
+    - `coverage-gate` failing (missing paired test delta) → spawn `test-rig` as first delegate
+    - `coverage` advisory failing → log + skip (advisory until 2026-05-30 per `coverage.yml`)
+    - Unknown check-run name → log + skip + emit `Self-improvement` entry so the table can grow
+    The classifier short-circuits without spawning when the failure looks transient (network timeout in cpr-fetched dep, MSYS2 mirror hiccup) — it posts a PR comment "transient failure detected; re-running CI" and re-runs the check via `gh workflow run` (no spawn cost). Transient detection is a fingerprint-match (set of known-flaky stderr substrings); false-positives default to "treat as real" so the user is never left with a silently-ignored failure.
 
 ### User-locked decisions (carrying forward)
 
@@ -53,59 +60,91 @@ User wants a **local** auto-react loop equivalent to "fix the things CodeRabbit 
 ```
 agentic-coding-handoff (already planned)            this plan adds
 ┌─────────────────────────────────────┐            ┌──────────────────────────────────┐
-│ AgenticHandoffController            │            │ open-PR registration scan        │
-│  └─ PrCommentWatcher (poll loop)    │◄───────────┤ (every interval, gh pr list →     │
-│       ├─ poll → fetch new comments  │            │  agent_pr_watch upsert)          │
-│       ├─ classify → dispatch        │◄───────────┤ PrCommentClassifier interface +  │
-│       └─ runner.Resume(...)         │            │  CoderabbitCommentClassifier      │
-└─────────────────────────────────────┘            └──────────────────────────────────┘
+│ AgenticHandoffController            │            │ OpenPrRegistrar (shared)         │
+│  ├─ PrCommentWatcher (poll loop)    │◄───────────┤  gh pr list → agent_pr_watch     │
+│  │    ├─ poll comments per PR       │            │  upsert (every interval; both    │
+│  │    ├─ classify via               │            │  watchers iterate the rows)      │
+│  │    │   PrCommentClassifier       │◄───────────┤                                  │
+│  │    └─ runner.Resume(...)         │            │ PrCommentClassifier interface +  │
+│  │                                  │            │  CoderabbitCommentClassifier     │
+│  └─ PrCheckRunWatcher (new sibling) │◄───────────┤                                  │
+│       ├─ poll check-runs per PR     │            │ PrCheckRunClassifier interface + │
+│       ├─ classify via               │            │  CiFailureClassifier (cmake-err →│
+│       │   PrCheckRunClassifier      │◄───────────┤   build-doctor; ctest-fail →     │
+│       └─ runner.Spawn(...)          │            │   debug-detective; coverage-gate │
+└─────────────────────────────────────┘            │   → test-rig; transient → rerun) │
+                  │                                └──────────────────────────────────┘
                   │
-                  │ classifier == coderabbit
-                  ▼
+        ┌─────────┴────────────┐
+        │ comment dispatch     │ check-run dispatch
+        ▼                      ▼
 ┌─────────────────────────────────────┐            ┌──────────────────────────────────┐
 │ ClaudeCodeLocalRunner (already)     │◄───────────┤ ad-hoc worktree creation for     │
 │  └─ spawn claude in PR worktree     │            │  hand-pushed PRs (no handoff     │
-│       └─ first delegate =           │◄───────────┤  origin worktree exists)         │
-│         agents/coderabbit-triage    │            │                                  │
-│         (v2 — spawned-harness mode) │            │ ConfigManager.coderabbit_react   │
-└─────────────────────────────────────┘            │  block + Preferences toggle      │
+│       └─ first delegate =           │◄───────────┤  origin worktree exists);        │
+│         agents/coderabbit-triage    │            │  shared between CodeRabbit and   │
+│         (v2 — spawned-harness mode) │            │  CI-failure dispatch (one        │
+│         OR build-doctor             │            │  worktree per PR per iteration)  │
+│         OR debug-detective          │            │                                  │
+│         OR test-rig                 │            │ ConfigManager.coderabbit_react + │
+│         (per classifier dispatch)   │            │  ConfigManager.ci_react blocks + │
+└─────────────────────────────────────┘            │  Preferences toggles             │
                   │                                └──────────────────────────────────┘
-                  │ short-circuit (override-rule rejection)
+                  │ short-circuit (override-rule rejection
+                  │  OR transient-failure re-run)
                   ▼
-              GitHub PR reply (no spawn cost)
+              GitHub PR reply / gh workflow run (no spawn cost)
 ```
 
-**No new daemon, no new SessionStart hook, no new bash watcher script** — `PrCommentWatcher` already covers in-process polling on a `std::thread`. The earlier draft's `scripts/dev/coderabbit-watch.sh` + `start-coderabbit-watch.ps1` + Windows Task Scheduler approach is **abandoned** as duplicate functionality.
+**No new daemon, no new SessionStart hook, no new bash watcher script** — `PrCommentWatcher` + `PrCheckRunWatcher` cover in-process polling on `std::thread`s. The earlier draft's `scripts/dev/coderabbit-watch.sh` + `start-coderabbit-watch.ps1` + Windows Task Scheduler approach is **abandoned** as duplicate functionality.
 
 ## Critical files
 
 ### New
 | Path | Purpose |
 |---|---|
+| `Source_Core/{include,src}/OpenPrRegistrar.{h,cpp}` | Shared periodic task — every interval, `gh pr list --base <branch> --state open --json number,headRefName,headRefOid` (subprocess via `SubprocessCapture`), upsert each row into `agent_pr_watch` with `origin = "open-pr-scan"`. Consumed by both `PrCommentWatcher` (OpenPrScan mode) and `PrCheckRunWatcher`. Cancellable, owned by `AgenticHandoffController` as a `std::thread` |
 | `Source_Core/include/PrCommentClassifier.h` | Abstract interface — `virtual ClassificationResult Classify(const PrComment&)` returns `{dispatch | reject_short_circuit | skip}` + target-agent name + optional pre-built short-circuit reply |
 | `Source_Core/{include,src}/CoderabbitCommentClassifier.{h,cpp}` | Concrete classifier — recognises `user.login == "coderabbitai[bot]"`, applies the 18-rule override table in C++ for short-circuit reject (saves a spawn for "use `std::optional`" suggestions), dispatches survivors to `coderabbit-triage` |
 | `Source_Core/{include,src}/CoderabbitCommentClassifierPure.{h,cpp}` | Pure helpers — body parser for CodeRabbit's `🛠️ ⚠️ 💡 🧹` icons, `_Actionable comments posted: N_` header parser, `suggestion` block extractor. Pure-helper TU split per AGENTS.md § "Pure-helper TU-split recipe" so doctest rig can exercise without GitHub HTTP |
+| `Source_Core/include/PrCheckRunClassifier.h` | Abstract interface — `virtual ClassificationResult Classify(const PrCheckRun&)` returns `{dispatch | rerun_transient | skip}` + target-agent name + (for `rerun_transient`) the workflow ID to re-fire |
+| `Source_Core/{include,src}/PrCheckRunWatcher.{h,cpp}` | New sibling to `PrCommentWatcher`. Per tick, iterates `agent_pr_watch` rows; for each, `GET /repos/{o}/{r}/commits/{head_sha}/check-runs` via `GitHubClient::FetchCheckRuns` (new method). Diffs against `agent_pr_watch.last_seen_check_run_id` cursor; dispatches new `conclusion == "failure"` rows through the registered `PrCheckRunClassifier`. Worker thread; cancel atomic |
+| `Source_Core/{include,src}/CiFailureClassifier.{h,cpp}` | Concrete classifier for the standard Smatchet CI matrix. Reads check-run name + first N annotations + last N log lines; classifies into `{build-doctor, debug-detective, test-rig, transient-rerun, skip}`. Annotation/log fetch via `GitHubClient::FetchCheckRunAnnotations` (new) + `GitHubClient::FetchActionsJobLogs` (new) |
+| `Source_Core/{include,src}/CiFailureClassifierPure.{h,cpp}` | Pure helpers — check-run-name → broad-category mapping table (`build-and-test` → cmake-or-ctest, `coverage-gate` → coverage, `coverage` → advisory), cmake/link/ctest/sanitizer fingerprint matchers, transient-flake fingerprint list (cpr network-timeout, MSYS2 mirror DNS, FetchContent ZIP-retry). Pure-helper TU split — same recipe |
 | `Source_Core/src/Commands/Builtin/BuiltinCommands_Coderabbit.cpp` | `coderabbit-react.start`, `.stop`, `.status`, `coderabbit-react.poll-now <pr>` (manual fire) |
+| `Source_Core/src/Commands/Builtin/BuiltinCommands_CiReact.cpp` | `ci-react.start`, `.stop`, `.status`, `ci-react.poll-now <pr>`, `ci-react.rerun <pr>` (manual transient re-fire) |
 | `tests/Source_Core/CoderabbitCommentClassifierPure.test.cpp` | Override-rule table coverage (each of the 18 rules has at least one positive + one negative case), icon parser, suggestion-block extractor |
+| `tests/Source_Core/CoderabbitCommentClassifier.test.cpp` | Wires pure helpers to the override table; dispatch survivors covering ≥3 distinct subsystem targets |
 | `tests/Source_Core/PrCommentWatcher_OpenPrScan.test.cpp` | New TU for open-PR-scan mode (separate from the existing `PrCommentWatcher.test.cpp` so the two modes have independent failure footprints) |
+| `tests/Source_Core/OpenPrRegistrar.test.cpp` | Upsert idempotency against fixture `gh pr list` output; cancellation; row dedupe on re-run |
+| `tests/Source_Core/PrCheckRunWatcher.test.cpp` | Cursor advance, classifier injection, failure-only filter, fixture-driven dispatch (no real HTTP) |
+| `tests/Source_Core/CiFailureClassifierPure.test.cpp` | Check-run-name table coverage, cmake-error fingerprint, ctest-fail fingerprint, sanitizer-hit fingerprint, transient-flake fingerprint, unknown-name fallback |
+| `tests/Source_Core/CiFailureClassifier.test.cpp` | Wires pure helpers to annotation/log fetch; routes the 5 buckets correctly against fixture check-run payloads |
 | `tests/fixtures/coderabbit_comments_sample.json` | Recorded `gh api … /pulls/{n}/comments` payload featuring at least one of each: actionable suggestion that should dispatch, nitpick that should dispatch via mechanic, suggestion that should short-circuit reject per override rule #1 |
+| `tests/fixtures/check_runs_failed_sample.json` | Recorded `gh api … /commits/{sha}/check-runs` payload with one `build-and-test` cmake failure, one `build-and-test` ctest failure, one `coverage-gate` failure, one `coverage` advisory failure, one transient cpr-timeout failure, one unknown check-run name |
+| `tests/fixtures/check_run_annotations_sample.json` | Annotations + log slices for each of the above check-runs, used by `CiFailureClassifier.test.cpp` |
 | `tests/fixtures/stub-coderabbit-claude.sh` | Bash script masquerading as `claude` for the spawned-harness-mode test — emits canned stream-json + writes `RUN_RESULT.json` with one fix applied |
+| `tests/fixtures/stub-ci-claude.sh` | Bash script masquerading as `claude` for the CI-failure spawned-harness test — emits canned stream-json that simulates `build-doctor` cmake re-edit + `cmake --build` exit-0 + `RUN_RESULT.json` |
 | `scripts/dev/test-coderabbit-react.sh` | Bucket-A CLI smoke — starts the react loop, injects fixture comments, asserts the watcher dispatches + the stub claude makes a fix + the loop pushes |
+| `scripts/dev/test-ci-react.sh` | Bucket-A CLI smoke — starts the CI react loop, injects fixture failed check-runs, asserts the watcher dispatches to the right specialist + stub claude lands the fix + the loop pushes; separately asserts transient-flake re-runs `gh workflow run` instead of spawning |
 
 ### Modified (existing)
 | Path | Change |
 |---|---|
-| `Source_Core/include/PrCommentWatcher.h` | Add `enum class WatchMode { OriginTracking, OpenPrScan }`; add classifier-registration API `void RegisterClassifier(std::unique_ptr<PrCommentClassifier>)`; default behaviour preserved when no classifier registered |
-| `Source_Core/src/PrCommentWatcher.cpp` | Add open-PR-scan mode body (every `Tick`, in `OpenPrScan` mode, `gh pr list --base develop --state open --json number,headRefName` and upsert each row into `agent_pr_watch` with `origin = "open-pr-scan"`); inject classifier in the dispatch path |
-| `Source_Core/src/AgenticHandoffController.cpp` | Register `CoderabbitCommentClassifier` at startup when `coderabbit_react.enabled = true`; gate by `#if SMATCHET_WITH_AI` |
-| `Source_Core/src/ClaudeCodeLocalRunner.cpp` | Add ad-hoc worktree path for PRs without handoff-origin worktree (resolved by lookup in `agent_pr_watch.origin` — if `"open-pr-scan"`, create `coderabbit-pr<N>/iter<n>` worktree off `origin/<headRefName>`) |
-| `Source_Core/include/ConfigManager.h` + `.cpp` | New block (no schema-version bump — held until phase 6 verification per AGENTS.md § "Schema-version bumps"): |
-| `Source_Core/src/SmatchetPreferencesUi.cpp` | New "CodeRabbit react loop" toggle row + interval input |
+| `Source_Core/include/PrCommentWatcher.h` | Add `enum class WatchMode { OriginTracking, OpenPrScan }`; add classifier-registration API `void RegisterClassifier(std::unique_ptr<PrCommentClassifier>)`; default behaviour preserved when no classifier registered. **No longer owns OpenPrScan registration** — that lifted to `OpenPrRegistrar` |
+| `Source_Core/src/PrCommentWatcher.cpp` | In `OpenPrScan` mode, iterate `agent_pr_watch` rows where `origin = "open-pr-scan"` (rows populated by `OpenPrRegistrar`, not by this watcher anymore); inject classifier in the dispatch path |
+| `Source_Core/src/AgenticHandoffController.cpp` | Own the `OpenPrRegistrar` thread + the new `PrCheckRunWatcher`. Register `CoderabbitCommentClassifier` when `coderabbit_react.enabled = true`; register `CiFailureClassifier` when `ci_react.enabled = true`; gate the whole block by `#if SMATCHET_WITH_AI` |
+| `Source_Core/src/ClaudeCodeLocalRunner.cpp` | Add ad-hoc worktree path for PRs without handoff-origin worktree (resolved by lookup in `agent_pr_watch.origin` — if `"open-pr-scan"`, create `coderabbit-pr<N>/iter<n>` worktree off `origin/<headRefName>`). Same path is reused for CI-failure spawns (the worktree namespace stays `coderabbit-pr*` even when the trigger was CI — single worktree per PR per iteration regardless of which classifier dispatched, so the spawned harness can see all in-flight signal sources for the PR in one place) |
+| `Source_Core/include/ConfigManager.h` + `.cpp` | New blocks `coderabbit_react` + `ci_react` (no schema-version bump — held until phase 8 verification per AGENTS.md § "Schema-version bumps") |
+| `Source_Core/src/SmatchetPreferencesUi.cpp` | New "CodeRabbit react loop" toggle + interval; new "CI react loop" toggle + interval + transient-rerun toggle |
 | `agents/coderabbit-triage.md` | Bump `version: 1` → `2`. Add `## Spawned-harness mode` section: when invoked inside a spawned `claude` subprocess with no parent orchestrator (detected by `SEED.json` absence + `pr-iteration-mode` env var presence), act as orchestrator — execute the routed fix as `Edit` calls, run slice-boundary `cmake --build` + `scripts/dev/test-all.sh`, write `RUN_RESULT.json`, exit with success. Outside spawned-harness mode (existing behaviour), emit handoff packets to parent orchestrator unchanged |
-| `AGENTS.md` | Small addendum to § Handoff envelope: `pr-iterator` is the **default** first-delegate inside a spawned harness; `coderabbit-triage` is the alternate when `PrCommentClassifier` routes the comment to it. One-paragraph addition, no new section |
-| `.gitignore` | Add `.claude/worktrees/coderabbit-pr*` (the ad-hoc worktree namespace) |
+| `agents/build-doctor.md` | Bump `version` per AGENTS.md § Agent versioning. Add a short `## Spawned-harness mode` paragraph parallel to `coderabbit-triage`: when invoked inside a spawned harness with `ci-failure-mode` env var, treat the seed's `CHECK_RUN.json` payload as the failure-cause source, fix in-place, run `cmake --build` to confirm, write `RUN_RESULT.json`, push commit |
+| `agents/debug-detective.md` | Same shape — add `## CI-failure spawned-harness mode` paragraph. **Note:** the debug-detective pause-loop (AGENTS.md § Debug-mode pause-loop) still applies — when dispatched for a ctest/sanitizer failure inside a spawned harness, the agent halts at round boundary and writes `CLARIFICATION_NEEDED.json` rather than auto-fixing. CI-failure auto-fix for behavioural regressions is **always** user-gated; only build-system failures (build-doctor scope) auto-land |
+| `agents/test-rig.md` | Same shape — add `## CI-failure spawned-harness mode` for `coverage-gate` failures (missing paired test delta) |
+| `AGENTS.md` | Addendum to § Handoff envelope: `pr-iterator` is the **default** first-delegate inside a spawned harness; `coderabbit-triage` / `build-doctor` / `debug-detective` / `test-rig` are alternates when the appropriate classifier (`PrCommentClassifier` / `PrCheckRunClassifier`) routes the trigger to them. Add the `CHECK_RUN.json` sentinel-file definition to the existing sentinel-vocabulary subsection. One-paragraph + one table-row addition, no new section |
+| `.gitignore` | Add `.claude/worktrees/coderabbit-pr*` (the ad-hoc worktree namespace — used for both CodeRabbit and CI-failure spawns) |
 
-### `ConfigManager` `coderabbit_react` block
+### `ConfigManager` `coderabbit_react` + `ci_react` blocks
 ```json
 {
   "coderabbit_react": {
@@ -117,28 +156,50 @@ agentic-coding-handoff (already planned)            this plan adds
     "auto_dispatch_fixes": true,
     "iteration_budget_per_pr": 5,
     "ad_hoc_worktree_root": ".claude/worktrees"
+  },
+  "ci_react": {
+    "enabled": false,
+    "poll_interval_sec": 600,
+    "watched_base_branches": ["develop"],
+    "watched_check_names": ["build-and-test", "coverage-gate"],
+    "ignored_check_names": ["coverage"],
+    "auto_dispatch_build_doctor": true,
+    "auto_dispatch_test_rig": true,
+    "auto_dispatch_debug_detective": false,
+    "transient_rerun_enabled": true,
+    "transient_rerun_max_per_pr": 2,
+    "iteration_budget_per_pr": 5,
+    "annotation_fetch_count": 20,
+    "log_tail_lines": 200
   }
 }
 ```
+
+`ci_react.poll_interval_sec` defaults to 10 min (vs CodeRabbit's 30 min) because CI completes in 5–15 min on Smatchet's build matrix and slower polling means longer dead time after red. `auto_dispatch_debug_detective` defaults **off** — behavioural / ctest regressions auto-spawn the agent but the agent itself halts at its first pause-loop boundary, so practically the user reviews every behavioural fix. The flag toggles whether to spawn at all.
+
+`OpenPrRegistrar.poll_interval_sec` shares one config key — both watchers iterate rows the registrar produced, so its cadence governs how quickly a newly-opened PR enters the react surface. Defaults to `min(coderabbit_react.poll_interval_sec, ci_react.poll_interval_sec)` (= 600 s when both enabled).
 
 ## Reuse (do not re-implement)
 
 | Need | Use |
 |---|---|
-| In-process poll loop | `PrCommentWatcher::Tick` (`agentic-coding-handoff` phase 7) |
-| Cursor persistence | `agent_pr_watch.last_seen_comment_id` column (already in `agentic-coding-handoff` schema) — add `origin TEXT` column in this plan to distinguish handoff-origin vs open-PR-scan rows |
+| In-process poll loop | `PrCommentWatcher::Tick` (`agentic-coding-handoff` phase 7) — pattern copied for new `PrCheckRunWatcher::Tick` |
+| Cursor persistence | `agent_pr_watch.last_seen_comment_id` (already in `agentic-coding-handoff` schema) — add `origin TEXT` + `last_seen_check_run_id INTEGER` columns in this plan (both additive — no version bump) |
 | Subprocess spawn | `SubprocessCapture::Run` (`agentic-coding-handoff` phase 1) |
-| Worktree creation | `ClaudeCodeLocalRunner::CreateWorktree` (`agentic-coding-handoff` phase 3) — extend to take a `WorktreeOrigin` enum |
-| Sentinel-file IPC | `AGENTS.md § Handoff envelope` (`agentic-coding-handoff` phase 2) |
+| Worktree creation | `ClaudeCodeLocalRunner::CreateWorktree` (`agentic-coding-handoff` phase 3) — extend to take a `WorktreeOrigin` enum; shared between CodeRabbit + CI-failure spawns |
+| Sentinel-file IPC | `AGENTS.md § Handoff envelope` (`agentic-coding-handoff` phase 2) — extend the sentinel vocabulary with `CHECK_RUN.json` (failure-cause payload from `CiFailureClassifier`, written into the worktree before the spawn so the harness reads it as its primary fact source) |
 | GitHub HTTP — PR comments | `GitHubClient::FetchPrComments` (`agentic-triage-flow` phase 2 + `agentic-coding-handoff` phase 7) |
 | GitHub HTTP — reply to comment | `GitHubClient::AddIssueCommentPlain` (`agentic-triage-flow` phase 2) — also used by short-circuit-reject path |
+| GitHub HTTP — check-runs | **New methods on `GitHubClient` added by this plan** — `FetchCheckRuns(headSha)`, `FetchCheckRunAnnotations(checkRunId)`, `FetchActionsJobLogs(jobId, tailLines)`, `RerunWorkflowRun(runId)`. All follow the `TrackerHttpRequestWithRetry` + `BackendAuditTrail` pattern that `GitHubClient`'s existing methods use. **Promote these to `agentic-triage-flow` phase 2 scope so they land alongside the other GitHub HTTP methods — this plan documents the surface but the implementation lives in the companion plan to keep `GitHubClient` cohesive.** |
 | Audit trail | `BackendAuditTrail::AppendEvent` (existing) |
 | Worker thread + cancel atomic | `AppController::LaunchBackgroundTask` (existing) |
 | Worker → UI hand-off | `MainThreadDispatcher::PostToMainThread` (existing) |
 | Toast | `SmatchetToastManager::Push` (existing) |
 | Override-rule table | `agents/coderabbit-triage.md` § "Override rules" (18 entries, shipped — referenced by `CoderabbitCommentClassifier::ShouldShortCircuitReject` in C++) |
 | Routing table | `agents/coderabbit-triage.md` § "Routing table" (referenced for the spawned-harness dispatch) |
+| CI check-run name → category mapping | `.github/workflows/build-and-test.yml`, `coverage-gate.yml`, `coverage.yml` (read at phase 5 to build the `CiFailureClassifierPure` name table — do not hardcode without cross-checking the workflow files) |
 | `gh pr list --json` query shape | `agents/git-janitor.md` pre-flight (existing pattern) |
+| `gh workflow run` invocation | `gh` CLI standard — used by transient-flake re-run path |
 | Plan-lock pre-flight | `bash scripts/dev/locks-show.sh` (existing) |
 
 ## Out of scope (deferred or covered elsewhere)
@@ -148,72 +209,94 @@ agentic-coding-handoff (already planned)            this plan adds
 - **PR thread-resolve via GraphQL.** Same scope as `agentic-coding-handoff`'s out-of-scope — separate slice.
 - **Cloud Claude execution.** User explicitly rejected; `ClaudeCodeLocalRunner` is the only runner this plan uses (`agentic-coding-handoff`'s `ICodingHarnessRunner` interface allows future cloud runners but they're not wired here).
 - **Cross-repo PRs.** Same scope as `agentic-coding-handoff` — only PRs in the current Smatchet repo are watched.
-- **CI-failure auto-fix.** The same `PrCommentWatcher` + classifier machinery could later host a `CiFailureClassifier` that watches `pull_request.check_run` events and routes to `build-doctor` / `debug-detective`. **Not in this plan** — flagged as a natural follow-up because it shares 95% of the plumbing.
+- **Webhook-driven CI react.** Push-mode (GitHub webhook `check_run.completed`) would react instantly but needs a public HTTPS endpoint and signature verification. Polling at 10-min cadence is good enough — flagged as future slice if instant-react matters.
+- **Auto-fix for `debug-detective` ctest dispatches.** `auto_dispatch_debug_detective` defaults off. The agent inherits the AGENTS.md § Debug-mode pause-loop, so even when on, it halts at first round boundary — practically every behavioural-regression fix is human-gated. The flag toggles whether to spawn at all.
 - **`.coderabbit.yaml` schema changes.** Already shipped; only revisit if a phase uncovers a missing `path_instructions` entry.
 
 ## Phased rollout
 
-Hard dependencies: `agentic-triage-flow` phases 0–2 (`GitHubClient` read+write) and `agentic-coding-handoff` phases 0–7 (`PrCommentWatcher` + `ClaudeCodeLocalRunner` + sentinel-file protocol + `pr-iterator`) must have shipped. Plan-lock claim slug: `coderabbit-react-loop`. Run `bash scripts/dev/locks-show.sh` before phase 1; `AgenticHandoffController.cpp` + `PrCommentWatcher.cpp` + `AGENTS.md` are head files — coordinate with whoever holds those if active.
+Hard dependencies: `agentic-triage-flow` phases 0–2 (`GitHubClient` read+write — **including the 4 new check-run methods promoted to the companion plan**) and `agentic-coding-handoff` phases 0–7 (`PrCommentWatcher` + `ClaudeCodeLocalRunner` + sentinel-file protocol + `pr-iterator`) must have shipped. Plan-lock claim slug: `coderabbit-react-loop`. Run `bash scripts/dev/locks-show.sh` before phase 1; `AgenticHandoffController.cpp` + `PrCommentWatcher.cpp` + `AGENTS.md` + `agents/build-doctor.md` + `agents/debug-detective.md` + `agents/test-rig.md` are head files — coordinate with whoever holds those if active.
 
 | Phase | Scope | Key files | Gate |
 |---|---|---|---|
-| 0 | Plan-lock claim, doc move to canonical (`docs/design/coderabbit-react-loop.md`), ADR for the open-PR-scan mode addition (`docs/adr/00NN-prcommentwatcher-open-pr-scan-mode.md`), glossary additions, dependency-shipped check (`gh pr view` for the `agentic-coding-handoff` phase-7 PR, must be merged) | `docs/design/coderabbit-react-loop.md`, `docs/adr/00NN-…md`, `docs/CONTEXT.md` | doc-only |
-| 1 | `PrCommentClassifier` interface + `CoderabbitCommentClassifierPure` (icon / suggestion-block / actionable-header parsers — pure helpers in their own TU per AGENTS.md "Pure-helper TU-split recipe"). Doctest covers every CodeRabbit comment shape from the recorded fixture | `Source_Core/include/PrCommentClassifier.h`, `Source_Core/{include,src}/CoderabbitCommentClassifierPure.{h,cpp}`, `tests/Source_Core/CoderabbitCommentClassifierPure.test.cpp`, `tests/fixtures/coderabbit_comments_sample.json` | dual-target build + ctest |
-| 2 | `CoderabbitCommentClassifier` concrete impl — wires the pure helpers to the 18-rule override table; for each rule that fires, builds a short-circuit-reject reply body that cites the rule number. Doctest covers each of the 18 rules + at least one survivor that dispatches to `coderabbit-triage` | `Source_Core/{include,src}/CoderabbitCommentClassifier.{h,cpp}`, `tests/Source_Core/CoderabbitCommentClassifier.test.cpp` (extends fixture) | build + ctest |
-| 3 | Extend `PrCommentWatcher` with `WatchMode` enum + classifier-registration API. Default `OriginTracking` behaviour unchanged. New `OpenPrScan` mode body: every `Tick`, `gh pr list --base develop --state open --json number,headRefName` (subprocess via `SubprocessCapture`), upsert rows into `agent_pr_watch` with `origin = "open-pr-scan"`. Add `origin TEXT` column to the `agent_pr_watch` schema (additive — no version bump per AGENTS.md "Schema-version bumps") | `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/PrCommentWatcher.cpp`, `tests/Source_Core/PrCommentWatcher_OpenPrScan.test.cpp` | build + ctest |
-| 4 | Wire the dispatch path: `CoderabbitCommentClassifier` registered in `AgenticHandoffController` when `coderabbit_react.enabled = true`. Short-circuit-reject path: `GitHubClient::AddIssueCommentPlain` posts the reply, audit-trails the rejection, no spawn. Dispatch path: when classifier returns `dispatch`, runner spawns with `--prompt-file` pointing at a per-spawn `SEED.md` that names `coderabbit-triage` as the first delegate instead of `pr-iterator` | `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp` (ad-hoc worktree path for `origin = "open-pr-scan"`), `tests/Source_Core/AgenticHandoffController.test.cpp` (extend) | build + ctest + CLI smoke against stub-coderabbit-claude |
-| 5 | `coderabbit-react.start --interval-sec N` / `.stop` / `.status` / `.poll-now <pr>` commands + config block + Preferences UI toggle. All write paths `Destructive = true`. Bump `agents/coderabbit-triage.md` `version: 1` → `2` with new `## Spawned-harness mode` section | `Source_Core/src/Commands/Builtin/BuiltinCommands_Coderabbit.cpp`, `Source_Core/src/Commands/BuiltinCommands.cpp` (registration), `Source_Core/include/ConfigManager.h` + `.cpp`, `Source_Core/src/SmatchetPreferencesUi.cpp`, `agents/coderabbit-triage.md`, `AGENTS.md` (one-paragraph addendum) | build + ctest + CLI smoke + frontmatter review |
-| 6 | End-to-end smoke + plan revision. Pick a real open PR with CodeRabbit feedback, start the react loop, observe one short-circuit reject + one dispatched fix + commit + push end-to-end. Plan-revision sections appended (`## Implementation log`, `## Deviations from plan`, `## Verification`) | `docs/design/coderabbit-react-loop.md` (revisions), `scripts/dev/test-coderabbit-react.sh` (CLI smoke wraps the synthetic version of the above) | full regression: `scripts/dev/test-all.sh` + dual-target build + sanitizer build |
+| 0 | Plan-lock claim, doc move to canonical (`docs/design/coderabbit-react-loop.md` — already done), ADRs for `OpenPrRegistrar` + `PrCheckRunWatcher` design (`docs/adr/00NN-prcheckrunwatcher.md`, `docs/adr/00NN-open-pr-registrar.md`), glossary additions, dependency-shipped check (`gh pr view` for the `agentic-coding-handoff` phase-7 PR + the `agentic-triage-flow` phase-2 PR carrying the new `GitHubClient` check-run methods, both must be merged) | `docs/design/coderabbit-react-loop.md`, `docs/adr/00NN-…md`, `docs/CONTEXT.md` | doc-only |
+| 1 | `OpenPrRegistrar` extracted as standalone periodic task (lifted out of the original `PrCommentWatcher::OpenPrScan` mode body — the shared registrar lets `PrCheckRunWatcher` consume the same `agent_pr_watch` rows without each watcher running its own `gh pr list`). Add `origin TEXT` + `last_seen_check_run_id INTEGER` columns to `agent_pr_watch` (both additive). Doctest covers upsert idempotency + cancellation | `Source_Core/{include,src}/OpenPrRegistrar.{h,cpp}`, `Source_Core/src/AgenticHandoffController.cpp` (own the registrar thread), `tests/Source_Core/OpenPrRegistrar.test.cpp` | dual-target build + ctest |
+| 2 | `PrCommentClassifier` interface + `CoderabbitCommentClassifierPure` (icon / suggestion-block / actionable-header parsers — pure helpers per AGENTS.md "Pure-helper TU-split recipe"). Doctest covers every CodeRabbit comment shape from the recorded fixture | `Source_Core/include/PrCommentClassifier.h`, `Source_Core/{include,src}/CoderabbitCommentClassifierPure.{h,cpp}`, `tests/Source_Core/CoderabbitCommentClassifierPure.test.cpp`, `tests/fixtures/coderabbit_comments_sample.json` | build + ctest |
+| 3 | `CoderabbitCommentClassifier` concrete impl — wires the pure helpers to the 18-rule override table; for each rule that fires, builds a short-circuit-reject reply body that cites the rule number. Doctest covers each of the 18 rules + at least one survivor that dispatches to `coderabbit-triage` | `Source_Core/{include,src}/CoderabbitCommentClassifier.{h,cpp}`, `tests/Source_Core/CoderabbitCommentClassifier.test.cpp` (extends fixture) | build + ctest |
+| 4 | Extend `PrCommentWatcher` with `WatchMode` enum + classifier-registration API. Default `OriginTracking` behaviour unchanged. In `OpenPrScan` mode, iterate rows the new `OpenPrRegistrar` (phase 1) wrote — this watcher no longer runs `gh pr list` itself | `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/PrCommentWatcher.cpp`, `tests/Source_Core/PrCommentWatcher_OpenPrScan.test.cpp` | build + ctest |
+| 5 | `PrCheckRunClassifier` interface + `CiFailureClassifierPure` (check-run-name table, cmake/link/ctest/sanitizer/transient fingerprints — pure helpers). Read `.github/workflows/build-and-test.yml` + `coverage-gate.yml` + `coverage.yml` at phase start to build the name table; do not hardcode against memory | `Source_Core/include/PrCheckRunClassifier.h`, `Source_Core/{include,src}/CiFailureClassifierPure.{h,cpp}`, `tests/Source_Core/CiFailureClassifierPure.test.cpp`, `tests/fixtures/check_runs_failed_sample.json`, `tests/fixtures/check_run_annotations_sample.json` | build + ctest |
+| 6 | `CiFailureClassifier` concrete + `PrCheckRunWatcher` (poll-loop, cursor advance via `last_seen_check_run_id`, dispatch hook). Annotation/log fetch via the new `GitHubClient` methods (promoted to `agentic-triage-flow` phase 2). Wire dispatch into `AgenticHandoffController` — `CiFailureClassifier` registered when `ci_react.enabled = true`. Per-target SEED.md template that names `build-doctor` / `debug-detective` / `test-rig` as first delegate based on classifier output. Transient-rerun path uses `GitHubClient::RerunWorkflowRun` (also new in phase 2 of companion plan) | `Source_Core/{include,src}/CiFailureClassifier.{h,cpp}`, `Source_Core/{include,src}/PrCheckRunWatcher.{h,cpp}`, `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp` (per-target SEED.md), `tests/Source_Core/CiFailureClassifier.test.cpp`, `tests/Source_Core/PrCheckRunWatcher.test.cpp` | build + ctest + CLI smoke against stub-ci-claude |
+| 7 | Wire the CodeRabbit dispatch path (parallel to phase 6 wiring for CI). Short-circuit-reject path: `GitHubClient::AddIssueCommentPlain` posts the reply, audit-trails the rejection, no spawn. Dispatch path: when classifier returns `dispatch`, runner spawns with `--prompt-file` pointing at a per-spawn `SEED.md` that names `coderabbit-triage` as the first delegate instead of `pr-iterator` | `Source_Core/src/AgenticHandoffController.cpp` (extend), `Source_Core/src/ClaudeCodeLocalRunner.cpp` (CodeRabbit SEED.md), `tests/Source_Core/AgenticHandoffController.test.cpp` (extend) | build + ctest + CLI smoke against stub-coderabbit-claude |
+| 8 | `coderabbit-react.*` + `ci-react.*` commands + config blocks + Preferences UI toggles. All write paths `Destructive = true`. Bump `agents/coderabbit-triage.md` `version: 1` → `2` (Spawned-harness mode section). Bump `agents/build-doctor.md` + `agents/debug-detective.md` + `agents/test-rig.md` with CI-failure spawned-harness paragraphs. `AGENTS.md § Handoff envelope` extended with `CHECK_RUN.json` sentinel + first-delegate selection table | `Source_Core/src/Commands/Builtin/BuiltinCommands_Coderabbit.cpp`, `BuiltinCommands_CiReact.cpp`, `Source_Core/src/Commands/BuiltinCommands.cpp` (registration), `Source_Core/include/ConfigManager.h` + `.cpp`, `Source_Core/src/SmatchetPreferencesUi.cpp`, `agents/{coderabbit-triage,build-doctor,debug-detective,test-rig}.md`, `AGENTS.md` | build + ctest + CLI smoke + frontmatter review |
+| 9 | End-to-end smoke for **both paths** + plan revision. (a) Pick a real open PR with CodeRabbit feedback, start the loop, observe one short-circuit reject + one dispatched fix + commit + push. (b) Push a deliberately-bad commit to the same PR that breaks `build-and-test` cmake config, observe `build-doctor` spawned + fix landed within one tick + iteration count incremented. (c) Push a commit that breaks `coverage-gate` (touch a `Source_Core/src/*.cpp` without test delta), observe `test-rig` spawned. Plan-revision sections appended | `docs/design/coderabbit-react-loop.md` (revisions), `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ci-react.sh` | full regression: `scripts/dev/test-all.sh` + dual-target build + sanitizer build |
 
 ## Verification
 
-Per AGENTS.md § "Verification automation — zero manual steps", `test-author` is invoked at plan-time (here), post-first-round (after phase 4), and after every handoff that ends with a manual step.
+Per AGENTS.md § "Verification automation — zero manual steps", `test-author` is invoked at plan-time (here), post-first-round (after phase 4), post-CI-classifier-round (after phase 6), and after every handoff that ends with a manual step.
 
 - **Pure-logic doctest** (`SMATCHET_BUILD_TESTS=ON`, `ninja-test-msys2`):
+  - `OpenPrRegistrar.test.cpp` — upsert idempotency, cancellation, row dedupe on re-run.
   - `CoderabbitCommentClassifierPure.test.cpp` — icon parser (`🛠️ ⚠️ 💡 🧹`), suggestion-block extractor, actionable-header parser. Round-trips against `tests/fixtures/coderabbit_comments_sample.json`.
   - `CoderabbitCommentClassifier.test.cpp` — every override rule (18 positive + 18 negative cases) + at least 3 dispatch survivors covering distinct subsystem targets.
-  - `PrCommentWatcher_OpenPrScan.test.cpp` — upsert idempotency, cursor advance, classifier injection.
+  - `CiFailureClassifierPure.test.cpp` — check-run-name → category table, cmake-error fingerprint, ctest-fail fingerprint, sanitizer-hit fingerprint, transient-flake fingerprint (cpr-timeout, MSYS2-mirror, FetchContent-retry), unknown-name fallback.
+  - `CiFailureClassifier.test.cpp` — wires pure helpers to annotation/log fetch; routes the 5 buckets (build-doctor / debug-detective / test-rig / transient-rerun / skip) correctly against fixture payloads.
+  - `PrCommentWatcher_OpenPrScan.test.cpp` — iterates `OpenPrRegistrar`-produced rows, cursor advance, classifier injection.
+  - `PrCheckRunWatcher.test.cpp` — cursor advance, classifier injection, failure-only filter, fixture-driven dispatch (no real HTTP).
 
 - **Subprocess doctest** (real `SubprocessCapture` driving stub `gh`):
-  - `gh pr list` stub yields fixture PR list; assert `agent_pr_watch` rows.
+  - `gh pr list` stub yields fixture PR list; assert `agent_pr_watch` rows registered by `OpenPrRegistrar`.
+  - `gh api … /check-runs` stub yields fixture failed-check-run set; assert `PrCheckRunWatcher` dispatches the right number per category.
+  - `gh workflow run` stub captures invocation; assert transient-rerun path calls it with the right `run_id` + does not spawn.
 
-- **Stub-runner end-to-end** (`tests/fixtures/stub-coderabbit-claude.sh`):
+- **Stub-runner end-to-end** (`tests/fixtures/stub-coderabbit-claude.sh`, `stub-ci-claude.sh`):
   - Stub `claude` emits canned stream-json + writes `RUN_RESULT.json` with one fix; `ClaudeCodeLocalRunner` parses + transitions to `Complete`; assert push attempted (mock `git push` via PATH-shim).
+  - Stub for CI path additionally writes the `CHECK_RUN.json` sentinel before the spawn and verifies the harness reads it.
 
-- **CLI smoke** (`scripts/dev/test-coderabbit-react.sh`, auto-enrolled by `scripts/dev/test-all.sh`):
-  - Start react loop with fixture config, inject 3 synthetic CodeRabbit comments (1 short-circuit-reject, 1 mechanic-dispatch, 1 tracker-backend-dispatch), assert: 1 reply posted (via mock `gh api`), 2 spawns happened, 2 commits pushed, 0 architect-class dispatches (would halt).
+- **CLI smoke** (`scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ci-react.sh`, auto-enrolled by `scripts/dev/test-all.sh`):
+  - **CodeRabbit smoke** — start react loop with fixture config, inject 3 synthetic CodeRabbit comments (1 short-circuit-reject, 1 mechanic-dispatch, 1 tracker-backend-dispatch), assert: 1 reply posted (via mock `gh api`), 2 spawns happened, 2 commits pushed, 0 architect-class dispatches (would halt).
+  - **CI smoke** — start CI react loop with fixture config, inject 5 synthetic failed check-runs (1 cmake → build-doctor, 1 ctest → debug-detective auto-spawn flag off, no spawn, 1 coverage-gate → test-rig, 1 transient-cpr → rerun, 1 unknown → skip), assert: 1 build-doctor spawn + commit, 0 debug-detective spawns (flag-off path), 1 test-rig spawn + commit, 1 `gh workflow run` invocation, 1 skip with `Self-improvement` log entry.
 
-- **Sanitizer build** — ASan/UBSan via `ninja-test-msys2`. Required because phase 3+ adds threading + subprocess + SQLite mutation paths to `PrCommentWatcher`.
+- **Sanitizer build** — ASan/UBSan via `ninja-test-msys2`. Required because phase 1+ adds threading + subprocess + SQLite mutation paths to the new watchers + registrar.
 
-- **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` surface is gated `#if SMATCHET_WITH_AI` (Standalone only); DX12 must compile cleanly without it.
+- **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` + `ci_react` surface is gated `#if SMATCHET_WITH_AI` (Standalone only); DX12 must compile cleanly without it.
 
-- **End-to-end happy-path probe** (phase 6, after automation passes):
-  1. Configure `coderabbit_react.enabled = true`, `poll_interval_sec = 60` (fast for the probe).
-  2. Open Smatchet, start the react loop via Preferences toggle.
-  3. Push a deliberately-flagged change to a draft PR (e.g. add a function using `std::optional`).
-  4. Wait for CodeRabbit to comment (≤ 2 min after push, observed empirically).
-  5. Wait one watcher tick. Observe in `SmatchetAgentHandoffUi`: PR registered, classifier short-circuit-rejected the suggestion, reply posted on the PR thread.
-  6. Push a second change with a real issue (e.g. missing `LOG_DEBUG` in a non-trivial branch). Observe: spawn happens, fix lands as a commit, PR updated.
-  7. Push a third change with a cross-cutting issue (e.g. CodeRabbit suggests an architectural change). Observe: classifier dispatches to `coderabbit-triage`, agent routes to `architect`, handoff halts for user.
+- **End-to-end happy-path probe** (phase 9, after automation passes):
+  1. Configure both `coderabbit_react.enabled` + `ci_react.enabled = true`, intervals at 60 s for the probe.
+  2. Open Smatchet, start both loops via Preferences toggles.
+  3. **CodeRabbit path:**
+      a. Push a `std::optional`-using change to a draft PR. Wait for CodeRabbit (≤ 2 min). Wait one comment-watcher tick. Observe: classifier short-circuit-rejected, reply posted citing override rule #1.
+      b. Push a change with missing `LOG_DEBUG` in a non-trivial branch. Observe: spawn → coderabbit-triage → mechanic → commit → push.
+      c. Push a cross-cutting / architectural-suggestion change. Observe: spawn → coderabbit-triage → architect → halt with `AskUserQuestion` surfaced in panel.
+  4. **CI path:**
+      a. Push a commit that deliberately breaks the cmake config (e.g. typo in `Source_Core/CMakeLists.txt`). Wait for CI red (≤ 15 min build). Wait one check-run-watcher tick. Observe: build-doctor spawned → fix → commit → push → CI re-runs and goes green.
+      b. Push a commit that touches `Source_Core/src/*.cpp` without a paired test delta (triggers `coverage-gate` red). Observe: test-rig spawned → test stub added → commit → push.
+      c. Synthesise a transient-flake check-run via a stub (real flakes are hard to manufacture; the synthetic path covers the rerun-without-spawn logic).
+      d. Push a commit that breaks ctest (behavioural regression). Observe: with `auto_dispatch_debug_detective = false` (default), classifier logs the failure + sends a toast but does not spawn — user reviews. Flip to `true` and re-push; observe: debug-detective spawns, halts at first pause-loop boundary, posts `CLARIFICATION_NEEDED.json`.
 
-Manual residue from steps 4-7 → `test-author` handoff to wire ImGui-Test-Engine equivalents for the Preferences toggle + the panel state-row reads. The synthetic CLI smoke covers the dispatch logic deterministically; only the live-PR end-to-end stays manual until ImGui Test Engine ships.
+Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engine equivalents for both Preferences toggles + the panel state-row reads + the CHECK_RUN.json sentinel surfacing. The synthetic CLI smoke covers the dispatch logic deterministically; only the live-PR end-to-end stays manual until ImGui Test Engine ships.
 
 ## Risks + mitigations
 
-- **`PrCommentWatcher`'s default bot-skip filter swallows CodeRabbit comments before classification.** Mitigation: classifier hook runs **before** the bot-skip filter. Phase 3 reorders the watcher's dispatch pipeline so classifier sees every comment, including bot-authored ones; classifier returns `skip` for bot comments it doesn't recognise (preserving default behaviour).
-- **Ad-hoc worktree leak.** Mitigation: extend `handoff.gc --older-than-days N` (from `agentic-coding-handoff` phase 9) to also sweep `.claude/worktrees/coderabbit-pr*` paths. Auto-GC of `coderabbit-pr*` worktrees on PR close/merge added in phase 4 (cheap — `gh api … /pulls/{n}` returns state).
-- **Spawn-storm if CodeRabbit posts many comments in burst.** Mitigation: `iteration_budget_per_pr` (default 5) caps total spawns per PR per react-loop lifetime. Budget exhausted → reply on PR ("budget exhausted, hand-off to human") + stop dispatching for that PR.
+- **`PrCommentWatcher`'s default bot-skip filter swallows CodeRabbit comments before classification.** Mitigation: classifier hook runs **before** the bot-skip filter. Phase 4 reorders the watcher's dispatch pipeline so classifier sees every comment, including bot-authored ones; classifier returns `skip` for bot comments it doesn't recognise (preserving default behaviour).
+- **Ad-hoc worktree leak.** Mitigation: extend `handoff.gc --older-than-days N` (from `agentic-coding-handoff` phase 9) to also sweep `.claude/worktrees/coderabbit-pr*` paths. Auto-GC on PR close/merge added in phase 6 (cheap — `gh api … /pulls/{n}` returns state). One worktree per PR is shared between CodeRabbit + CI spawns, so the leak surface does not double.
+- **Spawn-storm.** Per-classifier budget caps: `coderabbit_react.iteration_budget_per_pr` (default 5) for comment dispatches, `ci_react.iteration_budget_per_pr` (default 5) for check-run dispatches, plus `ci_react.transient_rerun_max_per_pr` (default 2) for re-runs. Budgets are **per react-loop lifetime** so a busy PR with both surfaces firing can still hit 12 spawns + 2 reruns before forcing handback. On budget hit, classifier posts an explicit PR comment and stops dispatching for that PR.
 - **Override-rule drift between agent prompt + C++ classifier.** Mitigation: the 18-rule table is the source of truth in `agents/coderabbit-triage.md`. The C++ classifier consumes the table at startup by reading the agent file from disk (the file is already at a known path because `bash scripts/setup-harness.sh claude-code` keeps it linked). Test asserts that every rule number quoted in the C++ table matches a rule in the agent file; CI gates on the agreement.
-- **Short-circuit-reject reply tone.** Mitigation: reply body cites the override rule number + a one-line rationale. Single short paragraph, no judgement. Reviewed for tone by code-review at phase 2.
-- **`gh` rate-limit pressure at 30-min poll × N open PRs.** Mitigation: 30-min interval × 10 PRs × 3 endpoints = 60 req/hour, well under the 5000/hr authenticated budget. Phase 3 adds a defensive `gh api rate_limit` probe before each tick; tick skips if remaining < 100.
-- **Pillar 1/2 regression.** All subprocess + GitHub HTTP + SQLite work on worker threads (inherited from `PrCommentWatcher`'s existing design). UI thread does panel render only. `perf-detective` runs on the standard scenario before phase 6 merge.
-- **Plan-lock collision.** Head files: `Source_Core/src/PrCommentWatcher.cpp`, `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp`, `Source_Core/include/ConfigManager.h`, `Source_Core/src/Commands/BuiltinCommands.cpp`, `agents/coderabbit-triage.md`, `AGENTS.md`. Phase 0 runs `locks-show.sh`; coordinate with the holder of `agentic-coding-handoff` if it is still active.
-- **CodeRabbit Pro / self-hosted bot login differs from `coderabbitai[bot]`.** Mitigation: `coderabbit_react.bot_logins` is a config list. First contact with a real CodeRabbit deployment in phase 6 logs the observed `user.login` for the user to add to the list if it differs.
+- **CI-failure auto-fix loop on a real-but-not-fixable failure** (e.g. infra-side flake the classifier mis-categorises as a real build error). Mitigation: `ci_react.iteration_budget_per_pr` caps it; in addition, the dispatch path tracks "same check-run name failed N times in a row" — three consecutive same-name failures bypass the spawn and post a "this looks like a real environmental issue, not a code issue" comment requesting human review. Transient-rerun separately capped via `transient_rerun_max_per_pr`.
+- **`debug-detective` pause-loop interacts oddly with the auto-dispatch flag.** When `auto_dispatch_debug_detective = true`, the agent spawns and runs Clarify → Hypothesise → Instrument → Run → Read, then halts. The user must respond to the AwaitingUser state before the agent does anything irreversible. Mitigation: this is the agent's existing pause-loop contract — the react-loop just respects it. UI panel surfaces the `AWAITING USER FEEDBACK` line clearly so the user knows the loop is waiting on them, not stuck.
+- **Annotation/log fetch is heavy.** GitHub returns annotations + job logs that can be hundreds of KB per check-run; fetching for every failed check on every PR per tick is expensive. Mitigation: `ci_react.annotation_fetch_count` (default 20) caps annotations; `log_tail_lines` (default 200) caps log bytes. Fetch only the first failed check per workflow run, not every job. `LRUCache<check_run_id, parsed_payload>` skips re-parses across ticks.
+- **Check-run name table drift vs `.github/workflows/*.yml`.** Mitigation: phase 5 reads the workflow YAML files to build the name table — not hardcoded. If new workflows land, the classifier's "unknown name → log+skip" path triggers + the user gets a `Self-improvement` entry to extend the table.
+- **Short-circuit-reject reply tone.** Mitigation: reply body cites the override rule number + a one-line rationale. Single short paragraph, no judgement. Reviewed for tone by code-review at phase 3.
+- **`gh` rate-limit pressure.** Budget: CodeRabbit 30 min × 10 PRs × 3 endpoints = 60 req/hr; CI 10 min × 10 PRs × 4 endpoints (check-runs + annotations + logs + per-run lookups) = 240 req/hr; OpenPrRegistrar 10 min = 6 req/hr. Total ≈ 306 req/hr peak, well under the 5000/hr authenticated budget. Phase 4 + phase 6 each add a defensive `gh api rate_limit` probe before each tick; tick skips if remaining < 100.
+- **Pillar 1/2 regression.** All subprocess + GitHub HTTP + SQLite work on worker threads (inherited from `PrCommentWatcher`'s existing design + extended for the new sibling watcher + registrar). UI thread does panel render only. `perf-detective` runs on the standard scenario before phase 9 merge.
+- **Plan-lock collision.** Head files: `Source_Core/src/PrCommentWatcher.cpp`, `Source_Core/include/PrCommentWatcher.h`, `Source_Core/src/AgenticHandoffController.cpp`, `Source_Core/src/ClaudeCodeLocalRunner.cpp`, `Source_Core/include/ConfigManager.h`, `Source_Core/src/Commands/BuiltinCommands.cpp`, `agents/coderabbit-triage.md`, `agents/build-doctor.md`, `agents/debug-detective.md`, `agents/test-rig.md`, `AGENTS.md`. Phase 0 runs `locks-show.sh`; coordinate with the holder of `agentic-coding-handoff` if it is still active. The four agent files are extra-sensitive because they are read by every spawned harness — a mid-flight prompt edit triggers `agent_version` mismatch in telemetry.
+- **CodeRabbit Pro / self-hosted bot login differs from `coderabbitai[bot]`.** Mitigation: `coderabbit_react.bot_logins` is a config list. First contact with a real CodeRabbit deployment in phase 9 logs the observed `user.login` for the user to add to the list if it differs.
 
 ## Open questions
 
-1. **In-Smatchet vs out-of-Smatchet detection.** User's earlier "hybrid daemon" pick was made before they pointed me at the in-flight plans. `PrCommentWatcher` is in-process — it only runs while Smatchet.exe is open. If the user wants detection while Smatchet is closed, a future slice adds a tiny `scripts/dev/coderabbit-watch.sh` daemon that only writes to `agent_pr_watch`; Smatchet's in-process watcher picks up the row on next start. **Default for this plan: in-process only.** Flag at phase 0 — if the user pushes back, the daemon-write-only slice is small enough to bolt on without rework.
-2. **`pr-iterator` vs `coderabbit-triage` first-delegate selection in spawned harness.** When the classifier dispatches a CodeRabbit comment, the spawned `claude` reads `SEED.md` whose first delegate is `coderabbit-triage`. When `PrCommentWatcher` dispatches a hand-pushed-PR comment (non-bot), the first delegate is `pr-iterator`. The selection lives in `SEED.md`'s "first delegate" line — needs concrete name confirmed at phase 4 against the `agentic-coding-handoff` phase-2 envelope spec.
-3. **Auto-GC for `coderabbit-pr*` worktrees.** Should happen on PR close/merge, but `PrCommentWatcher` doesn't watch `pull_request.closed` events today (it polls comments, not PR state). Cheapest fix: piggyback on the next-tick `gh api … /pulls/{n}` call (`state == "closed"` → gc). Confirm at phase 3.
-4. **Iteration budget interaction with `pr_iteration_budget` from `agentic-coding-handoff`.** The original budget caps handoff-PR iterations; this plan adds `iteration_budget_per_pr` for react-loop PRs. Two budgets, two semantic meanings. Could merge into one budget per PR regardless of origin — leaner. Confirm at phase 5.
-5. **Reply posting identity.** Replies use the `gh auth status` user — same as the rest of `agentic-coding-handoff`. The auto-reject reply will appear as the human user, not as a bot. Probably fine (the user owns the rejection decision via Smatchet's config-toggle to enable the react loop) but worth noting in phase 4 docs.
+1. **In-Smatchet vs out-of-Smatchet detection.** User's earlier "hybrid daemon" pick was made before they pointed me at the in-flight plans. `PrCommentWatcher` + `PrCheckRunWatcher` are in-process — they only run while Smatchet.exe is open. If the user wants detection while Smatchet is closed, a future slice adds a tiny `scripts/dev/pr-react-watch.sh` daemon that only writes to `agent_pr_watch`; Smatchet's in-process watchers pick up the rows on next start. **Default for this plan: in-process only.** Flag at phase 0 — if the user pushes back, the daemon-write-only slice is small enough to bolt on without rework.
+2. **First-delegate selection in spawned harness.** When the comment classifier dispatches a CodeRabbit comment, SEED.md names `coderabbit-triage`. When the check-run classifier dispatches a CI failure, SEED.md names one of `build-doctor` / `debug-detective` / `test-rig` based on category. When `PrCommentWatcher` dispatches a hand-pushed-PR non-bot comment (existing `agentic-coding-handoff` path), the first delegate is `pr-iterator`. The selection lives in SEED.md's "first delegate" line — needs concrete name confirmed at phase 6 + phase 7 against the `agentic-coding-handoff` phase-2 envelope spec.
+3. **Auto-GC for `coderabbit-pr*` worktrees.** Should happen on PR close/merge, but the watchers don't watch `pull_request.closed` events today (they poll comments + check-runs, not PR state). Cheapest fix: piggyback on the next-tick `gh api … /pulls/{n}` call (`state == "closed"` → gc). Confirm at phase 4.
+4. **Iteration budget interaction.** Three budgets now exist: `pr_iteration_budget` (handoff-origin PRs, `agentic-coding-handoff`), `coderabbit_react.iteration_budget_per_pr`, `ci_react.iteration_budget_per_pr`. Three counters, three semantic meanings. Could merge into a single `agentic.iteration_budget_per_pr` keyed by PR number — leaner but conflates "this PR has a chatty bot" with "this PR has flaky CI". Recommend keeping three; confirm at phase 8.
+5. **Reply posting identity.** Replies + transient-rerun invocations use the `gh auth status` user — same as the rest of `agentic-coding-handoff`. The auto-reject reply + the "transient failure detected, re-running" comment appear as the human user, not as a bot. Probably fine (the user owns the rejection decision via Smatchet's config-toggle) but worth noting in phase 7 + phase 6 docs.
+6. **Pillar-4 a11y for the new Preferences toggles.** Two new toggles + interval inputs land in phase 8. Same keyboard-nav contract as existing toggles (Tab cycles, Space toggles, Enter on focused input). Confirm at phase 8 against the pillar-4 in-scope list (keyboard nav / font scaling / WCAG AA contrast).
+7. **Coverage advisory cutoff.** `coverage.yml` is advisory until 2026-05-30 per the workflow YAML. Today's date is 2026-05-18. After 2026-05-30 the workflow becomes blocking — should `ci_react.ignored_check_names` drop `"coverage"` automatically? Recommend hardcoded list at phase 5, manual config flip at the cutoff; the user is in the loop for that decision because it changes blast radius. Document the date in `ConfigManager`'s comments.
