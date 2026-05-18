@@ -203,6 +203,13 @@ struct TrackerConfig {
     std::string AiApiKey;
     // Anthropic API key. Same DPAPI + legacy-migration shape as `AiApiKey`.
     std::string AiAnthropicApiKey;
+#if defined(SMATCHET_WITH_AGENTIC)
+    // GitHub Personal Access Token — consumed by `GitHubClient` to fetch issue comments
+    // (agentic-flow triage half) and to post comments / labels (later phases). Persisted
+    // DPAPI-encrypted on Win32; same legacy-plaintext migration shape as `AiApiKey`.
+    // Empty disables the GitHub backend (every API call returns "PAT not configured").
+    std::string GitHubPat;
+#endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;
     // Generic base URL for `OpenAi` / `OllamaOpenAiCompat`; empty means provider default

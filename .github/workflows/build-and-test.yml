@@ -163,3 +163,48 @@ jobs:
 
       - name: Build SmatchetStandalone (no whisper)
         run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+  windows-msys2-ucrt64-no-agentic:
+    # Stub-drift sentinel for the SMATCHET_WITH_AGENTIC gate (agentic-flow T1+).
+    # Any call site that includes GitHubClient.h / GitHubClientHelpers.h / references
+    # cfg.GitHubPat without `#if defined(SMATCHET_WITH_AGENTIC)` guarding fails here
+    # rather than at runtime on the DX12 / Unreal target (which also disables the gate).
+    name: Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-no-agentic-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msys2 with SMATCHET_WITH_AGENTIC=OFF
+        run: cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF
+
+      - name: Build SmatchetStandalone (no agentic)
+        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
