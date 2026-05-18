@@ -250,6 +250,36 @@ struct TrackerConfig {
     // credentials without contacting the provider.
     bool AiPrefsVerifyOnSave = true;
 
+#if defined(SMATCHET_WITH_WHISPER)
+    // --- Whisper dictation (push-to-talk) — Phase A schema (additive; no schema bump). ---
+    // See docs/design/whisper-dictation.md § Config schema additions.
+    //
+    // Runtime opt-in gate. Even when SMATCHET_WITH_WHISPER=ON the plugin stays
+    // dormant (no mic access, no network, no model download) until this flips to
+    // true via the first-run setup dialog (Phase C) or Preferences (Phase F).
+    bool WhisperEnabled = false;
+    // True once the user has seen and answered the first-run setup dialog (Phase C).
+    // Set independently of WhisperEnabled — a user who chose "No thanks" has
+    // SetupCompleted=true + Enabled=false; the dialog never reappears.
+    bool WhisperSetupCompleted = false;
+    // Informational record of the user's setup choice: "enabled", "disabled", or
+    // "" (deferred — show dialog next launch). The active runtime gate is
+    // WhisperEnabled; this field exists for UX readouts (Preferences) and audit.
+    std::string WhisperSetupChoice;
+    // Backend selection: "auto" (default — local if present, cloud fallback),
+    // "local" (whisper.cpp only), or "cloud" (OpenAI Whisper API only).
+    std::string WhisperMode = "auto";
+    // Local model name (Phase C uses this to resolve <userData>/whisper/<name>.bin).
+    std::string WhisperModel = "ggml-base.en";
+    // Push-to-talk hotkey. Captured via the Preferences capture widget in Phase E.
+    std::string WhisperHotkey = "Ctrl+Alt+Space";
+    // OpenAI API key for /v1/audio/transcriptions. Persisted DPAPI-encrypted on
+    // Win32; same legacy-plaintext migration shape as AiApiKey. Phase B consumer.
+    // Falls back to AiApiKey only when this is empty AND AiProvider==OpenAi
+    // (see docs/design/whisper-dictation.md § API key fallback rule).
+    std::string WhisperApiKey;
+#endif
+
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---
     bool FullScreen = false;
     bool ZenMode = false;

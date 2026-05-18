@@ -46,6 +46,7 @@ add_executable(SmatchetTests
     Source_Core/AiPrefsValidator.test.cpp
     Source_Core/AiEndpointSanitize.test.cpp
     Source_Core/CliArgCoercion.test.cpp
+    Source_Core/DictationInsertionRouter.test.cpp
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
@@ -97,6 +98,19 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
     "${CMAKE_SOURCE_DIR}/Target_Standalone/CliArgCoercion.cpp"
 )
+
+# Whisper dictation router — link the production TU that matches the parent
+# SMATCHET_WITH_WHISPER state so the test exe sees the same bindings/stubs
+# split as the standalone build. The test file itself compile-switches on
+# SMATCHET_WITH_WHISPER (always-compiled — covers both gating states).
+if(SMATCHET_WITH_WHISPER)
+    target_sources(SmatchetTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+    target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_WHISPER=1)
+else()
+    target_sources(SmatchetTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+endif()
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"

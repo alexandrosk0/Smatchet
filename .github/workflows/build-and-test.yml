@@ -117,3 +117,49 @@ jobs:
           name: Smatchet-failure-${{ github.run_id }}
           path: build/ninja-iter-msys2/Smatchet.exe
           if-no-files-found: ignore
+
+  windows-msys2-ucrt64-no-whisper:
+    # Stub-drift sentinel for the SMATCHET_WITH_WHISPER bindings/stubs split.
+    # Mirrors the regression-prevention shape of the dual-target build for the
+    # Lua bindings/stubs split: any drift between DictationInsertionRouter_Whisper.cpp
+    # and DictationInsertionRouter_Stubs.cpp surfaces here as a link / build error
+    # rather than at runtime in the DX12 / Unreal target.
+    name: Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-no-whisper-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msys2 with SMATCHET_WITH_WHISPER=OFF
+        run: cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF
+
+      - name: Build SmatchetStandalone (no whisper)
+        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
