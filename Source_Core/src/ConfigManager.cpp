@@ -529,6 +529,17 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     bool migrateLegacyPlaintextMcpAuthToken = false;
     bool migrateLegacyPlaintextAiApiKey = false;
     bool migrateLegacyPlaintextAiAnthropicApiKey = false;
+#if defined(SMATCHET_WITH_AGENTIC)
+    // Bundle B CR#226 + #232 — github_pat lazy plaintext-to-DPAPI migration.
+    // T1 stored GitHubPat DPAPI-encrypted from day one, but a manual edit to
+    // smatchet_config.json (or an external tool) can leave the legacy
+    // `github_pat` field in plaintext. On Load we read the plaintext fallback;
+    // this flag triggers an eager Save() at the bottom of the Load path so
+    // the next on-disk state has the value encrypted under `github_pat_enc`
+    // and the plaintext key removed. Mirror of the AiApiKey migration shape
+    // (see lines around 941 below).
+    bool migrateLegacyPlaintextGitHubPat = false;
+#endif
 #endif
 
     if (!j.empty()) {
@@ -640,6 +651,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
             if (cfg.GitHubPat.empty()) {
                 cfg.GitHubPat = j.value("github_pat", std::string{});
+                // Bundle B CR#226 + #232 — if we read the PAT from the legacy
+                // plaintext `github_pat` field (because `github_pat_enc` was
+                // absent or undecryptable), flag for migration so the eager
+                // Save() below re-encrypts it. Mirrors AiApiKey above.
+                migrateLegacyPlaintextGitHubPat = !cfg.GitHubPat.empty();
             }
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
@@ -938,12 +954,25 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    if (migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
-        migrateLegacyPlaintextAiAnthropicApiKey) {
+    bool migrateAny = migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
+                      migrateLegacyPlaintextAiAnthropicApiKey;
+#if defined(SMATCHET_WITH_AGENTIC)
+    migrateAny = migrateAny || migrateLegacyPlaintextGitHubPat;
+#endif
+    if (migrateAny) {
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d)",
+                 "(mcp=%d ai=%d anthropic=%d"
+#if defined(SMATCHET_WITH_AGENTIC)
+                 " github_pat=%d"
+#endif
+                 ")",
                  migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
-                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0);
+                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0
+#if defined(SMATCHET_WITH_AGENTIC)
+                 ,
+                 migrateLegacyPlaintextGitHubPat ? 1 : 0
+#endif
+        );
         Save(cfg);
     }
 #endif

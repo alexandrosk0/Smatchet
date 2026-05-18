@@ -2,6 +2,8 @@
 
 #include "Logger.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <mutex>
 #include <set>
 #include <string>
@@ -311,6 +313,20 @@ bool ParseInferenceResponse(const std::string& jsonBody, std::vector<ProposalDra
     }
 
     return true;
+}
+
+bool WouldExceedResponseCap(std::size_t currentBytes, std::size_t addBytes) {
+    // Saturating add — if currentBytes + addBytes overflows, treat as "over the
+    // cap" so an adversarial stream that wraps the size counter can't slip past
+    // the gate. Pillar 3 defense — see AGENTS.md § Never crash.
+    if (addBytes > kMaxLlmResponseBytes - std::min(currentBytes, kMaxLlmResponseBytes)) {
+        return true;
+    }
+    return currentBytes + addBytes > kMaxLlmResponseBytes;
+}
+
+bool ShouldAdvancePollCursor(std::size_t failedCount) {
+    return failedCount == 0;
 }
 
 } // namespace AgenticInferenceClientPure

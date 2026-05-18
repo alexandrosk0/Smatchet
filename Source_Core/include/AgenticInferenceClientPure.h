@@ -1,6 +1,7 @@
 #ifndef SMATCHET_AGENTIC_INFERENCE_CLIENT_PURE_H
 #define SMATCHET_AGENTIC_INFERENCE_CLIENT_PURE_H
 
+#include <cstddef>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -78,6 +79,33 @@ bool ParseInferenceResponse(const std::string& jsonBody,
 // language tag) at the very start and the trailing triple-backtick at the
 // very end are removed.
 std::string StripMarkdownCodeFence(const std::string& s);
+
+// Hard cap on the accumulated streamed LLM response body, in bytes. Pillar 3
+// defense — a hostile or compromised provider can stream gigabytes of delta
+// chunks before terminating; without a cap, the accumulator buffer grows
+// unbounded and OOMs the process. 10 MB is well above the largest legitimate
+// triage response we have observed (~12 KB JSON envelope) while still small
+// enough to fail loudly before causing harm. Bundle B SH1.
+constexpr std::size_t kMaxLlmResponseBytes = 10 * 1024 * 1024;
+
+// Returns true when appending `addBytes` more bytes to a buffer that already
+// holds `currentBytes` would exceed kMaxLlmResponseBytes. Pure helper so the
+// streaming accumulator can short-circuit + cancel the request without
+// pulling cpr / HTTP into the test surface. Saturating add — if
+// currentBytes + addBytes would overflow std::size_t, the helper treats that
+// as "exceeds the cap" and returns true.
+bool WouldExceedResponseCap(std::size_t currentBytes, std::size_t addBytes);
+
+// Returns true iff the scheduled-poll worker may safely advance the poll
+// cursor to wall-clock after a TriageBatch iteration. Bundle B CR#232:1653 —
+// if any issue in the iteration failed (LLM timeout, GitHub 5xx, db error,
+// etc.), the cursor must stay put so the next poll re-fetches those issues.
+// Without this gate, the cursor advanced unconditionally and silently skipped
+// the failed issues, causing the triage queue to silently lose them.
+// Idempotency at the LLM + insert layer means re-triaging on the next poll is
+// cheap and safe. `failedCount` is the size of TriageBatch's per-issue error
+// list; zero failures → safe to advance.
+bool ShouldAdvancePollCursor(std::size_t failedCount);
 
 // Returns the canonical lowercase-camel action string used in the LLM wire
 // schema. Stable across versions — used by AgentProposalStore (T4) for

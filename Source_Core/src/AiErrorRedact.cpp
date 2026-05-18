@@ -61,9 +61,23 @@ std::string RedactProviderErrorBody(const std::string& body) {
     redactJsonField("x-api-key");
     redactJsonField("X-Api-Key");
     redactJsonField("anthropic-api-key");
+    // GitHub PAT — Bundle B SH3. Cover both the snake_case config-field name
+    // and the camelCase variant some error bodies echo. The header form
+    // ("X-GitHub-...") never carries the token verbatim; the value is what
+    // matters and the `gh*_` prefix sweep below catches the literal token
+    // shape regardless of surrounding key.
+    redactJsonField("github_pat");
+    redactJsonField("githubPat");
+    redactJsonField("GitHubPat");
 
-    // Common id prefixes (OpenAI: sk-..., org-..., proj_..., asst_...).
-    static const char* kIdPrefixes[] = {"sk-", "sk_", "org-", "proj_", "asst_"};
+    // Common id prefixes:
+    //   OpenAI:  sk-..., sk_..., org-..., proj_..., asst_...
+    //   GitHub:  ghp_..., gho_..., ghs_..., ghu_..., ghr_... (PAT / OAuth /
+    //           server / user-to-server / refresh tokens — Bundle B SH3).
+    //           github_pat_ also handled below as a longer literal.
+    static const char* kIdPrefixes[] = {"sk-",  "sk_",         "org-", "proj_", "asst_",
+                                        "ghp_", "gho_",        "ghs_", "ghu_",  "ghr_",
+                                        "github_pat_"};
     for (const char* prefix : kIdPrefixes) {
         size_t i = 0;
         const size_t pl = std::strlen(prefix);

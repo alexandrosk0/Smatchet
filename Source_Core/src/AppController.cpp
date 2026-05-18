@@ -1777,15 +1777,23 @@ void AppController::AgenticPollWorkerLoop() {
                         "AppController::AgenticPollWorkerLoop: %s/%s scanned=%zu inserted=%d failed=%d (since=%lld)",
                         owner.c_str(), repo.c_str(), keys.size(), totalInserted, totalFailed,
                         static_cast<long long>(prevCursor));
-                    // Advance cursor to wall-clock — GitHub's updated_at monotonicity guarantees
-                    // we don't miss intervening edits. Using max(updated_at) of the returned set
-                    // would also work, but requires parsing every payload; wall-clock is cheaper
-                    // and the worst case (poll-clock skew) is bounded by interval seconds.
-                    const std::int64_t nowSec = std::chrono::duration_cast<std::chrono::seconds>(
-                                                    std::chrono::system_clock::now().time_since_epoch())
-                                                    .count();
-                    std::string setErr;
-                    agentProposalStore_->SetPollCursor("github", cfg.AgenticPollQuery, nowSec, setErr);
+                    // Bundle B CR#232:1653 — only advance the cursor when every issue in the
+                    // iteration succeeded. If ANY per-issue triage failed (LLM timeout,
+                    // GitHub 5xx, db error, ...) we must leave the cursor at the previous
+                    // value so the next poll re-fetches those issues. Otherwise the cursor
+                    // silently skips them and they vanish from the queue. Idempotency at
+                    // the LLM + InsertMany layer keeps re-triage cheap.
+                    if (AgenticInferenceClientPure::ShouldAdvancePollCursor(static_cast<std::size_t>(totalFailed))) {
+                        const std::int64_t nowSec = std::chrono::duration_cast<std::chrono::seconds>(
+                                                        std::chrono::system_clock::now().time_since_epoch())
+                                                        .count();
+                        std::string setErr;
+                        agentProposalStore_->SetPollCursor("github", cfg.AgenticPollQuery, nowSec, setErr);
+                    } else {
+                        LOG_WARN("AppController::AgenticPollWorkerLoop: %s/%s — %d per-issue failure(s); "
+                                 "leaving cursor at %lld for retry on next poll",
+                                 owner.c_str(), repo.c_str(), totalFailed, static_cast<long long>(prevCursor));
+                    }
                 } else {
                     LOG_WARN("AppController::AgenticPollWorkerLoop: ListOpenIssuesForRepo failed: %s", listErr.c_str());
                 }

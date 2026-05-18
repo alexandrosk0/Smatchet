@@ -64,6 +64,9 @@ bool LooksSensitiveKey(const std::string& key) {
            k.find("account_id") != std::string::npos || k.find("email") != std::string::npos ||
            k.find("p4_user") != std::string::npos || k.find("assignee") != std::string::npos ||
            k.find("reporter") != std::string::npos || k.find("creator") != std::string::npos ||
+           // Bundle B SH3 — GitHub PAT field names. Specific substrings to
+           // avoid false positives on "path" / "patch" etc.
+           k.find("github_pat") != std::string::npos || k.find("githubpat") != std::string::npos ||
            k.find("watchers") != std::string::npos || k == "summary" || k == "body" || k == "text";
 }
 
