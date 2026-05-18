@@ -126,6 +126,10 @@ if(SMATCHET_WITH_AGENTIC)
         # no fixture file is required. Pulls AgenticInferenceClientPure already linked above.
         Source_Core/AgentProposalStore.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentProposalStore.cpp"
+        # T5 — AgenticTriageController against mock IGitHubReadClient + IInferenceClient
+        # interfaces. The fakes carry no HTTP / SQLite; AgentProposalStore is :memory:.
+        Source_Core/AgenticTriageController.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticTriageController.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

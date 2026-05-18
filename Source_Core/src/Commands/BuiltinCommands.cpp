@@ -44,6 +44,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterScenarioCommands(reg, app);
     RegisterUiTestCommands(reg, app);
     RegisterAiCommands(reg, app);
+    RegisterAgenticCommands(reg, app);
     RegisterAutomationCommands(reg, app);
 
     RegisterViewToggleCommands(reg, app);

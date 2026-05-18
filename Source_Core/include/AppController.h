@@ -51,6 +51,13 @@ class PluginHost;
 class AgentProposalStore;
 #if defined(SMATCHET_WITH_AGENTIC)
 #include "AgentProposalStore.h"
+// AgenticTriageController + the IGitHubReadClient / IInferenceClient interfaces it depends on.
+// Pulled fully into the AGENTIC=ON header so the unique_ptr<AgenticTriageController> member
+// instantiated by every AppController-consuming TU sees a complete type. Same rationale as
+// AgentProposalStore above.
+#include "AgenticInferenceClient.h"
+#include "AgenticTriageController.h"
+#include "GitHubClient.h"
 #endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
@@ -249,6 +256,16 @@ class AppController
     /// The accessor is declared unconditionally so call sites in T5+ can use a single
     /// guard pattern (`if (auto* s = app.GetAgentProposalStore())`) in both gating states.
     AgentProposalStore* GetAgentProposalStore() noexcept;
+
+#if defined(SMATCHET_WITH_AGENTIC)
+    /// Agentic triage controller (T5). Lazily constructed on first call —
+    /// requires `cfg.GitHubPat` to be non-empty and the proposal store to be
+    /// initialised. Returns nullptr when either precondition fails, so CLI /
+    /// scheduled-poll callers degrade with a clear "configure GitHub PAT"
+    /// message instead of crashing. Owned by AppController; pointer is stable
+    /// for the lifetime of the controller.
+    smatchet::agentic::AgenticTriageController* GetAgenticTriageController() noexcept;
+#endif
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
     /// Phase E Lua glue calls these unconditionally; the OFF build silently no-ops so the
@@ -1056,6 +1073,17 @@ class AppController
     // cache (which already opens a SQLite handle via LocalCacheManager) — they target
     // different DB files so there's no contention.
     std::unique_ptr<AgentProposalStore> agentProposalStore_;
+
+    // Agentic triage controller (T5) + its concrete dependencies (GitHubClient + inference).
+    // Lazy: all four are constructed by `GetAgenticTriageController()` on first call, once
+    // `cfg.GitHubPat` is known non-empty. The interface-adapter shims (impl-side, .cpp only)
+    // bridge GitHubClient / AgenticInferenceClient to the IGitHubReadClient / IInferenceClient
+    // virtuals so tests can swap concrete implementations.
+    std::unique_ptr<GitHubClient> agenticGithubClient_;
+    std::unique_ptr<AgenticInferenceClient> agenticInferenceClient_;
+    std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;
+    std::unique_ptr<smatchet::agentic::IInferenceClient> agenticInferenceAdapter_;
+    std::unique_ptr<smatchet::agentic::AgenticTriageController> agenticTriageController_;
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)

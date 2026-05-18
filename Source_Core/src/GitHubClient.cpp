@@ -429,6 +429,118 @@ bool GitHubClient::AssigneeSet(const std::string& issueKey, const std::string& u
     return true;
 }
 
+// ─── Read endpoints (agentic triage seeds) ──────────────────────────────────
+//
+// Both methods follow the same shape as FetchIssueComments above: PAT presence
+// check, issue-key parse (where applicable), inline bearer-auth header,
+// status-code check + redacted error compose, JSON parse. Reads are NOT
+// audit-trail entries — that surface is reserved for write methods per the
+// existing Jira / Plane read-path precedent.
+
+bool GitHubClient::FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError) {
+    outBody.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueRootSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_),
+                               cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchIssueBody failed: %s", outError.c_str());
+        return false;
+    }
+
+    nlohmann::json obj;
+    try {
+        obj = nlohmann::json::parse(r.text);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("GitHub /issues/{n} response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!obj.is_object()) {
+        outError = "GitHub /issues/{n} response is not a JSON object.";
+        return false;
+    }
+    // GitHub returns `body: null` for issues created without a description. Treat as empty string.
+    if (obj.contains("body") && obj["body"].is_string()) {
+        outBody = obj["body"].get<std::string>();
+    }
+    return true;
+}
+
+bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::string& repo,
+                                         std::vector<std::string>& outKeys, std::string& outError) {
+    outKeys.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+    if (owner.empty() || repo.empty()) {
+        outError = "Owner and repo are required.";
+        return false;
+    }
+
+    // per_page bound (30) tracks the agentic-flow plan's predictable-cost cap for the
+    // single-shot triage batch. T7's cursor-driven poll path replaces this with pagination.
+    const std::string suffix = "/repos/" + owner + "/" + repo + "/issues?state=open&per_page=30";
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_),
+                               cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::ListOpenIssuesForRepo failed: %s", outError.c_str());
+        return false;
+    }
+
+    nlohmann::json arr;
+    try {
+        arr = nlohmann::json::parse(r.text);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("GitHub /issues response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!arr.is_array()) {
+        outError = "GitHub /issues response is not a JSON array.";
+        return false;
+    }
+
+    outKeys.reserve(arr.size());
+    // GitHub's /issues endpoint returns BOTH issues and PRs; PR rows carry a
+    // `pull_request` object. Skip those — the agentic triage flow is issue-only.
+    for (const auto& item : arr) {
+        if (!item.is_object())
+            continue;
+        if (item.contains("pull_request"))
+            continue;
+        if (!item.contains("number") || !item["number"].is_number_integer())
+            continue;
+        const std::int64_t number = item["number"].get<std::int64_t>();
+        if (number <= 0)
+            continue;
+        outKeys.push_back(GitHubClientHelpers::FormatGitHubIssueKey(owner, repo, number));
+    }
+    return true;
+}
+
 bool GitHubClient::StateTransition(const std::string& issueKey, const std::string& state, std::string& outError) {
     outError.clear();
     const std::string auditAction = "StateTransition";
