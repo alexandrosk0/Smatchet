@@ -340,6 +340,23 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     if (e.Cursor != nullptr) {
         *e.Cursor = static_cast<int>(insertAt + copyLen);
     }
+    // Signal the InputText draw site that ImGui's internal state buffer needs
+    // a reload from `e.Buf`. Without this, when the splice target is the
+    // currently-focused widget ImGui ignores `buf` and overwrites it with the
+    // stale internal `state->TextA` later in the same frame, silently erasing
+    // the splice. See header comment on `pendingReloadItemId_`. We prefer
+    // `e.ItemId` (the entries_ id, real ImGui id when the wrapper hook
+    // captured it), falling back to `shadowItemId_` for the shadow-fallback
+    // path. A zero result means no consumer-side reload is needed (test driver
+    // or scenario runner with no live ImGui frame).
+    const unsigned int reloadId = (e.ItemId != 0u) ? e.ItemId : shadowItemId_;
+    if (reloadId != 0u) {
+        pendingReloadItemId_.store(reloadId, std::memory_order_release);
+    }
+}
+
+unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
+    return pendingReloadItemId_.exchange(0u, std::memory_order_acq_rel);
 }
 
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {

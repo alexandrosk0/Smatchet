@@ -98,7 +98,8 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
 // for the multiline editor lands when an ImGuiInputTextCallback wire-up is
 // added (Phase E or later).
 inline void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
-    if (::ImGui::IsItemActive() || ::ImGui::IsItemFocused()) {
+    const bool active = ::ImGui::IsItemActive() || ::ImGui::IsItemFocused();
+    if (active) {
         // Capture the just-drawn widget's ImGui id so the router can pick the
         // correct entry from multiple registered surfaces when
         // `InsertIntoFocusedInputText(text, ImGui::GetActiveID())` runs.

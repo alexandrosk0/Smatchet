@@ -72,3 +72,8 @@ bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
 void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> /*cb*/) {}
 
 void DictationInsertionRouter::TriggerAiAssistantSend() {}
+
+unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
+    // No-op in stub mode — no live ImGui state to reload.
+    return 0u;
+}

@@ -865,9 +865,9 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
             LOG_DEBUG("Whisper hotkey: inserted %zu bytes of transcription", text.size());
             const TrackerConfig cfgPost = ConfigManager::Load();
-            if (cfgPost.WhisperAutoSendOnPunctuation &&
-                g_dictationRouter.IsFocusedTargetAiAssistant() &&
-                EndsWithSentencePunctuation(text)) {
+            const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
+            const bool endsPunct = EndsWithSentencePunctuation(text);
+            if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
                 LOG_DEBUG("Whisper hotkey: auto-send on punctuation triggered for AI Assistant");
                 g_dictationRouter.TriggerAiAssistantSend();
             }

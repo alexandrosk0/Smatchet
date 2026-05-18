@@ -116,6 +116,20 @@ class DictationInsertionRouter : public IDictationHost {
     /// post-back); consumer is the UI thread polling for the indicator.
     void SetTranscribing(bool active);
 
+    /// Test-and-clear an ImGui item id that needs its `ImGuiInputTextState`
+    /// reloaded from `buf` on the next frame. Set by
+    /// `InsertIntoFocusedInputText` whenever a splice lands while the target
+    /// widget is currently the active ImGui item — ImGui caches the buffer
+    /// contents in `state->TextA` and ignores the external `buf` unless
+    /// `state->WantReloadUserBuf` is true (see imgui_widgets.cpp:4821), so a
+    /// splice into a focused InputText would otherwise be silently overwritten
+    /// when InputText runs later in the same frame. The AI Assistant draw
+    /// (and any other caller hosting a focused InputText splice target) drains
+    /// this on every frame and, when non-zero, calls
+    /// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()` BEFORE the
+    /// InputText call. Returns 0 when no reload is pending.
+    unsigned int ConsumePendingReloadItemId();
+
   private:
     struct Entry {
         char* Buf = nullptr;
@@ -156,6 +170,16 @@ class DictationInsertionRouter : public IDictationHost {
     std::atomic<bool> recording_{false};
     std::atomic<bool> transcribing_{false};
     std::atomic<float> lastPeakAmplitude_{0.0f};
+
+    // Set by `InsertIntoFocusedInputText` when a splice lands into a buf whose
+    // owning widget is currently active in ImGui (the typical Whisper-dictation
+    // path — the AI Assistant chat input is focused while the user holds the
+    // hotkey). Drained by `ConsumePendingReloadItemId` on the UI thread the
+    // following frame so the InputText draw can call
+    // `ReloadUserBufAndMoveToEnd()` and pick up the splice. Atomic so the
+    // splice path (which already holds entries mutex_) can set it without an
+    // additional lock; drain is single-reader on the UI thread.
+    std::atomic<unsigned int> pendingReloadItemId_{0u};
 };
 
 /// Process-wide router instance. Defined exactly once — in
