@@ -135,6 +135,11 @@ if(SMATCHET_WITH_AGENTIC)
         # itself stays bucket-E only.
         Source_Core/SmatchetAgentProposalsUiPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp"
+        # T8 — pure scenario-fixture loaders (GitHub comments array + Ollama proposals
+        # envelope) used by the agent-triage-roundtrip scenario. Doctest covers the
+        # mapping rules + ISO-8601 helper; the scenario itself is bucket-A automated.
+        Source_Core/AgentTriageScenarioFixtures.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentTriageScenarioFixtures.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

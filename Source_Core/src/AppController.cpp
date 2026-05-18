@@ -1417,6 +1417,19 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     });
 #endif
 
+#if defined(SMATCHET_WITH_AGENTIC)
+    // End-to-end agentic-triage regression gate. The scenario wires
+    // AgenticTriageController against in-process mock IGitHubReadClient +
+    // IInferenceClient seams so no live HTTP / LLM traffic is needed. The
+    // scenario TU is source-list-conditional on SMATCHET_WITH_AGENTIC; the
+    // factory call is ifdef-wrapped because the OFF build excludes the
+    // controller + store symbols the scenario depends on.
+    scenarioRunner_->RegisterFactory("agent-triage-roundtrip", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAgentTriageScenario();
+        return MakeAgentTriageScenario();
+    });
+#endif
+
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
     // Lua host, offline queue, etc.). See docs/design/applied/command-system-plan.md.
