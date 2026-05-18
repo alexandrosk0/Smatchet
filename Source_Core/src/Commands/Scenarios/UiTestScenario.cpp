@@ -29,6 +29,12 @@ namespace {
 // hook runs while the scenario is being torn down on the same thread (both
 // are UI thread today; defensive nevertheless).
 std::atomic<ImGuiTestEngine*> g_active_engine{nullptr};
+
+// Active AppController pointer surfaced via SmatchetActiveUiTestAppController()
+// for bucket-E tests that need `app.mainThreadDispatcher` (e.g. the
+// ai_prefs_autosave_flow verify-on-save variants that drive
+// AiPrefsTestConnection::TriggerProbe). Same UI-thread semantics as g_active_engine.
+std::atomic<AppController*> g_active_app{nullptr};
 #endif
 
 // Per-feature registration entry point. Implemented in
@@ -50,10 +56,11 @@ UiTestScenario::~UiTestScenario() {
         engine_ = nullptr;
     }
     g_active_engine.store(nullptr, std::memory_order_release);
+    g_active_app.store(nullptr, std::memory_order_release);
 #endif
 }
 
-void UiTestScenario::OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) {
+void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) {
     filter_ = args.value("name", std::string());
     outPath_ = args.value("outPath", std::string());
     const bool all = args.value("all", false);
@@ -95,6 +102,7 @@ void UiTestScenario::OnStart(AppController& /*app*/, const nlohmann::json& args,
 
     ImGuiTestEngine_Start(engine_, uiCtx);
     g_active_engine.store(engine_, std::memory_order_release);
+    g_active_app.store(&app, std::memory_order_release);
 
     // QueueTests with an empty filter runs every registered test in the
     // ImGuiTestGroup_Tests group. The filter is a comma-separated wildcard
@@ -148,6 +156,7 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
         ImGuiTestEngine_GetResult(engine_, tested_, passed_);
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
+        g_active_app.store(nullptr, std::memory_order_release);
         ImGuiTestEngine_DestroyContext(engine_);
         engine_ = nullptr;
     }
@@ -170,6 +179,7 @@ void UiTestScenario::OnCancel(AppController& /*app*/) {
     if (engine_ != nullptr) {
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
+        g_active_app.store(nullptr, std::memory_order_release);
         ImGuiTestEngine_DestroyContext(engine_);
         engine_ = nullptr;
     }
@@ -188,6 +198,10 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario() {
 #if defined(SMATCHET_BUILD_UI_TESTS)
 extern "C" ImGuiTestEngine* SmatchetActiveUiTestEngine() {
     return smatchet::cmd::g_active_engine.load(std::memory_order_acquire);
+}
+
+AppController* SmatchetActiveUiTestAppController() {
+    return smatchet::cmd::g_active_app.load(std::memory_order_acquire);
 }
 
 // Weak default. When SMATCHET_BUILD_UI_TESTS is ON but no test sources are
