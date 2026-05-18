@@ -2,17 +2,25 @@
 #define SMATCHET_AGENT_PROPOSAL_STORE_H
 
 // AgentProposalStore — SQLite persistence for AgentProposal (T4 of the
-// agentic-flow plan, decisions #4 + #14). Two tables:
+// agentic-flow plan, decisions #4 + #14). Three tables:
 //
 //   agent_proposals   — one row per LLM-suggested action, lifecycle-tracked
 //                       through AgentProposalState transitions.
 //   agent_poll_cursor — durability for the GitHub poll cursor (per
 //                       (source_tracker, repo_key) tuple) so a restart never
 //                       re-triages the same issues.
+//   schema_version    — single-row migration ledger; version 1 is the first
+//                       shipped state of the agentic SQLite surface. Older
+//                       databases (unversioned, created on a build before
+//                       this row landed) auto-upgrade to version 1 on open
+//                       since the agent_* tables are additive; the open
+//                       path stamps version=1 idempotently and never
+//                       double-bumps on subsequent re-opens.
 //
-// Schema-version bump deferred to T9 per plan decision #14 — the tables are
-// created via CREATE TABLE IF NOT EXISTS so they coexist with the existing
-// schema without touching the cache_meta version row.
+// Migration policy: when an older shipped version exists, AgentProposalStore
+// applies migrations in numeric order on open. Migrations are pure SQL +
+// idempotent — re-running them must be safe. Version 1 has no migration body
+// (it is the first recorded shipped state); future bumps add a step.
 
 #include "AgentProposal.h"
 
@@ -84,7 +92,27 @@ class AgentProposalStore {
     bool SetPollCursor(const std::string& sourceTracker, const std::string& repoKey, int64_t lastSeenUpdatedAt,
                        std::string& outError);
 
+    // The shipped schema version. Bumped exactly once per shipped feature
+    // increment (AGENTS.md § Schema-version bumps). Increment in lock-step
+    // with EnsureSchemaVersion's migration ladder whenever a real migration
+    // body lands.
+    static constexpr int kCurrentSchemaVersion = 1;
+
+    // Returns the schema_version recorded in the database. Stamped at version
+    // 1 on first open (whether the db is brand-new or an older unversioned
+    // db) and never double-bumps on subsequent opens. Returns false + sets
+    // outError on DB-read failure.
+    bool GetSchemaVersion(int& outVersion, std::string& outError) const;
+
   private:
+    // Creates the schema_version table if missing, inserts the current
+    // shipped version on first call, applies any pending migrations in
+    // numeric order. Idempotent: subsequent calls find the row already at
+    // kCurrentSchemaVersion and return without mutation. Throws on
+    // unrecoverable DB error so the open path surfaces the failure to the
+    // caller via the std::runtime_error path.
+    void EnsureSchemaVersion();
+
     std::unique_ptr<SQLite::Database> db_;
 };
 
