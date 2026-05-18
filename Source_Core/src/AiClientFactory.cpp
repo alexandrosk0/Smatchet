@@ -11,7 +11,16 @@
 
 namespace AiClientFactory {
 
+namespace {
+TestOverrideFn s_testOverride = nullptr;
+}
+
+void SetTestOverride(TestOverrideFn fn) { s_testOverride = fn; }
+
 std::unique_ptr<IAiClient> MakeAiClient(AiProvider provider) {
+    if (s_testOverride) {
+        return s_testOverride(provider);
+    }
     switch (provider) {
     case AiProvider::OpenAi:
     case AiProvider::OllamaOpenAiCompat:

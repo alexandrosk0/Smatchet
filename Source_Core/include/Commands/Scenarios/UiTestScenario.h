@@ -65,6 +65,13 @@ class UiTestScenario : public IScenario {
 // header (which would otherwise leak nlohmann/json into main.cpp).
 #if defined(SMATCHET_BUILD_UI_TESTS)
 extern "C" ImGuiTestEngine* SmatchetActiveUiTestEngine();
+
+// Bucket-E test functions that need AppController (e.g. for
+// `app.mainThreadDispatcher`) call this from inside TestFunc. Returns nullptr
+// outside an active ui_test.run scenario. Stored at OnStart, cleared at
+// OnFinish / OnCancel / dtor. UI thread only.
+class AppController;
+AppController* SmatchetActiveUiTestAppController();
 #endif
 
 #endif // SMATCHET_COMMANDS_SCENARIOS_UITESTSCENARIO_H

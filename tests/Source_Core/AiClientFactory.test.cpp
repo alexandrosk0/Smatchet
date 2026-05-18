@@ -94,3 +94,55 @@ TEST_CASE("AiClientFactory: MakeAiClient(OllamaNative) returns a non-null Ollama
     REQUIRE(client != nullptr);
     CHECK(client->GetProviderName() == "ollama");
 }
+
+// --- SetTestOverride seam (bucket-E support; see docs/design/ai-client-test-override.md) ----
+
+namespace {
+
+class TestStubClient : public IAiClient {
+  public:
+    std::string GetProviderName() const override { return "stub-test-override"; }
+    std::string ProbeReachability(const AiClientConfig& /*cfg*/) override { return std::string(); }
+    void SendStreaming(const AiClientConfig& /*cfg*/, const AiChatRequest& /*req*/, const DeltaCallback& /*onDelta*/,
+                       const ErrorCallback& /*onError*/, const CancelToken& /*cancel*/) override {}
+};
+
+std::unique_ptr<IAiClient> MakeTestStub(AiProvider /*provider*/) {
+    return std::unique_ptr<IAiClient>(new TestStubClient());
+}
+
+} // namespace
+
+TEST_CASE("AiClientFactory: SetTestOverride routes MakeAiClient through injector") {
+    AiClientFactory::SetTestOverride(&MakeTestStub);
+
+    // Override fires regardless of the requested provider.
+    {
+        std::unique_ptr<IAiClient> c = AiClientFactory::MakeAiClient(AiProvider::OpenAi);
+        REQUIRE(c != nullptr);
+        CHECK(c->GetProviderName() == "stub-test-override");
+    }
+    {
+        std::unique_ptr<IAiClient> c = AiClientFactory::MakeAiClient(AiProvider::Anthropic);
+        REQUIRE(c != nullptr);
+        CHECK(c->GetProviderName() == "stub-test-override");
+    }
+
+    // Clear → default provider-kind switch resumes.
+    AiClientFactory::SetTestOverride(nullptr);
+    {
+        std::unique_ptr<IAiClient> c = AiClientFactory::MakeAiClient(AiProvider::OpenAi);
+        REQUIRE(c != nullptr);
+        CHECK(c->GetProviderName() == "openai");
+    }
+}
+
+TEST_CASE("AiClientFactory: SetTestOverride hands out non-null on repeated calls") {
+    AiClientFactory::SetTestOverride(&MakeTestStub);
+    for (int i = 0; i < 3; ++i) {
+        std::unique_ptr<IAiClient> c = AiClientFactory::MakeAiClient(AiProvider::OpenAi);
+        REQUIRE(c != nullptr);
+        CHECK(c->GetProviderName() == "stub-test-override");
+    }
+    AiClientFactory::SetTestOverride(nullptr);
+}

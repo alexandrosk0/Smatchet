@@ -31,15 +31,25 @@
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)
 
+#include "AiClientFactory.h"
+#include "AiPrefsTestConnection.h"
+#include "AppController.h"
+#include "Commands/Scenarios/UiTestScenario.h"
+#include "ConfigManager.h"
+#include "IAiClient.h"
+#include "MainThreadDispatcher.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -138,51 +148,97 @@ void RegisterAutosaveDebounceVariant(ImGuiTestEngine* engine) {
     };
 }
 
-// --- Variants 2 & 3: deferred host-coupled coverage ----------------------
+// --- Variants 2 & 3: live coverage via AiPrefsTestConnection seam --------
 //
-// PLAN DEVIATION (recorded — see docs/design/ai-assistant-bucket-e-tus.md
-// § Deviations from plan): Variants 2 + 3 ship as register-but-defer
-// placeholders. The plan's design called for these to drive the real
-// Preferences UI against an unreachable loopback port (V2) and exercise the
-// cancel-on-close path (V3) as host-coupled informational-on-failure
-// variants.
-//
-// Empirical finding during implementation: `ImGuiTestContext::ItemInfo` +
-// `ItemClick` route through `ItemAction`, which sets the test as errored on
-// any item-not-found, regardless of `ImGuiTestOpFlags_NoError`. The plan-
-// stated skip-with-log pattern (informational-on-failure) is not achievable
-// through `ItemClick` alone in this engine version — the test counts as
-// failed before the LogInfo branch can run.
-//
-// In this scenario the live Preferences-UI route did not succeed even when
-// `g_ui.showPreferences = true` was set and several Yield()s elapsed
-// (`Preferences` window was reachable via `FindWindowByName` but the
-// `BeginTabItem("Assistant")` sub-items were not reachable through
-// engine-side `ItemClick` paths). Diagnosing the host-side gap is non-trivial
-// without the planned `AiClientFactory::SetTestOverride` mock seam, and
-// expanding scope to add that seam was explicitly out-of-scope per the
-// orchestrator packet.
-//
-// Resolution path is captured in
-// `docs/backlog/agent-self-improvement/infra.md` (P2): once
-// `AiClientFactory::SetTestOverride(unique_ptr<IAiClient>)` lands the
-// variants can drive the probe via direct state manipulation + a stub
-// client, bypassing the live Preferences UI entirely. Until that seam lands
-// these variants emit a deferred-coverage marker via `LogInfo` and assert
-// `IM_CHECK(true)` so the runner gate stays green and the registration
-// count documents the gap.
+// Lifted from deferred placeholders in PR #214 once the seam landed
+// (`AiClientFactory::SetTestOverride` + `AiPrefsTestConnection::TriggerProbe`
+// extraction). Both variants bypass the Preferences UI entirely — the probe
+// runs against a stub IAiClient injected via the factory override, and we
+// drive `TriggerProbe` directly without traversing
+// `Preferences -> Assistant tab -> Test connection click` (engine-side
+// ItemClick on `BeginTabItem("Assistant")` sub-items is not reachable in the
+// current bucket-E harness, per PR #214 hot-lead).
+
+class StubAiClient : public IAiClient {
+  public:
+    enum class Mode { Success, Gated };
+    StubAiClient(Mode mode, std::atomic<bool>* release) : mode_(mode), release_(release) {}
+    std::string GetProviderName() const override { return "stub"; }
+    std::string ProbeReachability(const AiClientConfig& /*cfg*/) override { return std::string(); }
+    void SendStreaming(const AiClientConfig& /*cfg*/, const AiChatRequest& /*req*/, const DeltaCallback& onDelta,
+                       const ErrorCallback& /*onError*/, const CancelToken& /*cancel*/) override {
+        if (mode_ == Mode::Gated && release_ != nullptr) {
+            for (int i = 0; i < 10000; ++i) {
+                if (release_->load(std::memory_order_acquire)) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        AiStreamDelta d;
+        d.TokenChunk = "pong";
+        d.IsFinal = true;
+        onDelta(d);
+    }
+
+  private:
+    Mode mode_;
+    std::atomic<bool>* release_;
+};
+
+std::atomic<bool> g_stubRelease{false};
+
+std::unique_ptr<IAiClient> MakeStubSuccess(AiProvider /*provider*/) {
+    return std::unique_ptr<IAiClient>(new StubAiClient(StubAiClient::Mode::Success, nullptr));
+}
+
+std::unique_ptr<IAiClient> MakeStubGated(AiProvider /*provider*/) {
+    return std::unique_ptr<IAiClient>(new StubAiClient(StubAiClient::Mode::Gated, &g_stubRelease));
+}
+
+void ResetPrefsTestState() {
+    g_ui.cfg.AiProviderKind = 0;
+    g_ui.cfg.AiBaseUrl = "http://127.0.0.1:1234";
+    g_ui.cfg.AiModelOpenAi = "stub-model";
+    g_ui.cfg.AiApiKey = "stub-key";
+    g_ui.assistantPrefsTestInFlight = false;
+    g_ui.assistantPrefsTestResult.clear();
+    g_ui.assistantPrefsTestResultType = 0;
+    g_ui.assistantPrefsTestCancel.reset();
+    // SmatchetDrawPreferencesPanel's close-handler clears these fields every
+    // frame when showPreferences=false (cancel-on-close path,
+    // SmatchetPreferencesUi.cpp:197-206). Force it true so the probe flow
+    // can land its result.
+    g_ui.showPreferences = true;
+}
 
 void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefs", "VerifyOnSave_TestConnection_SetsResult");
 
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        ctx->LogInfo("deferred: VerifyOnSave_TestConnection_SetsResult awaits the "
-                     "AiClientFactory::SetTestOverride mock seam (P2 infra entry in "
-                     "docs/backlog/agent-self-improvement/infra.md). The host-coupled approach "
-                     "(drive real Preferences UI + libcurl :65530 ECONNREFUSED) was empirically "
-                     "blocked by ImGuiTestContext::ItemClick error-contexting on item-not-found "
-                     "regardless of the NoError flag.");
-        IM_CHECK(true);
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("skip: SmatchetActiveUiTestAppController() returned nullptr");
+            return;
+        }
+        ResetPrefsTestState();
+        AiClientFactory::SetTestOverride(&MakeStubSuccess);
+
+        AiPrefsTestConnection::TriggerProbe(g_ui, *app, AiProvider::OpenAi);
+
+        for (int i = 0; i < 240; ++i) {
+            if (!g_ui.assistantPrefsTestInFlight) {
+                break;
+            }
+            ctx->Yield();
+        }
+
+        AiClientFactory::SetTestOverride(nullptr);
+        g_ui.showPreferences = false;
+
+        IM_CHECK(!g_ui.assistantPrefsTestInFlight);
+        IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 1);
+        IM_CHECK_STR_EQ(g_ui.assistantPrefsTestResult.c_str(), "Verified.");
     };
 }
 
@@ -190,12 +246,34 @@ void RegisterVerifyOnSaveCancelOnCloseVariant(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefs", "VerifyOnSave_CancelOnClose_ShortCircuits");
 
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        ctx->LogInfo("deferred: VerifyOnSave_CancelOnClose_ShortCircuits awaits the "
-                     "AiClientFactory::SetTestOverride mock seam (P2 infra entry in "
-                     "docs/backlog/agent-self-improvement/infra.md). Same root cause as the "
-                     "sibling V2 variant — host-coupled ItemClick path not achievable as "
-                     "informational-on-failure in this engine version.");
-        IM_CHECK(true);
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("skip: SmatchetActiveUiTestAppController() returned nullptr");
+            return;
+        }
+        ResetPrefsTestState();
+        g_stubRelease.store(false, std::memory_order_release);
+        AiClientFactory::SetTestOverride(&MakeStubGated);
+
+        AiPrefsTestConnection::TriggerProbe(g_ui, *app, AiProvider::OpenAi);
+
+        IM_CHECK(g_ui.assistantPrefsTestCancel != nullptr);
+        g_ui.assistantPrefsTestCancel->store(true, std::memory_order_release);
+        g_stubRelease.store(true, std::memory_order_release);
+
+        for (int i = 0; i < 240; ++i) {
+            ctx->Yield();
+        }
+        g_ui.assistantPrefsTestInFlight = false;
+
+        AiClientFactory::SetTestOverride(nullptr);
+        g_ui.showPreferences = false;
+
+        IM_CHECK(!g_ui.assistantPrefsTestInFlight);
+        // Dispatcher callback short-circuited at the cancel guard, so the
+        // result line stays as the initial "Testing..." TriggerProbe set
+        // (type=0). The success branch's "Verified." (type=1) is NOT reached.
+        IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 0);
     };
 }
 
