@@ -13,18 +13,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-17 · code-review · [bug] · P1 — `CommandPaletteFuzzyScenario` flips `BackendHasBeenReachable=true` before `outErr` early-return guard; latch persists if OnStart errors
-  Details: `Source_Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` snapshots `savedBackendReachable_` then flips `cfg.BackendHasBeenReachable=true` *before* the `outErr` early-return guard. If `OnStart` errors out early, `OnCancel`/`OnFinish` may never run → latch persists for the session.
-  Concrete next action: move the flip *after* the error-return guard. Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
-
-- 2026-05-17 · code-review · [bug] · P1 — `Source_Core/include/AppController.h:660-693` asymmetric `override` keyword guarding under `SMATCHET_WITH_LUA_AUTOMATION`
-  Details: Declarations themselves wrapped in `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` but some `override` keywords sit outside the guard. If `LUA_AUTOMATION=0` is ever exercised, compile break.
-  Concrete next action: make `override` follow each declaration's guard. Surfaced by retrospective code-review sweep on PR #144.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · code-review · [bug] · P2 — `Source_Core/src/AiClientFactory.cpp:14,17,20` uses `new OpenAiClient()` wrapped in `unique_ptr` instead of `std::make_unique`
   Details: Violates AGENTS.md § Quality "no raw `new`/`delete` — use `std::unique_ptr` + `make_unique`".
   Concrete next action: rewrite three call sites to `std::make_unique<OpenAiClient>(...)`. Surfaced by retrospective code-review sweep on PR #140.

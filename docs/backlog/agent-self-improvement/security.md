@@ -13,9 +13,9 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-17 · security-review · [security] · P1 — Default `AssistantContextBlockAuditTrail = true` silently exfils audit-trail PII on every AI prompt
-  Details: All 5 `cfg.AssistantContextBlock*` toggles default to `true` (per [`ConfigManager.h:208`](../../../Source_Core/include/ConfigManager.h)). The AuditTrail block in particular ships `BackendAuditTrail::ReadRecentEvents` JSON to the configured AI provider — assignee emails, custom-field PII, freeform comments. New users do not know this data leaves their machine until they audit the outbound payload. PR #176 deferred the fetch off the UI thread but the default-on policy still applies.
-  Concrete next action: flip `AssistantContextBlockAuditTrail` default to `false` in `ConfigManager.h`. Add a one-time first-send consent modal (driven by a new `cfg.AssistantOutboundConsentShown = false` field) that lists the 5 block names + sample payload sizes + a "what gets sent" expander before the first turn. ~3 h including modal UX.
+- 2026-05-17 · security-review · [security] · P2 — First-send outbound-context consent modal (consent-tracking field + UX)
+  Details: Default flip of `AssistantContextBlockAuditTrail` to `false` shipped (`ConfigManager.h:248`); remaining work from the original P1 entry is the one-time first-send consent modal. Modal should list the 5 `AssistantContextBlock*` block names + sample payload sizes + a "what gets sent" expander before the first turn. Drive via a new `cfg.AssistantOutboundConsentShown = false` field. Severity downgraded P1→P2 because the riskiest default (audit-trail PII auto-shipping) is now off.
+  Concrete next action: add `cfg.AssistantOutboundConsentShown` (default false); gate `AiAssistantController::RunRequest` on the consent modal first turn; render modal in `SmatchetAiAssistantUi.cpp`. ~3 h UX.
   Status: open
   Last-reviewed: 2026-05-17
 

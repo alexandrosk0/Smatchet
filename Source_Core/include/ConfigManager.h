@@ -241,7 +241,11 @@ struct TrackerConfig {
     bool AssistantContextBlockVisibleRows = true;
     bool AssistantContextBlockActiveTicket = true;
     bool AssistantContextBlockActiveView = true;
-    bool AssistantContextBlockAuditTrail = true;
+    // Default OFF: audit-trail blocks ship assignee emails, freeform comments, and custom-field
+    // values via BackendAuditTrail::ReadRecentEvents to the configured AI provider. New users
+    // opt-in explicitly via the Preferences > Assistant > Context tab. First-send consent modal
+    // (per docs/backlog/agent-self-improvement/security.md 2026-05-17 P1) tracked separately.
+    bool AssistantContextBlockAuditTrail = false;
     // When true, the Preferences "Save changes" button runs a live ProbeReachability
     // probe before committing the Assistant tab buffers. Static validation
     // (`AiPrefsValidator`) must still pass first; the probe is the live network /

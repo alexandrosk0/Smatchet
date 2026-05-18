@@ -7,6 +7,15 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-17 · security-review · [security] · P1 — Default `AssistantContextBlockAuditTrail = true` silently exfils audit-trail PII (default flipped; consent modal deferred)
+  Resolution: `Source_Core/include/ConfigManager.h:248` default flipped to `false`. New users no longer auto-ship `BackendAuditTrail::ReadRecentEvents` PII (assignee emails, custom-field values, freeform comments) on first AI prompt. Existing users retain their persisted setting (`j.value(...)` Load semantics preserve already-saved configs). One-time first-send consent modal split to a new P2 entry under `security.md` (downgraded P1→P2 since the riskiest default is now off).
+
+- 2026-05-17 · code-review · [bug] · P1 — `CommandPaletteFuzzyScenario` flips `BackendHasBeenReachable=true` before `outErr` early-return guard
+  Resolution: Verified `Source_Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` already has the screenshotPath empty-check `return` ahead of the latch flip (L60-63 before L72-73). Added a clarifying comment naming the invariant so any future outErr branch added between the path check and the flip is flagged at review.
+
+- 2026-05-17 · code-review · [bug] · P1 — `Source_Core/include/AppController.h:660-693` asymmetric `override` keyword guarding under `SMATCHET_WITH_LUA_AUTOMATION` (false positive)
+  Resolution: No code change. Audited every `override` in `AppController.h`. The two sites originally flagged (`FindFieldById` L698-702, `SubmitFieldEdit` L722-727) follow the correct shape: declarations always present, `override` keyword wrapped in `#if defined(SMATCHET_WITH_LUA_AUTOMATION)`. When LUA=OFF the keyword is elided and the declaration becomes a regular non-virtual method, which compiles cleanly. The cited L660-693 range contains zero `override` interactions. Other `override` sites (L123, L346-376) all sit inside larger `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` blocks where the base class `ILuaBindingHost` is available. Entry archived as false positive.
+
 - 2026-05-17 · code-review · [tooling] · P3 — `ai.dump-request` debug body / URL drifted from OpenAi wire post PR #184
   Resolution: PR #184 (`batch 2`) updated `OpenAiClient::BuildChatBody` to always emit `max_tokens = 4096` and `OpenAiClient::ResolveBaseUrl` to strip a trailing `/v1` / `/v1/`. The parallel debug builders in `Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp` (`BuildOpenAiBody`, `ResolveEndpointUrl`) were not updated, so `ai.dump-request` for `openai` + `ollama-openai` misreported the wire — no `max_tokens` field, and `http://localhost:1234/v1` showed `/v1/v1/chat/completions`. Anthropic dumper was already correct. Fix mirrors the wire path: `BuildOpenAiBody` gains a `maxTokens` param defaulting to 4096; new `StripOpenAiV1Suffix` helper applied to the OpenAi / OllamaOpenAiCompat branch of `ResolveEndpointUrl`. Same TU also picked up four pre-existing cppcheck / clang-tidy nits (`uselessCallsSubstr`, two `useStlAlgorithm` raw-loops folded into nlohmann's vector-conversion, `PInt` / `PString` using-decls moved inside `#if defined(SMATCHET_WITH_AI)` so the stub build is clean).
 
