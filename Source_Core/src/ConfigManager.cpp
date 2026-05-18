@@ -250,6 +250,11 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["handoff_pr_body_template"] = config.HandoffPrBodyTemplate;
     j["handoff_git_bin_path"] = config.HandoffGitBinPath;
     j["handoff_gh_bin_path"] = config.HandoffGhBinPath;
+    // H7 — PR-iteration loop tunables. Both clamped on Load to keep a
+    // hand-edited config from looping forever (budget < 1) or polling too
+    // aggressively (interval < 30s would hammer GitHub rate limits).
+    j["handoff_pr_iteration_budget"] = config.HandoffPrIterationBudget;
+    j["handoff_pr_comment_poll_interval_sec"] = config.HandoffPrCommentPollIntervalSec;
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -773,12 +778,30 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.HandoffPrBodyTemplate = j.value("handoff_pr_body_template", cfg.HandoffPrBodyTemplate);
             cfg.HandoffGitBinPath = j.value("handoff_git_bin_path", cfg.HandoffGitBinPath);
             cfg.HandoffGhBinPath = j.value("handoff_gh_bin_path", cfg.HandoffGhBinPath);
+            // H7 — PR-iteration tunables.
+            cfg.HandoffPrIterationBudget = j.value("handoff_pr_iteration_budget", cfg.HandoffPrIterationBudget);
+            cfg.HandoffPrCommentPollIntervalSec =
+                j.value("handoff_pr_comment_poll_interval_sec", cfg.HandoffPrCommentPollIntervalSec);
             // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
             // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
             if (cfg.AgenticPollIntervalSec < 60) {
                 cfg.AgenticPollIntervalSec = 60;
             } else if (cfg.AgenticPollIntervalSec > 3600) {
                 cfg.AgenticPollIntervalSec = 3600;
+            }
+            // H7 — clamp PR-iteration budget into [1, 50] (matches the
+            // PrCommentWatcher's own ClampBudget) and the dedicated poll
+            // interval into [30, 600]. Both are documented near the field
+            // declarations in ConfigManager.h.
+            if (cfg.HandoffPrIterationBudget < 1) {
+                cfg.HandoffPrIterationBudget = 1;
+            } else if (cfg.HandoffPrIterationBudget > 50) {
+                cfg.HandoffPrIterationBudget = 50;
+            }
+            if (cfg.HandoffPrCommentPollIntervalSec < 30) {
+                cfg.HandoffPrCommentPollIntervalSec = 30;
+            } else if (cfg.HandoffPrCommentPollIntervalSec > 600) {
+                cfg.HandoffPrCommentPollIntervalSec = 600;
             }
 #endif
 
