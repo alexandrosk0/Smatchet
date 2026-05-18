@@ -194,7 +194,8 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();
                     if (ok) {
-                        g_ui.appUpdateActionStatus = "Installer launched. Smatchet will close so the update can proceed.";
+                        g_ui.appUpdateActionStatus =
+                            "Installer launched. Smatchet will close so the update can proceed.";
                     } else {
                         g_ui.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
                     }
@@ -767,7 +768,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Each MarkPrefsDirty call arms `prefsDirty` + a ~100 ms debounce window;
     // we drain at end-of-frame (after all panels have drawn) so the write
     // happens outside any mid-panel state. See SmatchetUiSession.h MarkPrefsDirty
-    // and docs/backlog/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    // and docs/design/applied/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
     if (g_ui.prefsDirty && std::chrono::steady_clock::now() >= g_ui.prefsSaveDueAt) {
         SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)");
         ConfigManager::Save(g_ui.cfg);
