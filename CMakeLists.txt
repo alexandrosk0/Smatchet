@@ -630,9 +630,13 @@ endif()
 # `#if defined(SMATCHET_WITH_AGENTIC)`-gate its include of GitHubClient.h / GitHubClientHelpers.h.
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClient.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClient.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp")
 if(SMATCHET_WITH_AGENTIC)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClient.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClient.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp")
 endif()
 
 add_library(SmatchetCoreInterface INTERFACE)

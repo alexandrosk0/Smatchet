@@ -120,6 +120,8 @@ if(SMATCHET_WITH_AGENTIC)
     target_sources(SmatchetTests PRIVATE
         Source_Core/GitHubClientHelpers.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
+        Source_Core/AgenticInferenceClientPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
