@@ -58,6 +58,22 @@ std::size_t Utf8SafeTruncate(const char* data, std::size_t len) {
     return i;
 }
 
+// Bounded length scan: returns the index of the first NUL byte in [0, cap),
+// or cap if no terminator exists within the buffer. Prevents the overread UB
+// that std::strlen risks on transiently-unterminated buffers (e.g. ImGui can
+// resize/move buffer contents between frames; a worker thread arriving with
+// a stale pointer must not walk past the registered capacity).
+std::size_t BoundedStrlen(const char* buf, std::size_t cap) {
+    if (buf == nullptr || cap == 0) {
+        return 0;
+    }
+    std::size_t n = 0;
+    while (n < cap && buf[n] != '\0') {
+        ++n;
+    }
+    return n;
+}
+
 } // namespace
 
 DictationInsertionRouter g_dictationRouter;
@@ -112,7 +128,13 @@ void DictationInsertionRouter::Insert(const std::string& text) {
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
     }
-    const std::size_t existing = std::strlen(e.Buf);
+    std::size_t existing = BoundedStrlen(e.Buf, e.Cap);
+    if (existing == e.Cap) {
+        // Buffer lacks a NUL terminator within its registered capacity; force
+        // one in and clamp `existing` so the rest of the splice math is sound.
+        e.Buf[e.Cap - 1] = '\0';
+        existing = e.Cap - 1;
+    }
     const std::size_t insertAt = (e.Cursor != nullptr && *e.Cursor >= 0 &&
                                   static_cast<std::size_t>(*e.Cursor) <= existing)
                                      ? static_cast<std::size_t>(*e.Cursor)
@@ -195,7 +217,11 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
     }
-    const std::size_t existing = std::strlen(e.Buf);
+    std::size_t existing = BoundedStrlen(e.Buf, e.Cap);
+    if (existing == e.Cap) {
+        e.Buf[e.Cap - 1] = '\0';
+        existing = e.Cap - 1;
+    }
     const std::size_t insertAt = (e.Cursor != nullptr && *e.Cursor >= 0 &&
                                   static_cast<std::size_t>(*e.Cursor) <= existing)
                                      ? static_cast<std::size_t>(*e.Cursor)

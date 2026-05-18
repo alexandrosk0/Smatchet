@@ -60,11 +60,13 @@ target_link_libraries(SmatchetPlugin_Whisper PRIVATE
 # BCRYPT_SHA256_ALGORITHM) — no extra third-party hash dep needed since the
 # plugin is already Windows-gated.
 if(WIN32)
+    # avrt (MMCSS) intentionally omitted — WindowsAudioCapture.cpp does not call
+    # AvSetMmThreadCharacteristics / AvRevertMmThreadCharacteristics and does not
+    # include <avrt.h>. Re-add only when MMCSS thread-priority promotion is wired in.
     target_link_libraries(SmatchetPlugin_Whisper PRIVATE
         ole32
         oleaut32
         uuid
-        avrt
         bcrypt
     )
 endif()

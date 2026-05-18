@@ -252,6 +252,64 @@ TEST_CASE("DictationInsertionRouter: g_dictationRouter global is usable") {
     g_dictationRouter.UnregisterInputText(buf);
 }
 
+TEST_CASE("DictationInsertionRouter::Insert: unterminated buffer is repaired, no overread") {
+    // Regression gate for PR #246 — the BoundedStrlen fix. A registered
+    // buffer that lacks a NUL within its capacity must NOT trigger
+    // std::strlen overread; instead the router force-terminates at
+    // cap-1, clamps `existing` to that, then performs the splice (which
+    // here drops because existing+1 >= cap leaves zero room — the
+    // important assertion is "no crash + buffer ends terminated").
+    DictationInsertionRouter router;
+    char buf[8];
+    std::memset(buf, 'X', sizeof(buf)); // intentionally NO terminator anywhere.
+    router.RegisterInputText(buf, sizeof(buf), nullptr);
+
+    router.Insert("payload");
+
+    // Last byte must be the repair terminator the router wrote in.
+    CHECK(buf[sizeof(buf) - 1] == '\0');
+    // First 7 bytes must remain untouched (the splice path bails because
+    // existing == cap-1 leaves no room for new content).
+    for (std::size_t i = 0; i < sizeof(buf) - 1; ++i) {
+        CHECK(buf[i] == 'X');
+    }
+
+    router.UnregisterInputText(buf);
+}
+
+TEST_CASE("DictationInsertionRouter::InsertIntoFocusedInputText: unterminated buffer is repaired") {
+    // Same regression gate as Insert above, exercised against the focused-
+    // insertion path. Both call sites must use BoundedStrlen.
+    DictationInsertionRouter router;
+    char buf[8];
+    std::memset(buf, 'Z', sizeof(buf)); // no NUL.
+    router.RegisterInputText(buf, sizeof(buf), nullptr);
+
+    router.InsertIntoFocusedInputText("payload");
+
+    CHECK(buf[sizeof(buf) - 1] == '\0');
+    for (std::size_t i = 0; i < sizeof(buf) - 1; ++i) {
+        CHECK(buf[i] == 'Z');
+    }
+
+    router.UnregisterInputText(buf);
+}
+
+TEST_CASE("DictationInsertionRouter::Insert: normally-terminated buffer behaves identically post-fix") {
+    // Sanity-check that the BoundedStrlen fallback does not regress the
+    // common path — a buffer with a NUL well within capacity must still
+    // splice as before.
+    DictationInsertionRouter router;
+    char buf[32] = {0};
+    std::strcpy(buf, "hi ");
+    router.RegisterInputText(buf, sizeof(buf), nullptr);
+
+    router.Insert("there");
+
+    CHECK(std::string(buf) == "hi there");
+    router.UnregisterInputText(buf);
+}
+
 #else // SMATCHET_WITH_WHISPER not defined — stubs TU is linked.
 
 TEST_CASE("DictationInsertionRouter stubs: every method is a no-op") {

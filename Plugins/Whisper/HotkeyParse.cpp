@@ -98,15 +98,21 @@ unsigned int TokenToVirtualKey(const std::string& lower) {
             }
         }
         if (numeric) {
-            int n = 0;
+            // Fast-reject: F1..F24 caps at two digits. Anything wider cannot
+            // pass and would force the n=n*10+digit loop through values that
+            // overflow signed int for sufficiently long input.
+            if (digits.size() > 2) {
+                return 0;
+            }
+            unsigned int n = 0;
             for (char c : digits) {
-                n = n * 10 + (c - '0');
-                if (n > 24) {
+                n = n * 10u + static_cast<unsigned int>(c - '0');
+                if (n > 24u) {
                     return 0; // out-of-range function key
                 }
             }
-            if (n >= 1 && n <= 24) {
-                return vk::kF1 + static_cast<unsigned int>(n - 1);
+            if (n >= 1u && n <= 24u) {
+                return vk::kF1 + (n - 1u);
             }
         }
     }

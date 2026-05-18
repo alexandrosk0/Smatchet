@@ -159,7 +159,7 @@ struct ModelDownloader::Impl {
     std::atomic<bool> running{false};
 };
 
-ModelDownloader::ModelDownloader() : impl_(std::unique_ptr<Impl>(new Impl())) {
+ModelDownloader::ModelDownloader() : impl_(std::make_shared<Impl>()) {
     impl_->cancelAtom = std::make_shared<std::atomic<bool>>(false);
 }
 
@@ -239,11 +239,13 @@ bool ModelDownloader::Start(AppController& app, const std::string& modelId, cons
     const std::string partialPath = finalPath + ".partial";
     const std::string expectedSha = entry->Sha256;
     std::shared_ptr<std::atomic<bool>> cancelAtom = impl_->cancelAtom;
-    Impl* implPtr = impl_.get();
+    // Co-own Impl with the worker so destructor of ModelDownloader does not
+    // invalidate mu/progress/running while the detached task is still running.
+    std::shared_ptr<Impl> implPtr = impl_;
 
     app.LaunchBackgroundTask([implPtr, url, finalPath, partialPath, expectedSha, modelId, cancelAtom]() {
-        auto setProgress = [implPtr](State st, std::uint64_t got, std::uint64_t expected,
-                                     const std::string& errMsg) {
+        auto setProgress = [&implPtr](State st, std::uint64_t got, std::uint64_t expected,
+                                      const std::string& errMsg) {
             std::lock_guard<std::mutex> lock(implPtr->mu);
             implPtr->progress.state = st;
             if (got != 0) {
@@ -254,7 +256,7 @@ bool ModelDownloader::Start(AppController& app, const std::string& modelId, cons
             }
             implPtr->progress.error = errMsg;
         };
-        auto finalize = [implPtr](State st, const std::string& errMsg) {
+        auto finalize = [&implPtr](State st, const std::string& errMsg) {
             std::lock_guard<std::mutex> lock(implPtr->mu);
             implPtr->progress.state = st;
             implPtr->progress.error = errMsg;
@@ -294,7 +296,7 @@ bool ModelDownloader::Start(AppController& app, const std::string& modelId, cons
         cpr::Redirect redirect(true, true);
         bool cancelled = false;
 
-        cpr::WriteCallback writeCb{[&](const std::string& data, intptr_t /*sz*/) -> bool {
+        cpr::WriteCallback writeCb{[&, implPtr](const std::string& data, intptr_t /*sz*/) -> bool {
             if (cancelAtom && cancelAtom->load(std::memory_order_acquire)) {
                 cancelled = true;
                 return false;
