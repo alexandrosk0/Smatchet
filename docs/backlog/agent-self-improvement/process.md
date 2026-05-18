@@ -25,12 +25,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-17 · orchestrator · [process] · P2 — Worktree bootstrap branches start on stale base (not origin/develop)
-  Details: Phase D's agent reported the worktree's branch HEAD was rooted on f2ce5b5 (an old `feat: add Google domain verification file` commit) instead of develop. Recovered via `git checkout -b feat/ai-assistant-side-panel-phase-d origin/develop` (~3 min wasted). The harness's worktree-spawn machinery does not pin the new branch to `origin/develop`; instead it inherits whatever HEAD the parent worktree's most-recent branch had. Pattern likely repeats on every dispatch. Phase E confirmed: worktree HEAD again on f2ce5b5, same recovery applied.
-  Concrete next action: `scripts/dev/worktree-spawn.sh` (or wherever the worktree creation lives) should `git fetch origin develop` + branch from `origin/develop` explicitly. ~30 min.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · orchestrator · [process] · P3 — `unique_ptr<incomplete-type>` footgun in AGENTS.md § C++14 invariants
   Details: Phase B (PR #163) hit `invalid application of sizeof to incomplete type` errors from every TU that includes `AppController.h` (including `main.cpp` via the PCH) because `AppController.h` held `std::unique_ptr<AiAssistantController>` with only a forward-decl. The header compiled in isolation but failed at every consumer's implicit-dtor instantiation site. Resolution: include the full `AiAssistantController.h`. The general C++ pattern — `unique_ptr<T>` member in a header needs `T` complete at every consumer's implicit-dtor instantiation, NOT just at the owning class's dtor definition site — is non-obvious and bit Phase B. Worth one-line callout in AGENTS.md § Quality / § Project rules so future agents lift to the full include up-front instead of attempting the forward-decl + pImpl pattern that requires manual out-of-line dtor.
   Concrete next action: add a single bullet to AGENTS.md § Quality (~line 92) stating "`std::unique_ptr<T>` member in a class declared in a header — include `T`'s full definition in that header. Forward-decl only works with an out-of-line dtor defined in a TU where `T` is complete; trying it without the out-of-line dtor fires sizeof-incomplete at every consumer." ~5 min doc edit.

@@ -42,6 +42,26 @@ This enables the otherwise-opt-in doctor check. The check is `YELLOW`-class (war
 
 POSIX runners would fall back to `lcov` + `gcov` for the same purpose — that path is documented inline in `scripts/dev/coverage.sh`'s header but not yet wired into a workflow (re-evaluate when a POSIX CI runner is provisioned).
 
+## Worktree base — known stale-HEAD pitfall
+
+**Symptom**: orchestrator spawns a Claude Code session in an isolated worktree (`.claude/worktrees/<id>/` on branch `claude/<id>`); the branch is rooted on a stale commit (not `origin/develop` HEAD), and every PR opened from the worktree carries an old base. Documented friction from Phase D + Phase E AI-assistant work — the `claude/<id>` branches landed on a months-old "feat: add Google domain verification file" commit (`f2ce5b5`) instead of develop tip.
+
+**Root cause**: the Claude Code SDK uses the parent repo's current local `HEAD` as the base when spawning a worktree. If the parent repo is checked out on an unrelated branch (`fix/<other>`, `feat/<other-feature>`, or a stale checkout of `develop`), that HEAD becomes the new worktree's base.
+
+**Two-track workaround**:
+
+1. **Before opening a new Claude Code session**: `git -C C:/Dev/Smatchet switch develop && git -C C:/Dev/Smatchet pull --ff-only origin develop`. The parent repo is now on the latest develop, and any worktree spawned for this session inherits that base.
+2. **If a session is already running and the base is stale**: the orchestrator runs as the **first move** in the worktree —
+   ```bash
+   git fetch origin develop
+   git rebase origin/develop
+   ```
+   Restages any uncommitted work; the worktree's branch now sits on top of latest develop. Cheap because most `claude/<id>` worktrees have zero or one commit at the time of the rebase.
+
+**Upstream fix**: this is the Claude Code SDK's responsibility — the worktree-spawn machinery should default the base to `origin/develop` (or a configurable `claude.worktree.baseBranch`) rather than current local HEAD. Filed as external-blocker in `docs/backlog/agent-self-improvement/external-blockers.md`.
+
+**Not the same path as the agentic-handoff runner**: `ClaudeCodeLocalRunner` (the in-repo H3 deliverable for `agent/<proposalId>` worktrees) already bases on `origin/develop` correctly per `Source_Core/src/ClaudeCodeLocalRunner.cpp` + the `handoff.auto_fetch_before_worktree` config flag (default `true`). Only the Claude Code SDK's own session-spawn path (`claude/<id>` worktrees) is affected.
+
 ## Adding a new harness
 
 1. Create `docs/harness/<name>/setup.md` with the recreation steps.

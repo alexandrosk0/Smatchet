@@ -7,6 +7,13 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-18 · orchestrator · [external] · BLOCKED — Claude Code SDK spawns `claude/<id>` worktrees rooted on parent-repo current local HEAD, not `origin/develop`
+  Owner: Claude Code SDK upstream.
+  Details: Phase D + Phase E AI-assistant agents reported worktree branch HEAD rooted on `f2ce5b5` ("feat: add Google domain verification file") instead of develop. Each agent wasted ~3 min recovering via `git checkout -b <branch> origin/develop`. Root cause: the SDK's worktree-spawn machinery uses the parent repo's current local `HEAD` as the base — if parent is on an unrelated branch (`fix/<other>`, stale `develop`, sibling agent's branch), the new `claude/<id>` worktree inherits that base. Investigation of `git config --local` on the current worktree confirms `branch.claude/<id>.merge=refs/heads/develop` is set (so push/pull go to `develop`) but the initial commit base is whatever `HEAD` pointed at when the worktree was created. `extensions.worktreeconfig=true` is enabled but doesn't change the base-selection behaviour.
+  Workaround / unblock: documented in `docs/harness/SETUP.md` § Worktree base — known stale-HEAD pitfall. Two tracks — (1) before opening a session, `git -C <repo-root> switch develop && git pull --ff-only`; (2) if a session is already running, first move is `git fetch origin develop && git rebase origin/develop` inside the worktree. Upstream fix: SDK should default base to `origin/develop` or expose `claude.worktree.baseBranch` config knob. Distinct from `ClaudeCodeLocalRunner` (`agent/<proposalId>` worktrees) which already bases on `origin/develop` via `handoff.auto_fetch_before_worktree` config flag default `true`.
+  Status: blocked-external
+  Last-reviewed: 2026-05-18
+
 - 2026-05-16 · orchestrator · [external] · BLOCKED — Auto-merge disabled on the repo; `gh pr merge --auto` errors
   Owner: GitHub repository settings.
   Details: `gh pr merge <N> --squash --auto --delete-branch` errors with `GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)`. The autonomous-execution contract in `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics names `--auto` as the default. Orchestrator falls back to direct `gh pr merge --squash --delete-branch` after CI greens (poll wakeup every ~270 s — caches stay warm). Adds ~14 min wall-clock per PR vs `--auto`.
