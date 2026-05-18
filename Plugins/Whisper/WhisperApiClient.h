@@ -33,6 +33,19 @@ class WhisperApiClient {
     WhisperApiClient(const WhisperApiClient&) = delete;
     WhisperApiClient& operator=(const WhisperApiClient&) = delete;
 
+    /// Test-only seam — when set, every subsequent `Transcribe` call returns
+    /// the canned text in `outText` and skips the HTTP request entirely. The
+    /// higher-level `WhisperPlugin::SetMockTranscription` is preferred for
+    /// scenario tests because it bypasses both the WASAPI capture loop and the
+    /// transcription backend; this lower-level seam exists for tests that need
+    /// to exercise the API-client code path itself (mode-router branch,
+    /// caller-side error mapping, fixture-driven golden checks) without
+    /// burning real OpenAI credits. Process-wide; thread-safe (mutex-guarded
+    /// copy). Production code never sets this.
+    static void SetMockResponse(const std::string& text);
+    static void ClearMockResponse();
+    static bool MockResponseActive();
+
     /// POST the WAV bytes to OpenAI's transcription endpoint and return the
     /// recognised text in `outText`. `apiKey` is the resolved Bearer token
     /// (caller invokes WhisperApiKeyResolve::ResolveWhisperApiKey first).

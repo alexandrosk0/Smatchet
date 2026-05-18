@@ -40,7 +40,55 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
+
+namespace {
+
+// Process-wide mock-transcription seam. Set by the
+// `whisper-dictation-roundtrip` scenario to bypass real capture + transcription;
+// the hotkey press/release path observes this and posts the canned text onto
+// the UI thread after the requested delay. Mutex-guarded because the producer
+// (UI-thread scenario) and the consumer (hook worker thread + LaunchBackgroundTask
+// worker) race on the same string buffer.
+std::mutex& MockMutex() {
+    static std::mutex m;
+    return m;
+}
+std::atomic<bool>& MockActiveAtom() {
+    static std::atomic<bool> a{false};
+    return a;
+}
+WhisperPlugin::MockTranscription& MockStorage() {
+    static WhisperPlugin::MockTranscription m;
+    return m;
+}
+
+} // namespace
+
+void WhisperPlugin::SetMockTranscription(const WhisperPlugin::MockTranscription& mock) {
+    std::lock_guard<std::mutex> lk(MockMutex());
+    MockStorage() = mock;
+    MockActiveAtom().store(true, std::memory_order_release);
+    LOG_INFO("WhisperPlugin: mock transcription armed (text=\"%s\", delay=%lld ms)",
+             mock.text.c_str(), static_cast<long long>(mock.delay.count()));
+}
+
+void WhisperPlugin::ClearMockTranscription() {
+    std::lock_guard<std::mutex> lk(MockMutex());
+    MockActiveAtom().store(false, std::memory_order_release);
+    MockStorage() = WhisperPlugin::MockTranscription();
+    LOG_INFO("WhisperPlugin: mock transcription cleared");
+}
+
+bool WhisperPlugin::MockTranscriptionActive() {
+    return MockActiveAtom().load(std::memory_order_acquire);
+}
+
+WhisperPlugin::MockTranscription WhisperPlugin::CurrentMockTranscription() {
+    std::lock_guard<std::mutex> lk(MockMutex());
+    return MockStorage();
+}
 
 // --- Phase E state struct definition ---
 //
@@ -653,6 +701,21 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
     if (state == nullptr || state->app == nullptr) {
         return;
     }
+    // Mock-transcription seam — short-circuit before the consent + WASAPI
+    // surface so headless scenario tests don't need a working mic or an
+    // approved consent toggle. Only the recording flag flips (so the UI
+    // indicator can still be exercised); the actual capture is skipped.
+    if (WhisperPlugin::MockTranscriptionActive()) {
+        bool expected = false;
+        if (!state->captureActive.compare_exchange_strong(expected, true,
+                                                          std::memory_order_acq_rel)) {
+            LOG_DEBUG("Whisper hotkey press ignored — capture already active (mock)");
+            return;
+        }
+        g_dictationRouter.SetRecording(true);
+        LOG_DEBUG("Whisper hotkey: capture started (mock seam — WASAPI bypassed)");
+        return;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
     if (!smatchet::whisper::consent::CanCaptureMic(cfg)) {
         LOG_WARN("Whisper hotkey: consent gate denied capture — Preferences->Whisper not enabled");
@@ -683,6 +746,44 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     if (state == nullptr || state->app == nullptr) {
         return;
     }
+    // Mock-transcription seam — when armed, skip WASAPI drain entirely and
+    // queue the canned text for insertion after the configured delay. This is
+    // the lower half of the test-injection contract exposed by
+    // `WhisperPlugin::SetMockTranscription`. Production code never reaches
+    // this branch.
+    if (WhisperPlugin::MockTranscriptionActive()) {
+        bool wasActive = state->captureActive.exchange(false, std::memory_order_acq_rel);
+        if (!wasActive) {
+            LOG_DEBUG("Whisper hotkey release ignored — no active capture (mock)");
+            return;
+        }
+        g_dictationRouter.SetRecording(false);
+        bool expectedFlight = false;
+        if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true,
+                                                                std::memory_order_acq_rel)) {
+            LOG_DEBUG("Whisper hotkey release (mock): prior transcription still in flight");
+            return;
+        }
+        const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
+        AppController* app = state->app;
+        WhisperPlugin::PhaseEState* localState = state;
+        app->LaunchBackgroundTask([app, localState, mock]() {
+            // Simulate the wall-clock delay a real round-trip would incur so
+            // the scenario observes the same press → asynchronous-post → insert
+            // ordering as the production cloud / local path. Then hand off via
+            // the same MainThreadDispatcher route the real release uses.
+            std::this_thread::sleep_for(mock.delay);
+            localState->transcribeInFlight.store(false, std::memory_order_release);
+            const std::string text = mock.text;
+            app->mainThreadDispatcher.PostToMainThread([text]() {
+                g_dictationRouter.InsertIntoFocusedInputText(text);
+                LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription",
+                          text.size());
+            });
+        });
+        return;
+    }
+
     // Only proceed if WE flipped the active flag — guards against a release
     // event for a press we never observed (rare; stuck-key recovery).
     bool wasActive = state->captureActive.exchange(false, std::memory_order_acq_rel);

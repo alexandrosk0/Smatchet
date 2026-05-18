@@ -24,6 +24,7 @@
 
 #include "IPlugin.h"
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -36,6 +37,25 @@ class WhisperPlugin : public IPlugin {
 
     void OnStart(AppController& app) override;
     void OnStop() override;
+
+    /// Test-injection seam — when set, the hotkey press/release path bypasses
+    /// the real WASAPI capture loop and the cloud / local transcription
+    /// backends entirely. On release, the plugin spawns a worker that sleeps
+    /// for `delay` then posts `g_dictationRouter.InsertIntoFocusedInputText(text)`
+    /// onto the UI thread via `MainThreadDispatcher`. Production code never
+    /// sets this — it exists for the `whisper-dictation-roundtrip` scenario
+    /// (Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp) so
+    /// regression tests can exercise the press → capture → transcribe → insert
+    /// pipeline end-to-end without mic hardware or network credits. Process-
+    /// wide singleton (one mock at a time); thread-safe (mutex-guarded copy).
+    struct MockTranscription {
+        std::string text;
+        std::chrono::milliseconds delay{50};
+    };
+    static void SetMockTranscription(const MockTranscription& mock);
+    static void ClearMockTranscription();
+    static bool MockTranscriptionActive();
+    static MockTranscription CurrentMockTranscription();
 
     /// Phase F — hot-rebind the global push-to-talk hotkey at runtime.
     /// `descriptor` is a HotkeyParse-compatible string (e.g. "Ctrl+Alt+Space");
