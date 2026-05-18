@@ -302,29 +302,29 @@ TEST_CASE("AgentProposalStore: schema_version is stamped at kCurrentSchemaVersio
     REQUIRE(s.GetSchemaVersion(v, err));
     CHECK(err.empty());
     CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
-    CHECK(v == 1); // First shipped version of the agentic SQLite surface.
+    CHECK(v == 2); // H10 shipped version of the agentic SQLite surface.
 }
 
 TEST_CASE("AgentProposalStore: schema_version does not double-bump across re-opens of the same db") {
     // :memory: is per-connection, so to exercise the "open against an existing
     // db that already has a schema_version row" path we use a real temp file.
     // Two sequential AgentProposalStore ctors share the file; the second one
-    // must see version=1 (already stamped) and leave it untouched, not bump
-    // to 2.
-    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_t9_schema.sqlite";
+    // must see the current version (already stamped) and leave it untouched,
+    // not bump beyond.
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_h10_schema.sqlite";
     {
         AgentProposalStore s(path);
         std::string err;
         int v = -1;
         REQUIRE(s.GetSchemaVersion(v, err));
-        CHECK(v == 1);
+        CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
     }
     {
         AgentProposalStore s(path);
         std::string err;
         int v = -1;
         REQUIRE(s.GetSchemaVersion(v, err));
-        CHECK(v == 1); // never 2; idempotent on re-open.
+        CHECK(v == AgentProposalStore::kCurrentSchemaVersion); // idempotent on re-open.
     }
     std::remove(path.c_str());
 }
@@ -337,7 +337,7 @@ TEST_CASE("AgentProposalStore: schema_version row count is exactly 1 (singleton 
     std::string err;
     int v = -1;
     REQUIRE(s.GetSchemaVersion(v, err));
-    CHECK(v == 1);
+    CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
 
     // Re-entering EnsureSchemaVersion via a second ctor on a fresh handle
     // creates an isolated db (per-connection :memory:), but the per-call
@@ -346,16 +346,186 @@ TEST_CASE("AgentProposalStore: schema_version row count is exactly 1 (singleton 
     AgentProposalStore s2(":memory:");
     int v2 = -1;
     REQUIRE(s2.GetSchemaVersion(v2, err));
-    CHECK(v2 == 1);
+    CHECK(v2 == AgentProposalStore::kCurrentSchemaVersion);
 }
 
-TEST_CASE("AgentProposalStore: kCurrentSchemaVersion is exactly 1 — guard against silent N>1 increments") {
+TEST_CASE("AgentProposalStore: kCurrentSchemaVersion is exactly 2 — guard against silent N>2 increments") {
     // AGENTS.md § Schema-version bumps: "the shipped version should be exactly
     // one higher than the previous shipped version, not N higher because of
-    // intermediate iterations." T9 lands the first shipped version (== 1)
-    // since T4-T8 shipped no version increments. Bump this constant alongside
+    // intermediate iterations." T9 shipped v1; H10 ships v2 (adds
+    // agent_pr_watch + handoff_status column). Bump this constant alongside
     // the production-side constant only when a real migration body lands.
-    CHECK(AgentProposalStore::kCurrentSchemaVersion == 1);
+    CHECK(AgentProposalStore::kCurrentSchemaVersion == 2);
+}
+
+TEST_CASE("AgentProposalStore: v1 db migrates in place to v2 (agent_pr_watch + handoff_status)") {
+    // Build a v1-shaped db by hand (without the v2 table or column) and then
+    // open it via AgentProposalStore — the migration body must add the table
+    // and column without throwing and bump schema_version to 2.
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_h10_migrate_v1.sqlite";
+    {
+        // Build the v1 schema directly via raw SQLite, mirroring the
+        // pre-H10 ctor body (no agent_pr_watch table, no handoff_status
+        // column). schema_version stamped at 1.
+        SQLite::Database side(path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        side.exec("CREATE TABLE agent_proposals ("
+                  "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                  "source_tracker TEXT NOT NULL, "
+                  "issue_key TEXT NOT NULL, "
+                  "action TEXT NOT NULL, "
+                  "rationale TEXT NOT NULL, "
+                  "payload_json TEXT NOT NULL, "
+                  "state TEXT NOT NULL, "
+                  "created_at_sec INTEGER NOT NULL, "
+                  "last_updated_at_sec INTEGER NOT NULL, "
+                  "apply_error TEXT NOT NULL DEFAULT '')");
+        side.exec("CREATE TABLE agent_poll_cursor ("
+                  "source_tracker TEXT NOT NULL, "
+                  "repo_key TEXT NOT NULL, "
+                  "last_seen_updated_at INTEGER NOT NULL, "
+                  "PRIMARY KEY (source_tracker, repo_key))");
+        side.exec("CREATE TABLE schema_version ("
+                  "id INTEGER PRIMARY KEY CHECK (id = 1), "
+                  "version INTEGER NOT NULL)");
+        side.exec("INSERT INTO schema_version (id, version) VALUES (1, 1)");
+        // Insert one proposal so the migration's ADD COLUMN has something to
+        // backfill the default for.
+        SQLite::Statement ins(side, "INSERT INTO agent_proposals (source_tracker, issue_key, action, rationale, "
+                                    "payload_json, state, created_at_sec, last_updated_at_sec, apply_error) "
+                                    "VALUES ('github', 'pre/v2#1', 'CommentAdd', 'pre-migration', '{}', 'Pending', "
+                                    "100, 100, '')");
+        ins.exec();
+    }
+    // Open through AgentProposalStore — should migrate cleanly.
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        int v = -1;
+        REQUIRE(s.GetSchemaVersion(v, err));
+        CHECK(v == 2);
+    }
+    // Verify the table + column landed via side-channel inspection.
+    {
+        SQLite::Database side(path, SQLite::OPEN_READONLY);
+        // agent_pr_watch table exists.
+        SQLite::Statement tableQ(
+            side, "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_pr_watch'");
+        REQUIRE(tableQ.executeStep());
+        CHECK(std::string(tableQ.getColumn(0).getText()) == "agent_pr_watch");
+        // handoff_status column on agent_proposals exists + defaults to "".
+        SQLite::Statement rowQ(side, "SELECT handoff_status FROM agent_proposals WHERE issue_key='pre/v2#1'");
+        REQUIRE(rowQ.executeStep());
+        CHECK(std::string(rowQ.getColumn(0).getText()).empty());
+    }
+    // Re-open a v2 db — must be a no-op (idempotent).
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        int v = -1;
+        REQUIRE(s.GetSchemaVersion(v, err));
+        CHECK(v == 2);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("AgentProposalStore: agent_pr_watch round-trip via Set/Get/Delete") {
+    AgentProposalStore s(":memory:");
+    std::string err;
+
+    // Empty Get on missing proposal id is OK (first-poll semantics) — fields default.
+    AgentProposalStore::PrWatchRow row;
+    REQUIRE(s.GetPrWatch(42, row, err));
+    CHECK(row.proposalId == 0);
+    CHECK(row.iterationCount == 0);
+    CHECK(row.lastSeenCommentIdStr.empty());
+
+    // Set + Get round-trip.
+    AgentProposalStore::PrWatchRow w;
+    w.proposalId = 42;
+    w.prUrl = "https://github.com/smatchet/example/pull/7";
+    w.lastSeenCommentIdStr = "9876543210";
+    w.iterationCount = 3;
+    w.lastPolledAtSec = 1778500000;
+    REQUIRE(s.SetPrWatch(w, err));
+
+    AgentProposalStore::PrWatchRow got;
+    REQUIRE(s.GetPrWatch(42, got, err));
+    CHECK(got.proposalId == 42);
+    CHECK(got.prUrl == w.prUrl);
+    CHECK(got.lastSeenCommentIdStr == "9876543210");
+    CHECK(got.iterationCount == 3);
+    CHECK(got.lastPolledAtSec == 1778500000);
+
+    // Re-Set on same proposal id overwrites (idempotent INSERT OR REPLACE).
+    w.iterationCount = 5;
+    w.lastSeenCommentIdStr = "9999999999";
+    REQUIRE(s.SetPrWatch(w, err));
+    REQUIRE(s.GetPrWatch(42, got, err));
+    CHECK(got.iterationCount == 5);
+    CHECK(got.lastSeenCommentIdStr == "9999999999");
+
+    // Delete clears the row + subsequent Get returns defaulted row.
+    REQUIRE(s.DeletePrWatch(42, err));
+    REQUIRE(s.GetPrWatch(42, got, err));
+    CHECK(got.proposalId == 0);
+    CHECK(got.iterationCount == 0);
+
+    // Delete on missing row is not an error (idempotent).
+    REQUIRE(s.DeletePrWatch(42, err));
+    REQUIRE(s.DeletePrWatch(9999, err));
+}
+
+TEST_CASE("AgentProposalStore: agent_pr_watch persists across store re-open (cursor durability)") {
+    // The whole point of the H10 schema bump — a watcher cursor must survive
+    // an app restart so the next tick resumes from the same comment id
+    // instead of replaying the entire PR thread.
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_h10_pr_watch_persist.sqlite";
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposalStore::PrWatchRow w;
+        w.proposalId = 17;
+        w.prUrl = "https://github.com/team/repo/pull/23";
+        w.lastSeenCommentIdStr = "1234567890";
+        w.iterationCount = 4;
+        w.lastPolledAtSec = 1778600000;
+        REQUIRE(s.SetPrWatch(w, err));
+    }
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposalStore::PrWatchRow got;
+        REQUIRE(s.GetPrWatch(17, got, err));
+        CHECK(got.proposalId == 17);
+        CHECK(got.lastSeenCommentIdStr == "1234567890");
+        CHECK(got.iterationCount == 4);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("AgentProposalStore: handoff_status round-trip via Set/Get") {
+    AgentProposalStore s(":memory:");
+    std::string err;
+    AgentProposal p = MakeProposal("smatchet/example#hs-1");
+    REQUIRE(s.Insert(p, err));
+
+    // Default after insert is empty (no handoff started).
+    std::string status = "sentinel";
+    REQUIRE(s.GetHandoffStatus(p.id, status, err));
+    CHECK(status.empty());
+
+    // Set + Get round-trip.
+    REQUIRE(s.SetHandoffStatus(p.id, "Spawning", err));
+    REQUIRE(s.GetHandoffStatus(p.id, status, err));
+    CHECK(status == "Spawning");
+
+    REQUIRE(s.SetHandoffStatus(p.id, "PrOpen", err));
+    REQUIRE(s.GetHandoffStatus(p.id, status, err));
+    CHECK(status == "PrOpen");
+
+    // SetHandoffStatus on a non-existent proposal id surfaces row-not-found.
+    CHECK_FALSE(s.SetHandoffStatus(99999, "Spawning", err));
+    CHECK(err.find("row not found") != std::string::npos);
 }
 
 // Bundle B CR#230:107 — InsertMany must be atomic. A failure on row N must

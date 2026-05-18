@@ -41,6 +41,8 @@
 #include <string>
 #include <vector>
 
+class AgentProposalStore;
+
 namespace smatchet {
 namespace agentic {
 
@@ -104,6 +106,31 @@ class PrCommentWatcher {
     void SetIterationBudget(int budget);
     int GetIterationBudget() const;
 
+    /// (H10) Wire the SQLite cursor-persistence seam. Optional — when null
+    /// the watcher operates in-memory only (H7 behaviour, lost across
+    /// restarts). When wired:
+    ///   - Tick() persists the (proposalId, prUrl, last_seen_comment_id_str,
+    ///     iteration_count, last_polled_at_sec) row to `agent_pr_watch`
+    ///     after every successful poll.
+    ///   - `LoadCursorsFromStore` hydrates the controller's in-memory
+    ///     ActiveHandoff records from any persisted rows on startup.
+    /// Setter is not thread-safe relative to in-flight ticks; wire at
+    /// AppController init before the scheduled-poll worker spawns.
+    void SetProposalStore(AgentProposalStore* store);
+
+    /// (H10) Hydrate the controller's in-memory ActiveHandoff records from
+    /// `agent_pr_watch` rows. Called at AppController init after the
+    /// controller is constructed but before the poll worker starts. For
+    /// each persisted row whose proposal id corresponds to a currently-
+    /// PrOpen handoff, copies `lastSeenCommentIdStr` + `iterationCount`
+    /// onto the matching ActiveHandoff record (the controller's
+    /// `MarkHandoffIteration` is reused so the FSM contract holds). Rows
+    /// with no matching handoff (handoff terminated between sessions) are
+    /// best-effort cleaned up by the next `DeletePrWatch` call from the
+    /// controller termination path. Returns the number of cursors loaded
+    /// (zero is a valid steady-state).
+    int LoadCursorsFromStore();
+
     /// One iteration of the watcher. Snapshots all PrOpen handoffs, fetches
     /// each PR's comments, dispatches a respawn for any new non-bot
     /// comment (or trips the budget-exhausted path). Returns the number
@@ -134,6 +161,9 @@ class PrCommentWatcher {
     // instead of every tick — same shape as the H5 dual-channel.
     std::atomic<bool> fetcherWarnLatched_{false};
     std::atomic<bool> dispatcherWarnLatched_{false};
+    // (H10) SQLite cursor-persistence seam. Optional — null falls back to
+    // H7 in-memory-only behaviour. Lifetime owned by AppController.
+    AgentProposalStore* store_ = nullptr;
 };
 
 } // namespace agentic
