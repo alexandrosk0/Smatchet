@@ -922,6 +922,141 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::EndTabItem();
         }
 #endif
+#if defined(SMATCHET_WITH_AGENTIC)
+        // T7 — Agentic flow Preferences tab. Master toggle + interval + source + query +
+        // GitHub PAT (DPAPI-encrypted via T1, same code path as cfg.GitHubPat).
+        // `RestartAgenticPoll()` fires on master-toggle flip so the worker thread picks up
+        // the new state without an app restart; field edits debounce-save via MarkPrefsDirty.
+        if (ImGui::BeginTabItem(SmatchetLocalization::T("agent.prefs.tabTitle", "Agentic"))) {
+            ImGui::TextWrapped("Scheduled agentic triage. When enabled, Smatchet polls the configured "
+                               "repository at the chosen interval, runs each updated issue through the LLM, "
+                               "and persists draft actions to the Proposals panel for your review. All API "
+                               "writes wait on your approval — nothing is applied without explicit consent.");
+            ImGui::Spacing();
+
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.enableToggle", "Enable scheduled agentic triage"),
+                                &d.cfg.AgenticPollEnabled)) {
+                MarkPrefsDirty(d);
+                // Flip applies immediately — the worker joins or spawns under the new toggle
+                // value without waiting for the next app start.
+                app.RestartAgenticPoll();
+            }
+
+            // Interval (clamped 60..3600).
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.intervalLabel", "Interval:"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputInt("##AgenticPollInterval", &d.cfg.AgenticPollIntervalSec, 30, 60)) {
+                if (d.cfg.AgenticPollIntervalSec < 60) {
+                    d.cfg.AgenticPollIntervalSec = 60;
+                } else if (d.cfg.AgenticPollIntervalSec > 3600) {
+                    d.cfg.AgenticPollIntervalSec = 3600;
+                }
+                MarkPrefsDirty(d);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.intervalUnit", "seconds (60..3600)"));
+
+            // Source combo — only "github" today; greyed dropdown keeps the surface visible
+            // for the next-backend extension (Plane / Linear / Jira-agentic) without churn.
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.sourceLabel", "Source:"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160.0f);
+            int sourceIdx = 0;
+            const char* sourceLabels[1] = {"github"};
+            ImGui::BeginDisabled(true);
+            ImGui::Combo("##AgenticPollSource", &sourceIdx, sourceLabels, 1);
+            ImGui::EndDisabled();
+            // Round-trip the source value to whatever the user chose (only "github" today —
+            // a no-op write per loop, but keeps the contract simple).
+            d.cfg.AgenticPollSource = "github";
+
+            // Query — `OWNER/REPO` for source=github. Persists via MarkPrefsDirty.
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.queryLabel", "Query:"));
+            ImGui::SameLine();
+            char queryBuf[256];
+            CopyStringToBuffer(queryBuf, d.cfg.AgenticPollQuery);
+            ImGui::SetNextItemWidth(320.0f);
+            if (ImGui::InputText("##AgenticPollQuery", queryBuf, sizeof(queryBuf))) {
+                d.cfg.AgenticPollQuery = queryBuf;
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.queryHint.github",
+                                                              "For github: OWNER/REPO of the repository to poll"));
+
+            // GitHub PAT — passworded. Persists via MarkPrefsDirty (DPAPI-encrypted on Save
+            // through the same path as the existing Assistant tab's API key fields).
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.githubPatLabel", "GitHub PAT:"));
+            ImGui::SameLine();
+            char patBuf[512];
+            CopyStringToBuffer(patBuf, d.cfg.GitHubPat);
+            ImGui::SetNextItemWidth(320.0f);
+            if (ImGui::InputText("##AgenticGitHubPat", patBuf, sizeof(patBuf), ImGuiInputTextFlags_Password)) {
+                d.cfg.GitHubPat = patBuf;
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.githubPatHint",
+                                                              "Bearer token - needs `repo` + `issues` scope"));
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Last-poll / Next-poll readout. Worker stamps `agenticPollLastAtSec_` at the end
+            // of every iteration; 0 means "never this session".
+            const std::int64_t lastPollSec = app.GetAgenticLastPollAtSec();
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.lastPoll", "Last poll:"));
+            ImGui::SameLine();
+            if (lastPollSec == 0) {
+                ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.lastPollNever", "never"));
+            } else {
+                const std::int64_t nowSec = std::chrono::duration_cast<std::chrono::seconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count();
+                const std::int64_t agoSec = (nowSec > lastPollSec) ? (nowSec - lastPollSec) : 0;
+                const long long mins = static_cast<long long>(agoSec / 60);
+                const long long secs = static_cast<long long>(agoSec % 60);
+                ImGui::Text("%llds ago (%lldm %llds)", static_cast<long long>(agoSec), mins, secs);
+                if (d.cfg.AgenticPollEnabled) {
+                    const std::int64_t nextSec = lastPollSec + d.cfg.AgenticPollIntervalSec;
+                    const std::int64_t deltaSec = (nextSec > nowSec) ? (nextSec - nowSec) : 0;
+                    const long long nm = static_cast<long long>(deltaSec / 60);
+                    const long long ns = static_cast<long long>(deltaSec % 60);
+                    char timeStr[64];
+                    std::snprintf(timeStr, sizeof(timeStr), "%lldm %llds", nm, ns);
+                    char nextStr[160];
+                    std::snprintf(nextStr, sizeof(nextStr), "%s",
+                                  SmatchetLocalization::T("agent.prefs.nextPoll", "Next poll: ~in {0}"));
+                    // Manual substitution since the existing localization helpers don't ship
+                    // a positional formatter. Worst case: a partial render if `{0}` is missing.
+                    std::string nextDisplay = nextStr;
+                    const std::size_t slot = nextDisplay.find("{0}");
+                    if (slot != std::string::npos) {
+                        nextDisplay.replace(slot, 3, timeStr);
+                    } else {
+                        nextDisplay += " ";
+                        nextDisplay += timeStr;
+                    }
+                    ImGui::TextUnformatted(nextDisplay.c_str());
+                }
+            }
+
+            ImGui::Spacing();
+
+            // Run-now button — synchronous on the UI thread would freeze for ~5-30 seconds
+            // (LLM round-trip per issue). Per AGENTS.md Pillar 2 we wrap in
+            // LaunchBackgroundTask; results land in SQLite and the T6 panel picks them up.
+            if (ImGui::Button(SmatchetLocalization::T("agent.prefs.runNow", "Run triage now"))) {
+                app.LaunchBackgroundTask([&app]() {
+                    std::string runErr;
+                    if (!app.RunAgenticTriageOnce(runErr)) {
+                        LOG_WARN("Preferences: Run triage now failed: %s", runErr.c_str());
+                    }
+                });
+            }
+            ImGui::EndTabItem();
+        }
+#endif // SMATCHET_WITH_AGENTIC
 #if defined(SMATCHET_WITH_WHISPER)
         // Whisper dictation Preferences tab — Phase C. Hotkey rebind UI lands
         // in Phase E (read-only display here). Master toggle persists through
@@ -929,14 +1064,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         // banner-owned ModelDownloader so a fetch started from the banner
         // continues to show progress on this tab.
         if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"))) {
-            ImGui::TextWrapped(
-                "Push-to-talk dictation. Hold the configured hotkey, speak, release. Transcription "
-                "runs locally when a Whisper model is on disk; falls back to OpenAI Whisper API "
-                "when no model is present (cloud mode requires an API key).");
+            ImGui::TextWrapped("Push-to-talk dictation. Hold the configured hotkey, speak, release. Transcription "
+                               "runs locally when a Whisper model is on disk; falls back to OpenAI Whisper API "
+                               "when no model is present (cloud mode requires an API key).");
             ImGui::Spacing();
 
-            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.enableToggle",
-                                                        "Enable voice dictation"),
+            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.enableToggle", "Enable voice dictation"),
                                 &d.cfg.WhisperEnabled)) {
                 if (d.cfg.WhisperEnabled) {
                     d.cfg.WhisperSetupCompleted = true;
@@ -956,8 +1089,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     modeIdx = 2;
                 }
                 const char* labels[3] = {
-                    SmatchetLocalization::T("whisper.preferences.modeAuto",
-                                            "Auto (local if present, cloud fallback)"),
+                    SmatchetLocalization::T("whisper.preferences.modeAuto", "Auto (local if present, cloud fallback)"),
                     SmatchetLocalization::T("whisper.preferences.modeLocal", "Local only (no network)"),
                     SmatchetLocalization::T("whisper.preferences.modeCloud", "Cloud only (OpenAI)")};
                 if (ImGui::Combo("Mode", &modeIdx, labels, 3)) {
@@ -999,8 +1131,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             for (const auto& s : labelStorage) {
                 labelPtrs.push_back(s.c_str());
             }
-            if (ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"),
-                             &selIdx, labelPtrs.data(), static_cast<int>(labelPtrs.size()))) {
+            if (ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"), &selIdx,
+                             labelPtrs.data(), static_cast<int>(labelPtrs.size()))) {
                 if (selIdx >= 0 && static_cast<std::size_t>(selIdx) < catalog.size()) {
                     d.cfg.WhisperModel = catalog[static_cast<std::size_t>(selIdx)].Id;
                     MarkPrefsDirty(d);
@@ -1009,14 +1141,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
             smatchet::whisper::ModelDownloader& dl = smatchet::whisper::banner::BannerOwnedDownloader();
             const auto prog = dl.GetProgress();
-            const bool currentlyDownloading =
-                (prog.state == smatchet::whisper::ModelDownloader::State::Downloading) ||
-                (prog.state == smatchet::whisper::ModelDownloader::State::Verifying);
+            const bool currentlyDownloading = (prog.state == smatchet::whisper::ModelDownloader::State::Downloading) ||
+                                              (prog.state == smatchet::whisper::ModelDownloader::State::Verifying);
             const bool modelPresent = smatchet::whisper::catalog::IsModelPresent(d.cfg.WhisperModel, modelDir);
 
             ImGui::BeginDisabled(modelPresent || currentlyDownloading || modelDir.empty());
-            if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.downloadModel",
-                                                      "Download model"))) {
+            if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.downloadModel", "Download model"))) {
                 // Stamp fresh consent for the gate before the worker reads it.
                 d.cfg.WhisperConsentTimestampSec = smatchet::whisper::consent::NowEpochSec();
                 ConfigManager::Save(d.cfg);
@@ -1028,14 +1158,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::EndDisabled();
             if (currentlyDownloading) {
                 ImGui::SameLine();
-                if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.cancelDownload",
-                                                         "Cancel download"))) {
+                if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.cancelDownload", "Cancel download"))) {
                     dl.Cancel();
                 }
-                const float frac = (prog.bytesExpected > 0)
-                                       ? std::min(1.0f, static_cast<float>(prog.bytesReceived) /
-                                                            static_cast<float>(prog.bytesExpected))
-                                       : 0.0f;
+                const float frac = (prog.bytesExpected > 0) ? std::min(1.0f, static_cast<float>(prog.bytesReceived) /
+                                                                                 static_cast<float>(prog.bytesExpected))
+                                                            : 0.0f;
                 ImGui::ProgressBar(frac, ImVec2(-1, 0));
             }
             if (!prog.error.empty()) {
@@ -1050,33 +1178,29 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             // next plugin OnStop/OnStart cycle (or at app restart) — Phase E
             // does not hot-rebind the live hook to keep the surface tight.
             ImGui::Separator();
-            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.hotkey",
-                                                           "Push-to-talk hotkey"));
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.hotkey", "Push-to-talk hotkey"));
             {
                 static bool s_capturing = false;
                 static std::string s_hotkeyError;
                 static char s_hotkeyDisplay[64] = {0};
                 static bool s_hotkeyDisplaySeeded = false;
-                if (!s_hotkeyDisplaySeeded ||
-                    std::strcmp(s_hotkeyDisplay, d.cfg.WhisperHotkey.c_str()) != 0) {
-                    std::snprintf(s_hotkeyDisplay, sizeof(s_hotkeyDisplay), "%s",
-                                  d.cfg.WhisperHotkey.c_str());
+                if (!s_hotkeyDisplaySeeded || std::strcmp(s_hotkeyDisplay, d.cfg.WhisperHotkey.c_str()) != 0) {
+                    std::snprintf(s_hotkeyDisplay, sizeof(s_hotkeyDisplay), "%s", d.cfg.WhisperHotkey.c_str());
                     s_hotkeyDisplaySeeded = true;
                 }
 
                 if (!s_capturing) {
                     ImGui::TextDisabled("%s", s_hotkeyDisplay);
                     ImGui::SameLine();
-                    if (ImGui::SmallButton(SmatchetLocalization::T(
-                            "whisper.preferences.hotkeyRebindButton", "Click to rebind"))) {
+                    if (ImGui::SmallButton(
+                            SmatchetLocalization::T("whisper.preferences.hotkeyRebindButton", "Click to rebind"))) {
                         s_capturing = true;
                         s_hotkeyError.clear();
                     }
                 } else {
                     ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.30f, 1.0f), "%s",
-                                       SmatchetLocalization::T(
-                                           "whisper.preferences.hotkeyCapturing",
-                                           "Press a key combo... (Esc to cancel)"));
+                                       SmatchetLocalization::T("whisper.preferences.hotkeyCapturing",
+                                                               "Press a key combo... (Esc to cancel)"));
 
                     // Esc cancels capture without clobbering the existing key.
                     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -1110,8 +1234,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         for (int k = 0; k < 12 && capturedVk == 0; ++k) {
                             const ImGuiKey ik = static_cast<ImGuiKey>(ImGuiKey_F1 + k);
                             if (ImGui::IsKeyPressed(ik, false)) {
-                                capturedVk =
-                                    smatchet::whisper::hotkey::vk::kF1 + static_cast<unsigned int>(k);
+                                capturedVk = smatchet::whisper::hotkey::vk::kF1 + static_cast<unsigned int>(k);
                             }
                         }
                         if (capturedVk == 0 && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
@@ -1126,26 +1249,27 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
                         if (capturedVk != 0) {
                             smatchet::whisper::hotkey::Hotkey hk;
-                            if (io.KeyCtrl) hk.mods |= smatchet::whisper::hotkey::mod::kControl;
-                            if (io.KeyAlt) hk.mods |= smatchet::whisper::hotkey::mod::kAlt;
-                            if (io.KeyShift) hk.mods |= smatchet::whisper::hotkey::mod::kShift;
-                            if (io.KeySuper) hk.mods |= smatchet::whisper::hotkey::mod::kWin;
+                            if (io.KeyCtrl)
+                                hk.mods |= smatchet::whisper::hotkey::mod::kControl;
+                            if (io.KeyAlt)
+                                hk.mods |= smatchet::whisper::hotkey::mod::kAlt;
+                            if (io.KeyShift)
+                                hk.mods |= smatchet::whisper::hotkey::mod::kShift;
+                            if (io.KeySuper)
+                                hk.mods |= smatchet::whisper::hotkey::mod::kWin;
                             hk.vk = capturedVk;
 
                             // Reject combos with no modifier — a bare key is
                             // a global hotkey landmine.
                             if (hk.mods == 0) {
-                                s_hotkeyError = SmatchetLocalization::T(
-                                    "whisper.preferences.hotkeyErrorModifiersOnly",
-                                    "Hotkey must include a non-modifier key");
+                                s_hotkeyError = SmatchetLocalization::T("whisper.preferences.hotkeyErrorModifiersOnly",
+                                                                        "Hotkey must include a non-modifier key");
                                 s_capturing = false;
                             } else {
-                                const std::string newDescriptor =
-                                    smatchet::whisper::hotkey::Stringify(hk);
+                                const std::string newDescriptor = smatchet::whisper::hotkey::Stringify(hk);
                                 if (newDescriptor.empty()) {
-                                    s_hotkeyError = SmatchetLocalization::T(
-                                        "whisper.preferences.hotkeyErrorParse",
-                                        "Could not parse the captured key combo");
+                                    s_hotkeyError = SmatchetLocalization::T("whisper.preferences.hotkeyErrorParse",
+                                                                            "Could not parse the captured key combo");
                                 } else {
                                     d.cfg.WhisperHotkey = newDescriptor;
                                     MarkPrefsDirty(d);
@@ -1168,8 +1292,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                                 "whisper.preferences.hotkeyErrorRebind",
                                                                 "Hotkey rebind failed: ")) +
                                                             rebindErr;
-                                            LOG_WARN("Whisper preferences: hot rebind failed: %s",
-                                                     rebindErr.c_str());
+                                            LOG_WARN("Whisper preferences: hot rebind failed: %s", rebindErr.c_str());
                                         } else {
                                             LOG_INFO("Whisper preferences: hot rebind applied to '%s'",
                                                      newDescriptor.c_str());
@@ -1182,15 +1305,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     }
                 }
                 if (!s_hotkeyError.empty()) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s",
-                                       s_hotkeyError.c_str());
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", s_hotkeyError.c_str());
                 }
             }
 
             // API key — passworded input, with fallback hint when empty + AiProvider=openai.
             ImGui::Separator();
-            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.apiKey",
-                                                           "OpenAI API key (cloud mode)"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("whisper.preferences.apiKey", "OpenAI API key (cloud mode)"));
             static char s_whisperKeyBuf[512] = {0};
             static bool s_whisperKeyBufSeeded = false;
             if (!s_whisperKeyBufSeeded) {
@@ -1223,18 +1345,18 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 if (inFlight) {
                     ImGui::BeginDisabled(true);
                 }
-                if (ImGui::Button(SmatchetLocalization::T(
-                        "whisper.preferences.apiKey.testButton", "Test connection"))) {
+                if (ImGui::Button(
+                        SmatchetLocalization::T("whisper.preferences.apiKey.testButton", "Test connection"))) {
                     // Resolve the key with the same 5-row fallback the runtime
                     // uses (WhisperApiKey > AiApiKey when provider=openai).
                     const std::string providerStr =
                         (d.cfg.AiProviderKind == 0) ? std::string("openai") : std::string("anthropic");
-                    const std::string resolvedKey = smatchet::whisper::pure::ResolveWhisperApiKey(
-                        d.cfg.WhisperApiKey, providerStr, d.cfg.AiApiKey);
+                    const std::string resolvedKey =
+                        smatchet::whisper::pure::ResolveWhisperApiKey(d.cfg.WhisperApiKey, providerStr, d.cfg.AiApiKey);
                     if (resolvedKey.empty()) {
-                        s_whisperTestResult = std::string(SmatchetLocalization::T(
-                            "whisper.preferences.testConnection.failure", "x ")) +
-                                              "no API key configured";
+                        s_whisperTestResult =
+                            std::string(SmatchetLocalization::T("whisper.preferences.testConnection.failure", "x ")) +
+                            "no API key configured";
                         s_whisperTestResultType = 2;
                     } else {
                         s_whisperTestInFlight.store(true, std::memory_order_release);
@@ -1249,10 +1371,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             std::string okMsg;
                             std::string errMsg;
                             try {
-                                cpr::Response r = cpr::Get(
-                                    cpr::Url{"https://api.openai.com/v1/models"},
-                                    cpr::Header{{"Authorization", std::string("Bearer ") + resolvedKey}},
-                                    cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+                                cpr::Response r =
+                                    cpr::Get(cpr::Url{"https://api.openai.com/v1/models"},
+                                             cpr::Header{{"Authorization", std::string("Bearer ") + resolvedKey}},
+                                             cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
                                 if (r.error.code != cpr::ErrorCode::OK) {
                                     errMsg = std::string("transport: ") + r.error.message;
                                 } else if (r.status_code < 200 || r.status_code >= 300) {
@@ -1268,16 +1390,16 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             dispatcher.PostToMainThread([okMsg, errMsg]() {
                                 s_whisperTestInFlight.store(false, std::memory_order_release);
                                 if (errMsg.empty()) {
-                                    s_whisperTestResult = std::string(SmatchetLocalization::T(
-                                        "whisper.preferences.testConnection.success",
-                                        "Connected")) +
-                                                          " (" + okMsg + ")";
+                                    s_whisperTestResult =
+                                        std::string(SmatchetLocalization::T(
+                                            "whisper.preferences.testConnection.success", "Connected")) +
+                                        " (" + okMsg + ")";
                                     s_whisperTestResultType = 1;
                                 } else {
-                                    s_whisperTestResult = std::string(SmatchetLocalization::T(
-                                        "whisper.preferences.testConnection.failure",
-                                        "Failed: ")) +
-                                                          errMsg;
+                                    s_whisperTestResult =
+                                        std::string(SmatchetLocalization::T(
+                                            "whisper.preferences.testConnection.failure", "Failed: ")) +
+                                        errMsg;
                                     s_whisperTestResultType = 2;
                                 }
                             });
@@ -1301,8 +1423,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
             // --- Phase F language / trim / max-clip / auto-send rows. ---
             ImGui::Separator();
-            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.language.label",
-                                                           "Language:"));
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.language.label", "Language:"));
             ImGui::SameLine();
             {
                 // Static set of common ISO codes the bundled English models +
@@ -1311,8 +1432,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 // more codes via direct config edit; the dropdown captures
                 // the common 80 % rather than enumerating every supported tag.
                 static const char* kLanguageCodes[] = {
-                    "en", "auto", "fr", "de", "es", "it", "pt", "nl",
-                    "ja", "zh", "ko", "ru", "pl", "ar", "hi", "tr",
+                    "en", "auto", "fr", "de", "es", "it", "pt", "nl", "ja", "zh", "ko", "ru", "pl", "ar", "hi", "tr",
                 };
                 int langIdx = 0;
                 for (int i = 0; i < static_cast<int>(sizeof(kLanguageCodes) / sizeof(kLanguageCodes[0])); ++i) {
@@ -1328,49 +1448,46 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 }
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.language.autoHint",
-                                                              "(or \"auto\" for autodetect)"));
+            ImGui::TextDisabled(
+                "%s", SmatchetLocalization::T("whisper.preferences.language.autoHint", "(or \"auto\" for autodetect)"));
 
-            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.trim.label",
-                                                        "Trim leading/trailing silence"),
-                                &d.cfg.WhisperTrim)) {
+            if (ImGui::Checkbox(
+                    SmatchetLocalization::T("whisper.preferences.trim.label", "Trim leading/trailing silence"),
+                    &d.cfg.WhisperTrim)) {
                 MarkPrefsDirty(d);
             }
 
             // Max clip length: int input with explicit clamp on edit. 0 = unlimited.
             {
                 int maxClip = d.cfg.WhisperMaxClipSec;
-                ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.maxClipSec.label",
-                                                               "Max clip length:"));
+                ImGui::TextUnformatted(
+                    SmatchetLocalization::T("whisper.preferences.maxClipSec.label", "Max clip length:"));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(80.0f);
                 if (ImGui::InputInt("##WhisperMaxClipSec", &maxClip, 0, 0)) {
-                    if (maxClip < 0) maxClip = 0;
-                    if (maxClip > 600) maxClip = 600;
+                    if (maxClip < 0)
+                        maxClip = 0;
+                    if (maxClip > 600)
+                        maxClip = 600;
                     d.cfg.WhisperMaxClipSec = maxClip;
                     MarkPrefsDirty(d);
                 }
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s",
-                                    SmatchetLocalization::T("whisper.preferences.maxClipSec.unit",
-                                                            "seconds"));
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.maxClipSec.unit", "seconds"));
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s",
-                                    SmatchetLocalization::T("whisper.preferences.maxClipSec.hint",
-                                                            "(0 = unlimited; max 600)"));
+                ImGui::TextDisabled(
+                    "%s", SmatchetLocalization::T("whisper.preferences.maxClipSec.hint", "(0 = unlimited; max 600)"));
             }
 
-            if (ImGui::Checkbox(SmatchetLocalization::T(
-                                    "whisper.preferences.autoSend.label",
-                                    "Auto-send AI chat on punctuation (\".\", \"!\", \"?\")"),
+            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.autoSend.label",
+                                                        "Auto-send AI chat on punctuation (\".\", \"!\", \"?\")"),
                                 &d.cfg.WhisperAutoSendOnPunctuation)) {
                 MarkPrefsDirty(d);
             }
 
             // Privacy disclosure — three-bullet list.
             ImGui::Separator();
-            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading",
-                                                           "Privacy disclosure"));
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading", "Privacy disclosure"));
             ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyLocal",
                                                             "Local mode: audio stays on your machine; "
                                                             "no network call is made."));
@@ -1387,18 +1504,17 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             // routine users (no harm if pressed — the banner just re-asks
             // the consent question).
             ImGui::Separator();
-            if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.rerunSetup.button",
-                                                      "Re-run setup banner"))) {
+            if (ImGui::Button(
+                    SmatchetLocalization::T("whisper.preferences.rerunSetup.button", "Re-run setup banner"))) {
                 d.cfg.WhisperSetupCompleted = false;
                 d.cfg.WhisperSetupChoice.clear();
                 MarkPrefsDirty(d);
                 LOG_INFO("Whisper preferences: Re-run setup banner pressed — "
                          "WhisperSetupCompleted reset; banner returns next launch");
             }
-            ImGui::SetItemTooltip("%s",
-                                  SmatchetLocalization::T("whisper.preferences.rerunSetup.tooltip",
-                                                          "Forces WhisperSetupCompleted=false; "
-                                                          "banner appears next launch"));
+            ImGui::SetItemTooltip("%s", SmatchetLocalization::T("whisper.preferences.rerunSetup.tooltip",
+                                                                "Forces WhisperSetupCompleted=false; "
+                                                                "banner appears next launch"));
 
             ImGui::EndTabItem();
         }

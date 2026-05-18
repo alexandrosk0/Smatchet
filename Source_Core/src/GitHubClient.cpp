@@ -456,8 +456,8 @@ bool GitHubClient::FetchIssueBody(const std::string& issueKey, std::string& outB
     const std::string suffix = GitHubClientHelpers::BuildIssueRootSuffix(parsed);
     const std::string url = baseUrl_ + suffix;
 
-    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_),
-                               cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
 
     if (r.status_code != 200) {
         outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
@@ -484,7 +484,8 @@ bool GitHubClient::FetchIssueBody(const std::string& issueKey, std::string& outB
 }
 
 bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::string& repo,
-                                         std::vector<std::string>& outKeys, std::string& outError) {
+                                         std::vector<std::string>& outKeys, std::string& outError,
+                                         std::int64_t sinceUnixSec) {
     outKeys.clear();
     outError.clear();
 
@@ -497,13 +498,19 @@ bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::st
         return false;
     }
 
-    // per_page bound (30) tracks the agentic-flow plan's predictable-cost cap for the
-    // single-shot triage batch. T7's cursor-driven poll path replaces this with pagination.
-    const std::string suffix = "/repos/" + owner + "/" + repo + "/issues?state=open&per_page=30";
+    // per_page bound (30) keeps the downstream LLM inference cost predictable. When
+    // `sinceUnixSec > 0` the scheduled-poll worker is paging by `updated_at` (GitHub's
+    // since= filter on /issues), so only issues that changed since the previous poll
+    // come back — the same 30-row cap then doubles as a per-poll work cap.
+    std::string suffix = "/repos/" + owner + "/" + repo + "/issues?state=open&per_page=30";
+    if (sinceUnixSec > 0) {
+        suffix += "&since=";
+        suffix += GitHubClientHelpers::FormatUnixSecAsIso8601(sinceUnixSec);
+    }
     const std::string url = baseUrl_ + suffix;
 
-    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_),
-                               cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
 
     if (r.status_code != 200) {
         outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);

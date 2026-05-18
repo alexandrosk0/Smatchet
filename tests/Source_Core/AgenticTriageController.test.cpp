@@ -63,7 +63,8 @@ class FakeGitHub : public smatchet::agentic::IGitHubReadClient {
         return true;
     }
     bool ListOpenIssuesForRepo(const std::string& /*owner*/, const std::string& /*repo*/,
-                               std::vector<std::string>& outKeys, std::string& outError) override {
+                               std::vector<std::string>& outKeys, std::string& outError,
+                               std::int64_t /*sinceUnixSec*/ = 0) override {
         ++listCalls;
         if (!listOk) {
             outError = listError;

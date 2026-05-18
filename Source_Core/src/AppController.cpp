@@ -360,6 +360,13 @@ AppController::~AppController() {
     // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
+#if defined(SMATCHET_WITH_AGENTIC)
+    // Join the scheduled-poll worker (T7) before any other teardown. The worker only touches
+    // its own members + the SQLite store + the cached triage adapters, so it does not interact
+    // with mainThreadDispatcher / AiAssistantController; ordering relative to those is loose.
+    // Joining here guarantees no worker iteration is in flight while later members destruct.
+    StopAgenticPoll();
+#endif
 #if defined(SMATCHET_WITH_AI)
     // Drop the AI assistant first — its worker may still be inside SendStreaming. The
     // dtor flips the cancel atom + joins; only after the join can the main-thread
@@ -1473,6 +1480,13 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         aiAssistant_.reset();
     }
 #endif
+
+#if defined(SMATCHET_WITH_AGENTIC)
+    // T7 — spawn the scheduled-poll worker AFTER all of agentProposalStore_ + AiAssistantController
+    // + ConfigManager::Load have settled. The worker is opt-in (cfg.AgenticPollEnabled defaults off);
+    // when off, StartAgenticPollIfEnabled is a fast no-op. Lifetime: joined in the destructor.
+    StartAgenticPollIfEnabled();
+#endif
 }
 
 #if defined(SMATCHET_WITH_AI)
@@ -1563,8 +1577,8 @@ class GitHubReadAdapter : public smatchet::agentic::IGitHubReadClient {
         return impl_.FetchIssueComments(issueKey, outComments, outError);
     }
     bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
-                               std::string& outError) override {
-        return impl_.ListOpenIssuesForRepo(owner, repo, outKeys, outError);
+                               std::string& outError, std::int64_t sinceUnixSec = 0) override {
+        return impl_.ListOpenIssuesForRepo(owner, repo, outKeys, outError, sinceUnixSec);
     }
 
   private:
@@ -1610,6 +1624,211 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
         agenticGithubReadAdapter_.get(), agenticInferenceAdapter_.get(), agentProposalStore_.get()));
     return agenticTriageController_.get();
 }
+
+// ─── T7 scheduled-poll worker ──────────────────────────────────────────────
+//
+// The worker loop reads its settings from `ConfigManager::Load()` on every
+// iteration (not just at start) so a Preferences edit takes effect on the next
+// sleep wake without forcing the user to restart the app. `RestartAgenticPoll`
+// joins the existing thread + reconstructs the triage controller (the PAT or
+// repo query may have changed) before the new worker spawns.
+//
+// Cursor durability: per-iteration the worker reads the previous
+// `last_seen_updated_at` from `agent_poll_cursor` via the proposal store,
+// passes it to `IGitHubReadClient::ListOpenIssuesForRepo` as the `since=`
+// filter, and after the batch completes it writes the *current* wall-clock
+// time back as the new cursor. We use wall-clock (not the max updated_at of
+// the returned issues) because GitHub guarantees monotonic `updated_at`
+// timestamps and any drift between server + client is bounded by the cursor's
+// "since" granularity (seconds).
+//
+// Threading: the worker thread never touches ImGui state directly — proposals
+// land in the SQLite store, which the T6 UI panel reads through its 1-Hz cache.
+// Cursor uses GitHub's since= filter to only fetch issues updated after last poll
+// — bounded API cost, predictable LLM token spend.
+
+void AppController::AgenticPollWorkerLoop() {
+    LOG_INFO("AppController::AgenticPollWorkerLoop: started");
+    while (!agenticPollShouldStop_.load()) {
+        TrackerConfig cfg = ConfigManager::Load();
+        // Re-check the preconditions every iteration so a runtime config edit (Preferences
+        // flips PAT off, or clears the query) cleanly stops the loop on the next wake without
+        // requiring the user to also flip the master toggle.
+        if (!cfg.AgenticPollEnabled || cfg.GitHubPat.empty() || cfg.AgenticPollQuery.empty()) {
+            LOG_INFO("AppController::AgenticPollWorkerLoop: precondition lost (enabled=%d pat_empty=%d query_empty=%d) "
+                     "— exiting",
+                     cfg.AgenticPollEnabled ? 1 : 0, cfg.GitHubPat.empty() ? 1 : 0,
+                     cfg.AgenticPollQuery.empty() ? 1 : 0);
+            break;
+        }
+
+        auto* triage = GetAgenticTriageController();
+        if (triage != nullptr && agentProposalStore_ != nullptr) {
+            // Read the previous cursor BEFORE triaging so a per-iteration crash leaves the
+            // cursor unmoved (the next poll re-fetches the same window). The cursor key
+            // (sourceTracker, repoKey) — repo key is the user's query verbatim for source=github.
+            std::int64_t prevCursor = 0;
+            std::string cursorErr;
+            agentProposalStore_->GetPollCursor("github", cfg.AgenticPollQuery, prevCursor, cursorErr);
+            // Errors reading the cursor are non-fatal — treat as 0 (full first-page fetch).
+
+            // Inject the cursor by routing the discovery through the adapter directly. The
+            // controller's `TriageBatch` calls `ListOpenIssuesForRepo(owner, repo, keys, err)`
+            // with the default sinceUnixSec=0 — to apply the cursor we'd need a controller-side
+            // overload, but for T7 the pragmatic shape is to invoke the adapter manually for
+            // discovery + then funnel each key through TriageIssue. Keeps the cursor filter
+            // entirely in the worker, not threaded through the controller API.
+            //
+            // ParseOwnerRepoQuery duplicates the controller's strict parser; using the same
+            // shape locally avoids re-doing the controller's strict checks indirectly.
+            const auto slash = cfg.AgenticPollQuery.find('/');
+            if (slash == std::string::npos || slash == 0 || slash + 1 >= cfg.AgenticPollQuery.size()) {
+                LOG_WARN("AppController::AgenticPollWorkerLoop: malformed query '%s' — skipping iteration",
+                         cfg.AgenticPollQuery.c_str());
+            } else {
+                const std::string owner = cfg.AgenticPollQuery.substr(0, slash);
+                const std::string repo = cfg.AgenticPollQuery.substr(slash + 1);
+                std::vector<std::string> keys;
+                std::string listErr;
+                if (agenticGithubReadAdapter_ &&
+                    agenticGithubReadAdapter_->ListOpenIssuesForRepo(owner, repo, keys, listErr, prevCursor)) {
+                    int totalInserted = 0;
+                    int totalFailed = 0;
+                    for (const auto& key : keys) {
+                        int inserted = 0;
+                        std::string triageErr;
+                        if (triage->TriageIssue(key, inserted, triageErr)) {
+                            totalInserted += inserted;
+                        } else {
+                            ++totalFailed;
+                            LOG_WARN("AppController::AgenticPollWorkerLoop: triage %s failed: %s", key.c_str(),
+                                     triageErr.c_str());
+                        }
+                    }
+                    LOG_INFO(
+                        "AppController::AgenticPollWorkerLoop: %s/%s scanned=%zu inserted=%d failed=%d (since=%lld)",
+                        owner.c_str(), repo.c_str(), keys.size(), totalInserted, totalFailed,
+                        static_cast<long long>(prevCursor));
+                    // Advance cursor to wall-clock — GitHub's updated_at monotonicity guarantees
+                    // we don't miss intervening edits. Using max(updated_at) of the returned set
+                    // would also work, but requires parsing every payload; wall-clock is cheaper
+                    // and the worst case (poll-clock skew) is bounded by interval seconds.
+                    const std::int64_t nowSec = std::chrono::duration_cast<std::chrono::seconds>(
+                                                    std::chrono::system_clock::now().time_since_epoch())
+                                                    .count();
+                    std::string setErr;
+                    agentProposalStore_->SetPollCursor("github", cfg.AgenticPollQuery, nowSec, setErr);
+                } else {
+                    LOG_WARN("AppController::AgenticPollWorkerLoop: ListOpenIssuesForRepo failed: %s", listErr.c_str());
+                }
+            }
+        } else {
+            LOG_WARN("AppController::AgenticPollWorkerLoop: triage controller unavailable — iteration skipped");
+        }
+
+        // Stamp the end-of-iteration time (for UI readout) before sleeping.
+        const std::int64_t nowSec =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        agenticPollLastAtSec_.store(nowSec);
+
+        // Sleep with condition-variable wake so a Stop / Restart from the UI thread doesn't
+        // have to wait out the full interval. Re-read cfg each loop so a Preferences edit to
+        // the interval applies on the next wake.
+        std::unique_lock<std::mutex> lk(agenticPollMu_);
+        const int intervalSec = (cfg.AgenticPollIntervalSec < 60)     ? 60
+                                : (cfg.AgenticPollIntervalSec > 3600) ? 3600
+                                                                      : cfg.AgenticPollIntervalSec;
+        agenticPollCv_.wait_for(lk, std::chrono::seconds(intervalSec),
+                                [this]() { return agenticPollShouldStop_.load(); });
+    }
+    agenticPollRunning_.store(false);
+    LOG_INFO("AppController::AgenticPollWorkerLoop: exited");
+}
+
+void AppController::StartAgenticPollIfEnabled() {
+    // Already running? Caller (RestartAgenticPoll) must Stop first; this guard is a safety
+    // net for callers that forget — never spawn a second worker.
+    if (agenticPollRunning_.load() || agenticPollThread_.joinable()) {
+        LOG_DEBUG("AppController::StartAgenticPollIfEnabled: worker already running — no-op");
+        return;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (!cfg.AgenticPollEnabled) {
+        LOG_DEBUG("AppController::StartAgenticPollIfEnabled: master toggle off — not starting");
+        return;
+    }
+    if (cfg.GitHubPat.empty()) {
+        LOG_INFO("AppController::StartAgenticPollIfEnabled: GitHubPat empty — not starting (configure in Preferences)");
+        return;
+    }
+    if (cfg.AgenticPollQuery.empty()) {
+        LOG_INFO("AppController::StartAgenticPollIfEnabled: query empty — not starting (configure OWNER/REPO)");
+        return;
+    }
+    if (cfg.AgenticPollSource != "github") {
+        LOG_WARN("AppController::StartAgenticPollIfEnabled: only source=github supported in T7 (got '%s')",
+                 cfg.AgenticPollSource.c_str());
+        return;
+    }
+    agenticPollShouldStop_.store(false);
+    agenticPollRunning_.store(true);
+    agenticPollThread_ = std::thread(&AppController::AgenticPollWorkerLoop, this);
+    LOG_INFO("AppController::StartAgenticPollIfEnabled: worker started (interval=%d s, query=%s)",
+             cfg.AgenticPollIntervalSec, cfg.AgenticPollQuery.c_str());
+}
+
+void AppController::StopAgenticPoll() {
+    if (!agenticPollThread_.joinable()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(agenticPollMu_);
+        agenticPollShouldStop_.store(true);
+    }
+    agenticPollCv_.notify_all();
+    agenticPollThread_.join();
+    agenticPollRunning_.store(false);
+    LOG_INFO("AppController::StopAgenticPoll: worker joined");
+}
+
+void AppController::RestartAgenticPoll() {
+    StopAgenticPoll();
+    // Drop the cached triage controller so the next start picks up a fresh GitHubPat /
+    // base URL — Preferences may have changed both behind us. The next GetAgenticTriageController()
+    // call from the worker rebuilds the chain (cheap — no HTTP traffic until TriageIssue runs).
+    agenticTriageController_.reset();
+    agenticGithubReadAdapter_.reset();
+    agenticInferenceAdapter_.reset();
+    agenticGithubClient_.reset();
+    agenticInferenceClient_.reset();
+    StartAgenticPollIfEnabled();
+}
+
+bool AppController::RunAgenticTriageOnce(std::string& outError) {
+    outError.clear();
+    auto* triage = GetAgenticTriageController();
+    if (triage == nullptr) {
+        outError = "Agentic triage unavailable — configure GitHub PAT in Preferences.";
+        return false;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.AgenticPollQuery.empty()) {
+        outError = "Agentic poll query empty — set OWNER/REPO in Preferences.";
+        return false;
+    }
+    smatchet::agentic::AgenticTriageController::BatchResult result;
+    std::string batchErr;
+    if (!triage->TriageBatch("github", cfg.AgenticPollQuery, result, batchErr)) {
+        outError = "TriageBatch failed: " + batchErr;
+        return false;
+    }
+    LOG_INFO("AppController::RunAgenticTriageOnce: %s scanned=%d inserted=%d failed=%zu", cfg.AgenticPollQuery.c_str(),
+             result.totalIssuesScanned, result.proposalsInserted, result.perIssueErrors.size());
+    return true;
+}
+
+std::int64_t AppController::GetAgenticLastPollAtSec() const noexcept { return agenticPollLastAtSec_.load(); }
 
 #endif // SMATCHET_WITH_AGENTIC
 
