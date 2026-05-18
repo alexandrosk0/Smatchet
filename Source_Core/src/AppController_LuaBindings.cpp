@@ -268,8 +268,8 @@ static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t
     }
     if (v.is<double>()) {
         const double d = v.as<double>();
-        if (d == std::floor(d) && d >= static_cast<double>(std::numeric_limits<std::int64_t>::min()) &&
-            d <= static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+        if (d == std::floor(d) && d >= static_cast<double>((std::numeric_limits<std::int64_t>::min)()) &&
+            d <= static_cast<double>((std::numeric_limits<std::int64_t>::max)())) {
             return std::to_string(static_cast<std::int64_t>(d));
         }
         return std::to_string(d);
@@ -1073,6 +1073,7 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
 void AppController::NotifyLuaTicketDataChanged() { luaWindowDataGen_.fetch_add(1); }
 
 void AppController::LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName) {
+    std::lock_guard<std::mutex> lock(luaActionsMutex_);
     luaTicketActions_.erase(
         std::remove_if(luaTicketActions_.begin(), luaTicketActions_.end(),
                        [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
@@ -1083,13 +1084,18 @@ void AppController::LuaUiRegisterTicketActionBind(const std::string& name, const
 }
 
 void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName) {
-    luaGlobalActions_.erase(
-        std::remove_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
-                       [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
-        luaGlobalActions_.end());
-    if (!callbackFuncName.empty()) {
-        luaGlobalActions_.push_back({name, callbackFuncName});
+    {
+        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        luaGlobalActions_.erase(
+            std::remove_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
+                           [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
+            luaGlobalActions_.end());
+        if (!callbackFuncName.empty()) {
+            luaGlobalActions_.push_back({name, callbackFuncName});
+        }
     }
+    // commandRegistry_ has its own internal locking; do NOT hold luaActionsMutex_ across this
+    // call. ExecuteLuaGlobalAction's handler closure does not re-enter luaActionsMutex_.
 
     // Mirror into the unified command registry as a `lua.<name>` command so it is
     // discoverable via CLI / MCP / Palette without extra registration. See plan §Lua.
@@ -2515,6 +2521,7 @@ void AppController::DrawLuaWindows() {
 }
 
 std::vector<std::string> AppController::GetLuaTicketActionNames() const {
+    std::lock_guard<std::mutex> lock(luaActionsMutex_);
     std::vector<std::string> names;
     names.reserve(luaTicketActions_.size());
     std::transform(luaTicketActions_.begin(), luaTicketActions_.end(), std::back_inserter(names),
@@ -2523,6 +2530,7 @@ std::vector<std::string> AppController::GetLuaTicketActionNames() const {
 }
 
 std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
+    std::lock_guard<std::mutex> lock(luaActionsMutex_);
     std::vector<std::string> names;
     names.reserve(luaGlobalActions_.size());
     std::transform(luaGlobalActions_.begin(), luaGlobalActions_.end(), std::back_inserter(names),
@@ -2532,10 +2540,14 @@ std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
 
 void AppController::ExecuteLuaTicketAction(const std::string& name, const std::string& issueId) {
     std::string callbackFuncName;
-    const auto it = std::find_if(luaTicketActions_.begin(), luaTicketActions_.end(),
-                                 [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
-    if (it != luaTicketActions_.end()) {
-        callbackFuncName = it->second;
+    {
+        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        const auto it =
+            std::find_if(luaTicketActions_.begin(), luaTicketActions_.end(),
+                         [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
+        if (it != luaTicketActions_.end()) {
+            callbackFuncName = it->second;
+        }
     }
     if (callbackFuncName.empty()) {
         return;
@@ -2549,10 +2561,14 @@ void AppController::ExecuteLuaTicketAction(const std::string& name, const std::s
 
 void AppController::ExecuteLuaGlobalAction(const std::string& name) {
     std::string callbackFuncName;
-    const auto it = std::find_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
-                                 [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
-    if (it != luaGlobalActions_.end()) {
-        callbackFuncName = it->second;
+    {
+        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        const auto it =
+            std::find_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
+                         [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
+        if (it != luaGlobalActions_.end()) {
+            callbackFuncName = it->second;
+        }
     }
     if (callbackFuncName.empty()) {
         return;
