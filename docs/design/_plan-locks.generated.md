@@ -8,7 +8,22 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/design/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash scripts/dev/lock-claim.sh <slug> <write-set-file>`._
+### `agent-docs-improvements`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/xenodochial-montalcini-4b9116`
+- **Originating plan**: [`docs/design/agent-docs-improvements.md`](../../docs/design/agent-docs-improvements.md)
+- **Started**: 2026-05-18T22:54:55Z
+- **Write set** (8 paths):
+  - `AGENTS.md`
+  - `agents/security-review.md`
+  - `docs/backlog/agent-self-improvement/process.md`
+  - `docs/backlog/agent-self-improvement/tooling.md`
+  - `docs/backlog/agent-self-improvement/applied.md`
+  - `docs/backlog/agent-self-improvement/external-blockers.md`
+  - `docs/harness/SETUP.md`
+  - `docs/design/agent-docs-improvements.md`
+- **Notes**: agent docs improvements P2/P3 backlog clearance
+
