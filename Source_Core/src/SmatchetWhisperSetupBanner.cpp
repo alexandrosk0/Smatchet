@@ -40,6 +40,17 @@ struct BannerState {
     bool pickerExpanded = false; // user has clicked "Enable ▾"
     int selectedIndex = 1;       // default to "Recommended" (ggml-base.en, index 1)
     std::string lastError;       // last download error surfaced to the banner
+    // True once the banner has observed an active download transition this
+    // session (Downloading or Verifying). Auto-completion is gated on this
+    // so a leftover State::Complete in the static downloader from a prior
+    // session does not flicker the banner into auto-dismiss on its first
+    // frame after "Re-run setup banner" flips WhisperSetupCompleted back
+    // to false.
+    bool sawActiveDownloadThisSession = false;
+    // Sticky observation of cfg.WhisperSetupCompleted — flipping it from
+    // true -> false (the Preferences "Re-run setup banner" path) resets the
+    // session-scoped flags so a fresh banner cycle starts clean.
+    bool lastCfgSetupCompleted = false;
 };
 
 BannerState& Bs() {
@@ -132,12 +143,24 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     (void)cfg;
     return false;
 #else
+    BannerState& s = Bs();
+
+    // Detect "Preferences re-run setup banner just flipped Completed false".
+    // Reset session-scoped flags so a leftover ModelDownloader::State::Complete
+    // from a prior successful download in the same process can't auto-dismiss
+    // the new banner on its first frame (the flicker bug).
+    if (s.lastCfgSetupCompleted && !cfg.WhisperSetupCompleted) {
+        s.sawActiveDownloadThisSession = false;
+        s.pickerExpanded = false;
+        s.lastError.clear();
+    }
+    s.lastCfgSetupCompleted = cfg.WhisperSetupCompleted;
+
     if (cfg.WhisperSetupCompleted) {
         return false;
     }
 
     bool cfgChanged = false;
-    BannerState& s = Bs();
 
     // Pin to the top of the main viewport work area. Work-area excludes the
     // main menu bar so SetNextWindowPos lands the banner directly under it.
@@ -154,6 +177,9 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     const ModelDownloader::Progress prog = OwnedDownloader().GetProgress();
     const bool downloading = (prog.state == ModelDownloader::State::Downloading) ||
                              (prog.state == ModelDownloader::State::Verifying);
+    if (downloading) {
+        s.sawActiveDownloadThisSession = true;
+    }
     float bannerHeight = 64.0f;
     if (downloading) {
         bannerHeight = 84.0f;
@@ -267,14 +293,18 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     }
 
     // Banner auto-dismisses when a download completes; flip the setup flag
-    // and the next frame stops drawing.
-    if (prog.state == ModelDownloader::State::Complete) {
+    // and the next frame stops drawing. Gated on `sawActiveDownloadThisSession`
+    // so a leftover State::Complete from a previous successful download in
+    // the same process cannot auto-dismiss a re-opened banner (the "flickers
+    // in and out" bug after Preferences -> Re-run setup banner).
+    if (s.sawActiveDownloadThisSession && prog.state == ModelDownloader::State::Complete) {
         cfg.WhisperEnabled = true;
         cfg.WhisperSetupCompleted = true;
         cfg.WhisperSetupChoice = "enabled";
         cfg.WhisperModel = prog.modelId.empty() ? cfg.WhisperModel : prog.modelId;
         cfgChanged = true;
         s.pickerExpanded = false;
+        s.sawActiveDownloadThisSession = false;
         LOG_INFO("Whisper banner: setup completed (model=%s).", cfg.WhisperModel.c_str());
     }
 

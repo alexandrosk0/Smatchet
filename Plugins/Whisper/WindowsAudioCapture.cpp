@@ -426,10 +426,24 @@ void WindowsAudioCapture::CaptureThreadMain() {
         return;
     }
 
-    LOG_INFO("WindowsAudioCapture: capture started (sourceRate=%lu ch=%u bps=%u tag=%u)",
-             static_cast<unsigned long>(negotiated.nSamplesPerSec),
-             static_cast<unsigned>(negotiated.nChannels), static_cast<unsigned>(negotiated.wBitsPerSample),
-             static_cast<unsigned>(negotiated.wFormatTag));
+    // Resolve once + log so a wrong format-unwrap path surfaces without
+    // having to enable per-chunk DEBUG. Re-resolved per frame in
+    // MixToMonoInt16; the log here is the human-readable single-shot.
+    {
+        WORD effTag = 0;
+        WORD effBits = 0;
+        const bool resolved = ResolveFormat(negotiated, effTag, effBits);
+        LOG_INFO("WindowsAudioCapture: capture started (sourceRate=%lu ch=%u bps=%u tag=%u "
+                 "cbSize=%u resolved=%d effTag=%u effBits=%u)",
+                 static_cast<unsigned long>(negotiated.nSamplesPerSec),
+                 static_cast<unsigned>(negotiated.nChannels),
+                 static_cast<unsigned>(negotiated.wBitsPerSample),
+                 static_cast<unsigned>(negotiated.wFormatTag),
+                 static_cast<unsigned>(negotiated.cbSize),
+                 resolved ? 1 : 0,
+                 static_cast<unsigned>(effTag),
+                 static_cast<unsigned>(effBits));
+    }
 
     DecimationState decim;
     if (negotiated.nSamplesPerSec > 0) {
@@ -439,6 +453,15 @@ void WindowsAudioCapture::CaptureThreadMain() {
 
     const DWORD waitTimeoutMs = 200; // matches kBufferDuration so we wake reliably
     const UINT32 frameSize = negotiated.nBlockAlign; // bytes per frame across all channels
+
+    // Session-aggregate diagnostics — logged on Stop so a "captured but
+    // trim-dropped" session leaves a single line a user / report can grep
+    // for. peakSessionAbs in raw int16 magnitude; totalFrames before
+    // decimation; totalDownmixedSamples after decimation (== what reaches
+    // pcmBuffer_).
+    std::int32_t peakSessionAbs = 0;
+    std::uint64_t totalSourceFrames = 0;
+    std::uint64_t totalDownmixedSamples = 0;
 
     while (!stopRequested_.load(std::memory_order_acquire)) {
         DWORD waitResult = WaitForSingleObject(wakeEvent.get(), waitTimeoutMs);
@@ -480,6 +503,11 @@ void WindowsAudioCapture::CaptureThreadMain() {
                 EmitDecimated(mono, decim, downmixed);
             }
             captureClient->ReleaseBuffer(numFrames);
+            totalSourceFrames += numFrames;
+            totalDownmixedSamples += downmixed.size();
+            if (peakAbs > peakSessionAbs) {
+                peakSessionAbs = peakAbs;
+            }
             if (!downmixed.empty()) {
                 std::lock_guard<std::mutex> lk(pcmMutex_);
                 pcmBuffer_.insert(pcmBuffer_.end(), downmixed.begin(), downmixed.end());
@@ -498,7 +526,13 @@ void WindowsAudioCapture::CaptureThreadMain() {
     }
 
     audioClient->Stop();
-    LOG_INFO("WindowsAudioCapture: capture stopped");
+    const float peakSessionNorm = static_cast<float>(peakSessionAbs) / 32768.0f;
+    LOG_INFO("WindowsAudioCapture: capture stopped (sourceFrames=%llu downmixedSamples=%llu "
+             "sessionPeakAbs=%d sessionPeakNorm=%.3f)",
+             static_cast<unsigned long long>(totalSourceFrames),
+             static_cast<unsigned long long>(totalDownmixedSamples),
+             static_cast<int>(peakSessionAbs),
+             peakSessionNorm);
 }
 
 #else // !_WIN32
