@@ -64,6 +64,13 @@ void RowToProposal(SQLite::Statement& q, AgentProposal& out) {
 
 } // namespace
 
+// C++14 odr-use definition for the inline constexpr declared in the header.
+// C++17 deprecated the redundancy; until the codebase moves off C++14 (Unreal
+// compat — see AGENTS.md § Project rules) any caller that binds a reference
+// or takes the address of the constant needs this definition to satisfy the
+// linker.
+constexpr int AgentProposalStore::kCurrentSchemaVersion;
+
 AgentProposalStore::AgentProposalStore(const std::string& dbPath)
     : db_(std::unique_ptr<SQLite::Database>(
           new SQLite::Database(dbPath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX))) {
@@ -101,7 +108,90 @@ AgentProposalStore::AgentProposalStore(const std::string& dbPath)
               "last_seen_updated_at INTEGER NOT NULL, "
               "PRIMARY KEY (source_tracker, repo_key))");
 
-    LOG_INFO("AgentProposalStore: schema ready");
+    // Records the shipped schema version. AGENTS.md § Schema-version bumps
+    // requires exactly one shipped increment per feature increment; the agentic
+    // tables were additive across T4-T8 (new tables only) and only formally
+    // land their first shipped version here.
+    EnsureSchemaVersion();
+
+    LOG_INFO("AgentProposalStore: schema ready (version=%d)", kCurrentSchemaVersion);
+}
+
+void AgentProposalStore::EnsureSchemaVersion() {
+    // The schema_version table is a single-row ledger keyed implicitly by the
+    // singleton constraint: a CHECK clamps id to 1 so callers can SELECT/UPDATE
+    // without juggling row identity. On first open the INSERT OR IGNORE stamps
+    // version=1; on subsequent opens it is a no-op.
+    db_->exec("CREATE TABLE IF NOT EXISTS schema_version ("
+              "id INTEGER PRIMARY KEY CHECK (id = 1), "
+              "version INTEGER NOT NULL)");
+
+    int current = 0;
+    {
+        SQLite::Statement q(*db_, "SELECT version FROM schema_version WHERE id = 1");
+        if (q.executeStep()) {
+            current = q.getColumn(0).getInt();
+        }
+    }
+
+    if (current == 0) {
+        // First open against a db with no recorded version. Stamp the shipped
+        // version directly — the agent_proposals + agent_poll_cursor tables
+        // are already created above, so an unversioned db is functionally
+        // identical to a version-1 db and the migration body is empty.
+        SQLite::Statement ins(*db_, "INSERT INTO schema_version (id, version) VALUES (1, ?)");
+        ins.bind(1, kCurrentSchemaVersion);
+        ins.exec();
+        LOG_INFO("AgentProposalStore: stamped schema_version=%d (first open)", kCurrentSchemaVersion);
+        return;
+    }
+
+    if (current == kCurrentSchemaVersion) {
+        // Hot path: re-opening an already-versioned db. No-op.
+        return;
+    }
+
+    if (current > kCurrentSchemaVersion) {
+        // A db written by a future build. Refuse to downgrade silently; the
+        // caller's std::runtime_error path surfaces this as an open failure.
+        throw std::runtime_error(std::string("AgentProposalStore: db schema_version=") + std::to_string(current) +
+                                 " is newer than build version=" + std::to_string(kCurrentSchemaVersion));
+    }
+
+    // current < kCurrentSchemaVersion: future migrations land here. Loop one
+    // step at a time so each migration body sees the exact prior state. For
+    // now (kCurrentSchemaVersion = 1) this branch is unreachable; kept so
+    // adding version 2 only requires writing one `if (current == 1) { … }`
+    // block plus bumping the constant.
+    while (current < kCurrentSchemaVersion) {
+        // Placeholder: per-version migration bodies are inserted here as the
+        // schema grows. Each body must be idempotent (re-runnable without
+        // side-effects beyond the first run) so partial-apply recovery is
+        // safe.
+        ++current;
+    }
+
+    SQLite::Statement up(*db_, "UPDATE schema_version SET version = ? WHERE id = 1");
+    up.bind(1, kCurrentSchemaVersion);
+    up.exec();
+    LOG_INFO("AgentProposalStore: migrated schema_version -> %d", kCurrentSchemaVersion);
+}
+
+bool AgentProposalStore::GetSchemaVersion(int& outVersion, std::string& outError) const {
+    outError.clear();
+    outVersion = 0;
+    try {
+        SQLite::Statement q(*db_, "SELECT version FROM schema_version WHERE id = 1");
+        if (!q.executeStep()) {
+            outError = "schema_version row missing";
+            return false;
+        }
+        outVersion = q.getColumn(0).getInt();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::GetSchemaVersion: ") + ex.what();
+        return false;
+    }
 }
 
 AgentProposalStore::~AgentProposalStore() = default;
