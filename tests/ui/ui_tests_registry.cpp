@@ -18,6 +18,7 @@ extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine
 #if defined(SMATCHET_WITH_AGENTIC)
 extern "C" void SmatchetRegisterAgentProposalsPanelTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAgentHandoffPanelTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAgentProposalsHandoffButtonTests(ImGuiTestEngine* engine);
 #endif
 
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
@@ -31,6 +32,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_AGENTIC)
     SmatchetRegisterAgentProposalsPanelTests(engine);
     SmatchetRegisterAgentHandoffPanelTests(engine);
+    SmatchetRegisterAgentProposalsHandoffButtonTests(engine);
 #endif
 }
 

@@ -1879,6 +1879,77 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticPrCommentWatcher_->SetPrCommentFetcher(std::move(prFetcher));
             agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
             agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
+
+            // (H9) Cross-flow wiring: when the proposals panel approves an
+            // ImplementIssue row, the store fires OnProposalApproved. This
+            // callback filters to ImplementIssue (defense in depth — the
+            // [Start handoff] button also filters), checks the
+            // `HandoffAutoStartOnApprove` cfg, and dispatches Start() via the
+            // worker pool. Manual mode (cfg false, the shipped default per
+            // plan-locked decision #5) returns early and lets the user click
+            // [Start handoff] from the panel instead.
+            //
+            // The cfg is re-read INSIDE the callback (not captured) so a
+            // Preferences flip takes effect on the next approval without
+            // restart. Capturing `this` keeps the dispatch tied to AppController
+            // lifetime; the store is owned by AppController so it cannot
+            // outlive the callback.
+            agentProposalStore_->SetOnProposalApproved(
+                [this](std::int64_t proposalId,
+                       AgenticInferenceClientPure::ProposedAction action) {
+                    if (action != AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
+                        // Other actions don't auto-handoff — the H4 controller
+                        // only governs ImplementIssue runs. Pure triage writes
+                        // (CommentAdd / LabelAdd / etc) stay in the store.
+                        return;
+                    }
+                    const TrackerConfig callbackCfg = ConfigManager::Load();
+                    if (!callbackCfg.HandoffAutoStartOnApprove) {
+                        // Manual mode — user clicks [Start handoff] from the
+                        // proposals panel instead. The panel's path emits a
+                        // distinct audit entry (HandoffStarted with
+                        // trigger=user-button) so future debug can tell the
+                        // two paths apart.
+                        LOG_INFO("AppController: OnProposalApproved auto-start skipped (cfg disabled) "
+                                 "proposalId=%lld",
+                                 static_cast<long long>(proposalId));
+                        return;
+                    }
+                    LOG_INFO("AppController: OnProposalApproved auto-starting handoff proposalId=%lld",
+                             static_cast<long long>(proposalId));
+                    // Emit the auto-start audit entry BEFORE the dispatch so
+                    // the row is in BackendAuditTrail even if Start() fails
+                    // synchronously. Carries trigger=approval-callback so
+                    // future audit-trail queries can distinguish auto- vs
+                    // button-driven starts.
+                    BackendAuditTrail::AuditEvent autoEv;
+                    autoEv.Action = "HandoffAutoStarted";
+                    autoEv.Source = "agentic";
+                    autoEv.IssueKey = "";
+                    autoEv.OperationId = BackendAuditTrail::MakeOperationId("handoff");
+                    autoEv.Success = true;
+                    autoEv.Phase = "begin";
+                    autoEv.Data = nlohmann::json::object();
+                    autoEv.Data["proposalId"] = static_cast<long long>(proposalId);
+                    autoEv.Data["trigger"] = "approval-callback";
+                    BackendAuditTrail::AppendEvent(autoEv);
+                    this->LaunchBackgroundTask([this, proposalId]() {
+                        auto* ctrl = this->GetAgenticHandoffController();
+                        if (ctrl == nullptr) {
+                            LOG_WARN("AppController: OnProposalApproved auto-start "
+                                     "could not resolve handoff controller proposalId=%lld",
+                                     static_cast<long long>(proposalId));
+                            return;
+                        }
+                        smatchet::agentic::AgenticHandoffController::ActiveHandoff out;
+                        std::string err;
+                        if (!ctrl->Start(proposalId, out, err)) {
+                            LOG_WARN("AppController: OnProposalApproved auto-start failed "
+                                     "proposalId=%lld: %s",
+                                     static_cast<long long>(proposalId), err.c_str());
+                        }
+                    });
+                });
         });
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());

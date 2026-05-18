@@ -23,7 +23,10 @@
 // (it is the first recorded shipped state); future bumps add a step.
 
 #include "AgentProposal.h"
+#include "AgenticInferenceClientPure.h"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -120,6 +123,28 @@ class AgentProposalStore {
     // outError on DB-read failure.
     bool GetSchemaVersion(int& outVersion, std::string& outError) const;
 
+    // H9 — cross-flow notification hook. Fired by Transition() each time a
+    // row's state advances Pending -> Approved AND the row's UPDATE commits
+    // successfully. Used by AppController to invoke the AgenticHandoffController
+    // when the approved row carries `action == ImplementIssue` and the
+    // `HandoffAutoStartOnApprove` cfg is true. The callback runs inline on the
+    // calling thread (the panel's worker-thread task), AFTER the SQLite
+    // transaction commits — so receivers may safely re-read the row through
+    // the store. Receiver must be fast: any blocking work (Start() invokes
+    // git-worktree + harness spawn) must be punted via `LaunchBackgroundTask`,
+    // not run inline.
+    //
+    // The action enum lives in the signature so a receiver can early-out on
+    // non-ImplementIssue rows without an extra Find() round-trip. Pending ->
+    // Rejected / Approved -> Applied / etc transitions never invoke the
+    // callback — only the Pending -> Approved edge does.
+    //
+    // Single-subscriber for H9 (last setter wins); upgrade to multi-listener
+    // when a second consumer materialises. Reset by passing an empty function.
+    using OnApprovedFn = std::function<void(std::int64_t proposalId,
+                                            AgenticInferenceClientPure::ProposedAction action)>;
+    void SetOnProposalApproved(OnApprovedFn cb);
+
   private:
     // Creates the schema_version table if missing, inserts the current
     // shipped version on first call, applies any pending migrations in
@@ -130,6 +155,12 @@ class AgentProposalStore {
     void EnsureSchemaVersion();
 
     std::unique_ptr<SQLite::Database> db_;
+
+    // H9 — see SetOnProposalApproved. Empty by default; single-subscriber.
+    // Not protected by an internal lock — callers set it once at AppController
+    // init (before any Transition() can fire) and the function-object is
+    // thread-safe to read after that point.
+    OnApprovedFn onApproved_;
 };
 
 #endif // SMATCHET_AGENT_PROPOSAL_STORE_H
