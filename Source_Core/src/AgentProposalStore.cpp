@@ -291,6 +291,13 @@ bool AgentProposalStore::InsertMany(std::vector<AgentProposal>& proposals, std::
 bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, const std::string& applyError,
                                     std::string& outError) {
     outError.clear();
+    // H9 — captured for the post-commit OnApprovedFn fire. The action enum
+    // is read from the row inside the transaction so the callback sees the
+    // exact action that was just approved; if the row vanished between
+    // SELECT and the commit we never fire (the caller already sees an error).
+    AgenticInferenceClientPure::ProposedAction approvedAction =
+        AgenticInferenceClientPure::ProposedAction::Unknown;
+    bool fireApprovedCallback = false;
     try {
         // Bundle B CR#229:177 — the SELECT-then-UPDATE sequence must be atomic.
         // Without the surrounding transaction, two concurrent transitions (UI
@@ -304,7 +311,7 @@ bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, con
 
         AgentProposalState current;
         {
-            SQLite::Statement q(*db_, "SELECT state FROM agent_proposals WHERE id=?");
+            SQLite::Statement q(*db_, "SELECT state, action FROM agent_proposals WHERE id=?");
             q.bind(1, static_cast<long long>(id));
             if (!q.executeStep()) {
                 outError = "row not found";
@@ -314,6 +321,18 @@ bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, con
             if (!ParseAgentProposalState(stateStr, current)) {
                 outError = std::string("unknown state literal in db: ") + stateStr;
                 return false;
+            }
+            // H9 — capture the action under the same SELECT so the post-commit
+            // callback sees the value that lived alongside the just-approved
+            // row. A schema-drift action literal warns but doesn't block the
+            // transition; the callback simply won't fire (Unknown is filtered
+            // by the receiver in AppController.cpp).
+            const std::string actionStr = q.getColumn(1).getText();
+            if (!ParseAgenticAction(actionStr, approvedAction)) {
+                LOG_WARN("AgentProposalStore::Transition: unknown action literal '%s' (row id=%lld) — "
+                         "OnProposalApproved will not fire",
+                         actionStr.c_str(), static_cast<long long>(id));
+                approvedAction = AgenticInferenceClientPure::ProposedAction::Unknown;
             }
         }
         if (!IsLegalTransition(current, newState)) {
@@ -335,12 +354,43 @@ bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, con
             return false;
         }
         transaction.commit();
-        return true;
+        // H9 — flag the Pending->Approved edge for the post-commit callback
+        // fire below. Other edges (Pending->Rejected, Approved->Applied, etc)
+        // never trigger the handoff path. Fire OUTSIDE the try/commit scope
+        // so a receiver-side exception cannot roll back the SQLite commit.
+        if (current == AgentProposalState::Pending && newState == AgentProposalState::Approved &&
+            approvedAction != AgenticInferenceClientPure::ProposedAction::Unknown) {
+            fireApprovedCallback = true;
+        }
     } catch (const std::exception& ex) {
         outError = std::string("AgentProposalStore::Transition: ") + ex.what();
         return false;
     }
+
+    // H9 — invoke the cross-flow callback AFTER the commit succeeds + the
+    // try/catch closes. Defense in depth: the receiver in AppController also
+    // re-checks `action == ImplementIssue` AND the auto-start cfg before
+    // dispatching a handoff, so a future store consumer wiring a non-handoff
+    // callback won't accidentally see an ImplementIssue row punted at a
+    // non-handoff path. We swallow any callback-side exception with LOG_WARN
+    // so a poorly-behaved receiver cannot turn a successful SQLite commit
+    // into a Transition-returns-false from the caller's perspective.
+    if (fireApprovedCallback && onApproved_) {
+        try {
+            onApproved_(id, approvedAction);
+        } catch (const std::exception& ex) {
+            LOG_WARN("AgentProposalStore::Transition: OnProposalApproved callback threw (id=%lld): %s",
+                     static_cast<long long>(id), ex.what());
+        } catch (...) {
+            LOG_WARN("AgentProposalStore::Transition: OnProposalApproved callback threw non-std exception "
+                     "(id=%lld)",
+                     static_cast<long long>(id));
+        }
+    }
+    return true;
 }
+
+void AgentProposalStore::SetOnProposalApproved(OnApprovedFn cb) { onApproved_ = std::move(cb); }
 
 bool AgentProposalStore::Query(const Filter& f, std::vector<AgentProposal>& out, std::string& outError) const {
     out.clear();

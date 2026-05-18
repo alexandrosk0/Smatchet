@@ -4,6 +4,9 @@
 
 #include "AgentProposal.h"
 #include "AgentProposalStore.h"
+#if defined(SMATCHET_WITH_AGENTIC)
+#include "AgenticHandoffController.h"
+#endif
 #include "AgenticInferenceClientPure.h"
 #include "AgenticProposalAuditPure.h"
 #include "AppController.h"
@@ -19,7 +22,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -166,6 +171,138 @@ void TransitionAndToast(AppController& app, AgentProposal& row, AgentProposalSta
     }
 }
 
+#if defined(SMATCHET_WITH_AGENTIC)
+// (H9) Manual-handoff path — fired from the per-row [Start handoff] button on
+// ImplementIssue proposals. The flow:
+//   1. SQLite Transition Pending -> Approved (on a worker thread for pillar 2).
+//   2. If the OnProposalApproved callback ran the auto-start path (cfg
+//      HandoffAutoStartOnApprove=true), Start() will refuse the duplicate
+//      in-flight start — that's fine, the user clicked the button expecting
+//      a handoff and one is already running.
+//   3. Otherwise Start() drives the handoff lifecycle from a worker thread.
+//
+// Defense in depth (anti-deception): the caller only invokes this when
+// `row.action == ImplementIssue`. We re-check the action against the post-
+// transition row here so a future caller wiring the button on a non-
+// ImplementIssue row gets a LOG_WARN + toast instead of a stuck handoff.
+//
+// Audit-trail distinction: this path emits `HandoffStarted` with
+// `trigger=user-button`. The auto-start path emits `HandoffAutoStarted`
+// with `trigger=approval-callback`. Both ride the same controller.Start()
+// so the FSM transitions that follow are identical.
+void ApproveAndStartHandoff(AppController& app, AgentProposal& row) {
+    const std::int64_t proposalId = row.id;
+    const std::string issueKey = row.issueKey;
+
+    // Emit the audit "begin" row inline on the UI thread so downstream
+    // queries can correlate the user-button-driven start even if the
+    // worker dispatch fails before Start() runs. Carries trigger so
+    // future audit-trail queries can distinguish manual vs auto.
+    {
+        BackendAuditTrail::AuditEvent ev;
+        ev.Action = "HandoffStarted";
+        ev.Source = "agentic";
+        ev.IssueKey = issueKey;
+        ev.OperationId = BackendAuditTrail::MakeOperationId("handoff");
+        ev.Success = true;
+        ev.Phase = "begin";
+        ev.Data = nlohmann::json::object();
+        ev.Data["proposalId"] = static_cast<long long>(proposalId);
+        ev.Data["trigger"] = "user-button";
+        BackendAuditTrail::AppendEvent(ev);
+    }
+
+    app.LaunchBackgroundTask([&app, proposalId, issueKey]() {
+        auto* store = app.GetAgentProposalStore();
+        auto* ctrl = app.GetAgenticHandoffController();
+        if (store == nullptr || ctrl == nullptr) {
+            const std::string toastTitle =
+                SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+            const std::string toastMsg = (store == nullptr)
+                ? SmatchetLocalization::T("agent.proposals.toastStoreUnavailable",
+                                          "Proposal store unavailable.")
+                : SmatchetLocalization::T(
+                      "agent.proposals.toastHandoffControllerUnavailable",
+                      "Agentic handoff controller unavailable (configure agentic flow).");
+            app.mainThreadDispatcher.PostToMainThread([toastTitle, toastMsg]() {
+                SmatchetToastManager::Instance().Push(toastTitle, toastMsg, ToastType::Error, 5000);
+            });
+            return;
+        }
+        // Transition first. If the row was already Approved (auto-start fired
+        // in a parallel path), Transition fails with "invalid transition" —
+        // tolerated; we still try Start().
+        std::string transErr;
+        const bool transOk = store->Transition(proposalId, AgentProposalState::Approved, std::string(), transErr);
+        if (!transOk) {
+            LOG_INFO("SmatchetAgentProposalsUi: ApproveAndStartHandoff Transition skipped/failed (id=%lld): %s",
+                     static_cast<long long>(proposalId), transErr.c_str());
+            // Fall through — the row may have been approved already (cfg auto-start
+            // raced ahead of us). Start() below will surface the duplicate-in-flight
+            // condition with a clean error if so.
+        }
+
+        smatchet::agentic::AgenticHandoffController::ActiveHandoff out;
+        std::string startErr;
+        const bool startOk = ctrl->Start(proposalId, out, startErr);
+        if (!startOk) {
+            // "already in flight" is the expected branch on auto-start race; surface
+            // it as an INFO + a softer toast since the user's intent (handoff this
+            // proposal) is already being satisfied.
+            const bool isAlreadyInFlight = startErr.find("already in flight") != std::string::npos;
+            if (isAlreadyInFlight) {
+                LOG_INFO("SmatchetAgentProposalsUi: ApproveAndStartHandoff race — handoff already in flight "
+                         "for proposalId=%lld",
+                         static_cast<long long>(proposalId));
+                const std::string toastTitle =
+                    SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+                const std::string toastMsg = SmatchetLocalization::T(
+                    "agent.proposals.toastHandoffAlreadyInFlight", "Handoff already in flight for this proposal.");
+                app.mainThreadDispatcher.PostToMainThread([toastTitle, toastMsg]() {
+                    SmatchetToastManager::Instance().Push(toastTitle, toastMsg, ToastType::Info, 4000);
+                });
+                return;
+            }
+            LOG_WARN("SmatchetAgentProposalsUi: ApproveAndStartHandoff failed proposalId=%lld: %s",
+                     static_cast<long long>(proposalId), startErr.c_str());
+            const std::string toastTitle =
+                SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+            const std::string toastMsgFmt = SmatchetLocalization::T("agent.proposals.toastHandoffStartFailed",
+                                                                    "Handoff start failed: %s");
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), toastMsgFmt.c_str(), startErr.c_str());
+            const std::string toastMsg(buf);
+            app.mainThreadDispatcher.PostToMainThread([toastTitle, toastMsg]() {
+                SmatchetToastManager::Instance().Push(toastTitle, toastMsg, ToastType::Error, 5000);
+            });
+            return;
+        }
+        LOG_INFO("SmatchetAgentProposalsUi: handoff started via user button proposalId=%lld branch=%s",
+                 static_cast<long long>(proposalId), out.branchName.c_str());
+        const std::string toastTitle =
+            SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+        const std::string toastMsgFmt =
+            SmatchetLocalization::T("agent.proposals.toastHandoffStarted", "Handoff started for proposal #%lld");
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), toastMsgFmt.c_str(), static_cast<long long>(proposalId));
+        const std::string toastMsg(buf);
+        app.mainThreadDispatcher.PostToMainThread([toastTitle, toastMsg]() {
+            SmatchetToastManager::Instance().Push(toastTitle, toastMsg, ToastType::Success, 4000);
+        });
+        // Force a refresh on the next frame so the row disappears immediately.
+        app.mainThreadDispatcher.PostToMainThread([]() { g_initialFetchDone = false; });
+    });
+
+    // Optimistic local prune — mirror the Approve/Reject path so the row
+    // disappears at human latency.
+    const auto it = std::find_if(g_proposalsCache.begin(), g_proposalsCache.end(),
+                                 [proposalId](const AgentProposal& p) { return p.id == proposalId; });
+    if (it != g_proposalsCache.end()) {
+        g_proposalsCache.erase(it);
+    }
+}
+#endif // SMATCHET_WITH_AGENTIC
+
 } // namespace
 
 void Render(AppController& app, UiDrawSession& d) {
@@ -285,6 +422,34 @@ void Render(AppController& app, UiDrawSession& d) {
                 TransitionAndToast(app, row, AgentProposalState::Rejected);
             }
             ImGui::PopStyleColor(3);
+
+#if defined(SMATCHET_WITH_AGENTIC)
+            // (H9) [Start handoff] button — conditional on:
+            //   (a) action == ImplementIssue (defense-in-depth — the
+            //       OnProposalApproved callback also filters by action so a
+            //       future regression on this conditional cannot silently
+            //       kick off a handoff for a non-handoff proposal),
+            //   (b) the handoff controller exists (returns null in degraded
+            //       mode when the agentic config is incomplete).
+            //
+            // The button approves the row AND starts the handoff in one
+            // worker-thread task. This is the manual path; the auto-start
+            // path (cfg HandoffAutoStartOnApprove=true) skips the button and
+            // fires via the OnProposalApproved callback after the user clicks
+            // the regular Approve.
+            if (row.action == AgenticInferenceClientPure::ProposedAction::ImplementIssue &&
+                app.GetAgenticHandoffController() != nullptr) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.40f, 0.70f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.50f, 0.82f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.34f, 0.60f, 1.0f));
+                if (ImGui::Button(
+                        SmatchetLocalization::T("agent.proposals.startHandoff", "Start handoff"))) {
+                    ApproveAndStartHandoff(app, row);
+                }
+                ImGui::PopStyleColor(3);
+            }
+#endif // SMATCHET_WITH_AGENTIC
         }
 
         ImGui::PopID();

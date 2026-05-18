@@ -255,6 +255,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     // aggressively (interval < 30s would hammer GitHub rate limits).
     j["handoff_pr_iteration_budget"] = config.HandoffPrIterationBudget;
     j["handoff_pr_comment_poll_interval_sec"] = config.HandoffPrCommentPollIntervalSec;
+    // H9 — cross-flow auto-start gate. Persisted so a Preferences flip survives
+    // restart; default is FALSE per plan-locked decision #5 (manual handoff
+    // start is the trust baseline). No schema bump — j.value() on Load.
+    j["handoff_auto_start_on_approve"] = config.HandoffAutoStartOnApprove;
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -803,6 +807,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             } else if (cfg.HandoffPrCommentPollIntervalSec > 600) {
                 cfg.HandoffPrCommentPollIntervalSec = 600;
             }
+            // H9 — auto-start gate. Plan-locked decision #5: default FALSE.
+            // Older configs without the key hydrate to the safe default so
+            // upgrading the app never silently enables auto-handoff.
+            cfg.HandoffAutoStartOnApprove =
+                j.value("handoff_auto_start_on_approve", cfg.HandoffAutoStartOnApprove);
 #endif
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
