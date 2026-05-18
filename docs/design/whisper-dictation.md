@@ -56,13 +56,98 @@ Two-tier dispatch behind a single user-visible feature:
 
 ### Subsystem placement
 
-- **`Plugins/Whisper/`** — new optional plugin, mirrors `Plugins/LuaConsole/` and `Plugins/Mcp/`. Gated by `SMATCHET_WITH_WHISPER` (default ON for Standalone, OFF for DX12).
-- **`Source_Core/include/IDictationHost.h`** — pure-virtual interface for the insertion router (matches `ILuaBindingHost` pattern from PR #144). Lets the plugin remain decoupled from `SmatchetUI*.cpp`.
-- **`Source_Core/src/DictationInsertionRouter.cpp`** — production impl: tracks active focus + the four insertion targets.
-- **`Plugins/Whisper/WhisperPlugin.cpp`** — plugin entry; owns audio capture + mode routing.
+- **`Plugins/Whisper/`** — new optional plugin, mirrors `Plugins/LuaConsole/` and `Plugins/Mcp/`. Gated by `SMATCHET_WITH_WHISPER` (default ON for Standalone, OFF for DX12 — same shape as `SMATCHET_WITH_MCP` / `SMATCHET_WITH_LUA_AUTOMATION`).
+- **`Source_Core/include/IDictationHost.h`** — pure-virtual interface for the insertion router (matches `ILuaBindingHost` pattern from PR #144). Always-compiled header — declarations only, no Whisper deps.
+- **`Source_Core/src/DictationInsertionRouter_Whisper.cpp`** — real impl (compiled when `SMATCHET_WITH_WHISPER=ON`).
+- **`Source_Core/src/DictationInsertionRouter_Stubs.cpp`** — no-op impl (compiled when `SMATCHET_WITH_WHISPER=OFF`). Mirrors `AppController_LuaStubs.cpp` precedent — keeps call sites in `SmatchetUI.cpp` / `SmatchetAiAssistantUi.cpp` / `TicketFieldEditor.cpp` / `SmatchetCommandPaletteUi.cpp` free of `#if defined(...)` blocks.
+- **`Plugins/Whisper/WhisperPlugin.cpp`** — plugin entry; owns audio capture + mode routing. All under `Plugins/Whisper/` is CMake-conditional, so no source-level ifdefs needed inside that subtree.
 - **`Plugins/Whisper/WhisperLocal.cpp`** — whisper.cpp wrapper.
-- **`Plugins/Whisper/WhisperApiClient.cpp`** — OpenAI `/v1/audio/transcriptions` client. Reuses `cpr` + existing `cfg.AiApiKey` (the OpenAI key already in `ConfigManager`).
+- **`Plugins/Whisper/WhisperApiClient.cpp`** — OpenAI `/v1/audio/transcriptions` client. Reuses `cpr` + existing `cfg.AiApiKey` (the OpenAI key already in `ConfigManager`). **Does not introduce a parallel `WhisperApiKey`** — single key for all OpenAI surfaces.
 - **`Plugins/Whisper/WindowsAudioCapture.cpp`** — WASAPI ring-buffer capture, RAII for `IAudioClient` / `IAudioCaptureClient`.
+
+## Conditional compilation (`SMATCHET_WITH_WHISPER`)
+
+Mirror the `SMATCHET_WITH_LUA_AUTOMATION` precedent exactly. Six gating layers:
+
+### Layer 1: CMake option + Unreal flip
+
+```cmake
+option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin" ON)
+
+# Unreal path keeps the plugin out — no WASAPI / whisper.cpp pollution.
+if(SMATCHET_EMBEDDED_IN_UNREAL)
+    set(SMATCHET_WITH_WHISPER OFF)
+endif()
+```
+
+### Layer 2: Source-list conditional inclusion in `CMakeLists.txt`
+
+Mirror lines 546-553 of the current `CMakeLists.txt` (the `AppController_LuaBindings.cpp` / `AppController_LuaStubs.cpp` swap):
+
+```cmake
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+if(SMATCHET_WITH_WHISPER)
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+else()
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+endif()
+```
+
+### Layer 3: PUBLIC compile definition
+
+```cmake
+if(SMATCHET_WITH_WHISPER)
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_WHISPER=1)
+endif()
+```
+
+### Layer 4: Bindings/stubs split (eliminates call-site ifdefs)
+
+`DictationInsertionRouter_Whisper.cpp` and `DictationInsertionRouter_Stubs.cpp` expose the **same** symbols (`DictationInsertionRouter::RegisterInputText(...)`, `Insert(...)`, `IsRecording()`, etc.). The stubs return `false` / no-op. This means UI TUs call the router unconditionally:
+
+```cpp
+// SmatchetUI.cpp, TicketFieldEditor.cpp, etc. — NO #if guards needed:
+g_dictationRouter.RegisterInputText(buf, cap, &cursor);
+```
+
+### Layer 5: Call-site ifdefs (used sparingly, only where stubs don't fit)
+
+Per the Lua precedent (`AppController.cpp:369`, `BuiltinCommands_Debug.cpp:120`), `#if defined(SMATCHET_WITH_WHISPER)` is used at the **two** places the stubs pattern can't cover:
+
+1. **Plugin instantiation** in `AppController::Initialize` — the plugin object itself only exists when the macro is set.
+2. **Status-bar mic indicator** in `SmatchetUI.cpp` — probes plugin state that doesn't exist in stub-mode. Cleaner to ifdef than to fake.
+
+Every other touched UI file uses the stub-backed router and stays ifdef-free.
+
+### Layer 6: Plugin-internal subtree
+
+Everything under `Plugins/Whisper/` is **CMake-conditional at the directory level** — `add_subdirectory(Plugins/Whisper)` only runs when `SMATCHET_WITH_WHISPER=ON`. So WASAPI / whisper.cpp / OpenAI client TUs need no source-level ifdefs; they don't get compiled in the off case at all.
+
+### Per-file gating audit
+
+| File | Gating mechanism |
+|---|---|
+| `Plugins/Whisper/*` | Layer 6 (subtree CMake-conditional) |
+| `Source_Core/src/DictationInsertionRouter_Whisper.cpp` | Layer 2 (source-list conditional) |
+| `Source_Core/src/DictationInsertionRouter_Stubs.cpp` | Layer 2 (source-list conditional — opposite branch) |
+| `Source_Core/include/IDictationHost.h` | Always-compiled (declarations only, no Whisper deps) |
+| `Source_Core/include/DictationInsertionRouter.h` | Always-compiled (declarations only) |
+| `Source_Core/include/ConfigManager.h` + `.cpp` | Layer 5 — additive fields wrapped `#if defined(SMATCHET_WITH_WHISPER)` |
+| `Source_Core/src/SmatchetUI.cpp` | Layer 5 — mic-active indicator only |
+| `Source_Core/src/SmatchetAiAssistantUi.cpp` | Layer 4 — register call is stub-safe, no ifdef |
+| `Source_Core/src/TicketFieldEditor.cpp` | Layer 4 — register call is stub-safe, no ifdef |
+| `Source_Core/src/SmatchetCommandPaletteUi.cpp` | Layer 4 — register call is stub-safe, no ifdef |
+| `Source_Core/include/SmatchetLocalizedImGui.h` | Layer 4 — InputText wrapper calls stub-safe router |
+| `Source_Core/src/SmatchetPreferencesUi.cpp` | Layer 5 — Whisper tab wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif` |
+| `Source_Core/src/AppController.cpp` | Layer 5 — plugin instantiation wrapped `#if defined(SMATCHET_WITH_WHISPER)` |
+| `Source_Core/src/SmatchetWhisperOverlayUi.cpp` | Layer 2 (source-list conditional — only added to `CORE_SOURCES` when `SMATCHET_WITH_WHISPER=ON`) |
+| `Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp` | Layer 2 (source-list conditional — same as overlay UI) |
+| `tests/Source_Core/DictationInsertionRouter.test.cpp` | Layer 1 — `if(SMATCHET_WITH_WHISPER AND SMATCHET_BUILD_TESTS)` in `tests/CMakeLists.txt` |
+| `tests/Source_Core/WhisperApiPayload.test.cpp` | Same as above |
+| `tests/Source_Core/WhisperModeRouter.test.cpp` | Same as above |
+| `Locales/en.json` | No gating — translations are inert when feature is off; tiny disk cost |
+| `docs/PERF_WORKFLOW.md`, `agents/*.md`, plan doc | No gating — documentation
 
 ### Threading model — strict Pillar 1 + 2
 
@@ -91,17 +176,25 @@ Cloud-on-fallback: if local inference fails (model load error, OOM), the next pr
 
 ### Config schema additions
 
-New fields on `ConfigManager` (additive; no schema bump per AGENTS.md schema-version rule — these use `j.value()` defaults):
+New fields on `ConfigManager` (additive; no schema bump per AGENTS.md schema-version rule — these use `j.value()` defaults). Field declarations in `ConfigManager.h` and serialisation in `ConfigManager.cpp` are wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif` (gating layer 5):
 
-- `WhisperEnabled : bool` — default `false` (opt-in)
+**Phase A (minimum viable schema):**
+
+- `WhisperEnabled : bool` — default `false` (opt-in; gates plugin runtime activation even when compiled in)
 - `WhisperMode : string` — `"local" | "cloud" | "auto"`, default `"auto"`
 - `WhisperModel : string` — e.g. `"ggml-base.en"`, default `"ggml-base.en"`
 - `WhisperHotkey : string` — default `"Ctrl+Alt+Space"` (push-to-talk)
-- `WhisperApiKey : string (DPAPI)` — optional override of `AiApiKey`; empty = fall back to `AiApiKey`
+
+**API key**: reuse existing `cfg.AiApiKey` (OpenAI key, already DPAPI-encrypted). **No parallel `WhisperApiKey` field** — single source of truth for OpenAI credentials across AI chat + Whisper.
+
+**Phase F (deferred until UI tab lands):**
+
 - `WhisperLanguage : string` — default `"en"`; `"auto"` for autodetect
 - `WhisperTrim : bool` — default `true`; strip leading/trailing silence before insertion
+- `WhisperMaxClipSec : int` — default `60`; hard cap at `600` (cost guard, see § Open questions)
+- `WhisperAutoSendOnPunctuation : bool` — default `false`; AI Assistant chat box only
 
-Model files stored at `<smatchet user data>/whisper/<model>.bin`; resolved via `ConfigManager::GetPlatformSharedUserDataDirectory` (same pattern AI keys use).
+Model files stored at `<smatchet user data>/whisper/<model>.bin`; resolved via `ConfigManager::GetPlatformSharedUserDataDirectory` (same pattern AI keys use). The directory is created lazily on first model download; absence is normal.
 
 ### Insertion targets — `IDictationHost::Insert(const std::string& text)`
 
@@ -131,36 +224,46 @@ Each phase = one PR. Sequential — later phases depend on earlier ones.
 
 **Owner**: command-system (config + router) + lua-binder pattern reuse.
 
-**Write set**:
+**Write set + gating shape**:
 
-- `Plugins/Whisper/CMakeLists.txt` (NEW)
-- `Plugins/Whisper/WhisperPlugin.{h,cpp}` (NEW — stub `RegisterCommands`, no transcription yet)
-- `Source_Core/include/IDictationHost.h` (NEW — pure interface)
-- `Source_Core/include/DictationInsertionRouter.h` (NEW)
-- `Source_Core/src/DictationInsertionRouter.cpp` (NEW — registry impl, no transcription)
-- `Source_Core/include/ConfigManager.h` + `Source_Core/src/ConfigManager.cpp` (MOD — additive fields; no schema bump)
-- `CMakeLists.txt` (MOD — wire plugin, add `SMATCHET_WITH_WHISPER` option)
-- `tests/Source_Core/DictationInsertionRouter.test.cpp` (NEW — pure-helper doctest for the router)
+| File | Action | Gating layer |
+|---|---|---|
+| `Plugins/Whisper/CMakeLists.txt` | NEW | L6 (subtree CMake-conditional) |
+| `Plugins/Whisper/WhisperPlugin.{h,cpp}` | NEW (stub `RegisterCommands`, no transcription) | L6 |
+| `Source_Core/include/IDictationHost.h` | NEW (pure-virtual interface, declarations only) | always-compiled |
+| `Source_Core/include/DictationInsertionRouter.h` | NEW (class decl, declarations only) | always-compiled |
+| `Source_Core/src/DictationInsertionRouter_Whisper.cpp` | NEW (real impl) | L2 (source-list conditional) |
+| `Source_Core/src/DictationInsertionRouter_Stubs.cpp` | NEW (no-op impl, same symbols) | L2 (opposite branch) |
+| `Source_Core/include/ConfigManager.h` | MOD (4 fields wrapped `#if defined(SMATCHET_WITH_WHISPER)`) | L5 |
+| `Source_Core/src/ConfigManager.cpp` | MOD (serialise/deserialise the 4 fields, same gate) | L5 |
+| `Source_Core/src/AppController.cpp` | MOD (plugin instantiation wrapped `#if defined(SMATCHET_WITH_WHISPER)`) | L5 |
+| `CMakeLists.txt` | MOD (add `SMATCHET_WITH_WHISPER` option + L1/L2/L3 wiring, mirror Lua block) | L1 + L2 + L3 |
+| `tests/CMakeLists.txt` | MOD (`if(SMATCHET_WITH_WHISPER AND SMATCHET_BUILD_TESTS)` block, mirror Lua tests gate) | L1 |
+| `tests/Source_Core/DictationInsertionRouter.test.cpp` | NEW (pure-helper doctest, tests stub-mode no-op + whisper-mode register/insert) | L1 gate via parent |
 
 **Verification**:
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 gates plugin out).
-- `cmake --build --preset ninja-test-msys2 && ctest` — router unit tests pass.
-- `Smatchet.exe cmd whisper.status` — returns `{"enabled": false, "mode": "auto", "model_present": false}`.
-- No runtime visual changes.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 build picks up stubs TU).
+- `cmake -DSMATCHET_WITH_WHISPER=OFF --build ...` — Standalone-with-Whisper-off compiles green using stubs TU.
+- `cmake --build --preset ninja-test-msys2 && ctest` — router unit tests pass for both on and off configurations.
+- `Smatchet.exe cmd whisper.status` — returns `{"enabled": false, "mode": "auto", "model_present": false}` (whisper-on build); command not registered at all (whisper-off build).
+- No runtime visual changes in either configuration.
 
 ### Phase B — Cloud-only transcription (OpenAI Whisper API)
 
 Smallest path to end-to-end working dictation. Validates audio capture + API client + insertion router without dragging in whisper.cpp.
 
-**Write set**:
+**Write set + gating shape**:
 
-- `Plugins/Whisper/WhisperApiClient.{h,cpp}` (NEW — `cpr::Post` multipart to `/v1/audio/transcriptions`)
-- `Plugins/Whisper/WindowsAudioCapture.{h,cpp}` (NEW — WASAPI loopback / mic capture, 16 kHz mono PCM int16)
-- `Plugins/Whisper/WhisperPlugin.cpp` (MOD — wire audio + cloud path; add `whisper.transcribe-once <wav-path>` CLI for headless testing)
-- `Source_Core/src/AppController.cpp` (MOD — `LaunchBackgroundTask` on transcription request)
-- `tests/Source_Core/WhisperApiPayload.test.cpp` (NEW — pure: build multipart body, parse OpenAI response JSON)
-- `tests/Source_Core/WavWriter.test.cpp` (NEW — pure: WAV header writer for the capture sink)
+| File | Action | Gating layer |
+|---|---|---|
+| `Plugins/Whisper/WhisperApiClient.{h,cpp}` | NEW (`cpr::Post` multipart to `/v1/audio/transcriptions`, uses `cfg.AiApiKey`) | L6 |
+| `Plugins/Whisper/WindowsAudioCapture.{h,cpp}` | NEW (WASAPI mic capture, 16 kHz mono PCM int16) | L6 |
+| `Plugins/Whisper/WhisperPlugin.cpp` | MOD (wire audio + cloud path; register `whisper.transcribe-once <wav-path>` CLI) | L6 |
+| `Source_Core/src/DictationInsertionRouter_Whisper.cpp` | MOD (route transcription request through `app.LaunchBackgroundTask` + `MainThreadDispatcher::PostToMainThread`) | L2 |
+| `Source_Core/src/DictationInsertionRouter_Stubs.cpp` | MOD (add the new method signature as a no-op so stubs stay sync'd — mirror `AppController_LuaStubs.cpp` discipline) | L2 |
+| `tests/Source_Core/WhisperApiPayload.test.cpp` | NEW (pure: build multipart body, parse OpenAI response JSON) | L1 |
+| `tests/Source_Core/WavWriter.test.cpp` | NEW (pure: WAV header writer for the capture sink) | L1 |
 
 **Verification**:
 
@@ -171,14 +274,16 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 ### Phase C — Local whisper.cpp integration
 
-**Write set**:
+**Write set + gating shape**:
 
-- `CMakeLists.txt` (MOD — FetchContent `ggerganov/whisper.cpp` at a pinned tag; only when `SMATCHET_WITH_WHISPER=ON`)
-- `Plugins/Whisper/WhisperLocal.{h,cpp}` (NEW — wraps `whisper_init_from_file_with_params` + `whisper_full`)
-- `Plugins/Whisper/WhisperPlugin.cpp` (MOD — mode router selects local vs cloud per § Mode router decision tree)
-- `Plugins/Whisper/ModelDownloader.{h,cpp}` (NEW — Pattern A worker for downloading `ggml-base.en.bin` from huggingface; resumable; SHA-256 verified)
-- `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — Whisper tab with "Download model" button + progress bar)
-- `tests/Source_Core/WhisperModeRouter.test.cpp` (NEW — pure: mode decision tree)
+| File | Action | Gating layer |
+|---|---|---|
+| `CMakeLists.txt` | MOD (FetchContent `ggerganov/whisper.cpp` at a pinned tag, guarded `if(SMATCHET_WITH_WHISPER)`) | L1 |
+| `Plugins/Whisper/WhisperLocal.{h,cpp}` | NEW (wraps `whisper_init_from_file_with_params` + `whisper_full`; `whisper_context*` under `std::unique_ptr`) | L6 |
+| `Plugins/Whisper/WhisperPlugin.cpp` | MOD (mode router selects local vs cloud per § Mode router decision tree) | L6 |
+| `Plugins/Whisper/ModelDownloader.{h,cpp}` | NEW (Pattern A worker for downloading `ggml-base.en.bin` from huggingface; resumable, SHA-256 verified) | L6 |
+| `Source_Core/src/SmatchetPreferencesUi.cpp` | MOD (Whisper tab with "Download model" button + progress bar, wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`) | L5 |
+| `tests/Source_Core/WhisperModeRouter.test.cpp` | NEW (pure: mode decision tree) | L1 |
 
 **Verification**:
 
@@ -189,13 +294,17 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 ### Phase D — Generic focused-InputText hook + the four target surfaces
 
-**Write set**:
+**Write set + gating shape**:
 
-- `Source_Core/include/SmatchetLocalizedImGui.h` (MOD — `InputText` / `InputTextMultiline` wrappers register the buffer with the router on first use, unregister on blur)
-- `Source_Core/src/SmatchetAiAssistantUi.cpp` (MOD — explicit register on panel open; opt-in "auto-send on punctuation" toggle)
-- `Source_Core/src/TicketFieldEditor.cpp` (MOD — register when `s_ActiveLongTextState.Active`)
-- `Source_Core/src/SmatchetCommandPaletteUi.cpp` (MOD — register when palette open)
-- `Source_Core/src/DictationInsertionRouter.cpp` (MOD — full insert-at-cursor logic with multi-byte UTF-8 safety)
+| File | Action | Gating layer |
+|---|---|---|
+| `Source_Core/include/SmatchetLocalizedImGui.h` | MOD (`InputText` / `InputTextMultiline` wrappers call stub-safe `g_dictationRouter.RegisterInputText(...)`; **no `#if` needed** — stub returns no-op) | L4 |
+| `Source_Core/src/SmatchetAiAssistantUi.cpp` | MOD (explicit register on panel open via stub-safe router) | L4 |
+| `Source_Core/src/TicketFieldEditor.cpp` | MOD (register when `s_ActiveLongTextState.Active`, via stub-safe router) | L4 |
+| `Source_Core/src/SmatchetCommandPaletteUi.cpp` | MOD (register when palette open, via stub-safe router) | L4 |
+| `Source_Core/src/DictationInsertionRouter_Whisper.cpp` | MOD (full insert-at-cursor logic with multi-byte UTF-8 safety) | L2 |
+| `Source_Core/src/DictationInsertionRouter_Stubs.cpp` | MOD (matching no-op signatures — keep stubs sync'd) | L2 |
+| `tests/Source_Core/DictationInsertionRouter.test.cpp` | MOD (extend coverage to UTF-8 splicing + cursor advance) | L1 |
 
 **Verification**:
 
@@ -204,13 +313,15 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 ### Phase E — Push-to-talk hotkey + visual cue
 
-**Write set**:
+**Write set + gating shape**:
 
-- `Plugins/Whisper/GlobalHotkey_Win32.{h,cpp}` (NEW — `RegisterHotKey` for in-focus, `SetWindowsHookEx WH_KEYBOARD_LL` for global)
-- `Plugins/Whisper/WhisperPlugin.cpp` (MOD — wire hotkey thread; debounce; ignore key-repeat)
-- `Source_Core/src/SmatchetUI.cpp` (MOD — mic-active indicator in status bar; 1-line ImGui draw guarded by `IsRecording()`)
-- `Source_Core/src/SmatchetWhisperOverlayUi.cpp` (NEW — floating amplitude meter overlay; cheap)
-- `Locales/en.json` (MOD — strings for `whisper.statusBar.recording`, `whisper.overlay.cancel`, etc.)
+| File | Action | Gating layer |
+|---|---|---|
+| `Plugins/Whisper/GlobalHotkey_Win32.{h,cpp}` | NEW (`RegisterHotKey` for in-focus, `SetWindowsHookEx WH_KEYBOARD_LL` for global) | L6 |
+| `Plugins/Whisper/WhisperPlugin.cpp` | MOD (wire hotkey thread; debounce; ignore key-repeat) | L6 |
+| `Source_Core/src/SmatchetUI.cpp` | MOD (mic-active indicator in status bar, wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif` — probes plugin state which doesn't exist in stub-mode) | L5 |
+| `Source_Core/src/SmatchetWhisperOverlayUi.cpp` | NEW (floating amplitude meter overlay; cheap) | L2 (source-list conditional — entire TU only compiled when `SMATCHET_WITH_WHISPER=ON`) |
+| `Locales/en.json` | MOD (strings for `whisper.statusBar.recording`, `whisper.overlay.cancel`, etc.) | none (inert when feature off) |
 
 **Verification**:
 
@@ -220,11 +331,14 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 ### Phase F — Settings UI + model management UX
 
-**Write set**:
+**Write set + gating shape**:
 
-- `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — new "Whisper" sub-tab under AI tab)
-- `Plugins/Whisper/ModelCatalog.{h,cpp}` (NEW — pure-helper list of available models with sizes + URLs)
-- `tests/Source_Core/ModelCatalog.test.cpp` (NEW)
+| File | Action | Gating layer |
+|---|---|---|
+| `Source_Core/src/SmatchetPreferencesUi.cpp` | MOD (new "Whisper" sub-tab under AI tab, wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`) | L5 |
+| `Source_Core/include/ConfigManager.h` + `Source_Core/src/ConfigManager.cpp` | MOD (4 Phase-F fields wrapped `#if defined(SMATCHET_WITH_WHISPER)`) | L5 |
+| `Plugins/Whisper/ModelCatalog.{h,cpp}` | NEW (pure-helper list of available models with sizes + URLs) | L6 |
+| `tests/Source_Core/ModelCatalog.test.cpp` | NEW | L1 |
 
 **Verification**:
 
@@ -234,12 +348,16 @@ Smallest path to end-to-end working dictation. Validates audio capture + API cli
 
 ### Phase G — Tests, perf gate, bucket-E coverage
 
-**Write set**:
+**Write set + gating shape**:
 
-- `scripts/dev/test-whisper-roundtrip.sh` (NEW — auto-enrolled by `test-all.sh`; runs the cloud `whisper.transcribe-once` path against a fixture WAV using a recorded test API response, no real network)
-- `tests/fixtures/hello-world.wav` (NEW — 16 kHz mono 1 s clip, ~32 KB)
-- `tests/_mocks/openai-whisper-response.json` (NEW — recorded API response for offline test)
-- `agents/perf-detective.md` (MOD if needed — pre-flight `scenario.list` already covers whisper scenario)
+| File | Action | Gating layer |
+|---|---|---|
+| `scripts/dev/test-whisper-roundtrip.sh` | NEW (auto-enrolled by `test-all.sh`; runs cloud `whisper.transcribe-once` path; **bash-level guard** at top: `command -v Smatchet.exe && Smatchet.exe cmd whisper.status 2>&1 \| grep -q "enabled" \|\| exit 0` — skips silently when feature is off) | self-guard |
+| `Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp` | NEW (scenario implementation) | L2 (source-list conditional — only added when `SMATCHET_WITH_WHISPER=ON`) |
+| `Source_Core/src/AppController.cpp` | MOD (scenario `RegisterFactory` line wrapped `#if defined(SMATCHET_WITH_WHISPER)` — mirror existing factory block) | L5 |
+| `tests/fixtures/hello-world.wav` | NEW (16 kHz mono 1 s clip, ~32 KB) | none (test asset; cheap to keep) |
+| `tests/_mocks/openai-whisper-response.json` | NEW (recorded API response for offline test) | none (test asset) |
+| `agents/perf-detective.md` | MOD if needed (pre-flight `scenario.list` already covers whisper scenario after Phase A) | none (docs) |
 
 **Verification**:
 
@@ -285,17 +403,33 @@ Net new infrastructure required: WASAPI capture wrapper, whisper.cpp wrapper, gl
 7. **DX12 / Unreal path** — WASAPI works under Unreal-on-Windows, but the plugin is gated OFF for `SMATCHET_EMBEDDED_IN_UNREAL` to avoid header pollution. Decision: defer Unreal support; add a follow-up backlog entry if a user requests it.
 8. **Latency target** — local whisper.cpp on `ggml-base.en` does a 10 s clip in ~1-2 s on a modern CPU. Cloud API roundtrip is ~1-3 s. Both meet a "feels responsive" bar. Streaming partial results (v2) would drop perceived latency further but isn't critical for v1.
 
+## CI matrix — both gating states must stay green
+
+Lua has a known failure mode: `AppController_LuaBindings.cpp` and `AppController_LuaStubs.cpp` drift apart over time when one is edited without the other (different signatures, dropped methods). The current CI build implicitly catches Lua drift because the DX12 target sets `SMATCHET_WITH_LUA_AUTOMATION=OFF` and CI builds both standalone (ON) and DX12 (OFF).
+
+For Whisper we want the same coverage — every PR must build green in **both** `SMATCHET_WITH_WHISPER=ON` and `SMATCHET_WITH_WHISPER=OFF`. The DX12 target gives us OFF coverage for free (mirroring Lua's setup), but to lock it in, Phase A's CI change adds a `with-whisper-off` job to `.github/workflows/build-and-test.yml`:
+
+```yaml
+- name: Build standalone with SMATCHET_WITH_WHISPER=OFF
+  run: cmake -DSMATCHET_WITH_WHISPER=OFF --preset ninja-iter-msys2 && cmake --build --preset ninja-iter-msys2
+```
+
+This catches stub drift the moment it lands — same regression-prevention shape as the existing dual-target build for DX12.
+
 ## Locking
 
 Per the new git-ref system (since 2026-05-17 / PR #194/#198/#200/#202):
 
 ```bash
-echo "Plugins/Whisper/
+cat > /tmp/whisper-write-set <<'EOF'
+Plugins/Whisper/
 Source_Core/include/IDictationHost.h
 Source_Core/include/DictationInsertionRouter.h
-Source_Core/src/DictationInsertionRouter.cpp
+Source_Core/src/DictationInsertionRouter_Whisper.cpp
+Source_Core/src/DictationInsertionRouter_Stubs.cpp
 Source_Core/include/ConfigManager.h
 Source_Core/src/ConfigManager.cpp
+Source_Core/src/AppController.cpp
 Source_Core/src/SmatchetPreferencesUi.cpp
 Source_Core/src/SmatchetAiAssistantUi.cpp
 Source_Core/src/TicketFieldEditor.cpp
@@ -303,11 +437,20 @@ Source_Core/src/SmatchetCommandPaletteUi.cpp
 Source_Core/include/SmatchetLocalizedImGui.h
 Source_Core/src/SmatchetUI.cpp
 Source_Core/src/SmatchetWhisperOverlayUi.cpp
+Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp
 CMakeLists.txt
+tests/CMakeLists.txt
 Locales/en.json
-tests/Source_Core/
-tests/fixtures/
-scripts/dev/test-whisper-roundtrip.sh" > /tmp/whisper-write-set
+tests/Source_Core/DictationInsertionRouter.test.cpp
+tests/Source_Core/WhisperApiPayload.test.cpp
+tests/Source_Core/WavWriter.test.cpp
+tests/Source_Core/WhisperModeRouter.test.cpp
+tests/Source_Core/ModelCatalog.test.cpp
+tests/fixtures/hello-world.wav
+tests/_mocks/openai-whisper-response.json
+scripts/dev/test-whisper-roundtrip.sh
+.github/workflows/build-and-test.yml
+EOF
 
 AGENT_ID=orchestrator \
 LOCK_BRANCH=feat/whisper-dictation \
@@ -315,7 +458,7 @@ LOCK_PLAN=docs/design/whisper-dictation.md \
 bash scripts/dev/lock-claim.sh whisper-dictation /tmp/whisper-write-set
 ```
 
-Each phase PR body must include `lock-slug: whisper-dictation` so `.github/workflows/lock-cleanup.yml` auto-releases on final merge. For per-phase locking, use a phased slug (`whisper-dictation-phase-a`, etc.) and release each phase independently.
+Each phase PR body must include `lock-slug: whisper-dictation` so `.github/workflows/lock-cleanup.yml` auto-releases on final merge. For per-phase locking, use a phased slug (`whisper-dictation-phase-a`, etc.) and release each phase independently — preferred for this multi-PR work.
 
 ## Implementation log
 
