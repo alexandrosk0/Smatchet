@@ -937,9 +937,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.enableToggle", "Enable scheduled agentic triage"),
                                 &d.cfg.AgenticPollEnabled)) {
                 MarkPrefsDirty(d);
-                // Flip applies immediately — the worker joins or spawns under the new toggle
-                // value without waiting for the next app start.
-                app.RestartAgenticPoll();
+                // (Bundle A) Flip applies immediately. `RestartAgenticPollAsync` signals
+                // the worker to stop + defers the join to the next dispatcher drain so
+                // the UI never blocks on a mid-batch LLM call (was: synchronous join
+                // froze the UI for multi-minute windows under Pillar 2). The new worker
+                // starts immediately; the old one drains off-band.
+                app.RestartAgenticPollAsync();
             }
 
             // Interval (clamped 60..3600).
