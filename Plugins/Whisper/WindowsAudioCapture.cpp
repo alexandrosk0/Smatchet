@@ -386,7 +386,15 @@ void WindowsAudioCapture::CaptureThreadMain() {
         return;
     }
     WaveFormatExPtr mixFormat(rawMixFormat);
-    const WAVEFORMATEX negotiated = *mixFormat;
+    // Reference, NOT value copy. `WAVEFORMATEX` itself is 18 bytes; when the
+    // mixer returns WAVE_FORMAT_EXTENSIBLE, the real allocation behind
+    // `mixFormat` is 40 bytes (18 + 22 of Samples/dwChannelMask/SubFormat).
+    // A value copy would slice off the extension and `reinterpret_cast` to
+    // WAVEFORMATEXTENSIBLE would read stack garbage at SubFormat (offset 24).
+    // That sliced read was the silent bug: ResolveFormat checked cbSize==22
+    // (correctly copied), then matched SubFormat against random bytes, always
+    // failed, returned 0, and every captured sample landed as int16(0).
+    const WAVEFORMATEX& negotiated = *mixFormat;
 
     hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                  AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
@@ -429,6 +437,9 @@ void WindowsAudioCapture::CaptureThreadMain() {
     // Resolve once + log so a wrong format-unwrap path surfaces without
     // having to enable per-chunk DEBUG. Re-resolved per frame in
     // MixToMonoInt16; the log here is the human-readable single-shot.
+    // On EXTENSIBLE + unknown SubFormat, also dumps the GUID bytes so
+    // a driver advertising a non-PCM / non-IEEE_FLOAT SubFormat is
+    // identifiable from the log alone (no debugger needed).
     {
         WORD effTag = 0;
         WORD effBits = 0;
@@ -443,6 +454,24 @@ void WindowsAudioCapture::CaptureThreadMain() {
                  resolved ? 1 : 0,
                  static_cast<unsigned>(effTag),
                  static_cast<unsigned>(effBits));
+        if (!resolved && negotiated.wFormatTag == WAVE_FORMAT_EXTENSIBLE && negotiated.cbSize >= 22) {
+            // mixFormat is the canonical full-size buffer the WASAPI service
+            // returned; `negotiated` is a value-copy of just the WAVEFORMATEX
+            // prefix, so reach back through mixFormat to read SubFormat safely.
+            const WAVEFORMATEXTENSIBLE* ext =
+                reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mixFormat.get());
+            const GUID& g = ext->SubFormat;
+            LOG_WARN("WindowsAudioCapture: EXTENSIBLE SubFormat unrecognised — "
+                     "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} "
+                     "(expected PCM=00000001-... or IEEE_FLOAT=00000003-...)",
+                     static_cast<unsigned long>(g.Data1),
+                     static_cast<unsigned>(g.Data2),
+                     static_cast<unsigned>(g.Data3),
+                     static_cast<unsigned>(g.Data4[0]), static_cast<unsigned>(g.Data4[1]),
+                     static_cast<unsigned>(g.Data4[2]), static_cast<unsigned>(g.Data4[3]),
+                     static_cast<unsigned>(g.Data4[4]), static_cast<unsigned>(g.Data4[5]),
+                     static_cast<unsigned>(g.Data4[6]), static_cast<unsigned>(g.Data4[7]));
+        }
     }
 
     DecimationState decim;

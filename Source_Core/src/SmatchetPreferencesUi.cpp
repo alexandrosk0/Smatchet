@@ -46,8 +46,10 @@
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SmatchetWhisperSetupBanner.h"
+#include "ModelCatalog.h"
 #include "WavWriter.h"
 #include "WhisperApiClient.h"
+#include "WhisperLocal.h"
 #include "WindowsAudioCapture.h"
 #include "WhisperApiKeyResolve.h"
 #include "WhisperConsentGate.h"
@@ -1544,10 +1546,77 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     s_e2eResult = "Recording 4 s — speak now...";
                     s_e2eResultType = 0;
                     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
-                    // Capture cfg by value so the worker observes the saved
-                    // state, not whatever the user toggles while it runs.
                     TrackerConfig cfgSnap = d.cfg;
                     std::thread([cfgSnap, &dispatcher]() {
+                        // --- Resolve route BEFORE spending 4 s capturing,
+                        // so cloud-only with no key / local-only with no
+                        // model fail fast.
+                        const std::string requestedMode =
+                            cfgSnap.WhisperMode.empty() ? std::string("auto") : cfgSnap.WhisperMode;
+                        const std::string providerStr =
+                            (cfgSnap.AiProviderKind == 0) ? std::string("openai")
+                                                          : std::string("anthropic");
+                        const std::string resolvedKey =
+                            smatchet::whisper::pure::ResolveWhisperApiKey(
+                                cfgSnap.WhisperApiKey, providerStr, cfgSnap.AiApiKey);
+                        // Mirror ResolveWhisperModelDir from WhisperPlugin.cpp
+                        // (anon namespace; inline here so Preferences stays
+                        // self-contained).
+                        std::string modelDir =
+                            ConfigManager::GetPlatformSharedUserDataDirectory();
+                        if (!modelDir.empty() && modelDir.back() != '/' &&
+                            modelDir.back() != '\\') {
+                            modelDir.push_back('/');
+                        }
+                        modelDir += "whisper";
+                        const bool localPresent =
+                            !cfgSnap.WhisperModel.empty() &&
+                            smatchet::whisper::catalog::IsModelPresent(cfgSnap.WhisperModel,
+                                                                        modelDir);
+
+                        // Pick effective route per the user's spec:
+                        //   - cloud: require key
+                        //   - local: require model file present
+                        //   - auto:  prefer cloud when key present, fall back to local
+                        std::string effectiveMode;
+                        std::string fastFail;
+                        if (requestedMode == "cloud") {
+                            if (resolvedKey.empty()) {
+                                fastFail =
+                                    "Cloud mode requires an API key. Set Whisper or AI API key "
+                                    "(provider=openai) and retry.";
+                            } else {
+                                effectiveMode = "cloud";
+                            }
+                        } else if (requestedMode == "local") {
+                            if (!localPresent) {
+                                fastFail =
+                                    "Local mode requires the selected model on disk. Open the "
+                                    "model picker above and click Download first.";
+                            } else {
+                                effectiveMode = "local";
+                            }
+                        } else { // auto
+                            if (!resolvedKey.empty()) {
+                                effectiveMode = "cloud";
+                            } else if (localPresent) {
+                                effectiveMode = "local";
+                            } else {
+                                fastFail =
+                                    "Auto mode needs either an API key (for cloud) or a "
+                                    "downloaded local model. Neither was found.";
+                            }
+                        }
+                        if (!fastFail.empty()) {
+                            dispatcher.PostToMainThread([fastFail]() {
+                                s_e2eInFlight.store(false, std::memory_order_release);
+                                s_e2eResult = std::string("Failed: ") + fastFail;
+                                s_e2eResultType = 2;
+                            });
+                            return;
+                        }
+
+                        // --- Capture once, route by effectiveMode below.
                         smatchet::whisper::WindowsAudioCapture cap;
                         std::string err;
                         if (!cap.Start(err)) {
@@ -1574,60 +1643,61 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             });
                             return;
                         }
-                        // Use the cloud client directly — keeps the E2E
-                        // helper isolated from the WhisperPlugin worker
-                        // pipeline so a regression there does not mask a
-                        // capture-only regression here.
-                        const std::string providerStr = (cfgSnap.AiProviderKind == 0)
-                                                           ? std::string("openai")
-                                                           : std::string("anthropic");
-                        const std::string resolvedKey =
-                            smatchet::whisper::pure::ResolveWhisperApiKey(
-                                cfgSnap.WhisperApiKey, providerStr, cfgSnap.AiApiKey);
-                        if (resolvedKey.empty()) {
-                            dispatcher.PostToMainThread([]() {
-                                s_e2eInFlight.store(false, std::memory_order_release);
-                                s_e2eResult = "Failed: capture OK but no API key — set "
-                                              "WhisperApiKey or AiApiKey (provider=openai)";
-                                s_e2eResultType = 2;
-                            });
-                            return;
-                        }
-                        // Encode 16kHz mono PCM to a WAV blob the OpenAI
-                        // endpoint accepts. WavWriter is pure helper, cheap
-                        // for a 4 s clip.
-                        const std::vector<std::uint8_t> wav =
-                            smatchet::whisper::pure::EncodeWav(
-                                pcm,
-                                smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
-                                1);
-                        std::string text;
-                        std::string txErr;
+
                         const std::string lang =
                             cfgSnap.WhisperLanguage.empty() ? std::string("en")
                                                             : cfgSnap.WhisperLanguage;
-                        smatchet::whisper::WhisperApiClient client;
-                        const bool ok = client.Transcribe(wav, resolvedKey, lang, text, txErr);
                         const std::size_t samples = pcm.size();
-                        dispatcher.PostToMainThread([ok, txErr, text, samples]() {
+                        std::string text;
+                        std::string txErr;
+                        bool ok = false;
+
+                        if (effectiveMode == "cloud") {
+                            // Encode + POST.
+                            const std::vector<std::uint8_t> wav =
+                                smatchet::whisper::pure::EncodeWav(
+                                    pcm,
+                                    smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
+                                    1);
+                            smatchet::whisper::WhisperApiClient client;
+                            ok = client.Transcribe(wav, resolvedKey, lang, text, txErr);
+                        } else {
+                            // Local — WhisperLocal::LoadModel + Transcribe on the
+                            // int16 overload (matches the worker pipeline path).
+                            // When SMATCHET_WHISPER_LOCAL_BACKEND=OFF the helper
+                            // returns "local backend not built", which we surface
+                            // verbatim so the user knows to flip the sub-option.
+                            const std::string modelPath =
+                                modelDir + "/" + cfgSnap.WhisperModel + ".bin";
+                            smatchet::whisper::WhisperLocal local;
+                            std::string loadErr;
+                            if (!local.LoadModel(modelPath, loadErr)) {
+                                txErr = std::string("LoadModel: ") + loadErr;
+                                ok = false;
+                            } else {
+                                ok = local.Transcribe(pcm, lang, text, txErr);
+                            }
+                        }
+
+                        const std::string mode = effectiveMode;
+                        dispatcher.PostToMainThread([ok, txErr, text, samples, mode]() {
                             s_e2eInFlight.store(false, std::memory_order_release);
                             char buf[1024];
                             if (!ok) {
                                 std::snprintf(buf, sizeof(buf),
-                                              "Failed (transcribe): captured %zu samples; "
-                                              "%s",
-                                              samples, txErr.c_str());
+                                              "Failed (%s, transcribe): captured %zu samples; %s",
+                                              mode.c_str(), samples, txErr.c_str());
                                 s_e2eResultType = 2;
                             } else if (text.empty()) {
                                 std::snprintf(buf, sizeof(buf),
-                                              "Warn: captured %zu samples + API ok, but "
-                                              "transcription empty (silence detected at the API)",
-                                              samples);
+                                              "Warn (%s): captured %zu samples + transcribe ok, "
+                                              "but empty result (silence at recogniser)",
+                                              mode.c_str(), samples);
                                 s_e2eResultType = 2;
                             } else {
                                 std::snprintf(buf, sizeof(buf),
-                                              "OK (%zu samples): \"%s\"",
-                                              samples, text.c_str());
+                                              "OK (%s, %zu samples): \"%s\"",
+                                              mode.c_str(), samples, text.c_str());
                                 s_e2eResultType = 1;
                             }
                             s_e2eResult = buf;
