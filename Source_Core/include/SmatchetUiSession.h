@@ -160,6 +160,13 @@ struct UiDrawSession {
     bool requestMcpServerFocus = false;
 #endif
 
+#if defined(SMATCHET_WITH_AGENTIC)
+    /// Agent proposals panel (T6). Toggled from the View menu; the panel polls
+    /// AgentProposalStore::Query at ~1 Hz while open. Not persisted across
+    /// process restarts — agentic flow is a per-session inspect-and-act tool.
+    bool showAgentProposals = false;
+#endif
+
 #if defined(SMATCHET_WITH_AI)
     // Smatchet Assistant side panel. Hydrated from `cfg.AssistantPanelOpen` on
     // first frame and round-tripped through ConfigManager::Save on user toggles.

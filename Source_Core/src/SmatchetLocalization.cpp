@@ -515,6 +515,22 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.rerunSetup.tooltip",
      "Forces WhisperSetupCompleted=false; banner appears next launch",
      u8"Force WhisperSetupCompleted=false ; la bannière réapparaît au prochain lancement"},
+
+    // T6 agent-proposals panel — localisable copy. The panel itself lives behind
+    // SMATCHET_WITH_AGENTIC; keeping the strings in the always-on catalog
+    // simplifies the OFF build (no localization-side gate) at the cost of a
+    // handful of unused rows in the table.
+    {"agent.proposals.windowTitle", "Agent proposals", u8"Propositions de l'agent"},
+    {"agent.proposals.totalPending", "Total Pending", u8"Total en attente"},
+    {"agent.proposals.approve", "Approve", u8"Approuver"},
+    {"agent.proposals.reject", "Reject", u8"Rejeter"},
+    {"agent.proposals.refresh", "Refresh", u8"Actualiser"},
+    {"agent.proposals.rationale", "Rationale:", u8"Justification :"},
+    {"agent.proposals.payload", "Payload:", u8"Charge utile :"},
+    {"agent.proposals.expand", "[click to expand]", u8"[cliquer pour développer]"},
+    {"agent.proposals.empty", "No pending proposals. Run `agent.triage.run` to generate proposals.",
+     u8"Aucune proposition en attente. Exécutez `agent.triage.run` pour en générer."},
+    {"agent.proposals.menuToggle", "Agent proposals", u8"Propositions de l'agent"},
 };
 
 std::mutex& LocalizationMutex() {

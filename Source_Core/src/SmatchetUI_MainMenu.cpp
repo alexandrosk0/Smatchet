@@ -342,6 +342,12 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 recentViews_.Touch("view.toggle.assistant");
             }
 #endif
+#if defined(SMATCHET_WITH_AGENTIC)
+            if (ImGui::MenuItem("Agent proposals", nullptr, d.showAgentProposals)) {
+                d.showAgentProposals = !d.showAgentProposals;
+                recentViews_.Touch("view.toggle.agent-proposals");
+            }
+#endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
             if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
                 d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
