@@ -19,7 +19,8 @@
 // in SmatchetUI.cpp.
 extern UiDrawSession g_ui;
 
-namespace smatchet { namespace cmd {
+namespace smatchet {
+namespace cmd {
 
 namespace {
 
@@ -27,19 +28,28 @@ namespace {
 // stores --key=value as `string`). Scenarios must coerce defensively or risk
 // nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
 int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key)) return fallback;
+    if (!args.contains(key))
+        return fallback;
     const auto& v = args[key];
-    if (v.is_number()) return v.get<int>();
+    if (v.is_number())
+        return v.get<int>();
     if (v.is_string()) {
-        try { return std::stoi(v.get<std::string>()); } catch (...) { return fallback; }
+        try {
+            return std::stoi(v.get<std::string>());
+        } catch (...) {
+            return fallback;
+        }
     }
     return fallback;
 }
 std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key)) return fallback;
+    if (!args.contains(key))
+        return fallback;
     const auto& v = args[key];
-    if (v.is_string()) return v.get<std::string>();
-    if (v.is_number()) return std::to_string(v.get<long long>());
+    if (v.is_string())
+        return v.get<std::string>();
+    if (v.is_number())
+        return std::to_string(v.get<long long>());
     return fallback;
 }
 
@@ -61,6 +71,9 @@ class CommandPaletteFuzzyScenario : public IScenario {
             outErr = "command-palette-fuzzy: screenshotPath is required";
             return;
         }
+        // Latch flip must follow the error-return guard above — otherwise
+        // an OnStart that errors out leaves BackendHasBeenReachable=true
+        // for the session (OnCancel/OnFinish may never run).
         // Headless-spawn ephemeral exes never trip `BackendHasBeenReachable`
         // (no live tracker). SmatchetUI::Draw gates `commandPalette_.Draw`
         // behind that latch, so the palette never renders + our open request
@@ -73,7 +86,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
         g_ui.cfg.BackendHasBeenReachable = true;
         // Stage the open + filter request now; SmatchetUI::Draw will consume
         // it on its next frame (which is also the scenario's first OnFrame).
-        g_ui.requestCommandPaletteOpen   = true;
+        g_ui.requestCommandPaletteOpen = true;
         g_ui.requestCommandPaletteFilter = filter_;
     }
 
@@ -97,32 +110,32 @@ class CommandPaletteFuzzyScenario : public IScenario {
         // swap handler in Target_Standalone/main.cpp will write the PPM
         // after the next SwapBuffers.
         g_ui.requestScreenshotPath = screenshotPath_;
-        g_ui.requestScreenshot     = true;
+        g_ui.requestScreenshot = true;
         // Restore the backend-reachable latch we forced in OnStart (no-op for
         // an already-reachable session; matches the OnCancel unwind path).
         g_ui.cfg.BackendHasBeenReachable = savedBackendReachable_;
 
         nlohmann::json out;
-        out["scenario"]         = Name();
-        out["warmupFrames"]     = warmupFrames_;
-        out["filter"]           = filter_;
-        out["screenshotPath"]   = screenshotPath_;
+        out["scenario"] = Name();
+        out["warmupFrames"] = warmupFrames_;
+        out["filter"] = filter_;
+        out["screenshotPath"] = screenshotPath_;
         out["captureRequested"] = true;
         return out;
     }
 
   private:
-    int         warmupFrames_         = 8;
+    int warmupFrames_ = 8;
     std::string filter_;
     std::string screenshotPath_;
-    bool        savedBackendReachable_ = false;
+    bool savedBackendReachable_ = false;
 };
 
 } // namespace
 
-}} // namespace smatchet::cmd
+} // namespace cmd
+} // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(
-        new smatchet::cmd::CommandPaletteFuzzyScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::CommandPaletteFuzzyScenario());
 }
