@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -341,4 +342,50 @@ TEST_CASE("ParseInferenceResponse — round-trip the recorded fixture") {
     CHECK(err.empty());
     // Fixture carries one of each action; all should survive validation.
     CHECK(drafts.size() == 7);
+}
+
+// Bundle B SH1 — accumulator cap guards against OOM from a hostile / runaway
+// provider streaming gigabytes of delta chunks. The pure helper drives the
+// short-circuit gate in AgenticInferenceClient::RequestProposals; tests here
+// pin behaviour without dragging the streaming HTTP layer into the test
+// surface.
+TEST_CASE("WouldExceedResponseCap — pure cap helper" * doctest::test_suite("[high-risk]")) {
+    using AgenticInferenceClientPure::kMaxLlmResponseBytes;
+    using AgenticInferenceClientPure::WouldExceedResponseCap;
+
+    SUBCASE("empty + small chunk well under cap") {
+        CHECK_FALSE(WouldExceedResponseCap(0, 0));
+        CHECK_FALSE(WouldExceedResponseCap(0, 1024));
+        CHECK_FALSE(WouldExceedResponseCap(1024, 1024));
+    }
+    SUBCASE("buffer near cap with chunk that lands exactly on cap is allowed") {
+        CHECK_FALSE(WouldExceedResponseCap(kMaxLlmResponseBytes - 1, 1));
+        CHECK_FALSE(WouldExceedResponseCap(kMaxLlmResponseBytes, 0));
+    }
+    SUBCASE("buffer near cap with chunk that crosses the cap is rejected") {
+        CHECK(WouldExceedResponseCap(kMaxLlmResponseBytes - 1, 2));
+        CHECK(WouldExceedResponseCap(kMaxLlmResponseBytes, 1));
+        CHECK(WouldExceedResponseCap(kMaxLlmResponseBytes + 1, 0));
+    }
+    SUBCASE("massive chunk on empty buffer is rejected") {
+        CHECK(WouldExceedResponseCap(0, kMaxLlmResponseBytes + 1));
+    }
+    SUBCASE("overflow protection — chunk size near SIZE_MAX is rejected") {
+        // An adversarial size that would wrap-around in naive addition must
+        // be caught by the saturating-add guard.
+        CHECK(WouldExceedResponseCap(1024, static_cast<std::size_t>(-1)));
+        CHECK(WouldExceedResponseCap(static_cast<std::size_t>(-1) / 2, static_cast<std::size_t>(-1) / 2));
+    }
+    SUBCASE("cap value is exactly 10 MB") {
+        CHECK(kMaxLlmResponseBytes == static_cast<std::size_t>(10) * 1024 * 1024);
+    }
+}
+
+// Bundle B CR#232:1653 — cursor advance gated on per-issue failures.
+TEST_CASE("ShouldAdvancePollCursor — gates on per-issue failure count") {
+    using AgenticInferenceClientPure::ShouldAdvancePollCursor;
+    CHECK(ShouldAdvancePollCursor(0));         // clean iteration → advance
+    CHECK_FALSE(ShouldAdvancePollCursor(1));   // one failure → hold
+    CHECK_FALSE(ShouldAdvancePollCursor(10));  // many failures → hold
+    CHECK_FALSE(ShouldAdvancePollCursor(std::numeric_limits<std::size_t>::max()));
 }

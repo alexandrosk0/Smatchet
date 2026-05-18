@@ -85,10 +85,14 @@ bool AgenticTriageController::TriageIssue(const std::string& issueKey, int& outP
         return false;
     }
 
-    // Step 4: persist each draft as a Pending row. A single Insert failure
-    // aborts the run — the alternative (insert as many as possible, surface
-    // per-row errors) would leave the proposals split across a half-committed
-    // state, which the lifecycle invariants in AgentProposal.h forbid.
+    // Step 4: persist all drafts as Pending rows atomically. Bundle B
+    // CR#230:107 — the N drafts the LLM returned for one issue must commit
+    // together or none at all. A mid-loop insert failure (e.g. disk full)
+    // previously left a fragmentary proposal set visible to the UI; the
+    // single InsertMany call wraps every row in one SQLite transaction so
+    // the user sees either the complete set or no rows.
+    std::vector<AgentProposal> proposals;
+    proposals.reserve(drafts.size());
     for (auto& d : drafts) {
         AgentProposal p;
         p.sourceTracker = "github"; // T5 supports the github backend only.
@@ -96,15 +100,16 @@ bool AgenticTriageController::TriageIssue(const std::string& issueKey, int& outP
         p.action = d.action;
         p.rationale = std::move(d.rationale);
         p.payload = std::move(d.payload);
-        // state / createdAtSec / lastUpdatedAtSec are stamped by Insert.
-
-        std::string insertErr;
-        if (!store_->Insert(p, insertErr)) {
-            outError = "AgentProposalStore::Insert failed: " + insertErr;
-            return false;
-        }
-        ++outProposalsInserted;
+        // state / createdAtSec / lastUpdatedAtSec are stamped by InsertMany.
+        proposals.push_back(std::move(p));
     }
+
+    std::string insertErr;
+    if (!store_->InsertMany(proposals, insertErr)) {
+        outError = "AgentProposalStore::InsertMany failed: " + insertErr;
+        return false;
+    }
+    outProposalsInserted = static_cast<int>(proposals.size());
     LOG_INFO("AgenticTriageController::TriageIssue %s — inserted %d proposals", issueKey.c_str(),
              outProposalsInserted);
     return true;

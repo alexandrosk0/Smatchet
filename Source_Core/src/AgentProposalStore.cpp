@@ -34,14 +34,21 @@ bool IsLegalTransition(AgentProposalState from, AgentProposalState to) {
     return false;
 }
 
-void RowToProposal(SQLite::Statement& q, AgentProposal& out) {
+// Bundle B CR#229:318 — return bool so callers can surface schema-drift on
+// unknown enum literals rather than silently re-classifying them as
+// Pending/Unknown. A future migration that introduces a new state (e.g.
+// "Reviewing") must not be re-actioned by an old build that wasn't taught
+// about it; failing the row read is the safe default.
+bool RowToProposal(SQLite::Statement& q, AgentProposal& out, std::string& outError) {
     out.id = q.getColumn(0).getInt64();
     out.sourceTracker = q.getColumn(1).getText();
     out.issueKey = q.getColumn(2).getText();
     const std::string actionStr = q.getColumn(3).getText();
     if (!ParseAgenticAction(actionStr, out.action)) {
-        out.action = AgenticInferenceClientPure::ProposedAction::Unknown;
-        LOG_WARN("AgentProposalStore: unknown action literal in db: %s", actionStr.c_str());
+        LOG_WARN("AgentProposalStore: unknown action literal in db (row id=%lld): %s",
+                 static_cast<long long>(out.id), actionStr.c_str());
+        outError = std::string("unknown action literal in db: ") + actionStr;
+        return false;
     }
     out.rationale = q.getColumn(4).getText();
     const std::string payloadStr = q.getColumn(5).getText();
@@ -54,12 +61,15 @@ void RowToProposal(SQLite::Statement& q, AgentProposal& out) {
     }
     const std::string stateStr = q.getColumn(6).getText();
     if (!ParseAgentProposalState(stateStr, out.state)) {
-        out.state = AgentProposalState::Pending;
-        LOG_WARN("AgentProposalStore: unknown state literal in db: %s", stateStr.c_str());
+        LOG_WARN("AgentProposalStore: unknown state literal in db (row id=%lld): %s", static_cast<long long>(out.id),
+                 stateStr.c_str());
+        outError = std::string("unknown state literal in db: ") + stateStr;
+        return false;
     }
     out.createdAtSec = q.getColumn(7).getInt64();
     out.lastUpdatedAtSec = q.getColumn(8).getInt64();
     out.applyError = q.getColumn(9).getText();
+    return true;
 }
 
 } // namespace
@@ -226,13 +236,71 @@ bool AgentProposalStore::Insert(AgentProposal& proposal, std::string& outError) 
     }
 }
 
+bool AgentProposalStore::InsertMany(std::vector<AgentProposal>& proposals, std::string& outError) {
+    outError.clear();
+    if (proposals.empty()) {
+        return true;
+    }
+    try {
+        // Bundle B CR#230:107 — atomic per-issue persistence. The N drafts the
+        // LLM returned for one issue commit together; an insert failure on row
+        // 3 of 5 rolls back rows 1-2, never leaving the user with a partial
+        // proposal set for that issue. RAII rollback on exit means we only
+        // commit explicitly at the end of the loop.
+        SQLite::Transaction transaction(*db_);
+
+        const int64_t now = NowEpochSec();
+        SQLite::Statement stmt(*db_, "INSERT INTO agent_proposals (source_tracker, issue_key, action, rationale, "
+                                     "payload_json, state, created_at_sec, last_updated_at_sec, apply_error) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        for (auto& p : proposals) {
+            p.createdAtSec = now;
+            p.lastUpdatedAtSec = now;
+            p.state = AgentProposalState::Pending;
+
+            stmt.reset();
+            stmt.clearBindings();
+            stmt.bind(1, p.sourceTracker);
+            stmt.bind(2, p.issueKey);
+            stmt.bind(3, AgenticInferenceClientPure::ActionToString(p.action));
+            stmt.bind(4, p.rationale);
+            const std::string payloadDump = p.payload.is_null() ? std::string("{}") : p.payload.dump();
+            stmt.bind(5, payloadDump);
+            stmt.bind(6, AgentProposalStateToString(p.state));
+            stmt.bind(7, static_cast<long long>(p.createdAtSec));
+            stmt.bind(8, static_cast<long long>(p.lastUpdatedAtSec));
+            stmt.bind(9, p.applyError);
+            stmt.exec();
+            p.id = db_->getLastInsertRowid();
+        }
+
+        transaction.commit();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::InsertMany: ") + ex.what();
+        // Reset stamped ids on the input vector — the rollback discarded the
+        // rowids so the caller must not surface them as if they had landed.
+        for (auto& p : proposals) {
+            p.id = 0;
+        }
+        return false;
+    }
+}
+
 bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, const std::string& applyError,
                                     std::string& outError) {
     outError.clear();
     try {
-        // Load current state to validate the transition. Done in the same TU as the UPDATE
-        // so we don't double-encode the state machine; a single SELECT keeps the round-trip
-        // honest and avoids racing with another writer (SQLite serialises writes).
+        // Bundle B CR#229:177 — the SELECT-then-UPDATE sequence must be atomic.
+        // Without the surrounding transaction, two concurrent transitions (UI
+        // Approve racing the auto-poll worker) can both observe state=Pending,
+        // both decide their transition is legal, and the second one silently
+        // overwrites the first. SQLite::Transaction issues `BEGIN`, which on
+        // a busy db waits up to the configured busy-timeout for the write
+        // lock — the second writer then re-reads the post-commit state and
+        // its transition validation catches the conflict.
+        SQLite::Transaction transaction(*db_);
+
         AgentProposalState current;
         {
             SQLite::Statement q(*db_, "SELECT state FROM agent_proposals WHERE id=?");
@@ -265,6 +333,7 @@ bool AgentProposalStore::Transition(int64_t id, AgentProposalState newState, con
             outError = "row vanished between SELECT and UPDATE";
             return false;
         }
+        transaction.commit();
         return true;
     } catch (const std::exception& ex) {
         outError = std::string("AgentProposalStore::Transition: ") + ex.what();
@@ -320,7 +389,18 @@ bool AgentProposalStore::Query(const Filter& f, std::vector<AgentProposal>& out,
 
         while (q.executeStep()) {
             AgentProposal p;
-            RowToProposal(q, p);
+            std::string rowErr;
+            if (!RowToProposal(q, p, rowErr)) {
+                // Bundle B CR#229:318 — surface schema-drift loudly. A row
+                // with an unknown action / state literal indicates a db
+                // written by a future build; the safe behaviour is to fail
+                // the whole query so the caller doesn't silently re-action
+                // misclassified rows. The partial `out` is cleared to keep
+                // the result-set semantics atomic (all-or-nothing).
+                out.clear();
+                outError = "AgentProposalStore::Query: " + rowErr;
+                return false;
+            }
             out.push_back(std::move(p));
         }
         return true;
@@ -341,7 +421,11 @@ bool AgentProposalStore::Find(int64_t id, AgentProposal& out, std::string& outEr
             outError = "row not found";
             return false;
         }
-        RowToProposal(q, out);
+        std::string rowErr;
+        if (!RowToProposal(q, out, rowErr)) {
+            outError = "AgentProposalStore::Find: " + rowErr;
+            return false;
+        }
         return true;
     } catch (const std::exception& ex) {
         outError = std::string("AgentProposalStore::Find: ") + ex.what();

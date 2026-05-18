@@ -4,6 +4,7 @@
 #include "AgentProposalStore.h"
 #include "AgenticInferenceClientPure.h"
 
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -355,6 +356,191 @@ TEST_CASE("AgentProposalStore: kCurrentSchemaVersion is exactly 1 — guard agai
     // since T4-T8 shipped no version increments. Bump this constant alongside
     // the production-side constant only when a real migration body lands.
     CHECK(AgentProposalStore::kCurrentSchemaVersion == 1);
+}
+
+// Bundle B CR#230:107 — InsertMany must be atomic. A failure on row N must
+// roll back rows 0..N-1 within the same SQLite transaction. The trigger here
+// is a NOT NULL constraint violation on the action column (action="" maps to
+// "" via ActionToString(Unknown) which is still non-null; we instead use a
+// real disk db and a malformed JSON dump that violates a different invariant.
+// Simpler approach: inject a duplicate primary-key conflict by pre-committing
+// a row with a known rowid, then asking InsertMany to clobber it. But the
+// table uses AUTOINCREMENT — we can't choose the rowid. So the cleanest
+// trigger is the source_tracker NOT NULL constraint: bind a sourceTracker
+// containing a SQLite-reserved byte sequence? No — that'd succeed. Use a
+// disk-backed db with a tiny page-cache size + a forced disk error? Out of
+// scope. The atomicity contract is best exercised end-to-end via the
+// integration test below, which forces a constraint violation by binding a
+// row that exercises the schema's CHECK / NOT NULL constraints. For pure
+// rollback proof on the SQLite::Transaction RAII shape see the empty-input
+// fast path + the per-issue scenario test (test-agentic-approve-reject.sh).
+TEST_CASE("AgentProposalStore: InsertMany on empty input is a no-op + returns true") {
+    AgentProposalStore s(":memory:");
+    std::string err;
+    std::vector<AgentProposal> empty;
+    REQUIRE(s.InsertMany(empty, err));
+    CHECK(err.empty());
+
+    // Store remains empty.
+    std::vector<AgentProposal> rows;
+    REQUIRE(s.Query({}, rows, err));
+    CHECK(rows.empty());
+}
+
+TEST_CASE("AgentProposalStore: InsertMany commits all rows atomically on success") {
+    AgentProposalStore s(":memory:");
+    std::string err;
+    std::vector<AgentProposal> batch;
+    for (int i = 0; i < 5; ++i) {
+        batch.push_back(MakeProposal("smatchet/example#bm-" + std::to_string(i)));
+    }
+    REQUIRE(s.InsertMany(batch, err));
+    CHECK(err.empty());
+    for (const auto& p : batch) {
+        CHECK(p.id > 0);
+        CHECK(p.state == AgentProposalState::Pending);
+        CHECK(p.createdAtSec > 0);
+        CHECK(p.lastUpdatedAtSec == p.createdAtSec);
+    }
+
+    std::vector<AgentProposal> rows;
+    REQUIRE(s.Query({}, rows, err));
+    CHECK(rows.size() == 5);
+}
+
+TEST_CASE("AgentProposalStore: InsertMany rolls back ALL rows when one fails") {
+    // The atomicity contract: if any row in the batch fails to insert, NO
+    // rows from the batch land in the db. Trigger the failure by binding a
+    // payload that breaks the json dump path? No — payloads can't fail to
+    // dump. The cleanest trigger is the source_tracker NOT NULL constraint:
+    // an empty string still satisfies NOT NULL (it's the zero-length text
+    // type). We force a different violation by closing the db connection
+    // mid-batch — not portable. Best path: use a CHECK constraint we add via
+    // raw SQL on the same db handle, prior to the InsertMany call, that
+    // rejects a specific issueKey marker. SQLite's CHECK constraints are
+    // enforced per-row and a violation aborts the surrounding transaction.
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_bundle_b_insertmany.sqlite";
+    {
+        AgentProposalStore s(path);
+        // Add a CHECK constraint via a side-channel handle BEFORE the test
+        // batch lands. SQLite allows ALTER TABLE only for limited mutations;
+        // adding a CHECK requires recreating the table. Instead, install a
+        // trigger that raises ABORT for the sentinel issueKey.
+        {
+            SQLite::Database side(path, SQLite::OPEN_READWRITE);
+            side.exec("CREATE TRIGGER reject_sentinel BEFORE INSERT ON agent_proposals "
+                      "FOR EACH ROW WHEN NEW.issue_key = 'force-rollback-sentinel' "
+                      "BEGIN SELECT RAISE(ABORT, 'sentinel rejected'); END;");
+        }
+        std::vector<AgentProposal> batch;
+        batch.push_back(MakeProposal("smatchet/example#ok-1"));
+        batch.push_back(MakeProposal("smatchet/example#ok-2"));
+        batch.push_back(MakeProposal("force-rollback-sentinel")); // 3rd row triggers the abort
+        batch.push_back(MakeProposal("smatchet/example#ok-4"));
+
+        std::string err;
+        CHECK_FALSE(s.InsertMany(batch, err));
+        CHECK(err.find("InsertMany") != std::string::npos);
+
+        // All input row ids reset to 0 on rollback.
+        for (const auto& p : batch) {
+            CHECK(p.id == 0);
+        }
+
+        // Zero rows in db — the 2 "ok" inserts before the failure must have
+        // been rolled back, NOT left behind as a half-written partial batch.
+        std::vector<AgentProposal> rows;
+        REQUIRE(s.Query({}, rows, err));
+        CHECK(rows.empty());
+    }
+    std::remove(path.c_str());
+}
+
+// Bundle B CR#229:318 — RowToProposal must propagate unknown state / action
+// literals as errors rather than silently re-mapping to Pending/Unknown. A
+// future migration that adds a new state (e.g. "Reviewing") would otherwise
+// have its rows silently re-actioned by an old build that wasn't taught
+// about it — data-loss adjacent.
+TEST_CASE("AgentProposalStore: Find returns false on unknown state literal in db") {
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_bundle_b_unknownstate.sqlite";
+    int64_t insertedId = 0;
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposal p = MakeProposal("smatchet/example#unknownstate");
+        REQUIRE(s.Insert(p, err));
+        insertedId = p.id;
+        // Side-channel mutate the row to a future state value.
+        SQLite::Database side(path, SQLite::OPEN_READWRITE);
+        SQLite::Statement u(side, "UPDATE agent_proposals SET state='Reviewing' WHERE id=?");
+        u.bind(1, static_cast<long long>(insertedId));
+        u.exec();
+    }
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposal got;
+        CHECK_FALSE(s.Find(insertedId, got, err));
+        CHECK(err.find("unknown state literal in db") != std::string::npos);
+        CHECK(err.find("Reviewing") != std::string::npos);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("AgentProposalStore: Query returns false + clears partial output on unknown state literal") {
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_bundle_b_querystate.sqlite";
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposal a = MakeProposal("smatchet/example#qs-1");
+        AgentProposal b = MakeProposal("smatchet/example#qs-2");
+        AgentProposal c = MakeProposal("smatchet/example#qs-3");
+        REQUIRE(s.Insert(a, err));
+        REQUIRE(s.Insert(b, err));
+        REQUIRE(s.Insert(c, err));
+        SQLite::Database side(path, SQLite::OPEN_READWRITE);
+        SQLite::Statement u(side, "UPDATE agent_proposals SET state='FutureState' WHERE id=?");
+        u.bind(1, static_cast<long long>(b.id));
+        u.exec();
+    }
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        std::vector<AgentProposal> rows;
+        rows.reserve(8);
+        CHECK_FALSE(s.Query({}, rows, err));
+        // Partial result cleared — caller can't accidentally consume a
+        // truncated row set thinking it succeeded.
+        CHECK(rows.empty());
+        CHECK(err.find("unknown state literal in db") != std::string::npos);
+        CHECK(err.find("FutureState") != std::string::npos);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("AgentProposalStore: Find returns false on unknown action literal in db") {
+    const std::string path = std::string(std::tmpnam(nullptr)) + "_smatchet_bundle_b_unknownaction.sqlite";
+    int64_t insertedId = 0;
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposal p = MakeProposal("smatchet/example#unknownaction");
+        REQUIRE(s.Insert(p, err));
+        insertedId = p.id;
+        SQLite::Database side(path, SQLite::OPEN_READWRITE);
+        SQLite::Statement u(side, "UPDATE agent_proposals SET action='SummonDragon' WHERE id=?");
+        u.bind(1, static_cast<long long>(insertedId));
+        u.exec();
+    }
+    {
+        AgentProposalStore s(path);
+        std::string err;
+        AgentProposal got;
+        CHECK_FALSE(s.Find(insertedId, got, err));
+        CHECK(err.find("unknown action literal in db") != std::string::npos);
+        CHECK(err.find("SummonDragon") != std::string::npos);
+    }
+    std::remove(path.c_str());
 }
 
 TEST_CASE("AgentProposalStore: agentic action string helpers round-trip via proposal serialization") {

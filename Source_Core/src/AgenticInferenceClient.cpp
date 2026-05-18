@@ -7,6 +7,7 @@
 #include "Logger.h"
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -167,23 +168,49 @@ bool AgenticInferenceClient::RequestProposals(const std::string& issueBody,
     chatReq.History.push_back(std::move(userMsg));
 
     // Accumulate streamed deltas into a single buffer; the parser runs once
-    // when the stream terminates (IsFinal=true).
+    // when the stream terminates (IsFinal=true). Bundle B SH1 — cap total
+    // accumulation at kMaxLlmResponseBytes; a hostile or compromised provider
+    // can stream gigabytes of delta chunks before terminating, OOMing the
+    // process. When the cap is breached we set the cancel atom (the HTTP layer
+    // honours it within a chunk-poll iteration) and latch the cap-breach error
+    // for the post-stream handler below to surface to the caller.
     std::string accumulated;
     AiStreamError captured;
     bool sawError = false;
+    bool capExceeded = false;
+    AiCancelToken cancel = std::make_shared<std::atomic<bool>>(false);
 
-    auto onDelta = [&accumulated](const AiStreamDelta& d) { accumulated += d.TokenChunk; };
+    auto onDelta = [&accumulated, &capExceeded, &cancel](const AiStreamDelta& d) {
+        if (capExceeded) {
+            // Already aborted; subsequent chunks during in-flight cancellation
+            // must not extend the buffer.
+            return;
+        }
+        if (AgenticInferenceClientPure::WouldExceedResponseCap(accumulated.size(), d.TokenChunk.size())) {
+            capExceeded = true;
+            cancel->store(true);
+            LOG_ERROR("AgenticInferenceClient: response exceeded %zu-byte cap at %zu bytes (probable provider error or "
+                      "attack) — cancelling stream",
+                      AgenticInferenceClientPure::kMaxLlmResponseBytes, accumulated.size());
+            return;
+        }
+        accumulated += d.TokenChunk;
+    };
     auto onError = [&captured, &sawError](const AiStreamError& e) {
         captured = e;
         sawError = true;
     };
-    AiCancelToken cancel = std::make_shared<std::atomic<bool>>(false);
 
     LOG_INFO("AgenticInferenceClient: dispatching triage request provider='%s' model='%s' commentCount=%zu",
              AiClientFactory::ProviderToString(provider).c_str(), chatReq.Model.c_str(), comments.size());
 
     client->SendStreaming(clientCfg, chatReq, onDelta, onError, cancel);
 
+    if (capExceeded) {
+        outError = "LLM response exceeded 10 MB cap (probable provider error or attack)";
+        LOG_ERROR("AgenticInferenceClient: %s (acceptedBytes=%zu)", outError.c_str(), accumulated.size());
+        return false;
+    }
     if (sawError) {
         outError = "LLM stream error: " + captured.Message;
         LOG_ERROR("AgenticInferenceClient: %s (httpStatus=%d cancelled=%d)", outError.c_str(), captured.HttpStatus,

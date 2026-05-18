@@ -52,6 +52,16 @@ class AgentProposalStore {
     // Returns false on DB error; outError carries the reason.
     bool Insert(AgentProposal& proposal, std::string& outError);
 
+    // Bundle B CR#230:107 — atomic batch insert. All proposals in the vector
+    // commit together or none of them do; an insert failure on row N rolls
+    // back rows 0..N-1 within the same SQLite transaction. Used by
+    // AgenticTriageController::TriageIssue so a partial-insert failure (e.g.
+    // disk full mid-batch) never leaves a fragmentary proposal set visible to
+    // the UI. Each successful row has its ROWID + timestamps stamped back into
+    // the corresponding element of `proposals`. Empty input returns true with
+    // no DB writes.
+    bool InsertMany(std::vector<AgentProposal>& proposals, std::string& outError);
+
     // Transitions the row identified by `id` to `newState`. Bumps
     // lastUpdatedAtSec. Stores `applyError` when `newState == Failed` (empty
     // string otherwise — ignored for non-Failed transitions).

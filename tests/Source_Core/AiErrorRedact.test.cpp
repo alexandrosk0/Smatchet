@@ -108,6 +108,51 @@ TEST_CASE("RedactProviderErrorBody strips id-prefix tokens (sk-/org-/proj_/asst_
     }
 }
 
+// Bundle B SH3 — GitHub PAT prefixes must redact alongside OpenAI id prefixes.
+// A 401 from GitHub that echoes the supplied token verbatim (rare but
+// observed in some validation error paths) must not surface to LOG_WARN or
+// AiStreamError::Message in plaintext.
+TEST_CASE("RedactProviderErrorBody strips GitHub PAT prefixes (ghp_/gho_/ghs_/ghu_/ghr_/github_pat_)" *
+          doctest::test_suite("[high-risk]")) {
+    SUBCASE("Classic PAT prefix ghp_") {
+        const std::string out = RedactProviderErrorBody("token=ghp_abcdefghij1234567890");
+        CHECK(out.find("abcdefghij1234567890") == std::string::npos);
+        CHECK(out.find("ghp_[REDACTED]") != std::string::npos);
+    }
+    SUBCASE("OAuth token prefix gho_") {
+        const std::string out = RedactProviderErrorBody("Authorization: token gho_oauthsecretvalue1234");
+        CHECK(out.find("oauthsecretvalue1234") == std::string::npos);
+    }
+    SUBCASE("GitHub App server-token prefix ghs_") {
+        const std::string out = RedactProviderErrorBody("server token: ghs_servervalue9876543210");
+        CHECK(out.find("servervalue9876543210") == std::string::npos);
+    }
+    SUBCASE("User-to-server token prefix ghu_") {
+        const std::string out = RedactProviderErrorBody("u2s: ghu_useruserusersecret123");
+        CHECK(out.find("useruserusersecret123") == std::string::npos);
+    }
+    SUBCASE("Refresh token prefix ghr_") {
+        const std::string out = RedactProviderErrorBody("refresh: ghr_refreshrefresh1234567");
+        CHECK(out.find("refreshrefresh1234567") == std::string::npos);
+    }
+    SUBCASE("Fine-grained PAT prefix github_pat_") {
+        const std::string body = "fg-pat=github_pat_abcdefghijklmnopqrstuvwxyz1234567890";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("abcdefghijklmnop") == std::string::npos);
+        CHECK(out.find("github_pat_[REDACTED]") != std::string::npos);
+    }
+    SUBCASE("PAT echoed in JSON field github_pat") {
+        const std::string body = R"({"github_pat":"ghp_secretpatvalue1234567"})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("secretpatvalue") == std::string::npos);
+    }
+    SUBCASE("PAT echoed in JSON field GitHubPat (config field name shape)") {
+        const std::string body = R"({"GitHubPat":"ghp_anothersecret12345678"})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("anothersecret") == std::string::npos);
+    }
+}
+
 TEST_CASE("RedactProviderErrorBody length-caps after sanitisation" * doctest::test_suite("[high-risk]")) {
     SUBCASE("Body shorter than cap passes through unchanged when no secrets") {
         const std::string body = "Plain error: invalid_request: bad temperature value";
