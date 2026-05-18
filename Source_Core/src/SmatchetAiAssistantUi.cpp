@@ -381,8 +381,14 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         if (d.requestAssistantFocus) {
             d.requestAssistantFocus = false;
         }
-        // Panel hidden (collapsed / docked-tab inactive) — drop dictation registration.
-        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
+        // Panel hidden (collapsed / docked-tab inactive). Intentionally do
+        // NOT unregister the dictation buffer here — local-model
+        // transcription can take multiple seconds, during which the user
+        // may have flipped to another dock tab. Unregistering here would
+        // leave the post-back with no target and silently drop the
+        // transcribed text. The buffer stays alive (static storage); the
+        // registration is dropped only when the panel actually closes
+        // (`!d.assistantPanelOpen`) at the top of this function.
         PersistOpenStateImmediate(d);
         return;
     }

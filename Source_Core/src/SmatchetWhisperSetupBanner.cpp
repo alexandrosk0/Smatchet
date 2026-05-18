@@ -38,8 +38,25 @@ namespace {
 // Per-banner UI state — persists across frames while the banner is open.
 struct BannerState {
     bool pickerExpanded = false; // user has clicked "Enable ▾"
+    // Set when user clicks "Decide later" — suppresses the banner for the
+    // rest of this process so the user isn't blocked while they think
+    // about it. WhisperSetupCompleted stays false so the banner returns
+    // on next launch (the documented "decide later" contract). Cleared
+    // when Preferences "Re-run setup banner" toggles the cfg flag.
+    bool dismissedThisSession = false;
     int selectedIndex = 1;       // default to "Recommended" (ggml-base.en, index 1)
     std::string lastError;       // last download error surfaced to the banner
+    // True once the banner has observed an active download transition this
+    // session (Downloading or Verifying). Auto-completion is gated on this
+    // so a leftover State::Complete in the static downloader from a prior
+    // session does not flicker the banner into auto-dismiss on its first
+    // frame after "Re-run setup banner" flips WhisperSetupCompleted back
+    // to false.
+    bool sawActiveDownloadThisSession = false;
+    // Sticky observation of cfg.WhisperSetupCompleted — flipping it from
+    // true -> false (the Preferences "Re-run setup banner" path) resets the
+    // session-scoped flags so a fresh banner cycle starts clean.
+    bool lastCfgSetupCompleted = false;
 };
 
 BannerState& Bs() {
@@ -132,12 +149,27 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     (void)cfg;
     return false;
 #else
-    if (cfg.WhisperSetupCompleted) {
+    BannerState& s = Bs();
+
+    // Detect "Preferences re-run setup banner just flipped Completed false".
+    // Reset session-scoped flags so a leftover ModelDownloader::State::Complete
+    // from a prior successful download in the same process can't auto-dismiss
+    // the new banner on its first frame (the flicker bug).
+    if (s.lastCfgSetupCompleted && !cfg.WhisperSetupCompleted) {
+        s.sawActiveDownloadThisSession = false;
+        s.pickerExpanded = false;
+        s.lastError.clear();
+        // Re-run banner also clears the session dismiss so the user sees
+        // the banner again in the same process.
+        s.dismissedThisSession = false;
+    }
+    s.lastCfgSetupCompleted = cfg.WhisperSetupCompleted;
+
+    if (cfg.WhisperSetupCompleted || s.dismissedThisSession) {
         return false;
     }
 
     bool cfgChanged = false;
-    BannerState& s = Bs();
 
     // Pin to the top of the main viewport work area. Work-area excludes the
     // main menu bar so SetNextWindowPos lands the banner directly under it.
@@ -148,15 +180,20 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     const ImVec2 workPos = vp->WorkPos;
     const ImVec2 workSize = vp->WorkSize;
 
-    // Compute banner height by phase.
+    // Compute banner height by phase. The taller heights below give the text
+    // + buttons room to breathe at the larger background contrast we use now —
+    // a too-tight banner looked indistinguishable from the menu bar.
     const ModelDownloader::Progress prog = OwnedDownloader().GetProgress();
     const bool downloading = (prog.state == ModelDownloader::State::Downloading) ||
                              (prog.state == ModelDownloader::State::Verifying);
-    float bannerHeight = 52.0f;
     if (downloading) {
-        bannerHeight = 70.0f;
+        s.sawActiveDownloadThisSession = true;
+    }
+    float bannerHeight = 64.0f;
+    if (downloading) {
+        bannerHeight = 84.0f;
     } else if (s.pickerExpanded) {
-        bannerHeight = 120.0f;
+        bannerHeight = 140.0f;
     }
 
     ::ImGui::SetNextWindowPos(workPos);
@@ -166,10 +203,22 @@ bool Render(AppController& app, TrackerConfig& cfg) {
                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoDocking;
 
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    // Distinct accent-blue background + a visible bottom border so the banner
+    // reads as a notification strip rather than blending into the chrome.
+    // The colors are picked to remain legible on both light and dark ImGui
+    // themes (high-saturation blue background, white text, contrasting border).
+    const ImVec4 bgColor(0.10f, 0.42f, 0.78f, 1.00f);        // saturated blue
+    const ImVec4 borderColor(0.95f, 0.78f, 0.20f, 1.00f);    // amber attention bar
+    const ImVec4 textColor(1.00f, 1.00f, 1.00f, 1.00f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+    ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+    ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 8.0f));
     if (!::ImGui::Begin("##WhisperSetupBanner", nullptr, flags)) {
         ::ImGui::End();
-        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
         return false;
     }
 
@@ -225,7 +274,12 @@ bool Render(AppController& app, TrackerConfig& cfg) {
             ::ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", s.lastError.c_str());
         }
     } else {
-        ::ImGui::TextUnformatted(
+        // TextWrapped lets the long copy fit on narrow viewports without being
+        // truncated to a single line. The leading dot-prefix substitutes for a
+        // missing icon glyph in the default ImGui font; the banner color +
+        // border already do most of the attention-grabbing work.
+        ::ImGui::TextWrapped(
+            "* %s",
             SmatchetLocalization::T("whisper.banner.title",
                                     "Enable voice dictation? Push-to-talk transcribes into any text field. "
                                     "Optional, off by default. No audio leaves your machine when the local "
@@ -235,7 +289,12 @@ bool Render(AppController& app, TrackerConfig& cfg) {
         }
         ::ImGui::SameLine();
         if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.later", "Decide later"))) {
-            // No state change — banner reappears next launch.
+            // Session-only dismiss. WhisperSetupCompleted stays false so the
+            // banner returns next launch; the dismissedThisSession flag
+            // hides it for the rest of the current process so the user can
+            // get on with their work.
+            s.dismissedThisSession = true;
+            LOG_INFO("Whisper banner: user picked 'Decide later' — hidden until next launch");
         }
         ::ImGui::SameLine();
         if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.disable", "No thanks"))) {
@@ -248,19 +307,24 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     }
 
     // Banner auto-dismisses when a download completes; flip the setup flag
-    // and the next frame stops drawing.
-    if (prog.state == ModelDownloader::State::Complete) {
+    // and the next frame stops drawing. Gated on `sawActiveDownloadThisSession`
+    // so a leftover State::Complete from a previous successful download in
+    // the same process cannot auto-dismiss a re-opened banner (the "flickers
+    // in and out" bug after Preferences -> Re-run setup banner).
+    if (s.sawActiveDownloadThisSession && prog.state == ModelDownloader::State::Complete) {
         cfg.WhisperEnabled = true;
         cfg.WhisperSetupCompleted = true;
         cfg.WhisperSetupChoice = "enabled";
         cfg.WhisperModel = prog.modelId.empty() ? cfg.WhisperModel : prog.modelId;
         cfgChanged = true;
         s.pickerExpanded = false;
+        s.sawActiveDownloadThisSession = false;
         LOG_INFO("Whisper banner: setup completed (model=%s).", cfg.WhisperModel.c_str());
     }
 
     ::ImGui::End();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(3);
     return cfgChanged;
 #endif
 }

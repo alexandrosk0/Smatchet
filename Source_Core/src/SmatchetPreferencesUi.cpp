@@ -46,7 +46,11 @@
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SmatchetWhisperSetupBanner.h"
+#include "ModelCatalog.h"
+#include "WavWriter.h"
 #include "WhisperApiClient.h"
+#include "WhisperLocal.h"
+#include "WindowsAudioCapture.h"
 #include "WhisperApiKeyResolve.h"
 #include "WhisperConsentGate.h"
 #include "WhisperPlugin.h"
@@ -1442,6 +1446,341 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     }
                     ImGui::SameLine();
                     ImGui::TextColored(col, "%s", s_whisperTestResult.c_str());
+                }
+            }
+
+            // --- Test microphone end-to-end (capture-only). Captures 3 s of
+            // audio via WindowsAudioCapture, reports total samples + peak
+            // amplitude inline so the user can confirm the mic + format
+            // path is producing real samples BEFORE saving + relying on it
+            // for transcription. No HTTP, no transcription — pure capture
+            // smoke. Surfaces silent-format regressions
+            // (WAVE_FORMAT_EXTENSIBLE unwrap, EAX-suppressed mic, muted OS
+            // capture, etc.) without burning a Whisper API call.
+            {
+                static std::atomic<bool> s_micTestInFlight{false};
+                static std::string s_micTestResult;
+                static int s_micTestResultType = 0; // 0=neutral, 1=ok, 2=fail
+                const bool inFlight = s_micTestInFlight.load(std::memory_order_acquire);
+                if (inFlight) {
+                    ImGui::BeginDisabled(true);
+                }
+                const char* micSpinnerGlyph = "|";
+                if (inFlight) {
+                    const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
+                    micSpinnerGlyph = (slot == 0)   ? "|"
+                                      : (slot == 1) ? "/"
+                                      : (slot == 2) ? "-"
+                                                    : "\\";
+                }
+                char micLabel[128];
+                std::snprintf(micLabel, sizeof(micLabel),
+                              inFlight ? "%s  %s" : "%s",
+                              SmatchetLocalization::T("whisper.preferences.testMic.button",
+                                                      "Test microphone (3 s)"),
+                              micSpinnerGlyph);
+                if (ImGui::Button(micLabel)) {
+                    s_micTestInFlight.store(true, std::memory_order_release);
+                    s_micTestResult = "Capturing...";
+                    s_micTestResultType = 0;
+                    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
+                    std::thread([&dispatcher]() {
+                        smatchet::whisper::WindowsAudioCapture cap;
+                        std::string startErr;
+                        if (!cap.Start(startErr)) {
+                            const std::string err = startErr.empty()
+                                                       ? std::string("capture start failed")
+                                                       : startErr;
+                            dispatcher.PostToMainThread([err]() {
+                                s_micTestInFlight.store(false, std::memory_order_release);
+                                s_micTestResult = std::string("Failed: ") + err;
+                                s_micTestResultType = 2;
+                            });
+                            return;
+                        }
+                        std::this_thread::sleep_for(std::chrono::seconds(3));
+                        cap.Stop();
+                        std::vector<std::int16_t> pcm;
+                        cap.DrainCapturedPcm(pcm);
+                        std::int32_t peakAbs = 0;
+                        for (std::int16_t s : pcm) {
+                            const std::int32_t m =
+                                s >= 0 ? static_cast<std::int32_t>(s)
+                                       : -static_cast<std::int32_t>(s);
+                            if (m > peakAbs) {
+                                peakAbs = m;
+                            }
+                        }
+                        const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
+                        const std::size_t samples = pcm.size();
+                        dispatcher.PostToMainThread([samples, peakAbs, peakNorm]() {
+                            s_micTestInFlight.store(false, std::memory_order_release);
+                            char buf[256];
+                            if (samples == 0) {
+                                std::snprintf(buf, sizeof(buf),
+                                              "Failed: 0 samples captured (mic unplugged / muted / "
+                                              "consent denied)");
+                                s_micTestResultType = 2;
+                            } else if (peakAbs == 0) {
+                                std::snprintf(
+                                    buf, sizeof(buf),
+                                    "Failed: %zu samples but peak=0 (format unwrap broken or mic "
+                                    "muted at hardware)",
+                                    samples);
+                                s_micTestResultType = 2;
+                            } else if (peakNorm < 0.01f) {
+                                std::snprintf(buf, sizeof(buf),
+                                              "Warn: %zu samples, peak=%.3f (very quiet — speak "
+                                              "louder or check mic gain)",
+                                              samples, peakNorm);
+                                s_micTestResultType = 2;
+                            } else {
+                                std::snprintf(buf, sizeof(buf),
+                                              "OK: %zu samples, peak=%.3f (ready for "
+                                              "transcription)",
+                                              samples, peakNorm);
+                                s_micTestResultType = 1;
+                            }
+                            s_micTestResult = buf;
+                        });
+                    }).detach();
+                }
+                if (inFlight) {
+                    ImGui::EndDisabled();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(captures 3 s; reports sample count + peak)");
+                if (!s_micTestResult.empty()) {
+                    ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
+                    if (s_micTestResultType == 1) col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
+                    if (s_micTestResultType == 2) col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
+                    ImGui::TextColored(col, "%s", s_micTestResult.c_str());
+                }
+            }
+
+            // --- Test transcription end-to-end. Captures 4 s, runs the
+            // full transcription pipeline (silence trim + mode router +
+            // cloud / local) and surfaces the resulting text inline. The
+            // first end-to-end "does this actually work" button — bridges
+            // the gap between "Test connection" (HTTP key probe only) and
+            // "hold hotkey + speak" (no feedback if it failed silently).
+            {
+                static std::atomic<bool> s_e2eInFlight{false};
+                static std::string s_e2eResult;
+                static int s_e2eResultType = 0;
+                const bool inFlight = s_e2eInFlight.load(std::memory_order_acquire);
+                if (inFlight) {
+                    ImGui::BeginDisabled(true);
+                }
+                // Cheap rotating glyph spinner so the disabled-button state
+                // doesn't look frozen during the multi-second local-model
+                // transcribe pipeline. ImGui::GetTime() is in seconds; pick
+                // one of four glyphs per ~120 ms.
+                const char* spinnerGlyph = "|";
+                if (inFlight) {
+                    const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
+                    spinnerGlyph = (slot == 0)   ? "|"
+                                   : (slot == 1) ? "/"
+                                   : (slot == 2) ? "-"
+                                                 : "\\";
+                }
+                char e2eLabel[128];
+                std::snprintf(e2eLabel, sizeof(e2eLabel),
+                              inFlight ? "%s  %s"
+                                       : "%s",
+                              SmatchetLocalization::T("whisper.preferences.testE2E.button",
+                                                      "Test end-to-end (capture 4 s + transcribe)"),
+                              spinnerGlyph);
+                if (ImGui::Button(e2eLabel)) {
+                    s_e2eInFlight.store(true, std::memory_order_release);
+                    s_e2eResult = "Recording 4 s — speak now...";
+                    s_e2eResultType = 0;
+                    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
+                    TrackerConfig cfgSnap = d.cfg;
+                    std::thread([cfgSnap, &dispatcher]() {
+                        // --- Resolve route BEFORE spending 4 s capturing,
+                        // so cloud-only with no key / local-only with no
+                        // model fail fast.
+                        const std::string requestedMode =
+                            cfgSnap.WhisperMode.empty() ? std::string("auto") : cfgSnap.WhisperMode;
+                        const std::string providerStr =
+                            (cfgSnap.AiProviderKind == 0) ? std::string("openai")
+                                                          : std::string("anthropic");
+                        const std::string resolvedKey =
+                            smatchet::whisper::pure::ResolveWhisperApiKey(
+                                cfgSnap.WhisperApiKey, providerStr, cfgSnap.AiApiKey);
+                        // Mirror ResolveWhisperModelDir from WhisperPlugin.cpp
+                        // (anon namespace; inline here so Preferences stays
+                        // self-contained).
+                        std::string modelDir =
+                            ConfigManager::GetPlatformSharedUserDataDirectory();
+                        if (!modelDir.empty() && modelDir.back() != '/' &&
+                            modelDir.back() != '\\') {
+                            modelDir.push_back('/');
+                        }
+                        modelDir += "whisper";
+                        const bool localPresent =
+                            !cfgSnap.WhisperModel.empty() &&
+                            smatchet::whisper::catalog::IsModelPresent(cfgSnap.WhisperModel,
+                                                                        modelDir);
+
+                        // Pick effective route per the user's spec:
+                        //   - cloud: require key
+                        //   - local: require model file present
+                        //   - auto:  prefer cloud when key present, fall back to local
+                        std::string effectiveMode;
+                        std::string fastFail;
+                        if (requestedMode == "cloud") {
+                            if (resolvedKey.empty()) {
+                                fastFail =
+                                    "Cloud mode requires an API key. Set Whisper or AI API key "
+                                    "(provider=openai) and retry.";
+                            } else {
+                                effectiveMode = "cloud";
+                            }
+                        } else if (requestedMode == "local") {
+                            if (!localPresent) {
+                                fastFail =
+                                    "Local mode requires the selected model on disk. Open the "
+                                    "model picker above and click Download first.";
+                            } else {
+                                effectiveMode = "local";
+                            }
+                        } else { // auto
+                            if (!resolvedKey.empty()) {
+                                effectiveMode = "cloud";
+                            } else if (localPresent) {
+                                effectiveMode = "local";
+                            } else {
+                                fastFail =
+                                    "Auto mode needs either an API key (for cloud) or a "
+                                    "downloaded local model. Neither was found.";
+                            }
+                        }
+                        if (!fastFail.empty()) {
+                            dispatcher.PostToMainThread([fastFail]() {
+                                s_e2eInFlight.store(false, std::memory_order_release);
+                                s_e2eResult = std::string("Failed: ") + fastFail;
+                                s_e2eResultType = 2;
+                            });
+                            return;
+                        }
+
+                        // --- Capture once, route by effectiveMode below.
+                        // Per-phase status updates keep the user informed —
+                        // local-model transcription on medium.en can take
+                        // 5+ seconds, and the "button disabled, nothing
+                        // visible" silence was confusing.
+                        const std::string modeForUi = effectiveMode;
+                        dispatcher.PostToMainThread([modeForUi]() {
+                            s_e2eResult = std::string("[1/3] Capturing 4 s (route=") +
+                                          modeForUi + ") — speak now...";
+                            s_e2eResultType = 0;
+                        });
+                        smatchet::whisper::WindowsAudioCapture cap;
+                        std::string err;
+                        if (!cap.Start(err)) {
+                            const std::string e =
+                                err.empty() ? std::string("capture start failed") : err;
+                            dispatcher.PostToMainThread([e]() {
+                                s_e2eInFlight.store(false, std::memory_order_release);
+                                s_e2eResult = std::string("Failed (capture): ") + e;
+                                s_e2eResultType = 2;
+                            });
+                            return;
+                        }
+                        std::this_thread::sleep_for(std::chrono::seconds(4));
+                        cap.Stop();
+                        std::vector<std::int16_t> pcm;
+                        cap.DrainCapturedPcm(pcm);
+                        dispatcher.PostToMainThread([modeForUi]() {
+                            s_e2eResult = std::string("[2/3] Captured; transcribing via ") +
+                                          modeForUi + "...";
+                            s_e2eResultType = 0;
+                        });
+                        if (pcm.empty()) {
+                            dispatcher.PostToMainThread([]() {
+                                s_e2eInFlight.store(false, std::memory_order_release);
+                                s_e2eResult =
+                                    "Failed: 0 PCM samples (mic / consent / format issue — "
+                                    "click Test microphone for narrower diagnosis)";
+                                s_e2eResultType = 2;
+                            });
+                            return;
+                        }
+
+                        const std::string lang =
+                            cfgSnap.WhisperLanguage.empty() ? std::string("en")
+                                                            : cfgSnap.WhisperLanguage;
+                        const std::size_t samples = pcm.size();
+                        std::string text;
+                        std::string txErr;
+                        bool ok = false;
+
+                        if (effectiveMode == "cloud") {
+                            // Encode + POST.
+                            const std::vector<std::uint8_t> wav =
+                                smatchet::whisper::pure::EncodeWav(
+                                    pcm,
+                                    smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
+                                    1);
+                            smatchet::whisper::WhisperApiClient client;
+                            ok = client.Transcribe(wav, resolvedKey, lang, text, txErr);
+                        } else {
+                            // Local — WhisperLocal::LoadModel + Transcribe on the
+                            // int16 overload (matches the worker pipeline path).
+                            // When SMATCHET_WHISPER_LOCAL_BACKEND=OFF the helper
+                            // returns "local backend not built", which we surface
+                            // verbatim so the user knows to flip the sub-option.
+                            const std::string modelPath =
+                                modelDir + "/" + cfgSnap.WhisperModel + ".bin";
+                            smatchet::whisper::WhisperLocal local;
+                            std::string loadErr;
+                            if (!local.LoadModel(modelPath, loadErr)) {
+                                txErr = std::string("LoadModel: ") + loadErr;
+                                ok = false;
+                            } else {
+                                ok = local.Transcribe(pcm, lang, text, txErr);
+                            }
+                        }
+
+                        const std::string mode = effectiveMode;
+                        dispatcher.PostToMainThread([ok, txErr, text, samples, mode]() {
+                            s_e2eInFlight.store(false, std::memory_order_release);
+                            char buf[1024];
+                            if (!ok) {
+                                std::snprintf(buf, sizeof(buf),
+                                              "[3/3] Failed (%s, transcribe): captured %zu "
+                                              "samples; %s",
+                                              mode.c_str(), samples, txErr.c_str());
+                                s_e2eResultType = 2;
+                            } else if (text.empty()) {
+                                std::snprintf(buf, sizeof(buf),
+                                              "[3/3] Warn (%s): captured %zu samples + "
+                                              "transcribe ok, but empty result (silence at "
+                                              "recogniser)",
+                                              mode.c_str(), samples);
+                                s_e2eResultType = 2;
+                            } else {
+                                std::snprintf(buf, sizeof(buf),
+                                              "[3/3] OK (%s, %zu samples): \"%s\"",
+                                              mode.c_str(), samples, text.c_str());
+                                s_e2eResultType = 1;
+                            }
+                            s_e2eResult = buf;
+                        });
+                    }).detach();
+                }
+                if (inFlight) {
+                    ImGui::EndDisabled();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(records 4 s + uploads to whisper for end-to-end check)");
+                if (!s_e2eResult.empty()) {
+                    ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
+                    if (s_e2eResultType == 1) col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
+                    if (s_e2eResultType == 2) col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
+                    ImGui::TextColored(col, "%s", s_e2eResult.c_str());
                 }
             }
 

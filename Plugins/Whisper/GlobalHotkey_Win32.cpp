@@ -130,9 +130,35 @@ struct GlobalHotkey_Win32::Impl {
 
 namespace {
 
+// Synthesize a benign non-modifier keystroke so Windows does not interpret
+// the user's Alt-down ... Alt-up pair (with our hotkey's main vk swallowed
+// in the middle) as a menu-activation trigger. VK_CANCEL (the Break key) is
+// rarely bound by apps and is a "non-modifier" from Windows' menu-activation
+// state-machine point of view — sending a down+up pair makes Alt look
+// paired and suppresses the focus-stealing menu-bar pop / system-menu pop.
+// Marked as injected via the LL hook's LLMHF_INJECTED flag check below so
+// our own hook ignores the synthetic event.
+void SuppressAltMenuActivationViaSyntheticKey() {
+    INPUT in[2];
+    ZeroMemory(in, sizeof(in));
+    in[0].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = VK_CANCEL;
+    in[1].type = INPUT_KEYBOARD;
+    in[1].ki.wVk = VK_CANCEL;
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, in, sizeof(INPUT));
+}
+
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    bool swallow = false;
     if (nCode == HC_ACTION) {
         const KBDLLHOOKSTRUCT* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
+        // Skip events we synthesised ourselves (the Alt-neutraliser
+        // SendInput in SuppressAltMenuActivationViaSyntheticKey) so they
+        // don't bounce back through our press/release tracking.
+        if (k != nullptr && (k->flags & LLKHF_INJECTED) != 0) {
+            return CallNextHookEx(nullptr, nCode, wParam, lParam);
+        }
         if (k != nullptr) {
             struct GlobalHotkey_Win32::Impl* impl = OwnerSlot().Get();
             if (impl != nullptr) {
@@ -151,6 +177,24 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                                     LOG_ERROR("GlobalHotkey_Win32: onPress threw");
                                 }
                             }
+                            // Swallow the down event so the OS doesn't see e.g.
+                            // Alt+Space and pop the system menu (which steals
+                            // focus from the currently-focused InputText and
+                            // leaves the dictation router with no target on
+                            // post-back). Auto-repeat downs are also swallowed
+                            // to keep the keystroke fully contained.
+                            swallow = true;
+                            // Also inject a synthetic non-modifier key so the
+                            // user's eventual Alt-release does not trigger
+                            // menu-bar focus (the "Alt alone" Windows
+                            // behaviour, since we just swallowed the only
+                            // non-modifier in their Alt+vk combo).
+                            SuppressAltMenuActivationViaSyntheticKey();
+                        } else if (autoRepeat) {
+                            // Already-pressed repeat of the hotkey vk while
+                            // we own the press — swallow to avoid leaking
+                            // duplicate Space presses to the foreground app.
+                            swallow = true;
                         }
                     } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
                         const bool wasPressed =
@@ -161,11 +205,19 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                             } catch (...) {
                                 LOG_ERROR("GlobalHotkey_Win32: onRelease threw");
                             }
+                            // Swallow the up event so the matched-pair
+                            // contract holds — anything downstream that
+                            // expected the up only sees it if it also saw
+                            // the down (which we just swallowed).
+                            swallow = true;
                         }
                     }
                 }
             }
         }
+    }
+    if (swallow) {
+        return 1;
     }
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
