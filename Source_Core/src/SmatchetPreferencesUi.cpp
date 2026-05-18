@@ -41,6 +41,7 @@
 #endif
 
 #if defined(SMATCHET_WITH_WHISPER)
+#include "HotkeyParse.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SmatchetWhisperSetupBanner.h"
@@ -1036,16 +1037,127 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", prog.error.c_str());
             }
 
-            // Hotkey display (read-only in Phase C).
+            // Hotkey display + Phase E rebind. Button label flips to the
+            // capturing-prompt while the user is binding a new combo. Cancel
+            // is Esc; capture completes on the first non-modifier key press,
+            // at which point we snapshot the modifier state, Stringify, and
+            // persist. Re-registration of the global hotkey happens on the
+            // next plugin OnStop/OnStart cycle (or at app restart) — Phase E
+            // does not hot-rebind the live hook to keep the surface tight.
             ImGui::Separator();
             ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.hotkey",
                                                            "Push-to-talk hotkey"));
-            ImGui::TextDisabled("%s",
-                                SmatchetLocalization::T("whisper.preferences.hotkeyReadonly",
-                                                        "Hotkey rebinding UI lands in Phase E. The "
-                                                        "active hotkey is:"));
-            ImGui::SameLine();
-            ImGui::TextUnformatted(d.cfg.WhisperHotkey.c_str());
+            {
+                static bool s_capturing = false;
+                static std::string s_hotkeyError;
+                static char s_hotkeyDisplay[64] = {0};
+                static bool s_hotkeyDisplaySeeded = false;
+                if (!s_hotkeyDisplaySeeded ||
+                    std::strcmp(s_hotkeyDisplay, d.cfg.WhisperHotkey.c_str()) != 0) {
+                    std::snprintf(s_hotkeyDisplay, sizeof(s_hotkeyDisplay), "%s",
+                                  d.cfg.WhisperHotkey.c_str());
+                    s_hotkeyDisplaySeeded = true;
+                }
+
+                if (!s_capturing) {
+                    ImGui::TextDisabled("%s", s_hotkeyDisplay);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(SmatchetLocalization::T(
+                            "whisper.preferences.hotkeyRebindButton", "Click to rebind"))) {
+                        s_capturing = true;
+                        s_hotkeyError.clear();
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.30f, 1.0f), "%s",
+                                       SmatchetLocalization::T(
+                                           "whisper.preferences.hotkeyCapturing",
+                                           "Press a key combo... (Esc to cancel)"));
+
+                    // Esc cancels capture without clobbering the existing key.
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        s_capturing = false;
+                        s_hotkeyError.clear();
+                    } else {
+                        // Walk the small set of supported non-modifier keys
+                        // and grab the first one pressed this frame.
+                        struct CaptureKey {
+                            ImGuiKey imguiKey;
+                            unsigned int vk;
+                        };
+                        const ImGuiIO& io = ImGui::GetIO();
+                        unsigned int capturedVk = 0;
+                        // Letters A..Z map ImGuiKey_A..ImGuiKey_Z to ASCII VKs.
+                        for (int k = 0; k < 26 && capturedVk == 0; ++k) {
+                            const ImGuiKey ik = static_cast<ImGuiKey>(ImGuiKey_A + k);
+                            if (ImGui::IsKeyPressed(ik, false)) {
+                                capturedVk = static_cast<unsigned int>('A' + k);
+                            }
+                        }
+                        // Digits 0..9.
+                        for (int k = 0; k < 10 && capturedVk == 0; ++k) {
+                            const ImGuiKey ik = static_cast<ImGuiKey>(ImGuiKey_0 + k);
+                            if (ImGui::IsKeyPressed(ik, false)) {
+                                capturedVk = static_cast<unsigned int>('0' + k);
+                            }
+                        }
+                        // Function keys F1..F12 (ImGui exposes up to F24 in some
+                        // builds, but F1..F12 covers the realistic rebind set).
+                        for (int k = 0; k < 12 && capturedVk == 0; ++k) {
+                            const ImGuiKey ik = static_cast<ImGuiKey>(ImGuiKey_F1 + k);
+                            if (ImGui::IsKeyPressed(ik, false)) {
+                                capturedVk =
+                                    smatchet::whisper::hotkey::vk::kF1 + static_cast<unsigned int>(k);
+                            }
+                        }
+                        if (capturedVk == 0 && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+                            capturedVk = smatchet::whisper::hotkey::vk::kSpace;
+                        }
+                        if (capturedVk == 0 && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+                            capturedVk = smatchet::whisper::hotkey::vk::kTab;
+                        }
+                        if (capturedVk == 0 && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+                            capturedVk = smatchet::whisper::hotkey::vk::kEnter;
+                        }
+
+                        if (capturedVk != 0) {
+                            smatchet::whisper::hotkey::Hotkey hk;
+                            if (io.KeyCtrl) hk.mods |= smatchet::whisper::hotkey::mod::kControl;
+                            if (io.KeyAlt) hk.mods |= smatchet::whisper::hotkey::mod::kAlt;
+                            if (io.KeyShift) hk.mods |= smatchet::whisper::hotkey::mod::kShift;
+                            if (io.KeySuper) hk.mods |= smatchet::whisper::hotkey::mod::kWin;
+                            hk.vk = capturedVk;
+
+                            // Reject combos with no modifier — a bare key is
+                            // a global hotkey landmine.
+                            if (hk.mods == 0) {
+                                s_hotkeyError = SmatchetLocalization::T(
+                                    "whisper.preferences.hotkeyErrorModifiersOnly",
+                                    "Hotkey must include a non-modifier key");
+                                s_capturing = false;
+                            } else {
+                                const std::string newDescriptor =
+                                    smatchet::whisper::hotkey::Stringify(hk);
+                                if (newDescriptor.empty()) {
+                                    s_hotkeyError = SmatchetLocalization::T(
+                                        "whisper.preferences.hotkeyErrorParse",
+                                        "Could not parse the captured key combo");
+                                } else {
+                                    d.cfg.WhisperHotkey = newDescriptor;
+                                    MarkPrefsDirty(d);
+                                    std::snprintf(s_hotkeyDisplay, sizeof(s_hotkeyDisplay), "%s",
+                                                  newDescriptor.c_str());
+                                    s_hotkeyError.clear();
+                                }
+                                s_capturing = false;
+                            }
+                        }
+                    }
+                }
+                if (!s_hotkeyError.empty()) {
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s",
+                                       s_hotkeyError.c_str());
+                }
+            }
 
             // API key — passworded input, with fallback hint when empty + AiProvider=openai.
             ImGui::Separator();

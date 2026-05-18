@@ -30,6 +30,19 @@ bool DictationInsertionRouter::IsRecording() const {
     return false;
 }
 
+void DictationInsertionRouter::SetRecording(bool /*active*/) {
+    // No-op in stub mode — drift between this TU and the real one is caught at
+    // CI link time by the build-windows-no-whisper job. Mirrors the symbol
+    // surface so call sites under SmatchetWhisperOverlayUi / WhisperPlugin
+    // need no per-callsite SMATCHET_WITH_WHISPER guards on the setter.
+}
+
+void DictationInsertionRouter::SetLastPeakAmplitude(float /*peak0to1*/) {}
+
+float DictationInsertionRouter::GetLastPeakAmplitude() const {
+    return 0.0f;
+}
+
 void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& /*text*/) {}
 
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {

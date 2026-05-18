@@ -24,6 +24,10 @@
 #include "SmatchetViewVisibility.h"
 #include "TicketGridModel.h"
 #include "TrackerGridFieldDisplay.h"
+#if defined(SMATCHET_WITH_WHISPER)
+#include "DictationInsertionRouter.h"
+#include "SmatchetLocalization.h"
+#endif
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -467,6 +471,38 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         if (trackerLocked)
             ImGui::EndDisabled();
 
+#if defined(SMATCHET_WITH_WHISPER)
+        // Phase E — push-to-talk REC indicator in the menu bar, just before
+        // the (Unreal) Close button. Polls the lock-free recording flag on
+        // the router; cheap (one atomic load per frame). Per Pillar 2 the
+        // indicator must appear < 100 ms after hotkey press; the worker
+        // flips the atomic immediately on onPress, and the next UI frame
+        // picks it up.
+        if (g_dictationRouter.IsRecording()) {
+            const char* recLabel = SmatchetLocalization::T("whisper.statusBar.recording",
+                                                            "\xE2\x97\x8F REC");
+            const float labelW = ImGui::CalcTextSize(recLabel).x;
+            constexpr float kRightMarginRec = 12.0f;
+#ifdef SMATCHET_EMBEDDED_IN_UNREAL
+            constexpr float kReservedForCloseButton = 80.0f;
+#else
+            constexpr float kReservedForCloseButton = 0.0f;
+#endif
+            const float xPosRec = (std::max)(ImGui::GetCursorPosX(),
+                                              ImGui::GetWindowContentRegionMax().x - labelW -
+                                                  kRightMarginRec - kReservedForCloseButton);
+            ImGui::SetCursorPosX(xPosRec);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextUnformatted(recLabel);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T(
+                                            "whisper.statusBar.recordingTooltip",
+                                            "Recording for dictation — release hotkey to "
+                                            "transcribe; press Esc to cancel"));
+            }
+        }
+#endif
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
         {
             const char* closeLabel = "Close";

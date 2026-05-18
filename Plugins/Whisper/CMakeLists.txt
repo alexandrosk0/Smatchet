@@ -18,6 +18,9 @@ add_library(SmatchetPlugin_Whisper STATIC
     ModelCatalog.cpp
     ModelDownloader.cpp
     WhisperConsentGate.cpp
+    # Phase E — push-to-talk hotkey parsing + Win32 global hotkey hook.
+    HotkeyParse.cpp
+    GlobalHotkey_Win32.cpp
 )
 
 target_include_directories(SmatchetPlugin_Whisper PUBLIC

@@ -10,6 +10,7 @@
 
 #include "IDictationHost.h"
 
+#include <atomic>
 #include <cstddef>
 #include <mutex>
 #include <string>
@@ -39,6 +40,26 @@ class DictationInsertionRouter : public IDictationHost {
     /// Count of currently-registered InputText buffers. Test-only convenience.
     std::size_t RegisteredCountForTest() const;
 
+    /// Live mic toggle. Set by the WhisperPlugin hotkey hook thread on
+    /// press / release; read by the UI thread (status-bar indicator + overlay
+    /// amplitude meter). Backed by `std::atomic<bool>` so the hook thread can
+    /// flip the flag without a mutex round-trip — the UI never blocks on
+    /// `IsRecording()`. Mirrors the SetLastPeakAmplitude / GetLastPeakAmplitude
+    /// pair below — the producer is always the capture thread, the consumer
+    /// is always the UI thread.
+    void SetRecording(bool active);
+
+    /// Worker -> UI hand-off for the per-frame amplitude meter. The capture
+    /// thread writes the peak |sample| / 32768.0 seen in the last drained
+    /// chunk; the overlay reads on every frame. `std::atomic<float>` is
+    /// lock-free on every Smatchet host (Win32 / MSYS2 UCRT), so this never
+    /// reaches the WASAPI mutex from the UI thread.
+    void SetLastPeakAmplitude(float peak0to1);
+
+    /// Last peak amplitude reported by the capture thread, clamped to [0, 1].
+    /// Returns 0 when no capture has run since the last `Reset` / startup.
+    float GetLastPeakAmplitude() const;
+
   private:
     struct Entry {
         char* Buf = nullptr;
@@ -48,6 +69,10 @@ class DictationInsertionRouter : public IDictationHost {
 
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
+
+    // Set/read across threads — no mutex round-trip on the UI poll path.
+    std::atomic<bool> recording_{false};
+    std::atomic<float> lastPeakAmplitude_{0.0f};
 };
 
 /// Process-wide router instance. Defined exactly once — in
