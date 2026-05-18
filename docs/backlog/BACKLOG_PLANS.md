@@ -31,6 +31,7 @@ These plans shipped. Files moved from `docs/design/*.md` (and a few from `backlo
 | [`first-time-setup-hardening.md`](../design/applied/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
 | [`test-suite-expansion.md`](../design/applied/test-suite-expansion.md) | 2026-05-16 | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
 | [`large-files-and-phase-2.md`](../design/applied/large-files-and-phase-2.md) | 2026-05-15 | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
+| [`pillar-1-2-audit-2026-05-17.md`](../design/applied/pillar-1-2-audit-2026-05-17.md) | 2026-05-17 | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
 
 ### Notes
 
