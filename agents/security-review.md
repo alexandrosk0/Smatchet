@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: Security review of pending branch changes — input validation, injection, secret leakage, deserialization, sandbox escapes, MCP / CLI / Lua / p4 / HTTP / SQLite attack surface. Calls your harness's semantic codebase search for impact / data-flow context, then runs flawfinder / semgrep / gitleaks if installed, cppcheck security warnings always. Read-only; returns severity-tagged findings with exploit reasoning. Wraps the harness's standard pre-merge security review skill (e.g. Claude Code's `/security-review`) with Smatchet attack-surface mapping.
+description: Security review of pending branch changes — input validation, injection, secret leakage, deserialization, sandbox escapes, MCP / CLI / Lua / p4 / HTTP / SQLite / AI-assistant / coding-harness-handoff attack surface. Calls your harness's semantic codebase search for impact / data-flow context, then runs flawfinder / semgrep / gitleaks if installed, cppcheck security warnings always. Read-only; returns severity-tagged findings with exploit reasoning. Wraps the harness's standard pre-merge security review skill (e.g. Claude Code's `/security-review`) with Smatchet attack-surface mapping.
 complexity: high
 read-only: true
 capabilities:
@@ -62,6 +62,14 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 - **P4 CLI** (`P4Blame`) — depot server may craft data; the CLI itself is invoked with user-config workspace.
 - **Local config / cache** (`ConfigManager`, `LocalCacheManager`, attachment dirs) — files under user control; attacker-with-FS-access scenario.
 - **Image fetches** (`SmatchetImageTextureCache`) — URLs from issue data / hooks; size-capped per `SmatchetHooks.lua` comments.
+- **AI feature surface** — provider HTTP clients (`OpenAiClient`, `AnthropicClient`, `OllamaClient`), streaming parsers (`AiSseParser` / `AiNdjsonParser`), `AgentsMdLoader` (filesystem read into prompt), `AiContextBuilder` (data exfil channel for ticket / view / audit data), `AiAssistantController` (worker thread + cancel atom + Lua glue surface). Per-client checks: URL allow-list / sanitisation (`AiEndpointSanitize`), error-body redaction (`AiErrorRedact` — no API keys in logs), buffer caps on streamed responses, `AgentsMdLoader` path validation (no `..` traversal), Lua `ai.*` rate limit / sandbox-respect, `AssistantContextBlockAuditTrail` default `false` (PII opt-in, not opt-out).
+- **Coding-harness handoff surface** — `ClaudeCodeLocalRunner` spawns an external `claude` binary inside a per-proposal git worktree (`.claude/worktrees/agent-<proposalId>`); sentinel files (`SEED.json` / `USER_RESPONSE.json` / `RUN_RESULT.json` / `CLARIFICATION_NEEDED.json` / `PR_URL.txt`) cross the trust boundary between Smatchet (parent) and the spawned harness (child). Per-component checks:
+  1. **Env allow-list** enforced at spawn time (`PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY` only; no `SMATCHET_*` passthrough — verified by env-allow-list doctest in `tests/Source_Core/ClaudeCodeLocalRunner.test.cpp`).
+  2. **Sentinel-file write contracts** — single-writer single-reader per AGENTS.md § Handoff envelope; `RUN_RESULT.json` strictly last; runner asserts each file's writer matches the documented owner. Schema drift in the child harness's writes is a trust-boundary violation.
+  3. **Branch-name discipline** — `agent/<proposalId>/<short-slug>` only; runner refuses `develop` / `main`; harness refuses non-`agent/*` push. Any push outside that namespace = security regression.
+  4. **PR draft requirement** — every harness-opened PR is `--draft`; no `gh pr merge` invocation from the harness; no `git push --force` to non-`agent/*`. The user marks ready-for-review.
+  5. **GH PAT scope** — `GH_TOKEN` / `GITHUB_TOKEN` minimum scope only (repo + pull_request); rotate on suspected harness compromise. Tokens never logged.
+  6. **Worktree GC** — kept on Complete/Failed for human inspection; explicit `handoff.gc --older-than-days N` command; never auto-deletes user-modified files.
 
 **Known crash classes:**
 - `decode_json` (Lua) can leak a C++ `parse_error` past the sol2 protected call on certain malformed inputs — documented in `scripts/SmatchetHooks.lua`. New Lua bindings accepting raw strings must avoid `decode_json` on untrusted input or wrap defensively.
