@@ -239,6 +239,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     // inject the stub_claude path here.
     j["handoff_harness_bin_path"] = config.HandoffHarnessBinPath;
     j["handoff_runner_name"] = config.HandoffRunnerName;
+    // H5 — clarification dual-channel toggle. Additive boolean; defaults to
+    // true on Load via `j.value()` so existing configs gain the field with
+    // the expected behaviour. No schema bump.
+    j["handoff_clarification_post_to_github"] = config.HandoffClarificationPostToGithub;
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -751,6 +755,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             // canonical runner name; older configs round-trip cleanly.
             cfg.HandoffHarnessBinPath = j.value("handoff_harness_bin_path", cfg.HandoffHarnessBinPath);
             cfg.HandoffRunnerName = j.value("handoff_runner_name", cfg.HandoffRunnerName);
+            // H5 — clarification dual-channel. Default true; older configs without the
+            // key get the default. Operators flip false to suppress all GitHub posts.
+            cfg.HandoffClarificationPostToGithub =
+                j.value("handoff_clarification_post_to_github", cfg.HandoffClarificationPostToGithub);
             // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
             // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
             if (cfg.AgenticPollIntervalSec < 60) {
@@ -972,8 +980,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    bool migrateAny = migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
-                      migrateLegacyPlaintextAiAnthropicApiKey;
+    bool migrateAny =
+        migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey || migrateLegacyPlaintextAiAnthropicApiKey;
 #if defined(SMATCHET_WITH_AGENTIC)
     migrateAny = migrateAny || migrateLegacyPlaintextGitHubPat;
 #endif

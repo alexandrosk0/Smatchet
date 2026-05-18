@@ -237,6 +237,15 @@ struct TrackerConfig {
     // future Codex / Aider runners drop in by string-renaming, no controller change.
     std::string HandoffHarnessBinPath;
     std::string HandoffRunnerName = "claude-code-local";
+
+    // H5 — clarification dual-channel. When `HandoffClarificationPostToGithub` is true
+    // (default) the controller mirrors every CLARIFICATION_NEEDED.json question to the
+    // originating GitHub issue as a bot-filtered comment, and the T7 scheduled-poll
+    // worker also scans those issues for non-bot replies to call ProvideClarification
+    // back. Flip false for private / non-GitHub work where the worktree file should
+    // be the only channel. The poll cadence reuses `AgenticPollIntervalSec` — H5
+    // piggybacks on T7's loop rather than spawning a 4th poll thread.
+    bool HandoffClarificationPostToGithub = true;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;

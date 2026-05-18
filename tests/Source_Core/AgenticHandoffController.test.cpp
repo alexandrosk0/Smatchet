@@ -18,21 +18,108 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-using ::smatchet::agentic::AgenticHandoffController;
-using ::smatchet::agentic::AuditSink;
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 using ::AgenticInferenceClientPure::ProposedAction;
 using ::CodingHarness::RunState;
+using ::smatchet::agentic::AgenticHandoffController;
+using ::smatchet::agentic::AuditSink;
+using ::smatchet::agentic::PostedComment;
 
 namespace {
+
+// (H5) mkdir -p the relative worktree path the controller builds. The path
+// is `.claude/worktrees/agent-<id>` relative to cwd. We need the dir to
+// exist before the FakeRunner writes CLARIFICATION_NEEDED.json (which the
+// controller reads on the AwaitingUser transition). Cleanup deletes the
+// individual file + the agent-<id> dir; we leave the `.claude/worktrees`
+// parent in place — other tests may share it.
+bool MkdirRecursive(const std::string& path) {
+#if defined(_WIN32)
+    std::string acc;
+    for (std::size_t i = 0; i <= path.size(); ++i) {
+        if (i == path.size() || path[i] == '/' || path[i] == '\\') {
+            if (!acc.empty()) {
+                if (CreateDirectoryA(acc.c_str(), nullptr) == 0) {
+                    if (GetLastError() != ERROR_ALREADY_EXISTS) {
+                        return false;
+                    }
+                }
+            }
+            if (i < path.size()) {
+                acc.push_back(path[i]);
+            }
+        } else {
+            acc.push_back(path[i]);
+        }
+    }
+    return true;
+#else
+    std::string acc;
+    for (std::size_t i = 0; i <= path.size(); ++i) {
+        if (i == path.size() || path[i] == '/') {
+            if (!acc.empty()) {
+                if (mkdir(acc.c_str(), 0700) != 0 && errno != EEXIST) {
+                    return false;
+                }
+            }
+            if (i < path.size()) {
+                acc.push_back(path[i]);
+            }
+        } else {
+            acc.push_back(path[i]);
+        }
+    }
+    return true;
+#endif
+}
+
+void RemoveFile(const std::string& path) {
+#if defined(_WIN32)
+    DeleteFileA(path.c_str());
+#else
+    unlink(path.c_str());
+#endif
+}
+
+void RemoveDir(const std::string& path) {
+#if defined(_WIN32)
+    RemoveDirectoryA(path.c_str());
+#else
+    rmdir(path.c_str());
+#endif
+}
+
+bool WriteText(const std::string& path, const std::string& body) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
+        return false;
+    }
+    f.write(body.data(), static_cast<std::streamsize>(body.size()));
+    return f.good();
+}
 
 // FakeRunner — scriptable test double. Two modes:
 //   - HappyPath: Spawn fires Running -> Complete via the state callback,
@@ -69,38 +156,66 @@ class FakeRunner : public CodingHarness::IRunner {
             // allowed transition (Complete requires PrOpen). The runner
             // emits PrOpen when the harness writes PR_URL.txt; the test
             // fakes the same sequence.
-            if (onStateChange) onStateChange("Running");
-            if (onStateChange) onStateChange("PrOpen");
-            if (onStateChange) onStateChange("Complete");
+            if (onStateChange)
+                onStateChange("Running");
+            if (onStateChange)
+                onStateChange("PrOpen");
+            if (onStateChange)
+                onStateChange("Complete");
             outResult.ok = true;
             outResult.prUrl = "https://example.invalid/pr/1";
             outResult.filesChanged = 2;
             return true;
         }
         case Mode::Clarify: {
-            if (onStateChange) onStateChange("Running");
-            if (onStateChange) onStateChange("AwaitingUser");
+            if (onStateChange)
+                onStateChange("Running");
+            // (H5) Mirror the real runner: drop CLARIFICATION_NEEDED.json
+            // into the worktree BEFORE firing AwaitingUser so the controller
+            // can parse the question. The worktree dir must already exist
+            // — tests use `MkdirRecursive(worktreeDir)` before driving the
+            // worker so the runner+controller side both have a real dir to
+            // touch. When clarificationQuestion is empty the FakeRunner
+            // intentionally skips writing the file so a test can exercise
+            // the "AwaitingUser without question text" fallback.
+            if (!clarificationQuestion.empty()) {
+                std::ofstream f(worktreeDir + "/CLARIFICATION_NEEDED.json", std::ios::binary | std::ios::trunc);
+                if (f.is_open()) {
+                    std::ostringstream os;
+                    os << "{\"question\":\"" << clarificationQuestion << "\",\"timestampUnixSec\":0}";
+                    const std::string body = os.str();
+                    f.write(body.data(), static_cast<std::streamsize>(body.size()));
+                }
+            }
+            if (onStateChange)
+                onStateChange("AwaitingUser");
             // Wait briefly for Resume() to flip resumeReceived_; the test
             // posts ProvideClarification on another thread.
             for (int i = 0; i < 50 && !resumeReceived_.load(); ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-            if (onStateChange) onStateChange("Running");
-            if (onStateChange) onStateChange("PrOpen");
-            if (onStateChange) onStateChange("Complete");
+            if (onStateChange)
+                onStateChange("Running");
+            if (onStateChange)
+                onStateChange("PrOpen");
+            if (onStateChange)
+                onStateChange("Complete");
             outResult.ok = true;
             outResult.prUrl = "https://example.invalid/pr/2";
             return true;
         }
         case Mode::Error: {
-            if (onStateChange) onStateChange("Running");
-            if (onStateChange) onStateChange("Failed");
+            if (onStateChange)
+                onStateChange("Running");
+            if (onStateChange)
+                onStateChange("Failed");
             outResult.ok = false;
             outResult.errorMessage = "scripted-failure";
             return false;
         }
         case Mode::SleepCancel: {
-            if (onStateChange) onStateChange("Running");
+            if (onStateChange)
+                onStateChange("Running");
             for (int i = 0; i < 200; ++i) {
                 if (cancelToken && cancelToken->load()) {
                     outResult.ok = false;
@@ -135,6 +250,11 @@ class FakeRunner : public CodingHarness::IRunner {
     CodingHarness::Seed capturedSeed;
     std::string capturedWorktree;
     std::string capturedAnswer;
+    // (H5) When non-empty AND mode_ == Clarify, the FakeRunner writes a
+    // CLARIFICATION_NEEDED.json file with this question text under the
+    // worktreeDir BEFORE emitting AwaitingUser, so the controller's
+    // ReadAndStashClarificationQuestion picks it up.
+    std::string clarificationQuestion;
 };
 
 // Audit-sink capture. One entry per call, in invocation order.
@@ -167,8 +287,8 @@ struct CapturingSink {
 AuditSink MakeCapturingSink(CapturingSink& sink) {
     auto mu = sink.mu;
     auto rows = sink.rows;
-    return [mu, rows](const std::string& a, const std::string& s, const std::string& k, bool ok,
-                      const std::string& e, const nlohmann::json& d) {
+    return [mu, rows](const std::string& a, const std::string& s, const std::string& k, bool ok, const std::string& e,
+                      const nlohmann::json& d) {
         AuditEntry row;
         row.action = a;
         row.source = s;
@@ -356,15 +476,25 @@ TEST_CASE("AgenticHandoffController — clarification round-trip flows AwaitingU
     CHECK(all[0].state == RunState::Complete);
 
     // Pending->Spawning, Spawning->Running, Running->AwaitingUser,
-    // AwaitingUser->Running, Running->PrOpen, PrOpen->Complete = 6 audit rows.
+    // AwaitingUser->Running, Running->PrOpen, PrOpen->Complete = 6 FSM
+    // transitions. (H5) added one ClarificationProvided audit row alongside
+    // ProvideClarification — assert the FSM transitions independently of the
+    // sibling action so the test doesn't break when audit-trail expansion
+    // adds adjacent rows in future phases.
     const auto audit = sink.Copy();
-    CHECK(audit.size() == 6);
-    CHECK(audit[0].data["toState"] == "Spawning");
-    CHECK(audit[1].data["toState"] == "Running");
-    CHECK(audit[2].data["toState"] == "AwaitingUser");
-    CHECK(audit[3].data["toState"] == "Running");
-    CHECK(audit[4].data["toState"] == "PrOpen");
-    CHECK(audit[5].data["toState"] == "Complete");
+    std::vector<AuditEntry> fsmRows;
+    for (const auto& r : audit) {
+        if (r.action == "HandoffStateTransition") {
+            fsmRows.push_back(r);
+        }
+    }
+    REQUIRE(fsmRows.size() == 6);
+    CHECK(fsmRows[0].data["toState"] == "Spawning");
+    CHECK(fsmRows[1].data["toState"] == "Running");
+    CHECK(fsmRows[2].data["toState"] == "AwaitingUser");
+    CHECK(fsmRows[3].data["toState"] == "Running");
+    CHECK(fsmRows[4].data["toState"] == "PrOpen");
+    CHECK(fsmRows[5].data["toState"] == "Complete");
 }
 
 TEST_CASE("AgenticHandoffController — runner failure transitions to Failed and records error") {
@@ -446,9 +576,309 @@ TEST_CASE("AgenticHandoffController::BuildShortSlug obeys 32-char cap and kebab 
 }
 
 TEST_CASE("AgenticHandoffController::BuildBranchName + BuildWorktreeDir match plan decisions") {
-    CHECK(AgenticHandoffController::BuildBranchName(42, "smatchet/example#42") ==
-          "agent/42/smatchet-example-42");
+    CHECK(AgenticHandoffController::BuildBranchName(42, "smatchet/example#42") == "agent/42/smatchet-example-42");
     CHECK(AgenticHandoffController::BuildWorktreeDir(42) == ".claude/worktrees/agent-42");
+}
+
+// ─── H5 — clarification dual-channel + bot-filter ─────────────────────────
+
+TEST_CASE("AgenticHandoffController H5 — bot-filter marker accessor + classifier") {
+    // Single source of truth for the marker string. If anyone ever changes
+    // this literal they will trip every in-flight handoff's poll loop —
+    // surfacing it here documents the contract.
+    CHECK(std::string(AgenticHandoffController::HandoffBotMarker()) == "<!-- smatchet-handoff -->");
+
+    CHECK(AgenticHandoffController::IsHandoffBotComment("<!-- smatchet-handoff -->\n\n**foo**"));
+    CHECK(AgenticHandoffController::IsHandoffBotComment("  <!-- smatchet-handoff -->\nfoo")); // leading whitespace
+    CHECK_FALSE(AgenticHandoffController::IsHandoffBotComment("regular user reply"));
+    CHECK_FALSE(AgenticHandoffController::IsHandoffBotComment("see <!-- smatchet-handoff --> below"));
+    CHECK_FALSE(AgenticHandoffController::IsHandoffBotComment(""));
+    // Case-sensitive — GitHub preserves comment body case verbatim. A
+    // surprise upper-case marker should NOT match the bot prefix.
+    CHECK_FALSE(AgenticHandoffController::IsHandoffBotComment("<!-- Smatchet-Handoff -->"));
+}
+
+TEST_CASE("AgenticHandoffController H5 — comment-body builders carry proposalId + marker") {
+    const std::string clar = AgenticHandoffController::BuildClarificationCommentBody(42, "Which API style?");
+    CHECK(clar.find("<!-- smatchet-handoff -->") == 0);
+    CHECK(clar.find("proposal #42") != std::string::npos);
+    CHECK(clar.find("Which API style?") != std::string::npos);
+    CHECK(clar.find("Reply to this comment to answer.") != std::string::npos);
+    CHECK(AgenticHandoffController::IsHandoffBotComment(clar));
+
+    const std::string ans = AgenticHandoffController::BuildAnswerCommentBody(42, "Use FetchAsync");
+    CHECK(ans.find("<!-- smatchet-handoff -->") == 0);
+    CHECK(ans.find("proposal #42") != std::string::npos);
+    CHECK(ans.find("User answered") != std::string::npos);
+    CHECK(ans.find("Use FetchAsync") != std::string::npos);
+    CHECK(AgenticHandoffController::IsHandoffBotComment(ans));
+}
+
+TEST_CASE("AgenticHandoffController H5 — clarification round-trip posts question + answer to GitHub") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#777");
+
+    // Ensure the worktree dir exists so the FakeRunner can write the
+    // clarification file the controller will then read.
+    const std::string wt = AgenticHandoffController::BuildWorktreeDir(pid);
+    REQUIRE(MkdirRecursive(wt));
+
+    FakeRunner runner(FakeRunner::Mode::Clarify);
+    runner.clarificationQuestion = "Which option, A or B?";
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    // Capture every CommentAdd via the poster seam.
+    struct PostedRow {
+        std::string issueKey;
+        std::string body;
+    };
+    auto postedMu = std::make_shared<std::mutex>();
+    auto posted = std::make_shared<std::vector<PostedRow>>();
+    ctrl.SetGitHubCommentPoster(
+        [postedMu, posted](const std::string& key, const std::string& body, std::string& outError) -> bool {
+            (void)outError;
+            std::lock_guard<std::mutex> lk(*postedMu);
+            PostedRow r;
+            r.issueKey = key;
+            r.body = body;
+            posted->push_back(std::move(r));
+            return true;
+        });
+
+    AgenticHandoffController::ActiveHandoff h;
+    std::string err;
+    REQUIRE(ctrl.Start(pid, h, err));
+
+    std::thread workerThread([&]() {
+        std::string werr;
+        ctrl.RunSpawnSynchronouslyForTests(pid, werr);
+    });
+
+    // Wait for AwaitingUser.
+    bool sawAwaiting = false;
+    for (int i = 0; i < 200 && !sawAwaiting; ++i) {
+        const auto snap = ctrl.SnapshotAllForTests();
+        if (!snap.empty() && snap[0].state == RunState::AwaitingUser) {
+            sawAwaiting = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(sawAwaiting);
+
+    // Question text was parsed + stashed.
+    {
+        const auto snap = ctrl.SnapshotAllForTests();
+        REQUIRE(snap.size() == 1);
+        CHECK(snap[0].lastClarificationQuestion == "Which option, A or B?");
+        CHECK(snap[0].issueKey == "smatchet/example#777");
+    }
+
+    // First posted comment is the question — body carries the marker.
+    {
+        std::lock_guard<std::mutex> lk(*postedMu);
+        REQUIRE(posted->size() == 1);
+        CHECK((*posted)[0].issueKey == "smatchet/example#777");
+        CHECK((*posted)[0].body.find("<!-- smatchet-handoff -->") == 0);
+        CHECK((*posted)[0].body.find("Which option, A or B?") != std::string::npos);
+        CHECK((*posted)[0].body.find("proposal #") != std::string::npos);
+    }
+
+    REQUIRE(ctrl.ProvideClarification(pid, "A", err));
+    CHECK(err.empty());
+
+    workerThread.join();
+
+    // Second posted comment is the answer — body carries the marker + the answer.
+    {
+        std::lock_guard<std::mutex> lk(*postedMu);
+        REQUIRE(posted->size() == 2);
+        CHECK((*posted)[1].issueKey == "smatchet/example#777");
+        CHECK((*posted)[1].body.find("<!-- smatchet-handoff -->") == 0);
+        CHECK((*posted)[1].body.find("User answered") != std::string::npos);
+        CHECK((*posted)[1].body.find("A") != std::string::npos);
+    }
+
+    // ClarificationProvided audit row should appear once with answer payload.
+    bool foundProvided = false;
+    for (const auto& row : sink.Copy()) {
+        if (row.action == "ClarificationProvided") {
+            foundProvided = true;
+            CHECK(row.data.value("answer", std::string()) == "A");
+            CHECK(row.data.value("postedToGithub", false) == true);
+        }
+    }
+    CHECK(foundProvided);
+
+    // lastClarificationQuestion cleared on resume.
+    {
+        const auto snap = ctrl.SnapshotAllForTests();
+        REQUIRE(snap.size() == 1);
+        CHECK(snap[0].state == RunState::Complete);
+        CHECK(snap[0].lastClarificationQuestion.empty());
+    }
+
+    // Cleanup the worktree file + dir we created.
+    RemoveFile(wt + "/CLARIFICATION_NEEDED.json");
+    RemoveDir(wt);
+}
+
+TEST_CASE("AgenticHandoffController H5 — GitHub posting disabled by config flag") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#778");
+    const std::string wt = AgenticHandoffController::BuildWorktreeDir(pid);
+    REQUIRE(MkdirRecursive(wt));
+
+    FakeRunner runner(FakeRunner::Mode::Clarify);
+    runner.clarificationQuestion = "Style?";
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    auto postedMu = std::make_shared<std::mutex>();
+    auto posted = std::make_shared<std::vector<std::string>>();
+    ctrl.SetGitHubCommentPoster([postedMu, posted](const std::string&, const std::string& body, std::string&) -> bool {
+        std::lock_guard<std::mutex> lk(*postedMu);
+        posted->push_back(body);
+        return true;
+    });
+    ctrl.SetGitHubClarificationEnabled(false); // flip OFF
+
+    AgenticHandoffController::ActiveHandoff h;
+    std::string err;
+    REQUIRE(ctrl.Start(pid, h, err));
+
+    std::thread workerThread([&]() {
+        std::string werr;
+        ctrl.RunSpawnSynchronouslyForTests(pid, werr);
+    });
+
+    // Wait for AwaitingUser to be observed by the controller.
+    for (int i = 0; i < 200; ++i) {
+        const auto snap = ctrl.SnapshotAllForTests();
+        if (!snap.empty() && snap[0].state == RunState::AwaitingUser)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(ctrl.ProvideClarification(pid, "snake_case", err));
+    workerThread.join();
+
+    // Poster never invoked — the config gate held.
+    {
+        std::lock_guard<std::mutex> lk(*postedMu);
+        CHECK(posted->empty());
+    }
+
+    // But ClarificationProvided audit still recorded with postedToGithub=false.
+    bool foundProvided = false;
+    for (const auto& row : sink.Copy()) {
+        if (row.action == "ClarificationProvided") {
+            foundProvided = true;
+            CHECK(row.data.value("postedToGithub", true) == false);
+        }
+    }
+    CHECK(foundProvided);
+
+    RemoveFile(wt + "/CLARIFICATION_NEEDED.json");
+    RemoveDir(wt);
+}
+
+TEST_CASE("AgenticHandoffController H5 — poll loop ignores bot comments + answers via user reply") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#779");
+    const std::string wt = AgenticHandoffController::BuildWorktreeDir(pid);
+    REQUIRE(MkdirRecursive(wt));
+
+    FakeRunner runner(FakeRunner::Mode::Clarify);
+    runner.clarificationQuestion = "Confirm rename?";
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    ctrl.SetGitHubCommentPoster([](const std::string&, const std::string&, std::string&) -> bool { return true; });
+
+    // Fetcher script: first call returns the bot's own posted comment +
+    // an unrelated bot prefix → poll loop should NOT dispatch. Second call
+    // adds a user reply → poll loop should dispatch ProvideClarification.
+    auto fetchCalls = std::make_shared<std::atomic<int>>(0);
+    auto userReplyCreatedAt = std::make_shared<std::int64_t>(0);
+    ctrl.SetGitHubCommentFetcher(
+        [fetchCalls, userReplyCreatedAt](const std::string&, std::vector<PostedComment>& out, std::string&) -> bool {
+            const int n = fetchCalls->fetch_add(1) + 1;
+            out.clear();
+            // The bot-authored question is always present (and must be filtered).
+            PostedComment bot;
+            bot.id = "1";
+            bot.author = "smatchet-bot";
+            bot.body = std::string(AgenticHandoffController::HandoffBotMarker()) +
+                       "\n\n**Agent question (proposal #779):**\n\nConfirm rename?";
+            bot.createdAtSec = 1; // always before any cursor we set
+            out.push_back(bot);
+            if (n >= 2) {
+                // The user reply arrives on the 2nd fetch.
+                PostedComment user;
+                user.id = "2";
+                user.author = "alice";
+                user.body = "yes, rename";
+                user.createdAtSec = *userReplyCreatedAt;
+                out.push_back(user);
+            }
+            return true;
+        });
+
+    AgenticHandoffController::ActiveHandoff h;
+    std::string err;
+    REQUIRE(ctrl.Start(pid, h, err));
+
+    std::thread workerThread([&]() {
+        std::string werr;
+        ctrl.RunSpawnSynchronouslyForTests(pid, werr);
+    });
+
+    // Wait for AwaitingUser — the controller will have stamped a cursor near
+    // "now". We script the user reply createdAt to be strictly after the
+    // cursor.
+    bool sawAwaiting = false;
+    for (int i = 0; i < 200 && !sawAwaiting; ++i) {
+        const auto snap = ctrl.SnapshotAllForTests();
+        if (!snap.empty() && snap[0].state == RunState::AwaitingUser) {
+            sawAwaiting = true;
+            *userReplyCreatedAt = snap[0].clarificationCommentCursorSec + 60; // 60 s after cursor
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(sawAwaiting);
+
+    // First poll — only bot comments visible, no dispatch.
+    int answered = ctrl.PollClarificationAnswers();
+    CHECK(answered == 0);
+
+    // Second poll — user reply now visible.
+    answered = ctrl.PollClarificationAnswers();
+    CHECK(answered == 1);
+
+    workerThread.join();
+
+    // The captured answer text matches the user reply (not the bot question).
+    CHECK(runner.capturedAnswer == "yes, rename");
+
+    RemoveFile(wt + "/CLARIFICATION_NEEDED.json");
+    RemoveDir(wt);
+}
+
+TEST_CASE("AgenticHandoffController H5 — poll loop is a no-op when fetcher is unwired") {
+    AgentProposalStore store(":memory:");
+    const std::int64_t pid = InsertImplementIssue(store, "smatchet/example#780");
+    FakeRunner runner(FakeRunner::Mode::HappyPath);
+    CapturingSink sink;
+    AgenticHandoffController ctrl(::smatchet::agentic::WorkerDispatcher(), &runner, &store, MakeCapturingSink(sink));
+
+    AgenticHandoffController::ActiveHandoff h;
+    std::string err;
+    REQUIRE(ctrl.Start(pid, h, err));
+
+    // No fetcher wired — poll loop reports 0 dispatches.
+    CHECK(ctrl.PollClarificationAnswers() == 0);
 }
 
 #endif // SMATCHET_WITH_AGENTIC
