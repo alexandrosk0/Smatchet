@@ -7,6 +7,16 @@ Subcommands:
                   PLAN, STARTED, UPDATED, NOTES.
   read-field    — read a JSON object from stdin, print one field's value.
                   Usage: read-field <field>
+  latest-ts     — read a claim.json from stdin, print
+                  `max(started, updated)` as the latest activity timestamp.
+                  Falls back to started when updated is empty / missing.
+                  Prints empty string when both are absent.
+  iso-to-epoch  — read an ISO-8601 timestamp from the LATEST_TS env var,
+                  print integer epoch seconds. Accepts both "Z" and
+                  "+00:00" timezone suffixes. Prints empty on parse error.
+                  Reads via env var so caller can avoid shell-into-python
+                  source interpolation (see git-ref-plan-locks.md §
+                  Phase 4 security fix).
   format-table  — read a JSON array of claim records from stdin, print as
                   a fixed-width table.
   format-json   — read a JSON array, pretty-print to stdout.
@@ -69,6 +79,54 @@ def read_field():
         print(value if value is not None else "")
 
 
+def latest_ts():
+    """Print max(started, updated) from a claim.json read on stdin.
+
+    Falls back to started when updated is empty or absent. Empty string
+    on both missing. Stable behaviour for the staleness sweep —
+    long-running slices that bump via lock-claim-update.sh push their
+    `updated` forward and stay fresh.
+    """
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        sys.stdout.write("\n")
+        return
+    started = data.get("started") or ""
+    updated = data.get("updated") or ""
+    # Use updated when non-empty AND later than started by lexicographic
+    # ISO-8601 ordering. ISO-8601 strings sort identically to chronological
+    # order when all share the same timezone suffix (Z or +00:00).
+    if updated and (not started or updated >= started):
+        sys.stdout.write(updated + "\n")
+    elif started:
+        sys.stdout.write(started + "\n")
+    else:
+        sys.stdout.write("\n")
+
+
+def iso_to_epoch():
+    """Read ISO-8601 timestamp from LATEST_TS env, print integer epoch seconds.
+
+    Accepts both 'Z' and '+00:00' tz suffixes. Empty string on parse
+    error. Reads via env var (NOT argv or stdin) so the bash caller can
+    pass attacker-influenced timestamps without shell-into-python
+    source interpolation (see Phase 4 security fix recorded in the
+    plan doc).
+    """
+    s = os.environ.get("LATEST_TS", "") or ""
+    if not s:
+        sys.stdout.write("\n")
+        return
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.datetime.fromisoformat(s)
+        sys.stdout.write(str(int(dt.timestamp())) + "\n")
+    except (ValueError, TypeError):
+        sys.stdout.write("\n")
+
+
 def format_table():
     records = json.load(sys.stdin)
     if not records:
@@ -96,7 +154,7 @@ def format_json():
 def main():
     if len(sys.argv) < 2:
         print(
-            "usage: _lock-json.py <build-claim|read-field|format-table|format-json>",
+            "usage: _lock-json.py <build-claim|read-field|latest-ts|iso-to-epoch|format-table|format-json>",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -105,6 +163,10 @@ def main():
         build_claim()
     elif cmd == "read-field":
         read_field()
+    elif cmd == "latest-ts":
+        latest_ts()
+    elif cmd == "iso-to-epoch":
+        iso_to_epoch()
     elif cmd == "format-table":
         format_table()
     elif cmd == "format-json":
