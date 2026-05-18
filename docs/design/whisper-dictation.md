@@ -34,7 +34,7 @@ Push-to-talk dictation. User holds a configurable hotkey, speaks, releases → t
 | **Build-time** | `cmake -DSMATCHET_WITH_WHISPER=OFF` | Plugin code excluded entirely. Binary size delta = 0. For distributors / corporate IT who want a slim build. The router stub TU compiles in instead. |
 | **Runtime** | First-run setup dialog + `WhisperSetupCompleted` / `WhisperSetupChoice` config fields | Plugin compiled but dormant. No mic access, no network call, no model download, no UI surface beyond Preferences. |
 
-**First-run setup dialog** — appears on app launch when `WhisperSetupCompleted == false` AND `SMATCHET_WITH_WHISPER` is on. One-time modal, ImGui-rendered (no separate installer process — Smatchet ships as a self-contained exe). Three buttons:
+**First-run setup banner** — non-blocking banner pinned to the top of the main window when `WhisperSetupCompleted == false` AND `SMATCHET_WITH_WHISPER` is on. App is fully usable while the banner is visible; the banner persists across launches until the user picks one of the three actions. ImGui-rendered (no separate installer process — Smatchet ships as a self-contained exe). Three actions:
 
 | Button | Effect |
 |---|---|
@@ -326,42 +326,43 @@ The setup dialog lands here (not earlier) because it requires the model-download
 | `Plugins/Whisper/WhisperLocal.{h,cpp}` | NEW (wraps `whisper_init_from_file_with_params` + `whisper_full`; `whisper_context*` under `std::unique_ptr`) | L6 |
 | `Plugins/Whisper/WhisperPlugin.cpp` | MOD (mode router selects local vs cloud per § Mode router decision tree) | L6 |
 | `Plugins/Whisper/ModelDownloader.{h,cpp}` | NEW (Pattern A worker for downloading model from huggingface; resumable, SHA-256 verified; explicit consent timestamp recorded per § Consent invariants) | L6 |
-| `Source_Core/src/SmatchetWhisperSetupDialog.cpp` | NEW (first-run setup modal; three buttons + model-size sub-picker; ImGui-rendered; gated on `cfg.WhisperSetupCompleted == false`) | L2 (source-list conditional — only added when `SMATCHET_WITH_WHISPER=ON`) |
-| `Source_Core/src/SmatchetUI.cpp` | MOD (invoke `DrawWhisperSetupDialog(...)` from main draw loop when `!cfg.WhisperSetupCompleted`; wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`) | L5 |
+| `Source_Core/src/SmatchetWhisperSetupBanner.cpp` | NEW (non-blocking top-of-window banner; three actions + model-size sub-picker on Enable; ImGui-rendered; visible while `cfg.WhisperSetupCompleted == false`) | L2 (source-list conditional — only added when `SMATCHET_WITH_WHISPER=ON`) |
+| `Source_Core/src/SmatchetUI.cpp` | MOD (invoke `DrawWhisperSetupBanner(...)` from main draw loop when `!cfg.WhisperSetupCompleted`; wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`) | L5 |
 | `Source_Core/src/SmatchetPreferencesUi.cpp` | MOD (Whisper tab with "Re-run setup", "Download model", model-size picker, current-choice readout, all wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`) | L5 |
 | `Locales/en.json` | MOD (strings for the setup dialog: title, three button labels, privacy bullets, model-size descriptions) | none |
 | `tests/Source_Core/WhisperModeRouter.test.cpp` | NEW (pure: mode decision tree) | L1 |
 | `tests/Source_Core/WhisperConsentGate.test.cpp` | NEW (pure: the 4 consent invariants — no mic / no network / no API / no model fetch without `WhisperEnabled == true` AND `WhisperSetupCompleted == true`) | L1 |
 
-**Setup dialog spec** — modal, non-dismissable except via the three buttons (no `X` close button). Approximate layout:
+**Setup banner spec** — pinned to the top of the main window, non-blocking. App is fully usable while visible. Approximate layout:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Voice dictation                                            │
-│                                                             │
-│  Smatchet can transcribe what you say into any text field   │
-│  via push-to-talk. This is optional and off by default.     │
-│                                                             │
-│  ▢  Enable voice dictation                                  │
-│       Downloads a speech model (~150 MB) and runs           │
-│       transcription locally. No audio leaves your machine.  │
-│                                                             │
-│       Model size:  ◉ Recommended (150 MB)                   │
-│                    ○ Smaller, faster (40 MB)                │
-│                    ○ Higher accuracy (500 MB)               │
-│                                                             │
-│  ▢  Decide later                                            │
-│       Skip for now. You'll be asked again next launch.      │
-│                                                             │
-│  ▢  No, don't use voice dictation                           │
-│       Voice features stay off. You can re-enable any time   │
-│       in Preferences → AI → Whisper.                        │
-│                                                             │
-│                          [ Continue ]                       │
+│ 🎤  Enable voice dictation? Push-to-talk transcribes into   │
+│     any text field. Optional, off by default. No audio      │
+│     leaves your machine when local model is used.           │
+│     [ Enable ▾ ]  [ Decide later ]  [ No thanks ]           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-On "Enable" + Continue: model download begins immediately with progress bar; cancel returns to the three-radio state. On success: dialog closes; first push-to-talk works without further setup. On "No": dialog closes; `WhisperEnabled = false` and `WhisperSetupCompleted = true`; dialog never reappears. On "Decide later": dialog closes; `WhisperSetupCompleted = false` (will reappear next launch).
+Clicking **Enable ▾** expands an inline picker:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🎤  Choose speech model:                                    │
+│     ○ Smaller, faster (40 MB)                               │
+│     ◉ Recommended (150 MB)                                  │
+│     ○ Higher accuracy (500 MB)                              │
+│     [ Download + enable ]  [ Cancel ]                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+On **Download + enable**: model download begins via Pattern A worker with inline progress bar in the banner (no separate modal). On success: banner disappears; first push-to-talk works without further setup. On **Cancel** inside the picker: returns to the three-action banner. On download failure: banner shows error + retry button.
+
+On **Decide later**: banner stays visible (no state change). Same banner re-shows every launch until the user picks Enable or No-thanks.
+
+On **No thanks**: banner closes; `WhisperEnabled = false` and `WhisperSetupCompleted = true`; banner never reappears. Reversible via Preferences → AI → Whisper → "Enable voice dictation".
+
+**Banner placement**: full-width strip immediately under the menu bar, above the dock space. Height ~52 px when collapsed (default state), ~120 px when model-size picker is expanded, ~70 px during active download (progress bar + cancel). Color: subtle accent (Smatchet theme `Frame` color), not alarming red.
 
 **Verification**:
 
@@ -515,7 +516,7 @@ Source_Core/src/SmatchetCommandPaletteUi.cpp
 Source_Core/include/SmatchetLocalizedImGui.h
 Source_Core/src/SmatchetUI.cpp
 Source_Core/src/SmatchetWhisperOverlayUi.cpp
-Source_Core/src/SmatchetWhisperSetupDialog.cpp
+Source_Core/src/SmatchetWhisperSetupBanner.cpp
 Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp
 CMakeLists.txt
 tests/CMakeLists.txt
