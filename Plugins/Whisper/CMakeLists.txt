@@ -28,6 +28,13 @@ target_link_libraries(SmatchetPlugin_Whisper PUBLIC
     SmatchetCoreInterface
 )
 
+# See AI-shim note on SmatchetPlugin_LuaConsole in the root CMakeLists.txt — UiDrawSession
+# layout depends on SMATCHET_WITH_AI. Plugins including Source_Core headers must match the
+# Source_Core define state to avoid silent member-offset drift.
+if(SMATCHET_WITH_AI)
+    target_link_libraries(SmatchetPlugin_Whisper PUBLIC SmatchetCoreAiShim)
+endif()
+
 # Link ghc::filesystem for the model-presence probe in WhisperPlugin.cpp.
 # Standalone targets already link it transitively, but PRIVATE here keeps the
 # dependency explicit and survives a future plugin-host refactor.
