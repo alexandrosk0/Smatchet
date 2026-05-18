@@ -12,6 +12,9 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ui_tests_registry.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_prefs_autosave_flow.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12
