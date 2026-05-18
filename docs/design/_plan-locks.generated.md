@@ -6,7 +6,7 @@
 >
 > **Live query**: `bash scripts/dev/locks-show.sh`
 >
-> **Snapshot taken**: 2026-05-18T17:10:41Z (UTC)
+> **Snapshot taken**: 2026-05-18T17:50:40Z (UTC)
 
 ## No active plan-locks
 
