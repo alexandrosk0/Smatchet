@@ -48,7 +48,12 @@ fi
 # Refresh local namespace, prune.
 git fetch --quiet --prune "$remote" '+refs/locks/*:refs/locks/*' 2>/dev/null || true
 
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# NOTE: deliberately no "Snapshot taken" timestamp here. An embedded
+# per-run wall-clock timestamp would make every cron fire produce a
+# different file content even when refs/locks/* is unchanged, opening a
+# new sync PR every 30 minutes (noise). The canonical "when was this
+# regenerated" signal is the git commit timestamp on this file — query
+# via `git log -1 --format=%cI docs/design/_plan-locks.generated.md`.
 
 cat <<EOF
 # Plan-locks — auto-generated view of \`refs/locks/*\`
@@ -59,7 +64,7 @@ cat <<EOF
 >
 > **Live query**: \`bash scripts/dev/locks-show.sh\`
 >
-> **Snapshot taken**: $now (UTC)
+> **When was this last regenerated?** Run \`git log -1 --format=%cI docs/design/_plan-locks.generated.md\`.
 
 EOF
 
