@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiAssistantController.h"
+#include "AiAssistantInputSeedDecision.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
@@ -222,18 +223,16 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // Without this check, the char buffer kept the previous session's text
     // and Lua-supplied input on Phase E was silently lost.
     const std::size_t bufLen = std::strlen(s_inputCharBuf.data());
-    const bool divergedFromModel = (d.assistantInputBuf.size() != bufLen) ||
-                                   (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
-    // Direction-aware re-seed: only copy model -> buf when the model has MORE
-    // content than the buf. Otherwise buf is the newer side (e.g. the
-    // dictation router just spliced transcribed text directly into
-    // s_inputCharBuf between frames) and we let the buf -> model mirror at
-    // line below propagate the change. Without this check, splicing text
-    // into s_inputCharBuf was silently clobbered next frame because diverge
-    // == true and the unconditional copy overwrote the splice with the
-    // still-stale model.
-    if (!s_inputCharBufSeeded ||
-        (divergedFromModel && d.assistantInputBuf.size() > bufLen)) {
+    const bool bytesDiffer = (d.assistantInputBuf.size() != bufLen) ||
+                             (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
+    // Direction-aware re-seed (see AiAssistantInputSeedDecision.h). The
+    // decision is factored into a pure helper so the unit test can pin every
+    // branch — the regression that motivated it was the Whisper dictation
+    // router splicing text directly into `s_inputCharBuf` between frames
+    // followed by the next frame unconditionally re-seeding from the still-
+    // stale model, silently clobbering the splice.
+    if (smatchet::ai::ShouldSeedAssistantInputFromModel(
+            s_inputCharBufSeeded, bufLen, d.assistantInputBuf.size(), bytesDiffer)) {
         s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);

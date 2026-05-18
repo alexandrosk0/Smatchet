@@ -140,6 +140,20 @@ void DictationInsertionRouter::UnregisterInputText(char* buf) {
     if (aiAssistantBuf_ == buf) {
         aiAssistantBuf_ = nullptr;
     }
+    // Clear the sticky shadow too when its buf is the one being unregistered.
+    // Without this, closing the AI Assistant panel (which Unregister-s the chat
+    // input buffer) left `shadowBuf_` pointing at the now-detached buffer; a
+    // subsequent transcription with no other focused InputText would fall back
+    // to the shadow and silently splice into the closed panel's hidden buffer.
+    // The user-perceived bug was: "I dictated, the log says inserted N bytes,
+    // but I see nothing anywhere." See DictationInsertionRouter.test.cpp
+    // "shadow cleared when its buf is unregistered" for the regression gate.
+    if (shadowBuf_ == buf) {
+        shadowBuf_ = nullptr;
+        shadowCap_ = 0;
+        shadowCursor_ = nullptr;
+        shadowItemId_ = 0;
+    }
     auto it = std::remove_if(entries_.begin(), entries_.end(),
                              [buf](const Entry& e) { return e.Buf == buf; });
     entries_.erase(it, entries_.end());
@@ -283,6 +297,16 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
                   "and no shadow; dropping %zu bytes", text.size());
         return;
     }
+    // Boundary log — worker -> UI hand-off + which buffer was actually picked.
+    // This is the single most valuable diagnostic line for "I dictated but
+    // nothing landed in the field I expected": it confirms the splice target,
+    // the path taken (active-id match vs entries.front() vs shadow), and
+    // whether the AI Assistant chat input was the target. Kept permanent at
+    // LOG_DEBUG so verbose logs are opt-in but reachable without rebuilding.
+    LOG_DEBUG("DictationInsertionRouter: splice activeId=%u entries=%zu picked buf=%p itemId=%u "
+              "isAiAssistant=%d (%zu bytes)",
+              activeId, entries_.size(), static_cast<const void*>(selected->Buf),
+              selected->ItemId, selected->Buf == aiAssistantBuf_ ? 1 : 0, text.size());
     Entry& e = *selected;
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
@@ -338,9 +362,22 @@ bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
     if (entries_.empty() || aiAssistantBuf_ == nullptr) {
         return false;
     }
-    // `InsertIntoFocusedInputText` uses entries_.front() as the splice target;
-    // mirror that pick here so callers see consistent answers.
-    return entries_.front().Buf == aiAssistantBuf_;
+    const Entry& front = entries_.front();
+    if (front.Buf != aiAssistantBuf_) {
+        return false;
+    }
+    // Require a non-zero ItemId on the front entry. The AI Assistant panel
+    // registers the chat-input buffer once per frame (panel-level call) with
+    // ItemId=0 to keep the sticky shadow up to date; the wrapper-level
+    // InputTextMultiline hook then either re-registers with the real ImGui
+    // item id (when actually focused) or unregisters the buffer (when blurred).
+    // So front.ItemId != 0 is the cheap, race-free way to say "the AI input
+    // was genuinely the focused widget at last-frame end", which is the only
+    // state in which the auto-send-on-punctuation flow should fire. Without
+    // this gate, the panel-level idempotent re-register on a frame where the
+    // wrapper-unregister had not yet run could let auto-send misfire and ship
+    // the dictated text to the model without the user intending a send.
+    return front.ItemId != 0u;
 }
 
 void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> cb) {

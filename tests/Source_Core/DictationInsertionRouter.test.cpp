@@ -310,6 +310,150 @@ TEST_CASE("DictationInsertionRouter::Insert: normally-terminated buffer behaves 
     router.UnregisterInputText(buf);
 }
 
+// ----------------------------------------------------------------------------
+// Whisper PR #249 + #250 regression gates — the live `test/whisper-all-prs`
+// dogfood log surfaced a misroute where the hotkey transcription landed in
+// the AI Assistant chat input despite the user expecting another field, and
+// the auto-send-on-punctuation fired and cleared the buffer. Root cause: the
+// sticky shadow was never cleared on Unregister, and `IsFocusedTargetAiAssistant`
+// returned true purely on buf-pointer equality without checking that the AI
+// input was actually the user-focused widget (i.e. had a real ItemId). The
+// tests below pin both routes.
+// ----------------------------------------------------------------------------
+
+TEST_CASE("DictationInsertionRouter: activeId match picks the right entry across three buffers") {
+    // Regression gate — entries_ has multiple registered buffers, the
+    // post-back lambda passes the focused widget's activeId, and the splice
+    // must land in the entry whose ItemId matches even when that entry is
+    // NOT entries_.front().
+    DictationInsertionRouter router;
+    char a[32] = {0};
+    char b[32] = {0};
+    char c[32] = {0};
+    router.RegisterInputTextWithItemId(a, sizeof(a), nullptr, 0x1111);
+    router.RegisterInputTextWithItemId(b, sizeof(b), nullptr, 0x2222);
+    router.RegisterInputTextWithItemId(c, sizeof(c), nullptr, 0x3333);
+    REQUIRE(router.RegisteredCountForTest() == 3u);
+
+    router.InsertIntoFocusedInputText("HELLO", 0x2222);
+
+    CHECK(std::string(a).empty());
+    CHECK(std::string(b) == "HELLO");
+    CHECK(std::string(c).empty());
+
+    router.UnregisterInputText(a);
+    router.UnregisterInputText(b);
+    router.UnregisterInputText(c);
+}
+
+TEST_CASE("DictationInsertionRouter: shadow fallback fires only when entries_ is empty") {
+    // Shadow exists for the case where the wrapper-level blur unregistered
+    // the widget between hotkey release and post-back arrival. When entries_
+    // is NON-empty but no ItemId matches, the legacy front-fallback wins;
+    // shadow must NOT override an actively-registered buffer.
+    DictationInsertionRouter router;
+    char active[32] = {0};
+    char shadow[32] = {0};
+    // Register `shadow` then unregister to leave shadowBuf_ set but entries_
+    // without shadow.
+    router.RegisterInputTextWithItemId(shadow, sizeof(shadow), nullptr, 0x9999);
+    router.UnregisterInputText(shadow);
+    // After our fix, Unregister of shadow's buf clears shadowBuf_. Sanity:
+    // a fresh Register of `active` should leave shadow inert.
+    router.RegisterInputTextWithItemId(active, sizeof(active), nullptr, 0x1111);
+
+    router.InsertIntoFocusedInputText("X", /*activeId=*/0);
+
+    CHECK(std::string(active) == "X");
+    CHECK(std::string(shadow).empty());
+    router.UnregisterInputText(active);
+}
+
+TEST_CASE("DictationInsertionRouter: shadow cleared when its buf is unregistered") {
+    // The actual fix from this investigation. Closing the AI Assistant panel
+    // calls UnregisterInputText on the chat-input buffer; without clearing
+    // shadowBuf_, a later transcription with entries_ empty would silently
+    // splice into the closed panel's hidden buffer. After the fix, the
+    // splice drops cleanly (no target, no shadow) instead.
+    DictationInsertionRouter router;
+    char ai[32] = {0};
+    router.RegisterAiAssistantInputText(ai, sizeof(ai), nullptr);
+    REQUIRE(router.RegisteredCountForTest() == 1u);
+
+    // Panel-close path — unregisters the chat-input buf.
+    router.UnregisterInputText(ai);
+    REQUIRE(router.RegisteredCountForTest() == 0u);
+
+    // Transcription post-back arrives. entries_ empty, shadow MUST also be
+    // empty after the fix → splice drops with no buffer mutation.
+    router.InsertIntoFocusedInputText("late text", /*activeId=*/0);
+    CHECK(std::string(ai).empty());
+}
+
+TEST_CASE("DictationInsertionRouter: shadow fallback into AI buffer no longer fires post-Unregister") {
+    // Variant of the above with a non-AI buffer playing the shadow role —
+    // proves the clear-on-Unregister covers the generic InputText path too,
+    // not just the AI-flavoured registration.
+    DictationInsertionRouter router;
+    char generic[32] = {0};
+    router.RegisterInputTextWithItemId(generic, sizeof(generic), nullptr, 0x5555);
+    router.UnregisterInputText(generic);
+
+    router.InsertIntoFocusedInputText("orphan", /*activeId=*/0);
+    CHECK(std::string(generic).empty());
+}
+
+TEST_CASE("DictationInsertionRouter::IsFocusedTargetAiAssistant: true only when AI input has real ItemId") {
+    // The auto-send-on-punctuation path keys on this. Returning true purely
+    // from buf-pointer equality (without checking that the AI input had a
+    // non-zero, wrapper-supplied ItemId) caused the live regression: the
+    // panel-level idempotent RegisterAiAssistantInputText keeps aiAssistantBuf_
+    // set even on frames where the wrapper-level hook would have unregistered
+    // on blur, so auto-send could fire without the user actually focusing the
+    // AI input. The fix requires `entries_.front().ItemId != 0`.
+    DictationInsertionRouter router;
+    char ai[32] = {0};
+
+    // Panel-level register (idempotent, ItemId=0). aiAssistantBuf_ is set but
+    // the entry's ItemId is still 0 — the wrapper-level hook has not yet
+    // observed focus / blur this frame.
+    router.RegisterAiAssistantInputText(ai, sizeof(ai), nullptr);
+    CHECK_FALSE(router.IsFocusedTargetAiAssistant());
+
+    // Wrapper-level re-register with the real ImGui item id (mirrors a
+    // focused-frame InputTextMultiline draw). NOW it should report true.
+    router.RegisterInputTextWithItemId(ai, sizeof(ai), nullptr, 0x4242);
+    CHECK(router.IsFocusedTargetAiAssistant());
+
+    // Wrapper-level Unregister (blur). aiAssistantBuf_ clears too.
+    router.UnregisterInputText(ai);
+    CHECK_FALSE(router.IsFocusedTargetAiAssistant());
+}
+
+TEST_CASE("DictationInsertionRouter::IsFocusedTargetAiAssistant: false when another buf is the front entry") {
+    // If a different widget is the focused/front entry, even with the AI
+    // buffer still registered (panel open but AI input not focused), the
+    // check must be false so auto-send doesn't fire.
+    DictationInsertionRouter router;
+    char ai[32] = {0};
+    char other[32] = {0};
+    router.RegisterAiAssistantInputText(ai, sizeof(ai), nullptr);
+    // Other widget registers AFTER the panel-level register — but the router
+    // appends in order, so AI is still entries_.front() until something
+    // mutates that. Reorder by unregistering AI's entry (mirrors the wrapper
+    // blur path), then re-register AI with ItemId=0 (panel-level mirror),
+    // then add `other` as the actually-focused widget.
+    router.UnregisterInputText(ai);
+    router.RegisterInputTextWithItemId(other, sizeof(other), nullptr, 0x1234);
+    router.RegisterAiAssistantInputText(ai, sizeof(ai), nullptr);
+    // Now entries_ is [other, ai] (other first). aiAssistantBuf_ = ai.
+    // entries_.front().Buf == other != ai → false.
+    CHECK_FALSE(router.IsFocusedTargetAiAssistant());
+
+    router.UnregisterInputText(ai);
+    router.UnregisterInputText(other);
+}
+
 #else // SMATCHET_WITH_WHISPER not defined — stubs TU is linked.
 
 TEST_CASE("DictationInsertionRouter stubs: every method is a no-op") {
