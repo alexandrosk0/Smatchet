@@ -1,0 +1,264 @@
+// SmatchetWhisperSetupBanner — see header for design pointers.
+//
+// Renders an ImGui window pinned to the top of the main viewport. Three
+// collapsed-state heights:
+//   - 52 px  three-button row,
+//   - 120 px model-size picker expanded,
+//   - 70 px  active download (progress bar + cancel).
+//
+// All strings flow through SmatchetLocalization::T so future locale work
+// only touches SmatchetLocalization.cpp. The TU is added to CORE_SOURCES
+// only when SMATCHET_WITH_WHISPER=ON (see root CMakeLists.txt) so call sites
+// can probe `cfg.WhisperSetupCompleted` without a per-call ifdef in
+// SmatchetUI.cpp.
+
+#include "SmatchetWhisperSetupBanner.h"
+
+#include "AppController.h"
+#include "ConfigManager.h"
+#include "Logger.h"
+#include "ModelCatalog.h"
+#include "ModelDownloader.h"
+#include "SmatchetLocalization.h"
+#include "WhisperConsentGate.h"
+
+#include "imgui.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+
+namespace smatchet {
+namespace whisper {
+namespace banner {
+
+namespace {
+
+// Per-banner UI state — persists across frames while the banner is open.
+struct BannerState {
+    bool pickerExpanded = false; // user has clicked "Enable ▾"
+    int selectedIndex = 1;       // default to "Recommended" (ggml-base.en, index 1)
+    std::string lastError;       // last download error surfaced to the banner
+};
+
+BannerState& Bs() {
+    static BannerState s;
+    return s;
+}
+
+ModelDownloader& OwnedDownloader() {
+    static ModelDownloader d;
+    return d;
+}
+
+std::string FormatSizeMb(std::uint64_t bytes) {
+    if (bytes == 0) {
+        return std::string("?");
+    }
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.0f MB", mb);
+    return std::string(buf);
+}
+
+// Map ModelCatalog index → cfg.WhisperModel id + remember the user's pick
+// so Preferences shows it consistently. Returns "ggml-base.en" on out-of-
+// range index.
+std::string CatalogIdAt(int idx) {
+    const auto& all = smatchet::whisper::catalog::All();
+    if (idx < 0 || static_cast<std::size_t>(idx) >= all.size()) {
+        return std::string("ggml-base.en");
+    }
+    return all[static_cast<std::size_t>(idx)].Id;
+}
+
+const char* TranslatedDisplayName(const std::string& id, const char* fallback) {
+    // English fallback used both when locale lookup misses and as the
+    // canonical user-visible string for the catalog table.
+    if (id == "ggml-tiny.en") {
+        return SmatchetLocalization::T("whisper.modelPicker.smaller", "Smaller, faster (40 MB)");
+    }
+    if (id == "ggml-base.en") {
+        return SmatchetLocalization::T("whisper.modelPicker.recommended", "Recommended (150 MB)");
+    }
+    if (id == "ggml-small.en") {
+        return SmatchetLocalization::T("whisper.modelPicker.higher", "Higher accuracy (500 MB)");
+    }
+    return fallback;
+}
+
+void StampFreshConsent(TrackerConfig& cfg) {
+#if defined(SMATCHET_WITH_WHISPER)
+    cfg.WhisperConsentTimestampSec = smatchet::whisper::consent::NowEpochSec();
+#else
+    (void)cfg;
+#endif
+}
+
+bool DispatchDownload(AppController& app, TrackerConfig& cfg, std::string& outError) {
+    const std::string modelId = CatalogIdAt(Bs().selectedIndex);
+    cfg.WhisperModel = modelId;
+    cfg.WhisperEnabled = true; // banner intent — Preferences can flip later
+    // SetupCompleted only flips on successful download (the next-launch
+    // banner-suppress contract). Persisting Enabled+Model early lets the
+    // CLI commands see them; the banner stays visible until Complete.
+    StampFreshConsent(cfg);
+    ConfigManager::Save(cfg);
+
+    const std::string sharedDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+    if (sharedDir.empty()) {
+        outError = "platform shared user-data directory unavailable";
+        return false;
+    }
+    std::string destDir = sharedDir;
+    if (!destDir.empty() && destDir.back() != '/' && destDir.back() != '\\') {
+        destDir.push_back('/');
+    }
+    destDir += "whisper";
+
+    return OwnedDownloader().Start(app, modelId, destDir, outError);
+}
+
+} // namespace
+
+ModelDownloader& BannerOwnedDownloader() {
+    return OwnedDownloader();
+}
+
+bool Render(AppController& app, TrackerConfig& cfg) {
+#if !defined(SMATCHET_WITH_WHISPER)
+    (void)app;
+    (void)cfg;
+    return false;
+#else
+    if (cfg.WhisperSetupCompleted) {
+        return false;
+    }
+
+    bool cfgChanged = false;
+    BannerState& s = Bs();
+
+    // Pin to the top of the main viewport work area. Work-area excludes the
+    // main menu bar so SetNextWindowPos lands the banner directly under it.
+    ImGuiViewport* vp = ::ImGui::GetMainViewport();
+    if (vp == nullptr) {
+        return false;
+    }
+    const ImVec2 workPos = vp->WorkPos;
+    const ImVec2 workSize = vp->WorkSize;
+
+    // Compute banner height by phase.
+    const ModelDownloader::Progress prog = OwnedDownloader().GetProgress();
+    const bool downloading = (prog.state == ModelDownloader::State::Downloading) ||
+                             (prog.state == ModelDownloader::State::Verifying);
+    float bannerHeight = 52.0f;
+    if (downloading) {
+        bannerHeight = 70.0f;
+    } else if (s.pickerExpanded) {
+        bannerHeight = 120.0f;
+    }
+
+    ::ImGui::SetNextWindowPos(workPos);
+    ::ImGui::SetNextWindowSize(ImVec2(workSize.x, bannerHeight));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    if (!::ImGui::Begin("##WhisperSetupBanner", nullptr, flags)) {
+        ::ImGui::End();
+        ImGui::PopStyleColor();
+        return false;
+    }
+
+    if (downloading) {
+        const float frac = (prog.bytesExpected > 0)
+                               ? std::min(1.0f, static_cast<float>(prog.bytesReceived) /
+                                                     static_cast<float>(prog.bytesExpected))
+                               : 0.0f;
+        const char* label = (prog.state == ModelDownloader::State::Verifying)
+                                ? SmatchetLocalization::T("whisper.banner.verifying", "Verifying download...")
+                                : SmatchetLocalization::T("whisper.banner.downloading", "Downloading speech model...");
+        ::ImGui::Text("%s %s (%.0f%%)", label, prog.modelId.c_str(), frac * 100.0f);
+        ::ImGui::ProgressBar(frac, ImVec2(-1, 0));
+        if (::ImGui::Button(SmatchetLocalization::T("whisper.modelPicker.cancel", "Cancel"))) {
+            OwnedDownloader().Cancel();
+        }
+    } else if (s.pickerExpanded) {
+        ::ImGui::TextUnformatted(
+            SmatchetLocalization::T("whisper.banner.pickModel", "Choose speech model:"));
+        const auto& all = smatchet::whisper::catalog::All();
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            const std::string id = all[i].Id;
+            int& sel = s.selectedIndex;
+            const bool selected = (static_cast<int>(i) == sel);
+            if (::ImGui::RadioButton(TranslatedDisplayName(id, all[i].DisplayName.c_str()), selected)) {
+                sel = static_cast<int>(i);
+            }
+            ::ImGui::SameLine();
+            ::ImGui::TextDisabled("(%s)", FormatSizeMb(all[i].SizeBytes).c_str());
+        }
+        if (::ImGui::Button(
+                SmatchetLocalization::T("whisper.modelPicker.download", "Download + enable"))) {
+            std::string err;
+            if (!DispatchDownload(app, cfg, err)) {
+                s.lastError = err;
+                LOG_WARN("Whisper banner: download dispatch failed: %s", err.c_str());
+            } else {
+                s.lastError.clear();
+            }
+            cfgChanged = true; // DispatchDownload writes cfg
+        }
+        ::ImGui::SameLine();
+        if (::ImGui::Button(SmatchetLocalization::T("whisper.modelPicker.cancel", "Cancel"))) {
+            s.pickerExpanded = false;
+        }
+        if (!s.lastError.empty()) {
+            ::ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", s.lastError.c_str());
+        }
+    } else {
+        ::ImGui::TextUnformatted(
+            SmatchetLocalization::T("whisper.banner.title",
+                                    "Enable voice dictation? Push-to-talk transcribes into any text field. "
+                                    "Optional, off by default. No audio leaves your machine when the local "
+                                    "model is used."));
+        if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.enable", "Enable"))) {
+            s.pickerExpanded = true;
+        }
+        ::ImGui::SameLine();
+        if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.later", "Decide later"))) {
+            // No state change — banner reappears next launch.
+        }
+        ::ImGui::SameLine();
+        if (::ImGui::Button(SmatchetLocalization::T("whisper.banner.disable", "No thanks"))) {
+            cfg.WhisperEnabled = false;
+            cfg.WhisperSetupCompleted = true;
+            cfg.WhisperSetupChoice = "disabled";
+            cfgChanged = true;
+            LOG_INFO("Whisper banner: user declined.");
+        }
+    }
+
+    // Banner auto-dismisses when a download completes; flip the setup flag
+    // and the next frame stops drawing.
+    if (prog.state == ModelDownloader::State::Complete) {
+        cfg.WhisperEnabled = true;
+        cfg.WhisperSetupCompleted = true;
+        cfg.WhisperSetupChoice = "enabled";
+        cfg.WhisperModel = prog.modelId.empty() ? cfg.WhisperModel : prog.modelId;
+        cfgChanged = true;
+        s.pickerExpanded = false;
+        LOG_INFO("Whisper banner: setup completed (model=%s).", cfg.WhisperModel.c_str());
+    }
+
+    ::ImGui::End();
+    ImGui::PopStyleColor();
+    return cfgChanged;
+#endif
+}
+
+} // namespace banner
+} // namespace whisper
+} // namespace smatchet

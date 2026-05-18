@@ -13,6 +13,11 @@ add_library(SmatchetPlugin_Whisper STATIC
     WhisperApiKeyResolve.cpp
     WavWriter.cpp
     WindowsAudioCapture.cpp
+    # Phase C — local backend wrapper, model catalog, downloader, consent gate.
+    WhisperLocal.cpp
+    ModelCatalog.cpp
+    ModelDownloader.cpp
+    WhisperConsentGate.cpp
 )
 
 target_include_directories(SmatchetPlugin_Whisper PUBLIC
@@ -34,13 +39,30 @@ target_link_libraries(SmatchetPlugin_Whisper PRIVATE
 # Phase B introduces WindowsAudioCapture.cpp; the libs below resolve the COM
 # imports it uses. Plugin subtree is only entered on Windows builds with
 # SMATCHET_WITH_WHISPER=ON, so the link list is unconditional.
+#
+# Phase C adds bcrypt for ModelDownloader's streaming SHA-256 (BCryptHash with
+# BCRYPT_SHA256_ALGORITHM) — no extra third-party hash dep needed since the
+# plugin is already Windows-gated.
 if(WIN32)
     target_link_libraries(SmatchetPlugin_Whisper PRIVATE
         ole32
         oleaut32
         uuid
         avrt
+        bcrypt
     )
+endif()
+
+# Optional whisper.cpp local-backend link. Default OFF — Phase C ships the
+# WhisperLocal API surface unconditionally, but the actual whisper.cpp link
+# costs ~50 MB of static lib and carries MinGW UCRT build risk. Flip the
+# sub-option ON to fetch whisper.cpp v1.7.4 and link it into the plugin; the
+# `SMATCHET_WHISPER_LOCAL_BACKEND=1` compile define then activates the live
+# inference branch in WhisperLocal.cpp. See docs/design/whisper-dictation.md
+# § Deviations for the rationale.
+if(SMATCHET_WHISPER_LOCAL_BACKEND)
+    target_compile_definitions(SmatchetPlugin_Whisper PUBLIC SMATCHET_WHISPER_LOCAL_BACKEND=1)
+    target_link_libraries(SmatchetPlugin_Whisper PRIVATE whisper)
 endif()
 
 smatchet_apply_strict_warnings(SmatchetPlugin_Whisper)

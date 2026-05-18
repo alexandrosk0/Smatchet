@@ -152,10 +152,18 @@ option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lu
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
 option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin (push-to-talk; Phase A shell)" ON)
+# Sub-option — flip ON to fetch whisper.cpp v1.7.4 and link it into
+# SmatchetPlugin_Whisper. Default OFF gates the binary-size + MinGW UCRT build
+# risk away from the Phase C release; the WhisperLocal API surface still
+# compiles, but Transcribe() returns "local backend not built". See
+# docs/design/whisper-dictation.md § Deviations for the multi-PR rationale.
+option(SMATCHET_WHISPER_LOCAL_BACKEND
+    "Fetch + link whisper.cpp for on-device Whisper inference (large binary impact)" OFF)
 # Unreal-packaged DX12 artifacts intentionally ship without Whisper (WASAPI / whisper.cpp /
 # global-hotkey hook would pollute the Unreal header path). Mirror SMATCHET_WITH_MCP_UNREAL.
 if(SMATCHET_EMBEDDED_IN_UNREAL)
     set(SMATCHET_WITH_WHISPER OFF)
+    set(SMATCHET_WHISPER_LOCAL_BACKEND OFF)
 endif()
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
@@ -473,6 +481,24 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     add_subdirectory("${sol2_SOURCE_DIR}" "${sol2_BINARY_DIR}" EXCLUDE_FROM_ALL)
 endif()
 
+# whisper.cpp — optional local-inference backend for the Whisper dictation
+# plugin. Pinned to v1.7.4 (confirmed via `git ls-remote --tags`). CPU-only
+# build: examples / tests are turned off, no GGML_CUDA / GGML_VULKAN /
+# GGML_METAL backends. Sub-option SMATCHET_WHISPER_LOCAL_BACKEND defaults
+# OFF — see the option declaration above for the multi-PR rationale.
+if(SMATCHET_WITH_WHISPER AND SMATCHET_WHISPER_LOCAL_BACKEND)
+    smatchet_fetch_status("Fetching whisper.cpp v1.7.4...")
+    set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
+    set(GGML_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+    set(GGML_BUILD_TESTS       OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(whisper_cpp
+        GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
+        GIT_TAG v1.7.4)
+    FetchContent_MakeAvailable(whisper_cpp)
+endif()
+
 # Compile Dear ImGui (with GLFW and OpenGL3 backends)
 smatchet_fetch_status("Fetching Dear ImGui...")
 FetchContent_Declare(imgui
@@ -564,8 +590,15 @@ endif()
 # `build-windows-no-whisper` job — see .github/workflows/build-and-test.yml).
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+# Phase C — setup banner is source-list-conditional (gating layer 2). The TU
+# uses ImGui + ModelDownloader + ModelCatalog, all of which are inside the
+# Plugins/Whisper subtree's `if(SMATCHET_WITH_WHISPER)` gate. CMake adds the
+# TU only on the ON path; the OFF build never compiles it (call site in
+# SmatchetUI.cpp is wrapped `#if defined(SMATCHET_WITH_WHISPER) ... #endif`).
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
 if(SMATCHET_WITH_WHISPER)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
@@ -621,6 +654,12 @@ function(smatchet_configure_core_impl_target _target)
             "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
     if(SMATCHET_WITH_MCP)
         target_include_directories("${_target}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    endif()
+    if(SMATCHET_WITH_WHISPER)
+        # SmatchetWhisperSetupBanner.cpp (compiled into CORE_SOURCES on the ON
+        # path) includes ModelDownloader.h / ModelCatalog.h / WhisperConsentGate.h
+        # which live in the Plugins/Whisper/ subtree.
+        target_include_directories("${_target}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Whisper")
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         target_include_directories("${_target}" PRIVATE

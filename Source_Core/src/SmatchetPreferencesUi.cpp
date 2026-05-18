@@ -40,6 +40,13 @@
 #include "PluginHost.h"
 #endif
 
+#if defined(SMATCHET_WITH_WHISPER)
+#include "ModelCatalog.h"
+#include "ModelDownloader.h"
+#include "SmatchetWhisperSetupBanner.h"
+#include "WhisperConsentGate.h"
+#endif
+
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -905,6 +912,175 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             ImGui::SetItemTooltip("OFF (default): only the Global file + explicit Project path are used. ON: walks up "
                                   "the cwd chain looking for agents.md / AGENTS.md.");
+
+            ImGui::EndTabItem();
+        }
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+        // Whisper dictation Preferences tab — Phase C. Hotkey rebind UI lands
+        // in Phase E (read-only display here). Master toggle persists through
+        // MarkPrefsDirty (debounced save). Download / cancel buttons share the
+        // banner-owned ModelDownloader so a fetch started from the banner
+        // continues to show progress on this tab.
+        if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"))) {
+            ImGui::TextWrapped(
+                "Push-to-talk dictation. Hold the configured hotkey, speak, release. Transcription "
+                "runs locally when a Whisper model is on disk; falls back to OpenAI Whisper API "
+                "when no model is present (cloud mode requires an API key).");
+            ImGui::Spacing();
+
+            if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.enableToggle",
+                                                        "Enable voice dictation"),
+                                &d.cfg.WhisperEnabled)) {
+                if (d.cfg.WhisperEnabled) {
+                    d.cfg.WhisperSetupCompleted = true;
+                    d.cfg.WhisperSetupChoice = "enabled";
+                } else {
+                    d.cfg.WhisperSetupChoice = "disabled";
+                }
+                MarkPrefsDirty(d);
+            }
+
+            // Mode selector.
+            {
+                int modeIdx = 0;
+                if (d.cfg.WhisperMode == "local") {
+                    modeIdx = 1;
+                } else if (d.cfg.WhisperMode == "cloud") {
+                    modeIdx = 2;
+                }
+                const char* labels[3] = {
+                    SmatchetLocalization::T("whisper.preferences.modeAuto",
+                                            "Auto (local if present, cloud fallback)"),
+                    SmatchetLocalization::T("whisper.preferences.modeLocal", "Local only (no network)"),
+                    SmatchetLocalization::T("whisper.preferences.modeCloud", "Cloud only (OpenAI)")};
+                if (ImGui::Combo("Mode", &modeIdx, labels, 3)) {
+                    d.cfg.WhisperMode = (modeIdx == 1) ? "local" : (modeIdx == 2) ? "cloud" : "auto";
+                    MarkPrefsDirty(d);
+                }
+            }
+
+            // Model picker + download button.
+            const std::string sharedDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+            std::string modelDir;
+            if (!sharedDir.empty()) {
+                modelDir = sharedDir;
+                if (!modelDir.empty() && modelDir.back() != '/' && modelDir.back() != '\\') {
+                    modelDir.push_back('/');
+                }
+                modelDir += "whisper";
+            }
+            const auto& catalog = smatchet::whisper::catalog::All();
+            int selIdx = 1; // default Recommended
+            for (std::size_t i = 0; i < catalog.size(); ++i) {
+                if (catalog[i].Id == d.cfg.WhisperModel) {
+                    selIdx = static_cast<int>(i);
+                    break;
+                }
+            }
+            std::vector<std::string> labelStorage;
+            std::vector<const char*> labelPtrs;
+            labelStorage.reserve(catalog.size());
+            for (std::size_t i = 0; i < catalog.size(); ++i) {
+                std::string lbl = catalog[i].DisplayName + " (" + catalog[i].Id + ")";
+                if (smatchet::whisper::catalog::IsModelPresent(catalog[i].Id, modelDir)) {
+                    lbl += " ";
+                    lbl += SmatchetLocalization::T("whisper.preferences.modelPresent", "(installed)");
+                }
+                labelStorage.push_back(std::move(lbl));
+            }
+            labelPtrs.reserve(labelStorage.size());
+            for (const auto& s : labelStorage) {
+                labelPtrs.push_back(s.c_str());
+            }
+            if (ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"),
+                             &selIdx, labelPtrs.data(), static_cast<int>(labelPtrs.size()))) {
+                if (selIdx >= 0 && static_cast<std::size_t>(selIdx) < catalog.size()) {
+                    d.cfg.WhisperModel = catalog[static_cast<std::size_t>(selIdx)].Id;
+                    MarkPrefsDirty(d);
+                }
+            }
+
+            smatchet::whisper::ModelDownloader& dl = smatchet::whisper::banner::BannerOwnedDownloader();
+            const auto prog = dl.GetProgress();
+            const bool currentlyDownloading =
+                (prog.state == smatchet::whisper::ModelDownloader::State::Downloading) ||
+                (prog.state == smatchet::whisper::ModelDownloader::State::Verifying);
+            const bool modelPresent = smatchet::whisper::catalog::IsModelPresent(d.cfg.WhisperModel, modelDir);
+
+            ImGui::BeginDisabled(modelPresent || currentlyDownloading || modelDir.empty());
+            if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.downloadModel",
+                                                      "Download model"))) {
+                // Stamp fresh consent for the gate before the worker reads it.
+                d.cfg.WhisperConsentTimestampSec = smatchet::whisper::consent::NowEpochSec();
+                ConfigManager::Save(d.cfg);
+                std::string err;
+                if (!dl.Start(app, d.cfg.WhisperModel, modelDir, err)) {
+                    LOG_WARN("Whisper preferences: download dispatch failed: %s", err.c_str());
+                }
+            }
+            ImGui::EndDisabled();
+            if (currentlyDownloading) {
+                ImGui::SameLine();
+                if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.cancelDownload",
+                                                         "Cancel download"))) {
+                    dl.Cancel();
+                }
+                const float frac = (prog.bytesExpected > 0)
+                                       ? std::min(1.0f, static_cast<float>(prog.bytesReceived) /
+                                                            static_cast<float>(prog.bytesExpected))
+                                       : 0.0f;
+                ImGui::ProgressBar(frac, ImVec2(-1, 0));
+            }
+            if (!prog.error.empty()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s", prog.error.c_str());
+            }
+
+            // Hotkey display (read-only in Phase C).
+            ImGui::Separator();
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.hotkey",
+                                                           "Push-to-talk hotkey"));
+            ImGui::TextDisabled("%s",
+                                SmatchetLocalization::T("whisper.preferences.hotkeyReadonly",
+                                                        "Hotkey rebinding UI lands in Phase E. The "
+                                                        "active hotkey is:"));
+            ImGui::SameLine();
+            ImGui::TextUnformatted(d.cfg.WhisperHotkey.c_str());
+
+            // API key — passworded input, with fallback hint when empty + AiProvider=openai.
+            ImGui::Separator();
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.apiKey",
+                                                           "OpenAI API key (cloud mode)"));
+            static char s_whisperKeyBuf[512] = {0};
+            static bool s_whisperKeyBufSeeded = false;
+            if (!s_whisperKeyBufSeeded) {
+                std::snprintf(s_whisperKeyBuf, sizeof(s_whisperKeyBuf), "%s", d.cfg.WhisperApiKey.c_str());
+                s_whisperKeyBufSeeded = true;
+            }
+            if (ImGui::InputText("##WhisperApiKey", s_whisperKeyBuf, sizeof(s_whisperKeyBuf),
+                                 ImGuiInputTextFlags_Password)) {
+                d.cfg.WhisperApiKey = s_whisperKeyBuf;
+                MarkPrefsDirty(d);
+            }
+            if (d.cfg.WhisperApiKey.empty() && d.cfg.AiProviderKind == 0) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.apiKeyFallback",
+                                                                  "(uses AI Assistant OpenAI key when empty)"));
+            }
+
+            // Privacy disclosure — three-bullet list.
+            ImGui::Separator();
+            ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading",
+                                                           "Privacy disclosure"));
+            ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyLocal",
+                                                            "Local mode: audio stays on your machine; "
+                                                            "no network call is made."));
+            ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyCloud",
+                                                            "Cloud mode: audio is uploaded to OpenAI "
+                                                            "for transcription."));
+            ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyDisabled",
+                                                            "Disabled: no microphone access, no "
+                                                            "network call, no model download."));
 
             ImGui::EndTabItem();
         }

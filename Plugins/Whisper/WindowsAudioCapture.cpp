@@ -23,7 +23,9 @@
 
 #include "WindowsAudioCapture.h"
 
+#include "ConfigManager.h"
 #include "Logger.h"
+#include "WhisperConsentGate.h"
 
 #include <atomic>
 #include <cstdint>
@@ -205,6 +207,18 @@ WindowsAudioCapture::~WindowsAudioCapture() {
 bool WindowsAudioCapture::Start(std::string& outError) {
 #if defined(_WIN32)
     outError.clear();
+    // Consent invariant #1 — no mic access before user opt-in. Load the live
+    // config under the lock the cache uses (cheap); WhisperConsentGate gates
+    // on WhisperEnabled + WhisperSetupCompleted. Phase B builds (before this
+    // PR) bypassed the gate because the only call site was the CLI smoke
+    // command; Phase E adds the hotkey path which is the primary consumer.
+    {
+        const TrackerConfig cfg = ConfigManager::Load();
+        if (!smatchet::whisper::consent::CanCaptureMic(cfg)) {
+            outError = "consent required: enable Whisper dictation in Preferences first";
+            return false;
+        }
+    }
     if (running_.load(std::memory_order_acquire)) {
         outError = "capture already running";
         return false;

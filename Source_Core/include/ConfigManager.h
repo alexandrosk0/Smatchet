@@ -14,6 +14,7 @@
 // in the .cpp — nlohmann's adl_serializer finds them via ADL from any TU that includes
 // this header and uses j["…"] = config.QuickCommentTemplates.
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -282,6 +283,15 @@ struct TrackerConfig {
     // Falls back to AiApiKey only when this is empty AND AiProvider==OpenAi
     // (see docs/design/whisper-dictation.md § API key fallback rule).
     std::string WhisperApiKey;
+    // Unix epoch seconds stamped when the user actively clicked "Download +
+    // enable" in the setup banner or the "Download" button in Preferences.
+    // WhisperConsentGate::CanDownloadModel rejects any download whose stamp is
+    // older than the freshness window (30 s by default). Enforces consent
+    // invariant #2 ("no silent re-downloads, no resume-after-restart without
+    // re-confirming") — see docs/design/whisper-dictation.md § Consent
+    // invariants. Persisted so a future Preferences "re-run setup" flow can
+    // observe whether the user has ever consented.
+    std::int64_t WhisperConsentTimestampSec = 0;
 #endif
 
     // --- Transient UI state — not round-tripped through JSON. Reset on every launch. ---

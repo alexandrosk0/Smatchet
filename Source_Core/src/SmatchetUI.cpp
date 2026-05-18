@@ -28,6 +28,9 @@
 #include "SmatchetToast.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
+#if defined(SMATCHET_WITH_WHISPER)
+#include "SmatchetWhisperSetupBanner.h"
+#endif
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -503,6 +506,18 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
+#if defined(SMATCHET_WITH_WHISPER)
+    // Whisper first-run dictation setup banner — pinned under the menu bar,
+    // visible only while cfg.WhisperSetupCompleted == false. Renders nothing
+    // once the user has answered (Enable / No thanks). See
+    // docs/design/whisper-dictation.md § Setup banner spec.
+    if (!d.cfg.WhisperSetupCompleted && !d.cfg.ZenMode) {
+        SMATCHET_UI_PERF_SCOPE("SmatchetWhisperSetupBanner::Render");
+        if (smatchet::whisper::banner::Render(app, d.cfg)) {
+            ConfigManager::Save(d.cfg);
+        }
+    }
+#endif
     // Ctrl+Alt+D — toggle dock-node debug overlay.
     {
         const ImGuiIO& dbgIo = ::ImGui::GetIO();
