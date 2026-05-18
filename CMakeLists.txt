@@ -738,6 +738,12 @@ if(SMATCHET_WITH_MCP)
     add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp Plugins/Mcp/McpJsonRpcPure.cpp)
     target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
     target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreInterface SmatchetCoreMcpShim)
+    # See AI-shim note on SmatchetPlugin_LuaConsole — UiDrawSession layout depends on
+    # SMATCHET_WITH_AI. Plugins that include Source_Core headers must match the Source_Core
+    # define state or risk silent member-offset drift.
+    if(SMATCHET_WITH_AI)
+        target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreAiShim)
+    endif()
     smatchet_apply_strict_warnings(SmatchetPlugin_Mcp)
 endif()
 
@@ -759,6 +765,15 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
     if(SMATCHET_WITH_MCP)
         target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreMcpShim)
+    endif()
+    # SmatchetUiSession.h has a ~200-byte `#if defined(SMATCHET_WITH_AI)` block of `assistant*`
+    # members in the middle of `UiDrawSession`. Source_Core compiles with `SMATCHET_WITH_AI=1`
+    # (via `SmatchetCoreAiShim` on the OpenGL/DX targets) — without the matching shim on the
+    # plugin side every `g_ui.gridEditError` / `gridState` / `cachedSortedIndices` access from
+    # LuaConsole hits the wrong offset and corrupts memory. Crash signature: SIGSEGV inside
+    # `std::__cxx11::basic_string::clear()` on the Save / Reload / Run buttons.
+    if(SMATCHET_WITH_AI)
+        target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreAiShim)
     endif()
     smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
     if(MSVC)
