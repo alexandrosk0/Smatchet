@@ -161,9 +161,23 @@ if(SMATCHET_WITH_AGENTIC)
         # is dual-platform; the test runs on every CI matrix.
         Source_Core/ClaudeCodeLocalRunner.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/ClaudeCodeLocalRunner.cpp"
+        # H4 — AgenticHandoffController + HarnessRunState FSM. Drives a
+        # scripted FakeRunner through the full Pending->Spawning->Running->
+        # {Complete | AwaitingUser->Running->Complete | Failed | Cancelled}
+        # lifecycle and asserts on the captured audit-sink trail.
+        Source_Core/AgenticHandoffController.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticHandoffController.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
+
+# H4 — HarnessRunState FSM doctest. The FSM helpers are pure C++14 + always-
+# compiled in production (under SMATCHET_WITH_AGENTIC, but with no AGENTIC-
+# dependent symbols in the source), so the test runs in both gating states.
+target_sources(SmatchetTests PRIVATE
+    Source_Core/HarnessRunState.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/HarnessRunState.cpp"
+)
 
 # H2 — agent-file frontmatter assertion. The HandoffAgentFrontmatter test
 # itself does NOT depend on SMATCHET_WITH_AGENTIC (the agent file lives in

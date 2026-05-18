@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# H3 — agentic handoff CLI smoke. Skips cleanly when:
+# H4 — agentic handoff CLI smoke. Drives the new `handoff.*` commands
+# end-to-end via the Smatchet exe. Skips cleanly when:
 #   - The Smatchet exe is missing (e.g. ninja-iter-msys2 hasn't run yet).
-#   - SMATCHET_WITH_AGENTIC=OFF — the handoff command (lands in H4) isn't
-#     registered in the AGENTIC=OFF build, so the smoke has nothing to test.
+#   - SMATCHET_WITH_AGENTIC=OFF — the handoff commands resolve to stub
+#     handlers that always fail; the smoke can't distinguish that from a
+#     real failure, so it skips.
 #
-# H3 ships the runner primitives only; the `handoff.start` / `handoff.dry-run`
-# command itself lands in H4 with `AgenticHandoffController`. Until then the
-# smoke verifies that the AGENTIC=ON build still parses `cmd commands.list`
-# without error — the runner / seed-builder are linked but not yet
-# command-registered. Once H4 lands, this script's grep narrows from the
-# generic "AGENTIC commands present" check to "handoff command registered".
+# H4 surface checked:
+#   1. `commands.list` contains every `handoff.*` command name.
+#   2. `handoff.start --dry-run --proposal-id 99999` returns ok=true with the
+#      computed branch (`agent/99999/...`) + worktree
+#      (`.claude/worktrees/agent-99999`). Dry-run doesn't require a real
+#      proposal to exist, so the smoke is hermetic.
+#   3. `handoff.dry-run --proposal-id 99999 --use-stub-claude` returns the
+#      same shape (developer convenience entry point).
+#
+# Future phases extend this script with real handoff lifecycle assertions
+# (stub-claude end-to-end) once the proposal-insertion CLI is exposed.
 
 set -euo pipefail
 
@@ -32,29 +39,67 @@ if [[ -z "$EXE" ]]; then
     exit 0
 fi
 
-# Pull the registered command list; the exe interleaves `[spawn] ...` markers
-# inline with the JSON response, so we substring-match rather than parse.
-# Pattern mirrors the existing test-agentic-triage-cli.sh shape.
-RAW=$("$EXE" cmd commands.list --spawn 2>&1 || true)
+LIST_OUT=$("$EXE" cmd commands.list --spawn 2>&1 || true)
 
-# H3-only marker: AGENTIC-gated commands appear at all. From H4 onward the
-# substring narrows to `handoff.start` / `handoff.dry-run`. Until then the
-# `agent.triage.run` entry suffices to confirm AGENTIC=ON command registration.
-if ! echo "$RAW" | grep -q '"name":"agent\.triage\.run"' ; then
-    echo "[agentic-handoff-cli] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF or pre-H4)"
+# AGENTIC=OFF gates every handoff.* command to a stub that always fails. The
+# command names still register so commands.list lists them, but exercising
+# them returns errors not worth distinguishing in this smoke — skip cleanly.
+if ! echo "$LIST_OUT" | grep -q '"name":"agent\.triage\.run"' ; then
+    echo "[agentic-handoff-cli] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF)"
     exit 0
 fi
 
-# Sanity: the response envelope's command field is present + ok=true.
-if ! echo "$RAW" | grep -q '"command":"commands\.list"' ; then
-    echo "[agentic-handoff-cli] FAIL — commands.list command response not found in output"
-    echo "$RAW" | head -3
+# H4 invariant — every handoff.* command name must be present.
+for NAME in handoff.start handoff.cancel handoff.list handoff.clarify handoff.dry-run; do
+    if ! echo "$LIST_OUT" | grep -q "\"name\":\"${NAME//./\\.}\"" ; then
+        echo "[agentic-handoff-cli] FAIL — handoff command not registered: $NAME"
+        echo "$LIST_OUT" | head -3
+        exit 1
+    fi
+done
+
+# Drive handoff.start --dry-run. Dry-run is hermetic: no proposal row needed,
+# no runner spawned. The reply must report the canonical branch + worktree.
+# The CLI accepts `--name=value` for typed params (see cmd commands.help).
+START_OUT=$("$EXE" cmd handoff.start --proposal_id=99999 --dry_run=true --spawn 2>&1 || true)
+if ! echo "$START_OUT" | grep -q '"command":"handoff\.start"' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.start envelope missing"
+    echo "$START_OUT" | head -5
     exit 1
 fi
-if ! echo "$RAW" | grep -q '"ok":true' ; then
-    echo "[agentic-handoff-cli] FAIL — commands.list envelope did not report ok=true"
+if ! echo "$START_OUT" | grep -q '"ok":true' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.start dry-run did not return ok=true"
+    echo "$START_OUT" | head -5
+    exit 1
+fi
+if ! echo "$START_OUT" | grep -q '"worktree":".claude/worktrees/agent-99999"' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.start dry-run worktree shape unexpected"
+    echo "$START_OUT" | head -5
+    exit 1
+fi
+if ! echo "$START_OUT" | grep -q '"branch":"agent/99999/' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.start dry-run branch shape unexpected"
+    echo "$START_OUT" | head -5
     exit 1
 fi
 
-echo "[agentic-handoff-cli] PASS — AGENTIC commands present in registry"
+# Drive handoff.dry-run as a sanity check on the dedicated stub-claude entry.
+DRY_OUT=$("$EXE" cmd handoff.dry-run --proposal_id=99999 --use_stub_claude=true --spawn 2>&1 || true)
+if ! echo "$DRY_OUT" | grep -q '"command":"handoff\.dry-run"' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.dry-run envelope missing"
+    echo "$DRY_OUT" | head -5
+    exit 1
+fi
+if ! echo "$DRY_OUT" | grep -q '"ok":true' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.dry-run did not return ok=true"
+    echo "$DRY_OUT" | head -5
+    exit 1
+fi
+if ! echo "$DRY_OUT" | grep -q '"use_stub_claude":true' ; then
+    echo "[agentic-handoff-cli] FAIL — handoff.dry-run did not echo use_stub_claude"
+    echo "$DRY_OUT" | head -5
+    exit 1
+fi
+
+echo "[agentic-handoff-cli] PASS — handoff.* commands registered + dry-run round-trip ok"
 exit 0

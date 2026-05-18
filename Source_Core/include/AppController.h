@@ -58,7 +58,10 @@ class AgentProposalStore;
 // AgentProposalStore above.
 #include "AgenticInferenceClient.h"
 #include "AgenticTriageController.h"
+#include "AgenticHandoffController.h"
+#include "ClaudeCodeLocalRunner.h"
 #include "GitHubClient.h"
+#include "ICodingHarnessRunner.h"
 #endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
@@ -266,6 +269,15 @@ class AppController
     /// message instead of crashing. Owned by AppController; pointer is stable
     /// for the lifetime of the controller.
     smatchet::agentic::AgenticTriageController* GetAgenticTriageController() noexcept;
+
+    /// (H4) Lazily-constructed handoff controller. Backed by a
+    /// `ClaudeCodeLocalRunner` whose bin path comes from
+    /// `cfg.HandoffHarnessBinPath` (empty == resolve `claude` from PATH).
+    /// Returns nullptr when the proposal store is not initialised — the
+    /// CLI surfaces a friendly "configure GitHub PAT / check store init"
+    /// message instead of crashing. Pointer is stable for the lifetime of
+    /// the AppController; the underlying runner + sink are owned here.
+    smatchet::agentic::AgenticHandoffController* GetAgenticHandoffController() noexcept;
 
     /// (T7) Apply the current `cfg.AgenticPoll*` settings to the worker thread:
     /// joins the existing worker (if any), then re-launches when the master
@@ -1142,6 +1154,17 @@ class AppController
     std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;
     std::unique_ptr<smatchet::agentic::IInferenceClient> agenticInferenceAdapter_;
     std::unique_ptr<smatchet::agentic::AgenticTriageController> agenticTriageController_;
+
+    // (H4) Agentic handoff controller + its runner. Lazy-constructed by
+    // `GetAgenticHandoffController()` via the same `std::call_once` pattern as
+    // the triage controller above. The runner is a `ClaudeCodeLocalRunner` by
+    // default — future runner types (cloud, Codex, Aider) are selected via
+    // `cfg.HandoffRunnerName` once those land. The runner outlives the
+    // controller so a Spawn() in flight survives controller destruction
+    // gracefully (cancel atom flips, runner exits, dtor joins).
+    std::once_flag agenticHandoffControllerOnce_;
+    std::unique_ptr<CodingHarness::IRunner> agenticHandoffRunner_;
+    std::unique_ptr<smatchet::agentic::AgenticHandoffController> agenticHandoffController_;
 
     // Scheduled-poll worker (T7). Lifetime: started by `StartAgenticPollIfEnabled`
     // (called from Initialize end-of-init + Preferences-toggle handler), joined by
