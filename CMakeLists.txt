@@ -151,6 +151,12 @@ option(SMATCHET_WARNINGS_AS_ERRORS
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
+option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin (push-to-talk; Phase A shell)" ON)
+# Unreal-packaged DX12 artifacts intentionally ship without Whisper (WASAPI / whisper.cpp /
+# global-hotkey hook would pollute the Unreal header path). Mirror SMATCHET_WITH_MCP_UNREAL.
+if(SMATCHET_EMBEDDED_IN_UNREAL)
+    set(SMATCHET_WITH_WHISPER OFF)
+endif()
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
 option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
@@ -553,6 +559,17 @@ else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
 endif()
 
+# Whisper dictation router — same bindings/stubs split shape as Lua. Always exactly
+# one of the two TUs is compiled; both export identical symbols (enforced by the CI
+# `build-windows-no-whisper` job — see .github/workflows/build-and-test.yml).
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+if(SMATCHET_WITH_WHISPER)
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+else()
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+endif()
+
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
@@ -580,6 +597,9 @@ target_link_libraries(SmatchetCoreInterface INTERFACE
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
     target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_LUA_AUTOMATION=1)
+endif()
+if(SMATCHET_WITH_WHISPER)
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_WHISPER=1)
 endif()
 # MCP define is not on SmatchetCoreInterface: Unreal DX12 libs omit MCP without MSVC D9025 (/D vs /U clash).
 # Targets that compile MCP-gated code link SmatchetCoreMcpShim (PUBLIC) instead.
@@ -701,6 +721,12 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
     endif()
+endif()
+
+# Whisper dictation plugin — entire subtree is CMake-conditional (gating layer 6).
+# DX12 / Unreal builds keep SMATCHET_WITH_WHISPER=OFF and never see this file.
+if(SMATCHET_WITH_WHISPER)
+    add_subdirectory(Plugins/Whisper)
 endif()
 
 if(WIN32)
@@ -1020,6 +1046,9 @@ if(SMATCHET_WITH_MCP)
 endif()
 if(SMATCHET_WITH_LUA_AUTOMATION)
     target_link_libraries(SmatchetStandalone PRIVATE SmatchetPlugin_LuaConsole)
+endif()
+if(SMATCHET_WITH_WHISPER)
+    target_link_libraries(SmatchetStandalone PRIVATE SmatchetPlugin_Whisper)
 endif()
 
 if(WIN32)

@@ -103,6 +103,9 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 #include "LuaConsolePlugin.h"
 #endif
+#if defined(SMATCHET_WITH_WHISPER)
+#include "WhisperPlugin.h"
+#endif
 
 #ifndef GL_SHADING_LANGUAGE_VERSION
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
@@ -482,6 +485,10 @@ int main(int argc, char** argv) {
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         pluginHost.Register(std::make_unique<LuaConsolePlugin>());
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+        // Phase A shell — registers whisper.status; no audio / network / model access.
+        pluginHost.Register(std::make_unique<WhisperPlugin>());
 #endif
         pluginHost.OnEarlyInit(smatchetApp);
 

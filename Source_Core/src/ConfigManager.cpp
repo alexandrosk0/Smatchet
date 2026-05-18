@@ -225,6 +225,16 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
     j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
     j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
+#if defined(SMATCHET_WITH_WHISPER)
+    // Whisper dictation — Phase A schema (additive). Non-secret fields write
+    // here; WhisperApiKey is DPAPI-encrypted alongside AiApiKey below.
+    j["whisper_enabled"] = config.WhisperEnabled;
+    j["whisper_setup_completed"] = config.WhisperSetupCompleted;
+    j["whisper_setup_choice"] = config.WhisperSetupChoice;
+    j["whisper_mode"] = config.WhisperMode;
+    j["whisper_model"] = config.WhisperModel;
+    j["whisper_hotkey"] = config.WhisperHotkey;
+#endif
     j["mcp_enabled"] = config.McpEnabled;
     j["mcp_port"] = config.McpPort;
     j["mcp_allow_remote"] = config.McpAllowRemote;
@@ -336,6 +346,14 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("ai_anthropic_api_key");
     }
     j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
+#if defined(SMATCHET_WITH_WHISPER)
+    // WhisperApiKey — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
+    const std::string whisperApiKeyEnc = ProtectSecretForConfig(config.WhisperApiKey);
+    if (config.WhisperApiKey.empty() || !whisperApiKeyEnc.empty()) {
+        j.erase("whisper_api_key");
+    }
+    j["whisper_api_key_enc"] = whisperApiKeyEnc;
+#endif
 #else
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
@@ -347,6 +365,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["mcp_auth_token"] = config.McpAuthToken;
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
+#if defined(SMATCHET_WITH_WHISPER)
+    j.erase("whisper_api_key_enc");
+    j["whisper_api_key"] = config.WhisperApiKey;
+#endif
 #endif
     WriteConfigJson(j);
 }
@@ -587,9 +609,28 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
                 migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
             }
+#if defined(SMATCHET_WITH_WHISPER)
+            cfg.WhisperApiKey =
+                UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
+            if (cfg.WhisperApiKey.empty()) {
+                cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
+            }
+#endif
 #else
             cfg.AiApiKey = j.value("ai_api_key", std::string{});
             cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+#if defined(SMATCHET_WITH_WHISPER)
+            cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
+#endif
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+            // Whisper dictation — Phase A schema (additive; missing fields fall back to defaults).
+            cfg.WhisperEnabled = j.value("whisper_enabled", cfg.WhisperEnabled);
+            cfg.WhisperSetupCompleted = j.value("whisper_setup_completed", cfg.WhisperSetupCompleted);
+            cfg.WhisperSetupChoice = j.value("whisper_setup_choice", cfg.WhisperSetupChoice);
+            cfg.WhisperMode = j.value("whisper_mode", cfg.WhisperMode);
+            cfg.WhisperModel = j.value("whisper_model", cfg.WhisperModel);
+            cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
 #endif
             cfg.AiOllamaBaseUrl = j.value("ai_ollama_base_url", cfg.AiOllamaBaseUrl);
             cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);

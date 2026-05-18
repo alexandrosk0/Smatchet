@@ -544,12 +544,19 @@ Each phase PR body must include `lock-slug: whisper-dictation` so `.github/workf
 
 ## Implementation log
 
-_(populated as phases ship)_
+- Phase A — plugin shell + config schema + dictation router skeleton (PR pending). Adds `SMATCHET_WITH_WHISPER` CMake option (default ON, OFF under `SMATCHET_EMBEDDED_IN_UNREAL`), source-list bindings/stubs split for `DictationInsertionRouter_{Whisper,Stubs}.cpp`, `PUBLIC` define on `SmatchetCoreInterface`, `add_subdirectory(Plugins/Whisper)` + standalone link, `whisper.status` CLI command (`{enabled, mode, model_present, setup_completed}`), 7 additive config fields wrapped `#if defined(SMATCHET_WITH_WHISPER)` (`WhisperEnabled`, `WhisperSetupCompleted`, `WhisperSetupChoice`, `WhisperMode`, `WhisperModel`, `WhisperHotkey`, `WhisperApiKey` — DPAPI-encrypted mirroring `AiApiKey`), doctest at `tests/Source_Core/DictationInsertionRouter.test.cpp` exercising register/unregister round-trip + multi-buffer independence + `IsRecording()` default false + stub-mode no-op contract, CI sentinel job `windows-msys2-ucrt64-no-whisper` enforcing stub-drift detection.
 
 ## Deviations from plan
 
-_(populated as decisions diverge from the plan above; each item one-line rationale)_
+- **Plugin instantiation site**: plan packet named `Source_Core/src/AppController.cpp` as the write set entry. Established precedent (Mcp + LuaConsole) registers plugins from `Target_Standalone/main.cpp` via `PluginHost::Register(std::make_unique<...>())`, with the DX12 path doing the same from `Source_Core/src/SmatchetImGuiHost.cpp`. Phase A instantiates `WhisperPlugin` in `main.cpp` (DX12 path skipped — Whisper is gated OFF under `SMATCHET_EMBEDDED_IN_UNREAL`). Keeps the existing plugin-host contract; avoids inventing a parallel plugin lifetime inside `AppController`.
+- **`add_subdirectory(Plugins/Whisper)` vs. inline target**: plan packet bullet 1 said "add_subdirectory only when option is ON" but McpPlugin / LuaConsolePlugin are declared inline in the root `CMakeLists.txt`. Phase A uses `add_subdirectory` per the packet's explicit instruction and Plugins/Whisper/CMakeLists.txt write set entry — gives Phase B+ a cleaner home for whisper.cpp / cpr / WASAPI deps without polluting the root file.
 
 ## Verification
 
-_(populated per phase: what was tested + result — passed / failed / not-run)_
+- Phase A:
+  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 picks up the stubs TU; Standalone the real router).
+  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode standalone compiles green.
+  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes including the new `DictationInsertionRouter.test.cpp` cases.
+  - `Smatchet.exe cmd whisper.status` — returns `{"enabled": false, "mode": "auto", "model_present": false, "setup_completed": false}` on a fresh profile.
+  - `bash scripts/dev/test-all.sh` — full sweep green.
+  - CI job `windows-msys2-ucrt64-no-whisper` — added in the same PR; sentinel for stubs/bindings drift.
