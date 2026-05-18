@@ -54,6 +54,15 @@ if [ "$PASSED" = "?" ] || [ "$FAILED" = "?" ]; then
 fi
 
 echo "Passed: $PASSED  Failed: $FAILED"
+# Bundle C CR#231:60 — fail on zero tests run. A green "Passed: 0  Failed: 0"
+# result previously slipped through because the script only checked the
+# FAILED counter. If the bucket-E filter no longer matches any test case
+# (rename, refactor, build drift), surface that as a regression rather than
+# report a misleading pass.
+if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
+    echo "FAIL: no tests ran (filter='$FILTER' matched nothing). Likely cause: bucket-E test renamed or excluded." >&2
+    exit 1
+fi
 if [ "$FAILED" != "0" ]; then
     exit 1
 fi

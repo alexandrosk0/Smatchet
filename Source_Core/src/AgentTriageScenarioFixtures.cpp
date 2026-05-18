@@ -27,11 +27,17 @@ std::string GetStr(const nlohmann::json& obj, const char* key, const std::string
 } // namespace
 
 std::int64_t ParseIso8601Utc(const std::string& iso) {
-    // Strict `YYYY-MM-DDTHH:MM:SSZ`. Anything else returns 0. We avoid
-    // std::get_time + std::mktime because Windows MSVC + UCRT do not provide
-    // a portable UTC timegm() and we want zero TZ dependence. The arithmetic
-    // here is the standard "days-since-epoch + seconds-of-day" decomposition.
-    if (iso.size() < 20) return 0;
+    // Strict `YYYY-MM-DDTHH:MM:SSZ` — exactly 20 chars. Anything else returns 0.
+    // We avoid std::get_time + std::mktime because Windows MSVC + UCRT do not
+    // provide a portable UTC timegm() and we want zero TZ dependence. The
+    // arithmetic here is the standard "days-since-epoch + seconds-of-day"
+    // decomposition.
+    //
+    // Bundle C CR#233:41 — require exact length match. The previous `< 20`
+    // check silently accepted any longer prefix (`2026-05-10T14:23:11Z+extra`)
+    // by letting sscanf parse the first 20 chars and ignore the tail. Strict
+    // exact-length matches the production parser in GitHubClientHelpers.
+    if (iso.size() != 20) return 0;
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
     char tsep = 0, zsep = 0;
     // %d picks up leading zeros via the standard format; the literal

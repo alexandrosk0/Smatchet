@@ -80,6 +80,7 @@ bool RowToProposal(SQLite::Statement& q, AgentProposal& out, std::string& outErr
 // or takes the address of the constant needs this definition to satisfy the
 // linker.
 constexpr int AgentProposalStore::kCurrentSchemaVersion;
+constexpr std::size_t AgentProposalStore::kMaxFilterStates;
 
 AgentProposalStore::AgentProposalStore(const std::string& dbPath)
     : db_(std::unique_ptr<SQLite::Database>(
@@ -345,12 +346,25 @@ bool AgentProposalStore::Query(const Filter& f, std::vector<AgentProposal>& out,
     out.clear();
     outError.clear();
     try {
+        // Bundle C — cap Filter::states defensively. The vector is concatenated
+        // into a SQL `IN (?, ?, ...)` placeholder list; an unbounded caller-
+        // supplied vector would compile a correspondingly large statement.
+        // Truncate (rather than reject) so the typical 1-5 entry use-case
+        // continues to work; a caller exceeding the cap sees a one-shot warning
+        // and the first kMaxFilterStates entries are used.
+        std::vector<AgentProposalState> states = f.states;
+        if (states.size() > kMaxFilterStates) {
+            LOG_WARN("AgentProposalStore::Query: Filter::states capped from %zu to %zu",
+                     states.size(), static_cast<std::size_t>(kMaxFilterStates));
+            states.resize(kMaxFilterStates);
+        }
+
         std::string sql = "SELECT id, source_tracker, issue_key, action, rationale, payload_json, "
                           "state, created_at_sec, last_updated_at_sec, apply_error FROM agent_proposals";
         std::vector<std::string> whereClauses;
-        if (!f.states.empty()) {
+        if (!states.empty()) {
             std::string inList;
-            for (size_t i = 0; i < f.states.size(); ++i) {
+            for (size_t i = 0; i < states.size(); ++i) {
                 if (i > 0)
                     inList += ", ";
                 inList += "?";
@@ -374,7 +388,7 @@ bool AgentProposalStore::Query(const Filter& f, std::vector<AgentProposal>& out,
 
         SQLite::Statement q(*db_, sql);
         int idx = 1;
-        for (const auto s : f.states) {
+        for (const auto s : states) {
             q.bind(idx++, AgentProposalStateToString(s));
         }
         if (!f.sourceTracker.empty()) {

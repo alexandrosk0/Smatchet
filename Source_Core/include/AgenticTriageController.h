@@ -1,6 +1,6 @@
 // AgenticTriageController — the orchestrator class that wires the three layers
-// shipped in T2-T4 (GitHub read+write, LLM inference, SQLite proposal store)
-// into a single end-to-end triage entry point.
+// (GitHub read+write, LLM inference, SQLite proposal store) into a single
+// end-to-end triage entry point.
 //
 // Two operations:
 //   - TriageIssue(issueKey) — pulls body + comments, invokes inference,
@@ -9,9 +9,9 @@
 //     iterates TriageIssue. Bound to 30 issues per call (predictable LLM cost).
 //
 // Threading: synchronous. The CLI thread is fine; UI callers must wrap in
-// `LaunchBackgroundTask` per the pillar-2 contract. The scheduled-poll path
-// (T7) is the first UI-thread-reachable caller and brings its Pattern A
-// wrap-up with it.
+// `LaunchBackgroundTask` per the pillar-2 contract. The scheduled-poll worker
+// is the first UI-thread-reachable caller and brings its Pattern A wrap-up
+// with it.
 //
 // Testability: the controller depends on two small read-only interfaces
 // (IGitHubReadClient + IInferenceClient) rather than the concrete
@@ -100,18 +100,23 @@ class AgenticTriageController {
         std::vector<std::pair<std::string, std::string>> perIssueErrors; // (issueKey, error)
     };
 
-    // Triage every open issue in `query` for the named source. T5 supports
-    // `sourceTracker == "github"` only; `query` is `OWNER/REPO`. Issue
+    // Triage every open issue in `query` for the named source. Only
+    // `sourceTracker == "github"` is supported today; `query` is `OWNER/REPO`. Issue
     // discovery is bounded by the source-side ListOpenIssuesForRepo cap
     // (30 issues). Per-issue triage failures are recorded in
     // outResult.perIssueErrors and do NOT abort the batch — a transient HTTP
     // failure on issue N+1 leaves N's proposals intact.
     //
+    // `maxIssues` truncates the discovered issue list to at most that many
+    // before iterating (0 = no extra cap beyond what discovery returned).
+    // Used by the CLI's `--limit` flag so a dry-run doesn't burn the full
+    // discovery cap. Bundle C CR#230:111.
+    //
     // Returns true if the discovery call succeeded (regardless of per-issue
     // failure count). Returns false on argument-validation failure or a
     // discovery-level failure (network / auth); outError carries the cause.
     bool TriageBatch(const std::string& sourceTracker, const std::string& query, BatchResult& outResult,
-                     std::string& outError);
+                     std::string& outError, int maxIssues = 0);
 
   private:
     IGitHubReadClient* github_;

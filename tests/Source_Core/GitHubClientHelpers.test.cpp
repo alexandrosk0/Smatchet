@@ -19,11 +19,15 @@ using GitHubClientHelpers::BuildStateTransitionBody;
 using GitHubClientHelpers::ExtractGitHubErrorMessage;
 using GitHubClientHelpers::FormatGitHubIssueKey;
 using GitHubClientHelpers::FormatUnixSecAsIso8601;
+using GitHubClientHelpers::IsValidGitHubBaseUrl;
 using GitHubClientHelpers::IsValidStateTransitionTarget;
+using GitHubClientHelpers::kMaxGitHubRequestBodyBytes;
 using GitHubClientHelpers::ParsedIssueKey;
 using GitHubClientHelpers::ParseGitHubIssueKey;
+using GitHubClientHelpers::ParseGitHubRepoKey;
 using GitHubClientHelpers::ParseIso8601ToUnixSec;
 using GitHubClientHelpers::PercentEncodePathSegment;
+using GitHubClientHelpers::ShouldRejectAsTooLarge;
 
 TEST_CASE("ParseGitHubIssueKey — happy path") {
     SUBCASE("canonical owner/repo#N") {
@@ -383,6 +387,183 @@ TEST_CASE("ExtractGitHubErrorMessage — surfaces .message when present") {
     SUBCASE("message field is not a string — returns false") {
         CHECK_FALSE(ExtractGitHubErrorMessage("{\"message\":42}", msg));
     }
+}
+
+// ─── Bundle C: ParseGitHubRepoKey (shared OWNER/REPO parser) ────────────────
+
+TEST_CASE("ParseGitHubRepoKey — happy path") {
+    std::string owner;
+    std::string repo;
+    std::string err;
+    SUBCASE("canonical owner/repo") {
+        CHECK(ParseGitHubRepoKey("smatchet/example", owner, repo, err));
+        CHECK(err.empty());
+        CHECK(owner == "smatchet");
+        CHECK(repo == "example");
+    }
+    SUBCASE("hyphens / underscores / digits — same set ParseGitHubIssueKey accepts") {
+        CHECK(ParseGitHubRepoKey("acme-corp/my_repo-v2", owner, repo, err));
+        CHECK(owner == "acme-corp");
+        CHECK(repo == "my_repo-v2");
+    }
+}
+
+TEST_CASE("ParseGitHubRepoKey — error cases") {
+    std::string owner;
+    std::string repo;
+    std::string err;
+    SUBCASE("empty input") {
+        CHECK_FALSE(ParseGitHubRepoKey("", owner, repo, err));
+        CHECK(err.find("empty") != std::string::npos);
+    }
+    SUBCASE("missing slash") {
+        CHECK_FALSE(ParseGitHubRepoKey("owner-repo", owner, repo, err));
+        CHECK(err.find("'/'") != std::string::npos);
+    }
+    SUBCASE("more than one slash (owner/team/repo)") {
+        CHECK_FALSE(ParseGitHubRepoKey("owner/team/repo", owner, repo, err));
+        CHECK(err.find("exactly one") != std::string::npos);
+    }
+    SUBCASE("empty owner") {
+        CHECK_FALSE(ParseGitHubRepoKey("/repo", owner, repo, err));
+        CHECK(err.find("empty owner") != std::string::npos);
+    }
+    SUBCASE("empty repo") {
+        CHECK_FALSE(ParseGitHubRepoKey("owner/", owner, repo, err));
+        CHECK(err.find("empty repo") != std::string::npos);
+    }
+    SUBCASE("leading whitespace") {
+        CHECK_FALSE(ParseGitHubRepoKey("  owner/repo", owner, repo, err));
+        CHECK(err.find("whitespace") != std::string::npos);
+    }
+    SUBCASE("trailing whitespace") {
+        CHECK_FALSE(ParseGitHubRepoKey("owner/repo  ", owner, repo, err));
+        CHECK(err.find("whitespace") != std::string::npos);
+    }
+    SUBCASE("embedded tab") {
+        CHECK_FALSE(ParseGitHubRepoKey("own\ter/repo", owner, repo, err));
+        CHECK(err.find("whitespace") != std::string::npos);
+    }
+    SUBCASE("embedded space") {
+        CHECK_FALSE(ParseGitHubRepoKey("owner repo/x", owner, repo, err));
+        CHECK(err.find("whitespace") != std::string::npos);
+    }
+}
+
+// ─── Bundle C: per-month day validation in ParseIso8601ToUnixSec (CR PR#226:172) ─
+
+TEST_CASE("ParseIso8601ToUnixSec — per-month day validation") {
+    std::int64_t ts = 0;
+    std::string err;
+    // February non-leap year: 28 days
+    SUBCASE("Feb 28 (2023 non-leap year) — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2023-02-28T00:00:00Z", ts, err));
+    }
+    SUBCASE("Feb 29 (2023 non-leap year) — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2023-02-29T00:00:00Z", ts, err));
+        CHECK(err.find("day out of range") != std::string::npos);
+    }
+    SUBCASE("Feb 29 (2024 leap year) — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2024-02-29T00:00:00Z", ts, err));
+    }
+    SUBCASE("Feb 30 (any year) — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-02-30T00:00:00Z", ts, err));
+        CHECK(err.find("day out of range") != std::string::npos);
+    }
+    SUBCASE("April 30 — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2024-04-30T00:00:00Z", ts, err));
+    }
+    SUBCASE("April 31 — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-04-31T00:00:00Z", ts, err));
+        CHECK(err.find("day out of range") != std::string::npos);
+    }
+    SUBCASE("June 30 — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2024-06-30T00:00:00Z", ts, err));
+    }
+    SUBCASE("June 31 — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-06-31T00:00:00Z", ts, err));
+    }
+    SUBCASE("September 30 — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2024-09-30T00:00:00Z", ts, err));
+    }
+    SUBCASE("September 31 — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-09-31T00:00:00Z", ts, err));
+    }
+    SUBCASE("November 30 — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2024-11-30T00:00:00Z", ts, err));
+    }
+    SUBCASE("November 31 — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-11-31T00:00:00Z", ts, err));
+    }
+    SUBCASE("December 31 — accepted (31-day month)") {
+        CHECK(ParseIso8601ToUnixSec("2024-12-31T00:00:00Z", ts, err));
+    }
+    SUBCASE("Century non-leap (2100) Feb 29 — rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2100-02-29T00:00:00Z", ts, err));
+    }
+    SUBCASE("400-year leap (2000) Feb 29 — accepted") {
+        CHECK(ParseIso8601ToUnixSec("2000-02-29T00:00:00Z", ts, err));
+    }
+    SUBCASE("day=0 still rejected") {
+        CHECK_FALSE(ParseIso8601ToUnixSec("2024-01-00T00:00:00Z", ts, err));
+        CHECK(err.find("day out of range") != std::string::npos);
+    }
+}
+
+// ─── Bundle C: IsValidGitHubBaseUrl (M — base-URL validation) ───────────────
+
+TEST_CASE("IsValidGitHubBaseUrl — happy + rejection") {
+    std::string err;
+    SUBCASE("canonical api.github.com") {
+        CHECK(IsValidGitHubBaseUrl("https://api.github.com", err));
+        CHECK(err.empty());
+    }
+    SUBCASE("GitHub Enterprise shape") {
+        CHECK(IsValidGitHubBaseUrl("https://github.acme.com/api/v3", err));
+        CHECK(err.empty());
+    }
+    SUBCASE("empty rejected") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("", err));
+        CHECK(err.find("empty") != std::string::npos);
+    }
+    SUBCASE("http (not https) rejected") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("http://api.github.com", err));
+        CHECK(err.find("https://") != std::string::npos);
+    }
+    SUBCASE("dangerous schemes rejected — javascript:") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("javascript:alert(1)", err));
+    }
+    SUBCASE("dangerous schemes rejected — file:") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("file:///etc/passwd", err));
+    }
+    SUBCASE("dangerous schemes rejected — data:") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("data:text/plain,xxx", err));
+    }
+    SUBCASE("https:// with no host rejected") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("https://", err));
+    }
+    SUBCASE("case-sensitive scheme — HTTPS:// rejected") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("HTTPS://api.github.com", err));
+    }
+    SUBCASE("whitespace embedded rejected") {
+        CHECK_FALSE(IsValidGitHubBaseUrl("https://api.github.com /", err));
+        CHECK(err.find("whitespace") != std::string::npos);
+    }
+}
+
+// ─── Bundle C: ShouldRejectAsTooLarge (M — body size cap) ───────────────────
+
+TEST_CASE("ShouldRejectAsTooLarge — outbound body cap") {
+    CHECK_FALSE(ShouldRejectAsTooLarge(0));
+    CHECK_FALSE(ShouldRejectAsTooLarge(1));
+    CHECK_FALSE(ShouldRejectAsTooLarge(kMaxGitHubRequestBodyBytes / 2));
+    CHECK_FALSE(ShouldRejectAsTooLarge(kMaxGitHubRequestBodyBytes - 1));
+    // Boundary: == cap is OK (cap is the maximum acceptable size).
+    CHECK_FALSE(ShouldRejectAsTooLarge(kMaxGitHubRequestBodyBytes));
+    // Just over the cap is rejected.
+    CHECK(ShouldRejectAsTooLarge(kMaxGitHubRequestBodyBytes + 1));
+    // Order-of-magnitude oversize is rejected.
+    CHECK(ShouldRejectAsTooLarge(kMaxGitHubRequestBodyBytes * 10));
 }
 
 // ─── T2: recorded-fixture parse against the sample github_issues_sample.json ─

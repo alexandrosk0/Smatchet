@@ -528,6 +528,14 @@ const TranslationEntry kEntries[] = {
     {"agent.proposals.empty", "No pending proposals. Run `agent.triage.run` to generate proposals.",
      u8"Aucune proposition en attente. Exécutez `agent.triage.run` pour en générer."},
     {"agent.proposals.menuToggle", "Agent proposals", u8"Propositions de l'agent"},
+    {"agent.proposals.initializing", "Initializing agent proposal store...",
+     u8"Initialisation du magasin de propositions de l'agent..."},
+    {"agent.proposals.refreshErrorPrefix", "  (refresh error: %s)",
+     u8"  (erreur d'actualisation : %s)"},
+    {"agent.proposals.rationaleEmpty", "(empty)", u8"(vide)"},
+    {"agent.proposals.toastTitle", "Agent proposals", u8"Propositions de l'agent"},
+    {"agent.proposals.toastStoreUnavailable", "Proposal store unavailable.",
+     u8"Magasin de propositions indisponible."},
 };
 
 std::mutex& LocalizationMutex() {

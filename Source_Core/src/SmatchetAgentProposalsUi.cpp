@@ -122,9 +122,12 @@ void TransitionAndToast(AppController& app, AgentProposal& row, AgentProposalSta
             BackendAuditTrail::AppendEvent(smatchet::agentic::pure::MakeResultEvent(
                 proposalId, issueKey, fromState, target, operationId, /*success*/ false,
                 /*error*/ "Proposal store unavailable."));
-            app.mainThreadDispatcher.PostToMainThread([]() {
-                SmatchetToastManager::Instance().Push("Agent proposals", "Proposal store unavailable.",
-                                                      ToastType::Error, 4000);
+            const std::string toastTitle =
+                SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+            const std::string toastMsg =
+                SmatchetLocalization::T("agent.proposals.toastStoreUnavailable", "Proposal store unavailable.");
+            app.mainThreadDispatcher.PostToMainThread([toastTitle, toastMsg]() {
+                SmatchetToastManager::Instance().Push(toastTitle, toastMsg, ToastType::Error, 4000);
             });
             return;
         }
@@ -136,8 +139,10 @@ void TransitionAndToast(AppController& app, AgentProposal& row, AgentProposalSta
             LOG_WARN("SmatchetAgentProposalsUi: Transition id=%lld -> %s failed: %s",
                      static_cast<long long>(proposalId), AgentProposalStateToString(target), err.c_str());
             const std::string toastErr = err;
-            app.mainThreadDispatcher.PostToMainThread([toastErr]() {
-                SmatchetToastManager::Instance().Push("Agent proposals", toastErr, ToastType::Error, 5000);
+            const std::string toastTitle =
+                SmatchetLocalization::T("agent.proposals.toastTitle", "Agent proposals");
+            app.mainThreadDispatcher.PostToMainThread([toastTitle, toastErr]() {
+                SmatchetToastManager::Instance().Push(toastTitle, toastErr, ToastType::Error, 5000);
             });
             return;
         }
@@ -185,7 +190,9 @@ void Render(AppController& app, UiDrawSession& d) {
                 static_cast<int>(g_proposalsCache.size()));
     if (!g_lastRefreshError.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.55f, 1.0f), "  (refresh error: %s)", g_lastRefreshError.c_str());
+        const char* errPrefix = SmatchetLocalization::T("agent.proposals.refreshErrorPrefix",
+                                                        "  (refresh error: %s)");
+        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.55f, 1.0f), errPrefix, g_lastRefreshError.c_str());
     }
 
     if (ImGui::SmallButton(SmatchetLocalization::T("agent.proposals.refresh", "Refresh"))) {
@@ -209,7 +216,13 @@ void Render(AppController& app, UiDrawSession& d) {
     ImGui::BeginChild("##AgentProposalsList", ImVec2(0.0f, 0.0f), false);
     for (size_t i = 0; i < g_proposalsCache.size(); ++i) {
         AgentProposal& row = g_proposalsCache[i];
-        ImGui::PushID(static_cast<int>(row.id));
+        // Bundle C CR#231:151 — PushID by pointer rather than narrowing the int64
+        // ROWID to `int`. SQLite ROWIDs are 64-bit; once a proposals db crosses
+        // 2^31 inserts (over its lifetime) the cast would alias older rows and
+        // ImGui state (open/closed CollapsingHeader, focused widget) would leak
+        // between rows. Pointer-based PushID is stable per-call and unique across
+        // the visible cache.
+        ImGui::PushID(&row);
 
         // Header — issueKey + bracketed action name. Issue title is deferred
         // (T7 may add it via FetchIssueBody-on-insert) so we show only the
@@ -229,7 +242,7 @@ void Render(AppController& app, UiDrawSession& d) {
                     ImGui::TreePop();
                 }
             } else if (row.rationale.empty()) {
-                ImGui::TextDisabled("(empty)");
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.proposals.rationaleEmpty", "(empty)"));
             } else {
                 ImGui::TextWrapped("%s", row.rationale.c_str());
             }

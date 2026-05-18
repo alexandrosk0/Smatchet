@@ -17,7 +17,8 @@
 // pillar 2 mandates no synchronous HTTP from ImGui frames.
 //
 // AgentProposal SQLite persistence (id, lifecycle state, source-tracker
-// linkage) lands in T4. T3 ships the in-memory ProposalDraft surface only.
+// linkage) lives in AgentProposalStore; this client returns in-memory
+// ProposalDraft rows only.
 
 class AgenticInferenceClient {
   public:

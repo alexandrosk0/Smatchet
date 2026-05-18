@@ -284,17 +284,21 @@ TEST_CASE("AgenticTriageController::TriageBatch rejects malformed OWNER/REPO que
     smatchet::agentic::AgenticTriageController::BatchResult result;
     std::string err;
 
+    // Bundle C C-H1 — error messages now come from the shared
+    // GitHubClientHelpers::ParseGitHubRepoKey helper. Match the shared parser's
+    // exact wording.
+
     // No slash.
     CHECK_FALSE(ctrl.TriageBatch("github", "acmerepo", result, err));
-    CHECK(err.find("must contain '/'") != std::string::npos);
+    CHECK(err.find("missing '/'") != std::string::npos);
 
     // Empty owner.
     CHECK_FALSE(ctrl.TriageBatch("github", "/repo", result, err));
-    CHECK(err.find("non-empty") != std::string::npos);
+    CHECK(err.find("empty owner") != std::string::npos);
 
     // Empty repo.
     CHECK_FALSE(ctrl.TriageBatch("github", "acme/", result, err));
-    CHECK(err.find("non-empty") != std::string::npos);
+    CHECK(err.find("empty repo") != std::string::npos);
 
     // Too many slashes.
     CHECK_FALSE(ctrl.TriageBatch("github", "acme/team/repo", result, err));

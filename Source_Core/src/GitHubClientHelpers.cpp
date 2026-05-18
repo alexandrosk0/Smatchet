@@ -125,6 +125,53 @@ bool ParseGitHubIssueKey(const std::string& key, ParsedIssueKey& out, std::strin
     return true;
 }
 
+bool ParseGitHubRepoKey(const std::string& query, std::string& outOwner, std::string& outRepo, std::string& outError) {
+    outOwner.clear();
+    outRepo.clear();
+    outError.clear();
+
+    if (query.empty()) {
+        outError = "OWNER/REPO query is empty.";
+        return false;
+    }
+    // Strict whitespace rejection — surface the typo, do not silently trim. Mirrors
+    // the issue-key parser's leading-whitespace check and extends it to trailing
+    // whitespace + any whitespace embedded between owner / repo (which a single
+    // `/` separator search would silently accept otherwise).
+    for (std::size_t i = 0; i < query.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(query[i]);
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            outError = "OWNER/REPO query contains whitespace.";
+            return false;
+        }
+    }
+
+    const std::size_t slash = query.find('/');
+    if (slash == std::string::npos) {
+        outError = "OWNER/REPO query missing '/' separator.";
+        return false;
+    }
+    if (query.find('/', slash + 1) != std::string::npos) {
+        outError = "OWNER/REPO query must have exactly one '/' separator.";
+        return false;
+    }
+
+    const std::string owner = query.substr(0, slash);
+    const std::string repo = query.substr(slash + 1);
+    if (owner.empty()) {
+        outError = "OWNER/REPO query has empty owner segment.";
+        return false;
+    }
+    if (repo.empty()) {
+        outError = "OWNER/REPO query has empty repo segment.";
+        return false;
+    }
+
+    outOwner = owner;
+    outRepo = repo;
+    return true;
+}
+
 std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number) {
     // Manual int64 → string to avoid bringing <sstream> into the call path. Negative numbers
     // are emitted with a leading `-`; the parser then rejects them on round-trip, surfacing
@@ -202,8 +249,16 @@ bool ParseIso8601ToUnixSec(const std::string& iso8601, std::int64_t& outUnixSec,
         outError = "ISO-8601 month out of range.";
         return false;
     }
-    if (day < 1 || day > 31) {
-        outError = "ISO-8601 day out of range.";
+    // Per-month day validation. The bare `day <= 31` check that previously lived
+    // here accepted nonsense dates like Feb 30 / Apr 31 / Feb 29 in non-leap years
+    // and let the underlying `timegm` silently normalise them into the following
+    // month, producing a wrong cursor value. Delegate to the shared days-in-month
+    // table (TrackerDateTimePure::DaysInMonth) which already encodes the
+    // 31 / 28-29 / 31 / 30 / 31 / 30 / 31 / 31 / 30 / 31 / 30 / 31 layout plus
+    // the proleptic-Gregorian leap-year rule for February.
+    const int maxDay = TrackerDateTimePure::DaysInMonth(year, month);
+    if (day < 1 || day > maxDay) {
+        outError = "ISO-8601 day out of range for given month.";
         return false;
     }
     if (hour > 23 || minute > 59 || second > 60) { // 60 — allow leap-second per RFC3339.
@@ -241,10 +296,22 @@ std::string FormatUnixSecAsIso8601(std::int64_t unixSec) {
 #if defined(_WIN32)
     // Windows ships gmtime_s with reversed param order; both POSIX and MSVCR
     // variants are reentrant. The non-_s gmtime returns a pointer to a static
-    // buffer — not safe for the worker-thread cursor invocation.
-    gmtime_s(&utc, &t);
+    // buffer — not safe for the worker-thread cursor invocation. gmtime_s
+    // returns 0 on success; non-zero indicates EINVAL on an out-of-range time_t
+    // (e.g. on 32-bit time_t targets past 2038). Bundle C — fall back to the
+    // epoch sentinel so the cursor URL is still well-formed; the caller's
+    // wall-clock-now invocation cannot trip this branch on a 64-bit time_t but
+    // the defensive check keeps the function total.
+    if (gmtime_s(&utc, &t) != 0) {
+        return "1970-01-01T00:00:00Z";
+    }
 #else
-    gmtime_r(&t, &utc);
+    // gmtime_r returns nullptr on failure (same out-of-range causes as the
+    // Windows path). Same epoch-sentinel fallback so callers never see an
+    // empty / partial timestamp string.
+    if (gmtime_r(&t, &utc) == nullptr) {
+        return "1970-01-01T00:00:00Z";
+    }
 #endif
     // Manual 20-char layout (snprintf would format-flag-route through locale on
     // some libc builds). Year is clamped at 9999 — the cursor will not see a
@@ -351,6 +418,44 @@ nlohmann::json BuildStateTransitionBody(const std::string& state) {
 bool IsValidStateTransitionTarget(const std::string& state) {
     // Enum-strict per agentic-flow-implementation.md § Decisions locked #3.
     return state == "open" || state == "closed";
+}
+
+bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
+    outError.clear();
+    if (baseUrl.empty()) {
+        outError = "GitHub base URL is empty.";
+        return false;
+    }
+    // Case-sensitive `https://` prefix check. Dangerous schemes (`javascript:`,
+    // `file:`, `data:`, `gopher:`, plain `http:` over the open internet, etc.)
+    // fall through to the explicit rejection so a hostile config write cannot
+    // redirect traffic. Trailing slashes on the authority itself are fine; the
+    // GitHubClient ctor strips them via StripTrailingSlash.
+    const std::string kScheme = "https://";
+    if (baseUrl.size() <= kScheme.size() || baseUrl.compare(0, kScheme.size(), kScheme) != 0) {
+        outError = "GitHub base URL must start with 'https://' (got '" + baseUrl + "').";
+        return false;
+    }
+    // Reject `https://` with no authority. The substring check above already
+    // refuses `https://`-exact via `<=` rather than `<`; an explicit guard
+    // mirrors the issue-key parser's "empty owner" message shape.
+    if (baseUrl.size() == kScheme.size()) {
+        outError = "GitHub base URL is missing host after scheme.";
+        return false;
+    }
+    // Reject whitespace anywhere — same strictness as the OWNER/REPO parser.
+    for (std::size_t i = 0; i < baseUrl.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(baseUrl[i]);
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            outError = "GitHub base URL contains whitespace.";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ShouldRejectAsTooLarge(std::size_t bodyByteLength) {
+    return bodyByteLength > kMaxGitHubRequestBodyBytes;
 }
 
 bool ExtractGitHubErrorMessage(const std::string& responseBody, std::string& outMessage) {

@@ -1,8 +1,8 @@
 #ifndef SMATCHET_AGENT_PROPOSAL_STORE_H
 #define SMATCHET_AGENT_PROPOSAL_STORE_H
 
-// AgentProposalStore — SQLite persistence for AgentProposal (T4 of the
-// agentic-flow plan, decisions #4 + #14). Three tables:
+// AgentProposalStore — SQLite persistence for AgentProposal (per
+// agentic-flow plan decisions #4 + #14). Three tables:
 //
 //   agent_proposals   — one row per LLM-suggested action, lifecycle-tracked
 //                       through AgentProposalState transitions.
@@ -83,6 +83,12 @@ class AgentProposalStore {
         std::string issueKey;
         int limit = 0;
     };
+    // Hard cap on Filter::states entries observed by Query. The vector is used
+    // verbatim to build a SQL `IN (?, ?, ...)` list; without a cap a hostile
+    // caller could submit an unbounded list and force SQLite to compile a
+    // pathologically large statement. The 5-state enum lives well below this
+    // ceiling so legitimate callers never trip it.
+    static constexpr std::size_t kMaxFilterStates = 32;
     bool Query(const Filter& f, std::vector<AgentProposal>& out, std::string& outError) const;
 
     // Single-row lookup by ROWID. Returns false + outError if the row is

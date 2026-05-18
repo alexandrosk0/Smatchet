@@ -389,3 +389,58 @@ TEST_CASE("ShouldAdvancePollCursor — gates on per-issue failure count") {
     CHECK_FALSE(ShouldAdvancePollCursor(10));  // many failures → hold
     CHECK_FALSE(ShouldAdvancePollCursor(std::numeric_limits<std::size_t>::max()));
 }
+
+// Bundle C CR#228:275 — outProposals.reserve cap. An oversize response no
+// longer pre-allocates 1M proposal slots; the parser truncates at the cap and
+// the remainder of the input array is ignored.
+TEST_CASE("ParseInferenceResponse caps proposals at kMaxProposalsPerResponse") {
+    using AgenticInferenceClientPure::kMaxProposalsPerResponse;
+
+    // Build a synthetic envelope with cap + 5 proposals — all valid
+    // CommentAdd shapes so the only thing limiting the resulting vector is
+    // the cap, not validation drops.
+    nlohmann::json env = nlohmann::json::object();
+    nlohmann::json arr = nlohmann::json::array();
+    const std::size_t requested = kMaxProposalsPerResponse + 5;
+    for (std::size_t i = 0; i < requested; ++i) {
+        nlohmann::json p = nlohmann::json::object();
+        p["action"] = "CommentAdd";
+        p["rationale"] = "n";
+        nlohmann::json pl = nlohmann::json::object();
+        pl["body"] = "hi";
+        p["payload"] = pl;
+        arr.push_back(p);
+    }
+    env["proposals"] = arr;
+
+    std::vector<ProposalDraft> drafts;
+    std::string err;
+    CHECK(ParseInferenceResponse(env.dump(), drafts, err));
+    CHECK(err.empty());
+    CHECK(drafts.size() == kMaxProposalsPerResponse);
+}
+
+TEST_CASE("ParseInferenceResponse passes through below the cap unchanged") {
+    using AgenticInferenceClientPure::kMaxProposalsPerResponse;
+
+    // A small response (3 entries) is well below the cap — exact-count
+    // preservation guards against an off-by-one in the cap math.
+    nlohmann::json env = nlohmann::json::object();
+    nlohmann::json arr = nlohmann::json::array();
+    for (int i = 0; i < 3; ++i) {
+        nlohmann::json p = nlohmann::json::object();
+        p["action"] = "LabelAdd";
+        p["rationale"] = "tag";
+        nlohmann::json pl = nlohmann::json::object();
+        pl["label"] = "x";
+        p["payload"] = pl;
+        arr.push_back(p);
+    }
+    env["proposals"] = arr;
+
+    std::vector<ProposalDraft> drafts;
+    std::string err;
+    CHECK(ParseInferenceResponse(env.dump(), drafts, err));
+    CHECK(drafts.size() == 3);
+    (void)kMaxProposalsPerResponse;
+}

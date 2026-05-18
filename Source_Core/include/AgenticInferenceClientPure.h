@@ -96,6 +96,15 @@ constexpr std::size_t kMaxLlmResponseBytes = 10 * 1024 * 1024;
 // as "exceeds the cap" and returns true.
 bool WouldExceedResponseCap(std::size_t currentBytes, std::size_t addBytes);
 
+// Hard cap on the number of proposals returned in a single LLM envelope.
+// `outProposals.reserve(arr.size())` was previously unbounded — a hostile or
+// runaway LLM emitting 1M proposals would OOM the process before any
+// per-proposal validation ran. The cap is well above any legitimate triage
+// response (the schema-locked actions enumerate < 10 distinct categories per
+// issue) while small enough to keep the worst-case allocation under a megabyte.
+// Bundle C CR#228:275.
+constexpr std::size_t kMaxProposalsPerResponse = 1000;
+
 // Returns true iff the scheduled-poll worker may safely advance the poll
 // cursor to wall-clock after a TriageBatch iteration. Bundle B CR#232:1653 —
 // if any issue in the iteration failed (LLM timeout, GitHub 5xx, db error,
@@ -107,9 +116,10 @@ bool WouldExceedResponseCap(std::size_t currentBytes, std::size_t addBytes);
 // list; zero failures → safe to advance.
 bool ShouldAdvancePollCursor(std::size_t failedCount);
 
-// Returns the canonical lowercase-camel action string used in the LLM wire
-// schema. Stable across versions — used by AgentProposalStore (T4) for
-// SQLite serialisation as well as by the parser. Unknown returns "Unknown".
+// Returns the canonical PascalCase action string used in the LLM wire schema
+// (e.g. "CommentAdd", "LabelAdd"). Stable across versions — used by
+// AgentProposalStore for SQLite serialisation as well as by the parser.
+// Unknown returns "Unknown".
 const char* ActionToString(ProposedAction a);
 
 } // namespace AgenticInferenceClientPure
