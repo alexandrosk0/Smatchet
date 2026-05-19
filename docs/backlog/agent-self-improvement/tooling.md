@@ -16,6 +16,12 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
+  Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.
+  Concrete next action: (1) audit `scripts/dev/setup-locks-ruleset.sh` + the corresponding workflow to confirm it triggers on `pull_request.closed` with `merged=true` (covers squash, rebase, merge), not just `push to default branch`. (2) Verify the `handoff-implementer` (`agents/handoff-implementer.md`) and bundle-PR templates always include `lock-slug: <slug>` in the body. (3) Add a `bash scripts/dev/lock-staleness-sweep.sh` invocation to the standard end-of-session cleanup checklist (`agents/git-janitor.md`). Estimated cost ~45 min audit + doc tweak.
+  Status: open
+  Last-reviewed: 2026-05-18
+
 - 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
   Details: Phase B (PR #163) agent reported 168 pass / 8 fail on isolated-worktree dispatch. Same `bash scripts/dev/test-all.sh` on main develop reports 173/0. The 8 worktree-only failures are pre-existing infra (lint-hook-split needs `.claude/hooks/` symlinked into the worktree root; 4 ui-test scripts have batched-PATH issues that pass when run individually). Causes false "regression" alarms in every PR that ships from a worktree, eroding signal.
   Concrete next action: either (a) `test-all.sh` auto-detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` and skips worktree-incompatible scripts with a CLEAR `SKIPPED (worktree)` line, or (b) `bash scripts/setup-harness.sh claude-code` extends to seed `.claude/hooks/` symlinks into newly-cut worktrees. Option (a) is simpler; option (b) is more thorough. ~2 h for either.
@@ -86,6 +92,12 @@
 > P3 entries with no immediate owner. Reassess when adjacent feature lands or when a P2 promotion is justified.
 
 <!-- Latest first within Parked. -->
+
+- 2026-05-18 · orchestrator · [tooling] · P3 — `git worktree remove --force` leaves the directory on disk on Windows
+  Details: End-of-session cleanup removed 35 agent worktrees via `git worktree unlock` + `git worktree remove --force` against each path. Git's metadata was correctly cleared (subsequent `git worktree list` showed only the main checkout), but every directory under `.claude/worktrees/agent-*` persisted on disk — 38 stale dirs requiring a manual `rm -rf agent-*` sweep. Likely cause: open file handles (lint hook caches, MSYS2 stat handles, antivirus scanning) prevent `RemoveDirectoryW` even with `--force`; git unregisters the worktree but logs no error when on-disk removal fails. Net effect: `worktree list` looks clean while disk usage remains, which is easy to miss for weeks.
+  Concrete next action: wrap the `worktree remove` step in `agents/git-janitor.md`'s end-of-session checklist with a follow-up `for d in .claude/worktrees/agent-*; do [ -d "$d" ] && rm -rf "$d"; done` sweep — and emit a clear log line per directory deleted so the post-cleanup output reflects on-disk reality, not just git metadata. ~10 min doc + tiny script tweak.
+  Status: parked
+  Last-reviewed: 2026-05-18
 
 - 2026-05-18 · orchestrator · [tooling] · P3 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
   Details: T7 (PR pending) ships the scheduled-poll worker + Preferences "Agentic" tab (`SmatchetPreferencesUi.cpp` master toggle / interval / source / query / GitHub PAT / Run-now button). The worker thread itself is unit-test-hostile (std::thread + condition variable + 60..3600 s sleeps); we lean on `scripts/dev/test-agentic-triage-cli.sh` for the synchronous triage path the worker calls. The Preferences UI variants (toggle flip → RestartAgenticPoll, Run-now → LaunchBackgroundTask, last-poll/next-poll readout updates) are not exercised by any bucket — manual click verification today.

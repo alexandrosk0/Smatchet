@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
+  Details: CodeRabbit findings #15 + #16 on PR #264 (handoff-half re-review) flagged `tests/Source_Core/AgentProposalStore.test.cpp` as violating the "tests/Source_Core/** must be pure-logic doctest only" rule — `test-rig` agent contract refuses SQLite surfaces. The tests were knowingly authored under the H10 plan as integration-coverage in the doctest rig because no bucket-E SQLite harness exists today. Moving them now has no destination lane. Triage marked DEFERRED rather than rejected because the suggestion's intent (proper lane separation) is correct; the blocker is missing infrastructure.
+  Concrete next action: design a bucket-E SQLite lane — preset `ninja-test-sqlite-msys2` or extend bucket-E with SQLite-allowed test TUs. Move `AgentProposalStore.test.cpp` + any future SQLite-backed tests there. Until then, the doctest-rig location is the documented exception. ~4 h for the lane design + initial migration.
+  Status: open
+  Last-reviewed: 2026-05-19
+
 - 2026-05-17 · test-author · [process] · P3 — test.md P2 item (4) "Save / Discard + 'Assistant *' dirty-tab label" describes a UI surface that was never shipped
   Details: `test.md` P2 item (4) (the AI Assistant Preferences batch 1 + 2 entry above) names "explicit Save / Discard buttons + 'Assistant *' dirty-tab label + Save-disabled-on-validation-error + tooltip-on-hover" as a flow needing bucket-E coverage. The Assistant tab is autosave (`MarkPrefsDirty` + ~100 ms debounce via `SmatchetUiSession.h:546-568` + `SmatchetUI.cpp:768-776`). There is NO Save button on the Assistant tab, NO Discard button, NO `Assistant *` dirty-tab label. The only "Save & Sync" button (`SmatchetPreferencesUi.cpp:1679`) is scoped to the Tracker + MCP tabs. Either ship explicit Save/Discard for the Assistant tab or amend test.md item (4) to describe autosave-and-verify. Cross-reference: `tests/ui/ai_prefs_autosave_flow.test.cpp` reframed per `docs/design/ai-assistant-bucket-e-tus.md`.
   Concrete next action: triage decision — ship explicit Save/Discard (feature work, new PR) OR rewrite the item (4) bullet inside the P2 entry above to read "autosave debounce + Test-connection verify + cancel-on-close". ~10 min for the rewrite path.
