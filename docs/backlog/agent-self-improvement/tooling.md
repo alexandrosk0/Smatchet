@@ -16,6 +16,24 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-18 · debug-detective · [tooling] · P2 — Smatchet Logger has no console output + no default file sink
+  Details: Whisper splice-no-show investigation (#258) needed verbose `[temp-debug]` logging across 4 TUs to localise the bug. Running `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp stderr — every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself goes only to the in-memory deque + (unwired in standalone) async file sink. Cost: ~30 min wiring a temp file-sink in `Target_Standalone/main.cpp` mid-investigation, then stripping it. Every future agent debugging a Smatchet runtime issue eats the same tax.
+  Concrete next action: in `Target_Standalone/main.cpp` (before `ConfigManager::Load`), default-wire `Logger::Instance().SetFileSinkPath()` to `%LOCALAPPDATA%\Smatchet\session-YYYYMMDD-HHMMSS.log` (or `$TMPDIR/Smatchet-debug-<pid>.log` on non-Windows). Honour `SMATCHET_DEBUG_LOG` env to override. Keep the existing in-memory deque + in-app Log window paths untouched. ~20 min including a doc bump in `docs/design/applied/logging.md` (or wherever logging is documented) noting where logs land for support / triage.
+  Status: open
+  Last-reviewed: 2026-05-18
+
+- 2026-05-18 · test-author · [tooling] · P2 — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
+  Details: Surfaced while wiring `tests/ui/whisper_ai_assistant_autosend.test.cpp` (PR #258). `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` (around line 267) inherits the parent's stdout/stderr but the parent's `--spawn` driver redirects both before the child starts. ImGui Test Engine's `ConfigLogToTTY` output, plus any `LOG_*` from the child, disappears — when a bucket-E test fails, the operator has no trail beyond the parent's exit code.
+  Concrete next action: extend `LaunchEphemeralInstance` to capture child stdout + stderr to a per-spawn temp file (e.g. `$TMPDIR/Smatchet-spawn-<pid>.log`) and emit the path in the spawn banner the parent prints. Failure-path teardown should keep the file; success-path can delete it. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-18
+
+- 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
+  Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
+  Concrete next action: add `scripts/dev/worktree-prune.sh` that iterates `git worktree list`, for each worktree checks if HEAD branch is `[gone]`, ff-pulls develop, then deletes the stale branch. Refuses to act when worktree has uncommitted work (mirrors git-janitor's discipline). Document in `docs/agent-rules/DELEGATION.md` or `CONTRIBUTING.md` as the end-of-PR-train one-liner. ~45 min.
+  Status: open
+  Last-reviewed: 2026-05-18
+
 - 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
   Details: Phase B (PR #163) agent reported 168 pass / 8 fail on isolated-worktree dispatch. Same `bash scripts/dev/test-all.sh` on main develop reports 173/0. The 8 worktree-only failures are pre-existing infra (lint-hook-split needs `.claude/hooks/` symlinked into the worktree root; 4 ui-test scripts have batched-PATH issues that pass when run individually). Causes false "regression" alarms in every PR that ships from a worktree, eroding signal.
   Concrete next action: either (a) `test-all.sh` auto-detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` and skips worktree-incompatible scripts with a CLEAR `SKIPPED (worktree)` line, or (b) `bash scripts/setup-harness.sh claude-code` extends to seed `.claude/hooks/` symlinks into newly-cut worktrees. Option (a) is simpler; option (b) is more thorough. ~2 h for either.
