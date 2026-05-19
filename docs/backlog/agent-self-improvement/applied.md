@@ -7,6 +7,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-19 · orchestrator · [process] · P3 — Agent-docs improvements: 4 parked items deferred from PR #260
+  Resolution: All 4 parked items shipped as separate PRs after the PR #260 tracking entry was filed. PR #269 closed lock-terminology clarification (4-roles glossary). PR #270 closed CONTEXT.md glossary expansion (9 → 41 entries / 7 sections). PR #273 closed AGENTS.md three-way split — scoped down to a single-file extraction of § Delegation (~230 lines) to `docs/agent-rules/DELEGATION.md` after audit found ~74 external `AGENTS.md § <section>` references; redirect stub in AGENTS.md preserves the cross-links. vexp-section-to-CLAUDE.md remains external-blocker (vexp installer auto-regenerates inside AGENTS.md). Plan revision appended to `docs/design/agent-docs-improvements.md` § Implementation log per AGENTS.md § Plan revision after implementation.
+
 - 2026-05-18 · orchestrator · [process] · P2 — Worktree bootstrap branches start on stale base (not origin/develop)
   Resolution: Re-scoped during plan double-check pass — the original backlog entry's `scripts/dev/worktree-spawn.sh` does not exist (Glob 0 hits). Two worktree-creation paths surfaced — (1) `Source_Core/src/ClaudeCodeLocalRunner.cpp` for agentic-handoff `agent/<proposalId>` worktrees (already correct, bases on `origin/develop` with `handoff.auto_fetch_before_worktree` config flag); (2) Claude Code SDK's session-spawn for `claude/<id>` worktrees (the Phase D/E pain — bases on parent repo local HEAD). Investigation of `git config --local` confirmed `extensions.worktreeconfig=true` is enabled but the base-selection happens before config applies. **Escalated to external-blocker** for SDK upstream. **Workaround documented** in `docs/harness/SETUP.md` § Worktree base — known stale-HEAD pitfall (two-track: parent-on-develop pre-session, OR rebase-on-origin/develop first-move post-session).
 
