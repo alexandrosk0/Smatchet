@@ -212,6 +212,17 @@ if(SMATCHET_WITH_AGENTIC)
         # skip, budget exhaustion, cursor idempotency. The watcher TU
         # itself is already linked above (under H7's entry).
         Source_Core/PrCommentWatcher_OpenPrScan.test.cpp
+        # coderabbit-react phase-5 — pure C++14 helpers for the CI-failure
+        # classifier (check-run name → category table, cmake/link/ctest/
+        # sanitizer/transient fingerprint matchers, annotation
+        # concatenation with tail-preserving cap). Loads
+        # tests/fixtures/check_runs_failed_sample.json +
+        # check_run_annotations_sample.json via SMATCHET_TESTS_REPO_ROOT
+        # and asserts each row's expected category + kind. The abstract
+        # PrCheckRunClassifier interface lands alongside; concrete
+        # CiFailureClassifier + PrCheckRunWatcher wire up in phase 6.
+        Source_Core/CiFailureClassifierPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
