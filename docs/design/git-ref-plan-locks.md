@@ -29,6 +29,19 @@ Already-shipped items (no further action required): primitive scripts (Phase 1),
 
 The four orthogonal subproblems (claim / discovery / collision-catch / cleanup) are all served by one markdown file, badly.
 
+## Terminology
+
+The vocabulary in this doc + `AGENTS.md` § Orchestrator delegation packet + `scripts/dev/lock-*.sh` uses four terms that look adjacent but are **role-distinct**. Cross-link: [`docs/CONTEXT.md`](../CONTEXT.md) § Plan locks for the glossary form.
+
+| Term | Role | Form on disk / wire |
+|---|---|---|
+| **Plan-lock** | the **object** — a claim on a planned write set | `refs/locks/<slug>` on origin (one ref per active slice); rendered as a row in `docs/design/_plan-locks.generated.md` |
+| **Lock-slug** | the **identifier field** — kebab-case name of the slice | URL-safe ASCII; ref-name suffix; script argument; line key `lock-slug: <slug>` in PR bodies |
+| **Lock-claim** | the **action** of acquiring + the **script** that performs it | `bash scripts/dev/lock-claim.sh <slug> <write-set-file>`; writes a `claim.json` blob into the ref; fails on ref-update conflict |
+| **Holds-lock** | the **predicate** — "agent X holds-lock Y" | derived field on the rendered table from `bash scripts/dev/locks-show.sh`; reads `claim.json.owner` |
+
+The four do not overlap. A `plan-lock` is the object; `lock-slug` is its identifier; `lock-claim` is the action that brings one into being; `holds-lock` is the predicate that names its current owner. If a future doc / commit / script needs a new term in this space, pick one of the existing four if it fits, or add a fifth row here.
+
 ## Proposed solution
 
 Use **git refs under `refs/locks/<slug>`** as the atomic claim primitive. Each ref points to a tiny commit whose tree contains a single `claim.json` blob with the write set, owner, and timestamps. Coordination becomes:
