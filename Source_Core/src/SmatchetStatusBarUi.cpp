@@ -27,9 +27,12 @@ static const char* ThemeIdName(ThemeId t) {
         return "High Contrast";
     case ThemeId::NortonCommander:
         return "Norton Commander";
+    case ThemeId::ImGuiDefaultDark:
+        return "ImGui Default Dark";
     case ThemeId::SmatchetDark:
-    default:
         return "Smatchet Dark";
+    default:
+        return "ImGui Default Dark";
     }
 }
 

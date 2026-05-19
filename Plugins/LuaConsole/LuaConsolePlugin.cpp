@@ -2,6 +2,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -189,7 +190,11 @@ void LuaConsolePlugin::EnsureLuaLanguageDef() {
         luaLangWithApi_.mIdentifiers[std::string(s)] = id;
     }
     luaEditor_.SetLanguageDefinition(luaLangWithApi_);
-    luaEditor_.SetPalette(TextEditor::GetDarkPalette());
+    // Initial palette — Render() re-applies every frame so the live SmatchetTheme
+    // tracks. See SmatchetThemedTextEditorPalette.h for why we don't use
+    // TextEditor::GetDarkPalette() directly (it's a static-const palette and
+    // does not follow theme switches).
+    luaEditor_.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
     luaEditor_.SetTabSize(4);
     luaLangReady_ = true;
 }
@@ -609,6 +614,11 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
             ImGui::Spacing();
             const float editorH =
                 (std::max)(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
+            // Refresh palette every frame so a SmatchetTheme switch (driven by
+            // SmatchetUI::Draw -> SmatchetTheme::ApplyStyle) propagates instantly.
+            // See SmatchetThemedTextEditorPalette.h for the per-frame-cost
+            // rationale (~84 bytes copy + 1 SetPalette per frame — negligible).
+            luaEditor_.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
             luaEditor_.Render("##lua_text_editor", ImVec2(-1.0f, editorH), false);
 
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&

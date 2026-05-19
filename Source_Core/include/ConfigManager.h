@@ -392,10 +392,8 @@ struct TrackerConfig {
         /// Default list matches the four blocking checks on develop today.
         /// Hand-edit this list to extend coverage to new workflows.
         std::vector<std::string> WatchedCheckNames = {
-            "Windows + MSYS2 UCRT64",
-            "Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)",
-            "Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)",
-            "Test-delta gate"};
+            "Windows + MSYS2 UCRT64", "Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)",
+            "Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)", "Test-delta gate"};
         /// Check-runs the watcher ignores even on failure (advisory checks
         /// the user does NOT want to auto-react against).
         ///
@@ -408,8 +406,7 @@ struct TrackerConfig {
         /// flip manual preserves the human-in-the-loop for the decision
         /// because the blast radius changes when coverage starts failing
         /// merges.
-        std::vector<std::string> IgnoredCheckNames = {
-            "Coverage (windows-2022 + OpenCppCoverage)"};
+        std::vector<std::string> IgnoredCheckNames = {"Coverage (windows-2022 + OpenCppCoverage)"};
         /// Auto-dispatch `build-doctor` on `ci_build_failure` verdicts.
         /// Default true — build breaks are the lowest-risk auto-dispatch
         /// surface (the agent reads cmake/link output and proposes a fix).
@@ -581,8 +578,11 @@ struct TrackerConfig {
     // Clamped to [8, 32] at load. 16 matches the legacy hardcoded value.
     int FontSizePt = 16;
     // Active ImGui style palette, applied per-frame from View > Appearance > Theme.
-    // Default keeps the legacy palette bit-identical for existing users.
-    ThemeId Theme = ThemeId::SmatchetDark;
+    // Fresh installs land on the bright ImGui-built-in dark palette. Existing users keep
+    // whatever theme they previously persisted — ConfigManager::Load overwrites this default
+    // with the string from disk, so a config with `"theme": "smatchet_dark"` round-trips
+    // through to ThemeId::SmatchetDark unchanged.
+    ThemeId Theme = ThemeId::ImGuiDefaultDark;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.

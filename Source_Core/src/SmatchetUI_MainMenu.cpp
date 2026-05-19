@@ -147,7 +147,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         const char* label;
                     };
                     constexpr ThemeEntry kEntries[] = {
-                        {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
+                        {ThemeId::ImGuiDefaultDark, "ImGui Default Dark (bright)"},
+                        {ThemeId::SmatchetDark, "Smatchet Dark"},
                         {ThemeId::ModernDark, "Modern Dark"},
                         {ThemeId::Vs2022Dark, "VS 2022 Dark"},
                         {ThemeId::Vs2022Light, "VS 2022 Light"},
@@ -495,12 +496,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         const bool isRec = g_dictationRouter.IsRecording();
         const bool isTx = !isRec && g_dictationRouter.IsTranscribing();
         if (isRec || isTx) {
-            const char* label = isRec
-                                    ? SmatchetLocalization::T("whisper.statusBar.recording",
-                                                              "\xE2\x97\x8F REC")
-                                    : SmatchetLocalization::T(
-                                          "whisper.statusBar.transcribing",
-                                          "\xE2\x97\x90 Transcribing...");
+            const char* label =
+                isRec ? SmatchetLocalization::T("whisper.statusBar.recording", "\xE2\x97\x8F REC")
+                      : SmatchetLocalization::T("whisper.statusBar.transcribing", "\xE2\x97\x90 Transcribing...");
             const float labelW = ImGui::CalcTextSize(label).x;
             constexpr float kRightMarginRec = 12.0f;
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
@@ -508,9 +506,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
 #else
             constexpr float kReservedForCloseButton = 0.0f;
 #endif
-            const float xPosRec = (std::max)(ImGui::GetCursorPosX(),
-                                              ImGui::GetWindowContentRegionMax().x - labelW -
-                                                  kRightMarginRec - kReservedForCloseButton);
+            const float xPosRec = (std::max)(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - labelW -
+                                                                         kRightMarginRec - kReservedForCloseButton);
             ImGui::SetCursorPosX(xPosRec);
             const ImVec4 col = isRec ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)   // red
                                      : ImVec4(0.95f, 0.78f, 0.20f, 1.0f); // amber
@@ -518,15 +515,13 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             ImGui::TextUnformatted(label);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
-                const char* tip =
-                    isRec ? SmatchetLocalization::T(
-                                "whisper.statusBar.recordingTooltip",
-                                "Recording for dictation — release hotkey to "
-                                "transcribe; press Esc to cancel")
-                          : SmatchetLocalization::T(
-                                "whisper.statusBar.transcribingTooltip",
-                                "Transcribing captured audio — text will appear in the "
-                                "last-focused input field when done");
+                const char* tip = isRec
+                                      ? SmatchetLocalization::T("whisper.statusBar.recordingTooltip",
+                                                                "Recording for dictation — release hotkey to "
+                                                                "transcribe; press Esc to cancel")
+                                      : SmatchetLocalization::T("whisper.statusBar.transcribingTooltip",
+                                                                "Transcribing captured audio — text will appear in the "
+                                                                "last-focused input field when done");
                 ImGui::SetTooltip("%s", tip);
             }
         }

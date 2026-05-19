@@ -1,6 +1,7 @@
 #include "AiChatTextEditorRender.h"
 
 #include "AiChatMarkdownTokens.h"
+#include "SmatchetThemedTextEditorPalette.h"
 #include "TextEditor.h"
 
 #include <algorithm>
@@ -8,28 +9,12 @@
 
 namespace {
 
-// Build a chat-specific palette derived from `GetDarkPalette()` with three
-// overrides so the chat view blends with the surrounding Smatchet theme
-// instead of looking like a code editor:
-//   1. `Default` (Plain body text) bumped to a bright off-white so prose is
-//      readable against the panel's dark background — the original dark
-//      palette greys it out to 0x7f7f7f which suited code but not prose.
-//   2. `Background` cleared to transparent so the parent `BeginChild`'s
-//      colour shows through.
-//   3. Two unused-by-the-markdown-mapping slots (CharLiteral,
-//      PreprocIdentifier) repurposed for the chat role overlays:
-//      CharLiteral = user-role marker tint, PreprocIdentifier = user-body
-//      tint. Claude-desktop-style differentiation without needing a new
-//      PaletteIndex slot in the third-party widget.
-TextEditor::Palette BuildChatPalette() {
-    TextEditor::Palette p = TextEditor::GetDarkPalette();
-    using P = TextEditor::PaletteIndex;
-    p[(int)P::Default] = 0xffe0e0e0;           // bright off-white body text
-    p[(int)P::Background] = 0x00000000;        // transparent — parent panel bg shows
-    p[(int)P::CharLiteral] = 0xfff5c97a;       // soft amber for user role lines
-    p[(int)P::PreprocIdentifier] = 0xffd9a76a; // deeper amber for user msg body
-    return p;
-}
+// Chat palette is theme-aware now — derived from
+// SmatchetTheme::GetThemedAiChatPalette() which reads the live ImGui style +
+// SmatchetTheme syntax-color palette. We re-apply per Draw() so theme switches
+// propagate without a separate notify path (~84 bytes of array copy + one
+// SetPalette() = a handful of cache lines, negligible vs the frame draw cost).
+// See SmatchetThemedTextEditorPalette.h for the override rationale.
 
 // Map AiChatMarkdownTokens::TokenKind onto TextEditor::PaletteIndex. Most
 // kinds reuse the dark palette's existing slots; the three chat-overlay kinds
@@ -99,7 +84,11 @@ AiChatTextEditorView::AiChatTextEditorView() : editor_(new TextEditor()) {
     editor_->SetShowWhitespaces(false);
     // Hide the line-number gutter — this view is prose, not code.
     editor_->SetShowLineNumbers(false);
-    editor_->SetPalette(BuildChatPalette());
+    // Initial palette — Draw() re-applies every frame so theme switches
+    // propagate. Seed it here too so the first frame isn't drawn with the
+    // third-party widget's hard-coded TextEditor::GetDarkPalette() default
+    // before our per-Draw refresh runs.
+    editor_->SetPalette(SmatchetTheme::GetThemedAiChatPalette());
     // Parent panel already owns the scrolling BeginChild; let TextEditor skip
     // its internal BeginChild so the parent retains scroll authority and the
     // auto-scroll-to-tail logic below remains accurate.
@@ -146,5 +135,13 @@ void AiChatTextEditorView::RebuildBuffer(const std::vector<AiMessage>& history, 
 }
 
 void AiChatTextEditorView::Draw(float availW, float availH) {
+    // Refresh the palette every frame so a SmatchetTheme switch (driven by
+    // SmatchetUI::Draw -> SmatchetTheme::ApplyStyle) propagates instantly to
+    // this embedded TextEditor instance. The third-party widget caches its
+    // palette in mPaletteBase + does not subscribe to theme changes, so the
+    // only way to stay in sync without adding an observer protocol is to
+    // re-push the desired palette on every render. ~84 bytes of array copy +
+    // one SetPalette() per frame; negligible against the ImGui draw cost.
+    editor_->SetPalette(SmatchetTheme::GetThemedAiChatPalette());
     editor_->Render("##ai_chat_editor", ImVec2(availW, availH), false);
 }
