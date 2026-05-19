@@ -53,8 +53,11 @@ add_executable(SmatchetTests
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
-    Source_Core/AiChatMarkdownTokens.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatMarkdownTokens.cpp"
+    Source_Core/MarkdownLanguageDefinition.test.cpp
+    # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
+    # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
+    # TU. Link it into the test rig so the symbols resolve.
+    "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp"
     Source_Core/SubprocessCapturePure.test.cpp
     Source_Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
@@ -316,6 +319,7 @@ endif()
 
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
+    "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit"
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/Target_Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"

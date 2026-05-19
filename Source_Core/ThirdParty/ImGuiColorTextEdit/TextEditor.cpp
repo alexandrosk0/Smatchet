@@ -251,9 +251,9 @@ void TextEditor::AddUndo(UndoRecord& aValue) {
     // printf("AddUndo: (@%d.%d) +\'%s' [%d.%d .. %d.%d], -\'%s', [%d.%d .. %d.%d] (@%d.%d)\n",
     //	aValue.mBefore.mCursorPosition.mLine, aValue.mBefore.mCursorPosition.mColumn,
     //	aValue.mAdded.c_str(), aValue.mAddedStart.mLine, aValue.mAddedStart.mColumn, aValue.mAddedEnd.mLine,
-    //aValue.mAddedEnd.mColumn, 	aValue.mRemoved.c_str(), aValue.mRemovedStart.mLine, aValue.mRemovedStart.mColumn,
-    //aValue.mRemovedEnd.mLine, aValue.mRemovedEnd.mColumn, 	aValue.mAfter.mCursorPosition.mLine,
-    //aValue.mAfter.mCursorPosition.mColumn
+    // aValue.mAddedEnd.mColumn, 	aValue.mRemoved.c_str(), aValue.mRemovedStart.mLine, aValue.mRemovedStart.mColumn,
+    // aValue.mRemovedEnd.mLine, aValue.mRemovedEnd.mColumn, 	aValue.mAfter.mCursorPosition.mLine,
+    // aValue.mAfter.mCursorPosition.mColumn
     //	);
 
     mUndoBuffer.resize((size_t)(mUndoIndex + 1));
@@ -785,8 +785,8 @@ void TextEditor::Render() {
     // Smatchet — added for AI chat panel: when line numbers are hidden, the
     // gutter shrinks to just `mLeftMargin` so the prose starts flush-left.
     if (mShowLineNumbers) {
-        mTextStart =
-            ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+        mTextStart = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x +
+                     mLeftMargin;
     } else {
         mTextStart = static_cast<float>(mLeftMargin);
     }
@@ -2052,11 +2052,28 @@ void TextEditor::ColorizeInternal() {
                         line[currentIndex].mComment = withinSingleLineComment;
 
                         auto& endStr = mLanguageDefinition.mCommentEnd;
-                        if (currentIndex + 1 >= (int)endStr.size() &&
-                            equals(endStr.begin(), endStr.end(), from + 1 - endStr.size(), from + 1, pred)) {
-                            commentStartIndex = endIndex;
-                            commentStartLine = endLine;
+                        // Smatchet — added for markdown LD: skip the end-string
+                        // check when start==end and the cursor is still inside
+                        // the opening token. Without this guard, same-token
+                        // block-comment delimiters (e.g. markdown ``` fences)
+                        // self-close on the same bytes that opened them. All
+                        // built-in LDs use distinct start/end strings so this
+                        // is a pure no-op for them.
+                        const bool _smatchetSameTokenDelim =
+                            (!mLanguageDefinition.mCommentStart.empty() &&
+                             mLanguageDefinition.mCommentStart == mLanguageDefinition.mCommentEnd);
+                        const bool _smatchetInsideOpener = (commentStartLine == currentLine &&
+                                                            currentIndex < commentStartIndex + (int)startStr.size());
+                        if (!(_smatchetSameTokenDelim && _smatchetInsideOpener)) {
+                            // Smatchet — end
+                            if (currentIndex + 1 >= (int)endStr.size() &&
+                                equals(endStr.begin(), endStr.end(), from + 1 - endStr.size(), from + 1, pred)) {
+                                commentStartIndex = endIndex;
+                                commentStartLine = endLine;
+                            }
+                            // Smatchet — added for markdown LD: close the guard.
                         }
+                        // Smatchet — end
                     }
                 }
                 line[currentIndex].mPreprocessor = withinPreproc;
@@ -3594,3 +3611,84 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::Lua() {
     }
     return langDef;
 }
+
+// Smatchet — added for markdown LD.
+//
+// Markdown(): native LanguageDefinition for the ImGuiColorTextEdit colorizer.
+// Fenced code blocks use the multi-line comment span (mCommentStart=mCommentEnd
+// = "```") in conjunction with the same-token-delimiter guard patched into
+// ColorizeInternal() above. The alternative wiring (issue #155 on
+// BalazsJako/ImGuiColorTextEdit) uses "<!--" / "-->" so the comment span
+// covers HTML comments instead of fences — we pick fences because the
+// Smatchet corpus has near-zero HTML comments and lots of fenced code.
+const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::Markdown() {
+    static bool inited = false;
+    static LanguageDefinition langDef;
+    if (!inited) {
+        using P = PaletteIndex;
+        // Regex insertion order = match precedence. Block-level patterns are
+        // line-anchored; inline patterns run after them.
+        // ATX heading — `# ` through `###### `.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("^#{1,6}[ \\t].*$", P::Keyword));
+        // Horizontal rule — three or more `-`, `*`, or `_` on a line.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("^(-{3,}|\\*{3,}|_{3,})$", P::Punctuation));
+        // Blockquote — `> ` line. Tagged Comment so it visually recedes.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("^>[ \\t].*$", P::Comment));
+        // List marker (un/ordered) at line start, captures the marker only.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("^[ \\t]*([-*+]|\\d+\\.)[ \\t]", P::Punctuation));
+        // Link / image — `[text](url)` / `![alt](url)` whole token.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("!?\\[[^\\]]+\\]\\([^)]+\\)", P::KnownIdentifier));
+        // Bold — `**text**`. Must come before italic so `**…**` wins.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("\\*\\*[^\\*]+\\*\\*", P::Identifier));
+        // Strikethrough — `~~text~~`.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("~~[^~]+~~", P::Preprocessor));
+        // Italic — `*text*`. Body class excludes `*` so unmatched markers
+        // don't span and bold remains the leftmost match.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("\\*[^\\*\\n]+\\*", P::String));
+        // Inline code — `` `text` `` (single backtick pair).
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("`[^`\\n]+`", P::Number));
+
+        // Same-token fence as block comment. ColorizeInternal()'s guard patch
+        // (added above) prevents the opener from immediately re-closing.
+        langDef.mCommentStart = "```";
+        langDef.mCommentEnd = "```";
+        langDef.mSingleLineComment = ""; // markdown has none
+
+        langDef.mCaseSensitive = true;
+        langDef.mAutoIndentation = false;
+        langDef.mPreprocChar = 0; // unused — no line starts with this in markdown
+        langDef.mTokenize = nullptr;
+
+        langDef.mName = "Markdown";
+
+        inited = true;
+    }
+    return langDef;
+}
+
+// MarkdownChat(): wrapper LD for the AI assistant chat panel. Clones
+// Markdown() and prepends a role-line regex (`> You:` / `> Assistant:` /
+// `> Assistant (streaming...):`) so role transitions stand out. The regex
+// goes BEFORE the generic blockquote regex so its match wins.
+const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::MarkdownChat() {
+    static bool inited = false;
+    static LanguageDefinition langDef;
+    if (!inited) {
+        langDef = Markdown(); // clone the base
+        langDef.mName = "MarkdownChat";
+        // Insert the role-line regex at the front so it pre-empts the generic
+        // blockquote regex (which would otherwise paint the role line as a
+        // dimmed Comment).
+        TokenRegexString roleRe = std::make_pair<std::string, PaletteIndex>(
+            "^>[ \\t]+(You|Assistant)(\\s*\\(streaming\\.\\.\\.\\))?:.*$", PaletteIndex::Keyword);
+        langDef.mTokenRegexStrings.insert(langDef.mTokenRegexStrings.begin(), roleRe);
+
+        inited = true;
+    }
+    return langDef;
+}
+// Smatchet — end

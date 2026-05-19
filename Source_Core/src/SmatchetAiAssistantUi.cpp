@@ -118,10 +118,10 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
     // One read-only ImGuiColorTextEdit instance for the whole conversation.
-    // Holds drag-select + Ctrl+C/A across messages. Markdown is coloured in
-    // place by the hand-rolled AiChatMarkdownTokens scanner. There is exactly
-    // one AI panel in the app at any time so a function-local static is
-    // adequate; if we ever ship a second panel, plumb the view onto
+    // Holds drag-select + Ctrl+C/A across messages. Markdown is coloured by
+    // the native TextEditor LD pipeline using LanguageDefinition::MarkdownChat().
+    // There is exactly one AI panel in the app at any time so a function-local
+    // static is adequate; if we ever ship a second panel, plumb the view onto
     // UiDrawSession instead.
     static AiChatTextEditorView s_chatView;
     s_chatView.RebuildBuffer(d.assistantHistory, d.assistantStreamBuf, d.assistantInFlight, wasAtTail);

@@ -11,9 +11,10 @@ class TextEditor;
 
 // One read-only ImGuiColorTextEdit instance owned per AI assistant panel.
 // Replaces the previous per-message ImGui::InputTextMultiline render so that
-// drag-select + Ctrl+C / Ctrl+A work across messages. Markdown is coloured
-// in-place by the hand-rolled AiChatMarkdownTokens scanner; the whole render
-// stays monospace (TextEditor uses ImGui's default monospaced font).
+// drag-select + Ctrl+C / Ctrl+A work across messages. Markdown coloring is
+// driven by TextEditor::LanguageDefinition::MarkdownChat() — a wrapper LD
+// over the canonical Markdown() that adds `> You:` / `> Assistant:` role
+// markers ahead of the generic blockquote regex.
 class AiChatTextEditorView {
   public:
     AiChatTextEditorView();

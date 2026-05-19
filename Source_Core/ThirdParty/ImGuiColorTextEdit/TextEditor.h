@@ -152,6 +152,10 @@ class TextEditor {
         static const LanguageDefinition& SQL();
         static const LanguageDefinition& AngelScript();
         static const LanguageDefinition& Lua();
+        // Smatchet — added for markdown LD
+        static const LanguageDefinition& Markdown();
+        static const LanguageDefinition& MarkdownChat();
+        // Smatchet — end
     };
 
     TextEditor();
