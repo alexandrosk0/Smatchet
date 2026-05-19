@@ -10,9 +10,9 @@
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "AiChatMarkdownRender.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
-#include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -118,44 +118,39 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    // Per-message rendering: role label + a SmallButton "Copy" that pushes the
-    // raw message text (markdown source) to the system clipboard via
-    // ImGui::SetClipboardText, followed by a rich-rendered body. Assistant
-    // replies + the in-flight stream go through MarkdownPreviewRender so
-    // headings / code fences / lists / inline code render with formatting;
-    // the Copy button still yields the raw markdown so paste targets that
-    // understand markdown (or want the literal) get the source back.
-    // User-typed messages stay as plain TextWrapped — what they typed is what
-    // they see; surprising markdown rendering on their own input is avoided.
-    MarkdownPreviewRender::Options mdOpts;
-    mdOpts.mode = MarkdownPreviewRender::Mode::Full;
+    // Per-message rendering: role label, then md4c-parsed block widgets via
+    // AiChatMarkdownRender::Render — each block is a ReadOnly InputTextMultiline
+    // so the user can drag-select + Ctrl+C inside any single block (heading /
+    // paragraph / fenced code / list-item / quote). Cross-block selection is
+    // not supported by ImGui, so each message ends with a single
+    // "Copy entire message" SmallButton that pushes the full raw markdown
+    // source to the clipboard. Same rules apply to both user-typed messages
+    // and assistant replies; the in-flight stream renders the same way with
+    // a "Copy partial response" button below it.
+    const float panelWidth = ImGui::GetContentRegionAvail().x;
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
         const AiMessage& m = d.assistantHistory[i];
         const bool isUser = (m.Role == "user");
         const char* role = isUser ? "You" : "Assistant";
         ImGui::TextDisabled("%s", role);
-        ImGui::SameLine();
-        char btnId[48];
-        std::snprintf(btnId, sizeof(btnId), "Copy##ai_msg_%zu", i);
-        if (ImGui::SmallButton(btnId)) {
+        char scopeId[48];
+        std::snprintf(scopeId, sizeof(scopeId), "ai_msg_%zu", i);
+        AiChatMarkdownRender::Render(m.Content, scopeId, panelWidth);
+        char copyBtn[64];
+        std::snprintf(copyBtn, sizeof(copyBtn), "Copy entire message##ai_msg_%zu", i);
+        if (ImGui::SmallButton(copyBtn)) {
             ImGui::SetClipboardText(m.Content.c_str());
         }
-        ImGui::SetItemTooltip("Copy raw message text (markdown source) to clipboard.");
-        if (isUser) {
-            ImGui::TextWrapped("%s", m.Content.c_str());
-        } else {
-            MarkdownPreviewRender::Render(m.Content, mdOpts);
-        }
+        ImGui::SetItemTooltip("Copy the raw markdown source of this message to clipboard.");
         ImGui::Separator();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
         ImGui::TextDisabled("Assistant (streaming...)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Copy##ai_stream")) {
+        AiChatMarkdownRender::Render(d.assistantStreamBuf, "ai_stream", panelWidth);
+        if (ImGui::SmallButton("Copy partial response##ai_stream")) {
             ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
         }
         ImGui::SetItemTooltip("Copy the in-flight partial response (markdown source) to clipboard.");
-        MarkdownPreviewRender::Render(d.assistantStreamBuf, mdOpts);
     }
 
     // Tail tracking: update for next frame based on user's current scroll.
