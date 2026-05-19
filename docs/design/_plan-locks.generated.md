@@ -10,20 +10,22 @@
 
 ## In-flight locks (1 active)
 
-### `agent-docs-improvements`
+### `agentic-flow-cr-bundle-prod`
 
-- **Owner**: `orchestrator`
-- **Branch**: `claude/xenodochial-montalcini-4b9116`
-- **Originating plan**: [`docs/design/agent-docs-improvements.md`](../../docs/design/agent-docs-improvements.md)
-- **Started**: 2026-05-18T22:54:55Z
-- **Write set** (8 paths):
-  - `AGENTS.md`
-  - `agents/security-review.md`
-  - `docs/backlog/agent-self-improvement/process.md`
-  - `docs/backlog/agent-self-improvement/tooling.md`
-  - `docs/backlog/agent-self-improvement/applied.md`
-  - `docs/backlog/agent-self-improvement/external-blockers.md`
-  - `docs/harness/SETUP.md`
-  - `docs/design/agent-docs-improvements.md`
-- **Notes**: agent docs improvements P2/P3 backlog clearance
+- **Owner**: `handoff-implementer`
+- **Branch**: `fix/cr-handoff-bundle-prod`
+- **Originating plan**: [`docs/design/agentic-coding-handoff.md`](../../docs/design/agentic-coding-handoff.md)
+- **Started**: 2026-05-19T00:55:21Z
+- **Write set** (11 paths):
+  - `Source_Core/include/AppController.h`
+  - `Source_Core/include/SubprocessCapturePure.h`
+  - `Source_Core/include/AgenticHandoffController.h`
+  - `Source_Core/src/AppController.cpp`
+  - `Source_Core/src/AgenticHandoffController.cpp`
+  - `Source_Core/src/ClaudeCodeLocalRunner.cpp`
+  - `Source_Core/src/CodingHarnessSeedBuilder.cpp`
+  - `Source_Core/src/PrCommentWatcher.cpp`
+  - `Source_Core/src/SmatchetAgentHandoffUi.cpp`
+  - `Source_Core/src/SubprocessCapture.cpp`
+  - `Source_Core/src/SubprocessCapturePure.cpp`
 
