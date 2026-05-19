@@ -1863,19 +1863,6 @@ void TextEditor::Colorize(int aFromLine, int aLines) {
     mCheckComments = true;
 }
 
-// Smatchet — added for AI chat panel
-void TextEditor::SetTokenColor(int aLine, int aColStart, int aColEnd, PaletteIndex aIdx) {
-    if (aLine < 0 || aLine >= (int)mLines.size())
-        return;
-    Line& line = mLines[aLine];
-    const int lo = std::max(0, aColStart);
-    const int hi = std::min((int)line.size(), aColEnd);
-    for (int c = lo; c < hi; ++c) {
-        line[c].mColorIndex = aIdx;
-    }
-}
-// Smatchet — end
-
 void TextEditor::ColorizeRange(int aFromLine, int aToLine) {
     if (mLines.empty() || aFromLine >= aToLine)
         return;
@@ -3689,25 +3676,4 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::Markdown()
     return langDef;
 }
 
-// MarkdownChat(): wrapper LD for the AI assistant chat panel. Clones
-// Markdown() and prepends a role-line regex (`> You:` / `> Assistant:` /
-// `> Assistant (streaming...):`) so role transitions stand out. The regex
-// goes BEFORE the generic blockquote regex so its match wins.
-const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::MarkdownChat() {
-    static bool inited = false;
-    static LanguageDefinition langDef;
-    if (!inited) {
-        langDef = Markdown(); // clone the base
-        langDef.mName = "MarkdownChat";
-        // Insert the role-line regex at the front so it pre-empts the generic
-        // blockquote regex (which would otherwise paint the role line as a
-        // dimmed Comment).
-        TokenRegexString roleRe = std::make_pair<std::string, PaletteIndex>(
-            "^>[ \\t]+(You|Assistant)(\\s*\\(streaming\\.\\.\\.\\))?:.*$", PaletteIndex::Keyword);
-        langDef.mTokenRegexStrings.insert(langDef.mTokenRegexStrings.begin(), roleRe);
-
-        inited = true;
-    }
-    return langDef;
-}
 // Smatchet — end

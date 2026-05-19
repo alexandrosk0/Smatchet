@@ -776,15 +776,25 @@ void Render(const std::string& md, const Options& opts) {
     state.mode = opts.mode;
     state.clickableLinks = opts.clickableLinks;
     state.fixedWrapWidth = opts.wrapWidth;
-    // Selectable text overlay — when the caller supplied a `selectableId`, all
-    // prose runs route through SelectableText::RegisterSegment so the
-    // rendered output is drag-selectable + Ctrl+C-copyable. Code blocks +
-    // tables remain non-selectable in this MVP (deferred per the slice-4
-    // plan).
+    // Selectable text overlay — three modes:
+    //   (a) `existingSelCtx` non-null: register segments into the caller's
+    //       Context, don't open/close one here. Used by the AI chat surface
+    //       where one outer Begin/End spans many sequential Render() calls.
+    //   (b) `selectableId` non-empty: open + close our own Context inline.
+    //       Used by the description preview (one Render = one selection
+    //       region).
+    //   (c) Neither set: legacy non-selectable path.
+    // Code blocks + tables remain non-selectable in this MVP (deferred per
+    // the slice-4 plan).
     SelectableText::Context* selCtx = nullptr;
-    if (opts.selectableId != nullptr && opts.selectableId[0] != '\0') {
+    bool ownsSelCtx = false;
+    if (opts.existingSelCtx != nullptr) {
+        selCtx = opts.existingSelCtx;
+        state.selCtx = selCtx;
+    } else if (opts.selectableId != nullptr && opts.selectableId[0] != '\0') {
         selCtx = &SelectableText::Begin(opts.selectableId);
         state.selCtx = selCtx;
+        ownsSelCtx = true;
     }
     MD_PARSER parser{};
     parser.abi_version = 0;
@@ -796,7 +806,7 @@ void Render(const std::string& md, const Options& opts) {
     parser.text = PreviewText;
     md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &state);
     PreviewFlushBlock(state);
-    if (selCtx) {
+    if (ownsSelCtx) {
         SelectableText::End(*selCtx);
     }
 }

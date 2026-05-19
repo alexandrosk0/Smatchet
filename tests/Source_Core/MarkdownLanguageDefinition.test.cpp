@@ -1,11 +1,15 @@
-// Bucket-A doctest for TextEditor::LanguageDefinition::Markdown() and
-// ::MarkdownChat(). The full colorizer integration belongs in bucket E
-// (ImGui Test Engine, deferred); this test compiles each regex into
-// std::regex and asserts match shape on representative inputs.
+// Bucket-A doctest for TextEditor::LanguageDefinition::Markdown(). The
+// full colorizer integration belongs in bucket E (ImGui Test Engine,
+// deferred); this test compiles each regex into std::regex and asserts
+// match shape on representative inputs.
+//
+// MarkdownChat() was retired in Slice 5 when AI chat moved off TextEditor
+// onto MarkdownPreviewRender + SelectableTextRun. Markdown() stays —
+// still used by the plan-doc viewer + ticket description editor.
 //
 // Anchors: tests for the regex strings live alongside the LD source they
 // describe — Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp,
-// LanguageDefinition::Markdown() / MarkdownChat().
+// LanguageDefinition::Markdown().
 
 #include "TextEditor.h"
 
@@ -151,24 +155,6 @@ TEST_CASE("Markdown LD declares fence as same-token block comment") {
     CHECK(md.mCaseSensitive == true);
 }
 
-TEST_CASE("MarkdownChat LD prepends role-line regex before blockquote") {
-    const LD& chat = LD::MarkdownChat();
-    CHECK(chat.mName == "MarkdownChat");
-    CHECK(AllRegexesCompile(chat));
-    CHECK_FALSE(chat.mTokenRegexStrings.empty());
-
-    // The first regex in the chat LD must be the role-line regex (precedence
-    // over the generic blockquote). Verify by structure: the first regex must
-    // match `> You:` and `> Assistant:` and `> Assistant (streaming...):`.
-    const std::string& firstPattern = chat.mTokenRegexStrings[0].first;
-    std::regex firstRe(firstPattern);
-    CHECK(std::regex_search(std::string("> You:"), firstRe));
-    CHECK(std::regex_search(std::string("> Assistant:"), firstRe));
-    CHECK(std::regex_search(std::string("> Assistant (streaming...):"), firstRe));
-    // Generic blockquote text must NOT match the role regex.
-    CHECK_FALSE(std::regex_search(std::string("> a normal quote"), firstRe));
-}
-
 TEST_CASE("Markdown LD same-token fence SetText round-trip smoke") {
     // The fence open/close regression (closing ``` mis-detected as a new
     // opener, leaving trailing content stuck inside the comment span) is
@@ -198,16 +184,4 @@ TEST_CASE("Markdown LD same-token fence SetText round-trip smoke") {
     // "comment-span state machine is not corrupted").
     ed.SetText("plain prose no fence");
     CHECK(ed.GetTotalLines() == 1);
-}
-
-TEST_CASE("MarkdownChat LD inherits base Markdown regex set") {
-    const LD& chat = LD::MarkdownChat();
-    // The chat LD must include all base Markdown regexes (heading, list,
-    // inline code, etc.) plus the role-line regex on top.
-    CHECK(chat.mTokenRegexStrings.size() > LD::Markdown().mTokenRegexStrings.size());
-    // Heading regex still present somewhere.
-    CHECK(AnyRegexMatches(chat, P::Keyword, "# H1 heading"));
-    // Bold + inline code carry over.
-    CHECK(AnyRegexMatches(chat, P::Identifier, "**bold here**"));
-    CHECK(AnyRegexMatches(chat, P::Number, "talk about `code`"));
 }
