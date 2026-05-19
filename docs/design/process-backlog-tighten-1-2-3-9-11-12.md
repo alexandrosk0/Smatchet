@@ -42,7 +42,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
    - **Visual-validation acceptance**: when no automated check covers a visual change (palette, layout, font), the user is the verifier. See § Autonomous ship-loop default § Exceptions § Visual-validation exception for the loop-pause contract.
    ```
 
-3. Cross-link from `agents/git-janitor.md` § Heuristics (or whichever section discusses commit cadence) — one-line pointer to the new exception so the janitor doesn't squash-merge a draft PR whose intermediate commits are still being visually validated.
+3. Cross-link from `agents/git-janitor.md` § Hard refusals (or § Standard cleanup loop, whichever currently discusses commit cadence) — one-line pointer to the new exception so the janitor doesn't squash-merge a draft PR whose intermediate commits are still being visually validated.
 
 **Verification**:
 - Read the diff to AGENTS.md; the 5th exception bullet is present and follows the same numbered-list shape as exceptions 1–4.
@@ -281,7 +281,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
    If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers — `--force-with-lease` is safe here because the branch is the agent's own `agent/<id>` worktree.
    ```
 
-2. Cross-link from `agents/handoff-implementer.md` § Failure modes (or similar) — one-line pointer.
+2. Cross-link from `agents/handoff-implementer.md` § Stop conditions (line 84) — one-line pointer.
 
 3. The "force-with-lease on agent/* branches is safe" claim is a partial relaxation of AGENTS.md § Git safety protocol's force-push ban. Add a one-line carve-out in § Git safety protocol explicitly naming this case:
    ```markdown
