@@ -377,7 +377,8 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 
 - `1625bf9` · plan revision: H7 reality-check + 2026-05-18 locked decisions (PR #285)
 - `70e7be7` · phase 1: OpenPrRegistrar + agent_open_pr_watch sibling table (PR #286, 901 LOC, 11 doctest cases)
-- `<sha-of-this-phase-2-commit>` · phase 2: PrCommentClassifier interface + CoderabbitCommentClassifierPure (this PR — sha will be filled in by the orchestrator post-merge if you can't know it pre-push)
+- `43d8635` · phase 2: PrCommentClassifier interface + CoderabbitCommentClassifierPure (PR #288)
+- `<sha-of-this-phase-3-commit>` · phase 3: CoderabbitCommentClassifier concrete + 18-rule override table (this PR — orchestrator will sed post-merge)
 
 ## Deviations from plan
 

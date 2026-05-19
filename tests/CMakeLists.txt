@@ -196,6 +196,15 @@ if(SMATCHET_WITH_AGENTIC)
         # SMATCHET_TESTS_REPO_ROOT and asserts each row's expected parse.
         Source_Core/CoderabbitCommentClassifierPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp"
+        # coderabbit-react phase-3 — CoderabbitCommentClassifier concrete impl
+        # wired to the 18-rule override table from
+        # agents/coderabbit-triage.md § "Override rules". Covers each of the
+        # 18 rules (positive + negative case) + ≥ 3 survivor dispatches +
+        # a markdown-table guard test (parses agents/coderabbit-triage.md
+        # via SMATCHET_TESTS_REPO_ROOT and asserts the rule-number set +
+        # short-reason column match the C++ descriptor table).
+        Source_Core/CoderabbitCommentClassifier.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
