@@ -27,6 +27,8 @@
 #include <mutex>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 namespace CodingHarness {
 
 class ClaudeCodeLocalRunner : public IRunner {
@@ -79,6 +81,13 @@ class ClaudeCodeLocalRunner : public IRunner {
         /// `TrackerConfig::HandoffGitBinPath` / `HandoffGhBinPath`.
         std::string gitBinPath;
         std::string ghBinPath;
+
+        /// (coderabbit-react phase-7) Override for the parent directory that
+        /// `SpawnAdHoc` creates `coderabbit-pr<N>/` worktrees under. Empty =
+        /// the production default `.claude/worktrees` (relative to CWD).
+        /// Tests inject an absolute tmp-dir path to keep ad-hoc worktrees
+        /// off the actual repo tree.
+        std::string adHocWorktreeRoot;
     };
 
     explicit ClaudeCodeLocalRunner(Options opts);
@@ -98,6 +107,69 @@ class ClaudeCodeLocalRunner : public IRunner {
                 std::string& outError) override;
     std::string Name() const override;
 
+    // (coderabbit-react phase-7) Ad-hoc spawn request for non-proposal
+    // dispatch sources — CodeRabbit PR-comment dispatches + CI-failure
+    // dispatches. Distinct from `Spawn()` (which spawns from an
+    // `AgenticHandoffController`-owned `Seed`) in three ways:
+    //
+    //   1. Worktree path is `.claude/worktrees/coderabbit-pr<N>` (one per PR,
+    //      shared between CodeRabbit + CI dispatches), not the
+    //      `.claude/worktrees/agent-<proposalId>` shape Spawn() uses.
+    //   2. Branch is `coderabbit/pr<N>/iter<n>` (n = iteration count from
+    //      `agent_open_pr_watch.iteration_count`), not `agent/<proposalId>/<slug>`.
+    //   3. SEED.json carries a `dispatch_source` discriminator (per the
+    //      2026-05-18 locked decision); SEED.md opens with a
+    //      `## First delegate: handoff-implementer` + `## Routed via:` line.
+    //
+    // The spawned harness's first move is still `handoff-implementer` — that
+    // delegate reads `dispatch_source` to pick a routed sub-delegate
+    // (`coderabbit-triage` for `coderabbit_comment`; `build-doctor` /
+    // `debug-detective` / `test-rig` for the three `ci_*` sources).
+    struct AdHocSpawnRequest {
+        /// Canonical PR URL — `https://github.com/<owner>/<repo>/pull/<N>`.
+        /// The runner parses `<N>` to derive the worktree dir.
+        std::string prUrl;
+        /// PR's head ref name (e.g. `agent/42/h7` / `feature/X`). The runner
+        /// creates the new iter-branch off `origin/<headRefName>` so the
+        /// spawned harness builds on top of the in-flight PR's commits.
+        std::string headRefName;
+        /// Dispatch-source discriminator — one of:
+        ///   `coderabbit_comment` | `ci_build_failure` | `ci_ctest_failure` |
+        ///   `ci_coverage_gate`. Written verbatim into SEED.json under the
+        ///   new `dispatch_source` key.
+        std::string dispatchSource;
+        /// For `coderabbit_comment`: the markdown body of the CodeRabbit
+        /// comment. For `ci_*`: a short human-readable failure summary
+        /// (the full payload lands in `checkRunPayload`).
+        std::string commentBodyOrFailureBody;
+        /// First-delegate name. Per the 2026-05-18 locked decision this is
+        /// **always** `"handoff-implementer"` — kept as a field so the
+        /// contract is visible at the call site + future variants stay
+        /// future-proof.
+        std::string targetAgent;
+        /// Routed-via delegate the `handoff-implementer` should hand off
+        /// to after reading the seed. One of:
+        ///   `coderabbit-triage` | `build-doctor` | `debug-detective` |
+        ///   `test-rig`. Written into SEED.md's `## Routed via:` line.
+        std::string routedDelegate;
+        /// Optional per-spawn iteration counter — sourced from the
+        /// `agent_open_pr_watch.iteration_count` column on the PR's row.
+        /// Used to suffix the branch name (`coderabbit/pr<N>/iter<n>`).
+        /// Defaults to 1 when zero/unset.
+        int iteration = 1;
+        /// CI-dispatch payload — serialised to `CHECK_RUN.json` in the
+        /// worktree root before the spawn. Empty for `coderabbit_comment`
+        /// dispatches. Per AGENTS.md § Handoff envelope (phase-7 addition).
+        nlohmann::json checkRunPayload;
+    };
+
+    /// Run an ad-hoc spawn. Worktree creation, branch shape, SEED.json /
+    /// SEED.md / CHECK_RUN.json writes, then forwards to the same spawn
+    /// loop `Spawn()` uses. Synchronous — returns when the child exits.
+    /// Returns true on `RUN_RESULT.json.ok == true`; otherwise false +
+    /// outError carries the rejection cause.
+    bool SpawnAdHoc(const AdHocSpawnRequest& req, std::string& outError);
+
   private:
     Options m_opts;
     // Live worktree directory of the currently-running Spawn(), if any.
@@ -105,6 +177,21 @@ class ClaudeCodeLocalRunner : public IRunner {
     // controller can call Resume from a different thread than Spawn.
     std::string m_liveWorktreeDir;
     mutable std::mutex m_mu;
+
+    // (coderabbit-react phase-7) Internal helper — invokes the child harness
+    // against an already-prepared worktree. SEED.json / SEED.md (+ optional
+    // CHECK_RUN.json for `ci_*` ad-hoc dispatches) MUST be written by the
+    // caller before calling this. Shared between Spawn() (proposal path,
+    // worktree created by this runner + sentinels written from `seed`) and
+    // SpawnAdHoc() (ad-hoc path, worktree + sentinels prepared by the
+    // ad-hoc-specific code).
+    //
+    // The auto-PR-create fallback runs unconditionally; for ad-hoc dispatches
+    // the harness itself is expected to push to the iter-branch and the
+    // operator merges back into the PR's head ref manually.
+    bool SpawnCore(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
+                   StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
+                   RunResult& outResult, std::string& outError);
 };
 
 } // namespace CodingHarness

@@ -40,7 +40,11 @@ TEST_SUITE("HandoffAgentFrontmatter") {
         CHECK(fm.name == "handoff-implementer");
         CHECK(fm.complexity == "medium");
         CHECK(fm.readOnly == false);
-        CHECK(fm.version == 1);
+        // (coderabbit-react phase-7) Bumped to 2 alongside the
+        // `Spawned-harness routing for non-proposal dispatch sources`
+        // section. Future version bumps document a behavioural shift the
+        // spawned harness must reckon with.
+        CHECK(fm.version == 2);
         // `class` is not a structured-field today — assert via rawScalars so
         // we still pin the Implementer class without bloating the parser API.
         CHECK(fm.rawScalars.count("class") == 1);

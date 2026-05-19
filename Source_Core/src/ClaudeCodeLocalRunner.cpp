@@ -55,6 +55,11 @@ const char* const kRunResultName = "RUN_RESULT.json";
 const char* const kPrUrlName = "PR_URL.txt";
 const char* const kClarificationName = "CLARIFICATION_NEEDED.json";
 const char* const kUserResponseName = "USER_RESPONSE.json";
+// (coderabbit-react phase-7) Sentinel for CI-failure ad-hoc dispatches —
+// classifier-built payload (check-run name, conclusion, top N annotations,
+// last N log lines). Read by handoff-implementer when dispatch_source
+// matches `ci_*`. See AGENTS.md § Handoff envelope.
+const char* const kCheckRunName = "CHECK_RUN.json";
 
 bool FileExists(const std::string& path) {
 #if defined(_WIN32)
@@ -305,6 +310,73 @@ std::string TrimSpace(const std::string& s) {
     return s.substr(first, last - first + 1);
 }
 
+// (coderabbit-react phase-7) Extract the integer PR number from a canonical
+// GitHub PR URL like `https://github.com/<owner>/<repo>/pull/<N>`. Returns
+// false on malformed input. Same parser shape as
+// `PrCommentWatcher::ParsePrKeyFromUrl` but returns just the integer — the
+// runner needs the bare number to name the worktree dir + branch.
+bool ExtractPrNumberFromUrl(const std::string& prUrl, int& outNumber, std::string& outError) {
+    outNumber = 0;
+    outError.clear();
+    if (prUrl.empty()) {
+        outError = "prUrl is empty";
+        return false;
+    }
+    std::string rest = prUrl;
+    const auto schemeEnd = rest.find("://");
+    if (schemeEnd != std::string::npos) {
+        rest = rest.substr(schemeEnd + 3);
+    }
+    const auto firstSlash = rest.find('/');
+    if (firstSlash == std::string::npos || firstSlash + 1 >= rest.size()) {
+        outError = "prUrl missing path after host";
+        return false;
+    }
+    rest = rest.substr(firstSlash + 1);
+    std::vector<std::string> segs;
+    std::string acc;
+    for (char c : rest) {
+        if (c == '/' || c == '?' || c == '#') {
+            if (!acc.empty()) {
+                segs.push_back(std::move(acc));
+                acc.clear();
+            }
+            if (c == '?' || c == '#') {
+                break;
+            }
+        } else {
+            acc.push_back(c);
+        }
+    }
+    if (!acc.empty()) {
+        segs.push_back(std::move(acc));
+    }
+    if (segs.size() < 4 || segs[2] != "pull") {
+        outError = "prUrl must have shape /<owner>/<repo>/pull/<N>";
+        return false;
+    }
+    const std::string& nstr = segs[3];
+    if (nstr.empty() ||
+        !std::all_of(nstr.begin(), nstr.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        outError = "prUrl number segment is empty or non-numeric";
+        return false;
+    }
+    // Convert to int — clamp upper bound to int max (PR numbers stay well
+    // below INT_MAX in practice; defensive guard for hostile input).
+    try {
+        const long long v = std::stoll(nstr);
+        if (v <= 0 || v > 2147483647LL) {
+            outError = "prUrl number out of range";
+            return false;
+        }
+        outNumber = static_cast<int>(v);
+    } catch (const std::exception& e) {
+        outError = std::string("prUrl number parse failed: ") + e.what();
+        return false;
+    }
+    return true;
+}
+
 bool LooksLikeGithubPrUrl(const std::string& url) {
     // Minimum shape: scheme + host + "/pull/" + a digit. Trailing slash /
     // querystring tolerated. Reject empty + whitespace-only outright.
@@ -460,6 +532,22 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
             return false;
         }
     }
+
+    return SpawnCore(seed, worktreeDir, std::move(onDelta), std::move(onStateChange), std::move(cancelToken), outResult,
+                     outError);
+}
+
+bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
+                                      StateChangeCallback onStateChange,
+                                      std::shared_ptr<std::atomic<bool>> cancelToken, RunResult& outResult,
+                                      std::string& outError) {
+    // Caller (Spawn / SpawnAdHoc) is responsible for worktree creation +
+    // SEED.json + SEED.md (+ optional CHECK_RUN.json) writes. This helper
+    // owns the env-allow-list build, subprocess spawn, line-streaming, poll
+    // thread for clarification + PR sentinels, RUN_RESULT.json parse, and
+    // the auto-PR-create fallback. Refactored out of Spawn() in phase-7 so
+    // SpawnAdHoc shares the same child-process loop.
+    const std::string seedMdPath = JoinPath(worktreeDir, kSeedMdName);
 
     // Stash live worktree dir so Resume() can drop USER_RESPONSE.json into
     // the same place. Set under the mutex so a parallel Resume call sees a
@@ -712,6 +800,195 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
         onStateChange(outResult.ok ? "Complete" : "Failed");
     }
     return outResult.ok;
+}
+
+bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string& outError) {
+    // (coderabbit-react phase-7) Ad-hoc dispatch — CodeRabbit PR-comment
+    // dispatches + CI-failure dispatches. Shared worktree per PR
+    // (.claude/worktrees/coderabbit-pr<N>); iter-suffixed branch
+    // (coderabbit/pr<N>/iter<n>) so successive dispatches on the same PR
+    // don't collide. See header for the full contract.
+    outError.clear();
+
+    if (req.prUrl.empty()) {
+        outError = "AdHocSpawnRequest.prUrl is empty";
+        return false;
+    }
+    if (req.headRefName.empty()) {
+        outError = "AdHocSpawnRequest.headRefName is empty";
+        return false;
+    }
+    if (req.dispatchSource.empty()) {
+        outError = "AdHocSpawnRequest.dispatchSource is empty";
+        return false;
+    }
+    if (req.targetAgent != "handoff-implementer") {
+        // Locked decision (2026-05-18): the spawned harness's first delegate
+        // is ALWAYS handoff-implementer. Any deviation is a coding error,
+        // not a config knob. Refuse rather than silently route around it.
+        outError = "AdHocSpawnRequest.targetAgent must be 'handoff-implementer'";
+        return false;
+    }
+    if (req.routedDelegate.empty()) {
+        outError = "AdHocSpawnRequest.routedDelegate is empty";
+        return false;
+    }
+
+    int prNumber = 0;
+    {
+        std::string parseErr;
+        if (!ExtractPrNumberFromUrl(req.prUrl, prNumber, parseErr)) {
+            outError = "AdHocSpawnRequest.prUrl malformed: " + parseErr;
+            return false;
+        }
+    }
+    const int iterN = (req.iteration > 0) ? req.iteration : 1;
+
+    // Worktree path — .claude/worktrees/coderabbit-pr<N>. Per the plan,
+    // one worktree per PR shared across CodeRabbit + CI dispatches.
+    // Relative to CWD on purpose: the runner is invoked from the Smatchet
+    // process whose CWD is the repo root. Tests inject an absolute root via
+    // Options::adHocWorktreeRoot.
+    const std::string adHocRoot =
+        m_opts.adHocWorktreeRoot.empty() ? std::string(".claude/worktrees") : m_opts.adHocWorktreeRoot;
+    std::string worktreeRoot = adHocRoot;
+    if (!worktreeRoot.empty() && worktreeRoot.back() != '/' && worktreeRoot.back() != '\\') {
+        worktreeRoot.push_back('/');
+    }
+    worktreeRoot += "coderabbit-pr" + std::to_string(prNumber);
+    const std::string branchName = "coderabbit/pr" + std::to_string(prNumber) + "/iter" + std::to_string(iterN);
+
+    // Worktree create. Reuse the existing dir if present (e.g. a prior
+    // iter on the same PR left it). On fresh creation, base off
+    // `origin/<headRefName>` so the spawned harness sees the in-flight
+    // PR's commits.
+    if (!m_opts.skipWorktreeCreate) {
+        if (DirExists(worktreeRoot)) {
+            LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc: worktree already exists, reusing: %s", worktreeRoot.c_str());
+            // Best-effort: checkout the iter-branch (creating it if absent).
+            // `git worktree add` would fail on an existing dir; use the
+            // `git -C <dir> checkout -B <branch> origin/<headRefName>`
+            // shape so reruns advance to the new iter cleanly.
+            std::vector<std::string> coArgs;
+            coArgs.push_back("-C");
+            coArgs.push_back(worktreeRoot);
+            coArgs.push_back("checkout");
+            coArgs.push_back("-B");
+            coArgs.push_back(branchName);
+            coArgs.push_back(std::string("origin/") + req.headRefName);
+            std::string ce, co;
+            const std::string gitBin = m_opts.gitBinPath.empty() ? std::string("git") : m_opts.gitBinPath;
+            if (!RunQuick(gitBin, coArgs, 30000, ce, co)) {
+                outError = "git checkout -B failed: " + ce;
+                LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc: %s", outError.c_str());
+                return false;
+            }
+        } else {
+            std::vector<std::string> wtArgs;
+            wtArgs.push_back("worktree");
+            wtArgs.push_back("add");
+            wtArgs.push_back(worktreeRoot);
+            wtArgs.push_back("-b");
+            wtArgs.push_back(branchName);
+            wtArgs.push_back(std::string("origin/") + req.headRefName);
+            std::string we, wo;
+            const std::string gitBin = m_opts.gitBinPath.empty() ? std::string("git") : m_opts.gitBinPath;
+            if (!RunQuick(gitBin, wtArgs, 30000, we, wo)) {
+                outError = "git worktree add failed: " + we;
+                LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc: %s", outError.c_str());
+                return false;
+            }
+        }
+    } else if (!DirExists(worktreeRoot)) {
+        outError = "skipWorktreeCreate set but worktree dir does not exist: " + worktreeRoot;
+        return false;
+    }
+
+    // Build the seed. Payload extras carry the dispatch_source +
+    // routed_delegate + comment body so the spawned harness reads them via
+    // SeedBuilder's forward-compat passthrough.
+    Seed seed;
+    seed.proposalId = 0; // No proposal id for ad-hoc dispatches.
+    seed.sourceTracker = "github";
+    seed.issueKey = std::string();
+    seed.issueTitle = std::string("PR #") + std::to_string(prNumber) + " · " + req.dispatchSource;
+    seed.issueBodyMarkdown = req.commentBodyOrFailureBody;
+    {
+        std::ostringstream approach;
+        approach << "Ad-hoc dispatch from PR #" << prNumber << " (source=" << req.dispatchSource
+                 << ", routed via " << req.routedDelegate << ").";
+        seed.approachOutline = approach.str();
+    }
+    seed.complexityHint = "medium";
+    seed.targetBranch = branchName;
+    seed.workingDirectory = worktreeRoot;
+    seed.timestampUnixSec =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    // (phase-7) payloadExtra discriminator fields. SeedBuilder passes these
+    // through verbatim — the spawned handoff-implementer reads them to pick
+    // a routed sub-delegate per the 2026-05-18 locked decision.
+    seed.payloadExtra = nlohmann::json::object();
+    seed.payloadExtra["dispatch_source"] = req.dispatchSource;
+    seed.payloadExtra["pr_url"] = req.prUrl;
+    seed.payloadExtra["head_ref_name"] = req.headRefName;
+    seed.payloadExtra["comment_body"] = req.commentBodyOrFailureBody;
+    seed.payloadExtra["target_agent"] = req.targetAgent;
+    seed.payloadExtra["routed_delegate"] = req.routedDelegate;
+    seed.payloadExtra["iteration"] = iterN;
+
+    // SEED.json — canonical payload.
+    const std::string seedJsonPath = JoinPath(worktreeRoot, kSeedJsonName);
+    {
+        const nlohmann::json js = SeedBuilder::FormatSeedJson(seed);
+        if (!WriteFileText(seedJsonPath, js.dump(2), outError)) {
+            return false;
+        }
+    }
+
+    // SEED.md — opens with the routing header per the locked decision so the
+    // spawned `claude` reads the first-delegate + routed sub-delegate at
+    // a glance. The base SeedBuilder markdown follows.
+    const std::string seedMdPath = JoinPath(worktreeRoot, kSeedMdName);
+    {
+        std::ostringstream md;
+        md << "## First delegate: handoff-implementer\n\n"
+           << "## Routed via: " << req.routedDelegate << "\n\n"
+           << "- **dispatch_source:** " << req.dispatchSource << "\n"
+           << "- **pr_url:** " << req.prUrl << "\n"
+           << "- **head_ref_name:** " << req.headRefName << "\n"
+           << "- **iter_branch:** " << branchName << "\n"
+           << "- **iteration:** " << iterN << "\n\n";
+        md << SeedBuilder::FormatSeedMarkdown(seed);
+        if (!WriteFileText(seedMdPath, md.str(), outError)) {
+            return false;
+        }
+    }
+
+    // CHECK_RUN.json — CI dispatches only. Phase-7 sentinel addition per
+    // AGENTS.md § Handoff envelope. Empty payload is permitted (the
+    // dispatcher may not have a full classifier output to hand off); the
+    // file is still written so handoff-implementer's `if exists` probe
+    // matches the documented contract.
+    const bool isCiDispatch = (req.dispatchSource.compare(0, 3, "ci_") == 0);
+    if (isCiDispatch) {
+        const std::string checkRunPath = JoinPath(worktreeRoot, kCheckRunName);
+        const nlohmann::json payload =
+            req.checkRunPayload.is_null() ? nlohmann::json::object() : req.checkRunPayload;
+        if (!WriteFileText(checkRunPath, payload.dump(2), outError)) {
+            return false;
+        }
+    }
+
+    // Forward to the shared child loop. No delta / state callbacks for
+    // ad-hoc dispatches today — the operator audit-trails them via the PR
+    // comments + the controller's audit sink. Future variants can plumb
+    // toast / panel callbacks through.
+    RunResult result;
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    if (!SpawnCore(seed, worktreeRoot, /*onDelta*/ nullptr, /*onStateChange*/ nullptr, cancel, result, outError)) {
+        return false;
+    }
+    return result.ok;
 }
 
 bool ClaudeCodeLocalRunner::Resume(const ClarificationResponse& response,

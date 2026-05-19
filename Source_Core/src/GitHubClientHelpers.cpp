@@ -627,4 +627,174 @@ bool ExtractGitHubErrorMessage(const std::string& responseBody, std::string& out
     return false;
 }
 
+// ─── Phase-7 GraphQL helpers (impls) ─────────────────────────────────────────
+
+namespace {
+
+// Local Base64 (RFC 4648). Mirrors the encoder in GitHubClient.cpp; lives
+// here too so the public node-id builder can call it without a cross-TU
+// dependency. The two copies are deliberately tiny + identical.
+std::string Base64Encode(const std::string& in) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < in.size(); i += 3) {
+        const unsigned char a = static_cast<unsigned char>(in[i]);
+        const unsigned char b = (i + 1 < in.size()) ? static_cast<unsigned char>(in[i + 1]) : 0u;
+        const unsigned char c = (i + 2 < in.size()) ? static_cast<unsigned char>(in[i + 2]) : 0u;
+        out += table[a >> 2];
+        out += table[((a & 3) << 4) | (b >> 4)];
+        out += (i + 1 < in.size()) ? table[((b & 15) << 2) | (c >> 6)] : '=';
+        out += (i + 2 < in.size()) ? table[c & 63] : '=';
+    }
+    return out;
+}
+
+} // namespace
+
+std::string BuildGraphqlUrl(const std::string& baseUrl) {
+    // Strip trailing slashes first so `/api/v3/` and `/api/v3` both map.
+    std::string base = baseUrl;
+    while (!base.empty() && base.back() == '/') {
+        base.pop_back();
+    }
+    const std::string apiV3 = "/api/v3";
+    if (base.size() >= apiV3.size() && base.compare(base.size() - apiV3.size(), apiV3.size(), apiV3) == 0) {
+        return base.substr(0, base.size() - apiV3.size()) + "/api/graphql";
+    }
+    return base + "/graphql";
+}
+
+std::string BuildPullRequestReviewCommentNodeId(const std::string& restCommentId) {
+    // GitHub's canonical node-id shape for a PullRequestReviewComment is
+    // `<prefix>:PullRequestReviewComment<id>`, base64-encoded. The numeric
+    // 012 prefix is documented in GitHub's GraphQL changelog (2024+).
+    const std::string raw = "012:PullRequestReviewComment" + restCommentId;
+    return Base64Encode(raw);
+}
+
+nlohmann::json BuildResolveReviewThreadBody(const std::string& threadId) {
+    nlohmann::json body = nlohmann::json::object();
+    body["query"] =
+        "mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { isResolved } } }";
+    body["variables"] = nlohmann::json::object();
+    body["variables"]["threadId"] = threadId;
+    return body;
+}
+
+nlohmann::json BuildLookupReviewThreadBody(const std::string& nodeId) {
+    nlohmann::json body = nlohmann::json::object();
+    body["query"] =
+        "query($nodeId: ID!) { node(id: $nodeId) { ... on PullRequestReviewComment { pullRequestReview { thread "
+        "{ id } } } } }";
+    body["variables"] = nlohmann::json::object();
+    body["variables"]["nodeId"] = nodeId;
+    return body;
+}
+
+bool ParseResolveReviewThreadResponse(const std::string& body, bool& outIsResolved, std::string& outError) {
+    outIsResolved = false;
+    outError.clear();
+    if (body.empty()) {
+        outError = "empty response body";
+        return false;
+    }
+    nlohmann::json resp;
+    try {
+        resp = nlohmann::json::parse(body);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (resp.contains("errors") && resp["errors"].is_array() && !resp["errors"].empty()) {
+        const auto& errArr = resp["errors"];
+        if (errArr[0].is_object() && errArr[0].contains("message") && errArr[0]["message"].is_string()) {
+            outError = "GraphQL error: " + errArr[0]["message"].get<std::string>();
+        } else {
+            outError = "GraphQL error (unparseable errors array)";
+        }
+        return false;
+    }
+    if (!resp.contains("data") || !resp["data"].is_object()) {
+        outError = "response missing data object";
+        return false;
+    }
+    const auto& data = resp["data"];
+    if (!data.contains("resolveReviewThread") || !data["resolveReviewThread"].is_object()) {
+        outError = "data missing resolveReviewThread object";
+        return false;
+    }
+    const auto& rrt = data["resolveReviewThread"];
+    if (!rrt.contains("thread") || !rrt["thread"].is_object()) {
+        outError = "resolveReviewThread missing thread object";
+        return false;
+    }
+    const auto& thread = rrt["thread"];
+    if (!thread.contains("isResolved") || !thread["isResolved"].is_boolean()) {
+        outError = "thread missing boolean isResolved";
+        return false;
+    }
+    outIsResolved = thread["isResolved"].get<bool>();
+    return true;
+}
+
+bool ParseLookupReviewThreadResponse(const std::string& body, std::string& outThreadId, std::string& outError) {
+    outThreadId.clear();
+    outError.clear();
+    if (body.empty()) {
+        outError = "empty response body";
+        return false;
+    }
+    nlohmann::json resp;
+    try {
+        resp = nlohmann::json::parse(body);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (resp.contains("errors") && resp["errors"].is_array() && !resp["errors"].empty()) {
+        const auto& errArr = resp["errors"];
+        if (errArr[0].is_object() && errArr[0].contains("message") && errArr[0]["message"].is_string()) {
+            outError = "GraphQL error: " + errArr[0]["message"].get<std::string>();
+        } else {
+            outError = "GraphQL error (unparseable errors array)";
+        }
+        return false;
+    }
+    if (!resp.contains("data") || !resp["data"].is_object()) {
+        outError = "response missing data object";
+        return false;
+    }
+    const auto& data = resp["data"];
+    if (!data.contains("node") || data["node"].is_null()) {
+        outError = "data.node is null — comment may have been deleted or PAT lacks access";
+        return false;
+    }
+    if (!data["node"].is_object()) {
+        outError = "data.node is not an object";
+        return false;
+    }
+    const auto& node = data["node"];
+    if (!node.contains("pullRequestReview") || !node["pullRequestReview"].is_object()) {
+        outError = "node missing pullRequestReview object";
+        return false;
+    }
+    const auto& review = node["pullRequestReview"];
+    if (!review.contains("thread") || !review["thread"].is_object()) {
+        outError = "pullRequestReview missing thread object";
+        return false;
+    }
+    const auto& thread = review["thread"];
+    if (!thread.contains("id") || !thread["id"].is_string()) {
+        outError = "thread missing string id";
+        return false;
+    }
+    outThreadId = thread["id"].get<std::string>();
+    if (outThreadId.empty()) {
+        outError = "thread id is empty string";
+        return false;
+    }
+    return true;
+}
+
 } // namespace GitHubClientHelpers

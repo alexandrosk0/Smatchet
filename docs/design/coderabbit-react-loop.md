@@ -277,7 +277,7 @@ agentic-coding-handoff (already planned)            this plan adds
 
 - **Out-of-Smatchet daemon / Task Scheduler.** Abandoned — `PrCommentWatcher` in-process polling makes it redundant for any flow where Smatchet.exe is running. If the user wants detection while Smatchet is closed, a future slice can add an out-of-process `scripts/dev/coderabbit-watch.sh` that only writes to `agent_pr_watch` and lets Smatchet's in-process watcher pick up the row on next start. **Not in this plan.**
 - **SessionStart hook in `.claude/hooks/`.** Abandoned for the same reason — `PrCommentWatcher` already surfaces new comments via `SmatchetAgentHandoffUi` while Smatchet runs.
-- **PR thread-resolve via GraphQL.** Same scope as `agentic-coding-handoff`'s out-of-scope — separate slice.
+- ~~**PR thread-resolve via GraphQL.** Same scope as `agentic-coding-handoff`'s out-of-scope — separate slice.~~ **Landed in phase 7** (`GitHubClient::ResolveReviewThread` + `LookupReviewThreadIdForComment`). See § Cross-cutting: merge-gates interaction.
 - **Cloud Claude execution.** User explicitly rejected; `ClaudeCodeLocalRunner` is the only runner this plan uses (`agentic-coding-handoff`'s `ICodingHarnessRunner` interface allows future cloud runners but they're not wired here).
 - **Cross-repo PRs.** Same scope as `agentic-coding-handoff` — only PRs in the current Smatchet repo are watched.
 - **Webhook-driven CI react.** Push-mode (GitHub webhook `check_run.completed`) would react instantly but needs a public HTTPS endpoint and signature verification. Polling at 10-min cadence is good enough — flagged as future slice if instant-react matters.
@@ -382,7 +382,8 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `d2fbdf6` · phase 4: PrCommentWatcher WatchMode + classifier-registration + agent_open_pr_watch iteration (PR #292)
 - `74547b0` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (PR #293)
 - `0ec22fb` · CodeRabbit feedback cleanup on phases 1-5 (PR #294, 8 files / 216 LOC)
-- `<sha-of-this-phase-6-commit>` · phase 6: CiFailureClassifier concrete + PrCheckRunWatcher + AgenticHandoffController wiring + lint cleanup (this PR — orchestrator will sed post-merge)
+- `d9bb3fb` · phase 6: CiFailureClassifier concrete + PrCheckRunWatcher + AgenticHandoffController wiring + lint cleanup (PR #296)
+- `<sha-of-this-phase-7-commit>` · phase 7: dispatch wiring (PrCommentWatcher OpenPrScan + PrCheckRunWatcher → ClaudeCodeLocalRunner::SpawnAdHoc) + GraphQL ResolveReviewThread + handoff-implementer routing for non-proposal dispatch sources (this PR — orchestrator will sed post-merge)
 
 ## Deviations from plan
 
@@ -399,3 +400,15 @@ Phase 3 verification: `CoderabbitCommentClassifier.test.cpp` ctest green coverin
 Phase 4 verification: `PrCommentWatcher.test.cpp` + `PrCommentWatcher_OpenPrScan.test.cpp` ctest green covering WatchMode dispatch + classifier-registration + cursor advance; dual-target build clean; CI on PR #292 — Windows matrix green at merge.
 
 Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering check-run-name → category mapping + cmake/ctest/sanitizer/transient fingerprints + bounded annotation concat; dual-target build clean; CI on PR #293 — Windows matrix green at merge.
+
+## Cross-cutting: merge-gates interaction
+
+`docs/design/merge-gates-ci-coderabbit-comments.md` (sibling plan, shipped via PR #295 + #297) gates squash-merge on three GraphQL conditions, one of which is **zero unresolved non-outdated review threads with a `coderabbitai` comment**. Without phase-7's `ResolveReviewThread` plumbing, the short-circuit-reject path would post a reply and stop — leaving the CodeRabbit thread in `isResolved=false` and blocking the merge gate indefinitely. The operator would have to click "Resolve" in the GitHub UI for every overridden suggestion, defeating the auto-react loop's "no human in the inner loop" goal.
+
+Phase-7 chains `GitHubClient::LookupReviewThreadIdForComment` → `GitHubClient::ResolveReviewThread` immediately after `CommentAdd` returns on a `RejectShortCircuit` verdict, so the merge gate sees `isResolved=true` on the next poll. The gate plan's GraphQL `reviewThreads(first: 100)` query is the canonical reader for the bit phase-7 flips; both plans share the same wire-format contract.
+
+Failure modes:
+- `LookupReviewThreadIdForComment` fails (deleted comment, malformed id, PAT lacks access) → log warn, do not block on `RejectShortCircuit`. The reply is already posted; the merge gate stays blocked until manual resolve.
+- `ResolveReviewThread` fails (thread already resolved, permissions) → same — log warn, continue.
+
+Both failure modes are non-fatal by design. The merge gate is the failsafe — a degraded resolve path means the operator clicks "Resolve" manually, exactly as the merge-gates plan documents for the no-react-loop case.

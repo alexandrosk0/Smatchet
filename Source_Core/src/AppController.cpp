@@ -1985,6 +1985,70 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
             agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
 
+            // (coderabbit-react phase-7) Review-thread resolver seam — binds
+            // to GraphQL LookupReviewThreadIdForComment → ResolveReviewThread.
+            // Invoked from the watcher's RejectShortCircuit path so the
+            // CodeRabbit thread is marked resolved after the reply lands;
+            // unblocks the merge-gates plan's unresolved-thread gate cleanly.
+            smatchet::agentic::ReviewThreadResolver threadResolver =
+                [this](const std::string& commentId, std::string& outError) -> bool {
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                std::string threadId;
+                if (!client->LookupReviewThreadIdForComment(commentId, threadId, outError)) {
+                    return false;
+                }
+                return client->ResolveReviewThread(threadId, outError);
+            };
+            agenticPrCommentWatcher_->SetReviewThreadResolver(std::move(threadResolver));
+
+            // (coderabbit-react phase-7) Wire the OpenPrScan-mode respawn
+            // dispatcher. Binds to ClaudeCodeLocalRunner::SpawnAdHoc which
+            // creates a `coderabbit-pr<N>/iter<n>` worktree off the PR's
+            // head ref + spawns the harness with handoff-implementer as the
+            // always-first delegate (per the 2026-05-18 locked decision).
+            // The routed sub-delegate is `coderabbit-triage` — the classifier
+            // returned that target verbatim, but the spawned-harness routing
+            // is the load-bearing part of the dispatch_source contract.
+            smatchet::agentic::OpenPrRespawnDispatcher openPrDispatcher =
+                [this](const std::string& prUrl, const std::string& commentBody,
+                       const std::string& dispatchTargetAgent, std::string& outError) -> bool {
+                CodingHarness::ClaudeCodeLocalRunner* runner =
+                    dynamic_cast<CodingHarness::ClaudeCodeLocalRunner*>(agenticHandoffRunner_.get());
+                if (runner == nullptr) {
+                    outError = "agentic handoff runner is not a ClaudeCodeLocalRunner";
+                    return false;
+                }
+                // Look up the open-PR row to derive headRefName + iteration.
+                // The registrar populates head_ref_name on every gh-pr-list
+                // sweep; iteration_count is bumped after dispatch by the
+                // watcher itself.
+                AgentProposalStore::OpenPrWatchRow row;
+                std::string lookupErr;
+                if (!agentProposalStore_->GetOpenPrWatch(prUrl, row, lookupErr)) {
+                    outError = "GetOpenPrWatch failed: " + lookupErr;
+                    return false;
+                }
+                CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+                req.prUrl = prUrl;
+                req.headRefName = row.headRefName;
+                req.dispatchSource = "coderabbit_comment";
+                req.commentBodyOrFailureBody = commentBody;
+                req.targetAgent = "handoff-implementer";
+                // Per the 2026-05-18 locked decision: `coderabbit_comment`
+                // routes to coderabbit-triage. The classifier's reported
+                // dispatchTargetAgent is honored when non-empty (allows
+                // future routing variants to override); else we default.
+                req.routedDelegate =
+                    dispatchTargetAgent.empty() ? std::string("coderabbit-triage") : dispatchTargetAgent;
+                req.iteration = row.iterationCount + 1;
+                return runner->SpawnAdHoc(req, outError);
+            };
+            agenticPrCommentWatcher_->SetOpenPrRespawnDispatcher(std::move(openPrDispatcher));
+
             // (coderabbit-react phase-1) Construct + wire the open-PR
             // registrar. Same lifetime as the handoff controller. Phase 1
             // hardcodes the watched base branch to `develop` — a future
@@ -2053,10 +2117,63 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
                     }
                     return client->RerunWorkflowRun(owner, repo, runId, outError);
                 });
-            // OpenPrRespawnDispatcher is intentionally NOT wired in phase
-            // 6 — phase 7 lands the worktree-spawning binding. Until then
-            // a Dispatch verdict logs once + advances the cursor but the
-            // child harness does not spawn.
+            // (coderabbit-react phase-7) CI-failure respawn dispatcher.
+            // Same shape as the CodeRabbit dispatcher above — derives PR
+            // metadata from the open_pr_watch row and forwards to
+            // ClaudeCodeLocalRunner::SpawnAdHoc. The dispatch_source carries
+            // the `ci_*` discriminator the classifier returned; the routed
+            // delegate is `build-doctor` / `debug-detective` / `test-rig`
+            // per the routing table in the plan.
+            //
+            // Failure-cause payload is serialised into CHECK_RUN.json by the
+            // runner; handoff-implementer reads it when the dispatch_source
+            // matches `ci_*` (per AGENTS.md § Handoff envelope phase-7
+            // addition).
+            smatchet::agentic::CheckRunRespawnDispatcher checkRunDispatcher =
+                [this](const std::string& prUrl, const std::string& dispatchSource,
+                       const std::string& dispatchTargetAgent, const GitHubClient::CheckRun& run,
+                       std::string& outError) -> bool {
+                CodingHarness::ClaudeCodeLocalRunner* runner =
+                    dynamic_cast<CodingHarness::ClaudeCodeLocalRunner*>(agenticHandoffRunner_.get());
+                if (runner == nullptr) {
+                    outError = "agentic handoff runner is not a ClaudeCodeLocalRunner";
+                    return false;
+                }
+                AgentProposalStore::OpenPrWatchRow row;
+                std::string lookupErr;
+                if (!agentProposalStore_->GetOpenPrWatch(prUrl, row, lookupErr)) {
+                    outError = "GetOpenPrWatch failed: " + lookupErr;
+                    return false;
+                }
+                CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+                req.prUrl = prUrl;
+                req.headRefName = row.headRefName;
+                req.dispatchSource = dispatchSource;
+                {
+                    // Build a short human-readable summary that goes into the
+                    // seed's `commentBodyOrFailureBody` field. Full classifier
+                    // payload lands in CHECK_RUN.json.
+                    std::ostringstream sum;
+                    sum << "CI check-run '" << run.name << "' (id=" << run.id << ") concluded '" << run.conclusion
+                        << "'. details_url=" << run.detailsUrl;
+                    req.commentBodyOrFailureBody = sum.str();
+                }
+                req.targetAgent = "handoff-implementer";
+                req.routedDelegate = dispatchTargetAgent.empty() ? std::string("build-doctor") : dispatchTargetAgent;
+                req.iteration = row.iterationCount + 1;
+                // CHECK_RUN.json payload — the classifier's structured output
+                // (name, conclusion, summary). Keeps the seed file small;
+                // the spawned harness reads the full payload from CHECK_RUN.json.
+                req.checkRunPayload = nlohmann::json::object();
+                req.checkRunPayload["check_run_id"] = run.id;
+                req.checkRunPayload["check_run_name"] = run.name;
+                req.checkRunPayload["status"] = run.status;
+                req.checkRunPayload["conclusion"] = run.conclusion;
+                req.checkRunPayload["details_url"] = run.detailsUrl;
+                req.checkRunPayload["dispatch_source"] = dispatchSource;
+                return runner->SpawnAdHoc(req, outError);
+            };
+            agenticPrCheckRunWatcher_->SetCheckRunRespawnDispatcher(std::move(checkRunDispatcher));
             agenticPrCheckRunWatcher_->SetClassifier(std::move(checkRunClassifier));
 
             // (CR Bundle A4) The H9 OnProposalApproved auto-start callback is

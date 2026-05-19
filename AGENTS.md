@@ -222,16 +222,17 @@ The agentic coding-handoff flow (see `docs/design/agentic-coding-handoff.md`) sp
 
 ### Sentinel files
 
-Six files, one writer + one reader per file. None of them are committed to the git history — the runner writes them before / during the child's lifetime; the child writes its results back; the runner consumes the results on exit.
+Seven files, one writer + one reader per file. None of them are committed to the git history — the runner writes them before / during the child's lifetime; the child writes its results back; the runner consumes the results on exit.
 
 | File | Writer | Reader | One-line role |
 |---|---|---|---|
-| `SEED.md` | runner | handoff-implementer | Human-readable handoff brief; weave into commit-message + PR-body prose. |
-| `SEED.json` | runner | handoff-implementer | Canonical payload (`CodingHarness::Seed` struct); first thing the child reads on entry. |
+| `SEED.md` | runner | handoff-implementer | Human-readable handoff brief; weave into commit-message + PR-body prose. For non-proposal dispatches (`coderabbit_comment` / `ci_*`) the markdown opens with a `## First delegate: handoff-implementer` + `## Routed via: <sub-delegate>` header naming the routed sub-delegate the implementer hands off to. |
+| `SEED.json` | runner | handoff-implementer | Canonical payload (`CodingHarness::Seed` struct); first thing the child reads on entry. Phase 7 adds the `dispatch_source` discriminator field for non-proposal dispatches — one of `proposal_implement` \| `coderabbit_comment` \| `ci_build_failure` \| `ci_ctest_failure` \| `ci_coverage_gate` \| `ci_transient_rerun`. Absent or unrecognised values fall back to `proposal_implement` (the H3 default). Carried in the seed's `payloadExtra` so the existing `CodingHarness::SeedBuilder` round-trips it without schema-version churn. |
 | `CLARIFICATION_NEEDED.json` | handoff-implementer | runner + Smatchet UI | Written **only** when the child cannot proceed without user input; surfaces a single question, then the child stops. |
 | `USER_RESPONSE.json` | runner | handoff-implementer | Written by the runner (or the Smatchet UI, or the GitHub-comment poller) when the user answers; child reads on resume. |
 | `RUN_RESULT.json` | handoff-implementer | runner | Terminal signal — `{ ok, errorMessage, prUrl, filesChanged, linesAdded, linesRemoved, toolUseSummary }`. Runner watches for this file; its appearance flips the FSM to Complete or Failed. |
 | `PR_URL.txt` | handoff-implementer | runner + Smatchet UI | Single line containing the PR URL. Mirrors `RUN_RESULT.json.prUrl` so the UI has a cheap path before parsing the full result. |
+| `CHECK_RUN.json` | classifier (`PrCheckRunWatcher` dispatcher) | handoff-implementer | CI failure cause payload (check-run name, conclusion, top N annotations, last N log lines) — written before spawn for `ci_*` dispatch sources. The seed's `dispatch_source` matching `ci_*` is the read-trigger; absence on a `ci_*` dispatch is a logged warning, not a fatal error (CodeRabbit-comment + proposal dispatches never produce this file). |
 
 Write-once semantics: every sentinel except `USER_RESPONSE.json` (rewritten per clarification round) is written once per spawn. `RUN_RESULT.json` is the **last** write the child performs before exit — anything else can race, but the runner must observe `RUN_RESULT.json` strictly after `PR_URL.txt`.
 

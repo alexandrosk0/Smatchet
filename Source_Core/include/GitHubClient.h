@@ -281,6 +281,52 @@ class GitHubClient : public ITrackerClient {
      */
     bool RerunWorkflowRun(const std::string& owner, const std::string& repo, std::int64_t runId, std::string& outError);
 
+    // ─── GraphQL surface (phase 7 — review-thread resolve) ───────────────────
+    //
+    // GraphQL endpoint POST /graphql. Same auth-header construction as the
+    // REST methods (inline bearer, no audit-trail PAT leak). Used by the
+    // short-circuit-reject path to mark a CodeRabbit review thread resolved
+    // after the reject reply lands — unblocks the merge-gates plan's
+    // unresolved-thread gate cleanly. Audit action `"ResolveReviewThread"`.
+    //
+    // The GraphQL endpoint URL is derived by stripping `/api/v3` from
+    // `baseUrl_` (for GitHub Enterprise) and appending `/graphql`; for
+    // `https://api.github.com` the endpoint is `https://api.github.com/graphql`.
+
+    /**
+     * GraphQL `resolveReviewThread` mutation. `threadId` is the GraphQL
+     * node ID of the review thread (NOT the REST comment id — use
+     * `LookupReviewThreadIdForComment` to translate a REST comment id when
+     * needed).
+     *
+     * Mutation body:
+     *   mutation($threadId: ID!) {
+     *     resolveReviewThread(input: {threadId: $threadId}) {
+     *       thread { isResolved }
+     *     }
+     *   }
+     *
+     * Returns true on 2xx + `data.resolveReviewThread.thread.isResolved == true`.
+     * Audit action `"ResolveReviewThread"`.
+     */
+    bool ResolveReviewThread(const std::string& threadId, std::string& outError);
+
+    /**
+     * GraphQL `node(id: ...)` query — translate a REST review-comment id
+     * (the numeric id returned by GitHub's `/pulls/{n}/comments` endpoint)
+     * into the containing review thread's GraphQL ID. The REST id is
+     * base64-encoded into the canonical `PRRC_` node ID shape first
+     * (`base64("012:PullRequestReviewComment<id>")`), then queried for
+     * `pullRequestReview.thread { id }`.
+     *
+     * Returns false + outError when the REST id cannot be resolved (deleted
+     * comment, mis-encoded id, thread not visible to the PAT). Read endpoint
+     * — no audit-trail. Phase 7 picks this lazy-lookup shape over a eager
+     * variant on FetchPrComments to keep the diff narrow; rejects are rare.
+     */
+    bool LookupReviewThreadIdForComment(const std::string& restCommentId, std::string& outThreadId,
+                                        std::string& outError);
+
   private:
     std::string baseUrl_; // e.g. https://api.github.com (no trailing slash).
     std::string pat_;

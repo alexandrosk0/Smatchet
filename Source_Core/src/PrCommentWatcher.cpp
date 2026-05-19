@@ -82,6 +82,9 @@ void PrCommentWatcher::SetRespawnDispatcher(HarnessRespawnDispatcher dispatcher)
 void PrCommentWatcher::SetOpenPrRespawnDispatcher(OpenPrRespawnDispatcher dispatcher) {
     openPrDispatcher_ = std::move(dispatcher);
 }
+void PrCommentWatcher::SetReviewThreadResolver(ReviewThreadResolver resolver) {
+    threadResolver_ = std::move(resolver);
+}
 void PrCommentWatcher::SetClassifier(std::unique_ptr<PrCommentClassifier> classifier) {
     classifier_ = std::move(classifier);
 }
@@ -420,6 +423,20 @@ int PrCommentWatcher::Tick() {
                                  row.prUrl.c_str(), postErr.c_str());
                     }
                 }
+                // (phase-7) Resolve the CodeRabbit review thread via GraphQL
+                // after posting the reply. Unblocks the merge-gates plan's
+                // unresolved-thread gate cleanly. Failure is non-fatal — the
+                // reply already landed; manual resolve is a recoverable
+                // follow-up. Skipped when the seam is unwired (tests or
+                // operators that opted out).
+                if (threadResolver_ && !firstNewComment->id.empty()) {
+                    std::string resolveErr;
+                    if (!threadResolver_(firstNewComment->id, resolveErr)) {
+                        LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: review-thread resolve failed for prUrl=%s "
+                                 "commentId=%s: %s",
+                                 row.prUrl.c_str(), firstNewComment->id.c_str(), resolveErr.c_str());
+                    }
+                }
                 LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: RejectShortCircuit on prUrl=%s (%s)",
                          row.prUrl.c_str(), cls.rejectRuleCitation.c_str());
                 continue;
@@ -591,6 +608,14 @@ int PrCommentWatcher::Tick() {
                 if (!poster_(prKey, cls.rejectReplyBody, postErr)) {
                     LOG_WARN("PrCommentWatcher::Tick: reject-reply post failed for proposalId=%lld: %s",
                              static_cast<long long>(h.proposalId), postErr.c_str());
+                }
+            }
+            // (phase-7) Same review-thread resolve seam as OpenPrScan.
+            if (threadResolver_ && !bodyId.empty()) {
+                std::string resolveErr;
+                if (!threadResolver_(bodyId, resolveErr)) {
+                    LOG_WARN("PrCommentWatcher::Tick: review-thread resolve failed for proposalId=%lld commentId=%s: %s",
+                             static_cast<long long>(h.proposalId), bodyId.c_str(), resolveErr.c_str());
                 }
             }
             LOG_INFO("PrCommentWatcher::Tick: RejectShortCircuit on proposalId=%lld (%s)",
