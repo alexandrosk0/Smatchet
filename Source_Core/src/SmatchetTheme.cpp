@@ -557,13 +557,76 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     SetSyntaxColors(syn);
 }
 
+// Pristine ImGui-built-in dark palette — bright cyan-blue accents (HeaderHovered #4296FA,
+// WindowBg #0F0F0F). Default for fresh installs. Deliberately bypasses ApplyCommonStyle so
+// rounding / padding stay at ImGui defaults (the whole point of this theme is to show what
+// ImGui ships with out of the box).
+void ApplyImGuiDefaultDark(ImGuiStyle& style, ImVec4* /*colors*/) {
+    ImGui::StyleColorsDark(&style);
+
+    // Muted, neutral syntax palette readable on ImGui-default-dark bg (#0F0F0F). Mirrors
+    // SmatchetDark's family (purple/orange/green/cyan/yellow) — same hues land just as
+    // legibly on the bright ImGui default backdrop as they do on Smatchet's muted navy.
+    const SmatchetThemeSyntaxColors syn = {{0.78f, 0.50f, 1.00f, 1.0f},  // Keyword
+                                           {0.95f, 0.65f, 0.45f, 1.0f},  // String
+                                           {0.45f, 0.75f, 0.45f, 1.0f},  // Comment
+                                           {0.65f, 0.85f, 1.00f, 1.0f},  // Number
+                                           {0.85f, 0.85f, 0.50f, 1.0f}}; // Preprocessor
+    SetSyntaxColors(syn);
+}
+
 } // namespace
 
 void SmatchetTheme::ApplyStyle(ThemeId theme) {
     ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4* colors = style.Colors;
+
+    // Full-style reset BEFORE the theme override runs. Two layered concerns:
+    //
+    //   1) Colors[]: ApplySmatchetDark / ApplyModernDark / ... only write 55 of the ~66
+    //      ImGuiCol_* slots. The unwritten slots (TextLink, TreeLines, InputTextCursor,
+    //      TabSelectedOverline, TabDimmedSelectedOverline, DragDropTargetBg, UnsavedMarker,
+    //      NavCursor + renamed-alias duplicates) keep whatever value the previous theme — or a
+    //      leaked PushStyleColor — left in them.
+    //
+    //   2) Layout fields (WindowBorderSize, ChildBorderSize, IndentSpacing, TabBarBorderSize,
+    //      etc.): NortonCommander zeroes the 7 rounding fields; ApplyCommonStyle resets those
+    //      symmetrically. But the ~50 OTHER ImGuiStyle layout fields (DisabledAlpha,
+    //      WindowMinSize, ItemInnerSpacing, CellPadding, TabBarBorderSize, ScrollbarPadding,
+    //      DragDropTargetPadding, AntiAliased* toggles, HoverDelay*, etc.) are not touched by
+    //      ApplyCommonStyle. Any future per-theme override on one of those fields would leak
+    //      across switches — the exact failure mode the user reports as "switching back doesn't
+    //      restore SmatchetDark even after the seed-colors fix."
+    //
+    // `style = ImGuiStyle{}` invokes ImGui's default ctor — every layout field returns to its
+    // ImGui-documented baseline, and the freshly-constructed Colors[] holds the dark seed
+    // (per the ctor body in imgui.cpp). We then re-run StyleColorsLight() for the lone light
+    // variant; StyleColorsDark for everything else (the dark seed is already in the ctor, but
+    // calling it explicitly is the documented public API and keeps the intent obvious).
+    // ApplyCommonStyle + per-theme apply then layer on top of a known-clean substrate.
+    style = ImGuiStyle{};
+    if (theme == ThemeId::Vs2022Light) {
+        ImGui::StyleColorsLight(&style);
+    } else {
+        ImGui::StyleColorsDark(&style);
+    }
+
+    // ImGuiDefaultDark short-circuits the Smatchet brand polish: this theme exists to surface
+    // ImGui's pristine defaults (rounding, padding, HeaderHovered #4296FA, WindowBg #0F0F0F),
+    // so we skip ApplyCommonStyle entirely. The freshly-constructed style above already holds
+    // the ImGui defaults; ApplyImGuiDefaultDark just sets the syntax palette and (re)asserts
+    // StyleColorsDark for clarity. Returning early keeps a future ApplyCommonStyle bug from
+    // silently overwriting the defaults.
+    if (theme == ThemeId::ImGuiDefaultDark) {
+        ApplyImGuiDefaultDark(style, style.Colors);
+        return;
+    }
 
     ApplyCommonStyle(style);
+
+    // `colors` is a convenience alias for the (now-reset, seeded) Colors[] array. The per-theme
+    // ApplyXxx helpers take it as their `ImVec4* colors` parameter so they only have to write the
+    // slot indices, not re-derefence the style on every line.
+    ImVec4* colors = style.Colors;
 
     switch (theme) {
     case ThemeId::ModernDark:
@@ -580,6 +643,10 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
         break;
     case ThemeId::NortonCommander:
         ApplyNortonCommander(style, colors);
+        break;
+    case ThemeId::ImGuiDefaultDark:
+        // Handled by the early-return above; this case is here so the switch is exhaustive
+        // and a compiler warning fires if the enum gains a new value without an arm.
         break;
     case ThemeId::SmatchetDark:
     default:

@@ -79,6 +79,11 @@ SCENARIOS=(
     "dock-gap-sentinel"
     "command-palette-fuzzy"
 )
+# NOTE: theme-switch-roundtrip is NOT in this list. Its assertion shape is
+# different — it does not gate against a committed golden PNG. Instead the
+# fresh-launch capture serves as the per-run reference and the round-trip
+# capture must be bytewise-identical to it. See scripts/dev/test-theme-roundtrip.sh
+# for that test driver.
 
 # Extract a JSON field from the CLI's text-wrapped output.
 extract() {

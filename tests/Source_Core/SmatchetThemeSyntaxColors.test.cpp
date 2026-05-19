@@ -140,6 +140,58 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes NortonComma
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ImGuiDefaultDark syntax palette") {
+    SmatchetTheme::ApplyStyle(ThemeId::ImGuiDefaultDark);
+    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+
+    // ImGuiDefaultDark mirrors SmatchetDark's syntax family (only the chrome — provided by
+    // ImGui::StyleColorsDark — diverges). Encoded explicitly so a future hue split between
+    // the two trips the assertion instead of silently passing.
+    const float keyword[4] = {0.78f, 0.50f, 1.00f, 1.0f};
+    const float strLit[4] = {0.95f, 0.65f, 0.45f, 1.0f};
+    const float comment[4] = {0.45f, 0.75f, 0.45f, 1.0f};
+    const float number[4] = {0.65f, 0.85f, 1.00f, 1.0f};
+    const float preproc[4] = {0.85f, 0.85f, 0.50f, 1.0f};
+
+    CHECK(ApproxEq(s.Keyword, keyword));
+    CHECK(ApproxEq(s.String, strLit));
+    CHECK(ApproxEq(s.Comment, comment));
+    CHECK(ApproxEq(s.Number, number));
+    CHECK(ApproxEq(s.Preprocessor, preproc));
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle ImGuiDefaultDark restores ImGui default WindowBg") {
+    // Pin the user-visible promise of ImGuiDefaultDark: WindowBg = ImGui's built-in dark default
+    // (#0F0F0F — 0.0588f / 0x0F on each RGB channel). Switching SmatchetDark → ImGuiDefaultDark
+    // must produce that exact bg, and round-tripping back to SmatchetDark must NOT poison the
+    // ImGui defaults.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    SmatchetTheme::ApplyStyle(ThemeId::ImGuiDefaultDark);
+    const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+
+    // ImGui::StyleColorsDark() sets WindowBg = ImVec4(0.06f, 0.06f, 0.06f, 0.94f) per imgui.cpp.
+    // Encode the documented constants verbatim — any future ImGui upgrade that shifts the dark
+    // palette baseline trips this assertion deliberately so we re-validate the user-facing
+    // "show me what ImGui ships" promise.
+    CHECK(std::fabs(bg.x - 0.06f) < 1e-3f);
+    CHECK(std::fabs(bg.y - 0.06f) < 1e-3f);
+    CHECK(std::fabs(bg.z - 0.06f) < 1e-3f);
+    CHECK(std::fabs(bg.w - 0.94f) < 1e-3f);
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle ImGuiDefaultDark skips ApplyCommonStyle rounding") {
+    // ImGuiDefaultDark deliberately bypasses ApplyCommonStyle so rounding / padding stay at
+    // the ImGui defaults (the whole point of this theme is to surface ImGui's out-of-the-box
+    // look). ApplyCommonStyle would override WindowRounding to 6.0 — assert it stays at the
+    // ImGui ctor default (0.0).
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    CHECK(std::fabs(ImGui::GetStyle().WindowRounding - 6.0f) < 1e-5f);
+
+    SmatchetTheme::ApplyStyle(ThemeId::ImGuiDefaultDark);
+    // ImGuiStyle{} ctor leaves WindowRounding at 0.0; ApplyImGuiDefaultDark must not touch it.
+    CHECK(std::fabs(ImGui::GetStyle().WindowRounding) < 1e-5f);
+}
+
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle keyword color diverges between themes") {
     // Round-trip proof for the user-facing claim — switching theme actually recolors the syntax
     // palette in the next frame. Captures the SmatchetDark / Vs2022Dark / Vs2022Light /
@@ -283,6 +335,158 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle round-trips full I
             CHECK(Vec4Eq(before.colors[i], after.colors[i]));
         }
     }
+}
+
+// Field-by-field round-trip — pins EVERY ImGuiCol_* slot the runtime exposes (not just the 55 the
+// SmatchetTheme apply functions explicitly write). Even one un-rewritten slot that the intermediate
+// theme mutated (via a future PushStyleColor leak or a partial apply path) would surface here as
+// a visible "residual color" the user reports as "switching back doesn't restore SmatchetDark".
+//
+// Layered onto the existing StyleSnapshot test: that one declared a StyleSnapshot with
+// `ImVec4 colors[ImGuiCol_COUNT]` but only iterates `ImGuiCol_COUNT` slots — already comprehensive.
+// This test exists to surface a *behavioural* contract the existing test phrased only as a
+// property check: every slot the round-trip touches must be bit-identical to a fresh apply
+// performed on a never-mutated style (an ImGuiStyle{} with StyleColorsDark seeded by its ctor).
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle SmatchetDark every-slot matches fresh-style apply") {
+    // Reference: a brand-new ImGuiStyle (ctor calls StyleColorsDark + sets every layout field).
+    // ApplyStyle on this is what "fresh" SmatchetDark looks like. We capture the full Colors[]
+    // array post-apply, then exercise the user-reported A->B->A path and assert every single slot
+    // matches the fresh path — INCLUDING the 11 slots no SmatchetTheme apply function explicitly
+    // writes (TextLink / TreeLines / NavCursor / TabSelected / etc.).
+    ImGui::StyleColorsDark();
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    ImVec4 freshColors[ImGuiCol_COUNT];
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        freshColors[i] = ImGui::GetStyle().Colors[i];
+    }
+
+    // User-reported sequence: SmatchetDark → every other theme → SmatchetDark.
+    const ThemeId others[] = {ThemeId::ModernDark, ThemeId::Vs2022Dark, ThemeId::Vs2022Light, ThemeId::HighContrast,
+                              ThemeId::NortonCommander};
+    for (ThemeId detour : others) {
+        SmatchetTheme::ApplyStyle(detour);
+        SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+            INFO("Detour theme=", static_cast<int>(detour), " slot=", i, " fresh=(", freshColors[i].x, ",",
+                 freshColors[i].y, ",", freshColors[i].z, ",", freshColors[i].w, ") after=(",
+                 ImGui::GetStyle().Colors[i].x, ",", ImGui::GetStyle().Colors[i].y, ",", ImGui::GetStyle().Colors[i].z,
+                 ",", ImGui::GetStyle().Colors[i].w, ")");
+            CHECK(Vec4Eq(freshColors[i], ImGui::GetStyle().Colors[i]));
+        }
+    }
+}
+
+// Sentinel-injection regression — pins the seed-baseline contract added to ApplyStyle. Pokes a
+// neon-magenta sentinel into the 11 slots that the per-theme override functions do NOT explicitly
+// rewrite (TextLink, TreeLines, InputTextCursor, TabSelectedOverline, TabDimmedSelectedOverline,
+// DragDropTargetBg, UnsavedMarker, NavCursor / aliases for TabSelected / TabDimmed /
+// TabDimmedSelected). If ApplyStyle ever drops its StyleColorsDark/Light seed pass — the change
+// that fixes the user-reported residual-color bug — the sentinel will survive the next ApplyStyle
+// and this CHECK trips. Equivalent of forcing a PushStyleColor leak on those slots.
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle re-seeds baseline so injected sentinels are wiped") {
+    const ImVec4 sentinel(1.0f, 0.0f, 1.0f, 1.0f); // neon magenta — none of our themes use this
+    const int slotsToProbe[] = {
+        ImGuiCol_TextLink,
+        ImGuiCol_TreeLines,
+        ImGuiCol_InputTextCursor,
+        ImGuiCol_TabSelected,
+        ImGuiCol_TabSelectedOverline,
+        ImGuiCol_TabDimmed,
+        ImGuiCol_TabDimmedSelected,
+        ImGuiCol_TabDimmedSelectedOverline,
+        ImGuiCol_DragDropTargetBg,
+        ImGuiCol_UnsavedMarker,
+        ImGuiCol_NavCursor,
+    };
+
+    // Establish a known-good SmatchetDark baseline.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    ImVec4 cleanBaseline[ImGuiCol_COUNT];
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        cleanBaseline[i] = ImGui::GetStyle().Colors[i];
+    }
+
+    // Inject the sentinel into every probed slot (simulates an external PushStyleColor leak or a
+    // future theme that touches more slots than the apply path expects).
+    for (int slot : slotsToProbe) {
+        ImGui::GetStyle().Colors[slot] = sentinel;
+    }
+
+    // Switch theme. ApplyStyle's seed-baseline pass should restore the unwritten slots.
+    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+
+    // Every probed slot must match the original SmatchetDark baseline — the sentinel must be gone.
+    for (int slot : slotsToProbe) {
+        INFO("Probed slot=", slot, " expected=(", cleanBaseline[slot].x, ",", cleanBaseline[slot].y, ",",
+             cleanBaseline[slot].z, ",", cleanBaseline[slot].w, ") actual=(", ImGui::GetStyle().Colors[slot].x, ",",
+             ImGui::GetStyle().Colors[slot].y, ",", ImGui::GetStyle().Colors[slot].z, ",",
+             ImGui::GetStyle().Colors[slot].w, ")");
+        CHECK(Vec4Eq(cleanBaseline[slot], ImGui::GetStyle().Colors[slot]));
+    }
+}
+
+// Non-color sentinel-injection — pins the FULL-style reset (`style = ImGuiStyle{}`) contract.
+// The earlier sentinel test only proved the Colors[] array gets re-seeded. The deeper bug the user
+// reported was that the ~50 layout fields ImGuiStyle exposes outside Colors[] — WindowBorderSize,
+// IndentSpacing, ItemInnerSpacing, CellPadding, DisabledAlpha, ScrollbarPadding, AntiAliased*
+// toggles, HoverDelay*, etc. — were leaking across switches because ApplyCommonStyle only resets
+// 11 of them and no per-theme apply touches the rest. If ApplyStyle ever drops the full reset, a
+// poisoned layout field will survive the next ApplyStyle and these CHECKs trip. Picks a
+// representative subset of layout fields a future theme is likely to override.
+TEST_CASE_FIXTURE(ImGuiCtxFixture,
+                  "SmatchetTheme::ApplyStyle re-seeds full ImGuiStyle so non-color sentinels are wiped") {
+    // Establish a known-good SmatchetDark baseline for the layout fields.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const float expectedWindowBorderSize = ImGui::GetStyle().WindowBorderSize;
+    const float expectedChildBorderSize = ImGui::GetStyle().ChildBorderSize;
+    const float expectedPopupBorderSize = ImGui::GetStyle().PopupBorderSize;
+    const float expectedFrameBorderSize = ImGui::GetStyle().FrameBorderSize;
+    const float expectedTabBorderSize = ImGui::GetStyle().TabBorderSize;
+    const float expectedTabBarBorderSize = ImGui::GetStyle().TabBarBorderSize;
+    const float expectedIndentSpacing = ImGui::GetStyle().IndentSpacing;
+    const ImVec2 expectedItemInnerSpacing = ImGui::GetStyle().ItemInnerSpacing;
+    const ImVec2 expectedCellPadding = ImGui::GetStyle().CellPadding;
+    const float expectedGrabMinSize = ImGui::GetStyle().GrabMinSize;
+    const float expectedScrollbarPadding = ImGui::GetStyle().ScrollbarPadding;
+    const float expectedDisabledAlpha = ImGui::GetStyle().DisabledAlpha;
+    const float expectedAlpha = ImGui::GetStyle().Alpha;
+
+    // Poison every layout field a future per-theme override might mutate. None of these match the
+    // ImGuiStyle{} ctor defaults so the assertion only passes if the reset path runs.
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowBorderSize = 99.0f;
+    s.ChildBorderSize = 99.0f;
+    s.PopupBorderSize = 99.0f;
+    s.FrameBorderSize = 99.0f;
+    s.TabBorderSize = 99.0f;
+    s.TabBarBorderSize = 99.0f;
+    s.IndentSpacing = 999.0f;
+    s.ItemInnerSpacing = ImVec2(99.0f, 99.0f);
+    s.CellPadding = ImVec2(99.0f, 99.0f);
+    s.GrabMinSize = 99.0f;
+    s.ScrollbarPadding = 99.0f;
+    s.DisabledAlpha = 0.123f;
+    s.Alpha = 0.456f;
+
+    // Switch theme — both the detour and the return path must reset the poisoned fields.
+    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+
+    // Every layout field must match the original SmatchetDark baseline — the poison must be gone.
+    CHECK(std::fabs(expectedWindowBorderSize - ImGui::GetStyle().WindowBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedChildBorderSize - ImGui::GetStyle().ChildBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedPopupBorderSize - ImGui::GetStyle().PopupBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedFrameBorderSize - ImGui::GetStyle().FrameBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedTabBorderSize - ImGui::GetStyle().TabBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedTabBarBorderSize - ImGui::GetStyle().TabBarBorderSize) < 1e-5f);
+    CHECK(std::fabs(expectedIndentSpacing - ImGui::GetStyle().IndentSpacing) < 1e-5f);
+    CHECK(Vec2Eq(expectedItemInnerSpacing, ImGui::GetStyle().ItemInnerSpacing));
+    CHECK(Vec2Eq(expectedCellPadding, ImGui::GetStyle().CellPadding));
+    CHECK(std::fabs(expectedGrabMinSize - ImGui::GetStyle().GrabMinSize) < 1e-5f);
+    CHECK(std::fabs(expectedScrollbarPadding - ImGui::GetStyle().ScrollbarPadding) < 1e-5f);
+    CHECK(std::fabs(expectedDisabledAlpha - ImGui::GetStyle().DisabledAlpha) < 1e-5f);
+    CHECK(std::fabs(expectedAlpha - ImGui::GetStyle().Alpha) < 1e-5f);
 }
 
 // Density-preservation policy: SmatchetUI re-runs ApplyDensityToImGuiStyle after every
