@@ -62,12 +62,22 @@ DeepSeek serves an OpenAI-compatible API at `https://api.deepseek.com/v1/chat/co
 
 ## Implementation log
 
-(populated on slice completion)
+- `25491330` · `wip(plan): deepseek-provider` — plan doc committed pre-implementation to guarantee plan-doc safety across the spawned-handoff session.
+- `593a1f83` · `feat(ai): add DeepSeek provider + auto-clear chat on model change` — F1 + F2 implemented in a single squash-ready commit (21 files changed, +572 / −145).
+  - F1: `AiProvider::DeepSeek = 4`; factory routes to `OpenAiClient`; catalog seeds `deepseek-chat` + `deepseek-reasoner`; new `TrackerConfig` fields `AiDeepSeekApiKey` (DPAPI-encrypted on Win32, legacy-plaintext migration) + `AiDeepSeekBaseUrl` + `AiModelDeepSeek = "deepseek-chat"`; validator branch (key-required / catalog-known / `sk-` sniff); controller `BuildClientConfig` arm with empty-URL fallback to `https://api.deepseek.com` (always through `SanitizeAiEndpointUrl`); `AiPrefsTestConnection` + `SmatchetPreferencesUi::runProbe` parallel arms; per-provider UI render with key / model picker / base URL inputs; `AgenticInferenceClient` (4 sites: provider clamp + URL + key + model) and `BuiltinCommands_Ai` Lua glue (display + client config + model) parity.
+  - F2: new pure helper `Source_Core/{include,src}/AiModelSignature.{h,cpp}` returning `{ShouldClear, NewSignature}`; controller caches `lastModelSignature_`, runs the helper in `RunRequest` after model resolution, posts a `MainThreadDispatcher` clear of `g_ui.assistantHistory` + `assistantStreamBuf` + sets `assistantLastError = "[model changed - chat cleared]"` when the signature changes. Posted lambda captures nothing by reference (worker-local-to-UI UAF avoided).
+  - Tests: 18 new doctest cases (AiModelSignature 6, AiClientFactory DeepSeek round-trip + factory, AiModelCatalog DeepSeek seed + IsKnownModel cross-misses, AiPrefsValidator DeepSeek 6 branches, ConfigMigration DeepSeek round-trip + plaintext migration). 168 assertions across the 34-case selector pass.
 
 ## Deviations from plan
 
-(populated on slice completion)
+- Pre-existing style-lint cleanups applied opportunistically (cppcheck `useStlAlgorithm` warnings) in files I edited for DeepSeek: `Source_Core/src/AiModelCatalog.cpp::IsKnownModel`, `Source_Core/src/SmatchetPreferencesUi.cpp` Whisper label loop, `tests/Source_Core/AiModelCatalog.test.cpp::ContainsId`, `tests/Source_Core/AiPrefsValidator.test.cpp::ContainsSubstring`. The pre-commit lint hook blocks any further edit on the file until the lint warnings clear — these were collateral cleanup, not plan deviations. Marked here for traceability.
+- ConfigMigration round-trip test for DeepSeek lives in `ConfigMigration.test.cpp` (per plan); the legacy-plaintext migration test is `#if defined(_WIN32)` only because the `_enc` path itself is Win32-only (matches the existing AiAnthropicApiKey pattern even though no Anthropic round-trip test existed yet — the DeepSeek pair establishes the template).
+- Bucket-E (ImGui Test Engine) rendered-strip verification of the `"[model changed - chat cleared]"` warning banner deferred per plan § Verification. Logged to [`docs/backlog/agent-self-improvement/tooling.md`](../backlog/agent-self-improvement/tooling.md) (2026-05-19 entry under `## Parked`, P3, owner `handoff-implementer`).
 
 ## Verification
 
-(populated on slice completion)
+- **Standalone build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — clean, `Smatchet.exe` linked.
+- **DX12 (Unreal) target**: builds 432/651 TUs then halts on a **pre-existing, unrelated** failure in `Source_Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp` (`g_ui.assistantPanelOpen` referenced unconditionally from a `SMATCHET_WITH_WHISPER`-gated TU; the field is declared inside `#if defined(SMATCHET_WITH_AI)`, but the DX12 build defines `SMATCHET_WITH_WHISPER=1` without `SMATCHET_WITH_AI=1`). Reproduced on `develop` without these changes (stash + rebuild) — same diagnostic on lines 112, 113, 309. Not introduced by this slice; surfaced because it lives within ~20 TUs of where my AI changes compile. Out of scope for this PR; tracked separately for a Whisper-side fix.
+- **doctest rig**: `cmake --build --preset ninja-test-msys2 --target SmatchetTests` builds clean; full ctest reports **757 passed, 7 failed, 0 skipped** (4224 assertions). The 7 failures are all `AgentProposalStore` SQLite ":memory:" `unable to open database file` errors — pre-existing on `develop` (verified with stash baseline, same 746/739/7 vs my 764/757/7). None of the 18 new tests added by this slice fail.
+- **Targeted selector** `SmatchetTests.exe --test-case="*DeepSeek*,*AiModelSignature*,AiClientFactory*,AiModelCatalog*,*model change*,ConfigMigration DeepSeek*"`: **34 cases, 168 assertions, all pass**.
+- **Bucket-E**: deferred (see § Deviations from plan).
