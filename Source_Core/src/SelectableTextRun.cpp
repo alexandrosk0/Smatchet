@@ -137,7 +137,7 @@ void RegisterSegment(Context& ctx, const char* begin, const char* end, ImVec2 sc
 }
 
 void End(Context& ctx) {
-    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
     const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     const bool mouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
