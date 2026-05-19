@@ -26,3 +26,56 @@ Four lock-related terms appear across `docs/design/git-ref-plan-locks.md`, `AGEN
 - **Holds-lock** — the **predicate**. "Agent X holds-lock Y" = the plan-lock with slug Y has `claim.json` `owner=X`. Surfaced by `bash scripts/dev/locks-show.sh` (table form) or the rendered `docs/design/_plan-locks.generated.md` (markdown form). Used in orchestrator delegation packets to refuse delegation that overlaps an active claim.
 
 The four roles do not overlap: a `plan-lock` is the object; `lock-slug` is its identifier; `lock-claim` is the action that brings one into being; `holds-lock` is the predicate that names its current owner. Cross-link: full operational rules live in [`docs/design/git-ref-plan-locks.md`](design/git-ref-plan-locks.md) § Terminology.
+
+## UX Pillars
+
+Four north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § UX Pillars. Pillars 1-3 are enforceable merge gates; Pillar 4 is aspirational.
+
+- **Frame budget** — **6.94 ms** per UI-thread frame, derived from `1000 / 144`. Steady-state mean per-frame work above the budget is a Pillar-1 violation; `perf-detective` regression-fails any commit that lifts the mean. Floor: no single frame > **16.67 ms** (60 Hz) in normal operation; outliers above the floor are tracked at p99 by `spike-hunter`.
+- **Pillar 1 — Performance** — sustain ≈ 144 Hz. Enforced via `perf.reset` → `scenario.run` → `perf.snapshot` loop in `docs/PERF_WORKFLOW.md`. Owner agent: `perf-detective` for sustained load; `spike-hunter` for intermittent stalls.
+- **Pillar 2 — UI never freezes** — any op estimated > 100 ms moves to a worker thread; if a UI-thread block is genuinely unavoidable, a visual cue (spinner / progress widget) must appear within 100 ms. Synchronous I/O (HTTP, SQLite, p4, filesystem, blocking lock) reaching the UI thread = `code-review` CRITICAL. Worker → UI handoff goes through `MainThreadDispatcher` (`Source_Core/include/MainThreadDispatcher.h`); never touch ImGui state from a worker.
+- **Pillar 3 — Never crash** — RAII enforced (no raw `new` / `delete`), bounds-checked (`.at()` / explicit length checks), no silent UB (nullptr deref / unsigned wrap-around / use-after-free are merge-blocking). Ship builds degrade gracefully — assertions in dev become `LOG_ERROR` + safe default returns in ship; the app never aborts on a recoverable bad state. `debug-detective` runs the ASan / UBSan sanitizer build (`cmake --build --preset ninja-test-msys2`) for every crash-suspect investigation.
+- **Pillar 4 — Accessibility (aspirational)** — locked in-scope: keyboard navigation, font-size / zoom via `ImGuiIO::FontGlobalScale`, WCAG AA contrast (4.5:1 body, 3:1 large). No enforcement gates today — flagged in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) until the supporting infra lands.
+
+## Performance monitoring
+
+Vocabulary for the perf workflow. See [`docs/PERF_WORKFLOW.md`](PERF_WORKFLOW.md) for the operational ladder.
+
+- **Steady-state mean** — average per-frame UI-thread work over a representative scenario run, reported by `perf.snapshot`. The Pillar-1 enforcement metric.
+- **p99 / outlier** — 99th-percentile per-frame work. Pillar-2 spikes — frames > 100 ms — are tracked here. `spike-hunter` regression-fails any commit that introduces a new p99 > 16.67 ms on a previously-clean scenario.
+- **Sustained load** — perf measured over N frames of a repetitive scenario (e.g. `priority-grid-scroll`); contrast with **spike** (single-frame outlier). Different agents own each: `perf-detective` for sustained; `spike-hunter` for spikes.
+- **`SMATCHET_UI_PERF_SCOPE`** — RAII macro from `Source_Core/include/UiPerfMonitor.h` that records a scoped block's wall-clock under a string-literal name. Overhead ~200-500 ns per call (two `steady_clock::now()` + mutex lock + linear scan). Markers prefixed `perf_temp:` are stripped between perf rounds; permanent markers stay.
+- **`perf.snapshot`** — CLI command that returns top-N rows by `lastTotalMs` from `UiPerfMonitor`. Standard loop: `perf.reset` → `scenario.run` → `perf.snapshot`. Run by `perf-measure` against a named scenario.
+- **Scenario** — a registered repro under `Source_Core/src/Commands/Scenarios/` that drives the app for a fixed number of frames or until a state condition. Deterministic (no live HTTP). Examples: `priority-grid-scroll`, `lua-recorder-fuzz`, `ui-test`. Adding a scenario is the canonical fix when `perf-measure` reports a `cli-gap` halt.
+
+## Plugin architecture
+
+Optional Smatchet plugins gated by compile-time flags. See `Plugins/` directory + `AGENTS.md` § Optional plugins.
+
+- **MCP server** — JSON-RPC HTTP server in `Plugins/Mcp/` (gated `SMATCHET_WITH_MCP=1`, Standalone only). Exposes commands from `CommandRegistry` as MCP tools — define a command once, surface everywhere. Lifecycle managed by `SmatchetMcpServerUi` (UI) + `McpServerStatus` (model).
+- **Lua automation host** — sandboxed Lua 5.3 + sol2 binding layer (gated `SMATCHET_WITH_LUA_AUTOMATION=1`). Bindings in `AppController_LuaBindings.cpp`; mirror stubs in `AppController_LuaStubs.cpp` (built when flag is OFF). Sandbox enforces `lua_sethook` instruction-count timeout; per-call marshalling cost ~50-60× C++ — don't expose bindings on per-cell hot paths.
+- **`SMATCHET_WITH_*` gates** — compile-time `#if` guards for optional features (`SMATCHET_WITH_MCP`, `SMATCHET_WITH_LUA_AUTOMATION`, `SMATCHET_WITH_AGENTIC`, `SMATCHET_WITH_AI`, `SMATCHET_WITH_WHISPER`). Stub-side TUs (e.g. `AppController_LuaStubs.cpp`, MCP stub shims) must compile cleanly when the flag is OFF — DX12 in particular often has flags OFF.
+- **Static plugin** — Smatchet plugins are static-linked at build time via `PluginHost`, not runtime-loaded DSOs. No `dlopen` / `LoadLibrary` paths.
+- **sol2 bindings** — C++ ↔ Lua glue. `state.new_usertype<T>(name, ...)` takes name + alternating method-name + member-ptr pairs (no `sol::no_constructor` sentinel). Use `sol::optional<T>` for nullable args, `sol::protected_function` for callback storage. `decode_json` can leak a C++ `parse_error` past the protected call on malformed input — wrap defensively on untrusted strings.
+
+## Test taxonomy
+
+Five testing buckets per `AGENTS.md` § Verification automation + `agents/test-author.md`. Every plan's `## Verification` step must classify into one bucket. Manual residue must come with a deferred-automation entry.
+
+- **Bucket A — CLI / unit** — pure-logic doctest cases under `tests/Source_Core/<Unit>.test.cpp`, or bash assertions over `Smatchet.exe cmd <name>` output. Fast, deterministic, the canonical home for parsers / classifiers / pure helpers. Owner agent: `test-rig`.
+- **Bucket B — Scenario** — `scenario.run --name=<scenario>` exercises a registered scenario class from `Source_Core/src/Commands/Scenarios/`. Asserts on `perf.snapshot` rows, log output, or screenshot capture. Deterministic, no live HTTP.
+- **Bucket C — Screenshot diff** — `ImGui::Render` capture compared against a golden PNG via stb_image_write. L∞ diff tolerance ≤ 4. Used for dock-gap detection (pink-clear scan) + theme color verification. Requires a GL context on the runner — bucket-C gates are dev-machine-only today (CI runners headless).
+- **Bucket D — Sanitizer** — ASan / UBSan / TSan / MSan build via `ninja-test-msys2` + sanitizer-specific presets. Required on any `Source_Core/` C++ PR per Pillar 3.
+- **Bucket E — ImGui Test Engine** — bucket-E tests under `tests/ui/*.test.cpp` drive ImGui interactions programmatically (drag, hover, focus, type). Spawn-mode requires a GL context; same headless-CI limitation as bucket-C. Wired but not all surfaces covered — manual residue without a bucket-E entry is a `test-author` failure.
+- **Fixture** — a reusable setup harness under `tests/support/` (e.g. `FakeOfflineQueueDeps`, `LuaHostFixture`, `GoldenImage`). Tests link the fixtures they need; production-side adapters (e.g. `AppControllerDepsAdapter.cpp`) are deliberately NOT linkable into tests — they drag unresolved `AppController::*` symbols.
+- **Golden image** — PNG under `tests/golden/` captured by bucket-C scenario via stb_image_write. Re-bootstrap via `bash scripts/dev/test-screenshot-diff.sh --bootstrap` whenever the theme / layout deliberately changes.
+
+## Harness concepts
+
+Terminology for agentic-harness wiring — see [`docs/harness/SETUP.md`](harness/SETUP.md) + `AGENTS.md` § Harness adapter for the operational shape.
+
+- **Harness adapter** — per-harness directory (`.claude/`, `.codex/`, `.cursor/`) gitignored at the repo root, regenerated locally from canonical `agents/` tree via `bash scripts/setup-harness.sh <name>`. Edits to `agents/*.md` propagate immediately via directory junctions / symlinks (file-level on Windows often falls back to copy — see SETUP.md § Worktree base for the known stale-HEAD pitfall and `link_file` short-circuit caveat).
+- **Worktree** — git worktree under `.claude/worktrees/<id>/` (Claude Code-spawned `claude/<id>` worktrees) or `.claude/worktrees/agent-<proposalId>/` (`ClaudeCodeLocalRunner`-spawned `agent/<proposalId>/<short-slug>` worktrees per the agentic-handoff design). The runner-spawned path bases on `origin/develop`; the SDK-spawned path bases on parent repo's current local HEAD — pre-session `git switch develop && git pull --ff-only` keeps the latter on develop.
+- **vexp pipeline** — `mcp__vexp__run_pipeline` MCP tool that returns graph-ranked context (impact + memory + capsule in one call). The mandatory first-call alternative to `Grep` / `Glob` over the codebase per `.claude/CLAUDE.md` § vexp. Harness-specific (Claude Code only); other harnesses substitute their semantic-search equivalent via the capability table in AGENTS.md § Harness adapter.
+- **Capability tag** — a closed-set role declared in an agent's frontmatter `capabilities:` list (`semantic-code-search`, `file-skeleton`, `file-read`, `file-edit`, `text-search`, `file-glob`, `shell`, `web-fetch`, `git-history`). Maps per-harness to concrete tools via the AGENTS.md § Harness adapter table.
+- **Telemetry hook** — `agents/_shared/token-tracking/agent-token-log.py` (canonical) + `.claude/hooks/agent-token-log.py` (Claude Code runtime copy). Appends one JSONL line per subagent call to `.claude/.agent-tokens.jsonl` with token usage + tool count + `## Outcome:` classification. The classifier (`_infer_outcome`) reads the explicit tag, falls back to halt-keyword detection, defaults to `partial` (was `applied` before the contract-alignment tightening — see `docs/design/agent-contract-alignment.md`).
