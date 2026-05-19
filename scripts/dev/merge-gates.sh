@@ -76,6 +76,13 @@ poll_merge_gates() {
         return 3
     fi
 
+    # Read GraphQL document into a variable. `gh api graphql -f query=@file`
+    # does NOT read the file — it sends the literal `@filename` string, which
+    # the GraphQL parser then chokes on at the leading `@` (directive marker).
+    # The canonical pattern is to pass the document body as a string field.
+    local query_body
+    query_body=$(<"$QUERY_FILE")
+
     local start gh_fails=0
     start=$(date +%s)
 
@@ -86,7 +93,7 @@ poll_merge_gates() {
                        -f owner="$owner" \
                        -f repo="$repo" \
                        -F pr="$prNumber" \
-                       -f query=@"$QUERY_FILE" 2>&1); then
+                       -f query="$query_body" 2>&1); then
             gh_fails=$((gh_fails+1))
             echo "Poll $((p+1)): gh failed ($gh_fails/3): $data"
             if [ "$gh_fails" -ge 3 ]; then

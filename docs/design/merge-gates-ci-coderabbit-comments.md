@@ -211,8 +211,14 @@ poll_merge_gates() {
 
     for ((p=0; p<MAX_POLLS; p++)); do
         local data
+        # NOTE: `gh api graphql -f query=@file` does NOT read the file — it
+        # sends the literal `@filename` string, which the GraphQL parser
+        # then rejects at the leading `@` (directive marker). Read the
+        # document into a variable first; pass as a plain string field.
+        local query_body
+        query_body=$(<"$q")
         if ! data=$(gh api graphql -f owner="$owner" -f repo="$repo" \
-                       -F pr="$prNumber" -f query=@"$q" 2>&1); then
+                       -F pr="$prNumber" -f query="$query_body" 2>&1); then
             gh_fails=$((gh_fails+1))
             echo "Poll $((p+1)): gh failed ($gh_fails/3): $data"
             [ "$gh_fails" -ge 3 ] && { echo "GH_API_DOWN"; return 3; }
