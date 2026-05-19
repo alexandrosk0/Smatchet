@@ -118,6 +118,15 @@ git -C "$MAIN_REPO" branch --no-merged origin/develop
 
 # 4. Audit open PRs.
 gh pr list --base develop --json number,title,headRefName,mergeable,mergeStateStatus
+
+# 5. Resolve orchestrator identity for merge-gates user-comment filter.
+gh auth status >/dev/null || { echo "gh auth failed — HALT" >&2; exit 1; }
+ORCH_USER=$(gh api user --jq .login)
+export ORCH_USER
+
+# 6. Source the merge-gates poller (declares poll_merge_gates,
+#    gh_pr_ready_idempotent, ask_user_question).
+source "$MAIN_REPO/scripts/dev/merge-gates.sh"
 ```
 
 If step 2 reports uncommitted modifications outside the safe-ignore set (`build/`, `.fetchcontent-*/`), HALT and surface the file list.
@@ -169,28 +178,77 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
-2. **Squash-merge via API** (works regardless of which branch is checked out anywhere on disk):
+2. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`:
+   ```bash
+   if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
+       poll_merge_gates "$OWNER" "$REPO" "$N"
+       rc=$?
+       case "$rc" in
+           0) ;;                                                        # gates passed
+           1|2|3)
+               choice=$(ask_user_question "Gates blocked (code=$rc)." \
+                          "Skip gates and merge anyway" \
+                          "Keep waiting (double MAX_POLLS, reset timer)" \
+                          "Abandon")
+               case "$choice" in
+                   "Skip gates and merge anyway") echo "WARN: user skipped gates: code=$rc" >&2 ;;
+                   "Keep waiting"*) MERGE_GATES_MAX_POLLS=$((MERGE_GATES_MAX_POLLS*2)) \
+                                   poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
+                   *) exit 1 ;;
+               esac
+               ;;
+           4)
+               ask_user_question "PR no longer mergeable (CLOSED/MERGED)." "Abandon"
+               exit 1
+               ;;
+           5)
+               choice=$(ask_user_question "Pagination overflow — manual review required." \
+                          "Abandon (manual review)" \
+                          "Skip and merge anyway (acknowledge risk)")
+               case "$choice" in
+                   "Skip and merge anyway"*) echo "WARN: user skipped gates: code=5 (pagination)" >&2 ;;
+                   *) exit 1 ;;
+               esac
+               ;;
+           *)
+               # Defensive catch-all. poll_merge_gates returns 0-5 today; any
+               # unexpected rc (future-added codes, internal bug, propagated
+               # gh_pr_ready_idempotent code 6) must HALT — never silently
+               # fall through to auto-merge.
+               echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2
+               exit 1
+               ;;
+       esac
+   fi
+   ```
+
+3. **Flip PR draft → ready** when the user authorised merge for this PR (post-ship option 3 or "merge when green"):
+   ```bash
+   gh_pr_ready_idempotent "$N" || { echo "gh pr ready failed — HALT" >&2; exit 1; }
+   ```
+
+4. **Squash-merge via API** (works regardless of which branch is checked out anywhere on disk):
    ```bash
    gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash
    ```
    Capture the returned `sha` for the implementation-log entry.
 
-3. **Delete the remote branch**:
+5. **Delete the remote branch**:
    ```bash
    gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
    ```
 
-4. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
-   ```
+6. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
+   ```text
    - <sha-short> · <PR-title>
    ```
    Commit as `docs(plan): log <slug> #<N>` on a fresh small branch + its own PR (or batch with subsequent cleanup PRs to avoid PR-spam).
 
-5. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
+7. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
 
-6. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+8. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
-7. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+9. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 ## Diverged branch recovery
 

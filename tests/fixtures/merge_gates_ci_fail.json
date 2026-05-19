@@ -1,0 +1,31 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "abc123",
+        "headRefName": "feature/ci-fail",
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "build", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": true},
+                    {"__typename": "StatusContext", "context": "ci/lint", "state": "SUCCESS", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+        "reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+        "comments": {"pageInfo": {"hasNextPage": false}, "nodes": []}
+      }
+    }
+  }
+}
