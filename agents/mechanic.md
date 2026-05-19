@@ -56,4 +56,4 @@ Bullet list of relative paths touched + per-file occurrence count (e.g. `Source_
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End with `## Self-improvement` — only if the rename hit a scope this prompt doesn't cover (new file type, new dir to scan). Empty is the norm. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if the rename hit a scope this prompt doesn't cover (new file type, new dir to scan). Empty is the norm. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

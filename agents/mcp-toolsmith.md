@@ -59,4 +59,4 @@ Tool name + JSON schema diff + which command it bridges to + `MCP_GUIDE.md` upda
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End with `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

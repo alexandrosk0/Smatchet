@@ -63,4 +63,4 @@ Packaging dir verified (if applicable): `UnrealPlugins/SmatchetImGuiPlugin/Third
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End with `## Self-improvement` — only on real friction (new dual-target gotcha, header-pollution case missed by hooks, packaging quirk). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (new dual-target gotcha, header-pollution case missed by hooks, packaging quirk). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
