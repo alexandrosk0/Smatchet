@@ -14,10 +14,3 @@
   Status: blocked-external
   Last-reviewed: 2026-05-18
 
-- 2026-05-13 · orchestrator · [external] · BLOCKED — vexp `<!-- vexp -->` block auto-regenerates inside `AGENTS.md`; should land in `.claude/CLAUDE.md` instead
-  Owner: vexp tool upstream.
-  Details: AGENTS.md is the harness-agnostic root per the agents.md spec. The vexp tool injects ~30 lines of Claude-Code-specific MCP guidance (`run_pipeline`, `get_skeleton`, MCP tool list) directly into AGENTS.md, which other harnesses load and ignore. Editing the block in-place fights the regenerator. Upstream fix: vexp tool emits to `.claude/CLAUDE.md` only; the `@`-import in `.claude/CLAUDE.md` then pulls AGENTS.md without the vexp section.
-  Workaround / unblock: file an issue / PR at the vexp project. Leave the block alone meanwhile; the ~250 input-token cost per session is small relative to the auto-regen friction of fighting it.
-  Status: blocked-external
-  Last-reviewed: 2026-05-17
-
