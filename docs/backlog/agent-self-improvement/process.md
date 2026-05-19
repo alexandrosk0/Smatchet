@@ -19,24 +19,6 @@
   Status: open
   Last-reviewed: 2026-05-19
 
-- 2026-05-19 · orchestrator · [process] · P1 — Autonomous ship-loop fires commit+push during iterative UI/visual polish, before user can validate
-  Details: AGENTS.md § Autonomous ship-loop default says the orchestrator runs `diagnose → fix → build → commit → push → open PR` end-to-end in one turn without pausing per stage. That rule is correct for self-verifiable changes (sanitiser-gated logic, doctest-covered helpers) but **wrong** for iterative UI / visual / theme polish where the user is the only check on "does this look right". Observed in PR #289's AI-chat-render arc: user requested markdown render → orchestrator shipped md4c block-by-block render → user said "horrible" AFTER the commit + push had landed; orchestrator then shipped monospace-everywhere → user said "everything more broken" AFTER another commit + push; orchestrator then shipped plain InputTextMultiline → user OK; orchestrator then shipped block-by-block colour overlay → still pending validation. Branch now carries 4 commits for intermediate broken states (`f60f8621`, `d9a20c07`, `c6084855`, `45418a76`) plus the working one. Each push obligates a future squash or `git reset`/force-push cleanup and pollutes the PR's commit history that reviewers will see.
-  Concrete next action: extend AGENTS.md § Autonomous ship-loop default with an explicit **Visual-validation exception** carve-out: "When the user is acting as the verifier — UI palette tuning, dock layout, ImGui widget arrangement, font / colour choices, any change where 'looks right' is the acceptance criterion and no scenario / screenshot-diff covers it — the loop pauses after **build** with the launched exe. Orchestrator presents the launched-app handle (`bash` background id + the user-runnable command) and **waits for the user's verdict** before commit+push. On 'looks good' → resume the loop and commit. On 'no' → discard the working-tree changes via `git stash` (preserve the orchestrator's reasoning for the next iteration) and iterate. Never commit + push an unvalidated visual change." Also extend `agents/ux-pillars` (Pillar 4 — Accessibility, currently aspirational) with a "visual-validation acceptance" sub-clause so the rule has a pillar anchor. ~20 min doc edit; high impact across every UI-tuning task.
-  Status: open
-  Last-reviewed: 2026-05-19
-
-- 2026-05-19 · git-janitor · [process] · P2 — FF-clean docs-batch exception still gates on `bash scripts/dev/test-all.sh` for pure-docs / design-only diffs
-  Details: `agents/git-janitor.md` § FF-clean docs-batch exception precondition 4 requires `test-all.sh` to exit 0 before the FF push, regardless of whether the diff is C++-adjacent. Triggered on a plan-only revision (single file under `docs/design/**`, no scripts / tests / agents / Lua touched) — the test rig has nothing to validate because no executable code changed, yet the gate still costs ~3 min wall-clock for a doc edit. Same friction every time a plan revision lands without code. Pillar 3 ("never crash") rationale for the gate doesn't apply when the diff cannot affect a built artefact.
-  Concrete next action: refine the exception in `agents/git-janitor.md:56-97` to add a sub-case "**Pure-docs sub-exception** — when the ahead-range touches only `docs/**`, `backlog/**`, `AGENTS.md`, or root-level `*.md` (i.e. no `agents/**`, no `scripts/**`, no `tests/**`, no `.gitignore`), skip the `test-all.sh` gate entirely. Cross-link to AGENTS.md § Trivial-visual-only change envelope as the precedent." Mirror the relaxation into `AGENTS.md` if the rule was duplicated there. ~15 min doc edit + 1 verifying push.
-  Status: open
-  Last-reviewed: 2026-05-19
-
-- 2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a merged-PR branch silently orphans them
-  Details: During whisper PR train, 5 commits landed on `claude/whisper-major-minor-fixes` AFTER GitHub squash-merged PR #249. The remote accepted the pushes; the PR view stayed frozen at the merge-time SHA; no warning anywhere. Discovered only when checking why CI didn't fire on the new commits. Cost: one rescue PR (#258) + 5 cherry-picks onto a fresh branch + conflict resolution on `DictationInsertionRouter.test.cpp`. Multi-cycle iteration loop on a closed PR is a recurring pattern when fast-shipping fixes.
-  Concrete next action: add a `git push` pre-push hook (or wrap `gh pr` workflow in `scripts/dev/`) that queries `gh pr view --json state` for the current branch and refuses + warns when state is `MERGED` / `CLOSED`. Hook output should suggest "open a follow-up branch from `develop`" with the exact `git checkout -b ... origin/develop` recipe. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-18
-
 - 2026-05-18 · whisper-phase-d · [process] · P3 — `AppController_LuaBindings.cpp:1816` calls `ImGui::InputText` raw, bypassing the `SmatchetLocalizedImGui` dictation wrapper
   Details: Phase D of the whisper-dictation plan auto-wired dictation insertion to every ImGui input via the `SmatchetLocalizedImGui::InputText` / `InputTextMultiline` / `InputTextWithHint` wrappers (the existing `#define ImGui SmatchetLocalizedImGui` pattern). One first-party call site bypasses the wrapper: `Source_Core/src/AppController_LuaBindings.cpp:1816` invokes `ImGui::InputText` directly (it's inside the sol2 binding that lets Lua scripts spawn dynamic widgets — the wrapper macro is intentionally off in that TU). Effect: Lua-authored dynamic InputText widgets in `scripts/*.lua` do NOT participate in dictation; focused-buffer auto-registration skips them. Real-world impact is small (Lua-driven widgets are advanced-user territory; built-in surfaces are all already covered). No NEW raw-`ImGui::InputText` call sites should be allowed elsewhere — those would be regressions.
   Concrete next action: either (a) extend the localized-ImGui wrapper macro into `AppController_LuaBindings.cpp` so Lua widgets pick up dictation automatically (need to verify the wrapper doesn't conflict with sol2's macro expansion — non-trivial), or (b) add an explicit `g_dictationRouter.RegisterInputText(buf, cap, nullptr)` call adjacent to the raw `ImGui::InputText` call and an unregister on the next-frame boundary. Option (b) is the minimal change. ~1 h.
@@ -85,15 +67,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-16 · orchestrator · [process] · P3 — Plan-doc file-level tables drift from grep ground truth; re-verify before sealing
-  Details: While shipping `ai-assistant-side-panel` Phase A, two inaccuracies surfaced in the plan's § File-level changes table that would have wasted agent cycles if delegated blindly:
-    1. Plan listed `Source_Core/src/FieldCatalogCache.cpp` among 3 `NetworkUsageTracker::Instance().Record(...)` callers to update with a `HttpTrafficKind::Tracker` first arg. `git grep "NetworkUsageTracker::Instance().Record"` finds the symbol only in `TrackerHttpUtils.cpp` (5×) + `JiraIssueMutation.cpp` (1×). `FieldCatalogCache.cpp` does not call the API.
-    2. Plan said "Add new sources to `CORE_SOURCES`" in `CMakeLists.txt`. The list is actually `file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")` (line 530) — new files auto-included, no list edit needed.
-  Both cost ≤5 min to re-verify with a single `git grep` + `grep -n CORE_SOURCES CMakeLists.txt` before sealing the file-level table. Without the re-verify, a downstream agent could waste ~10 min hunting for a non-existent caller or writing a redundant `CORE_SOURCES` edit before noticing the glob.
-  Concrete next action: orchestrator's plan-time production-file existence check (per `AGENTS.md` § Orchestrator delegation packet) should be extended to "production-symbol existence + production-mechanism shape" — one `git grep <symbol-list>` + one `grep -n <cmake-variable> CMakeLists.txt` before the file-level table is sealed. Five-minute cost catches both classes of drift.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-16 · test-rig · [process] · P3 — `AppControllerDepsAdapter.cpp` is a link-trap for tests
   Details: PR D introduced `Source_Core/src/AppControllerDepsAdapter.cpp` as the production-side implementation of `IOfflineQueueDeps` + `ITicketSyncDeps` against a live `AppController&`. Adding it to a test target's source list drags unresolved `AppController::*` symbols (since `AppController.cpp` is correctly excluded — ImGui-tainted). Tests should always use `FakeOfflineQueueDeps` / `FakeTicketSyncDeps`; the adapter belongs only in the production exe. PR E lost a link-error round-trip before the agent figured this out.
   Concrete next action: add a one-paragraph note to `agents/test-rig.md` § Workflow: "Adapter TUs (`AppControllerDepsAdapter.cpp` and similar) are production-only — never link them into test targets. Always use Fake* fixtures under `tests/support/`." Estimated cost 5 min doc edit.
@@ -118,22 +91,10 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-16 · orchestrator · [process] · P3 — API-500 mid-run recovery procedure not documented
-  Details: 4/4 Wave A2 agents (`tracker-labels`, `tracker-datetime`, `tracker-payload`, `tracker-field-catalog`) errored API 500 on final-synthesis turn after shipping 100% of file edits. Worktree state was complete and correct — only the agent's report write-up failed. Orchestrator recovered each by: (1) inspecting worktree `git status` for new/modified files, (2) running local gates (`cmake --build`, `ctest`, dual-target), (3) `git add -A && git commit -m '<recovery message>'`, (4) `git push -u origin <branch>`, (5) `gh pr create` with a stand-in body. Tracker-payload required force-push amend because initial `git commit` only included staged files (`tests/CMakeLists.txt` + `TrackerFieldPayload.cpp`) — the 3 new files weren't staged. Recovery cost: ~5-10 min per agent.
-  Concrete next action: document the recovery as an operational rule in AGENTS.md § Delegation. Key gotcha: after working-tree inspection, `git add -A` (not `git add <list>`) before commit so new untracked files are included. Estimated cost 30 min doc edit. Land in AGENTS.md § Delegation § API-500 recovery (new sub-section).
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-16 · test-rig · [process] · P3 — Parallel-write-fan-in to `tests/CMakeLists.txt` needs sequential-merge stance documented
   Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/design/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
   Concrete next action: promote to `agents/test-rig.md` § Parallel-with-N-other-agents note — explicit rule "when N siblings touch `tests/CMakeLists.txt`, append at the END only; merge order is serial; orchestrator handles rebase". Saves explanation in every parallel-batch packet. Estimated cost 10 min doc edit.
   Status: open
-  Last-reviewed: 2026-05-17
-
-- 2026-05-16 · orchestrator · [process] · P3 · OBSERVATIONAL — `_plan-locks.md` stale-read race when concurrent orchestrators / hooks edit
-  Details: Multiple times this session `Edit` errored with `File has been modified since read, either by the user or by a linter`. Cause: concurrent orchestrator (`claude/coordination-plan-locks` worktree at `jolly-cerf-97840e`) editing the same file, or PostToolUse hook reformatting. Re-Read-on-stale + re-Edit pattern always recovered.
-  Concrete next action: no obvious procedural fix beyond what's already in place. Not actionable today; documented for cross-session continuity awareness.
-  Status: observational
   Last-reviewed: 2026-05-17
 
 - 2026-05-14 · architect · [process] · P3 · DEFERRED — `TodoWrite` reminder noise during read-only tasks

@@ -53,6 +53,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 - **Keyboard navigation**: every actionable widget reachable without mouse. Tab order sane, focus indicators visible, `Ctrl+Shift+P` Command Palette as the keyboard entry point to every registered command.
 - **Font size / zoom**: user-controlled `ImGuiIO::FontGlobalScale`, persisted in `smatchet_config.json`. Affects grid row heights, cell renderers, and modal sizing.
 - **Color contrast**: WCAG AA minimum — 4.5:1 for body text, 3:1 for large text and UI components — on both default and dark themes. Theme audit before any palette change.
+- **Visual-validation acceptance**: when no automated check (bucket-C screenshot diff, bucket-E ImGui-Test-Engine scenario) covers a visual change, the user is the verifier. See § Autonomous ship-loop default § Exceptions § Visual-validation exception for the loop-pause contract — the orchestrator must NOT commit+push an unvalidated visual change.
 
 **Out of scope (deferred until a concrete user need):**
 - Screen-reader compatibility. ImGui has no native a11y tree; wiring one is a multi-week effort. Defer.
@@ -89,6 +90,22 @@ All clarifications that the orchestrator anticipates needing are batched **once 
 2. **Destructive ops outside loop** — `git reset --hard`, `git push --force` to a shared branch, `git branch -D`, `gh pr merge` of a non-self PR, `rm -rf` outside the worktree, schema drops. These require explicit confirmation per § Project rules § Destructive git ops in shared worktrees.
 3. **Cross-repo or external-service mutations** — anything that writes outside the current repo or calls a third-party API with side effects (posting to Slack, sending email, modifying a Jira ticket the user didn't ask for). Confirm before acting.
 4. **Anything not previously authorised in a durable rule** — durable = recorded in AGENTS.md, CLAUDE.md, or this session's explicit user instructions. Verbal "ok in this conversation" doesn't bind future turns; encode it as a memory or doc edit if it should.
+5. **Visual-validation exception** — fires when **both** conditions hold:
+   1. Diff touches at least one of: `Source_Core/src/SmatchetTheme.cpp`, `Source_Core/src/Smatchet*Ui*.cpp`, `Source_Core/include/SmatchetTheme.h`, `Locales/*.json`, ImGui style constants (`ImVec4` / `ImGuiStyle` literals), dock-layout init paths.
+   2. AND no bucket-C screenshot diff or bucket-E ImGui-Test-Engine scenario covers the changed widget.
+
+   When both fire, the loop pauses after **build** with the launched exe. Orchestrator presents:
+   - the `build/<preset>/Smatchet.exe` path + a one-line run command,
+   - the `bash` background-task id of the launched exe (or "launched manually"),
+   - the specific visual change the user is asked to evaluate (one sentence).
+
+   Wait for the user's verdict before commit+push. On "looks good" → resume the loop and commit. On "no" → leave the working tree dirty; iterate in-place. The orchestrator does `git diff` between attempts to see what was tried. Clean-slate reset (`git checkout -- <files>`) only when the user explicitly asks for one. Never commit+push an unvalidated visual change.
+
+   Out-of-scope (NOT a visual-validation pause):
+   - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
+   - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per § Project rules.
+
+   Pillar anchor: see § UX Pillars § 4 § Visual-validation acceptance for the cross-link from the pillar side.
 
 ### Post-ship turn-end protocol
 
@@ -207,6 +224,8 @@ Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/me
 
 `reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
 
+**Force-push carve-out for spawned-agent recovery**: the global `git push --force` ban (and the harness's banned `--no-verify`/`--no-gpg-sign` flags) gets one narrow carve-out — `git push --force-with-lease origin agent/<id>` and `git push --force-with-lease origin claude/<id>` are permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch. Excludes `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`, and any branch with non-self commits in the ahead-range. Rationale + alternatives: `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`.
+
 **Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
 
 - `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
@@ -224,6 +243,22 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 **Trivial-visual-only change envelope**: a change qualifies as **trivial-visual** when **every** condition holds — (a) write set is a strict subset of `{Source_Core/src/SmatchetTheme.cpp, Locales/*.json, ImGui style constants (`ImVec4` / `ImGuiStyle` literals)}`; (b) diff shape is literals-only (no API surface, no header touch, no schema, no control flow, no new symbols); (c) zero touch under `Source_Core/include/` / `Plugins/` / `cmake/` / `CMakePresets.json`. Under this envelope the orchestrator may ship after: (1) `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` builds, (2) `ninja-test-msys2` ctest passes **if** a pure-logic test touches the changed file, (3) **NO** `ninja-ui-test-msys2` bucket-E run, (4) **NO** isolated worktree — use the main worktree with `git stash` race-recovery if a concurrent agent appears. Bucket-E coverage gets deferred to a single post-batch run before merge, or to the test backlog. Saves ~10× wall-clock on visual-only PRs (palette retunes, locale string fixes). Any condition fails → fall back to the full build + test-all + bucket-E loop.
 
 **Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
+
+**Stale-read recovery on `Edit`**: `Edit` may error with `File has been modified since read, either by the user or by a linter` when (a) a concurrent orchestrator in a sibling worktree edited the same file, (b) a `PostToolUse` hook (e.g. `lint-cpp.sh`'s `clang-format -i`) rewrote the file between your `Read` and `Edit`, or (c) the user touched the file in their editor.
+
+Canonical recovery — always works, no manual conflict resolution:
+
+1. Re-`Read` the file at the same path (and same `offset` / `limit` if you used them).
+2. Diff your intended change against the new content — verify the `old_string` you were going to pass still exists verbatim. If a hook reformatted it (trailing whitespace stripped, line wrapped), update `old_string` to the new exact form.
+3. Re-`Edit` with the refreshed `old_string`.
+
+Hot files (high race rate; expect to re-Read at least once per edit):
+
+- `docs/design/_plan-locks.generated.md` (every orchestrator that takes / releases a plan-lock touches it)
+- `AGENTS.md` (multi-agent doc edits)
+- `docs/backlog/agent-self-improvement/*.md` (parallel self-improvement appends; concurrent agents shipping different slices in the same session)
+
+Do NOT use `replace_all: true` as a "force-write" — it amplifies race-collision risk by widening the rewrite surface. Stick to the targeted Re-Read + Re-Edit pattern.
 
 The harness maintains a `.claude/.tree-dirty` sentinel file written by `.claude/hooks/lint-cpp.sh` on every first-party `.cpp` / `.h` edit and cleared automatically by the `PreToolUse:Bash` hook (`clear-tree-dirty.sh`) the moment any `cmake --build …` invocation is about to run. Agents reading the sentinel know edits have happened since the last build — if your implementation isn't done yet, defer the build.
 
@@ -269,6 +304,7 @@ Quick index of moved subsections — full content in `docs/agent-rules/DELEGATIO
 - **Agent output contract** — 5-class table (Investigator / Diagnostic read-edit / Implementer / Helper / Maintenance) + `## Outcome:` mandate.
 - **Trigger auto-activation** — keyword → agent routing table.
 - **Debug-mode pause-loop (overrides ship-loop)** — for `debug-detective` triggers.
+- **API-500 mid-run recovery** — 5-step recovery for delegated agents that error API-500 after shipping file edits; `git add -A` gotcha; force-push carve-out for spawned-agent branches.
 - **Skeleton-first** — `get_skeleton` for inspection, `Read` for editing.
 - **Agent versioning** — when to bump `version: <N>`.
 - **Cross-cutting** + **Subsystem specialists** — delegation tables.
