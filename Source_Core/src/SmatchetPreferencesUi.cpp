@@ -1116,6 +1116,115 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                                         "Default OFF (recommended). Enable only for trusted "
                                                         "upstream proposals — auto-spawns Claude Code on approval."));
 
+            // ─── coderabbit-react-loop phase 8 — CodeRabbit react loop ────
+            //
+            // Toggles for the open-PR CodeRabbit react loop (cfg.CoderabbitReact.*).
+            // Persistence rides MarkPrefsDirty's debounced save; the master toggle
+            // flip calls RestartAgenticPollAsync so the worker picks up the change
+            // without an app restart. Pillar-4 keyboard nav inherits from the
+            // existing widgets above (Tab cycles, Space toggles, Enter on
+            // focused sliders).
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.coderabbitReactSection",
+                                                              "CodeRabbit react loop"));
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.coderabbitReactEnable",
+                                                        "Enable CodeRabbit react loop"),
+                                &d.cfg.CoderabbitReact.Enabled)) {
+                MarkPrefsDirty(d);
+                app.RestartAgenticPollAsync();
+            }
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitPollInterval",
+                                                           "Poll interval (sec):"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderInt("##CoderabbitReactInterval", &d.cfg.CoderabbitReact.PollIntervalSec, 60, 3600)) {
+                MarkPrefsDirty(d);
+            }
+            // Bot login allow-list — read-only display in phase 8 (edit lands later).
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitBotLogins",
+                                                           "Bot logins (read-only):"));
+            ImGui::SameLine();
+            if (d.cfg.CoderabbitReact.BotLogins.empty()) {
+                ImGui::TextDisabled("(none)");
+            } else {
+                std::string joined;
+                for (std::size_t i = 0; i < d.cfg.CoderabbitReact.BotLogins.size(); ++i) {
+                    if (i > 0) joined += ", ";
+                    joined += d.cfg.CoderabbitReact.BotLogins[i];
+                }
+                ImGui::TextDisabled("%s", joined.c_str());
+            }
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.coderabbitShortCircuit",
+                                                        "Short-circuit reject overridden rules"),
+                                &d.cfg.CoderabbitReact.ShortCircuitRejectEnabled)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitIterationBudget",
+                                                           "Iteration budget per PR:"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderInt("##CoderabbitReactBudget", &d.cfg.CoderabbitReact.IterationBudgetPerPr, 1, 50)) {
+                MarkPrefsDirty(d);
+            }
+
+            // ─── coderabbit-react-loop phase 8 — CI react loop ────────────
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.ciReactSection", "CI react loop"));
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciReactEnable", "Enable CI react loop"),
+                                &d.cfg.CiReact.Enabled)) {
+                MarkPrefsDirty(d);
+                app.RestartAgenticPollAsync();
+            }
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciPollInterval",
+                                                           "Poll interval (sec):"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderInt("##CiReactInterval", &d.cfg.CiReact.PollIntervalSec, 60, 3600)) {
+                MarkPrefsDirty(d);
+            }
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciAutoDispatchBuildDoctor",
+                                                        "Auto-dispatch build-doctor on build failures"),
+                                &d.cfg.CiReact.AutoDispatchBuildDoctor)) {
+                MarkPrefsDirty(d);
+            }
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciAutoDispatchTestRig",
+                                                        "Auto-dispatch test-rig on coverage-gate failures"),
+                                &d.cfg.CiReact.AutoDispatchTestRig)) {
+                MarkPrefsDirty(d);
+            }
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciAutoDispatchDebugDetective",
+                                                        "Auto-dispatch debug-detective on ctest failures"),
+                                &d.cfg.CiReact.AutoDispatchDebugDetective)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextDisabled("%s",
+                                SmatchetLocalization::T("agent.prefs.ciAutoDispatchDebugDetectiveHint",
+                                                        "spawn pauses at first investigation round; user "
+                                                        "reviews"));
+            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciTransientRerun",
+                                                        "Re-run workflow on transient fingerprint match"),
+                                &d.cfg.CiReact.TransientRerunEnabled)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciTransientRerunCap",
+                                                           "Transient reruns per PR:"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderInt("##CiReactRerunCap", &d.cfg.CiReact.TransientRerunMaxPerPr, 0, 10)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciIterationBudget",
+                                                           "Iteration budget per PR:"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderInt("##CiReactBudget", &d.cfg.CiReact.IterationBudgetPerPr, 1, 50)) {
+                MarkPrefsDirty(d);
+            }
+
             ImGui::EndTabItem();
         }
 #endif // SMATCHET_WITH_AGENTIC

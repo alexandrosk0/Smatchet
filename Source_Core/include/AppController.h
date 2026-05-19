@@ -325,6 +325,25 @@ class AppController
     /// completion (regardless of success / failure). 0 means "never polled this
     /// session". Atomic; safe to read from any thread.
     std::int64_t GetAgenticLastPollAtSec() const noexcept;
+
+    /// (coderabbit-react-loop phase 8) Read-only accessors for the watchers /
+    /// registrar that the new `coderabbit-react.*` and `ci-react.*` builtin
+    /// commands tick / inspect. Returns nullptr when the handoff controller
+    /// has not yet been lazily constructed (PAT missing / store init failed).
+    /// Pointers are stable for the lifetime of the AppController.
+    smatchet::agentic::PrCommentWatcher* GetAgenticPrCommentWatcher() noexcept;
+    smatchet::agentic::PrCheckRunWatcher* GetAgenticPrCheckRunWatcher() noexcept;
+    smatchet::agentic::OpenPrRegistrar* GetAgenticOpenPrRegistrar() noexcept;
+
+    /// (coderabbit-react-loop phase 8) Manual transient-rerun trigger for the
+    /// `ci-react.rerun` builtin command. Resolves the agentic-flow's
+    /// GitHubClient (the PAT-configured instance shared with the rest of the
+    /// agentic surface) and forwards to `GitHubClient::RerunWorkflowRun`.
+    /// Returns false + outError when the client is unavailable (PAT empty) or
+    /// the REST call fails; on success returns true with no payload (the API
+    /// itself returns 201 with empty body).
+    bool RerunAgenticWorkflowRun(const std::string& owner, const std::string& repo, std::int64_t runId,
+                                 std::string& outError);
 #endif
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).

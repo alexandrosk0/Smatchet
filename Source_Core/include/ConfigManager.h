@@ -315,6 +315,138 @@ struct TrackerConfig {
     // exclusively in Preferences. Round-trips through Load() via j.value()
     // so a missing key in older configs hydrates to the safe default.
     bool HandoffAutoStartOnApprove = false;
+
+    // ─── coderabbit-react-loop phase 8 — config blocks ─────────────────
+    //
+    // Two cohesive blocks for the open-PR react loop. Both default to
+    // `Enabled = false` so existing users see no behaviour change after the
+    // upgrade — the user opts in explicitly via Preferences. Every field is
+    // additive; missing JSON keys round-trip to the construct-time defaults
+    // via `j.value()` on Load. No schema-version bump (the additive shape
+    // satisfies AGENTS.md § "Schema-version bumps").
+    //
+    // Field names mirror the JSON sketch in
+    // `docs/design/coderabbit-react-loop.md § ConfigManager coderabbit_react
+    // + ci_react blocks` byte-for-byte so the documentation and runtime
+    // shape stay in lockstep.
+
+    /// CodeRabbit react loop. Watches open PRs for non-Smatchet-author
+    /// comments from the configured bot logins, classifies each via
+    /// `CoderabbitCommentClassifier` (18-rule override table), and either
+    /// posts a short-circuit-reject reply (rule fired) or dispatches a
+    /// `coderabbit-triage` spawn (no rule fired).
+    struct CoderabbitReactConfig {
+        /// Master toggle. False (default) keeps the watcher dormant even when
+        /// SMATCHET_WITH_AGENTIC=ON; flipping true via Preferences calls
+        /// `AppController::RestartAgenticPollAsync` to pick up the change
+        /// without an app restart (same shape as `AgenticPollEnabled`).
+        bool Enabled = false;
+        /// Sleep between consecutive ticks. Clamped to [60, 3600] on Load.
+        /// Default 1800 (30 min) matches the plan's CodeRabbit cadence —
+        /// CodeRabbit batches comments and a slower poll is less spammy.
+        int PollIntervalSec = 1800;
+        /// Base branches the registrar enumerates open PRs against.
+        /// Default `["develop"]` matches the Smatchet integration branch.
+        std::vector<std::string> WatchedBaseBranches = {"develop"};
+        /// GitHub author login allow-list — only comments authored by one
+        /// of these logins are considered for classification. Default
+        /// `["coderabbitai[bot]"]` is the canonical CodeRabbit identity.
+        std::vector<std::string> BotLogins = {"coderabbitai[bot]"};
+        /// When true, classifier verdicts hitting an 18-rule override post
+        /// the cited rule as a PR reply + mark the GraphQL review thread
+        /// resolved. When false the watcher logs and skips — useful for
+        /// audit-only operation. Default true.
+        bool ShortCircuitRejectEnabled = true;
+        /// When true, non-override comments dispatch a `coderabbit-triage`
+        /// spawn via `ClaudeCodeLocalRunner::SpawnAdHoc`. False keeps the
+        /// watcher in read-only mode (cursor still advances). Default true.
+        bool AutoDispatchFixes = true;
+        /// Per-PR cap on `coderabbit-triage` spawns. Clamped to [1, 50] on
+        /// Load (matches the PrCommentWatcher clamp). Hitting the budget
+        /// posts a "budget exhausted" PR comment + skips further dispatches.
+        int IterationBudgetPerPr = 5;
+        /// Worktree root for ad-hoc spawns. Production keeps the default
+        /// (`.claude/worktrees`); tests inject a temp dir. Mirrors the
+        /// existing handoff-controller convention.
+        std::string AdHocWorktreeRoot = ".claude/worktrees";
+    };
+    CoderabbitReactConfig CoderabbitReact;
+
+    /// CI react loop. Watches the same open-PR rows the registrar produces,
+    /// reads check-runs, routes failures through `CiFailureClassifier` to
+    /// one of `build-doctor` / `debug-detective` / `test-rig`. Transient
+    /// fingerprint matches re-run the workflow via
+    /// `GitHubClient::RerunWorkflowRun` without spawning a harness.
+    struct CiReactConfig {
+        /// Master toggle. False (default) — same shape as
+        /// `CoderabbitReactConfig::Enabled`.
+        bool Enabled = false;
+        /// Sleep between consecutive ticks. Clamped to [60, 3600] on Load.
+        /// Default 600 (10 min) — CI runs complete in 5–15 min on the
+        /// Smatchet Windows matrix, so slower polling means longer red dead
+        /// time. Lives below the CodeRabbit default by design.
+        int PollIntervalSec = 600;
+        /// Base branches the registrar watches. Default `["develop"]`.
+        std::vector<std::string> WatchedBaseBranches = {"develop"};
+        /// Check-run names the watcher dispatches on (failing check-runs).
+        /// Default list matches the four blocking checks on develop today.
+        /// Hand-edit this list to extend coverage to new workflows.
+        std::vector<std::string> WatchedCheckNames = {
+            "Windows + MSYS2 UCRT64",
+            "Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)",
+            "Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)",
+            "Test-delta gate"};
+        /// Check-runs the watcher ignores even on failure (advisory checks
+        /// the user does NOT want to auto-react against).
+        ///
+        /// NOTE: "Coverage (windows-2022 + OpenCppCoverage)" is advisory
+        /// until 2026-05-30; remove this entry to enable react-on-coverage-fail.
+        ///
+        /// Per the 2026-05-18 locked decision (plan § Open questions /
+        /// confirmations #7), the user manually flips this list when
+        /// coverage.yml transitions from advisory to blocking. Keeping the
+        /// flip manual preserves the human-in-the-loop for the decision
+        /// because the blast radius changes when coverage starts failing
+        /// merges.
+        std::vector<std::string> IgnoredCheckNames = {
+            "Coverage (windows-2022 + OpenCppCoverage)"};
+        /// Auto-dispatch `build-doctor` on `ci_build_failure` verdicts.
+        /// Default true — build breaks are the lowest-risk auto-dispatch
+        /// surface (the agent reads cmake/link output and proposes a fix).
+        bool AutoDispatchBuildDoctor = true;
+        /// Auto-dispatch `test-rig` on `ci_coverage_gate` verdicts (missing
+        /// paired-test deltas). Default true.
+        bool AutoDispatchTestRig = true;
+        /// Auto-dispatch `debug-detective` on `ci_ctest_failure` verdicts.
+        ///
+        /// Default OFF per the 2026-05-18 locked decision: behavioural
+        /// regressions auto-spawning the debug-detective agent are
+        /// safe-ish (the agent halts at its first pause-loop boundary so
+        /// the user reviews every behavioural fix anyway), but the
+        /// asymmetric blast radius vs build / coverage failures means we
+        /// gate it behind an explicit opt-in. Comment label hint exposed
+        /// in Preferences: "spawn pauses at first investigation round;
+        /// user reviews".
+        bool AutoDispatchDebugDetective = false;
+        /// When true, transient fingerprint matches re-run the workflow
+        /// via `gh workflow run` instead of spawning. Default true.
+        bool TransientRerunEnabled = true;
+        /// Per-PR cap on transient reruns. Clamped to [0, 10] on Load
+        /// (matches `PrCheckRunWatcher::SetTransientRerunCap`). Default 2.
+        int TransientRerunMaxPerPr = 2;
+        /// Per-PR cap on spawned-harness dispatches. Clamped to [1, 50]
+        /// (matches `PrCheckRunWatcher::SetIterationBudget`). Default 5.
+        int IterationBudgetPerPr = 5;
+        /// Number of annotations the watcher fetches per failed check-run.
+        /// Clamped to [1, 100]. Default 20 — enough for most failures
+        /// without bloating CHECK_RUN.json.
+        int AnnotationFetchCount = 20;
+        /// Number of trailing log lines included in CHECK_RUN.json when
+        /// the log-tail fetcher is wired. Clamped to [10, 2000]. Default
+        /// 200.
+        int LogTailLines = 200;
+    };
+    CiReactConfig CiReact;
 #endif
     // Ollama native endpoint (e.g. http://localhost:11434). Stored verbatim — Phase D consumer.
     std::string AiOllamaBaseUrl;

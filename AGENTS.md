@@ -333,6 +333,21 @@ The **orchestrator** running in the user's main session may auto-`gh pr ready` +
 
 The spawned `claude` child's first move, if `SEED.json` exists at `$PWD`, is to delegate to `handoff-implementer` with the file as inline context. Do not re-read it; do not improvise routing. The delegate owns the diagnose → code → test → commit → push → PR loop and writes the terminal `RUN_RESULT.json` before exit.
 
+### First-delegate selection
+
+`handoff-implementer` is always the first-delegate inside a spawned harness (2026-05-18 locked decision, per `docs/design/coderabbit-react-loop.md` § Phased rollout § Phase 7). It reads `SEED.json.dispatch_source` and routes internally:
+
+| `dispatch_source` | Routed delegate |
+|---|---|
+| `proposal_implement` | (handoff-implementer continues per H2 default routing) |
+| `coderabbit_comment` | `coderabbit-triage` |
+| `ci_build_failure` | `build-doctor` |
+| `ci_ctest_failure` | `debug-detective` |
+| `ci_coverage_gate` | `test-rig` |
+| `ci_transient_rerun` | (no spawn — runner calls `gh workflow run` instead) |
+
+Canonical routing details + the failure-mode contract live in `agents/handoff-implementer.md` § `dispatch_source` enum (single source of truth). This table is a navigation aid; do not duplicate the contract here.
+
 ### Anti-deception note
 
 **Anti-deception note**: `HarnessRunState::IsTransitionAllowed` (`Source_Core/include/HarnessRunState.h`) is the FSM integrity boundary for the agentic handoff lifecycle. `AgenticHandoffController::ControllerTransition` validates every state-name string the runner emits through this predicate before audit-trailing + storing — disallowed transitions log `LOG_WARN` and are dropped. The check exists because the runner emits **untrusted strings** read from the spawned child's stdout; a compromised / buggy harness must not be able to forge `Spawning → Complete` or other skip-states. Loosening the FSM for any reason defeats the load-bearing piece. Keep the predicate strict; if a new legitimate transition emerges, add it explicitly to the allow-list rather than relaxing the check.
