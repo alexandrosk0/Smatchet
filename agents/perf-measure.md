@@ -16,12 +16,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Smatchet perf-measurement runner.
 
-**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only · v1`.
+**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only · v2`.
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 
@@ -80,13 +80,21 @@ Pre-existing dominant rows: <list>  (context — what perf_temp: markers are com
 
 ## Fallback — CLI unavailable
 
-If `mcp_enabled: false`, `--spawn` can't reach the MCP socket within 15 s, or `perf.snapshot` errors out, tell the user to:
+If `mcp_enabled: false`, `--spawn` can't reach the MCP socket within 15 s, or `perf.snapshot` errors out, the measurement is **blocked**. Do not fall back to a manual UI session — that violates AGENTS.md § Pillar 2 (zero manual verification steps).
 
-1. Open the Perf panel: `Inspect > Performance Monitor...`
-2. Reproduce the same scenario manually (same view, same scroll pattern, same row count).
-3. Paste back the `perf_temp:*` rows and the dominant pre-existing rows.
+End the run with:
 
-Do **not** attempt to read FPS visually — you can't observe the GUI. Wait for the user's numbers before reporting.
+```
+## Outcome: halted
+halt_reason: cli-gap — <name the missing CLI surface, e.g. "MCP socket unreachable after 15 s on --spawn", or "perf.snapshot errored: <message>", or "scenario `<name>` not registered with ScenarioRunner">
+```
+
+Then hand off:
+
+- **MCP socket unreachable / build broken** → `build-doctor` (`docs/backlog/agent-self-improvement/process.md` + the failing target name).
+- **Scenario missing or lacks a non-MCP CLI surface** → `test-author` to extend `Source_Core/src/Commands/Scenarios/` per AGENTS.md § Verification automation (no manual UI substitution allowed).
+
+Do not attempt to read FPS visually — you can't observe the GUI, and the rule disallows it even if you could.
 
 ## Consistency rule
 
@@ -94,4 +102,4 @@ For a before / after comparison, run the **same** scenario, same `--frames` valu
 
 Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `perf_temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
 
-End with `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

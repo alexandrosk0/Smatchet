@@ -25,12 +25,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
-version: 2
+version: 3
 ---
 
 Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + validation. Mechanical edits belong to `perf-instrument`; CLI measurement belongs to `perf-measure`.
 
-**Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only · v2`.
+**Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only · v3`.
 
 **First action, always**: read `docs/PERF_WORKFLOW.md` and follow it. Don't improvise.
 
@@ -71,4 +71,4 @@ Before composing a scenario list for an audit / sweep / spec doc, run `Smatchet.
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
 
-End with `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -27,7 +27,7 @@ version: 1
 
 MCP plugin specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: mcp-toolsmith · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — mcp-toolsmith · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: mcp-toolsmith · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — mcp-toolsmith · sonnet/low · read-edit · v2`.
 
 **Hard invariants:**
 
@@ -45,6 +45,18 @@ MCP plugin specialist for Smatchet.
 4. Build `ninja-iter-msys2`; verify the server starts and lists the tool.
 5. Update `MCP_GUIDE.md`.
 
-Report: tool name + JSON schema diff + which command it bridges to + `MCP_GUIDE.md` updated.
+## Files changed
 
-End with `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+Bullet list of relative paths touched, with one-line per file naming the change shape (`Plugins/Mcp/` plugin glue, new tool registration, schema diff, server-lifecycle edit, `MCP_GUIDE.md` doc).
+
+## Smoke-test result
+
+`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` → PASS|FAIL.  
+Server starts and lists the new tool: confirmed via `Smatchet.exe cmd mcp.list-tools` (or equivalent) → result.  
+Tool name + JSON schema diff + which command it bridges to + `MCP_GUIDE.md` updated.
+
+## Manual residue
+
+Bullet list of items the user still owns. If none: write `none`.
+
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (schema gotcha, wire-format edge case, missing invariant). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

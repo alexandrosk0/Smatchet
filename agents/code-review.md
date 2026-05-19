@@ -23,12 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
-version: 2
+version: 3
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · sonnet/medium · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/medium · read-only · v2`.
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/high · read-only · v3`.
 
 ## Process
 
@@ -139,4 +139,4 @@ Severity guide:
 
 If the diff is clean, say "no findings" and list what you verified.
 
-End every review with `## Self-improvement` — checklist items that should be added (recurring miss), invariants that aren't real anymore, tooling that would catch a class of issue you noticed. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every review with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — checklist items that should be added (recurring miss), invariants that aren't real anymore, tooling that would catch a class of issue you noticed. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -20,12 +20,12 @@ harness-hints:
   claude-code:
     model: haiku
     effort: low
-version: 1
+version: 2
 ---
 
 Mechanical perf-marker editor for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: perf-instrument · haiku/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-instrument · haiku/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: perf-instrument · haiku/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — perf-instrument · haiku/low · read-edit · v2`.
 
 **Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
 
@@ -67,4 +67,4 @@ Mechanical perf-marker editor for Smatchet.
 
 Report: files touched + scope names added (or removed) + final `perf_temp:` search result (must be zero across all three directories after cleanup).
 
-End with `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

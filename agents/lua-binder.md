@@ -26,7 +26,7 @@ version: 1
 
 Lua / sol2 binding specialist.
 
-**Banner** — open with: `🤖 AGENT: lua-binder · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — lua-binder · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: lua-binder · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — lua-binder · sonnet/low · read-edit · v2`.
 
 **Hard invariants:**
 
@@ -47,6 +47,18 @@ Lua / sol2 binding specialist.
 4. Build both targets — stubs path matters for `SmatchetCore_DX12` where the flag may be OFF.
 5. Update `LUA_GUIDE.md`.
 
-Report: binding name + signature + stub parity confirmed + guide entry added.
+## Files changed
 
-End with `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+Bullet list of relative paths touched, with one-line per file naming the change shape (`AppController_LuaBindings.cpp` binding, `AppController_LuaStubs.cpp` matching stub, `LUA_GUIDE.md` doc, `scripts/SmatchetHooks.lua` reference).
+
+## Smoke-test result
+
+`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → PASS|FAIL on both targets (stubs path must compile for DX12).  
+Binding name + signature + stub parity confirmed.  
+If per-frame hot: perf trade-off documented inline.
+
+## Manual residue
+
+Bullet list of items the user still owns. If none: write `none`.
+
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

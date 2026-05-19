@@ -181,11 +181,17 @@ def _final_text(assistant_msgs: list[dict]) -> str:
 def _infer_outcome(final_text: str) -> tuple[str, str | None]:
     """Return (outcome, halt_reason).
 
-    Priority:
+    Priority (per AGENTS.md § Agent output contract):
       1. Explicit `## Outcome: applied|halted|failed|partial|aborted` line.
-      2. Halt keywords near the end → `halted`.
-      3. `## Self-improvement` present → `applied`.
-      4. Default → `applied`.
+         This is the contract; every agent prompt mandates it.
+      2. Halt keywords near the end → `halted` (defensive — agent forgot
+         the tag but emitted a halt signal).
+      3. Default → `partial`. An agent that did not emit `## Outcome:` and
+         didn't trip a halt keyword is **not** automatically green; the
+         missing tag is itself a signal that something diverged. The
+         former rule ("`## Self-improvement` present → `applied`") was
+         dropped because it silently green-washed halted runs — see
+         docs/design/agent-contract-alignment.md § Pre-resolved decision 5.
     """
     m = _OUTCOME_TAG.search(final_text)
     if m:
@@ -201,9 +207,7 @@ def _infer_outcome(final_text: str) -> tuple[str, str | None]:
             if _HALT_HINT.search(line):
                 return "halted", line.strip()[:200]
         return "halted", None
-    if _SELF_IMPROV.search(final_text):
-        return "applied", None
-    return "applied", None
+    return "partial", None
 
 
 def _extract_scratchpad_block(final_text: str) -> str:

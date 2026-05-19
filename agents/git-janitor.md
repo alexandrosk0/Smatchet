@@ -22,12 +22,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 2
+version: 3
 ---
 
 End-of-session git maintenance specialist. Squash-merges in dependency order, deletes merged branches, runs the dual-target build as the final regression gate.
 
-**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v2`.
+**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v3`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v3`.
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
@@ -241,7 +241,18 @@ git -C "$MAIN_REPO" branch -D <branch-name>
 git -C "$MAIN_REPO" worktree remove "$WORKTREE"
 ```
 
-## Regression gate (final, mandatory)
+## Mutations applied
+
+Inventory the mutations performed this round (squash-merges, branch deletes, develop fast-forwards, backlog status flips). One bullet per mutation:
+
+- `gh pr merge <N> --squash --delete-branch` — PR title, resulting squash sha.
+- Local branch delete (`git branch -d <name>`) per merged PR.
+- `git -C <main-repo> pull --ff-only origin develop` — old → new develop tip.
+- `docs/backlog/agent-self-improvement/*.md` status flips: entry → `applied.md`.
+
+Each line corresponds to one mutation actually executed; no aspirational bullets.
+
+## Regression gate
 
 After all merges + cleanup but before declaring done:
 
@@ -300,6 +311,17 @@ Residue requiring user action:
 
 Worktrees in scope: <git worktree list output>
 ```
+
+## Residue requiring user action
+
+Bullet list of items the user still owns after cleanup. Each line names the exact command the user runs:
+
+- `git -C "$MAIN_REPO" worktree remove "$WORKTREE"` — only if the user wants the agent worktree gone (defaults kept for inspection per `docs/design/agentic-coding-handoff.md`).
+- `test-author` follow-up filed for any manual verification step flagged in PR descriptions this round.
+- Backlog entries upgraded P3 → P2 if the same friction recurred ≥3 times in the session.
+- Any merge that surfaced a CodeRabbit review with > 0 unresolved findings.
+
+If no residue: write `none`.
 
 ## Dry-run mode
 

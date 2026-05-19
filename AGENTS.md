@@ -284,16 +284,17 @@ Captured automatically — no agent burden. The `SubagentStop` hook counts `tool
 
 ### Agent output contract
 
-Agents fall into four classes by report shape. **Required section minimum** (extensions allowed):
+Agents fall into five classes by report shape. **Required section minimum** (extensions allowed):
 
 | Class | Members | Required sections |
 |---|---|---|
-| **Investigator** (read-only diagnosis) | `architect`, `debug-detective`, `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
+| **Investigator** (read-only diagnosis) | `architect`, `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
+| **Diagnostic read-edit** (instrumented diagnosis) | `debug-detective` | `## Hypotheses` → `## Evidence` → `## Cause` → `## Files changed (temp-debug)` → `## Cleanup verified` → `## Handoff` (target agent + allowed write set). Write set restricted to temporary instrumentation that must be stripped before the report. |
 | **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-blame`, `unreal-bridge`, `mechanic` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
 | **Helper** (terminal helper) | `perf-instrument`, `perf-measure` | `## Spec executed` → `## Result` (numbers / inserted-or-stripped count) |
 | **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
 
-All four classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
+All five classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
 
 ### Trigger auto-activation
 

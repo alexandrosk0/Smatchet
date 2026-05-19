@@ -183,7 +183,9 @@ def _render(rows: list[dict], header: str) -> str:
     lines.append("")
 
     # Outcome breakdown (new in 2026-05; older rows lack the field and count
-    # as "applied" since that was the default behaviour).
+    # as "applied" since that was the historic default before
+    # docs/design/agent-contract-alignment.md tightened the inference rule
+    # so missing-tag now resolves to "partial" rather than "applied").
     outcomes: dict[str, int] = {}
     halt_reasons: dict[str, int] = {}
     versions: dict[str, set[int]] = {}
