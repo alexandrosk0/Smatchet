@@ -182,6 +182,12 @@ if(SMATCHET_WITH_AGENTIC)
         # empty-poll no-op behaviour.
         Source_Core/PrCommentWatcher.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp"
+        # coderabbit-react phase-1 — OpenPrRegistrar against scripted lister
+        # seam + :memory: AgentProposalStore. Verifies upsert idempotency,
+        # cursor-field preservation, parser tolerance, and lister-error
+        # fail-safety. No real `gh` subprocess.
+        Source_Core/OpenPrRegistrar.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

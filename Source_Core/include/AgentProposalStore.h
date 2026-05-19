@@ -169,6 +169,60 @@ class AgentProposalStore {
     // / Cancelled) so the table does not grow unbounded.
     bool DeletePrWatch(std::int64_t proposalId, std::string& outError);
 
+    // ─── coderabbit-react phase-1: agent_open_pr_watch persistence ────────
+    //
+    // Sibling table to `agent_pr_watch` — but keyed on `pr_url` rather than
+    // `proposal_id` because the open-PR registrar watches every open PR on
+    // the configured base branch, not just PRs born from an agent handoff.
+    // The registrar (`OpenPrRegistrar`, gated on SMATCHET_WITH_AGENTIC)
+    // periodically runs `gh pr list` and upserts a row per open PR; the
+    // future comment-classifier + check-run watcher iterate this table to
+    // decide which PRs to poll. Additive in v2 — no schema-version bump
+    // (the CREATE TABLE IF NOT EXISTS path in the ctor body is a v2-
+    // extending statement, not a migration body).
+    //
+    // Cursor-preservation invariant: re-running the registrar with the same
+    // `pr_url` must rebind the head-ref fields (head_sha may have shifted
+    // after a force-push) but MUST NOT zero the watcher cursors
+    // (last_seen_comment_id_str, last_seen_check_run_id, iteration_count,
+    // last_polled_at_sec). `SetOpenPrWatch` uses `ON CONFLICT … DO UPDATE`
+    // for that reason; a naïve `INSERT OR REPLACE` would zero the cursors
+    // on every registrar tick.
+
+    struct OpenPrWatchRow {
+        std::string prUrl;
+        int prNumber = 0;
+        std::string headRefName;
+        std::string headSha;
+        std::string lastSeenCommentIdStr;
+        std::int64_t lastSeenCheckRunId = 0;
+        int iterationCount = 0;
+        std::int64_t lastPolledAtSec = 0;
+    };
+
+    // Upsert one open-PR watch row. Rebinds prNumber + headRefName + headSha
+    // from `row`; preserves the cursor fields (lastSeenCommentIdStr,
+    // lastSeenCheckRunId, iterationCount, lastPolledAtSec) when the row
+    // already exists — the registrar passes default-zero cursors and relies
+    // on the ON CONFLICT body to leave the existing values untouched.
+    // Returns false + outError on DB error. Idempotent.
+    bool SetOpenPrWatch(const OpenPrWatchRow& row, std::string& outError);
+
+    // Reads the open-PR watch row for `prUrl`. Returns true + populates
+    // `outRow` when present; returns true + leaves `outRow` defaulted when
+    // absent (first-poll semantics — same shape as GetPrWatch). Returns
+    // false on DB error.
+    bool GetOpenPrWatch(const std::string& prUrl, OpenPrWatchRow& outRow, std::string& outError) const;
+
+    // Lists every open-PR watch row, ordered by `pr_url` ASC for stable
+    // iteration. Returns false + outError on DB error; an empty table is
+    // not an error.
+    bool ListOpenPrWatch(std::vector<OpenPrWatchRow>& outRows, std::string& outError) const;
+
+    // Deletes the open-PR watch row for `prUrl`. Idempotent — missing row
+    // is not an error.
+    bool DeleteOpenPrWatch(const std::string& prUrl, std::string& outError);
+
     // ─── H10 agent_proposals.handoff_status column ────────────────────────
     //
     // Mirrors `CodingHarness::RunState` as a string so the

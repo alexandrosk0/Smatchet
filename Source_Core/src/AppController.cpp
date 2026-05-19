@@ -1985,6 +1985,20 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
             agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
 
+            // (coderabbit-react phase-1) Construct + wire the open-PR
+            // registrar. Same lifetime as the handoff controller. Phase 1
+            // hardcodes the watched base branch to `develop` — a future
+            // phase 8 surfaces the Preferences toggle that selects which
+            // branch the registrar polls. The lister seam binds to the
+            // production `gh pr list` invocation via SubprocessCapture.
+            agenticOpenPrRegistrar_ = std::unique_ptr<smatchet::agentic::OpenPrRegistrar>(
+                new smatchet::agentic::OpenPrRegistrar(agentProposalStore_.get(), "develop"));
+            agenticOpenPrRegistrar_->SetOpenPrLister(
+                [this](std::vector<smatchet::agentic::OpenPrListing>& out, std::string& err) -> bool {
+                    return smatchet::agentic::OpenPrRegistrar::RunGhPrList(
+                        agenticOpenPrRegistrar_->GetWatchedBaseBranch(), out, err);
+                });
+
             // (CR Bundle A4) The H9 OnProposalApproved auto-start callback is
             // now wired in `InitAgentProposalStoreOnWorker` — at store-
             // construction time, not inside this lazy getter — so the auto-
@@ -2144,6 +2158,19 @@ void AppController::AgenticPollWorkerLoop() {
                 LOG_INFO("AppController::AgenticPollWorkerLoop: %d clarification answer(s) dispatched via GitHub",
                          answered);
             }
+            // (coderabbit-react phase-1) Tick the open-PR registrar BEFORE
+            // the comment watcher so any newly-discovered open PR is
+            // visible to the comment watcher / future check-run watcher in
+            // the SAME iteration (the comment watcher in a future phase
+            // will iterate agent_open_pr_watch rows the registrar just
+            // upserted).
+            if (agenticOpenPrRegistrar_) {
+                const int upserted = agenticOpenPrRegistrar_->Tick();
+                if (upserted > 0) {
+                    LOG_INFO("AppController::AgenticPollWorkerLoop: open-PR registrar upserted %d row(s)", upserted);
+                }
+            }
+
             // (H7) Tick the PR-comment watcher AFTER the clarification poll
             // so a PR transition observed by the handoff controller (PrOpen
             // emits inside the runner-callback path) is reflected in the
