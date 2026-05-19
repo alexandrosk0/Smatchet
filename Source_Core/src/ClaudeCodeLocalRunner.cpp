@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -42,27 +43,18 @@ namespace {
 // child process sees its env block. This list is the security boundary.
 // Additions require a deliberate edit + the env-allow-list doctest update.
 const char* const kAllowedEnvKeys[] = {
-    "PATH",
-    "HOME",
-    "USER",
-    "USERPROFILE",
-    "TEMP",
-    "TMP",
-    "SYSTEMROOT",
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "ANTHROPIC_API_KEY",
-    nullptr,
+    "PATH",       "HOME",     "USER",         "USERPROFILE",       "TEMP",  "TMP",
+    "SYSTEMROOT", "GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", nullptr,
 };
 
 // Filenames the runner writes/reads inside the worktree. The contract is
 // shared with the handoff-implementer agent docs; do not rename casually.
-const char* const kSeedJsonName       = "SEED.json";
-const char* const kSeedMdName         = "SEED.md";
-const char* const kRunResultName      = "RUN_RESULT.json";
-const char* const kPrUrlName          = "PR_URL.txt";
-const char* const kClarificationName  = "CLARIFICATION_NEEDED.json";
-const char* const kUserResponseName   = "USER_RESPONSE.json";
+const char* const kSeedJsonName = "SEED.json";
+const char* const kSeedMdName = "SEED.md";
+const char* const kRunResultName = "RUN_RESULT.json";
+const char* const kPrUrlName = "PR_URL.txt";
+const char* const kClarificationName = "CLARIFICATION_NEEDED.json";
+const char* const kUserResponseName = "USER_RESPONSE.json";
 
 bool FileExists(const std::string& path) {
 #if defined(_WIN32)
@@ -156,20 +148,16 @@ bool TryReadParentEnv(const char* name, std::string& outValue) {
 // Any key in `forced` overrides; allow-list assertion still applies to its
 // name. Forced keys are how tests inject STUB_CLAUDE_MODE without poisoning
 // the parent env permanently.
-std::vector<std::pair<std::string, std::string>> BuildAllowListEnv(
-    const std::vector<std::pair<std::string, std::string>>& forced) {
+std::vector<std::pair<std::string, std::string>>
+BuildAllowListEnv(const std::vector<std::pair<std::string, std::string>>& forced) {
     std::vector<std::pair<std::string, std::string>> out;
     out.reserve(16);
     for (size_t i = 0; kAllowedEnvKeys[i] != nullptr; ++i) {
         const char* key = kAllowedEnvKeys[i];
         // Skip if the test layer already supplied a value via forced.
-        bool overridden = false;
-        for (size_t j = 0; j < forced.size(); ++j) {
-            if (forced[j].first == key) {
-                overridden = true;
-                break;
-            }
-        }
+        const bool overridden =
+            std::any_of(forced.begin(), forced.end(),
+                        [key](const std::pair<std::string, std::string>& kv) { return kv.first == key; });
         if (overridden) {
             continue;
         }
@@ -201,8 +189,8 @@ std::vector<std::pair<std::string, std::string>> CollectTestModePassthrough() {
 }
 
 // Run a quick command via SubprocessCapture; return true on exitCode 0.
-bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, int timeoutMs,
-              std::string& outStderr, std::string& outStdout) {
+bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, int timeoutMs, std::string& outStderr,
+              std::string& outStdout) {
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = argv0;
     opts.args = args;
@@ -246,7 +234,7 @@ bool RunQuickInDir(const std::string& argv0, const std::vector<std::string>& arg
 // `{key}` expansion creates a content-injection surface (the seed's issueKey
 // would otherwise pass through user-controlled text). Keep this list narrow.
 std::string SubstituteTemplate(const std::string& tmpl, std::int64_t proposalId, const std::string& issueKey,
-                                const std::string& sourceTracker) {
+                               const std::string& sourceTracker) {
     std::string out = tmpl;
     auto replaceAll = [&out](const std::string& needle, const std::string& replacement) {
         if (needle.empty()) {
@@ -319,7 +307,7 @@ bool LooksLikeGithubPrUrl(const std::string& url) {
 // else `proposal.issueKey`, else a sentinel. Never empty — `gh pr create`
 // rejects an empty `--title`.
 std::string ResolvePrTitle(const std::string& worktreeDir, const std::string& gitBin, const std::string& issueTitle,
-                            const std::string& issueKey) {
+                           const std::string& issueKey) {
     std::vector<std::string> args;
     args.push_back("log");
     args.push_back("-1");
@@ -394,13 +382,9 @@ bool ClaudeCodeLocalRunner::Probe(std::string& outError) {
     return true;
 }
 
-bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
-                                  const std::string& worktreeDir,
-                                  DeltaCallback onDelta,
-                                  StateChangeCallback onStateChange,
-                                  std::shared_ptr<std::atomic<bool>> cancelToken,
-                                  RunResult& outResult,
-                                  std::string& outError) {
+bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
+                                  StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
+                                  RunResult& outResult, std::string& outError) {
     outResult = RunResult();
     outError.clear();
 
@@ -437,7 +421,7 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
 
     // 2. Write SEED.json + SEED.md.
     const std::string seedJsonPath = JoinPath(worktreeDir, kSeedJsonName);
-    const std::string seedMdPath   = JoinPath(worktreeDir, kSeedMdName);
+    const std::string seedMdPath = JoinPath(worktreeDir, kSeedMdName);
     {
         const nlohmann::json js = SeedBuilder::FormatSeedJson(seed);
         if (!WriteFileText(seedJsonPath, js.dump(2), outError)) {
@@ -501,17 +485,19 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
     bool announcedPr = false;
     {
         const std::string clarPath = JoinPath(worktreeDir, kClarificationName);
-        const std::string prPath   = JoinPath(worktreeDir, kPrUrlName);
+        const std::string prPath = JoinPath(worktreeDir, kPrUrlName);
         StateChangeCallback cb = onStateChange;
         pollThread = std::thread([&stopPoll, clarPath, prPath, cb, &announcedClar, &announcedPr]() {
             while (!stopPoll.load()) {
                 if (!announcedClar && FileExists(clarPath)) {
                     announcedClar = true;
-                    if (cb) cb("AwaitingUser");
+                    if (cb)
+                        cb("AwaitingUser");
                 }
                 if (!announcedPr && FileExists(prPath)) {
                     announcedPr = true;
-                    if (cb) cb("PrOpen");
+                    if (cb)
+                        cb("PrOpen");
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             }
@@ -548,14 +534,16 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
         outError = "subprocess spawn failed: " + subErr;
         outResult.ok = false;
         outResult.errorMessage = outError;
-        if (onStateChange) onStateChange("Failed");
+        if (onStateChange)
+            onStateChange("Failed");
         return false;
     }
 
     if (res.cancelled) {
         outResult.ok = false;
         outResult.errorMessage = "cancelled";
-        if (onStateChange) onStateChange("Cancelled");
+        if (onStateChange)
+            onStateChange("Cancelled");
         return false;
     }
 
@@ -565,12 +553,12 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
         try {
             const std::string body = ReadFileText(runResultPath);
             nlohmann::json j = nlohmann::json::parse(body);
-            outResult.ok            = j.value("ok", false);
-            outResult.errorMessage  = j.value("errorMessage", std::string());
-            outResult.prUrl         = j.value("prUrl", std::string());
-            outResult.filesChanged  = j.value("filesChanged", 0);
-            outResult.linesAdded    = j.value("linesAdded", 0);
-            outResult.linesRemoved  = j.value("linesRemoved", 0);
+            outResult.ok = j.value("ok", false);
+            outResult.errorMessage = j.value("errorMessage", std::string());
+            outResult.prUrl = j.value("prUrl", std::string());
+            outResult.filesChanged = j.value("filesChanged", 0);
+            outResult.linesAdded = j.value("linesAdded", 0);
+            outResult.linesRemoved = j.value("linesRemoved", 0);
             if (j.contains("toolUseSummary")) {
                 outResult.toolUseSummary = j["toolUseSummary"];
             }
@@ -578,7 +566,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
             outError = std::string("failed to parse RUN_RESULT.json: ") + e.what();
             outResult.ok = false;
             outResult.errorMessage = outError;
-            if (onStateChange) onStateChange("Failed");
+            if (onStateChange)
+                onStateChange("Failed");
             return false;
         }
     } else {
@@ -606,7 +595,7 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
         }
         if (outResult.prUrl.empty()) {
             const std::string gitBin = m_opts.gitBinPath.empty() ? std::string("git") : m_opts.gitBinPath;
-            const std::string ghBin  = m_opts.ghBinPath.empty() ? std::string("gh") : m_opts.ghBinPath;
+            const std::string ghBin = m_opts.ghBinPath.empty() ? std::string("gh") : m_opts.ghBinPath;
             const std::string baseBranch = m_opts.prBaseBranch.empty() ? std::string("develop") : m_opts.prBaseBranch;
 
             // 1. `git push -u origin <branch>` from the worktree dir.
@@ -622,7 +611,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
                 outError = "PR-open fallback: git push failed (exit=" + std::to_string(pushExit) + "): " + pushErr;
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange) onStateChange("Failed");
+                if (onStateChange)
+                    onStateChange("Failed");
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
                 return false;
             }
@@ -652,7 +642,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
                 outError = "PR-open fallback: gh pr create failed (exit=" + std::to_string(ghExit) + "): " + ghErr;
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange) onStateChange("Failed");
+                if (onStateChange)
+                    onStateChange("Failed");
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
                 return false;
             }
@@ -663,7 +654,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
                 outError = "PR-open fallback: gh pr create returned non-PR URL: '" + urlCandidate + "'";
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange) onStateChange("Failed");
+                if (onStateChange)
+                    onStateChange("Failed");
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
                 return false;
             }
@@ -697,8 +689,7 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed,
 }
 
 bool ClaudeCodeLocalRunner::Resume(const ClarificationResponse& response,
-                                   std::shared_ptr<std::atomic<bool>> /*cancelToken*/,
-                                   std::string& outError) {
+                                   std::shared_ptr<std::atomic<bool>> /*cancelToken*/, std::string& outError) {
     std::string dir;
     {
         std::lock_guard<std::mutex> lk(m_mu);

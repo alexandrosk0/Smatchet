@@ -194,24 +194,19 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
                 for (LPWCH p = parentBlock; *p != L'\0';) {
                     const size_t entryLen = wcslen(p);
                     // Convert each NAME=VAL to UTF-8, split on first '='.
-                    const int u8len = WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen),
-                                                          nullptr, 0, nullptr, nullptr);
+                    const int u8len =
+                        WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen), nullptr, 0, nullptr, nullptr);
                     if (u8len > 0) {
                         std::string entry(static_cast<size_t>(u8len), '\0');
-                        WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen), &entry[0], u8len,
-                                            nullptr, nullptr);
+                        WideCharToMultiByte(CP_UTF8, 0, p, static_cast<int>(entryLen), &entry[0], u8len, nullptr,
+                                            nullptr);
                         const size_t eq = entry.find('=');
                         if (eq != std::string::npos && eq > 0) {
                             std::string name = entry.substr(0, eq);
                             std::string value = entry.substr(eq + 1);
                             const std::string lname = toLower(name);
-                            bool shadowed = false;
-                            for (size_t i = 0; i < overrideKeys.size(); ++i) {
-                                if (overrideKeys[i] == lname) {
-                                    shadowed = true;
-                                    break;
-                                }
-                            }
+                            const bool shadowed = std::any_of(overrideKeys.begin(), overrideKeys.end(),
+                                                              [&lname](const std::string& k) { return k == lname; });
                             if (!shadowed) {
                                 merged.emplace_back(std::move(name), std::move(value));
                             }
@@ -270,9 +265,8 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     // in the buffered capture for the caller to inspect on completion.
     std::string stdoutLinePending;
     const auto startTp = std::chrono::steady_clock::now();
-    auto drain = [&buf, &n, &sawAnyRead](HANDLE h, std::string& dst, size_t cap, bool& capped,
-                                          std::string* linePending,
-                                          const std::function<void(const std::string&)>* lineCb) {
+    auto drain = [&buf, &n, &sawAnyRead](HANDLE h, std::string& dst, size_t cap, bool& capped, std::string* linePending,
+                                         const std::function<void(const std::string&)>* lineCb) {
         DWORD avail = 0;
         if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) {
             return;
@@ -287,8 +281,7 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     };
     for (;;) {
         sawAnyRead = false;
-        drain(rdOut, out.stdoutText, opts.stdoutByteCap, out.stdoutCapped,
-              &stdoutLinePending, &opts.onStdoutLine);
+        drain(rdOut, out.stdoutText, opts.stdoutByteCap, out.stdoutCapped, &stdoutLinePending, &opts.onStdoutLine);
         drain(rdErr, out.stderrText, opts.stderrByteCap, out.stderrCapped, nullptr, nullptr);
         if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
             break;
