@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
+  Details: CodeRabbit findings #15 + #16 on PR #264 (handoff-half re-review) flagged `tests/Source_Core/AgentProposalStore.test.cpp` as violating the "tests/Source_Core/** must be pure-logic doctest only" rule — `test-rig` agent contract refuses SQLite surfaces. The tests were knowingly authored under the H10 plan as integration-coverage in the doctest rig because no bucket-E SQLite harness exists today. Moving them now has no destination lane. Triage marked DEFERRED rather than rejected because the suggestion's intent (proper lane separation) is correct; the blocker is missing infrastructure.
+  Concrete next action: design a bucket-E SQLite lane — preset `ninja-test-sqlite-msys2` or extend bucket-E with SQLite-allowed test TUs. Move `AgentProposalStore.test.cpp` + any future SQLite-backed tests there. Until then, the doctest-rig location is the documented exception. ~4 h for the lane design + initial migration.
+  Status: open
+  Last-reviewed: 2026-05-19
+
 - 2026-05-18 · orchestrator · [test] · P3 — CodeRabbit "✅ Addressed in commit X" notation gives false confidence
   Details: On PR #250 follow-up triage, CodeRabbit flagged 5 findings with 2 marked `✅ Addressed in commits 5e7d75b to 29c3321` / `✅ Addressed in commit 85aa69f`. Verified against the actual merged code: the Test E2E mode-routing was genuinely fixed (✓), but the banner `ImGuiCol_TextDisabled` push was NOT — the merged banner still pushed 3 colors (`WindowBg / Border / Text`), missing `TextDisabled`. CR's check matched commit message keywords rather than the diff actually addressing the finding. Acting on the green check alone would have left a known low-contrast bug shipped.
   Concrete next action: standing process rule — when CR labels a finding as addressed, ALWAYS read the cited commit's diff against the original finding to confirm the change matches the requested fix. Add a one-liner to `docs/agent-rules/REVIEW_TRIAGE.md` (or the CodeRabbit-handling section of `AGENTS.md`) so future orchestrators don't trust the green-check blindly. ~10 min doc edit.

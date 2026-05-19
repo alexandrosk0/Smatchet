@@ -239,7 +239,7 @@ Write-once semantics: every sentinel except `USER_RESPONSE.json` (rewritten per 
 
 The child process is spawned with a fresh environment block, NOT an inherited copy of the parent's. Allow-listed variables only:
 
-```
+```text
 PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY
 ```
 
