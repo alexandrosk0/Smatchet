@@ -10,6 +10,7 @@
 #   6. agents/architect.md does NOT contain a `git commit` self-directive.
 #   7. AGENTS.md § Agent output contract has 5 class rows (the post-PR split).
 #   8. agents/_shared/token-tracking/tests/test_infer_outcome.py passes (Python unit cases for the telemetry classifier).
+#   9. agent-token-log.py canonical and .claude/hooks/ copy are byte-identical (link_file drift check per process.md 2026-05-19 P3).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
@@ -28,7 +29,7 @@ check_fail() { FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); printf '  FAIL  %s\n' "$
 # -------------------------------------------------------------------------
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
-echo "[1/8] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
+echo "[1/9] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
 IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-blame unreal-bridge mechanic)
 for a in "${IMPLEMENTERS[@]}"; do
   f="agents/$a.md"
@@ -43,7 +44,7 @@ done
 # 2. Maintenance agents — 4 required headings.
 # -------------------------------------------------------------------------
 echo
-echo "[2/8] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
+echo "[2/9] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
 MAINTENANCE=(build-doctor test-author git-janitor)
 for a in "${MAINTENANCE[@]}"; do
   f="agents/$a.md"
@@ -58,7 +59,7 @@ done
 # 3. Diagnostic read-edit (debug-detective) — 6 required headings.
 # -------------------------------------------------------------------------
 echo
-echo "[3/8] Diagnostic read-edit required headings (debug-detective)"
+echo "[3/9] Diagnostic read-edit required headings (debug-detective)"
 DD_REQUIRED=("## Hypotheses" "## Evidence" "## Cause" "## Files changed (temp-debug)" "## Cleanup" "## Handoff")
 miss=0
 for h in "${DD_REQUIRED[@]}"; do
@@ -73,7 +74,7 @@ if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "de
 # 4. Every agent has ## Outcome: mandate text.
 # -------------------------------------------------------------------------
 echo
-echo "[4/8] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
+echo "[4/9] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
 miss_outcome=()
 for f in agents/*.md; do
   base=$(basename "$f")
@@ -91,7 +92,7 @@ fi
 # 5. Banner model/effort substring matches frontmatter harness-hints.claude-code.{model,effort}.
 # -------------------------------------------------------------------------
 echo
-echo "[5/8] Banner ↔ frontmatter model/effort match"
+echo "[5/9] Banner ↔ frontmatter model/effort match"
 banner_mismatch=()
 for f in agents/*.md; do
   base=$(basename "$f")
@@ -116,7 +117,7 @@ fi
 # 6. agents/architect.md does NOT contain a git commit self-directive.
 # -------------------------------------------------------------------------
 echo
-echo "[6/8] architect.md emit-only (no self-commit directive)"
+echo "[6/9] architect.md emit-only (no self-commit directive)"
 if grep -qE '^[^>`]*Commit immediately with ' agents/architect.md; then
   check_fail "architect.md still instructs the agent to commit"
 else
@@ -127,7 +128,7 @@ fi
 # 7. AGENTS.md § Agent output contract has 5 class rows.
 # -------------------------------------------------------------------------
 echo
-echo "[7/8] docs/agent-rules/DELEGATION.md output-contract table has 5 class rows"
+echo "[7/9] docs/agent-rules/DELEGATION.md output-contract table has 5 class rows"
 # Table lives in docs/agent-rules/DELEGATION.md § Agent output contract since
 # AGENTS.md L192-422 was extracted into the new file. AGENTS.md still carries
 # a redirect stub naming the subsection.
@@ -142,11 +143,34 @@ fi
 # 8. _infer_outcome unit tests pass.
 # -------------------------------------------------------------------------
 echo
-echo "[8/8] agents/_shared/token-tracking/tests/test_infer_outcome.py"
+echo "[8/9] agents/_shared/token-tracking/tests/test_infer_outcome.py"
 if python agents/_shared/token-tracking/tests/test_infer_outcome.py; then
   check_pass "_infer_outcome unit tests"
 else
   check_fail "_infer_outcome unit tests"
+fi
+
+# -------------------------------------------------------------------------
+# 9. agent-token-log.py canonical vs .claude/hooks/ copy drift check.
+# -------------------------------------------------------------------------
+# Per process.md 2026-05-19 orchestrator P3 — `link_file()` in
+# scripts/setup-harness.sh short-circuits when destination exists, so an
+# independent copy at `.claude/hooks/agent-token-log.py` (different inode,
+# possibly stale) can silently diverge from the canonical at
+# `agents/_shared/token-tracking/agent-token-log.py`. Edits to the canonical
+# don't propagate; the live Claude Code SubagentStop hook runs the stale copy.
+# Catch the drift at PR time before the misclassification ships.
+echo
+echo "[9/9] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
+canonical=agents/_shared/token-tracking/agent-token-log.py
+hook_copy=.claude/hooks/agent-token-log.py
+if [[ ! -f "$hook_copy" ]]; then
+  # Hook copy absent — Claude Code harness not set up locally. Skip cleanly.
+  check_pass "drift check skipped (hook copy absent — setup-harness.sh not run)"
+elif cmp -s "$canonical" "$hook_copy"; then
+  check_pass "canonical and hook copy byte-identical"
+else
+  check_fail "DRIFT: $canonical vs $hook_copy differ — run \`cp -f $canonical $hook_copy\` or \`bash scripts/setup-harness.sh claude-code\` (after \`rm $hook_copy\`)"
 fi
 
 # -------------------------------------------------------------------------
