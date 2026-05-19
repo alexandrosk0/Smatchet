@@ -203,6 +203,14 @@ struct TrackerConfig {
     std::string AiApiKey;
     // Anthropic API key. Same DPAPI + legacy-migration shape as `AiApiKey`.
     std::string AiAnthropicApiKey;
+    // DeepSeek API key. DeepSeek's wire is OpenAI-protocol-compatible
+    // (`/v1/chat/completions`); the dedicated key field keeps the slot
+    // round-tripping across provider switches so the user does not lose
+    // credentials by flipping to / from another provider. Persisted
+    // DPAPI-encrypted on Win32; legacy plaintext `ai_deepseek_api_key`
+    // keys from any hand-edited config are migrated on Load and erased
+    // on next Save. Same shape as `AiApiKey` / `AiAnthropicApiKey`.
+    std::string AiDeepSeekApiKey;
 #if defined(SMATCHET_WITH_AGENTIC)
     // GitHub Personal Access Token — consumed by `GitHubClient` to fetch issue comments
     // (agentic-flow triage half) and to post comments / labels (later phases). Persisted
@@ -316,6 +324,13 @@ struct TrackerConfig {
     std::string AiModelOpenAi = "gpt-4o-mini";
     std::string AiModelAnthropic = "claude-sonnet-4-6";
     std::string AiModelOllama = "llama3";
+    // DeepSeek base URL (empty = use built-in default `https://api.deepseek.com`).
+    // Stored verbatim — same shape as `AiBaseUrl` for OpenAI. Kept as a separate
+    // field so the URL round-trips across provider switches.
+    std::string AiDeepSeekBaseUrl;
+    // DeepSeek model identifier. Default `deepseek-chat`; the published catalog
+    // (see AiModelCatalog) also lists `deepseek-reasoner` (reasoning-tuned).
+    std::string AiModelDeepSeek = "deepseek-chat";
     /// Reasoning effort (OpenAI `reasoning_effort` parameter on o-series / reasoning-tuned
     /// models; LM Studio passes it through to local reasoning models such as Qwen3 / gemma-3).
     /// Allowed values: "auto" | "low" | "medium" | "high". "auto" means "do not send the

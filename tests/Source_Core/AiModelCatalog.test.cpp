@@ -15,12 +15,7 @@
 namespace {
 
 bool ContainsId(const std::vector<smatchet::ai::ModelOption>& models, const std::string& id) {
-    for (std::size_t i = 0; i < models.size(); ++i) {
-        if (models[i].Id == id) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(models.begin(), models.end(), [&id](const smatchet::ai::ModelOption& m) { return m.Id == id; });
 }
 
 } // namespace
@@ -53,6 +48,25 @@ TEST_CASE("AiModelCatalog: Anthropic seed contains current public IDs") {
 TEST_CASE("AiModelCatalog: OllamaNative returns empty (free-form)") {
     const auto v = smatchet::ai::KnownModels(AiProvider::OllamaNative);
     CHECK(v.empty());
+}
+
+TEST_CASE("AiModelCatalog: DeepSeek seed contains the two published IDs") {
+    const auto v = smatchet::ai::KnownModels(AiProvider::DeepSeek);
+    REQUIRE(v.size() == 2);
+    CHECK(ContainsId(v, "deepseek-chat"));
+    CHECK(ContainsId(v, "deepseek-reasoner"));
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        CHECK_FALSE(v[i].Id.empty());
+        CHECK_FALSE(v[i].DisplayName.empty());
+    }
+}
+
+TEST_CASE("AiModelCatalog: IsKnownModel recognises DeepSeek IDs") {
+    CHECK(smatchet::ai::IsKnownModel(AiProvider::DeepSeek, "deepseek-chat"));
+    CHECK(smatchet::ai::IsKnownModel(AiProvider::DeepSeek, "deepseek-reasoner"));
+    CHECK_FALSE(smatchet::ai::IsKnownModel(AiProvider::DeepSeek, ""));
+    CHECK_FALSE(smatchet::ai::IsKnownModel(AiProvider::DeepSeek, "gpt-4o-mini"));
+    CHECK_FALSE(smatchet::ai::IsKnownModel(AiProvider::OpenAi, "deepseek-chat"));
 }
 
 TEST_CASE("AiModelCatalog: OllamaOpenAiCompat shares OpenAi convenience catalog") {

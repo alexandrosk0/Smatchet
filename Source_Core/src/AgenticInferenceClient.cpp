@@ -23,32 +23,31 @@ constexpr std::size_t kMaxIssueBodyBytes = 8 * 1024;
 // "Decisions locked" → #3. Instructs the model to emit the JSON envelope
 // only, with strict per-action payload shapes. Any deviation is filtered by
 // `AgenticInferenceClientPure::ParseInferenceResponse`.
-const char* kAgenticTriageSystemPrompt =
-    "You are a triage agent. Given a tracker issue and its comments, propose "
-    "actions the user should consider. Return ONLY a JSON object of the shape:\n"
-    "\n"
-    "{\n"
-    "  \"proposals\": [\n"
-    "    {\n"
-    "      \"action\": \"CommentAdd | LabelAdd | LabelRemove | AssigneeSet | "
-    "StateTransition | DerivedTicketCreate | ImplementIssue\",\n"
-    "      \"rationale\": \"free-form one-paragraph explanation\",\n"
-    "      \"payload\": { /* action-specific object, see below */ }\n"
-    "    }\n"
-    "  ]\n"
-    "}\n"
-    "\n"
-    "Per-action payload shapes:\n"
-    "- CommentAdd: { \"body\": \"string\" }\n"
-    "- LabelAdd / LabelRemove: { \"label\": \"string\" }\n"
-    "- AssigneeSet: { \"user\": \"github-username\" }\n"
-    "- StateTransition: { \"state\": \"open | closed\" }\n"
-    "- DerivedTicketCreate: { \"targetTracker\": \"jira | plane\", "
-    "\"summary\": \"string\", \"description\": \"string\" }\n"
-    "- ImplementIssue: { \"complexityHint\": \"low | medium | high\", "
-    "\"approachOutline\": \"free-form\" }\n"
-    "\n"
-    "Do not return prose, explanations, or markdown. JSON only.";
+const char* kAgenticTriageSystemPrompt = "You are a triage agent. Given a tracker issue and its comments, propose "
+                                         "actions the user should consider. Return ONLY a JSON object of the shape:\n"
+                                         "\n"
+                                         "{\n"
+                                         "  \"proposals\": [\n"
+                                         "    {\n"
+                                         "      \"action\": \"CommentAdd | LabelAdd | LabelRemove | AssigneeSet | "
+                                         "StateTransition | DerivedTicketCreate | ImplementIssue\",\n"
+                                         "      \"rationale\": \"free-form one-paragraph explanation\",\n"
+                                         "      \"payload\": { /* action-specific object, see below */ }\n"
+                                         "    }\n"
+                                         "  ]\n"
+                                         "}\n"
+                                         "\n"
+                                         "Per-action payload shapes:\n"
+                                         "- CommentAdd: { \"body\": \"string\" }\n"
+                                         "- LabelAdd / LabelRemove: { \"label\": \"string\" }\n"
+                                         "- AssigneeSet: { \"user\": \"github-username\" }\n"
+                                         "- StateTransition: { \"state\": \"open | closed\" }\n"
+                                         "- DerivedTicketCreate: { \"targetTracker\": \"jira | plane\", "
+                                         "\"summary\": \"string\", \"description\": \"string\" }\n"
+                                         "- ImplementIssue: { \"complexityHint\": \"low | medium | high\", "
+                                         "\"approachOutline\": \"free-form\" }\n"
+                                         "\n"
+                                         "Do not return prose, explanations, or markdown. JSON only.";
 
 AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
     switch (cfg.AiProviderKind) {
@@ -60,6 +59,8 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
         return AiProvider::OllamaOpenAiCompat;
     case 3:
         return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
     default:
         return AiProvider::OpenAi;
     }
@@ -73,6 +74,10 @@ std::string ResolveBaseUrl(const TrackerConfig& cfg, AiProvider provider) {
         return cfg.AiOllamaBaseUrl;
     case AiProvider::OllamaOpenAiCompat:
         return cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
+    case AiProvider::DeepSeek:
+        // Empty -> built-in default. Same fallback contract as
+        // AiAssistantController::BuildClientConfig.
+        return cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com") : cfg.AiDeepSeekBaseUrl;
     case AiProvider::OpenAi:
     default:
         return cfg.AiBaseUrl;
@@ -85,6 +90,8 @@ std::string ResolveApiKey(const TrackerConfig& cfg, AiProvider provider) {
         return cfg.AiAnthropicApiKey;
     case AiProvider::OllamaNative:
         return std::string();
+    case AiProvider::DeepSeek:
+        return cfg.AiDeepSeekApiKey;
     case AiProvider::OllamaOpenAiCompat:
     case AiProvider::OpenAi:
     default:
@@ -99,6 +106,8 @@ std::string ResolveModel(const TrackerConfig& cfg, AiProvider provider) {
     case AiProvider::OllamaNative:
     case AiProvider::OllamaOpenAiCompat:
         return cfg.AiModelOllama;
+    case AiProvider::DeepSeek:
+        return cfg.AiModelDeepSeek;
     case AiProvider::OpenAi:
     default:
         return cfg.AiModelOpenAi;

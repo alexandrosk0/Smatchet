@@ -447,6 +447,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         static char s_ollamaModelBuf[256] = {};
         static char s_baseUrlBuf[512] = {};
         static char s_ollamaBaseUrlBuf[512] = {};
+        // DeepSeek-specific buffers — same shape as the OpenAI / Anthropic pair.
+        // Sized matching the existing key / model / URL buffers (1024 / 256 / 1024
+        // respectively — the URL buffer doubles the others to accommodate path
+        // suffixes some operators add to their endpoint).
+        static char s_deepseekKeyBuf[1024] = {};
+        static char s_deepseekBaseUrlBuf[1024] = {};
+        static char s_deepseekModelBuf[256] = {};
         static bool s_aiBufsSeeded = false;
         static int s_lastSeededProvider = -1;
         if (!s_agentsBufsSeeded) {
@@ -468,6 +475,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             std::snprintf(s_ollamaModelBuf, sizeof(s_ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
             std::snprintf(s_baseUrlBuf, sizeof(s_baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
             std::snprintf(s_ollamaBaseUrlBuf, sizeof(s_ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
+            std::snprintf(s_deepseekKeyBuf, sizeof(s_deepseekKeyBuf), "%s", d.cfg.AiDeepSeekApiKey.c_str());
+            std::snprintf(s_deepseekBaseUrlBuf, sizeof(s_deepseekBaseUrlBuf), "%s", d.cfg.AiDeepSeekBaseUrl.c_str());
+            std::snprintf(s_deepseekModelBuf, sizeof(s_deepseekModelBuf), "%s", d.cfg.AiModelDeepSeek.c_str());
         }
 
         if (ImGui::BeginTabItem("Assistant")) {
@@ -562,6 +572,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     baseUrl = probeCfg.AiBaseUrl.empty() ? probeCfg.AiOllamaBaseUrl : probeCfg.AiBaseUrl;
                     modelId = probeCfg.AiModelOpenAi;
                     break;
+                case AiProvider::DeepSeek:
+                    apiKey = probeCfg.AiDeepSeekApiKey;
+                    baseUrl = probeCfg.AiDeepSeekBaseUrl;
+                    modelId = probeCfg.AiModelDeepSeek;
+                    break;
                 case AiProvider::OpenAi:
                 default:
                     apiKey = probeCfg.AiApiKey;
@@ -580,6 +595,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         defaultedBaseUrl = "http://127.0.0.1:1234";
                     } else if (provider == AiProvider::OllamaNative) {
                         defaultedBaseUrl = "http://localhost:11434";
+                    } else if (provider == AiProvider::DeepSeek) {
+                        defaultedBaseUrl = "https://api.deepseek.com";
                     }
                     baseUrl = defaultedBaseUrl;
                 }
@@ -682,6 +699,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                     g_ui.cfg.AiBaseUrl = defaultedBaseUrl;
                                 } else if (provider == AiProvider::OllamaNative) {
                                     g_ui.cfg.AiOllamaBaseUrl = defaultedBaseUrl;
+                                } else if (provider == AiProvider::DeepSeek) {
+                                    g_ui.cfg.AiDeepSeekBaseUrl = defaultedBaseUrl;
                                 }
                                 MarkPrefsDirty(g_ui);
                                 g_ui.assistantPrefsForceBufferReseed = true;
@@ -848,6 +867,21 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 if (ImGui::InputTextWithHint("Ollama base URL", "http://localhost:11434", s_ollamaBaseUrlBuf,
                                              sizeof(s_ollamaBaseUrlBuf))) {
                     d.cfg.AiOllamaBaseUrl = s_ollamaBaseUrlBuf;
+                    MarkPrefsDirty(d);
+                    clearStaleTestResult();
+                }
+            } else if (selectedKind == AiProvider::DeepSeek) {
+                if (ImGui::InputText("DeepSeek API key", s_deepseekKeyBuf, sizeof(s_deepseekKeyBuf),
+                                     ImGuiInputTextFlags_Password)) {
+                    d.cfg.AiDeepSeekApiKey = s_deepseekKeyBuf;
+                    MarkPrefsDirty(d);
+                    clearStaleTestResult();
+                }
+                renderModelPicker("DeepSeek model", "DeepSeek model", "", AiProvider::DeepSeek, s_deepseekModelBuf,
+                                  sizeof(s_deepseekModelBuf), d.cfg.AiModelDeepSeek);
+                if (ImGui::InputTextWithHint("Base URL", "https://api.deepseek.com", s_deepseekBaseUrlBuf,
+                                             sizeof(s_deepseekBaseUrlBuf))) {
+                    d.cfg.AiDeepSeekBaseUrl = s_deepseekBaseUrlBuf;
                     MarkPrefsDirty(d);
                     clearStaleTestResult();
                 }
@@ -1071,10 +1105,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             // approval (the store callback re-reads ConfigManager::Load() on
             // every fire). Persistence rides MarkPrefsDirty's debounced save.
             ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.handoffSection", "Handoff (Implement)"));
-            if (ImGui::Checkbox(SmatchetLocalization::T(
-                                    "agent.prefs.handoffAutoStartOnApprove",
-                                    "Auto-start handoff when an ImplementIssue proposal is approved"),
-                                &d.cfg.HandoffAutoStartOnApprove)) {
+            if (ImGui::Checkbox(
+                    SmatchetLocalization::T("agent.prefs.handoffAutoStartOnApprove",
+                                            "Auto-start handoff when an ImplementIssue proposal is approved"),
+                    &d.cfg.HandoffAutoStartOnApprove)) {
                 MarkPrefsDirty(d);
             }
             ImGui::TextDisabled("%s",
@@ -1156,9 +1190,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 labelStorage.push_back(std::move(lbl));
             }
             labelPtrs.reserve(labelStorage.size());
-            for (const auto& s : labelStorage) {
-                labelPtrs.push_back(s.c_str());
-            }
+            std::transform(labelStorage.begin(), labelStorage.end(), std::back_inserter(labelPtrs),
+                           [](const std::string& s) { return s.c_str(); });
             if (ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"), &selIdx,
                              labelPtrs.data(), static_cast<int>(labelPtrs.size()))) {
                 if (selIdx >= 0 && static_cast<std::size_t>(selIdx) < catalog.size()) {
@@ -1468,16 +1501,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 const char* micSpinnerGlyph = "|";
                 if (inFlight) {
                     const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
-                    micSpinnerGlyph = (slot == 0)   ? "|"
-                                      : (slot == 1) ? "/"
-                                      : (slot == 2) ? "-"
-                                                    : "\\";
+                    micSpinnerGlyph = (slot == 0) ? "|" : (slot == 1) ? "/" : (slot == 2) ? "-" : "\\";
                 }
                 char micLabel[128];
-                std::snprintf(micLabel, sizeof(micLabel),
-                              inFlight ? "%s  %s" : "%s",
-                              SmatchetLocalization::T("whisper.preferences.testMic.button",
-                                                      "Test microphone (3 s)"),
+                std::snprintf(micLabel, sizeof(micLabel), inFlight ? "%s  %s" : "%s",
+                              SmatchetLocalization::T("whisper.preferences.testMic.button", "Test microphone (3 s)"),
                               micSpinnerGlyph);
                 if (ImGui::Button(micLabel)) {
                     s_micTestInFlight.store(true, std::memory_order_release);
@@ -1495,9 +1523,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         smatchet::whisper::WindowsAudioCapture cap;
                         std::string startErr;
                         if (!cap.Start(startErr)) {
-                            const std::string err = startErr.empty()
-                                                       ? std::string("capture start failed")
-                                                       : startErr;
+                            const std::string err = startErr.empty() ? std::string("capture start failed") : startErr;
                             app.mainThreadDispatcher.PostToMainThread([err]() {
                                 s_micTestInFlight.store(false, std::memory_order_release);
                                 s_micTestResult = std::string("Failed: ") + err;
@@ -1512,8 +1538,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         std::int32_t peakAbs = 0;
                         for (std::int16_t s : pcm) {
                             const std::int32_t m =
-                                s >= 0 ? static_cast<std::int32_t>(s)
-                                       : -static_cast<std::int32_t>(s);
+                                s >= 0 ? static_cast<std::int32_t>(s) : -static_cast<std::int32_t>(s);
                             if (m > peakAbs) {
                                 peakAbs = m;
                             }
@@ -1529,11 +1554,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                               "consent denied)");
                                 s_micTestResultType = 2;
                             } else if (peakAbs == 0) {
-                                std::snprintf(
-                                    buf, sizeof(buf),
-                                    "Failed: %zu samples but peak=0 (format unwrap broken or mic "
-                                    "muted at hardware)",
-                                    samples);
+                                std::snprintf(buf, sizeof(buf),
+                                              "Failed: %zu samples but peak=0 (format unwrap broken or mic "
+                                              "muted at hardware)",
+                                              samples);
                                 s_micTestResultType = 2;
                             } else if (peakNorm < 0.01f) {
                                 std::snprintf(buf, sizeof(buf),
@@ -1559,8 +1583,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextDisabled("(captures 3 s; reports sample count + peak)");
                 if (!s_micTestResult.empty()) {
                     ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
-                    if (s_micTestResultType == 1) col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
-                    if (s_micTestResultType == 2) col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
+                    if (s_micTestResultType == 1)
+                        col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
+                    if (s_micTestResultType == 2)
+                        col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
                     ImGui::TextColored(col, "%s", s_micTestResult.c_str());
                 }
             }
@@ -1586,15 +1612,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 const char* spinnerGlyph = "|";
                 if (inFlight) {
                     const int slot = static_cast<int>(::ImGui::GetTime() * 8.0) & 3;
-                    spinnerGlyph = (slot == 0)   ? "|"
-                                   : (slot == 1) ? "/"
-                                   : (slot == 2) ? "-"
-                                                 : "\\";
+                    spinnerGlyph = (slot == 0) ? "|" : (slot == 1) ? "/" : (slot == 2) ? "-" : "\\";
                 }
                 char e2eLabel[128];
-                std::snprintf(e2eLabel, sizeof(e2eLabel),
-                              inFlight ? "%s  %s"
-                                       : "%s",
+                std::snprintf(e2eLabel, sizeof(e2eLabel), inFlight ? "%s  %s" : "%s",
                               SmatchetLocalization::T("whisper.preferences.testE2E.button",
                                                       "Test end-to-end (capture 4 s + transcribe)"),
                               spinnerGlyph);
@@ -1615,25 +1636,20 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         const std::string requestedMode =
                             cfgSnap.WhisperMode.empty() ? std::string("auto") : cfgSnap.WhisperMode;
                         const std::string providerStr =
-                            (cfgSnap.AiProviderKind == 0) ? std::string("openai")
-                                                          : std::string("anthropic");
-                        const std::string resolvedKey =
-                            smatchet::whisper::pure::ResolveWhisperApiKey(
-                                cfgSnap.WhisperApiKey, providerStr, cfgSnap.AiApiKey);
+                            (cfgSnap.AiProviderKind == 0) ? std::string("openai") : std::string("anthropic");
+                        const std::string resolvedKey = smatchet::whisper::pure::ResolveWhisperApiKey(
+                            cfgSnap.WhisperApiKey, providerStr, cfgSnap.AiApiKey);
                         // Mirror ResolveWhisperModelDir from WhisperPlugin.cpp
                         // (anon namespace; inline here so Preferences stays
                         // self-contained).
-                        std::string modelDir =
-                            ConfigManager::GetPlatformSharedUserDataDirectory();
-                        if (!modelDir.empty() && modelDir.back() != '/' &&
-                            modelDir.back() != '\\') {
+                        std::string modelDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+                        if (!modelDir.empty() && modelDir.back() != '/' && modelDir.back() != '\\') {
                             modelDir.push_back('/');
                         }
                         modelDir += "whisper";
                         const bool localPresent =
                             !cfgSnap.WhisperModel.empty() &&
-                            smatchet::whisper::catalog::IsModelPresent(cfgSnap.WhisperModel,
-                                                                        modelDir);
+                            smatchet::whisper::catalog::IsModelPresent(cfgSnap.WhisperModel, modelDir);
 
                         // Pick effective route per the user's spec:
                         //   - cloud: require key
@@ -1643,17 +1659,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         std::string fastFail;
                         if (requestedMode == "cloud") {
                             if (resolvedKey.empty()) {
-                                fastFail =
-                                    "Cloud mode requires an API key. Set Whisper or AI API key "
-                                    "(provider=openai) and retry.";
+                                fastFail = "Cloud mode requires an API key. Set Whisper or AI API key "
+                                           "(provider=openai) and retry.";
                             } else {
                                 effectiveMode = "cloud";
                             }
                         } else if (requestedMode == "local") {
                             if (!localPresent) {
-                                fastFail =
-                                    "Local mode requires the selected model on disk. Open the "
-                                    "model picker above and click Download first.";
+                                fastFail = "Local mode requires the selected model on disk. Open the "
+                                           "model picker above and click Download first.";
                             } else {
                                 effectiveMode = "local";
                             }
@@ -1663,9 +1677,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             } else if (localPresent) {
                                 effectiveMode = "local";
                             } else {
-                                fastFail =
-                                    "Auto mode needs either an API key (for cloud) or a "
-                                    "downloaded local model. Neither was found.";
+                                fastFail = "Auto mode needs either an API key (for cloud) or a "
+                                           "downloaded local model. Neither was found.";
                             }
                         }
                         if (!fastFail.empty()) {
@@ -1684,15 +1697,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         // visible" silence was confusing.
                         const std::string modeForUi = effectiveMode;
                         app.mainThreadDispatcher.PostToMainThread([modeForUi]() {
-                            s_e2eResult = std::string("[1/3] Capturing 4 s (route=") +
-                                          modeForUi + ") — speak now...";
+                            s_e2eResult = std::string("[1/3] Capturing 4 s (route=") + modeForUi + ") — speak now...";
                             s_e2eResultType = 0;
                         });
                         smatchet::whisper::WindowsAudioCapture cap;
                         std::string err;
                         if (!cap.Start(err)) {
-                            const std::string e =
-                                err.empty() ? std::string("capture start failed") : err;
+                            const std::string e = err.empty() ? std::string("capture start failed") : err;
                             app.mainThreadDispatcher.PostToMainThread([e]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
                                 s_e2eResult = std::string("Failed (capture): ") + e;
@@ -1705,24 +1716,21 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         std::vector<std::int16_t> pcm;
                         cap.DrainCapturedPcm(pcm);
                         app.mainThreadDispatcher.PostToMainThread([modeForUi]() {
-                            s_e2eResult = std::string("[2/3] Captured; transcribing via ") +
-                                          modeForUi + "...";
+                            s_e2eResult = std::string("[2/3] Captured; transcribing via ") + modeForUi + "...";
                             s_e2eResultType = 0;
                         });
                         if (pcm.empty()) {
                             app.mainThreadDispatcher.PostToMainThread([]() {
                                 s_e2eInFlight.store(false, std::memory_order_release);
-                                s_e2eResult =
-                                    "Failed: 0 PCM samples (mic / consent / format issue — "
-                                    "click Test microphone for narrower diagnosis)";
+                                s_e2eResult = "Failed: 0 PCM samples (mic / consent / format issue — "
+                                              "click Test microphone for narrower diagnosis)";
                                 s_e2eResultType = 2;
                             });
                             return;
                         }
 
                         const std::string lang =
-                            cfgSnap.WhisperLanguage.empty() ? std::string("en")
-                                                            : cfgSnap.WhisperLanguage;
+                            cfgSnap.WhisperLanguage.empty() ? std::string("en") : cfgSnap.WhisperLanguage;
                         const std::size_t samples = pcm.size();
                         std::string text;
                         std::string txErr;
@@ -1730,11 +1738,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
 
                         if (effectiveMode == "cloud") {
                             // Encode + POST.
-                            const std::vector<std::uint8_t> wav =
-                                smatchet::whisper::pure::EncodeWav(
-                                    pcm,
-                                    smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
-                                    1);
+                            const std::vector<std::uint8_t> wav = smatchet::whisper::pure::EncodeWav(
+                                pcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate, 1);
                             smatchet::whisper::WhisperApiClient client;
                             ok = client.Transcribe(wav, resolvedKey, lang, text, txErr);
                         } else {
@@ -1743,8 +1748,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             // When SMATCHET_WHISPER_LOCAL_BACKEND=OFF the helper
                             // returns "local backend not built", which we surface
                             // verbatim so the user knows to flip the sub-option.
-                            const std::string modelPath =
-                                modelDir + "/" + cfgSnap.WhisperModel + ".bin";
+                            const std::string modelPath = modelDir + "/" + cfgSnap.WhisperModel + ".bin";
                             smatchet::whisper::WhisperLocal local;
                             std::string loadErr;
                             if (!local.LoadModel(modelPath, loadErr)) {
@@ -1773,9 +1777,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                               mode.c_str(), samples);
                                 s_e2eResultType = 2;
                             } else {
-                                std::snprintf(buf, sizeof(buf),
-                                              "[3/3] OK (%s, %zu samples): \"%s\"",
-                                              mode.c_str(), samples, text.c_str());
+                                std::snprintf(buf, sizeof(buf), "[3/3] OK (%s, %zu samples): \"%s\"", mode.c_str(),
+                                              samples, text.c_str());
                                 s_e2eResultType = 1;
                             }
                             s_e2eResult = buf;
@@ -1789,8 +1792,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::TextDisabled("(records 4 s + uploads to whisper for end-to-end check)");
                 if (!s_e2eResult.empty()) {
                     ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
-                    if (s_e2eResultType == 1) col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
-                    if (s_e2eResultType == 2) col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
+                    if (s_e2eResultType == 1)
+                        col = ImVec4(0.35f, 0.90f, 0.45f, 1.0f);
+                    if (s_e2eResultType == 2)
+                        col = ImVec4(0.95f, 0.55f, 0.35f, 1.0f);
                     ImGui::TextColored(col, "%s", s_e2eResult.c_str());
                 }
             }

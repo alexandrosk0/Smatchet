@@ -11,6 +11,7 @@ enum class AiProvider : int {
     Anthropic = 1,
     OllamaOpenAiCompat = 2,
     OllamaNative = 3,
+    DeepSeek = 4,
 };
 
 struct AiMessage {

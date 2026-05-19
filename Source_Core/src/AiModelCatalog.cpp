@@ -1,5 +1,7 @@
 #include "AiModelCatalog.h"
 
+#include <algorithm>
+
 namespace smatchet {
 namespace ai {
 
@@ -37,6 +39,15 @@ std::vector<ModelOption> KnownModels(AiProvider provider) {
         // The Preferences UI falls back to an InputText when KnownModels()
         // returns empty.
         break;
+    case AiProvider::DeepSeek:
+        // DeepSeek's published model catalog. The wire is OpenAI-compatible
+        // (served at https://api.deepseek.com/v1/chat/completions) but the
+        // model IDs are DeepSeek-specific — `deepseek-chat` is the general
+        // chat model, `deepseek-reasoner` is the reasoning-tuned variant
+        // which accepts the OpenAI-style `reasoning_effort` parameter.
+        out.push_back({"deepseek-chat", "DeepSeek Chat"});
+        out.push_back({"deepseek-reasoner", "DeepSeek Reasoner"});
+        break;
     }
     return out;
 }
@@ -46,12 +57,7 @@ bool IsKnownModel(AiProvider provider, const std::string& modelId) {
         return false;
     }
     const std::vector<ModelOption> catalog = KnownModels(provider);
-    for (std::size_t i = 0; i < catalog.size(); ++i) {
-        if (catalog[i].Id == modelId) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(catalog.begin(), catalog.end(), [&modelId](const ModelOption& m) { return m.Id == modelId; });
 }
 
 } // namespace ai

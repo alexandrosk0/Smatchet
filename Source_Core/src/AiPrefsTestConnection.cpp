@@ -50,6 +50,11 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
         baseUrl = probeCfg.AiBaseUrl.empty() ? probeCfg.AiOllamaBaseUrl : probeCfg.AiBaseUrl;
         modelId = probeCfg.AiModelOpenAi;
         break;
+    case AiProvider::DeepSeek:
+        apiKey = probeCfg.AiDeepSeekApiKey;
+        baseUrl = probeCfg.AiDeepSeekBaseUrl;
+        modelId = probeCfg.AiModelDeepSeek;
+        break;
     case AiProvider::OpenAi:
     default:
         apiKey = probeCfg.AiApiKey;
@@ -68,6 +73,8 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
             defaultedBaseUrl = "http://127.0.0.1:1234";
         } else if (provider == AiProvider::OllamaNative) {
             defaultedBaseUrl = "http://localhost:11434";
+        } else if (provider == AiProvider::DeepSeek) {
+            defaultedBaseUrl = "https://api.deepseek.com";
         }
         baseUrl = defaultedBaseUrl;
     }
@@ -160,6 +167,8 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
                         g_ui.cfg.AiBaseUrl = defaultedBaseUrl;
                     } else if (provider == AiProvider::OllamaNative) {
                         g_ui.cfg.AiOllamaBaseUrl = defaultedBaseUrl;
+                    } else if (provider == AiProvider::DeepSeek) {
+                        g_ui.cfg.AiDeepSeekBaseUrl = defaultedBaseUrl;
                     }
                     MarkPrefsDirty(g_ui);
                     g_ui.assistantPrefsForceBufferReseed = true;

@@ -212,6 +212,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["ai_model_openai"] = config.AiModelOpenAi;
     j["ai_model_anthropic"] = config.AiModelAnthropic;
     j["ai_model_ollama"] = config.AiModelOllama;
+    // DeepSeek — model + base URL serialise verbatim; the API key is handled
+    // alongside the other AI secrets in the DPAPI block below.
+    j["ai_deepseek_base_url"] = config.AiDeepSeekBaseUrl;
+    j["ai_model_deepseek"] = config.AiModelDeepSeek;
     j["ai_reasoning_effort"] = config.AiReasoningEffort;
     j["assistant_panel_open"] = config.AssistantPanelOpen;
     j["assistant_panel_width"] = config.AssistantPanelWidth;
@@ -387,6 +391,11 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("ai_anthropic_api_key");
     }
     j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
+    const std::string aiDeepSeekEnc = ProtectSecretForConfig(config.AiDeepSeekApiKey);
+    if (config.AiDeepSeekApiKey.empty() || !aiDeepSeekEnc.empty()) {
+        j.erase("ai_deepseek_api_key");
+    }
+    j["ai_deepseek_api_key_enc"] = aiDeepSeekEnc;
 #if defined(SMATCHET_WITH_AGENTIC)
     // GitHubPat — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
     const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
@@ -409,11 +418,13 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j.erase("mcp_auth_token_enc");
     j.erase("ai_api_key_enc");
     j.erase("ai_anthropic_api_key_enc");
+    j.erase("ai_deepseek_api_key_enc");
     j["token"] = config.ApiToken;
     j["plane_api_key"] = config.PlaneApiKey;
     j["mcp_auth_token"] = config.McpAuthToken;
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
+    j["ai_deepseek_api_key"] = config.AiDeepSeekApiKey;
 #if defined(SMATCHET_WITH_AGENTIC)
     j.erase("github_pat_enc");
     j["github_pat"] = config.GitHubPat;
@@ -555,6 +566,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     bool migrateLegacyPlaintextMcpAuthToken = false;
     bool migrateLegacyPlaintextAiApiKey = false;
     bool migrateLegacyPlaintextAiAnthropicApiKey = false;
+    bool migrateLegacyPlaintextAiDeepSeekApiKey = false;
 #if defined(SMATCHET_WITH_AGENTIC)
     // Bundle B CR#226 + #232 — github_pat lazy plaintext-to-DPAPI migration.
     // T1 stored GitHubPat DPAPI-encrypted from day one, but a manual edit to
@@ -663,7 +675,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             {
                 const int rawProvider = j.value("ai_provider_kind", cfg.AiProviderKind);
                 const int kProviderMin = static_cast<int>(AiProvider::OpenAi);
-                const int kProviderMax = static_cast<int>(AiProvider::OllamaNative);
+                const int kProviderMax = static_cast<int>(AiProvider::DeepSeek);
                 cfg.AiProviderKind = (rawProvider < kProviderMin || rawProvider > kProviderMax)
                                          ? static_cast<int>(AiProvider::OpenAi)
                                          : rawProvider;
@@ -679,6 +691,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             if (cfg.AiAnthropicApiKey.empty()) {
                 cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
                 migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
+            }
+            cfg.AiDeepSeekApiKey = UnprotectSecretFieldFromConfig("ai_deepseek_api_key_enc",
+                                                                  j.value("ai_deepseek_api_key_enc", std::string{}));
+            if (cfg.AiDeepSeekApiKey.empty()) {
+                cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
+                migrateLegacyPlaintextAiDeepSeekApiKey = !cfg.AiDeepSeekApiKey.empty();
             }
 #if defined(SMATCHET_WITH_AGENTIC)
             cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
@@ -702,6 +720,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #else
             cfg.AiApiKey = j.value("ai_api_key", std::string{});
             cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+            cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
 #if defined(SMATCHET_WITH_AGENTIC)
             cfg.GitHubPat = j.value("github_pat", std::string{});
 #endif
@@ -739,6 +758,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AiModelOpenAi = j.value("ai_model_openai", cfg.AiModelOpenAi);
             cfg.AiModelAnthropic = j.value("ai_model_anthropic", cfg.AiModelAnthropic);
             cfg.AiModelOllama = j.value("ai_model_ollama", cfg.AiModelOllama);
+            // DeepSeek base URL + model — additive; older configs round-trip
+            // the construct-time defaults (empty URL → built-in default
+            // `https://api.deepseek.com`; model `deepseek-chat`).
+            cfg.AiDeepSeekBaseUrl = j.value("ai_deepseek_base_url", cfg.AiDeepSeekBaseUrl);
+            cfg.AiModelDeepSeek = j.value("ai_model_deepseek", cfg.AiModelDeepSeek);
             cfg.AiReasoningEffort = j.value("ai_reasoning_effort", cfg.AiReasoningEffort);
             cfg.AssistantPanelOpen = j.value("assistant_panel_open", cfg.AssistantPanelOpen);
             cfg.AssistantPanelWidth =
@@ -810,8 +834,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             // H9 — auto-start gate. Plan-locked decision #5: default FALSE.
             // Older configs without the key hydrate to the safe default so
             // upgrading the app never silently enables auto-handoff.
-            cfg.HandoffAutoStartOnApprove =
-                j.value("handoff_auto_start_on_approve", cfg.HandoffAutoStartOnApprove);
+            cfg.HandoffAutoStartOnApprove = j.value("handoff_auto_start_on_approve", cfg.HandoffAutoStartOnApprove);
 #endif
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
@@ -1026,8 +1049,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    bool migrateAny =
-        migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey || migrateLegacyPlaintextAiAnthropicApiKey;
+    bool migrateAny = migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
+                      migrateLegacyPlaintextAiAnthropicApiKey || migrateLegacyPlaintextAiDeepSeekApiKey;
 #if defined(SMATCHET_WITH_AGENTIC)
     migrateAny = migrateAny || migrateLegacyPlaintextGitHubPat;
 #endif
@@ -1036,7 +1059,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #endif
     if (migrateAny) {
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d"
+                 "(mcp=%d ai=%d anthropic=%d deepseek=%d"
 #if defined(SMATCHET_WITH_AGENTIC)
                  " github_pat=%d"
 #endif
@@ -1045,7 +1068,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 #endif
                  ")",
                  migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
-                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0
+                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0
 #if defined(SMATCHET_WITH_AGENTIC)
                  ,
                  migrateLegacyPlaintextGitHubPat ? 1 : 0

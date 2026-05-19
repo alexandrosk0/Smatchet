@@ -256,6 +256,67 @@ TEST_CASE("ConfigMigration migrated_inherit_issuetype_v1 missing on disk: one-sh
     CHECK(cfg.NewIssueInheritFieldIdsPlane.front() == "issuetype");
 }
 
+// --- DeepSeek provider — additive config keys round-trip ---
+//
+// Mirrors the Anthropic save/load shape. The new keys are additive — older
+// configs without them hydrate to the construct-time defaults via
+// `j.value(..., default)`. Tests below assert the Save -> Load round-trip
+// preserves the values and (on Win32) that a hand-edited legacy plaintext
+// `ai_deepseek_api_key` field migrates to `ai_deepseek_api_key_enc` on
+// the eager Save() at the bottom of Load().
+
+TEST_CASE("ConfigMigration DeepSeek fields round-trip via Save -> Load") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerConfig out;
+    out.AiProviderKind = 4; // DeepSeek
+    out.AiDeepSeekApiKey = "sk-deepseek-roundtrip";
+    out.AiDeepSeekBaseUrl = "https://api.deepseek.example/v1";
+    out.AiModelDeepSeek = "deepseek-reasoner";
+    ConfigManager::Save(out);
+    ConfigManager::InvalidateCache();
+
+    const TrackerConfig back = ConfigManager::Load();
+    CHECK(back.AiProviderKind == 4);
+    CHECK(back.AiDeepSeekApiKey == "sk-deepseek-roundtrip");
+    CHECK(back.AiDeepSeekBaseUrl == "https://api.deepseek.example/v1");
+    CHECK(back.AiModelDeepSeek == "deepseek-reasoner");
+}
+
+TEST_CASE("ConfigMigration DeepSeek keys default when absent from disk") {
+    smatchet_tests::TestEnvGuard env;
+    // Pre-DeepSeek config: only an unrelated top-level field. The new keys must
+    // hydrate to construct-time defaults — empty key, empty base URL, model
+    // "deepseek-chat" (the default in TrackerConfig).
+    const std::string preDeepSeek = "{\"tracker_type\":\"Jira\"}";
+    WriteConfigRaw(env, preDeepSeek);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    CHECK(cfg.AiDeepSeekApiKey.empty());
+    CHECK(cfg.AiDeepSeekBaseUrl.empty());
+    CHECK(cfg.AiModelDeepSeek == "deepseek-chat");
+}
+
+#if defined(_WIN32)
+TEST_CASE("ConfigMigration DeepSeek legacy plaintext ai_deepseek_api_key migrates to _enc") {
+    smatchet_tests::TestEnvGuard env;
+    // Hand-edited legacy shape — operator dropped the plaintext key into the JSON.
+    // Load() should read it via the fallback branch, flag the migration, and the
+    // eager Save() at the bottom of Load() must re-encrypt to `_enc` + erase the
+    // plaintext field on the next read.
+    const std::string legacy = "{\"tracker_type\":\"Jira\",\"ai_deepseek_api_key\":\"sk-legacy-deepseek\"}";
+    WriteConfigRaw(env, legacy);
+
+    const TrackerConfig first = ConfigManager::Load();
+    CHECK(first.AiDeepSeekApiKey == "sk-legacy-deepseek");
+    // Re-load from disk after migration — the on-disk JSON should now carry
+    // ai_deepseek_api_key_enc and the plaintext field should be gone.
+    ConfigManager::InvalidateCache();
+    const TrackerConfig second = ConfigManager::Load();
+    CHECK(second.AiDeepSeekApiKey == "sk-legacy-deepseek");
+}
+#endif
+
 TEST_CASE("ConfigMigration migrated_inherit_issuetype_v1=true on disk: injection skipped") {
     smatchet_tests::TestEnvGuard env;
     // User explicitly removed "issuetype" then saved (migrated_v1 stays true), the next

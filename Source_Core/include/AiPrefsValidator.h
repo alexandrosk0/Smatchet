@@ -31,6 +31,8 @@ constexpr const char* kAiOllamaBaseUrl = "ai_ollama_base_url";
 constexpr const char* kAiModelOpenAi = "ai_model_openai";
 constexpr const char* kAiModelAnthropic = "ai_model_anthropic";
 constexpr const char* kAiModelOllama = "ai_model_ollama";
+constexpr const char* kAiDeepSeekApiKey = "ai_deepseek_api_key";
+constexpr const char* kAiModelDeepSeek = "ai_model_deepseek";
 } // namespace PrefsFieldKey
 
 enum class PrefsSeverity { Error, Warning };

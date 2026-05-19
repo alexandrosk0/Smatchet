@@ -21,11 +21,12 @@ TEST_CASE("AiClientFactory: ProviderToString covers every enum value") {
     CHECK(AiClientFactory::ProviderToString(AiProvider::Anthropic) == "anthropic");
     CHECK(AiClientFactory::ProviderToString(AiProvider::OllamaOpenAiCompat) == "ollama-openai");
     CHECK(AiClientFactory::ProviderToString(AiProvider::OllamaNative) == "ollama-native");
+    CHECK(AiClientFactory::ProviderToString(AiProvider::DeepSeek) == "deepseek");
 }
 
 TEST_CASE("AiClientFactory: ProviderFromString round-trips every known key") {
     const AiProvider kinds[] = {AiProvider::OpenAi, AiProvider::Anthropic, AiProvider::OllamaOpenAiCompat,
-                                AiProvider::OllamaNative};
+                                AiProvider::OllamaNative, AiProvider::DeepSeek};
     for (AiProvider kind : kinds) {
         const std::string key = AiClientFactory::ProviderToString(kind);
         AiProvider out = AiProvider::OpenAi;
@@ -48,9 +49,9 @@ TEST_CASE("AiClientFactory: ProviderFromString rejects unknown / empty input") {
     CHECK_FALSE(AiClientFactory::ProviderFromString("OpenAI", out));
 }
 
-TEST_CASE("AiClientFactory: EnumeratedProviders returns 4 entries in stable order") {
+TEST_CASE("AiClientFactory: EnumeratedProviders returns 5 entries in stable order") {
     const std::vector<AiClientFactory::ProviderEntry> entries = AiClientFactory::EnumeratedProviders();
-    REQUIRE(entries.size() == 4);
+    REQUIRE(entries.size() == 5);
 
     // Stable insertion order matches enum declaration order — load-bearing for the
     // Preferences Combo: a re-ordered list would silently corrupt persisted indices
@@ -59,6 +60,7 @@ TEST_CASE("AiClientFactory: EnumeratedProviders returns 4 entries in stable orde
     CHECK(entries[1].Kind == AiProvider::Anthropic);
     CHECK(entries[2].Kind == AiProvider::OllamaOpenAiCompat);
     CHECK(entries[3].Kind == AiProvider::OllamaNative);
+    CHECK(entries[4].Kind == AiProvider::DeepSeek);
 
     // Each entry's Key must round-trip through ProviderFromString.
     for (const AiClientFactory::ProviderEntry& e : entries) {
@@ -93,6 +95,15 @@ TEST_CASE("AiClientFactory: MakeAiClient(OllamaNative) returns a non-null Ollama
     std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::OllamaNative);
     REQUIRE(client != nullptr);
     CHECK(client->GetProviderName() == "ollama");
+}
+
+TEST_CASE("AiClientFactory: MakeAiClient(DeepSeek) returns a non-null OpenAI-shaped client") {
+    // DeepSeek's wire is OpenAI-protocol-compatible; the factory reuses
+    // OpenAiClient. GetProviderName therefore reports "openai" — DeepSeek-vs-OpenAI
+    // is distinguished by the configured base URL + model, not by the client class.
+    std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::DeepSeek);
+    REQUIRE(client != nullptr);
+    CHECK(client->GetProviderName() == "openai");
 }
 
 // --- SetTestOverride seam (bucket-E support; see docs/design/ai-client-test-override.md) ----

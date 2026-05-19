@@ -69,6 +69,8 @@ const char* AiProviderDisplayName(AiProvider p) {
         return "ollama-openai";
     case AiProvider::OllamaNative:
         return "ollama-native";
+    case AiProvider::DeepSeek:
+        return "deepseek";
     }
     return "unknown";
 }
@@ -88,6 +90,10 @@ AiClientConfig BuildClientConfigForProvider(const TrackerConfig& cfg, AiProvider
         out.ApiKey = cfg.AiApiKey;
         out.BaseUrl = cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
         break;
+    case AiProvider::DeepSeek:
+        out.ApiKey = cfg.AiDeepSeekApiKey;
+        out.BaseUrl = cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com") : cfg.AiDeepSeekBaseUrl;
+        break;
     case AiProvider::OpenAi:
     default:
         out.ApiKey = cfg.AiApiKey;
@@ -104,6 +110,8 @@ std::string ResolveModelId(const TrackerConfig& cfg, AiProvider provider) {
     case AiProvider::OllamaNative:
     case AiProvider::OllamaOpenAiCompat:
         return cfg.AiModelOllama;
+    case AiProvider::DeepSeek:
+        return cfg.AiModelDeepSeek;
     case AiProvider::OpenAi:
     default:
         return cfg.AiModelOpenAi;

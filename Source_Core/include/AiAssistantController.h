@@ -161,6 +161,13 @@ class AiAssistantController {
     std::string agentsMdCachedGlobalPath_;
     std::string agentsMdCachedProjectPath_;
     std::atomic<bool> agentsMdCacheValid_{false};
+
+    // F2 — model-change auto-clear. The worker thread caches the previous
+    // turn's "provider|model" signature; on the next turn it compares against
+    // the freshly resolved signature and posts a UI-side clear of the chat
+    // history when the signature changes. Empty on first turn so the very
+    // first send never triggers a clear. Touched only from the worker.
+    std::string lastModelSignature_;
 };
 
 #endif // SMATCHET_WITH_AI

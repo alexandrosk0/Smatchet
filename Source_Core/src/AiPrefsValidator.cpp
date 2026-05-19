@@ -19,6 +19,8 @@ AiProvider ClampProvider(int kind) {
         return AiProvider::OllamaOpenAiCompat;
     case 3:
         return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
     default:
         return AiProvider::OpenAi;
     }
@@ -32,9 +34,7 @@ bool StartsWith(const std::string& s, const char* prefix) {
     return s.compare(0, plen, prefix) == 0;
 }
 
-bool LooksLikeHttpUrl(const std::string& s) {
-    return StartsWith(s, "http://") || StartsWith(s, "https://");
-}
+bool LooksLikeHttpUrl(const std::string& s) { return StartsWith(s, "http://") || StartsWith(s, "https://"); }
 
 void EmitError(PrefsValidation& v, const char* fieldKey, std::string message) {
     PrefsValidationIssue issue;
@@ -74,6 +74,10 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
         if (cfg.AiAnthropicApiKey.empty()) {
             EmitError(v, PrefsFieldKey::kAiAnthropicApiKey, "Anthropic: API key required");
         }
+    } else if (provider == AiProvider::DeepSeek) {
+        if (cfg.AiDeepSeekApiKey.empty()) {
+            EmitError(v, PrefsFieldKey::kAiDeepSeekApiKey, "DeepSeek: API key required");
+        }
     }
     // OllamaOpenAiCompat + OllamaNative: API key optional (no error when empty).
 
@@ -102,6 +106,11 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
         activeProviderLabel = "OpenAI-compatible local";
         activeModelFieldKey = PrefsFieldKey::kAiModelOpenAi;
         break;
+    case AiProvider::DeepSeek:
+        activeModelId = cfg.AiModelDeepSeek;
+        activeProviderLabel = "DeepSeek";
+        activeModelFieldKey = PrefsFieldKey::kAiModelDeepSeek;
+        break;
     }
     if (activeModelId.empty()) {
         EmitError(v, activeModelFieldKey, std::string(activeProviderLabel) + ": model ID required");
@@ -113,8 +122,7 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
     }
     if (provider == AiProvider::OllamaNative) {
         if (!cfg.AiOllamaBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiOllamaBaseUrl)) {
-            EmitError(v, PrefsFieldKey::kAiOllamaBaseUrl,
-                      "Ollama base URL must start with http:// or https://");
+            EmitError(v, PrefsFieldKey::kAiOllamaBaseUrl, "Ollama base URL must start with http:// or https://");
         }
     }
 
@@ -122,13 +130,16 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
     // Only nag for the hosted-provider key formats. Local-server keys (rare; sometimes used
     // as a literal "sk-no-key-required" placeholder) don't follow a stable prefix.
     if (provider == AiProvider::OpenAi && !cfg.AiApiKey.empty() && !StartsWith(cfg.AiApiKey, "sk-")) {
-        EmitWarning(v, PrefsFieldKey::kAiApiKey,
-                    "OpenAI: API key doesn't start with 'sk-' - likely malformed");
+        EmitWarning(v, PrefsFieldKey::kAiApiKey, "OpenAI: API key doesn't start with 'sk-' - likely malformed");
     }
     if (provider == AiProvider::Anthropic && !cfg.AiAnthropicApiKey.empty() &&
         !StartsWith(cfg.AiAnthropicApiKey, "sk-ant-")) {
         EmitWarning(v, PrefsFieldKey::kAiAnthropicApiKey,
                     "Anthropic: API key doesn't start with 'sk-ant-' - likely malformed");
+    }
+    if (provider == AiProvider::DeepSeek && !cfg.AiDeepSeekApiKey.empty() && !StartsWith(cfg.AiDeepSeekApiKey, "sk-")) {
+        EmitWarning(v, PrefsFieldKey::kAiDeepSeekApiKey,
+                    "DeepSeek: API key doesn't start with 'sk-' - likely malformed");
     }
 
     // --- Unknown model warning (only when catalog non-empty) ---

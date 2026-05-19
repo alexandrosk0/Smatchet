@@ -6,6 +6,7 @@
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiEndpointSanitize.h"
+#include "AiModelSignature.h"
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
@@ -42,6 +43,8 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
         return AiProvider::OllamaOpenAiCompat;
     case 3:
         return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
     default:
         return AiProvider::OpenAi;
     }
@@ -88,6 +91,16 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
         // OllamaOpenAi-compat uses the user's base URL (typically http://localhost:11434/v1)
         out.BaseUrl =
             SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl, "ollama-openai-compat");
+        break;
+    case AiProvider::DeepSeek:
+        out.ApiKey = SanitizeHeaderValue(cfg.AiDeepSeekApiKey);
+        // DeepSeek default endpoint when the user leaves the URL blank. Pass
+        // the literal default through the sanitiser too — never bypass the
+        // SanitizeAiEndpointUrl gate so a future redirect-block / scheme-pin
+        // rule applies uniformly.
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com")
+                                                                         : cfg.AiDeepSeekBaseUrl,
+                                           "deepseek");
         break;
     case AiProvider::OpenAi:
     default:
@@ -230,6 +243,9 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
             case AiProvider::OllamaOpenAiCompat:
                 chatReq.Model = cfg.AiModelOllama;
                 break;
+            case AiProvider::DeepSeek:
+                chatReq.Model = cfg.AiModelDeepSeek;
+                break;
             case AiProvider::OpenAi:
             default:
                 chatReq.Model = cfg.AiModelOpenAi;
@@ -241,6 +257,27 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
                  "systemPromptCap=64KB",
                  static_cast<unsigned long long>(req.TurnGen), cachedProviderName_.c_str(), chatReq.Model.c_str(),
                  chatReq.ReasoningEffort.c_str());
+
+        // F2 — model-change auto-clear. Compose "<provider>|<effective-model>" and
+        // compare against the previous turn's signature. The per-turn model override
+        // (chat-window Combo) composes naturally because chatReq.Model already
+        // reflects override-wins-cfg above. ReasoningEffort deliberately omitted —
+        // effort-only changes must NOT discard chat history (decision Q in plan).
+        const smatchet::ai::ModelSignatureChangeResult sigResult =
+            smatchet::ai::DetectModelChange(lastModelSignature_, cachedProviderName_, chatReq.Model);
+        if (sigResult.ShouldClear) {
+            LOG_INFO("AiAssistantController: model signature changed ('%s' -> '%s') — posting chat clear",
+                     lastModelSignature_.c_str(), sigResult.NewSignature.c_str());
+            // Capture by value: the task may run arbitrarily later on the UI thread
+            // and must remain safe even if the controller (or worker locals) go away
+            // between post and drain. No references to worker-thread state.
+            app_.mainThreadDispatcher.PostToMainThread([]() {
+                g_ui.assistantHistory.clear();
+                g_ui.assistantStreamBuf.clear();
+                g_ui.assistantLastError = "[model changed - chat cleared]";
+            });
+        }
+        lastModelSignature_ = sigResult.NewSignature;
     }
 
     // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
