@@ -379,7 +379,8 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `70e7be7` · phase 1: OpenPrRegistrar + agent_open_pr_watch sibling table (PR #286, 901 LOC, 11 doctest cases)
 - `43d8635` · phase 2: PrCommentClassifier interface + CoderabbitCommentClassifierPure (PR #288)
 - `fde53c2` · phase 3: CoderabbitCommentClassifier concrete + 18-rule override table (PR #291)
-- `<sha-of-this-phase-4-commit>` · phase 4: PrCommentWatcher WatchMode + classifier-registration + agent_open_pr_watch iteration (this PR — orchestrator will sed post-merge)
+- `d2fbdf6` · phase 4: PrCommentWatcher WatchMode + classifier-registration + agent_open_pr_watch iteration (PR #292)
+- `<sha-of-this-phase-5-commit>` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (this PR — orchestrator will sed post-merge)
 
 ## Deviations from plan
 
