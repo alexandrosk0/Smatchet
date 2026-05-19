@@ -97,6 +97,37 @@ git -C "$MAIN_REPO" push origin develop
 
 **Why narrow.** The exception preserves the original rule's intent — keep behaviour-changing code under PR review — while removing the friction case it never meant to block. A single C++ touch reverts the whole batch to PR-only.
 
+#### Pure-docs sub-exception (precondition 4 relaxation)
+
+When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` gate (precondition 4) is skipped — the test rig has nothing to validate when no executable code, no scripts, no agents, no CMake, and no Lua changed.
+
+**Allow-list (must hold for every file in the ahead-range):**
+
+- `docs/**`
+- `backlog/**`
+- `AGENTS.md`
+- any root-level `*.md` (README, CONTEXT, CLAUDE)
+
+**Deny-list (any hit kicks back to the full FF-clean gate including `test-all.sh`):**
+
+- `agents/**` (changes agent behaviour; `scripts/dev/test-agent-contract.sh` covers this)
+- `scripts/**` (changes tooling / hooks)
+- `tests/**` (changes test surface)
+- `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt` (CI / build)
+- Any C++, Lua, Python, or shell source
+- (Allow-list is exhaustive — anything not allow-listed deny-lists by default.)
+
+`Locales/*.json` stays in AGENTS.md § Trivial-visual-only change envelope (separate gate-relaxation path). Don't conflate.
+
+**Discriminator (one-liner)**:
+```bash
+bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip test-all.sh)" || echo "needs full gate"
+```
+
+Implementation: `scripts/dev/is-pure-docs-diff.sh <base-branch>` — exits 0 if `git diff --name-only origin/<base>...HEAD` is strictly within the allow-list; exit 1 otherwise.
+
+Cross-link: AGENTS.md § Trivial-visual-only change envelope is the precedent for path-prefix-based gate relaxation; this sub-exception is its pure-docs sibling.
+
 ## Pre-flight
 
 Always run in order before any mutation:
