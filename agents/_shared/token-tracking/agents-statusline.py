@@ -181,6 +181,56 @@ def _agents_badge() -> str:
     return f"[AGENTS] 🤖 " + " · ".join(parts) + f" · total {_fmt_k(total_tokens)} · ${total_cost:.2f}{halt_segment}"
 
 
+def _skills_badge() -> str:
+    """Per-session skill-load tally from .skill-loads.jsonl.
+
+    Surfaces invocation count + approximate token cost (file-size/4 heuristic
+    when SKILL.md is resolvable — plugin skills resolve to 0). Stays quiet
+    when no skill has been invoked this session.
+    """
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not project_dir:
+        return ""
+    log_path = Path(project_dir) / ".claude" / ".skill-loads.jsonl"
+    if not log_path.exists():
+        return ""
+
+    lines = _tail_lines(log_path, MAX_TAIL_LINES)
+    rows: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if not rows:
+        return ""
+
+    latest = rows[-1].get("session")
+    session_rows = [r for r in rows if r.get("session") == latest]
+    if not session_rows:
+        return ""
+
+    by_skill: dict[str, dict] = {}
+    for r in session_rows:
+        name = str(r.get("skill") or "unknown")
+        b = by_skill.setdefault(name, {"count": 0, "approx_tokens": 0})
+        b["count"] += 1
+        b["approx_tokens"] += int(r.get("approx_tokens") or 0)
+
+    top = sorted(by_skill.items(), key=lambda kv: -kv[1]["count"])[:TOP_N_AGENTS]
+    parts = [f"{name}×{b['count']}" for name, b in top]
+    total_loads = sum(b["count"] for b in by_skill.values())
+    total_approx = sum(b["approx_tokens"] for b in by_skill.values())
+
+    tail = f" · loads={total_loads}"
+    if total_approx > 0:
+        tail += f" · ~{_fmt_k(total_approx)}t"
+    return f"[SKILLS] 🧠 " + " · ".join(parts) + tail
+
+
 def _tail_lines(path: Path, max_lines: int) -> list[str]:
     """Read at most the last max_lines without scanning the whole JSONL."""
     try:
@@ -209,12 +259,13 @@ def main() -> int:
     try:
         caveman = _caveman_badge()
         agents = _agents_badge()
+        skills = _skills_badge()
     except Exception:
         # Statusline must never blow up. Swallow everything.
         sys.stdout.write("")
         return 0
 
-    pieces = [p for p in (caveman, agents) if p]
+    pieces = [p for p in (caveman, agents, skills) if p]
     sys.stdout.write("    ".join(pieces))
     return 0
 

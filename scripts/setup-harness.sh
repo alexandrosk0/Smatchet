@@ -140,6 +140,7 @@ setup_claude_code() {
   link_file ".claude/skills/agent-tokens/SKILL.md"            "agents/_shared/token-tracking/SKILL.md"
   link_file ".claude/hooks/agent-token-log.py"                "agents/_shared/token-tracking/agent-token-log.py"
   link_file ".claude/hooks/agents-statusline.py"              "agents/_shared/token-tracking/agents-statusline.py"
+  link_file ".claude/hooks/skill-load-log.py"                 "agents/_shared/token-tracking/skill-load-log.py"
 
   echo "Done. .claude/ ready for Claude Code."
 }
