@@ -67,15 +67,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-16 · orchestrator · [process] · P3 — Plan-doc file-level tables drift from grep ground truth; re-verify before sealing
-  Details: While shipping `ai-assistant-side-panel` Phase A, two inaccuracies surfaced in the plan's § File-level changes table that would have wasted agent cycles if delegated blindly:
-    1. Plan listed `Source_Core/src/FieldCatalogCache.cpp` among 3 `NetworkUsageTracker::Instance().Record(...)` callers to update with a `HttpTrafficKind::Tracker` first arg. `git grep "NetworkUsageTracker::Instance().Record"` finds the symbol only in `TrackerHttpUtils.cpp` (5×) + `JiraIssueMutation.cpp` (1×). `FieldCatalogCache.cpp` does not call the API.
-    2. Plan said "Add new sources to `CORE_SOURCES`" in `CMakeLists.txt`. The list is actually `file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")` (line 530) — new files auto-included, no list edit needed.
-  Both cost ≤5 min to re-verify with a single `git grep` + `grep -n CORE_SOURCES CMakeLists.txt` before sealing the file-level table. Without the re-verify, a downstream agent could waste ~10 min hunting for a non-existent caller or writing a redundant `CORE_SOURCES` edit before noticing the glob.
-  Concrete next action: orchestrator's plan-time production-file existence check (per `AGENTS.md` § Orchestrator delegation packet) should be extended to "production-symbol existence + production-mechanism shape" — one `git grep <symbol-list>` + one `grep -n <cmake-variable> CMakeLists.txt` before the file-level table is sealed. Five-minute cost catches both classes of drift.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-16 · test-rig · [process] · P3 — `AppControllerDepsAdapter.cpp` is a link-trap for tests
   Details: PR D introduced `Source_Core/src/AppControllerDepsAdapter.cpp` as the production-side implementation of `IOfflineQueueDeps` + `ITicketSyncDeps` against a live `AppController&`. Adding it to a test target's source list drags unresolved `AppController::*` symbols (since `AppController.cpp` is correctly excluded — ImGui-tainted). Tests should always use `FakeOfflineQueueDeps` / `FakeTicketSyncDeps`; the adapter belongs only in the production exe. PR E lost a link-error round-trip before the agent figured this out.
   Concrete next action: add a one-paragraph note to `agents/test-rig.md` § Workflow: "Adapter TUs (`AppControllerDepsAdapter.cpp` and similar) are production-only — never link them into test targets. Always use Fake* fixtures under `tests/support/`." Estimated cost 5 min doc edit.
