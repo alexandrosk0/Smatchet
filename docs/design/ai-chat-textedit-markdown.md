@@ -244,12 +244,28 @@ Single squash commit on `claude/amazing-hamilton-3e1618`, on top of `c6084855`.
 
 ## Implementation log
 
-(populated on slice completion)
+- `feat(ai): selectable monospace markdown chat via TextEditor` (commit on `claude/amazing-hamilton-3e1618`):
+  - Moved `Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.{cpp,h}` to `Source_Core/ThirdParty/ImGuiColorTextEdit/`; SmatchetCore now compiles the TU once and exposes it to both the standalone Lua editor and the new AI chat view.
+  - Updated `CMakeLists.txt` so the TU appends to `CORE_SOURCES`, plus put the header dir on `SmatchetCoreInterface` (`PUBLIC`). Dropped the per-plugin source entries from `SmatchetPlugin_LuaConsole` + `SmatchetPlugin_LuaConsole_DX12`.
+  - Patched the vendored TextEditor with two additive public methods marked `// Smatchet — added for AI chat panel`: `SetTokenColor(line, colStart, colEnd, PaletteIndex)` (in `.cpp`) and `DisableColorizerPasses()` (inline in `.h`).
+  - New `Source_Core/include/AiChatMarkdownTokens.h` + `Source_Core/src/AiChatMarkdownTokens.cpp`: pure-logic line + std::regex scanner. Emits `(line, colStart, colEnd, kind)` spans for heading / fence / inline code / bold / italic / link / list / quote / strike. No md4c / ImGui / TextEditor dependency.
+  - New `Source_Core/include/AiChatTextEditorRender.h` + `Source_Core/src/AiChatTextEditorRender.cpp`: `AiChatTextEditorView` owns one `TextEditor` instance per panel. Serialises conversation with `> You:` / `> Assistant:` role prefixes; sha-equality short-circuit so per-frame rebuild is cheap; `MoveBottom()`-on-tail mirrors prior auto-scroll behaviour.
+  - Replaced the per-message `ImGui::InputTextMultiline` loop in `SmatchetAiAssistantUi.cpp::DrawHistoryArea` with the new view. Dropped the `SmatchetImGuiFonts.h` include.
+  - New tests at `tests/Source_Core/AiChatMarkdownTokens.test.cpp`: 17 doctest cases covering the documented edge list (empty / headings H1-H6 / H7 not heading / paragraph mix / fenced code with lang tag / unclosed fence / lists / blockquote / link / strike / mixed sequence / bold-vs-italic / role prefix / non-greedy backticks). `tests/CMakeLists.txt` picks up the new test + tokens TU.
+- `docs(plan): ai-chat-textedit-markdown implementation log` — this revision commit.
 
 ## Deviations from plan
 
-(populated on slice completion)
+- **Palette mapping — `LinkText`**: plan says `PaletteIndex::Function`. That enumerator does not exist in `TextEditor::PaletteIndex`; substituted `KnownIdentifier` (cyan in the dark palette, same visual class).
+- **Italic hand-roll**: emitted Italic spans directly from a manual scan + neighbouring-character guard (the plan flagged this as a likely deviation — `std::regex` lookbehind is unreliable on libstdc++/MinGW UCRT).
+- **`mIgnoreImGuiChild` patch unnecessary**: TextEditor already exposes a public `SetImGuiChildIgnored(bool)` setter; no third additive method needed. Two patched methods, not three.
+- **`AiChatTextEditorView` ownership**: plan suggested a `std::unique_ptr` member on `UiDrawSession`. Used a function-local `static` inside `DrawHistoryArea` instead — there is exactly one AI panel and this avoids touching the session struct. A migration to `UiDrawSession` is trivial if a second panel ever ships.
+- **`RebuildBuffer` signature**: takes `wasAtTail` from the caller rather than tracking it internally. Keeps the view stateless w.r.t. ImGui scroll state, which the parent BeginChild owns.
 
 ## Verification
 
-(populated on slice completion)
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — **passed** (174/174 targets, no warnings in new files).
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12` — new TUs (`AiChatMarkdownTokens.cpp`, `AiChatTextEditorRender.cpp`, vendored `TextEditor.cpp`) all compiled successfully under DX12. A pre-existing `WhisperAiAssistantAutosendScenario.cpp` failure (references `assistantPanelOpen` which is `#if defined(SMATCHET_WITH_AI)` gated; DX12 build does not define `SMATCHET_WITH_AI`) stopped the chain at 376/383 — unrelated to this slice, predates by commit `4c56b83b`.
+- `cmake --build --preset ninja-test-msys2` — built; ran `SmatchetTests.exe --test-case="*AiChatMarkdownTokens*"` — **17/17 passed, 63/63 assertions**. Targeted AI regression `*Provider*,*DeepSeek*,*ModelSignature*,*AiClient*,*Model*` — **65/65 passed, 579/579 assertions**.
+- Full `SmatchetTests.exe` — 776/783 passed; the 7 failures are pre-existing `AgentProposalStore` "unable to open database file" errors unrelated to this slice (concurrent worktree SQLite file collisions).
+- Bucket E (ImGui Test Engine) still deferred per the original Risks table — no Bucket E rig wired in repo today.
