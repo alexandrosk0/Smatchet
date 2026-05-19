@@ -64,7 +64,7 @@ Only use Read when you need exact raw content to edit a specific line.
 ### Advanced Parameters
 - `preset: "debug"` — forces debug mode (capsule+tests+impact+memory)
 - `preset: "refactor"` — deep impact analysis (depth 5)
-- `max_tokens: 12000` — increase total budget for complex tasks
+- `max_tokens: 12000` — increase total budget for complex tasks (**integer literal only**; the daemon rejects `12000.0` as `"floating point, expected usize"`)
 - `include_tests: true` — include test files in results
 - `include_file_content: false` — omit full file content (lighter response)
 
