@@ -2,6 +2,7 @@
 
 #include "SmatchetTheme.h"
 #include "SmatchetThemeIds.h"
+#include "SmatchetUiDensity.h"
 #include "imgui.h"
 
 #include <cmath>
@@ -191,4 +192,139 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle is idempotent for 
                              SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
 
     CHECK(ApproxEq(first, second));
+}
+
+namespace {
+struct StyleSnapshot {
+    ImVec4 colors[ImGuiCol_COUNT];
+    float WindowRounding;
+    float ChildRounding;
+    float FrameRounding;
+    float PopupRounding;
+    float ScrollbarRounding;
+    float GrabRounding;
+    float TabRounding;
+    ImVec2 WindowPadding;
+    ImVec2 FramePadding;
+    ImVec2 ItemSpacing;
+    float ScrollbarSize;
+};
+
+StyleSnapshot SnapshotStyle() {
+    const ImGuiStyle& s = ImGui::GetStyle();
+    StyleSnapshot out;
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        out.colors[i] = s.Colors[i];
+    }
+    out.WindowRounding = s.WindowRounding;
+    out.ChildRounding = s.ChildRounding;
+    out.FrameRounding = s.FrameRounding;
+    out.PopupRounding = s.PopupRounding;
+    out.ScrollbarRounding = s.ScrollbarRounding;
+    out.GrabRounding = s.GrabRounding;
+    out.TabRounding = s.TabRounding;
+    out.WindowPadding = s.WindowPadding;
+    out.FramePadding = s.FramePadding;
+    out.ItemSpacing = s.ItemSpacing;
+    out.ScrollbarSize = s.ScrollbarSize;
+    return out;
+}
+
+bool Vec4Eq(const ImVec4& a, const ImVec4& b) {
+    return std::fabs(a.x - b.x) < 1e-5f && std::fabs(a.y - b.y) < 1e-5f && std::fabs(a.z - b.z) < 1e-5f &&
+           std::fabs(a.w - b.w) < 1e-5f;
+}
+
+bool Vec2Eq(const ImVec2& a, const ImVec2& b) { return std::fabs(a.x - b.x) < 1e-5f && std::fabs(a.y - b.y) < 1e-5f; }
+} // namespace
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture,
+                  "SmatchetTheme::ApplyStyle round-trips full ImGuiStyle for SmatchetDark<->NortonCommander") {
+    // Mimic the host's boot sequence (SmatchetImGuiHost.cpp:449-451): StyleColorsDark first, then
+    // ApplyStyle. The round-trip path must reach the same state without re-running StyleColorsDark.
+    ImGui::StyleColorsDark();
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const StyleSnapshot before = SnapshotStyle();
+
+    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
+
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const StyleSnapshot after = SnapshotStyle();
+
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        INFO("ImGuiCol_ index ", i);
+        CHECK(Vec4Eq(before.colors[i], after.colors[i]));
+    }
+    CHECK(before.WindowRounding == after.WindowRounding);
+    CHECK(before.ChildRounding == after.ChildRounding);
+    CHECK(before.FrameRounding == after.FrameRounding);
+    CHECK(before.PopupRounding == after.PopupRounding);
+    CHECK(before.ScrollbarRounding == after.ScrollbarRounding);
+    CHECK(before.GrabRounding == after.GrabRounding);
+    CHECK(before.TabRounding == after.TabRounding);
+    CHECK(Vec2Eq(before.WindowPadding, after.WindowPadding));
+    CHECK(Vec2Eq(before.FramePadding, after.FramePadding));
+    CHECK(Vec2Eq(before.ItemSpacing, after.ItemSpacing));
+    CHECK(before.ScrollbarSize == after.ScrollbarSize);
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle round-trips full ImGuiStyle through every theme") {
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const StyleSnapshot before = SnapshotStyle();
+
+    const ThemeId others[] = {ThemeId::ModernDark, ThemeId::Vs2022Dark, ThemeId::Vs2022Light, ThemeId::HighContrast,
+                              ThemeId::NortonCommander};
+    for (ThemeId t : others) {
+        SmatchetTheme::ApplyStyle(t);
+        SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+        const StyleSnapshot after = SnapshotStyle();
+        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+            INFO("Detour theme=", static_cast<int>(t), " ImGuiCol_ index=", i);
+            CHECK(Vec4Eq(before.colors[i], after.colors[i]));
+        }
+    }
+}
+
+// Density-preservation policy: SmatchetUI re-runs ApplyDensityToImGuiStyle after every
+// SmatchetTheme::ApplyStyle. The test pins the policy — push density, apply a theme, re-push
+// density, and assert the user's spacing survives. Without the re-push, ApplyCommonStyle
+// reverts ItemSpacing / FramePadding to Normal defaults silently.
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "Density survives theme switch when re-applied after ApplyStyle") {
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Compact);
+    const ImVec2 compactItem = ImGui::GetStyle().ItemSpacing;
+    const ImVec2 compactFrame = ImGui::GetStyle().FramePadding;
+    CHECK(Vec2Eq(compactItem, ImVec2(4.0f, 2.0f)));
+    CHECK(Vec2Eq(compactFrame, ImVec2(4.0f, 2.0f)));
+
+    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
+    // Right after a raw ApplyStyle the spacing reverts to Normal density — that is the regression
+    // SmatchetUI guards against by re-pushing density immediately after.
+    CHECK_FALSE(Vec2Eq(ImGui::GetStyle().ItemSpacing, compactItem));
+
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Compact);
+    CHECK(Vec2Eq(ImGui::GetStyle().ItemSpacing, compactItem));
+    CHECK(Vec2Eq(ImGui::GetStyle().FramePadding, compactFrame));
+
+    // Round-trip back to the original theme also preserves density once re-pushed.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Compact);
+    CHECK(Vec2Eq(ImGui::GetStyle().ItemSpacing, compactItem));
+    CHECK(Vec2Eq(ImGui::GetStyle().FramePadding, compactFrame));
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "ApplyDensityToImGuiStyle writes the documented constants") {
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Compact);
+    CHECK(Vec2Eq(ImGui::GetStyle().ItemSpacing, ImVec2(4.0f, 2.0f)));
+    CHECK(Vec2Eq(ImGui::GetStyle().FramePadding, ImVec2(4.0f, 2.0f)));
+
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Comfortable);
+    CHECK(Vec2Eq(ImGui::GetStyle().ItemSpacing, ImVec2(10.0f, 8.0f)));
+    CHECK(Vec2Eq(ImGui::GetStyle().FramePadding, ImVec2(8.0f, 6.0f)));
+
+    smatchet::ui_density::ApplyDensityToImGuiStyle(TrackerConfig::UiDensity::Normal);
+    CHECK(Vec2Eq(ImGui::GetStyle().ItemSpacing, ImVec2(8.0f, 6.0f)));
+    CHECK(Vec2Eq(ImGui::GetStyle().FramePadding, ImVec2(6.0f, 4.0f)));
 }

@@ -13,6 +13,7 @@
 #include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetTheme.h"
+#include "SmatchetUiDensity.h"
 #include "Logger.h"
 #include "NavigationHistory.h"
 #include "ProjectResolver.h"
@@ -295,25 +296,9 @@ void SmatchetUI::Draw(AppController& app) {
     ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
 
     // Apply density padding — only re-apply when the setting changes.
-    {
-        if (d.cfg.Density != lastAppliedDensity_) {
-            lastAppliedDensity_ = d.cfg.Density;
-            ImGuiStyle& style = ::ImGui::GetStyle();
-            switch (d.cfg.Density) {
-            case TrackerConfig::UiDensity::Compact:
-                style.ItemSpacing = ImVec2(4.0f, 2.0f);
-                style.FramePadding = ImVec2(4.0f, 2.0f);
-                break;
-            case TrackerConfig::UiDensity::Comfortable:
-                style.ItemSpacing = ImVec2(10.0f, 8.0f);
-                style.FramePadding = ImVec2(8.0f, 6.0f);
-                break;
-            default: // Normal
-                style.ItemSpacing = ImVec2(8.0f, 6.0f);
-                style.FramePadding = ImVec2(6.0f, 4.0f);
-                break;
-            }
-        }
+    if (d.cfg.Density != lastAppliedDensity_) {
+        lastAppliedDensity_ = d.cfg.Density;
+        smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
     }
 
     // Panel visibility is driven by the d.show* / cfg.Show* flags that gate each ImGui::Begin call.
@@ -322,10 +307,12 @@ void SmatchetUI::Draw(AppController& app) {
 
     // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
     // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
-    // any user-saved value through this check.
+    // any user-saved value through this check. ApplyStyle's ApplyCommonStyle rewrites ItemSpacing /
+    // FramePadding to Normal-density defaults; re-push density so Compact / Comfortable survive.
     if (d.cfg.Theme != lastAppliedTheme_) {
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
+        smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
     }
 
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
