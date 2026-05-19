@@ -17,7 +17,7 @@
 - 2026-05-16 · orchestrator · [external] · BLOCKED — Auto-merge disabled on the repo; `gh pr merge --auto` errors
   Owner: GitHub repository settings.
   Details: `gh pr merge <N> --squash --auto --delete-branch` errors with `GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)`. The autonomous-execution contract in `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics names `--auto` as the default. Orchestrator falls back to direct `gh pr merge --squash --delete-branch` after CI greens (poll wakeup every ~270 s — caches stay warm). Adds ~14 min wall-clock per PR vs `--auto`.
-  Workaround / unblock: either (a) enable `enablePullRequestAutoMerge` at the repo level (one-time settings change, no agent edit) or (b) update AGENTS.md § Auto-merge mechanics to document the direct-merge fallback + poll cadence. Estimated cost 1 min if (a) is chosen; 10 min doc edit if (b).
+  Workaround / unblock: either (a) enable `enablePullRequestAutoMerge` at the repo level (one-time settings change, no agent edit) or (b) update `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics to document the direct-merge fallback + poll cadence. Estimated cost 1 min if (a) is chosen; 10 min doc edit if (b).
   Status: blocked-external
   Last-reviewed: 2026-05-17
 

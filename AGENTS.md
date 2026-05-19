@@ -8,7 +8,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ### 1. Performance — sustain ≈ 144 Hz
 
-**Target**: 144 frames per second on the UI thread under representative load. Frame budget = **6.94 ms** (`1000 / 144`).
+**Pillar 1**: sustained 144 Hz on the UI thread. Frame budget = **6.94 ms** (`1000 / 144`) under representative load.
 
 **Enforceable invariants:**
 - Steady-state mean per-frame UI work `≤ 6.94 ms` measured by `perf.snapshot` over a representative scenario.
@@ -20,7 +20,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ### 2. UI never freezes — predictable visual cue if it must
 
-**Rule**: Any operation estimated **> 100 ms** moves to a worker thread. Synchronous I/O (HTTP, SQLite, p4, filesystem, blocking lock) reaching the UI thread = **code-review CRITICAL**.
+**Pillar 2**: zero manual verification steps; the UI thread never blocks longer than 100 ms without a visible cue. Any operation estimated **> 100 ms** moves to a worker thread. Synchronous I/O (HTTP, SQLite, p4, filesystem, blocking lock) reaching the UI thread = **code-review CRITICAL**.
 
 **Visual cue contract** for the rare unavoidable blocking case:
 - Spinner or progress widget appears within **100 ms** of op start.
@@ -36,7 +36,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ### 3. Never crash
 
-**Rule**: Smatchet must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
+**Pillar 3**: Smatchet must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
 
 **Enforceable invariants:**
 - **Pre-merge sanitizer build** mandatory on any PR that touches `Source_Core/` C++: `cmake --build --preset ninja-test-msys2` runs the doctest rig under ASan / UBSan (when toolchain supports it). `debug-detective` runs the sanitizer build for every crash-suspect investigation.
@@ -47,7 +47,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ### 4. Accessibility — aspirational (locked scope)
 
-**Status**: no auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
+**Pillar 4**: keyboard nav, font-size / zoom, WCAG AA contrast. No auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
 
 **Locked in-scope (work on these when adjacent to current task):**
 - **Keyboard navigation**: every actionable widget reachable without mouse. Tab order sane, focus indicators visible, `Ctrl+Shift+P` Command Palette as the keyboard entry point to every registered command.
@@ -265,6 +265,10 @@ Every PR opened by the harness is `--draft`. The user marks ready-for-review onl
 ### Spawned-orchestrator first-move contract
 
 The spawned `claude` child's first move, if `SEED.json` exists at `$PWD`, is to delegate to `handoff-implementer` with the file as inline context. Do not re-read it; do not improvise routing. The delegate owns the diagnose → code → test → commit → push → PR loop and writes the terminal `RUN_RESULT.json` before exit.
+
+### Anti-deception note
+
+**Anti-deception note**: `HarnessRunState::IsTransitionAllowed` (`Source_Core/include/HarnessRunState.h`) is the FSM integrity boundary for the agentic handoff lifecycle. `AgenticHandoffController::ControllerTransition` validates every state-name string the runner emits through this predicate before audit-trailing + storing — disallowed transitions log `LOG_WARN` and are dropped. The check exists because the runner emits **untrusted strings** read from the spawned child's stdout; a compromised / buggy harness must not be able to forge `Spawning → Complete` or other skip-states. Loosening the FSM for any reason defeats the load-bearing piece. Keep the predicate strict; if a new legitimate transition emerges, add it explicitly to the allow-list rather than relaxing the check.
 
 ## Self-improvement loop
 
