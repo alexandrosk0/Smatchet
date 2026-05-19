@@ -10,22 +10,60 @@
 
 ## In-flight locks (1 active)
 
-### `agentic-flow-cr-bundle-prod`
+### `coderabbit-react-loop`
 
-- **Owner**: `handoff-implementer`
-- **Branch**: `fix/cr-handoff-bundle-prod`
-- **Originating plan**: [`docs/design/agentic-coding-handoff.md`](../../docs/design/agentic-coding-handoff.md)
-- **Started**: 2026-05-19T00:55:21Z
-- **Write set** (11 paths):
-  - `Source_Core/include/AppController.h`
-  - `Source_Core/include/SubprocessCapturePure.h`
+- **Owner**: `claude-code`
+- **Branch**: `develop`
+- **Originating plan**: [`docs/design/coderabbit-react-loop.md`](../../docs/design/coderabbit-react-loop.md)
+- **Started**: 2026-05-19T02:57:37Z
+- **Write set** (48 paths):
+  - `docs/design/coderabbit-react-loop.md`
+  - `AGENTS.md`
+  - `agents/coderabbit-triage.md`
+  - `agents/handoff-implementer.md`
   - `Source_Core/include/AgenticHandoffController.h`
-  - `Source_Core/src/AppController.cpp`
   - `Source_Core/src/AgenticHandoffController.cpp`
-  - `Source_Core/src/ClaudeCodeLocalRunner.cpp`
-  - `Source_Core/src/CodingHarnessSeedBuilder.cpp`
+  - `Source_Core/include/PrCommentWatcher.h`
   - `Source_Core/src/PrCommentWatcher.cpp`
-  - `Source_Core/src/SmatchetAgentHandoffUi.cpp`
-  - `Source_Core/src/SubprocessCapture.cpp`
-  - `Source_Core/src/SubprocessCapturePure.cpp`
+  - `Source_Core/include/ClaudeCodeLocalRunner.h`
+  - `Source_Core/src/ClaudeCodeLocalRunner.cpp`
+  - `Source_Core/include/OpenPrRegistrar.h`
+  - `Source_Core/src/OpenPrRegistrar.cpp`
+  - `Source_Core/include/PrCommentClassifier.h`
+  - `Source_Core/include/CoderabbitCommentClassifier.h`
+  - `Source_Core/src/CoderabbitCommentClassifier.cpp`
+  - `Source_Core/include/CoderabbitCommentClassifierPure.h`
+  - `Source_Core/src/CoderabbitCommentClassifierPure.cpp`
+  - `Source_Core/include/PrCheckRunClassifier.h`
+  - `Source_Core/include/PrCheckRunWatcher.h`
+  - `Source_Core/src/PrCheckRunWatcher.cpp`
+  - `Source_Core/include/CiFailureClassifier.h`
+  - `Source_Core/src/CiFailureClassifier.cpp`
+  - `Source_Core/include/CiFailureClassifierPure.h`
+  - `Source_Core/src/CiFailureClassifierPure.cpp`
+  - `Source_Core/include/AgentProposalStore.h`
+  - `Source_Core/src/AgentProposalStore.cpp`
+  - `Source_Core/include/ConfigManager.h`
+  - `Source_Core/src/ConfigManager.cpp`
+  - `Source_Core/src/SmatchetPreferencesUi.cpp`
+  - `Source_Core/src/Commands/BuiltinCommands.cpp`
+  - `Source_Core/src/Commands/Builtin/BuiltinCommands_Coderabbit.cpp`
+  - `Source_Core/src/Commands/Builtin/BuiltinCommands_CiReact.cpp`
+  - `tests/CMakeLists.txt`
+  - `tests/Source_Core/CoderabbitCommentClassifierPure.test.cpp`
+  - `tests/Source_Core/CoderabbitCommentClassifier.test.cpp`
+  - `tests/Source_Core/PrCommentWatcher_OpenPrScan.test.cpp`
+  - `tests/Source_Core/OpenPrRegistrar.test.cpp`
+  - `tests/Source_Core/PrCheckRunWatcher.test.cpp`
+  - `tests/Source_Core/CiFailureClassifierPure.test.cpp`
+  - `tests/Source_Core/CiFailureClassifier.test.cpp`
+  - `tests/fixtures/coderabbit_comments_sample.json`
+  - `tests/fixtures/check_runs_failed_sample.json`
+  - `tests/fixtures/check_run_annotations_sample.json`
+  - `tests/fixtures/stub-coderabbit-claude.sh`
+  - `tests/fixtures/stub-ci-claude.sh`
+  - `scripts/dev/test-coderabbit-react.sh`
+  - `scripts/dev/test-ci-react.sh`
+  - `.gitignore`
+- **Notes**: 2026-05-18 H7-reality-check pass; locked decisions recorded. Phase 1 deferred until concrete demand for auto-fix-on-CI-red surfaces.
 
