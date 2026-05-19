@@ -16,6 +16,16 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-19 · orchestrator · [tooling] · P3 — `test-doc-anchors.sh` advisory → blocking flip (4 known broken refs)
+  Details: `scripts/dev/test-doc-anchors.sh` (and helper `scripts/dev/test_doc_anchors.py`) shipped in advisory mode — finds broken `AGENTS.md § <section>` references but exits 0 to unblock CI during the soak (Phase 9 coverage-gate pattern). Initial run found **4 legitimate broken refs**:
+    1. `Anti-deception note` — `Source_Core/include/AgenticHandoffController.h:24` + `HarnessRunState.h:14`. Section was never added to AGENTS.md (likely an aspirational reference that predates the contract-alignment work). Action: either add the section, or rewrite both refs to point at the actual location.
+    2. `Auto-merge mechanics` — `docs/backlog/agent-self-improvement/external-blockers.md:20`. Aspirational ref ("update AGENTS.md § Auto-merge mechanics to document the direct-merge fallback"). Action: add the section, OR strike the ref + update the existing § Project rules.
+    3. `Git workflow` — `docs/backlog/agent-self-improvement/tooling.md:188`. Aspirational ref ("document the right order in AGENTS.md § Git workflow"). Action: add the section, OR rewrite the ref.
+    4. `Pillar 2` — `agents/perf-measure.md:83` + L95. Real semantic anchor (UX Pillars 1-4) but the literal "Pillar 2" string is only in subsection-numbered headings (`### 2. UI never freezes — …`). Action: add `Pillar 2` (and 1/3/4) as named aliases inside § UX Pillars, OR rewrite the perf-measure refs.
+  Concrete next action: after the 4 above are fixed, flip the advisory exit-0 → exit-1 in `test_doc_anchors.py` (remove the "ADVISORY" branch's early return). Estimated cost ~30 min to fix the 4 refs + 5 min to flip the gate. Track this entry; archive when done.
+  Status: open
+  Last-reviewed: 2026-05-19
+
 - 2026-05-18 · debug-detective · [tooling] · P2 — Smatchet Logger has no console output + no default file sink
   Details: Whisper splice-no-show investigation (#258) needed verbose `[temp-debug]` logging across 4 TUs to localise the bug. Running `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp stderr — every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself goes only to the in-memory deque + (unwired in standalone) async file sink. Cost: ~30 min wiring a temp file-sink in `Target_Standalone/main.cpp` mid-investigation, then stripping it. Every future agent debugging a Smatchet runtime issue eats the same tax.
   Concrete next action: in `Target_Standalone/main.cpp` (before `ConfigManager::Load`), default-wire `Logger::Instance().SetFileSinkPath()` to `%LOCALAPPDATA%\Smatchet\session-YYYYMMDD-HHMMSS.log` (or `$TMPDIR/Smatchet-debug-<pid>.log` on non-Windows). Honour `SMATCHET_DEBUG_LOG` env to override. Keep the existing in-memory deque + in-app Log window paths untouched. ~20 min including a doc bump in `docs/design/applied/logging.md` (or wherever logging is documented) noting where logs land for support / triage.
