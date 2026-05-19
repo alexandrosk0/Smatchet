@@ -7,6 +7,13 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-19 · coderabbit-react-loop · [bug] · P3 — `WhisperAiAssistantAutosendScenario.cpp` references missing `UiDrawSession::assistantPanelOpen` — develop DX12 link broken
+  Details: Surfaced by the coderabbit-react-loop phase-2 agent (PR #288). The file at `Source_Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp` references `UiDrawSession::assistantPanelOpen`; the field has been renamed or removed. Build `cmake --build --preset ninja-test-msys2 --target SmatchetCore_DX12` fails on develop HEAD because of this.
+  Impact: every `Source_Core/`-touching agent that follows AGENTS.md § Project rules' dual-target verify (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`) hits a pre-existing break and must triage-by-stash. The standalone build is fine; DX12 targets are `EXCLUDE_FROM_ALL` so CI doesn't catch it, but agents performing the manual verify see false positives.
+  Concrete next action: either repair the rename (git blame the field removal to find the responsible PR) or carve out a dual-target probe command that excludes the broken TU. Owner: whoever shipped the `UiDrawSession::assistantPanelOpen` removal/rename. ~30 min once located.
+  Status: open
+  Last-reviewed: 2026-05-19
+
 - 2026-05-18 · debug-detective · [bug] · P2 — `SmatchetAiAssistantUi.cpp` `#define ImGui SmatchetLocalizedImGui` macro is invisible at call sites
   Details: While investigating the whisper splice-no-show (PR #258), the verbose `[temp-debug] a7b2c4 HookDictation REGISTER` log fired for `s_inputCharBuf` even though the AI Assistant TU appeared to call raw `ImGui::InputTextMultiline` (which doesn't go through the wrapper hook). 2 detective rounds were spent grepping for `SmatchetLocalizedImGui::InputTextMultiline` callers (none) before noticing the TU-local `#define ImGui SmatchetLocalizedImGui` at line 21. The macro rewrites every `ImGui::` call in the TU to the wrapper transparently. Greppable indirection (`using namespace`) would have shaved the investigation by half.
   Concrete next action: replace `#define ImGui SmatchetLocalizedImGui` with explicit `using namespace SmatchetLocalizedImGui;` (the wrapper's `using namespace ::ImGui;` inside the namespace handles the fallthrough to underlying ImGui functions). Audit all TUs that do the same macro trick and apply uniformly. ~30 min for the AI Assistant TU + grep-and-sweep across the codebase.

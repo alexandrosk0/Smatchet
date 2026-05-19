@@ -1985,6 +1985,80 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
             agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
 
+            // (coderabbit-react phase-1) Construct + wire the open-PR
+            // registrar. Same lifetime as the handoff controller. Phase 1
+            // hardcodes the watched base branch to `develop` — a future
+            // phase 8 surfaces the Preferences toggle that selects which
+            // branch the registrar polls. The lister seam binds to the
+            // production `gh pr list` invocation via SubprocessCapture.
+            agenticOpenPrRegistrar_ = std::unique_ptr<smatchet::agentic::OpenPrRegistrar>(
+                new smatchet::agentic::OpenPrRegistrar(agentProposalStore_.get(), "develop"));
+            agenticOpenPrRegistrar_->SetOpenPrLister(
+                [this](std::vector<smatchet::agentic::OpenPrListing>& out, std::string& err) -> bool {
+                    return smatchet::agentic::OpenPrRegistrar::RunGhPrList(
+                        agenticOpenPrRegistrar_->GetWatchedBaseBranch(), out, err);
+                });
+
+            // (coderabbit-react phase-6) Construct + wire the CI-failure
+            // classifier and PrCheckRunWatcher. The watcher reads
+            // agent_open_pr_watch rows the registrar upserts and routes
+            // failed check-runs through the classifier. Defaults match the
+            // plan's cfg.ci_react.* block (phase 8 lands the actual config
+            // plumbing — phase 6 inlines sensible defaults):
+            //   - iteration_budget_per_pr = 5
+            //   - transient_rerun_max_per_pr = 2
+            //   - auto_dispatch_debug_detective = true
+            //   - auto_dispatch_test_rig = true
+            auto checkRunClassifier = std::unique_ptr<smatchet::agentic::CiFailureClassifier>(
+                new smatchet::agentic::CiFailureClassifier());
+            agenticPrCheckRunWatcher_ = std::unique_ptr<smatchet::agentic::PrCheckRunWatcher>(
+                new smatchet::agentic::PrCheckRunWatcher(agentProposalStore_.get(),
+                                                         /*iterationBudget*/ 5,
+                                                         /*transientRerunCap*/ 2));
+            // Fetcher seam binds to GitHubClient::FetchCheckRuns; resolve
+            // the client lazily on every call so a PAT configured AFTER
+            // controller construction lights up the seam.
+            agenticPrCheckRunWatcher_->SetCheckRunFetcher(
+                [this](const std::string& owner, const std::string& repo, const std::string& headSha,
+                       std::vector<GitHubClient::CheckRun>& outRuns, std::string& outError) -> bool {
+                    GitHubClient* client = EnsureAgenticGithubClient();
+                    if (client == nullptr) {
+                        outError = "GitHubClient not constructed (configure PAT)";
+                        return false;
+                    }
+                    return client->FetchCheckRuns(owner, repo, headSha, outRuns, outError);
+                });
+            agenticPrCheckRunWatcher_->SetAnnotationFetcher(
+                [this](const std::string& owner, const std::string& repo, std::int64_t checkRunId,
+                       std::vector<GitHubClient::CheckRunAnnotation>& outAnnot, std::string& outError) -> bool {
+                    GitHubClient* client = EnsureAgenticGithubClient();
+                    if (client == nullptr) {
+                        outError = "GitHubClient not constructed (configure PAT)";
+                        return false;
+                    }
+                    return client->FetchCheckRunAnnotations(owner, repo, checkRunId, outAnnot, outError);
+                });
+            // Log-tail fetcher is left null in phase-6 — the classifier
+            // works off annotations alone, and resolving the Actions
+            // job_id from the check-run's details_url is a follow-up
+            // (the job_id != check_run_id generally). Phase-7 can wire
+            // this once the resolver helper lands.
+            agenticPrCheckRunWatcher_->SetWorkflowRerunDispatcher(
+                [this](const std::string& owner, const std::string& repo, std::int64_t runId,
+                       std::string& outError) -> bool {
+                    GitHubClient* client = EnsureAgenticGithubClient();
+                    if (client == nullptr) {
+                        outError = "GitHubClient not constructed (configure PAT)";
+                        return false;
+                    }
+                    return client->RerunWorkflowRun(owner, repo, runId, outError);
+                });
+            // OpenPrRespawnDispatcher is intentionally NOT wired in phase
+            // 6 — phase 7 lands the worktree-spawning binding. Until then
+            // a Dispatch verdict logs once + advances the cursor but the
+            // child harness does not spawn.
+            agenticPrCheckRunWatcher_->SetClassifier(std::move(checkRunClassifier));
+
             // (CR Bundle A4) The H9 OnProposalApproved auto-start callback is
             // now wired in `InitAgentProposalStoreOnWorker` — at store-
             // construction time, not inside this lazy getter — so the auto-
@@ -2144,6 +2218,19 @@ void AppController::AgenticPollWorkerLoop() {
                 LOG_INFO("AppController::AgenticPollWorkerLoop: %d clarification answer(s) dispatched via GitHub",
                          answered);
             }
+            // (coderabbit-react phase-1) Tick the open-PR registrar BEFORE
+            // the comment watcher so any newly-discovered open PR is
+            // visible to the comment watcher / future check-run watcher in
+            // the SAME iteration (the comment watcher in a future phase
+            // will iterate agent_open_pr_watch rows the registrar just
+            // upserted).
+            if (agenticOpenPrRegistrar_) {
+                const int upserted = agenticOpenPrRegistrar_->Tick();
+                if (upserted > 0) {
+                    LOG_INFO("AppController::AgenticPollWorkerLoop: open-PR registrar upserted %d row(s)", upserted);
+                }
+            }
+
             // (H7) Tick the PR-comment watcher AFTER the clarification poll
             // so a PR transition observed by the handoff controller (PrOpen
             // emits inside the runner-callback path) is reflected in the
@@ -2157,6 +2244,20 @@ void AppController::AgenticPollWorkerLoop() {
                     LOG_INFO("AppController::AgenticPollWorkerLoop: %d PR-comment respawn(s) / budget-exhaustion(s) "
                              "processed",
                              prDispatched);
+                }
+            }
+
+            // (coderabbit-react phase-6) Tick the check-run watcher AFTER the
+            // PR-comment watcher so a comment-driven dispatch is logged
+            // before the same tick's check-run scan. Constructed in the
+            // same call_once block so non-null whenever the handoff
+            // controller is.
+            if (agenticPrCheckRunWatcher_) {
+                const int crActioned = agenticPrCheckRunWatcher_->Tick();
+                if (crActioned > 0) {
+                    LOG_INFO("AppController::AgenticPollWorkerLoop: %d check-run action(s) "
+                             "(dispatch + rerun) processed",
+                             crActioned);
                 }
             }
         }

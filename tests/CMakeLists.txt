@@ -186,6 +186,56 @@ if(SMATCHET_WITH_AGENTIC)
         # empty-poll no-op behaviour.
         Source_Core/PrCommentWatcher.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp"
+        # coderabbit-react phase-1 — OpenPrRegistrar against scripted lister
+        # seam + :memory: AgentProposalStore. Verifies upsert idempotency,
+        # cursor-field preservation, parser tolerance, and lister-error
+        # fail-safety. No real `gh` subprocess.
+        Source_Core/OpenPrRegistrar.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp"
+        # coderabbit-react phase-2 — pure UTF-8 / substring helpers for the
+        # CodeRabbit comment classifier (icon parser, suggestion-block
+        # extractor, actionable + nitpick header parsers, bot-login allow-list,
+        # smatchet-handoff-marker detector). Loads
+        # tests/fixtures/coderabbit_comments_sample.json via
+        # SMATCHET_TESTS_REPO_ROOT and asserts each row's expected parse.
+        Source_Core/CoderabbitCommentClassifierPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp"
+        # coderabbit-react phase-3 — CoderabbitCommentClassifier concrete impl
+        # wired to the 18-rule override table from
+        # agents/coderabbit-triage.md § "Override rules". Covers each of the
+        # 18 rules (positive + negative case) + ≥ 3 survivor dispatches +
+        # a markdown-table guard test (parses agents/coderabbit-triage.md
+        # via SMATCHET_TESTS_REPO_ROOT and asserts the rule-number set +
+        # short-reason column match the C++ descriptor table).
+        Source_Core/CoderabbitCommentClassifier.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp"
+        # coderabbit-react phase-4 — PrCommentWatcher OpenPrScan-mode tests.
+        # Separate TU from PrCommentWatcher.test.cpp so the two modes'
+        # failure footprints stay independent. Covers basic iteration,
+        # classifier verdicts, no-classifier fallback, Smatchet-own-marker
+        # skip, budget exhaustion, cursor idempotency. The watcher TU
+        # itself is already linked above (under H7's entry).
+        Source_Core/PrCommentWatcher_OpenPrScan.test.cpp
+        # coderabbit-react phase-5 — pure C++14 helpers for the CI-failure
+        # classifier (check-run name → category table, cmake/link/ctest/
+        # sanitizer/transient fingerprint matchers, annotation
+        # concatenation with tail-preserving cap). Loads
+        # tests/fixtures/check_runs_failed_sample.json +
+        # check_run_annotations_sample.json via SMATCHET_TESTS_REPO_ROOT
+        # and asserts each row's expected category + kind. The abstract
+        # PrCheckRunClassifier interface lands alongside; concrete
+        # CiFailureClassifier + PrCheckRunWatcher wire up in phase 6.
+        Source_Core/CiFailureClassifierPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp"
+        # coderabbit-react phase-6 — concrete CiFailureClassifier (wires the
+        # phase-5 pure helpers to the verdict logic for build-doctor /
+        # debug-detective / test-rig routing + transient-rerun) and the
+        # PrCheckRunWatcher (Tick()-only, mirrors PrCommentWatcher::OpenPrScan
+        # shape against the agent_open_pr_watch SQLite table).
+        Source_Core/CiFailureClassifier.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp"
+        Source_Core/PrCheckRunWatcher.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

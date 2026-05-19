@@ -63,6 +63,9 @@ class AgentProposalStore;
 #include "GitHubClient.h"
 #include "ICodingHarnessRunner.h"
 #include "PrCommentWatcher.h"
+#include "OpenPrRegistrar.h"
+#include "CiFailureClassifier.h"
+#include "PrCheckRunWatcher.h"
 #endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
@@ -1180,6 +1183,25 @@ class AppController
     // scheduled-poll worker's `AgenticPollWorkerLoop` ticks it after the
     // H5 clarification-poll path on every iteration.
     std::unique_ptr<smatchet::agentic::PrCommentWatcher> agenticPrCommentWatcher_;
+
+    // (coderabbit-react phase-1) Open-PR registrar — enumerates every open
+    // PR on the configured base branch via `gh pr list` and upserts each
+    // into the `agent_open_pr_watch` SQLite table. Future phases (comment
+    // classifier, check-run watcher) read that table. Same lifetime as
+    // the handoff controller; constructed in the same `std::call_once`
+    // block. The poll worker ticks the registrar BEFORE the comment
+    // watcher so newly-discovered PRs are visible in the same iteration.
+    std::unique_ptr<smatchet::agentic::OpenPrRegistrar> agenticOpenPrRegistrar_;
+
+    // (coderabbit-react phase-6) Concrete CI-failure classifier + check-run
+    // watcher. Constructed alongside the handoff controller in the same
+    // `std::call_once` block; ticked by the scheduled-poll worker AFTER the
+    // PR-comment watcher so a comment-driven dispatch shows up in logs
+    // before the same tick's check-run scan. Phase-6 wires the production
+    // seams (FetchCheckRuns, FetchCheckRunAnnotations, RerunWorkflowRun);
+    // the OpenPrRespawnDispatcher seam is left null on purpose so phase-7
+    // can land the actual worktree-spawning binding.
+    std::unique_ptr<smatchet::agentic::PrCheckRunWatcher> agenticPrCheckRunWatcher_;
 
     // Scheduled-poll worker (T7). Lifetime: started by `StartAgenticPollIfEnabled`
     // (called from Initialize end-of-init + Preferences-toggle handler), joined by

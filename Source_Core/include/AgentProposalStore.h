@@ -169,6 +169,93 @@ class AgentProposalStore {
     // / Cancelled) so the table does not grow unbounded.
     bool DeletePrWatch(std::int64_t proposalId, std::string& outError);
 
+    // ─── coderabbit-react phase-1: agent_open_pr_watch persistence ────────
+    //
+    // Sibling table to `agent_pr_watch` — but keyed on `pr_url` rather than
+    // `proposal_id` because the open-PR registrar watches every open PR on
+    // the configured base branch, not just PRs born from an agent handoff.
+    // The registrar (`OpenPrRegistrar`, gated on SMATCHET_WITH_AGENTIC)
+    // periodically runs `gh pr list` and upserts a row per open PR; the
+    // future comment-classifier + check-run watcher iterate this table to
+    // decide which PRs to poll. Additive in v2 — no schema-version bump
+    // (the CREATE TABLE IF NOT EXISTS path in the ctor body is a v2-
+    // extending statement, not a migration body).
+    //
+    // Cursor-preservation invariant: re-running the registrar with the same
+    // `pr_url` must rebind the head-ref fields (head_sha may have shifted
+    // after a force-push) but MUST NOT zero the watcher cursors
+    // (last_seen_comment_id_str, last_seen_check_run_id, iteration_count,
+    // last_polled_at_sec). `SetOpenPrWatch` uses `ON CONFLICT … DO UPDATE`
+    // for that reason; a naïve `INSERT OR REPLACE` would zero the cursors
+    // on every registrar tick.
+
+    struct OpenPrWatchRow {
+        std::string prUrl;
+        int prNumber = 0;
+        std::string headRefName;
+        std::string headSha;
+        std::string lastSeenCommentIdStr;
+        std::int64_t lastSeenCheckRunId = 0;
+        int iterationCount = 0;
+        std::int64_t lastPolledAtSec = 0;
+    };
+
+    // Upsert one open-PR watch row. Rebinds prNumber + headRefName + headSha
+    // from `row`; preserves the cursor fields (lastSeenCommentIdStr,
+    // lastSeenCheckRunId, iterationCount, lastPolledAtSec) when the row
+    // already exists — the registrar passes default-zero cursors and relies
+    // on the ON CONFLICT body to leave the existing values untouched.
+    // Returns false + outError on DB error. Idempotent.
+    bool SetOpenPrWatch(const OpenPrWatchRow& row, std::string& outError);
+
+    // Reads the open-PR watch row for `prUrl`. Returns true + populates
+    // `outRow` when present; returns true + leaves `outRow` defaulted when
+    // absent (first-poll semantics — same shape as GetPrWatch). Returns
+    // false on DB error.
+    bool GetOpenPrWatch(const std::string& prUrl, OpenPrWatchRow& outRow, std::string& outError) const;
+
+    // Lists every open-PR watch row, ordered by `pr_url` ASC for stable
+    // iteration. Returns false + outError on DB error; an empty table is
+    // not an error.
+    bool ListOpenPrWatch(std::vector<OpenPrWatchRow>& outRows, std::string& outError) const;
+
+    // Deletes the open-PR watch row for `prUrl`. Idempotent — missing row
+    // is not an error.
+    bool DeleteOpenPrWatch(const std::string& prUrl, std::string& outError);
+
+    // ─── coderabbit-react phase-4: open-PR watcher cursor advance ─────────
+    //
+    // The phase-4 `PrCommentWatcher` in `WatchMode::OpenPrScan` iterates
+    // every row in `agent_open_pr_watch` and advances each row's cursor
+    // when a new non-bot comment is processed. The registrar's
+    // `SetOpenPrWatch` cannot be used for this — its ON CONFLICT body
+    // rebinds the head-tracking fields but intentionally leaves the cursor
+    // fields untouched (cursor preservation invariant), so a pure cursor
+    // update needs a dedicated UPDATE statement.
+    //
+    // `SetOpenPrCommentCursor` updates the cursor + last_polled_at_sec
+    // together so callers don't have to wall-clock-stamp twice.
+    // Idempotent — missing `pr_url` is not an error (returns true with 0
+    // rows changed, mirroring the `DeleteOpenPrWatch` shape).
+    //
+    // `IncrementOpenPrIterationCount` atomically bumps `iteration_count`
+    // and returns the post-increment value. Used by the watcher after a
+    // successful dispatch — gated against the per-PR budget. Missing row
+    // returns false + outError so a logic bug (caller bumping a row that
+    // was deleted between Tick() iterations) is surfaced rather than
+    // silently absorbed.
+    bool SetOpenPrCommentCursor(const std::string& prUrl, const std::string& lastSeenCommentIdStr,
+                                std::string& outError);
+    bool IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount, std::string& outError);
+
+    // (coderabbit-react phase-6) Mirror of SetOpenPrCommentCursor for the
+    // check-run side. Sets `last_seen_check_run_id` + bumps
+    // `last_polled_at_sec` together. Idempotent — missing `pr_url` is not
+    // an error (UPDATE returns 0 rows changed). The phase-6 `PrCheckRunWatcher`
+    // calls this after every processed check-run so a stale tick (fetch
+    // succeeded but classifier failed) does not lose the cursor advance.
+    bool SetOpenPrCheckRunCursor(const std::string& prUrl, std::int64_t lastSeenCheckRunId, std::string& outError);
+
     // ─── H10 agent_proposals.handoff_status column ────────────────────────
     //
     // Mirrors `CodingHarness::RunState` as a string so the

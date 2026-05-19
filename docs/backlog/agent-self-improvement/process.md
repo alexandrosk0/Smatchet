@@ -13,6 +13,12 @@
   Status: open
   Last-reviewed: 2026-05-19
 
+- 2026-05-19 · git-janitor · [process] · P2 — FF-clean docs-batch exception still gates on `bash scripts/dev/test-all.sh` for pure-docs / design-only diffs
+  Details: `agents/git-janitor.md` § FF-clean docs-batch exception precondition 4 requires `test-all.sh` to exit 0 before the FF push, regardless of whether the diff is C++-adjacent. Triggered on a plan-only revision (single file under `docs/design/**`, no scripts / tests / agents / Lua touched) — the test rig has nothing to validate because no executable code changed, yet the gate still costs ~3 min wall-clock for a doc edit. Same friction every time a plan revision lands without code. Pillar 3 ("never crash") rationale for the gate doesn't apply when the diff cannot affect a built artefact.
+  Concrete next action: refine the exception in `agents/git-janitor.md:56-97` to add a sub-case "**Pure-docs sub-exception** — when the ahead-range touches only `docs/**`, `backlog/**`, `AGENTS.md`, or root-level `*.md` (i.e. no `agents/**`, no `scripts/**`, no `tests/**`, no `.gitignore`), skip the `test-all.sh` gate entirely. Cross-link to AGENTS.md § Trivial-visual-only change envelope as the precedent." Mirror the relaxation into `AGENTS.md` if the rule was duplicated there. ~15 min doc edit + 1 verifying push.
+  Status: open
+  Last-reviewed: 2026-05-19
+
 - 2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a merged-PR branch silently orphans them
   Details: During whisper PR train, 5 commits landed on `claude/whisper-major-minor-fixes` AFTER GitHub squash-merged PR #249. The remote accepted the pushes; the PR view stayed frozen at the merge-time SHA; no warning anywhere. Discovered only when checking why CI didn't fire on the new commits. Cost: one rescue PR (#258) + 5 cherry-picks onto a fresh branch + conflict resolution on `DictationInsertionRouter.test.cpp`. Multi-cycle iteration loop on a closed PR is a recurring pattern when fast-shipping fixes.
   Concrete next action: add a `git push` pre-push hook (or wrap `gh pr` workflow in `scripts/dev/`) that queries `gh pr view --json state` for the current branch and refuses + warns when state is `MERGED` / `CLOSED`. Hook output should suggest "open a follow-up branch from `develop`" with the exact `git checkout -b ... origin/develop` recipe. ~1 h.

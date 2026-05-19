@@ -503,6 +503,92 @@ TEST_CASE("AgentProposalStore: agent_pr_watch persists across store re-open (cur
     std::remove(path.c_str());
 }
 
+TEST_CASE("AgentProposalStore: open-PR watch row CRUD") {
+    // coderabbit-react phase-1 — agent_open_pr_watch sibling table. Keyed
+    // on `pr_url`. Re-upsert preserves cursor fields (ON CONFLICT … DO
+    // UPDATE rebinds only head_ref_name / head_sha / pr_number).
+    AgentProposalStore s(":memory:");
+    std::string err;
+
+    // Empty Get on missing pr_url is OK (first-poll semantics) — fields default.
+    AgentProposalStore::OpenPrWatchRow row;
+    REQUIRE(s.GetOpenPrWatch("https://github.com/o/r/pull/99", row, err));
+    CHECK(row.prUrl.empty());
+    CHECK(row.prNumber == 0);
+    CHECK(row.iterationCount == 0);
+
+    // Empty List on empty table — ok=true, vector empty.
+    std::vector<AgentProposalStore::OpenPrWatchRow> rows;
+    REQUIRE(s.ListOpenPrWatch(rows, err));
+    CHECK(rows.empty());
+
+    // Insert two rows, then List orders by pr_url ASC.
+    AgentProposalStore::OpenPrWatchRow a;
+    a.prUrl = "https://github.com/o/r/pull/2";
+    a.prNumber = 2;
+    a.headRefName = "feat/a";
+    a.headSha = "aaa";
+    REQUIRE(s.SetOpenPrWatch(a, err));
+
+    AgentProposalStore::OpenPrWatchRow b;
+    b.prUrl = "https://github.com/o/r/pull/1";
+    b.prNumber = 1;
+    b.headRefName = "feat/b";
+    b.headSha = "bbb";
+    b.lastSeenCommentIdStr = "1234";
+    b.lastSeenCheckRunId = 4444;
+    b.iterationCount = 1;
+    b.lastPolledAtSec = 1700000000;
+    REQUIRE(s.SetOpenPrWatch(b, err));
+
+    rows.clear();
+    REQUIRE(s.ListOpenPrWatch(rows, err));
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].prUrl == "https://github.com/o/r/pull/1"); // sorted ASC
+    CHECK(rows[1].prUrl == "https://github.com/o/r/pull/2");
+
+    // Get round-trip — every field present.
+    AgentProposalStore::OpenPrWatchRow got;
+    REQUIRE(s.GetOpenPrWatch("https://github.com/o/r/pull/1", got, err));
+    CHECK(got.prUrl == "https://github.com/o/r/pull/1");
+    CHECK(got.prNumber == 1);
+    CHECK(got.headRefName == "feat/b");
+    CHECK(got.headSha == "bbb");
+    CHECK(got.lastSeenCommentIdStr == "1234");
+    CHECK(got.lastSeenCheckRunId == 4444);
+    CHECK(got.iterationCount == 1);
+    CHECK(got.lastPolledAtSec == 1700000000);
+
+    // Re-upsert with a rebound head sha but zero cursor fields — head fields
+    // change, cursor fields are PRESERVED by the ON CONFLICT … DO UPDATE body.
+    AgentProposalStore::OpenPrWatchRow bUpdate;
+    bUpdate.prUrl = "https://github.com/o/r/pull/1";
+    bUpdate.prNumber = 1;
+    bUpdate.headRefName = "feat/b-renamed";
+    bUpdate.headSha = "bbb-NEW";
+    // Default cursor fields — these would zero the row under INSERT OR REPLACE.
+    REQUIRE(s.SetOpenPrWatch(bUpdate, err));
+
+    REQUIRE(s.GetOpenPrWatch("https://github.com/o/r/pull/1", got, err));
+    CHECK(got.headRefName == "feat/b-renamed");
+    CHECK(got.headSha == "bbb-NEW");
+    // Cursor fields survived the re-upsert.
+    CHECK(got.lastSeenCommentIdStr == "1234");
+    CHECK(got.lastSeenCheckRunId == 4444);
+    CHECK(got.iterationCount == 1);
+    CHECK(got.lastPolledAtSec == 1700000000);
+
+    // Delete by pr_url + subsequent Get returns defaulted row.
+    REQUIRE(s.DeleteOpenPrWatch("https://github.com/o/r/pull/1", err));
+    REQUIRE(s.GetOpenPrWatch("https://github.com/o/r/pull/1", got, err));
+    CHECK(got.prUrl.empty());
+    CHECK(got.prNumber == 0);
+
+    // Delete on missing row is not an error (idempotent).
+    REQUIRE(s.DeleteOpenPrWatch("https://github.com/o/r/pull/1", err));
+    REQUIRE(s.DeleteOpenPrWatch("does-not-exist", err));
+}
+
 TEST_CASE("AgentProposalStore: handoff_status round-trip via Set/Get") {
     AgentProposalStore s(":memory:");
     std::string err;

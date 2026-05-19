@@ -147,6 +147,22 @@ AgentProposalStore::AgentProposalStore(const std::string& dbPath)
               "last_polled_at_sec INTEGER NOT NULL DEFAULT 0, "
               "PRIMARY KEY (proposal_id))");
 
+    // coderabbit-react phase-1 — agent_open_pr_watch table. Sibling to
+    // agent_pr_watch but keyed on `pr_url` because the registrar walks every
+    // open PR on the configured base branch (not only handoff-spawned PRs).
+    // Additive in v2 — no schema-version bump (this is a v2-extending CREATE
+    // TABLE IF NOT EXISTS, not a migration body). Belt-and-braces idempotent.
+    db_->exec("CREATE TABLE IF NOT EXISTS agent_open_pr_watch ("
+              "pr_url TEXT NOT NULL, "
+              "pr_number INTEGER NOT NULL, "
+              "head_ref_name TEXT NOT NULL DEFAULT '', "
+              "head_sha TEXT NOT NULL DEFAULT '', "
+              "last_seen_comment_id_str TEXT NOT NULL DEFAULT '', "
+              "last_seen_check_run_id INTEGER NOT NULL DEFAULT 0, "
+              "iteration_count INTEGER NOT NULL DEFAULT 0, "
+              "last_polled_at_sec INTEGER NOT NULL DEFAULT 0, "
+              "PRIMARY KEY (pr_url))");
+
     // Records the shipped schema version. AGENTS.md § Schema-version bumps
     // requires exactly one shipped increment per feature increment; v1 shipped
     // at T9, v2 ships here at H10 (agent_pr_watch + handoff_status column).
@@ -616,6 +632,195 @@ bool AgentProposalStore::DeletePrWatch(std::int64_t proposalId, std::string& out
         return true;
     } catch (const std::exception& ex) {
         outError = std::string("AgentProposalStore::DeletePrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::SetOpenPrWatch(const OpenPrWatchRow& row, std::string& outError) {
+    outError.clear();
+    try {
+        // ON CONFLICT … DO UPDATE preserves cursor fields on re-upsert (the
+        // registrar passes default-zero cursors on every tick; INSERT OR
+        // REPLACE would zero them and we'd lose the watcher's place every
+        // poll). Only the head-tracking fields (pr_number, head_ref_name,
+        // head_sha) rebind on conflict — a force-push shifts head_sha, but
+        // last_seen_comment_id_str / last_seen_check_run_id / iteration_count
+        // / last_polled_at_sec stay put. Requires SQLite 3.24+; the Smatchet
+        // FetchContent build ships a newer SQLiteCpp / SQLite.
+        SQLite::Statement stmt(*db_, "INSERT INTO agent_open_pr_watch "
+                                     "(pr_url, pr_number, head_ref_name, head_sha, last_seen_comment_id_str, "
+                                     " last_seen_check_run_id, iteration_count, last_polled_at_sec) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                                     "ON CONFLICT (pr_url) DO UPDATE SET "
+                                     "  pr_number = excluded.pr_number, "
+                                     "  head_ref_name = excluded.head_ref_name, "
+                                     "  head_sha = excluded.head_sha");
+        stmt.bind(1, row.prUrl);
+        stmt.bind(2, row.prNumber);
+        stmt.bind(3, row.headRefName);
+        stmt.bind(4, row.headSha);
+        stmt.bind(5, row.lastSeenCommentIdStr);
+        stmt.bind(6, static_cast<long long>(row.lastSeenCheckRunId));
+        stmt.bind(7, row.iterationCount);
+        stmt.bind(8, static_cast<long long>(row.lastPolledAtSec));
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetOpenPrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::GetOpenPrWatch(const std::string& prUrl, OpenPrWatchRow& outRow,
+                                        std::string& outError) const {
+    outError.clear();
+    outRow = OpenPrWatchRow();
+    try {
+        SQLite::Statement q(*db_,
+                            "SELECT pr_url, pr_number, head_ref_name, head_sha, last_seen_comment_id_str, "
+                            "       last_seen_check_run_id, iteration_count, last_polled_at_sec "
+                            "FROM agent_open_pr_watch WHERE pr_url=?");
+        q.bind(1, prUrl);
+        if (q.executeStep()) {
+            outRow.prUrl = q.getColumn(0).getText();
+            outRow.prNumber = q.getColumn(1).getInt();
+            outRow.headRefName = q.getColumn(2).getText();
+            outRow.headSha = q.getColumn(3).getText();
+            outRow.lastSeenCommentIdStr = q.getColumn(4).getText();
+            outRow.lastSeenCheckRunId = q.getColumn(5).getInt64();
+            outRow.iterationCount = q.getColumn(6).getInt();
+            outRow.lastPolledAtSec = q.getColumn(7).getInt64();
+        }
+        // Row absent -> defaulted outRow + ok=true (first-poll semantics).
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::GetOpenPrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::ListOpenPrWatch(std::vector<OpenPrWatchRow>& outRows, std::string& outError) const {
+    outError.clear();
+    outRows.clear();
+    try {
+        SQLite::Statement q(*db_,
+                            "SELECT pr_url, pr_number, head_ref_name, head_sha, last_seen_comment_id_str, "
+                            "       last_seen_check_run_id, iteration_count, last_polled_at_sec "
+                            "FROM agent_open_pr_watch ORDER BY pr_url ASC");
+        while (q.executeStep()) {
+            OpenPrWatchRow r;
+            r.prUrl = q.getColumn(0).getText();
+            r.prNumber = q.getColumn(1).getInt();
+            r.headRefName = q.getColumn(2).getText();
+            r.headSha = q.getColumn(3).getText();
+            r.lastSeenCommentIdStr = q.getColumn(4).getText();
+            r.lastSeenCheckRunId = q.getColumn(5).getInt64();
+            r.iterationCount = q.getColumn(6).getInt();
+            r.lastPolledAtSec = q.getColumn(7).getInt64();
+            outRows.push_back(std::move(r));
+        }
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::ListOpenPrWatch: ") + ex.what();
+        outRows.clear();
+        return false;
+    }
+}
+
+bool AgentProposalStore::DeleteOpenPrWatch(const std::string& prUrl, std::string& outError) {
+    outError.clear();
+    try {
+        SQLite::Statement stmt(*db_, "DELETE FROM agent_open_pr_watch WHERE pr_url=?");
+        stmt.bind(1, prUrl);
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::DeleteOpenPrWatch: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::SetOpenPrCommentCursor(const std::string& prUrl, const std::string& lastSeenCommentIdStr,
+                                                std::string& outError) {
+    outError.clear();
+    try {
+        // Idempotent — UPDATE on a missing row returns 0 rows changed and is
+        // not an error. The phase-4 watcher relies on this when an open-PR
+        // row was deleted by the registrar mid-tick (PR closed upstream).
+        SQLite::Statement stmt(*db_, "UPDATE agent_open_pr_watch SET last_seen_comment_id_str=?, "
+                                     "last_polled_at_sec=? WHERE pr_url=?");
+        stmt.bind(1, lastSeenCommentIdStr);
+        stmt.bind(2, static_cast<long long>(NowEpochSec()));
+        stmt.bind(3, prUrl);
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetOpenPrCommentCursor: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::SetOpenPrCheckRunCursor(const std::string& prUrl, std::int64_t lastSeenCheckRunId,
+                                                  std::string& outError) {
+    outError.clear();
+    try {
+        // Idempotent — UPDATE on a missing row returns 0 rows changed and is
+        // not an error. Mirrors SetOpenPrCommentCursor; bumps the same
+        // `last_polled_at_sec` field so a check-run-only tick is observable
+        // as recent activity.
+        SQLite::Statement stmt(*db_, "UPDATE agent_open_pr_watch SET last_seen_check_run_id=?, "
+                                     "last_polled_at_sec=? WHERE pr_url=?");
+        stmt.bind(1, static_cast<long long>(lastSeenCheckRunId));
+        stmt.bind(2, static_cast<long long>(NowEpochSec()));
+        stmt.bind(3, prUrl);
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetOpenPrCheckRunCursor: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount,
+                                                       std::string& outError) {
+    outError.clear();
+    outNewCount = 0;
+    try {
+        // SELECT-then-UPDATE inside an explicit transaction. The bundled
+        // SQLite supports RETURNING (3.35+) but doing the read+write
+        // explicitly keeps the SQL portable across the wider SQLiteCpp /
+        // amalgamation range used in archived state-replay tooling. The
+        // BEGIN locks out a concurrent writer so the read sees a coherent
+        // snapshot.
+        SQLite::Transaction transaction(*db_);
+        int current = -1;
+        {
+            SQLite::Statement q(*db_, "SELECT iteration_count FROM agent_open_pr_watch WHERE pr_url=?");
+            q.bind(1, prUrl);
+            if (!q.executeStep()) {
+                outError = "row not found";
+                return false;
+            }
+            current = q.getColumn(0).getInt();
+        }
+        const int next = current + 1;
+        {
+            SQLite::Statement u(*db_, "UPDATE agent_open_pr_watch SET iteration_count=?, last_polled_at_sec=? "
+                                      "WHERE pr_url=?");
+            u.bind(1, next);
+            u.bind(2, static_cast<long long>(NowEpochSec()));
+            u.bind(3, prUrl);
+            const int changed = u.exec();
+            if (changed == 0) {
+                outError = "row vanished between SELECT and UPDATE";
+                return false;
+            }
+        }
+        transaction.commit();
+        outNewCount = next;
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::IncrementOpenPrIterationCount: ") + ex.what();
         return false;
     }
 }
