@@ -341,3 +341,58 @@ Steps 4-7 are bucket-E covered (`scripts/dev/test-ui-agent-handoff.sh`) + CLI-sm
 5. **Auto-start on approve.** Default `false` to preserve human-in-loop posture; the user explicitly clicks `[Start handoff]` per approval. Confirm before phase 9.
 6. **PR iteration budget default.** `pr_iteration_budget = 10` proposed (i.e. up to 10 re-spawns per PR before forcing user attention). Higher / lower? Confirm before phase 7.
 7. ~~**Harness env passthrough.**~~ **Resolved — lifted into the Permission-mode decision row.** Env is default-deny + the allow-list `{PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY}`. `SMATCHET_*` never inherits. No phase-3 confirmation needed — the runner constructs the child's env explicitly.
+
+## Implementation log
+
+Append-only record per AGENTS.md § Plan revision after implementation. Canonical detail (per-phase summary + per-file write-set) lives in [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) § Implementation log; this section is a thin index keeping the companion plan self-explanatory.
+
+All 11 handoff-half phases shipped (H0-H10):
+
+| Phase | PR  | sha       | Summary                                                                                                          |
+|-------|-----|-----------|------------------------------------------------------------------------------------------------------------------|
+| H0    | #240| `f38c0bf` | Handoff plan-lock + ADRs 0005/0006 + `docs/CONTEXT.md` seed entries                                              |
+| H1    | #244| `1b9a575` | `SubprocessCapture::Run` extracted from `P4Blame` + Win32/POSIX argv-quote + env-block helpers + 3 helper exes   |
+| H2    | #248| `17cc5c9` | `CodingHarnessTypes` + `ICodingHarnessRunner` interface + `CodingHarnessSeedBuilder` + `agents/handoff-implementer.md` |
+| H3    | #251| `d1bc456` | `ClaudeCodeLocalRunner` end-to-end (Probe/Spawn/Resume) + stub-claude exe + env allow-list test (6 doctests)     |
+| H4    | #252| `fcaa533` | `HarnessRunState` 8-state FSM + `AgenticHandoffController` + 5 `handoff.*` CLI commands (7 doctests via FakeRunner) |
+| H5    | #253| `33e0b3a` | Clarification dual-channel (worktree sentinel + GitHub-comment poll with `<!-- smatchet-handoff -->` bot-filter) |
+| H6    | #254| `a5a21cf` | PR-open fallback path (`gh pr create --draft`) + 5 new config rows + stub_git / stub_gh helper exes              |
+| H7    | #255| `37f4f2e` | `PrCommentWatcher` + 6 `GitHubClient` PR/check-run methods (folded from `coderabbit-react-loop.md`) + `pr-iterator` agent + iteration budget |
+| H8    | #256| `121b5bb` | `SmatchetAgentHandoffUi` panel + 27 locale keys + 3-variant bucket-E test (`agent_handoff_panel.test.cpp`)       |
+| H9    | #257| `b082292` | Cross-flow wiring (`AgentProposalStore::OnApprovedFn` callback) + `[Start handoff]` button (`ImplementIssue` filter) + 4 bucket-E variants |
+| H10   | #259| `4b330ce` | `AgentHandoffScenario` step + SQLite v1→v2 (`agent_pr_watch` + `agent_proposals.handoff_status`) + cursor durability + plan revision (FINAL) |
+
+CodeRabbit feedback close-out (post-H10):
+
+| PR  | sha       | Summary                                                                                              |
+|-----|-----------|------------------------------------------------------------------------------------------------------|
+| #267| `5a772f4` | Bundle C + D + E — test + script + doc CR fixes                                                      |
+| #268| `7fcf523` | Drain deferred-lint findings on agentic handoff TUs                                                  |
+| #271| `737fc8b` | Bundle A + B — production CR fixes (round 1)                                                         |
+| #272| `cc47f70` | Bundle A + B — production CR fixes (round 2, post-rebase)                                            |
+| #278| `51b9571` | CR-residue docs (env-allow-list fence-tag + SQLite-lane backlog deferral)                            |
+
+## Deviations from plan
+
+Canonical list with per-decision rationale lives in [`agentic-flow-implementation.md`](agentic-flow-implementation.md) § Deviations from plan (H0-H10 block). Headline deviations:
+
+- **Phase-per-branch shipping (not all-in-one).** Plan envisioned one consolidated PR per half; instead each phase shipped as its own PR (H0-H10 = 11 PRs). Rationale: smaller diffs, per-phase regression isolation, parallelisable review.
+- **H3 — `SubprocessCapture::CaptureOptions::onStdoutLine` callback added rather than a new streaming primitive.** Keeps one process-spawn implementation across `P4Blame` + runner + future agentic surfaces; callback is purely additive (default-null = existing buffered behaviour). Side benefit: new `replaceParentEnv` flag normalises Windows / POSIX env-block semantics so the allow-list assertion holds cross-platform.
+- **H3 — `STUB_CLAUDE_MODE` env passthrough exception.** Narrow allow-list extension for `STUB_CLAUDE_MODE` so the doctest layer can select stub modes without poisoning the parent env permanently. Production callers never see this branch.
+- **H5 — Bot-filter via `<!-- smatchet-handoff -->` comment prefix, not by `gh auth status` user identity.** Resilient against multi-account environments; mirrored on both posted questions and posted answers so the poll loop never treats Smatchet's own comments as user replies.
+- **H7 — `PrCommentWatcher::Tick()` piggybacks on the scheduled-poll thread rather than spawning its own.** Existing T7 `AgenticPollWorkerLoop` already runs at a configurable cadence; following that pattern keeps thread count flat (3 vs 4). `HandoffPrCommentPollIntervalSec` config field is plumbed but unused — reserved for a future dedicated-thread variant.
+- **H7 — `FetchPrComments` delegates to `FetchIssueComments`.** GitHub treats PRs as a superset of issues; the issues-comments endpoint returns the PR's conversation thread, while `/pulls/{n}/comments` returns only diff-review comments (not what the watcher needs).
+- **H7 — respawn dispatcher seam wired-but-no-op for H7.** Iteration counting + budget enforcement live in H7; actual `claude` respawn binding ships in H9 cross-flow wiring (needs SEED.json carry-over + `PR_COMMENT.json` writer from `pr-iterator.md`).
+- **H8 — recent-events log deferred.** Sketched in plan layout, dropped because it would mean a second query path against the audit file from the UI thread (Pillar 2 violation). Substituted a compact `worktree / branch / started / iterations` metadata block from already-cached fields. A real recent-events feed can ride on top of the audit-trail viewer.
+- **H9 — single-subscriber callback (not a multi-listener vector).** YAGNI applies — the only consumer is the cross-flow handoff dispatcher. The `OnApprovedFn` setter doc-comments the contract ("last setter wins"); upgrade to multi-listener when a second consumer materialises.
+- **H9 — callback re-reads cfg on every fire (not at register time).** Capturing `HandoffAutoStartOnApprove` inside the registered lambda would freeze the auto-start gate at controller-construction time, making the Preferences checkbox a no-op until next restart. `ConfigManager::Load()` returns a cheap copy.
+- **H10 — handoff_status column writes are NOT wired in this PR.** Schema column + `SetHandoffStatus` / `GetHandoffStatus` API exposed; the controller side that calls `SetHandoffStatus` after each FSM transition is deferred to a UI-only polish slice. Column defaults to `''` so any reader sees the documented "no handoff started" sentinel.
+- **H10 — end-to-end probe is morning manual residue.** Per the orchestrator stub-only directive, the full end-to-end probe (real GitHub PAT + real `claude` install + real PR thread) does NOT run in any of the H phases. Recipe stays in § Verification § End-to-end happy-path probe for the next post-merge session.
+
+## Implementation status
+
+- **Shipped:** all 11 phases (H0-H10) into `develop`.
+- **Tests:** doctest, bucket-E, dual-target build, sanitizer build all green; CLI smokes (`test-agentic-handoff-*.sh`) all green; replay scenario (`agent-handoff-roundtrip`) green via `scripts/dev/test-agentic-handoff-scenario.sh`.
+- **Schema:** SQLite at v2 (`agent_pr_watch` + `agent_proposals.handoff_status`); `kCurrentSchemaVersion == 2`; migration ladder idempotent on re-open.
+- **Plan-lock:** released by `.github/workflows/lock-cleanup.yml` on merge of H10.
+- **Manual residue:** end-to-end probe (steps 1-8 below) against a real `claude` install + a real GitHub repo + a real PAT. Not gated on the lock; runs once post-merge when the user has 15 minutes.

@@ -242,3 +242,43 @@ Steps 3-6 are bucket-E covered (`scripts/dev/test-ui-agent-proposals.sh` + the C
    ```
    Confirm field names + enum spelling at phase 3 start.
 4. **Poll cursor durability** — store the "last seen issue updated_at" per repo in SQLite or in `smatchet_config.json`? SQLite is more robust against config-file edits; config is simpler. Recommend SQLite in `agent_poll_cursor` table.
+
+## Implementation log
+
+Append-only record per AGENTS.md § Plan revision after implementation. Canonical detail (per-phase summary + per-file write-set) lives in [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) § Implementation log; this section is a thin index keeping the companion plan self-explanatory.
+
+All 10 triage-half phases shipped (T0–T9):
+
+| Phase | PR  | sha       | Summary                                                                                                |
+|-------|-----|-----------|--------------------------------------------------------------------------------------------------------|
+| T0    | #225| `906c312` | plan-lock + ADRs 0003/0004 + `docs/CONTEXT.md` seed entries                                            |
+| T1    | #226| `c0a74bd` | `ITrackerClient::FetchIssueComments` + `GitHubClient` skeleton + `SMATCHET_WITH_AGENTIC` build gate    |
+| T2    | #227| `639b0a3` | `GitHubClient` write methods (`AddComment`/`AddLabel`/`RemoveLabel`/`SetAssignee`/`CloseIssue`) + audit-trail wiring |
+| T3    | #228| `0c0f9c6` | `AgenticInferenceClient` (Ollama POST + structured-output schema validation, 6 doctest cases)          |
+| T4    | #229| `746d8bf` | `AgentProposal` POD + `AgentProposalStore` (SQLite, 18 doctest cases)                                  |
+| T5    | #230| `6530c1f` | `AgenticTriageController::TriageBatch` orchestrator + `agent.triage.run` command                       |
+| T6    | #231| `f944dd0` | `SmatchetAgentProposalsUi` panel + bucket-E test (Approve / Reject)                                    |
+| T7    | #232| `dd2fa99` | Scheduled-poll worker + Preferences "Agentic" tab + cursor-aware GitHub `since=` filter                |
+| T8    | #233| `04a6d0f` | `AgentTriageScenario` step + recorded fixtures + headless replay regression                            |
+| T9    | #234| `321589c` | SQLite `schema_version` table + `kCurrentSchemaVersion = 1` + plan revision (triage-half final)        |
+
+## Deviations from plan
+
+Canonical list with per-decision rationale lives in [`agentic-flow-implementation.md`](agentic-flow-implementation.md) § Deviations from plan (T0-T9 block). Headline deviations:
+
+- **Phase-per-branch shipping (not all-in-one).** Plan envisioned one consolidated PR per half; instead each phase shipped as its own PR (T0-T9 = 10 PRs). Rationale: smaller diffs, per-phase regression isolation, parallelisable review.
+- **T6 / T7 — issue-title deferred.** Plan-locked decision (#5) allowed deferring issue-title rendering pending T7's `FetchIssueBody` integration; never adopted in this slice. Row header shows `<issueKey>  [<action>]` only. Worth a future UX polish slice if scan-friction surfaces.
+- **T7 — cursor advance uses wall-clock, not `max(updated_at)` of returned issues.** GitHub guarantees monotonic `updated_at`; worst-case drift is bounded by the poll interval (≤ 1 h). Parsing every payload would add cost with no observable benefit.
+- **T7 — discovery routed through the adapter directly (not `TriageBatch`).** Cursor filter is worker-local; the worker calls `IGitHubReadClient::ListOpenIssuesForRepo` directly + funnels keys through `TriageIssue`. Keeps cursor surface contained.
+- **T9 — `schema_version` layered alongside existing additive tables, not via destructive migration.** Decision #14 deferred the bump precisely so T4-T8 could ship without interim version churn. T9 lands `version=1` as the first recorded shipped state; the migration ladder is wired but empty (no version-2 body exists). Singleton row enforced via `CHECK (id = 1)` rather than a separate settings table.
+
+## Verification
+
+The original § Verification block above documents the deterministic target. Shipped verification per phase (build + ctest + dual-target + sanitizer + scenario + bucket-E + CLI smoke) lives in [`agentic-flow-implementation.md`](agentic-flow-implementation.md) § Verification. Triage-half acceptance gate result:
+
+- [x] All T0-T9 PRs merged into `develop`.
+- [x] `develop` buildable + `bash scripts/dev/test-all.sh` green at T9 merge.
+- [x] `agent.triage.run --source github --query <fixture>` lands proposals in the SQLite store (T5 + T8 scenario verifies; `test-agentic-triage-cli.sh` + `test-agentic-approve-reject.sh` both green).
+- [x] `SmatchetAgentProposalsUi` shows proposals with working Approve / Reject buttons (T6 bucket-E variants + T8 scenario verifies state-machine transitions).
+
+Manual residue: none. Triage half is fully stub-verified end-to-end via the scenario step + CLI smoke; no real-PAT / real-LLM probe deferred.
