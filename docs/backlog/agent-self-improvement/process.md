@@ -100,12 +100,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-16 · orchestrator · [process] · P3 — API-500 mid-run recovery procedure not documented
-  Details: 4/4 Wave A2 agents (`tracker-labels`, `tracker-datetime`, `tracker-payload`, `tracker-field-catalog`) errored API 500 on final-synthesis turn after shipping 100% of file edits. Worktree state was complete and correct — only the agent's report write-up failed. Orchestrator recovered each by: (1) inspecting worktree `git status` for new/modified files, (2) running local gates (`cmake --build`, `ctest`, dual-target), (3) `git add -A && git commit -m '<recovery message>'`, (4) `git push -u origin <branch>`, (5) `gh pr create` with a stand-in body. Tracker-payload required force-push amend because initial `git commit` only included staged files (`tests/CMakeLists.txt` + `TrackerFieldPayload.cpp`) — the 3 new files weren't staged. Recovery cost: ~5-10 min per agent.
-  Concrete next action: document the recovery as an operational rule in AGENTS.md § Delegation. Key gotcha: after working-tree inspection, `git add -A` (not `git add <list>`) before commit so new untracked files are included. Estimated cost 30 min doc edit. Land in AGENTS.md § Delegation § API-500 recovery (new sub-section).
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-16 · test-rig · [process] · P3 — Parallel-write-fan-in to `tests/CMakeLists.txt` needs sequential-merge stance documented
   Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/design/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
   Concrete next action: promote to `agents/test-rig.md` § Parallel-with-N-other-agents note — explicit rule "when N siblings touch `tests/CMakeLists.txt`, append at the END only; merge order is serial; orchestrator handles rebase". Saves explanation in every parallel-batch packet. Estimated cost 10 min doc edit.

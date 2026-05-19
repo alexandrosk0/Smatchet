@@ -224,6 +224,8 @@ Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/me
 
 `reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
 
+**Force-push carve-out for spawned-agent recovery**: the global `git push --force` ban (and the harness's banned `--no-verify`/`--no-gpg-sign` flags) gets one narrow carve-out — `git push --force-with-lease origin agent/<id>` and `git push --force-with-lease origin claude/<id>` are permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch. Excludes `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`, and any branch with non-self commits in the ahead-range. Rationale + alternatives: `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`.
+
 **Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
 
 - `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
@@ -286,6 +288,7 @@ Quick index of moved subsections — full content in `docs/agent-rules/DELEGATIO
 - **Agent output contract** — 5-class table (Investigator / Diagnostic read-edit / Implementer / Helper / Maintenance) + `## Outcome:` mandate.
 - **Trigger auto-activation** — keyword → agent routing table.
 - **Debug-mode pause-loop (overrides ship-loop)** — for `debug-detective` triggers.
+- **API-500 mid-run recovery** — 5-step recovery for delegated agents that error API-500 after shipping file edits; `git add -A` gotcha; force-push carve-out for spawned-agent branches.
 - **Skeleton-first** — `get_skeleton` for inspection, `Read` for editing.
 - **Agent versioning** — when to bump `version: <N>`.
 - **Cross-cutting** + **Subsystem specialists** — delegation tables.

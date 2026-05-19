@@ -151,6 +151,37 @@ When the user prompt matches the `debug-detective` trigger row above ("fix bug",
 
 **Pause-loop is not pause-everything.** Within a single round the agent freely edits instrumentation, builds, runs auto-repros, reads logs. The pause is at the **round boundary** — once `Read` + hypothesis-status update is done, the agent reports and stops.
 
+## API-500 mid-run recovery
+
+When a delegated agent errors API-500 mid-run, the worktree state is usually complete — the agent shipped its file edits before the synthesis turn failed. Recovery procedure (orchestrator runs from the agent's worktree path; do not `cd`):
+
+1. **Inspect worktree state**:
+   ```
+   git -C <worktree-path> status --short
+   git -C <worktree-path> diff --stat
+   ```
+   Confirm the expected files are modified / created.
+
+2. **Run local gates** (the agent didn't get to):
+   - `cmake --build --preset ninja-iter-msys2` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
+   - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
+
+3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:
+   ```
+   git -C <worktree-path> add -A
+   git -C <worktree-path> commit -m "<recovery message naming the agent + wave>"
+   ```
+
+4. **Push + open draft PR**:
+   ```
+   git -C <worktree-path> push -u origin <branch>
+   gh pr create --draft --title "..." --body "..."
+   ```
+
+5. **Mark recovery in backlog** — add an entry to `docs/backlog/agent-self-improvement/process.md` with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
+
+If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers. `--force-with-lease` is safe here because the branch is the spawned-agent's own `agent/<id>` or `claude/<id>` worktree — covered by AGENTS.md § Project rules § Git safety protocol § Force-push carve-out (see also `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`).
+
 ## Skeleton-first
 
 **Hard rule.** For files you're **inspecting** (understanding shape, finding the right symbol, scoping a change) use `get_skeleton` (or the harness equivalent — see § Harness adapter). For files you're **editing** use `Read`. Reading a full file for context-only inspection wastes ~70–90% of input tokens.
