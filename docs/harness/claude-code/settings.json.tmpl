@@ -66,6 +66,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-cpp-drain.sh\"",
             "timeout": 120000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/dev/check-main-repo-clean.sh\"",
+            "timeout": 5000
           }
         ]
       }
