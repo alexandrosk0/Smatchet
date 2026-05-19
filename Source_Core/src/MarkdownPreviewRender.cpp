@@ -253,19 +253,29 @@ static void PreviewRenderRuns(const std::vector<StyledRun>& runs, const PreviewS
 
         if (!firstOnLine) {
             ImGui::SameLine(0.0f, 0.0f);
+            const ImVec2 interWordPos = ImGui::GetCursorScreenPos();
+            const float interWordLineH = ImGui::GetTextLineHeight();
             // When both the previous and current word are inline-code, the gap
             // between them is part of the same `code` span — paint the bg under
             // the space too so the highlighting reads as continuous.
             if (prevWasCode && isCode) {
-                const ImVec2 spacePos = ImGui::GetCursorScreenPos();
-                const float lineH = ImGui::GetTextLineHeight();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(ImVec2(spacePos.x, spacePos.y), ImVec2(spacePos.x + spaceW, spacePos.y + lineH),
-                                  codeBgCol, 0.0f);
+                dl->AddRectFilled(ImVec2(interWordPos.x, interWordPos.y),
+                                  ImVec2(interWordPos.x + spaceW, interWordPos.y + interWordLineH), codeBgCol, 0.0f);
             }
             ImGui::TextUnformatted(" ");
             ImGui::SameLine(0.0f, 0.0f);
             curX += spaceW;
+            // Register the inter-word space as a Segment so Ctrl+C / right-
+            // click Copy preserves whitespace between words. Without this the
+            // selection text comes out as a single run-on token. ImGui::GetFont
+            // returns the currently bound font (the per-word PushFont below
+            // hasn't run yet — default font is active here).
+            if (s.selCtx) {
+                const char* spaceLit = " ";
+                SelectableText::RegisterSegment(*s.selCtx, spaceLit, spaceLit + 1, interWordPos, interWordLineH,
+                                                ImGui::GetFont(), spaceW, nullptr);
+            }
         }
 
         ImGui::PushFont(font);
@@ -543,6 +553,12 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
                                 r.marks |= MARK_BOLD;
                         }
                         PreviewRenderRuns(cell.runs, s);
+                        // Mark a block boundary at each cell end so cross-cell
+                        // selection inserts a newline (otherwise the cells
+                        // glue together into one run-on token on copy).
+                        if (s.selCtx) {
+                            SelectableText::EndBlock(*s.selCtx);
+                        }
                     }
                 }
                 ImGui::EndTable();
