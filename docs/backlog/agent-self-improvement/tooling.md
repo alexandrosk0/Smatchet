@@ -16,9 +16,27 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-18 · debug-detective · [tooling] · P2 — Smatchet Logger has no console output + no default file sink
+  Details: Whisper splice-no-show investigation (#258) needed verbose `[temp-debug]` logging across 4 TUs to localise the bug. Running `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp stderr — every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself goes only to the in-memory deque + (unwired in standalone) async file sink. Cost: ~30 min wiring a temp file-sink in `Target_Standalone/main.cpp` mid-investigation, then stripping it. Every future agent debugging a Smatchet runtime issue eats the same tax.
+  Concrete next action: in `Target_Standalone/main.cpp` (before `ConfigManager::Load`), default-wire `Logger::Instance().SetFileSinkPath()` to `%LOCALAPPDATA%\Smatchet\session-YYYYMMDD-HHMMSS.log` (or `$TMPDIR/Smatchet-debug-<pid>.log` on non-Windows). Honour `SMATCHET_DEBUG_LOG` env to override. Keep the existing in-memory deque + in-app Log window paths untouched. ~20 min including a doc bump in `docs/design/applied/logging.md` (or wherever logging is documented) noting where logs land for support / triage.
+  Status: open
+  Last-reviewed: 2026-05-18
+
+- 2026-05-18 · test-author · [tooling] · P2 — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
+  Details: Surfaced while wiring `tests/ui/whisper_ai_assistant_autosend.test.cpp` (PR #258). `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` (around line 267) inherits the parent's stdout/stderr but the parent's `--spawn` driver redirects both before the child starts. ImGui Test Engine's `ConfigLogToTTY` output, plus any `LOG_*` from the child, disappears — when a bucket-E test fails, the operator has no trail beyond the parent's exit code.
+  Concrete next action: extend `LaunchEphemeralInstance` to capture child stdout + stderr to a per-spawn temp file (e.g. `$TMPDIR/Smatchet-spawn-<pid>.log`) and emit the path in the spawn banner the parent prints. Failure-path teardown should keep the file; success-path can delete it. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-18
+
 - 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
   Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.
   Concrete next action: (1) audit `scripts/dev/setup-locks-ruleset.sh` + the corresponding workflow to confirm it triggers on `pull_request.closed` with `merged=true` (covers squash, rebase, merge), not just `push to default branch`. (2) Verify the `handoff-implementer` (`agents/handoff-implementer.md`) and bundle-PR templates always include `lock-slug: <slug>` in the body. (3) Add a `bash scripts/dev/lock-staleness-sweep.sh` invocation to the standard end-of-session cleanup checklist (`agents/git-janitor.md`). Estimated cost ~45 min audit + doc tweak.
+  Status: open
+  Last-reviewed: 2026-05-18
+
+- 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
+  Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
+  Concrete next action: add `scripts/dev/worktree-prune.sh` that iterates `git worktree list`, for each worktree checks if HEAD branch is `[gone]`, ff-pulls develop, then deletes the stale branch. Refuses to act when worktree has uncommitted work (mirrors git-janitor's discipline). Document in `docs/agent-rules/DELEGATION.md` or `CONTRIBUTING.md` as the end-of-PR-train one-liner. ~45 min.
   Status: open
   Last-reviewed: 2026-05-18
 

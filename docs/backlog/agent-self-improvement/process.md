@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a merged-PR branch silently orphans them
+  Details: During whisper PR train, 5 commits landed on `claude/whisper-major-minor-fixes` AFTER GitHub squash-merged PR #249. The remote accepted the pushes; the PR view stayed frozen at the merge-time SHA; no warning anywhere. Discovered only when checking why CI didn't fire on the new commits. Cost: one rescue PR (#258) + 5 cherry-picks onto a fresh branch + conflict resolution on `DictationInsertionRouter.test.cpp`. Multi-cycle iteration loop on a closed PR is a recurring pattern when fast-shipping fixes.
+  Concrete next action: add a `git push` pre-push hook (or wrap `gh pr` workflow in `scripts/dev/`) that queries `gh pr view --json state` for the current branch and refuses + warns when state is `MERGED` / `CLOSED`. Hook output should suggest "open a follow-up branch from `develop`" with the exact `git checkout -b ... origin/develop` recipe. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-18
+
 - 2026-05-19 · orchestrator · [process] · P2 — Wrong-worktree-path footgun recurs despite documentation
   Details: PR #260 (agent-docs-improvements Action 1+5) hit the exact wrong-worktree-path footgun documented in `process.md` 2026-05-16 test-rig P2 — orchestrator wrote `Edit` calls against `C:\Dev\Smatchet\AGENTS.md` (main repo) instead of `C:\Dev\Smatchet\.claude\worktrees\xenodochial-montalcini-4b9116\AGENTS.md` (worktree). Edits landed on main repo's then-current branch (`fix/locks-render-stable-output`) instead of the agent's branch. Recovered via `git -C C:/Dev/Smatchet stash push` + replay against worktree paths. ~5 min lost. Documentation didn't prevent recurrence — the footgun reappears every time the orchestrator's mental model of "absolute path == correct path" overrides the worktree-prefix check. Bumping to P2 because this is the **second** hit (the 2026-05-16 entry was the first).
   Concrete next action: either (a) add a PreToolUse hook that rewrites Edit/Write/Read absolute paths missing the worktree prefix into the worktree-rooted equivalent (with WARN log so the user sees the auto-fix), or (b) add a Stop-time audit script that diffs `git -C <main-repo> status` against expected (clean) state and surfaces stale-modifications-on-main as a session-end warning. Option (a) is more thorough but harder; option (b) is a 10-line bash script run from `.claude/hooks/`. ~30 min for (b); ~2 h for (a).
