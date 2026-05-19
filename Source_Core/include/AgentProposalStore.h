@@ -223,6 +223,31 @@ class AgentProposalStore {
     // is not an error.
     bool DeleteOpenPrWatch(const std::string& prUrl, std::string& outError);
 
+    // ─── coderabbit-react phase-4: open-PR watcher cursor advance ─────────
+    //
+    // The phase-4 `PrCommentWatcher` in `WatchMode::OpenPrScan` iterates
+    // every row in `agent_open_pr_watch` and advances each row's cursor
+    // when a new non-bot comment is processed. The registrar's
+    // `SetOpenPrWatch` cannot be used for this — its ON CONFLICT body
+    // rebinds the head-tracking fields but intentionally leaves the cursor
+    // fields untouched (cursor preservation invariant), so a pure cursor
+    // update needs a dedicated UPDATE statement.
+    //
+    // `SetOpenPrCommentCursor` updates the cursor + last_polled_at_sec
+    // together so callers don't have to wall-clock-stamp twice.
+    // Idempotent — missing `pr_url` is not an error (returns true with 0
+    // rows changed, mirroring the `DeleteOpenPrWatch` shape).
+    //
+    // `IncrementOpenPrIterationCount` atomically bumps `iteration_count`
+    // and returns the post-increment value. Used by the watcher after a
+    // successful dispatch — gated against the per-PR budget. Missing row
+    // returns false + outError so a logic bug (caller bumping a row that
+    // was deleted between Tick() iterations) is surfaced rather than
+    // silently absorbed.
+    bool SetOpenPrCommentCursor(const std::string& prUrl, const std::string& lastSeenCommentIdStr,
+                                std::string& outError);
+    bool IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount, std::string& outError);
+
     // ─── H10 agent_proposals.handoff_status column ────────────────────────
     //
     // Mirrors `CodingHarness::RunState` as a string so the

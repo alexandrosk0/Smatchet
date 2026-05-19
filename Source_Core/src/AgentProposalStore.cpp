@@ -740,6 +740,70 @@ bool AgentProposalStore::DeleteOpenPrWatch(const std::string& prUrl, std::string
     }
 }
 
+bool AgentProposalStore::SetOpenPrCommentCursor(const std::string& prUrl, const std::string& lastSeenCommentIdStr,
+                                                std::string& outError) {
+    outError.clear();
+    try {
+        // Idempotent — UPDATE on a missing row returns 0 rows changed and is
+        // not an error. The phase-4 watcher relies on this when an open-PR
+        // row was deleted by the registrar mid-tick (PR closed upstream).
+        SQLite::Statement stmt(*db_, "UPDATE agent_open_pr_watch SET last_seen_comment_id_str=?, "
+                                     "last_polled_at_sec=? WHERE pr_url=?");
+        stmt.bind(1, lastSeenCommentIdStr);
+        stmt.bind(2, static_cast<long long>(NowEpochSec()));
+        stmt.bind(3, prUrl);
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetOpenPrCommentCursor: ") + ex.what();
+        return false;
+    }
+}
+
+bool AgentProposalStore::IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount,
+                                                       std::string& outError) {
+    outError.clear();
+    outNewCount = 0;
+    try {
+        // SELECT-then-UPDATE inside an explicit transaction. The bundled
+        // SQLite supports RETURNING (3.35+) but doing the read+write
+        // explicitly keeps the SQL portable across the wider SQLiteCpp /
+        // amalgamation range used in archived state-replay tooling. The
+        // BEGIN locks out a concurrent writer so the read sees a coherent
+        // snapshot.
+        SQLite::Transaction transaction(*db_);
+        int current = -1;
+        {
+            SQLite::Statement q(*db_, "SELECT iteration_count FROM agent_open_pr_watch WHERE pr_url=?");
+            q.bind(1, prUrl);
+            if (!q.executeStep()) {
+                outError = "row not found";
+                return false;
+            }
+            current = q.getColumn(0).getInt();
+        }
+        const int next = current + 1;
+        {
+            SQLite::Statement u(*db_, "UPDATE agent_open_pr_watch SET iteration_count=?, last_polled_at_sec=? "
+                                      "WHERE pr_url=?");
+            u.bind(1, next);
+            u.bind(2, static_cast<long long>(NowEpochSec()));
+            u.bind(3, prUrl);
+            const int changed = u.exec();
+            if (changed == 0) {
+                outError = "row vanished between SELECT and UPDATE";
+                return false;
+            }
+        }
+        transaction.commit();
+        outNewCount = next;
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::IncrementOpenPrIterationCount: ") + ex.what();
+        return false;
+    }
+}
+
 bool AgentProposalStore::SetHandoffStatus(std::int64_t proposalId, const std::string& status, std::string& outError) {
     outError.clear();
     try {
