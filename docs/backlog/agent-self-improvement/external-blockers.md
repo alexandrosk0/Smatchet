@@ -14,13 +14,6 @@
   Status: blocked-external
   Last-reviewed: 2026-05-18
 
-- 2026-05-16 · orchestrator · [external] · BLOCKED — Auto-merge disabled on the repo; `gh pr merge --auto` errors
-  Owner: GitHub repository settings.
-  Details: `gh pr merge <N> --squash --auto --delete-branch` errors with `GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)`. The autonomous-execution contract in `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics names `--auto` as the default. Orchestrator falls back to direct `gh pr merge --squash --delete-branch` after CI greens (poll wakeup every ~270 s — caches stay warm). Adds ~14 min wall-clock per PR vs `--auto`.
-  Workaround / unblock: either (a) enable `enablePullRequestAutoMerge` at the repo level (one-time settings change, no agent edit) or (b) update `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics to document the direct-merge fallback + poll cadence. Estimated cost 1 min if (a) is chosen; 10 min doc edit if (b).
-  Status: blocked-external
-  Last-reviewed: 2026-05-17
-
 - 2026-05-13 · orchestrator · [external] · BLOCKED — vexp `<!-- vexp -->` block auto-regenerates inside `AGENTS.md`; should land in `.claude/CLAUDE.md` instead
   Owner: vexp tool upstream.
   Details: AGENTS.md is the harness-agnostic root per the agents.md spec. The vexp tool injects ~30 lines of Claude-Code-specific MCP guidance (`run_pipeline`, `get_skeleton`, MCP tool list) directly into AGENTS.md, which other harnesses load and ignore. Editing the block in-place fights the regenerator. Upstream fix: vexp tool emits to `.claude/CLAUDE.md` only; the `@`-import in `.claude/CLAUDE.md` then pulls AGENTS.md without the vexp section.
