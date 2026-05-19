@@ -10,10 +10,10 @@
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
-#include "AiChatMarkdownRender.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
+#include "SmatchetImGuiFonts.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 
@@ -118,39 +118,40 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    // Per-message rendering: role label, then md4c-parsed block widgets via
-    // AiChatMarkdownRender::Render — each block is a ReadOnly InputTextMultiline
-    // so the user can drag-select + Ctrl+C inside any single block (heading /
-    // paragraph / fenced code / list-item / quote). Cross-block selection is
-    // not supported by ImGui, so each message ends with a single
-    // "Copy entire message" SmallButton that pushes the full raw markdown
-    // source to the clipboard. Same rules apply to both user-typed messages
-    // and assistant replies; the in-flight stream renders the same way with
-    // a "Copy partial response" button below it.
-    const float panelWidth = ImGui::GetContentRegionAvail().x;
+    // Simple per-message render: role label, then one ReadOnly
+    // ImGui::InputTextMultiline showing the raw message content with the
+    // monospace font (Consolas) pushed — matches the Lua editor's look.
+    // The multiline widget gives native drag-select + Ctrl+C, so no Copy
+    // button is needed. Height is the content's line count × the active
+    // line height + small frame slack.
+    ImFont* const monoFont = SmatchetGetPreviewFonts().Mono;
+    auto renderMsgBody = [monoFont](const char* widgetId, const std::string& content) {
+        if (monoFont) {
+            ImGui::PushFont(monoFont);
+        }
+        const std::size_t lines = static_cast<std::size_t>(std::count(content.begin(), content.end(), '\n')) + 1u;
+        const float lineH = ImGui::GetTextLineHeightWithSpacing();
+        const float h = static_cast<float>(lines) * lineH + ImGui::GetStyle().FramePadding.y * 2.0f + 4.0f;
+        ImGui::InputTextMultiline(widgetId, const_cast<char*>(content.c_str()),
+                                  static_cast<std::size_t>(content.size()) + 1u, ImVec2(-1.0f, h),
+                                  ImGuiInputTextFlags_ReadOnly);
+        if (monoFont) {
+            ImGui::PopFont();
+        }
+    };
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
         const AiMessage& m = d.assistantHistory[i];
         const bool isUser = (m.Role == "user");
         const char* role = isUser ? "You" : "Assistant";
         ImGui::TextDisabled("%s", role);
-        char scopeId[48];
-        std::snprintf(scopeId, sizeof(scopeId), "ai_msg_%zu", i);
-        AiChatMarkdownRender::Render(m.Content, scopeId, panelWidth);
-        char copyBtn[64];
-        std::snprintf(copyBtn, sizeof(copyBtn), "Copy entire message##ai_msg_%zu", i);
-        if (ImGui::SmallButton(copyBtn)) {
-            ImGui::SetClipboardText(m.Content.c_str());
-        }
-        ImGui::SetItemTooltip("Copy the raw markdown source of this message to clipboard.");
+        char widgetId[48];
+        std::snprintf(widgetId, sizeof(widgetId), "##ai_msg_%zu", i);
+        renderMsgBody(widgetId, m.Content);
         ImGui::Separator();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
         ImGui::TextDisabled("Assistant (streaming...)");
-        AiChatMarkdownRender::Render(d.assistantStreamBuf, "ai_stream", panelWidth);
-        if (ImGui::SmallButton("Copy partial response##ai_stream")) {
-            ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
-        }
-        ImGui::SetItemTooltip("Copy the in-flight partial response (markdown source) to clipboard.");
+        renderMsgBody("##ai_stream", d.assistantStreamBuf);
     }
 
     // Tail tracking: update for next frame based on user's current scroll.

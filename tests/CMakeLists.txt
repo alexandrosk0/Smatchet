@@ -42,7 +42,6 @@ add_executable(SmatchetTests
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiContextBuilder.test.cpp
     Source_Core/AiErrorRedact.test.cpp
-    Source_Core/AiChatMarkdownRender.test.cpp
     Source_Core/AiModelCatalog.test.cpp
     Source_Core/AiModelSignature.test.cpp
     Source_Core/AiPrefsValidator.test.cpp
@@ -101,7 +100,6 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/OllamaClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatMarkdownParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelSignature.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
