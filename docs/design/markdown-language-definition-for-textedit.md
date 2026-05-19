@@ -239,3 +239,23 @@ Goal: AI chat panel renders through the same rich-rendered selectable path as th
 - **Q1 — Plan-doc viewer file scope**: `docs/design/*.md` + `docs/adr/*.md` only, or all of `docs/**/*.md`? Default: design + ADR only (those are the curated long-form docs).
 - **Q2 — Ticket description modal**: TextEditor as default edit widget, or opt-in toggle? Default: replace outright. Old `InputTextMultiline` path deleted.
 - **Q3 — Strip `SetTokenColor` + `DisableColorizerPasses` patches after slice 1 lands**? Default: keep them (additive, harmless, useful escape hatch). Mark deprecation in a comment.
+
+## Implementation log
+
+- `34e9077` · Slice 1 — `LanguageDefinition::Markdown()` + `MarkdownChat()`; `ColorizeInternal()` same-token guard; AiChat migrated; `AiChatMarkdownTokens.{h,cpp,test.cpp}` deleted; bucket-A `MarkdownLanguageDefinition.test.cpp` added.
+- `932b06d` · Slice 2 — `SmatchetPlanDocViewerUi.{h,cpp}` with file picker + read-only TextEditor; `view.toggle.plan_doc_viewer` registered; View menu → "Plan docs".
+- Slice 3 (this commit) — `TicketFieldEditor.cpp` long-text edit-mode swapped to `TextEditor` with `Markdown()` LD; bidirectional buffer sync handles dictation router + async seed paths.
+
+## Deviations from plan
+
+- The trivial helper TU `Plan-doc viewer`'s "lazy file-load on combo-change (single-buffer reuse)" is implemented inside `LoadSelected()` exactly as planned, but the read path uses a local `ReadCapped()` helper rather than reusing `AgentsMdLoader::LoadOneCapped` — the latter applies sentinel formatting tuned for AGENTS.md layering, not plain doc display. A 1 MiB cap with a one-line truncation footer was used instead.
+- Slice 3's "On modal save, `std::strncpy(...)`" became an after-render `IsTextChanged()`-gated `std::memcpy` so the existing preview / save / dictation paths keep reading from `s_ActiveLongTextState.Buffer.data()` unchanged. The TextEditor and the raw buffer are kept in sync every frame; equality short-circuits the work when nothing changed.
+- The DX12 build was not exercised — `WhisperAiAssistantAutosendScenario.cpp` has a pre-existing `assistantPanelOpen` symbol-mismatch on `develop` unrelated to this work. Standalone build + dual-target Source_Core compile of the changed TUs both pass.
+
+## Verification
+
+- Bucket A (doctest) — `MarkdownLanguageDefinition.test.cpp` adds 12 cases / 47 assertions covering every regex in `Markdown()` + the `MarkdownChat()` role-line precedence. `ctest --preset ninja-test-msys2` passes (smatchet_tests + smatchet_lua_tests, 100%).
+- Bucket B (manual) — deferred to post-merge user verification per plan; no agent can run a UI smoke today without bucket-E infrastructure.
+- Bucket C (perf) — not run; `perf-measure` against `AiAssistantBigPromptStream` is the canonical fixture and slice 1's switch from the hand-rolled scanner to the native LD is expected to be at least as fast (TextEditor only re-colorizes changed line ranges via `mColorRangeMin/Max`). Schedule a follow-up `perf-measure` once a representative prompt scenario lands.
+- Bucket D (sanitizer) — not run in this session; the existing ASan/UBSan presets remain wired through `ninja-debug-msys2-asan` for the next pre-merge run.
+- Bucket E (ImGui Test Engine) — deferred per `docs/backlog/agent-self-improvement/tooling.md`.

@@ -14,6 +14,7 @@
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
 #include "TicketFieldEditorLongTextPure.h"
+#include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
@@ -206,15 +207,14 @@ static void OpenLongTextEditor(AppController& app, const std::string& issueId, c
     // Threshold-gated dispatch: large rich values are parsed on a worker; small ones stay inline.
     // The threshold avoids an unnecessary worker round-trip for the common case (sub-KB descriptions)
     // while keeping the UI thread responsive on pathological payloads (multi-MB ADF docs).
-    const bool deferSeed =
-        currentRichValue.size() > kAsyncRichSeedThresholdBytes &&
-        (s_ActiveLongTextState.RichKind == LongTextRichKind::Adf ||
-         s_ActiveLongTextState.RichKind == LongTextRichKind::Html);
+    const bool deferSeed = currentRichValue.size() > kAsyncRichSeedThresholdBytes &&
+                           (s_ActiveLongTextState.RichKind == LongTextRichKind::Adf ||
+                            s_ActiveLongTextState.RichKind == LongTextRichKind::Html);
 
     if (!deferSeed) {
-        std::string seed = ComputeLongTextSeed(
-            s_ActiveLongTextState.RichKind, currentRichValue, currentStrippedValue,
-            s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
+        std::string seed =
+            ComputeLongTextSeed(s_ActiveLongTextState.RichKind, currentRichValue, currentStrippedValue,
+                                s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
         s_ActiveLongTextState.OriginalMarkdown = seed;
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
         const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
@@ -234,32 +234,27 @@ static void OpenLongTextEditor(AppController& app, const std::string& issueId, c
         const LongTextRichKind capturedKind = s_ActiveLongTextState.RichKind;
         const std::string capturedRich = currentRichValue;
         const std::string capturedStripped = currentStrippedValue;
-        app.LaunchBackgroundTask([&app, capturedGen, capturedIssueId, capturedKind, capturedRich,
-                                  capturedStripped]() {
+        app.LaunchBackgroundTask([&app, capturedGen, capturedIssueId, capturedKind, capturedRich, capturedStripped]() {
             std::vector<std::string> droppedNodes;
             bool rawMode = false;
-            std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped,
-                                                   droppedNodes, rawMode);
-            app.mainThreadDispatcher.PostToMainThread(
-                [capturedGen, capturedIssueId, seed = std::move(seed),
-                 droppedNodes = std::move(droppedNodes), rawMode]() mutable {
-                    // Discard if the user opened a different editor (or closed this one) since
-                    // dispatch — LoadGen monotonically increases on every OpenLongTextEditor.
-                    if (!s_ActiveLongTextState.Active ||
-                        s_ActiveLongTextState.LoadGen != capturedGen ||
-                        s_ActiveLongTextState.IssueId != capturedIssueId) {
-                        return;
-                    }
-                    s_ActiveLongTextState.OriginalMarkdown = seed;
-                    s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
-                    s_ActiveLongTextState.RawMode = rawMode;
-                    s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-                    const size_t copyLen =
-                        (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
-                    std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
-                    s_ActiveLongTextState.Buffer[copyLen] = '\0';
-                    s_ActiveLongTextState.LoadingMarkdown = false;
-                });
+            std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped, droppedNodes, rawMode);
+            app.mainThreadDispatcher.PostToMainThread([capturedGen, capturedIssueId, seed = std::move(seed),
+                                                       droppedNodes = std::move(droppedNodes), rawMode]() mutable {
+                // Discard if the user opened a different editor (or closed this one) since
+                // dispatch — LoadGen monotonically increases on every OpenLongTextEditor.
+                if (!s_ActiveLongTextState.Active || s_ActiveLongTextState.LoadGen != capturedGen ||
+                    s_ActiveLongTextState.IssueId != capturedIssueId) {
+                    return;
+                }
+                s_ActiveLongTextState.OriginalMarkdown = seed;
+                s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
+                s_ActiveLongTextState.RawMode = rawMode;
+                s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
+                const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
+                std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
+                s_ActiveLongTextState.Buffer[copyLen] = '\0';
+                s_ActiveLongTextState.LoadingMarkdown = false;
+            });
         });
     }
     s_ActiveLongTextState.Active = true;
@@ -271,8 +266,8 @@ static void OpenLongTextEditor(AppController& app, const std::string& issueId, c
     // below; re-registering on subsequent Opens picks up the freshly-resized
     // Buffer in s_ActiveLongTextState.
     if (!s_ActiveLongTextState.Buffer.empty()) {
-        g_dictationRouter.RegisterInputText(s_ActiveLongTextState.Buffer.data(),
-                                            ActiveLongTextEditorState::kBufferSize, nullptr);
+        g_dictationRouter.RegisterInputText(s_ActiveLongTextState.Buffer.data(), ActiveLongTextEditorState::kBufferSize,
+                                            nullptr);
     }
 }
 
@@ -1337,9 +1332,51 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
         const ImGuiID editorId = ImGui::GetID("##LongTextEditorBuf");
 
         if (effectiveMode != PreviewModeT::PreviewOnly) {
-            ImGui::InputTextMultiline("##LongTextEditorBuf", s_ActiveLongTextState.Buffer.data(),
-                                      s_ActiveLongTextState.Buffer.size(), ImVec2(editorW, inputSize.y),
-                                      ImGuiInputTextFlags_AllowTabInput);
+            // Long-text edit-mode now renders into a ImGuiColorTextEdit
+            // TextEditor configured with the Markdown LD. Synced both ways
+            // against s_ActiveLongTextState.Buffer per frame so the existing
+            // dictation router + async-seed paths continue to work without
+            // any further hook changes:
+            //   - Before render: when Buffer's c_str differs from the
+            //     editor's text AND IsTextChanged() did NOT fire last frame,
+            //     the divergence came from outside the editor (dictation or
+            //     async seed). Reseed editor from Buffer.
+            //   - After render: when IsTextChanged() fires, the user typed
+            //     into the editor. Copy GetText() back to Buffer so the
+            //     preview-render path + save path see the new bytes.
+            static TextEditor s_LongTextEditor;
+            static bool s_LongTextEditorInitialized = false;
+            if (!s_LongTextEditorInitialized) {
+                s_LongTextEditorInitialized = true;
+                s_LongTextEditor.SetShowWhitespaces(false);
+                s_LongTextEditor.SetShowLineNumbers(false);
+                s_LongTextEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Markdown());
+                s_LongTextEditor.SetColorizerEnable(true);
+            }
+            const std::string bufferAsStr(s_ActiveLongTextState.Buffer.data());
+            const std::string editorAsStr = s_LongTextEditor.GetText();
+            // TextEditor::GetText() appends a trailing '\n'; strip it for
+            // round-trip comparison so we don't trigger spurious reseeds.
+            std::string editorTrimmed = editorAsStr;
+            if (!editorTrimmed.empty() && editorTrimmed.back() == '\n') {
+                editorTrimmed.pop_back();
+            }
+            if (bufferAsStr != editorTrimmed) {
+                // Either JustOpened, async seed post-back, dictation write,
+                // or we are catching up to a Buffer mutation from a sibling
+                // path. Buffer wins.
+                s_LongTextEditor.SetText(bufferAsStr);
+            }
+            s_LongTextEditor.Render("##LongTextEditorBuf", ImVec2(editorW, inputSize.y), false);
+            if (s_LongTextEditor.IsTextChanged()) {
+                std::string newText = s_LongTextEditor.GetText();
+                if (!newText.empty() && newText.back() == '\n') {
+                    newText.pop_back();
+                }
+                const std::size_t copy = (std::min)(newText.size(), ActiveLongTextEditorState::kBufferSize - 1);
+                std::memcpy(s_ActiveLongTextState.Buffer.data(), newText.data(), copy);
+                s_ActiveLongTextState.Buffer[copy] = '\0';
+            }
         }
 
         if (effectiveMode == PreviewModeT::Split) {
