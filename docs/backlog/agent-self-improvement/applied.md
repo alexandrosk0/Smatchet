@@ -7,6 +7,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-19 · orchestrator · [process] · P3 — AGENTS.md § <section> cross-link rot when sections move
+  Resolution: `scripts/dev/test-doc-anchors.sh` (+ helper `scripts/dev/test_doc_anchors.py`) landed via PR #TBD. Collects valid anchors (headings + bold-prefix paragraphs) from `AGENTS.md` and every `docs/agent-rules/*.md`; greps every `AGENTS.md § <Name>` reference repo-wide; reports refs whose extracted name doesn't substring-match any anchor. Initial run found **4 legitimate broken refs** (Anti-deception note, Auto-merge mechanics, Git workflow, Pillar 2). Shipped in **advisory mode** (exit 0 with warnings) per Phase 9 coverage-gate soak pattern — flips to blocking once the 4 known refs are fixed; tracked as P3 `tooling.md` 2026-05-19. Auto-enrolled by `scripts/dev/test-all.sh`. 152 distinct anchors detected; 47 distinct refs scanned; 43 resolved (91%) on initial run.
+
 - 2026-05-19 · orchestrator · [process] · P2 — Wrong-worktree-path footgun recurs despite documentation
   Resolution: Option (b) from the entry — Stop-time audit script — landed via PR #TBD. `scripts/dev/check-main-repo-clean.sh` runs from the Claude Code Stop hook (wired via `docs/harness/claude-code/settings.json.tmpl`); resolves the main repo via `git rev-parse --git-common-dir`, runs `git -C <main-repo> status --short`, and emits a loud STDERR banner if non-empty. Banner names the modified files + the worktree branch + the exact `git -C "$MAIN_REPO" stash push` recovery command. Best-effort: exit 0 always, never blocks Stop. Smoke-tested with a synthetic dirty marker — fires correctly. The harness setup script template propagates the new hook on next `bash scripts/setup-harness.sh claude-code` run; live `.claude/settings.json` updated in the same PR for this session. PreToolUse-rewrite option (a) deferred — option (b) catches the bug at session-end which is sufficient for the documented friction pattern.
 
