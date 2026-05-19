@@ -5,6 +5,68 @@
 > **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it).
 >
 > **Canonical implementation runbook:** [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) sequences `agentic-triage-flow` phases T0–T9 + `agentic-coding-handoff` phases H0–H10 with copy-paste-ready build / test / commit / push / PR commands. **As of HEAD: T0–T9 + H0–H10 merged on `develop`** (last triage commit `321589c feat(agentic): T9 …`; last handoff commit `4b330ce feat(agentic): H10 …` PR #259). This plan's surviving phases sit **after H10**; do not start phase 1 until concrete demand materialises.
+>
+> **2026-05-18 re-validation pass.** § "Re-validation 2026-05-18 — H7 reality check + locked decisions" (immediately below) records architectural drift between the original plan prose and what H7 actually shipped, plus a user-locked decision batch from 2026-05-18 that supersedes the original `## User-locked decisions` table and parts of `## What is NOT yet covered` / `## Critical files` / `## Phased rollout` / `## Risks + mitigations` / `## Open questions`. **Read that section before doing anything else in this plan.**
+
+## Re-validation 2026-05-18 — H7 reality check + locked decisions
+
+Investigation against shipped H7 (PR #255 sha `37f4f2e`) + H10 (PR #259 sha `4b330ce`) found the in-flight architecture diverged from what the original plan prose assumed. Locked decisions from a 2026-05-18 user batch — these supersede the original prose where they conflict. Phase 1 starts from this section, not from `## Phased rollout` § Phase 1.
+
+### Plumbing confirmed shipped (no rework needed)
+
+- **All 6 H7 `GitHubClient` methods** ship per `Source_Core/include/GitHubClient.h:191-282` — `FetchPrComments`, `CreatePullRequest`, `FetchCheckRuns`, `FetchCheckRunAnnotations`, `FetchActionsJobLogs`, `RerunWorkflowRun`. Phase 0's dependency-shipped probe passes.
+- **`ClaudeCodeLocalRunner` + sentinel-file IPC + worktree creation** ship per `Source_Core/include/ClaudeCodeLocalRunner.h` (H3 onward).
+- **`PrCommentWatcher` core surface** ships per `Source_Core/include/PrCommentWatcher.h` (H7) — including the SQLite cursor persistence added at H10.
+- **`pr-iterator` agent** ships at `agents/pr-iterator.md`. **`handoff-implementer` agent** ships at `agents/handoff-implementer.md`.
+- **Macro gate is `SMATCHET_WITH_AGENTIC`** (the plan body says it correctly; calling it out explicitly because earlier sibling-plan drafts said `SMATCHET_WITH_AI`).
+- **`agent_pr_watch` table** ships at H10 per `Source_Core/src/AgentProposalStore.cpp:142` — keyed on `proposal_id`, carries `pr_url`, `last_seen_comment_id_str TEXT`, `iteration_count`, `last_polled_at_sec`. Schema migration is at v2.
+
+### Architecture corrections (supersede original prose)
+
+1. **Watcher shape — Tick()-only, no thread per watcher.** `PrCommentWatcher` exposes `int Tick()` called once per scheduled-poll iteration; it owns no `std::thread` and no cancel atomic (per `PrCommentWatcher.h:18-28`). Both new components (`OpenPrRegistrar`, `PrCheckRunWatcher`) follow the same shape — each exposes `int Tick()`; the existing scheduled-poll worker invokes them per iteration. **Strike every reference to "worker thread; cancel atomic" in the original prose** (architecture diagram, critical-files table, phase-1 / phase-6 gates).
+
+2. **Schema split — new `agent_open_pr_watch` sibling table.** `agent_pr_watch` is keyed on `proposal_id`; hand-pushed open-PR-scan rows have no proposal id. Use a new sibling table `agent_open_pr_watch` keyed on `pr_url`, carrying `last_seen_comment_id_str TEXT`, `last_seen_check_run_id INTEGER`, `iteration_count INTEGER`, `last_polled_at_sec INTEGER`. **Strike** the "add `origin TEXT` + `last_seen_check_run_id INTEGER` columns to `agent_pr_watch`" plan in original phase 1; **replace** with the new sibling-table creation. Both watchers iterate rows from both tables (`agent_pr_watch` for handoff-origin, `agent_open_pr_watch` for hand-pushed). Additive — no schema-version bump (H10 already shipped v2).
+
+3. **First-delegate selection — always `handoff-implementer`.** Every dispatch path (CodeRabbit comment, CI build failure, CI ctest failure, CI coverage-gate) names `handoff-implementer` on `SEED.md`'s `## First delegate:` line. `handoff-implementer` reads `SEED.json` + (when present) the new `CHECK_RUN.json` sentinel, then routes internally based on a new `dispatch_source` discriminator field on `SEED.json` (enum: `proposal_implement | coderabbit_comment | ci_build_failure | ci_ctest_failure | ci_coverage_gate | ci_transient_rerun`). **This collapses 4 agent-prompt edits into 1.**
+    - **Strike** the modifications to `agents/build-doctor.md`, `agents/debug-detective.md`, `agents/test-rig.md` in the original `## Critical files § Modified` table. Those agents are invoked through the existing AGENTS.md § Delegation table by `handoff-implementer` and need **no prompt changes** for this plan.
+    - **Replace** with a single extension to `agents/handoff-implementer.md`: bump `version`, add `## Spawned-harness routing for non-proposal dispatch sources` section + dispatch-source enum + `CHECK_RUN.json` reader contract.
+    - **Keep** the `agents/coderabbit-triage.md` v1→v2 bump with the `## Spawned-harness mode` section. `handoff-implementer` invokes it as the routed delegate for `coderabbit_comment` dispatches; the delegate must know to act as orchestrator when no parent orchestrator exists.
+
+4. **Risk #1 reframing — H7 has no generic bot-skip filter.** Original Risk #1 said "`PrCommentWatcher`'s default bot-skip filter swallows CodeRabbit comments before classification". H7's actual filter is `AgenticHandoffController::IsHandoffBotComment` (per `PrCommentWatcher.h:22-27`), which **only** skips comments carrying the `<!-- smatchet-handoff -->` marker (Smatchet's own posts). CodeRabbit comments are NOT swallowed today — without this plan they would dispatch via the default path to `pr-iterator`, which is also not what we want. The classifier hook is an **addition ahead of the existing dispatch path**, not a "reorder before bot-skip". **Strike** Risk #1 in its current form; replace with: *"The classifier hook must run before the existing default dispatch to `pr-iterator`; the Smatchet-own-marker filter is unrelated."*
+
+### User-locked decisions (2026-05-18 batch — supersedes the original table)
+
+| Question | Decision (2026-05-18 batch) |
+|---|---|
+| Detection scope | **In-process only.** Both new watchers run inside Smatchet via the scheduled-poll worker. No daemon, no Windows Task Scheduler. Out-of-Smatchet detection is deferred to a future slice if demand surfaces. |
+| Iteration-budget shape | **Three separate budgets.** `pr_iteration_budget` (handoff-origin), `coderabbit_react.iteration_budget_per_pr`, `ci_react.iteration_budget_per_pr` — different signals, different semantics, tunable independently. |
+| First-delegate selection | **Always `handoff-implementer`.** Single entry point; routes internally based on `SEED.json.dispatch_source`. See correction #3 above. |
+| Reply / rerun-workflow identity | **`gh auth status` user.** Short-circuit-reject replies + `gh workflow run` invocations appear authored by the human PAT owner. Matches the existing handoff PR-create flow. |
+| Coverage advisory cutoff | **Hardcoded ignored list + manual config flip at 2026-05-30 cutoff.** Phase 5 hardcodes `"Coverage (windows-2022 + OpenCppCoverage)"` in `ci_react.ignored_check_names`; user flips it manually when `coverage.yml` becomes blocking. Document the date in `ConfigManager` comments. |
+| Worktree GC (carry-forward) | Piggyback on the next-tick `gh api … /pulls/{n}` call — `state == "closed"` ⇒ gc the worktree. Confirm at phase 4. |
+| Pillar-4 a11y (carry-forward) | Same keyboard-nav contract as existing toggles (Tab cycles, Space toggles, Enter on focused input). Audit at phase 8 against the pillar-4 in-scope list. |
+
+The original `## User-locked decisions` table four rows above § Architecture still hold for: cloud-Claude execution (no), watcher shape (in-process — now reinforced above), auto-fix scope (full auto within whitelist), poll interval (30 min default for CodeRabbit watcher specifically). Nothing in that table is contradicted by the 2026-05-18 batch.
+
+### Critical-files diff (supersedes original tables where they conflict)
+
+- **Strike** the modifications to `agents/build-doctor.md`, `agents/debug-detective.md`, `agents/test-rig.md`. **Replace with** a single extension to `agents/handoff-implementer.md` (version bump + `## Spawned-harness routing` section + dispatch-source enum + `CHECK_RUN.json` reader).
+- **Strike** the `PrCheckRunWatcher` description "Worker thread; cancel atomic". **Replace with**: "Tick()-only; called once per scheduled-poll iteration like `PrCommentWatcher`."
+- **Strike** the `OpenPrRegistrar` description "Cancellable, owned by `AgenticHandoffController` as a `std::thread`". **Replace with**: "Tick()-only; `gh pr list` invoked once per `OpenPrRegistrar::Tick()` call from the scheduled-poll worker."
+- **Strike** "add `origin TEXT` + `last_seen_check_run_id INTEGER` columns to `agent_pr_watch`" wherever the original prose mentions it (`## What is NOT yet covered` item #1, `## Reuse` table, `## Phased rollout` phase 1). **Replace with**: create new sibling table `agent_open_pr_watch (pr_url TEXT PRIMARY KEY, last_seen_comment_id_str TEXT NOT NULL DEFAULT '', last_seen_check_run_id INTEGER NOT NULL DEFAULT 0, iteration_count INTEGER NOT NULL DEFAULT 0, last_polled_at_sec INTEGER NOT NULL DEFAULT 0)`. Additive table (no schema-version bump).
+- **Add** to `AGENTS.md § Handoff envelope` § Sentinel files: `CHECK_RUN.json` (writer: runner / classifier; reader: handoff-implementer; one-line role: CI-failure cause payload — check-run name, conclusion, top N annotations, last N log lines — written into the worktree before spawn for `ci_*` dispatch sources). And add `dispatch_source` field to the `SEED.json` shape in the same section.
+
+### Revised phase-1 sequence (supersedes original `## Phased rollout` § Phase 1)
+
+1. Plan-lock claim (`bash scripts/dev/lock-claim.sh coderabbit-react-loop .claude/coderabbit-react-loop.write-set.txt`) — done in the wip(plan) commit that lands this revision.
+2. Add `agent_open_pr_watch` table to `AgentProposalStore` schema (additive; no version bump).
+3. Implement `OpenPrRegistrar` as a Tick()-only class — `OpenPrRegistrar::Tick()` runs `gh pr list --base <branch> --state open --json number,headRefName,headRefOid` via `SubprocessCapture`, upserts each returned row into `agent_open_pr_watch`.
+4. Wire `OpenPrRegistrar::Tick()` into the existing scheduled-poll worker (the same worker that calls `PrCommentWatcher::Tick`) so all three components share one thread.
+5. doctest: `OpenPrRegistrar.test.cpp` — upsert idempotency, row dedupe on re-run, fixture-driven `gh pr list` output via `SubprocessCapture` injection (no real subprocess).
+
+### Open questions — closed by the 2026-05-18 batch
+
+The original `## Open questions` items #1, #4, #5, #6, #7 are closed by the decisions above. Item #2 (first-delegate selection) is closed by correction #3. Item #3 (auto-GC strategy) carries forward into phase 4 with the recommended "piggyback on next-tick `gh api … /pulls/{n}`" approach. No remaining unresolved questions before phase 1.
 
 ## Context
 
