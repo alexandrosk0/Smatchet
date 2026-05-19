@@ -58,6 +58,12 @@ add_executable(SmatchetTests
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
     # TU. Link it into the test rig so the symbols resolve.
     "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp"
+    # Slice 4 — pure-logic coverage of SelectableText::GetSelectedText
+    # (doc-order range walk + reverse normalisation + block-boundary
+    # newline insertion). Constructs a synthetic Context directly so no
+    # ImGui context is required.
+    Source_Core/SelectableTextRun.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/SelectableTextRun.cpp"
     Source_Core/SubprocessCapturePure.test.cpp
     Source_Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"

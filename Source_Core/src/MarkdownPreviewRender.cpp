@@ -2,6 +2,7 @@
 
 #include "CppSyntaxHighlight.h"
 #include "MarkdownConvert.h"
+#include "SelectableTextRun.h"
 #include "SmatchetImGuiFonts.h"
 #include "Logger.h"
 
@@ -107,6 +108,11 @@ struct PreviewState {
     /// <=0 falls back to ImGui::GetContentRegionAvail().x. Lets callers pin a wrap
     /// width independent of the surrounding window (tooltip option).
     float fixedWrapWidth = 0.0f;
+    /// Active SelectableText context. Non-null → prose `ImGui::TextUnformatted`
+    /// calls inside `PreviewRenderRuns` route through `SelectableText::TextRun`
+    /// so glyphs are drag-selectable + Ctrl+C-copyable. Code blocks + tables
+    /// remain non-selectable in MVP (handled by a follow-up).
+    SelectableText::Context* selCtx = nullptr;
 };
 
 /// Append `text` of length `size` as either an extension of the trailing run
@@ -281,6 +287,17 @@ static void PreviewRenderRuns(const std::vector<StyledRun>& runs, const PreviewS
             dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
         }
         ImGui::TextUnformatted(w.text.c_str(), w.text.c_str() + w.text.size());
+        if (s.selCtx) {
+            // Record the just-rendered word so SelectableText::End() can hit-test
+            // the mouse against it + paint the selection overlay + service
+            // Ctrl+C. href is threaded through as opaque void* — the caller's
+            // existing link-click handler (ShellExecute below) stays
+            // authoritative; the registered href is only used by
+            // GetHoveredHref for future routing.
+            SelectableText::RegisterSegment(
+                *s.selCtx, w.text.data(), w.text.data() + w.text.size(), wordPos, lineH, font, wordW,
+                isLink && !w.href.empty() ? const_cast<void*>(static_cast<const void*>(w.href.c_str())) : nullptr);
+        }
         if (isLink) {
             const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
             dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
@@ -350,6 +367,11 @@ static void PreviewFlushBlock(PreviewState& s) {
     }
     s.runs.clear();
     s.headingLevel = 0;
+    // Selectable text — bump the block-boundary counter so Ctrl+C inserts `\n`
+    // between selected segments that span block boundaries.
+    if (s.selCtx) {
+        SelectableText::EndBlock(*s.selCtx);
+    }
 }
 
 static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
@@ -754,6 +776,16 @@ void Render(const std::string& md, const Options& opts) {
     state.mode = opts.mode;
     state.clickableLinks = opts.clickableLinks;
     state.fixedWrapWidth = opts.wrapWidth;
+    // Selectable text overlay — when the caller supplied a `selectableId`, all
+    // prose runs route through SelectableText::RegisterSegment so the
+    // rendered output is drag-selectable + Ctrl+C-copyable. Code blocks +
+    // tables remain non-selectable in this MVP (deferred per the slice-4
+    // plan).
+    SelectableText::Context* selCtx = nullptr;
+    if (opts.selectableId != nullptr && opts.selectableId[0] != '\0') {
+        selCtx = &SelectableText::Begin(opts.selectableId);
+        state.selCtx = selCtx;
+    }
     MD_PARSER parser{};
     parser.abi_version = 0;
     parser.flags = MarkdownConvert::Md4cParserFlags();
@@ -764,6 +796,9 @@ void Render(const std::string& md, const Options& opts) {
     parser.text = PreviewText;
     md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &state);
     PreviewFlushBlock(state);
+    if (selCtx) {
+        SelectableText::End(*selCtx);
+    }
 }
 
 } // namespace MarkdownPreviewRender

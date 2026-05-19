@@ -17,6 +17,12 @@ struct Options {
     float wrapWidth = 0.0f;
     /// Off in Tooltip mode — tooltip dismisses on mouse-up so the click never lands.
     bool clickableLinks = true;
+    /// When non-empty, wraps the render in SelectableText::Begin(selectableId) /
+    /// End() so prose is drag-selectable + Ctrl+C-copyable. The MVP integration
+    /// only instruments paragraph / heading / list-item inline runs — code
+    /// blocks and tables remain non-selectable until the deferred follow-up.
+    /// See docs/design/markdown-language-definition-for-textedit.md § Slice 4.
+    const char* selectableId = nullptr;
 };
 
 void Render(const std::string& md, const Options& opts = Options());

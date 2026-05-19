@@ -1464,7 +1464,11 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
-            MarkdownPreviewRender::Render(s_ActiveLongTextState.LastRoundTripOutput);
+            MarkdownPreviewRender::Options previewOpts;
+            // Slice 4: enable drag-select + Ctrl+C on the description preview
+            // pane. The id matches the surrounding BeginChild for symmetry.
+            previewOpts.selectableId = "##LongTextPreviewSel";
+            MarkdownPreviewRender::Render(s_ActiveLongTextState.LastRoundTripOutput, previewOpts);
             const float previewScroll = ImGui::GetScrollY();
             const float previewScrollMax = ImGui::GetScrollMaxY();
             ImGui::EndChild();
