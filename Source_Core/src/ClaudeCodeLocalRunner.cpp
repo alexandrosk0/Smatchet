@@ -15,9 +15,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -979,7 +982,17 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
         // earlier `ci_*` dispatch; clear it before spawning a
         // `coderabbit_comment` (or other non-CI) child so the
         // documented `if exists` contract is not violated.
-        std::remove(checkRunPath.c_str());
+        //
+        // (CodeRabbit PR #303) Best-effort delete — log on failure so a
+        // stale CI payload that survives is diagnosable, but do not
+        // error out (the child can still proceed; the worst case is the
+        // handoff-implementer reads a stale CHECK_RUN.json which it
+        // already tolerates per the dispatch_source contract).
+        if (std::remove(checkRunPath.c_str()) != 0) {
+            const int err = errno;
+            LOG_WARN("ClaudeCodeLocalRunner::SpawnAdHoc: failed to remove stale CHECK_RUN.json at %s (errno=%d: %s)",
+                     checkRunPath.c_str(), err, std::strerror(err));
+        }
     }
 
     // Forward to the shared child loop. No delta / state callbacks for

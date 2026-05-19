@@ -554,7 +554,10 @@ int PrCommentWatcher::Tick() {
             if (a.createdAtSec != b.createdAtSec) {
                 return a.createdAtSec < b.createdAtSec;
             }
-            return a.id < b.id;
+            // (CodeRabbit PR #303) Use the numeric-safe comparator so the
+            // sort order matches the baseline-filter check below; raw lex
+            // `<` mis-orders varying-length numeric IDs ("10" < "9" lex).
+            return CommentIdLess(a.id, b.id);
         });
         // (CR Bundle A6) Find the first non-bot comment whose
         // `(createdAtSec, id)` tuple is strictly greater than the cursor's
@@ -565,8 +568,13 @@ int PrCommentWatcher::Tick() {
         const std::string& baselineId = h.prCommentCursorIdStr;
         const PostedComment* firstNewComment = nullptr;
         for (const auto& c : comments) {
-            const bool tupleGreater =
-                (c.createdAtSec > baselineSec) || (c.createdAtSec == baselineSec && c.id > baselineId);
+            // (CodeRabbit PR #303) `c.id > baselineId` is lex compare and
+            // mis-orders numeric strings; `CommentIdLess(baselineId, c.id)`
+            // is "baselineId is strictly numerically less than c.id" which
+            // is exactly "c.id is strictly greater than baselineId" for the
+            // numeric-aware ordering.
+            const bool tupleGreater = (c.createdAtSec > baselineSec) ||
+                                      (c.createdAtSec == baselineSec && CommentIdLess(baselineId, c.id));
             if (!tupleGreater) {
                 continue;
             }

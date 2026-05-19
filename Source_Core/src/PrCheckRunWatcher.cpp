@@ -279,7 +279,19 @@ int PrCheckRunWatcher::Tick() {
                 // Apply the per-PR rerun cap. The classifier returns the
                 // verdict unconditionally; the cap is a watcher concern
                 // so it stays a single source of truth.
-                const int currentReruns = GetRerunCount(row.prUrl);
+                //
+                // (CodeRabbit PR #303 review) Read + write happen under
+                // separate critical sections, but the post-increment value
+                // is captured under the second lock so the LOG_INFO below
+                // reports the actual stored count (not a stale
+                // `currentReruns + 1` that two concurrent Ticks could
+                // both compute against the same `currentReruns`).
+                int currentReruns = 0;
+                {
+                    std::lock_guard<std::mutex> lock(rerunCountMu_);
+                    auto it = rerunCountByPrUrl_.find(row.prUrl);
+                    currentReruns = (it != rerunCountByPrUrl_.end()) ? it->second : 0;
+                }
                 if (currentReruns >= rerunCap) {
                     LOG_WARN("PrCheckRunWatcher::Tick: transient rerun cap exceeded on prUrl=%s "
                              "(reruns=%d cap=%d) — skipping rerun of checkRunId=%lld",
@@ -300,13 +312,14 @@ int PrCheckRunWatcher::Tick() {
                              row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), rerunErr.c_str());
                     continue;
                 }
+                int newReruns = 0;
                 {
                     std::lock_guard<std::mutex> lock(rerunCountMu_);
-                    rerunCountByPrUrl_[row.prUrl] = currentReruns + 1;
+                    newReruns = ++rerunCountByPrUrl_[row.prUrl];
                 }
                 ++actioned;
                 LOG_INFO("PrCheckRunWatcher::Tick: RerunTransient fired for prUrl=%s runId=%lld (rerun %d of %d)",
-                         row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), currentReruns + 1, rerunCap);
+                         row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), newReruns, rerunCap);
                 continue;
             }
 

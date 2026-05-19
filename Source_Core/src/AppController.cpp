@@ -2079,8 +2079,7 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // failed check-runs through the classifier. Budgets come from
             // `cfg.CiReact.*` (phase 8 plumbed the config block; phase 6
             // had inlined 5/2 as placeholders).
-            auto checkRunClassifier =
-                std::unique_ptr<smatchet::agentic::CiFailureClassifier>(new smatchet::agentic::CiFailureClassifier());
+            auto checkRunClassifier = std::make_unique<smatchet::agentic::CiFailureClassifier>();
             agenticPrCheckRunWatcher_ = std::unique_ptr<smatchet::agentic::PrCheckRunWatcher>(
                 new smatchet::agentic::PrCheckRunWatcher(agentProposalStore_.get(),
                                                          /*iterationBudget*/ cfg.CiReact.IterationBudgetPerPr,
