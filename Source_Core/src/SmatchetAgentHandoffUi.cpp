@@ -85,10 +85,57 @@ bool ShouldRefresh() {
     return (std::chrono::steady_clock::now() - g_lastRefreshAt) >= kRefreshInterval;
 }
 
+// (CR Bundle B2) Drop per-handoff scratch state for ids no longer in the
+// active set. Without this, g_replyBufs and g_perRowStatus accumulate one
+// entry per terminal handoff and never shrink — a long-running operator
+// session running many handoffs leaks ~4 KB per finished handoff (the
+// reply-buffer cap) plus a small status string. Pruning here is O(N+M)
+// where N=active handoffs and M=total cached scratch entries; both stay
+// in the dozens range in practice.
+void PrunePerHandoffScratchState() {
+    auto pruneMap = [](auto& map) {
+        for (auto it = map.begin(); it != map.end();) {
+            const std::int64_t id = it->first;
+            bool stillActive = false;
+            for (size_t i = 0; i < g_handoffsCache.size(); ++i) {
+                if (g_handoffsCache[i].proposalId == id) {
+                    stillActive = true;
+                    break;
+                }
+            }
+            if (!stillActive) {
+                it = map.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+    pruneMap(g_replyBufs);
+    pruneMap(g_perRowStatus);
+    // The selected-id may now point at a row that left the active set
+    // (handoff reached a terminal state between frames). Reset to 0 so the
+    // detail pane renders the empty-selection hint instead of trying to
+    // resolve a stale id.
+    if (g_selectedId != 0) {
+        bool selectedStillActive = false;
+        for (size_t i = 0; i < g_handoffsCache.size(); ++i) {
+            if (g_handoffsCache[i].proposalId == g_selectedId) {
+                selectedStillActive = true;
+                break;
+            }
+        }
+        if (!selectedStillActive) {
+            g_selectedId = 0;
+        }
+    }
+}
+
 void RefreshFromController(AppController& app) {
     auto* controller = app.GetAgenticHandoffController();
     if (controller == nullptr) {
         g_handoffsCache.clear();
+        // (CR Bundle B2) Empty active set → all scratch entries are stale.
+        PrunePerHandoffScratchState();
         g_lastRefreshAt = std::chrono::steady_clock::now();
         return;
     }
@@ -99,6 +146,10 @@ void RefreshFromController(AppController& app) {
     std::sort(g_handoffsCache.begin(), g_handoffsCache.end(),
               [](const AgenticHandoffController::ActiveHandoff& a,
                  const AgenticHandoffController::ActiveHandoff& b) { return a.startedAtSec < b.startedAtSec; });
+    // (CR Bundle B2) Drop g_replyBufs / g_perRowStatus entries for handoffs
+    // that left the active set on this refresh. See the helper above for
+    // rationale.
+    PrunePerHandoffScratchState();
     g_lastRefreshAt = std::chrono::steady_clock::now();
     g_initialFetchDone = true;
 }

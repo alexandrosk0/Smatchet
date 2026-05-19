@@ -35,6 +35,29 @@ bool IsKnownTopLevelKey(const std::string& k) {
            k == kKeyTimestampUnixSec;
 }
 
+// (CR Bundle B1) Scan a markdown body for the longest run of consecutive
+// backticks and return the run length. The outer fence then uses
+// `max(3, longestRun + 1)` backticks so an embedded ```rust ... ``` block
+// never terminates the wrapping fence early. Issue bodies pasted from
+// CodeRabbit / GitHub regularly contain triple-backtick code blocks; without
+// this, the second `'''` closes the seed's fence and the rest of the body
+// leaks into the next markdown section.
+size_t LongestBacktickRun(const std::string& body) {
+    size_t longest = 0;
+    size_t current = 0;
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] == '`') {
+            ++current;
+            if (current > longest) {
+                longest = current;
+            }
+        } else {
+            current = 0;
+        }
+    }
+    return longest;
+}
+
 // Emit a Markdown fence around free-form text so subsequent sections never
 // terminate early on an embedded heading.
 void EmitFencedBlock(std::ostringstream& os, const char* heading, const std::string& body) {
@@ -43,11 +66,17 @@ void EmitFencedBlock(std::ostringstream& os, const char* heading, const std::str
         os << "_(empty)_\n\n";
         return;
     }
-    os << "```\n" << body;
+    // (CR Bundle B1) Adaptive fence length — at least three backticks, but
+    // one more than the longest backtick run in the body. This lets the
+    // wrapper survive a body that carries its own code fences.
+    const size_t bodyRun = LongestBacktickRun(body);
+    const size_t fenceLen = (bodyRun + 1 > 3) ? (bodyRun + 1) : 3;
+    const std::string fence(fenceLen, '`');
+    os << fence << "\n" << body;
     if (!body.empty() && body.back() != '\n') {
         os << '\n';
     }
-    os << "```\n\n";
+    os << fence << "\n\n";
 }
 
 } // namespace

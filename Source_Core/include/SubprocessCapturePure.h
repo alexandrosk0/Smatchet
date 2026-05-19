@@ -34,12 +34,18 @@ std::string QuoteArgvWindows(const std::string& arg);
 /// the user pastes back into a shell.
 std::string QuoteArgvPosix(const std::string& arg);
 
-/// Build a Windows CreateProcessW-style env block: a string of
-/// `KEY=VALUE\0KEY=VALUE\0\0` segments, double-null terminated.
-/// Caller passes the .data() pointer as the lpEnvironment argument.
+/// Build a Windows CreateProcessW-style env block as a UTF-16 (wide)
+/// string of `KEY=VALUE\0KEY=VALUE\0\0` segments, double-null terminated.
+/// Caller passes the .data() pointer as the lpEnvironment argument with
+/// `CREATE_UNICODE_ENVIRONMENT` set in dwCreationFlags so CreateProcessW
+/// interprets the buffer as wide characters. The input KEY / VALUE
+/// strings are UTF-8; conversion to UTF-16 happens here so non-ASCII
+/// values (Unicode paths, locale-translated user dirs) round-trip
+/// without being corrupted as ANSI.
+///
 /// Order is preserved (Windows itself does not care, but tests assert
 /// it for determinism).
-std::string BuildEnvBlockWindows(const std::vector<std::pair<std::string, std::string>>& env);
+std::wstring BuildEnvBlockWindows(const std::vector<std::pair<std::string, std::string>>& env);
 
 /// Compute milliseconds remaining given a start time and a total
 /// timeout budget. Returns 0 when expired, and the caller-supplied

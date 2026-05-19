@@ -97,14 +97,21 @@ int PrCommentWatcher::LoadCursorsFromStore() {
         // bypasses the audit fire.
         const int targetCount = row.iterationCount;
         const std::int64_t targetCursor = row.lastPolledAtSec;
+        // (CR Bundle A6) The persisted column now stores the backend-stable
+        // comment id, not a seconds-as-string fallback. Older rows written
+        // before A6 carry a stringified second value; that decays gracefully
+        // — `(seconds, "12345") > (seconds, "")` still admits any future
+        // same-second comment with a non-empty id.
+        const std::string targetCursorIdStr = row.lastSeenCommentIdStr;
         std::string markErr;
         for (int i = 0; i < targetCount; ++i) {
             // Cursor only matters on the final call; pass targetCursor on
             // the last iteration so the in-memory record matches the
             // persisted snapshot.
-            const std::int64_t cursorThisCall =
-                (i == targetCount - 1) ? targetCursor : static_cast<std::int64_t>(0);
-            if (!controller_->MarkHandoffIteration(h.proposalId, cursorThisCall, markErr)) {
+            const bool isLast = (i == targetCount - 1);
+            const std::int64_t cursorThisCall = isLast ? targetCursor : static_cast<std::int64_t>(0);
+            const std::string idThisCall = isLast ? targetCursorIdStr : std::string();
+            if (!controller_->MarkHandoffIteration(h.proposalId, cursorThisCall, idThisCall, markErr)) {
                 LOG_WARN("PrCommentWatcher::LoadCursorsFromStore: MarkHandoffIteration(%lld) failed: %s",
                          static_cast<long long>(h.proposalId), markErr.c_str());
                 break;
@@ -124,19 +131,19 @@ namespace {
 // failures LOG_WARN and the in-memory state remains the source of truth
 // for the rest of the session.
 void PersistWatchRowBestEffort(AgentProposalStore* store, std::int64_t proposalId, const std::string& prUrl,
-                               std::int64_t cursorSec, int iterationCount) {
+                               std::int64_t cursorSec, const std::string& cursorIdStr, int iterationCount) {
     if (!store) {
         return;
     }
     AgentProposalStore::PrWatchRow row;
     row.proposalId = proposalId;
     row.prUrl = prUrl;
-    // The watcher tracks comments by `createdAtSec` (unix-seconds), not by
-    // GitHub's `id`. We persist the cursor seconds as the id-string column
-    // so a future restart can re-derive the cursor without needing a second
-    // column; if a later wave switches to id-based dedup, this column
-    // becomes the canonical home for the id.
-    row.lastSeenCommentIdStr = std::to_string(cursorSec);
+    // (CR Bundle A6) The `lastSeenCommentIdStr` column is the canonical home
+    // for the backend-stable comment id at the cursor. The watcher's tuple
+    // compare uses `(cursorSec, id)`; persisting both lets a restarted session
+    // resume without dropping a same-second comment. Empty cursorIdStr is
+    // valid (first-poll case) — the column stores an empty string then.
+    row.lastSeenCommentIdStr = cursorIdStr;
     row.iterationCount = iterationCount;
     row.lastPolledAtSec = cursorSec;
     std::string err;
@@ -305,15 +312,32 @@ int PrCommentWatcher::Tick() {
                      static_cast<long long>(h.proposalId));
             continue;
         }
-        // Find the first non-bot comment newer than the cursor. GitHub returns
-        // oldest-first; we honour that ordering so a queue of multiple
-        // user comments produces one respawn per tick (the next tick picks
-        // up the next).
-        const std::int64_t baseline = h.prCommentCursorSec;
+        // (CR Bundle A6) Sort by `(createdAtSec, id)` so multiple comments
+        // sharing the same `createdAtSec` are processed in a deterministic
+        // backend-stable order. GitHub returns oldest-first but does not
+        // guarantee a secondary key when the second-granularity timestamp
+        // collides; sorting here removes the ambiguity. A copy is cheap —
+        // PR comment threads are short.
+        std::stable_sort(comments.begin(), comments.end(), [](const PostedComment& a, const PostedComment& b) {
+            if (a.createdAtSec != b.createdAtSec) {
+                return a.createdAtSec < b.createdAtSec;
+            }
+            return a.id < b.id;
+        });
+        // (CR Bundle A6) Find the first non-bot comment whose
+        // `(createdAtSec, id)` tuple is strictly greater than the cursor's
+        // `(prCommentCursorSec, prCommentCursorIdStr)` tuple. The prior
+        // single-key `createdAtSec <= baseline` test dropped same-second
+        // comments authored by different users on rapid review.
+        const std::int64_t baselineSec = h.prCommentCursorSec;
+        const std::string& baselineId = h.prCommentCursorIdStr;
         std::string body;
         std::int64_t bodyTs = 0;
+        std::string bodyId;
         for (const auto& c : comments) {
-            if (c.createdAtSec <= baseline) {
+            const bool tupleGreater = (c.createdAtSec > baselineSec) ||
+                                      (c.createdAtSec == baselineSec && c.id > baselineId);
+            if (!tupleGreater) {
                 continue;
             }
             if (AgenticHandoffController::IsHandoffBotComment(c.body)) {
@@ -321,6 +345,7 @@ int PrCommentWatcher::Tick() {
             }
             body = c.body;
             bodyTs = c.createdAtSec;
+            bodyId = c.id;
             break;
         }
         if (body.empty()) {
@@ -330,7 +355,7 @@ int PrCommentWatcher::Tick() {
         // dispatcher that takes longer than the poll interval) cannot pick
         // up the same comment.
         std::string markErr;
-        if (!controller_->MarkHandoffIteration(h.proposalId, bodyTs, markErr)) {
+        if (!controller_->MarkHandoffIteration(h.proposalId, bodyTs, bodyId, markErr)) {
             LOG_WARN("PrCommentWatcher::Tick: MarkHandoffIteration failed (%s) for proposalId=%lld — skipping",
                      markErr.c_str(), static_cast<long long>(h.proposalId));
             continue;
@@ -338,7 +363,7 @@ int PrCommentWatcher::Tick() {
         // H10 — persist the post-Mark in-memory state to agent_pr_watch.
         // After MarkHandoffIteration the in-memory iterationCount is
         // (h.iterationCount + 1); we mirror that to the row.
-        PersistWatchRowBestEffort(store_, h.proposalId, h.prUrl, bodyTs, h.iterationCount + 1);
+        PersistWatchRowBestEffort(store_, h.proposalId, h.prUrl, bodyTs, bodyId, h.iterationCount + 1);
         if (!dispatcher_) {
             if (!dispatcherWarnLatched_.exchange(true)) {
                 LOG_INFO("PrCommentWatcher::Tick: respawn dispatcher not wired — recording iteration but cannot "

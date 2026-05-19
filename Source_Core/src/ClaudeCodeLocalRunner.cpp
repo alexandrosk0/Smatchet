@@ -172,29 +172,53 @@ BuildAllowListEnv(const std::vector<std::pair<std::string, std::string>>& forced
     return out;
 }
 
-// Pull STUB_CLAUDE_MODE and any STUB_TEST_* extra keys out of the parent
-// env. The runner has no business propagating arbitrary STUB_*, but the
-// test layer needs a way to control stub modes without poisoning the env
-// allow-list. We carve a narrow exception: `STUB_CLAUDE_MODE` carries the
-// mode selector; other keys do not survive.
+// Pull STUB_CLAUDE_MODE and the narrow set of STUB_* keys the test layer
+// uses to drive stub_claude / stub_git / stub_gh out of the parent env.
+// The runner has no business propagating arbitrary STUB_*, but the test
+// layer needs a way to control stub modes without poisoning the env
+// allow-list. Carved exceptions: STUB_CLAUDE_MODE drives the main harness
+// stub; STUB_GIT_MODE / STUB_GH_MODE / STUB_GH_URL drive the helper-
+// subprocess stubs invoked via RunQuick / RunQuickInDir (H6 fallback).
 //
-// Production callers pass an empty parent and never see this branch.
+// Production callers do not have these set and the function returns
+// empty for them — no production env leakage.
 std::vector<std::pair<std::string, std::string>> CollectTestModePassthrough() {
     std::vector<std::pair<std::string, std::string>> out;
-    std::string v;
-    if (TryReadParentEnv("STUB_CLAUDE_MODE", v)) {
-        out.emplace_back("STUB_CLAUDE_MODE", v);
+    static const char* const kStubKeys[] = {"STUB_CLAUDE_MODE", "STUB_GIT_MODE", "STUB_GH_MODE", "STUB_GH_URL",
+                                            nullptr};
+    for (size_t i = 0; kStubKeys[i] != nullptr; ++i) {
+        std::string v;
+        if (TryReadParentEnv(kStubKeys[i], v)) {
+            out.emplace_back(std::string(kStubKeys[i]), std::move(v));
+        }
     }
     return out;
 }
 
+// Apply the env allow-list (decision #7) to a CaptureOptions before Run.
+// Sourced from kAllowedEnvKeys + the STUB_CLAUDE_MODE narrow exception used
+// by the test layer. Setting replaceParentEnv=true ensures the child sees
+// ONLY the allow-listed keys — without this, helper subprocesses (Probe,
+// `git worktree add`, fallback `gh pr create`) inherited the full parent
+// env and could carry SMATCHET_*/secret entries past the security
+// boundary the Spawn() path enforces.
+void ApplyAllowListEnv(SubprocessCapture::CaptureOptions& opts) {
+    std::vector<std::pair<std::string, std::string>> forced = CollectTestModePassthrough();
+    opts.env = BuildAllowListEnv(forced);
+    opts.replaceParentEnv = true;
+}
+
 // Run a quick command via SubprocessCapture; return true on exitCode 0.
+// Applies the env allow-list — helper subprocesses (Probe, git worktree
+// add, the gh pr create fallback) MUST get the same env shape Spawn()
+// gives the main harness, otherwise the security boundary leaks.
 bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, int timeoutMs, std::string& outStderr,
               std::string& outStdout) {
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = argv0;
     opts.args = args;
     opts.timeoutMs = timeoutMs;
+    ApplyAllowListEnv(opts);
     SubprocessCapture::CaptureResult res;
     std::string err;
     if (!SubprocessCapture::Run(opts, res, err)) {
@@ -208,7 +232,8 @@ bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, in
 
 // Same as RunQuick but pins cwd to a specific directory. The fallback path
 // pushes from the worktree dir (so `git` picks up the right remote / branch
-// context) and creates the PR against the same worktree.
+// context) and creates the PR against the same worktree. Shares the same
+// env allow-list as RunQuick.
 bool RunQuickInDir(const std::string& argv0, const std::vector<std::string>& args, const std::string& cwd,
                    int timeoutMs, std::string& outStderr, std::string& outStdout, int& outExitCode) {
     SubprocessCapture::CaptureOptions opts;
@@ -216,6 +241,7 @@ bool RunQuickInDir(const std::string& argv0, const std::vector<std::string>& arg
     opts.args = args;
     opts.cwd = cwd;
     opts.timeoutMs = timeoutMs;
+    ApplyAllowListEnv(opts);
     SubprocessCapture::CaptureResult res;
     std::string err;
     outExitCode = -1;
