@@ -834,6 +834,28 @@ bool AgenticHandoffController::MarkHandoffIteration(std::int64_t proposalId, std
     return true;
 }
 
+bool AgenticHandoffController::MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec,
+                                                    const std::string& newCursorIdStr, std::string& outError) {
+    // (CR Bundle A6) Tuple-cursor variant — advances the pair so that two
+    // comments sharing `createdAtSec` are no longer collapsed.
+    std::lock_guard<std::mutex> lk(handoffsMu_);
+    auto it = handoffs_.find(proposalId);
+    if (it == handoffs_.end()) {
+        outError = "Unknown proposalId.";
+        return false;
+    }
+    const std::int64_t curSec = it->second.prCommentCursorSec;
+    const std::string& curId = it->second.prCommentCursorIdStr;
+    const bool advance =
+        (newCursorSec > curSec) || (newCursorSec == curSec && newCursorIdStr > curId);
+    if (advance) {
+        it->second.prCommentCursorSec = newCursorSec;
+        it->second.prCommentCursorIdStr = newCursorIdStr;
+    }
+    ++it->second.iterationCount;
+    return true;
+}
+
 bool AgenticHandoffController::MarkHandoffBudgetExhausted(std::int64_t proposalId, int iterationBudget,
                                                           std::string& outError) {
     // Lookup + idempotency flip under the mutex, then drop the lock before

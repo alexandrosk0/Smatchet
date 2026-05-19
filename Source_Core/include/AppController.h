@@ -1150,6 +1150,14 @@ class AppController
     // from the init lambda to every concurrent caller without the second one silently
     // believing init succeeded.
     std::once_flag agenticTriageControllerOnce_;
+    // (CR Bundle A5) The handoff controller's H5 GitHub-comment seams and the
+    // H7 PR-comment watcher both depend on `agenticGithubClient_`. Previously
+    // the client was constructed only inside `GetAgenticTriageController` — so
+    // handoff-only sessions (no triage poll) left the seams permanently
+    // unwired. Share construction via a dedicated once_flag so the first
+    // caller (triage or handoff) materialises the client and the other path
+    // reuses it.
+    std::once_flag agenticGithubClientOnce_;
     std::unique_ptr<GitHubClient> agenticGithubClient_;
     std::unique_ptr<AgenticInferenceClient> agenticInferenceClient_;
     std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;
@@ -1208,6 +1216,13 @@ class AppController
     // `agentProposalStoreReady_`. Called from `LaunchBackgroundTask` so the
     // tens-to-hundreds-ms init never lands on the UI thread.
     void InitAgentProposalStoreOnWorker(const std::string& dbPath);
+
+    // (CR Bundle A5) Lazy-construct `agenticGithubClient_` from the current
+    // TrackerConfig PAT. Idempotent — call once-flagged so concurrent first-
+    // callers (handoff lambdas + triage controller construction) share one
+    // GitHubClient instance. Returns nullptr when the PAT is empty (the
+    // configure-PAT degraded path callers already handle).
+    GitHubClient* EnsureAgenticGithubClient();
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)

@@ -150,6 +150,17 @@ class AgenticHandoffController {
         // timestamp so the marker comment Smatchet posts (if any) is not
         // mistaken for a user reply.
         std::int64_t prCommentCursorSec = 0;
+        // (CR Bundle A6) Secondary cursor — backend-stable comment id of
+        // the most recent observed comment at `prCommentCursorSec`. Used
+        // to break ties when two comments share the same `createdAtSec`
+        // (GitHub second-granularity timestamps make this a real case
+        // under rapid review). A comment is "new" iff
+        // `(createdAtSec, id) > (cursorSec, cursorIdStr)` under lexicographic
+        // tuple comparison. The id-string column already exists on the
+        // persisted `agent_pr_watch` row from H10; this is the in-memory
+        // mirror so an unrestarted session does not drop a same-second
+        // comment.
+        std::string prCommentCursorIdStr;
         // Iteration count grows on every dispatched respawn. The watcher
         // refuses to dispatch once this hits the configured iteration
         // budget; a final "budget exhausted" comment is posted and the
@@ -323,6 +334,15 @@ class AgenticHandoffController {
     /// by the watcher after dispatching a respawn. Returns false if the
     /// handoff id is unknown (already cleaned up).
     bool MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec, std::string& outError);
+
+    /// (CR Bundle A6) Tuple-cursor overload — advances the `(cursorSec, cursorIdStr)`
+    /// pair atomically so two comments sharing `createdAtSec` are not
+    /// collapsed by the second-granularity cursor. The pair only advances
+    /// when `(newCursorSec, newCursorIdStr) > (prev pair)` under lexicographic
+    /// comparison. Iteration count bumps unconditionally — that mirrors the
+    /// "we acted on a non-bot comment" semantic of the original overload.
+    bool MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec, const std::string& newCursorIdStr,
+                              std::string& outError);
 
     /// Flip the budget-exhausted flag + transition the handoff to Failed
     /// with the canonical error message. Idempotent: subsequent calls on

@@ -7,16 +7,27 @@
 
 namespace {
 
-// Helper for inspecting the null-separated env block. Returns the
-// sequence of KEY=VALUE entries split on '\0' (excluding the final
-// double-null terminator).
-std::vector<std::string> SplitEnvBlock(const std::string& block) {
+// (CR Bundle A1) BuildEnvBlockWindows returns std::wstring (UTF-16) since
+// `CreateProcessW` consumes a wide env block under CREATE_UNICODE_ENVIRONMENT.
+// Split on wide null sentinels and narrow each entry back to UTF-8 for the
+// assertions. The narrowing is safe for the ASCII test cases below; the
+// Unicode round-trip case asserts on the wide form directly.
+std::vector<std::string> SplitEnvBlock(const std::wstring& block) {
     std::vector<std::string> out;
     size_t start = 0;
     for (size_t i = 0; i < block.size(); ++i) {
-        if (block[i] == '\0') {
+        if (block[i] == L'\0') {
             if (i > start) {
-                out.push_back(block.substr(start, i - start));
+                std::string entry;
+                entry.reserve(i - start);
+                for (size_t j = start; j < i; ++j) {
+                    // Narrow ASCII-safe — wide chars in [0, 127] map 1:1 to UTF-8.
+                    // Non-ASCII content is asserted at the wide-string level
+                    // (see the Ångström round-trip below) so this helper is
+                    // only used for ASCII keys/values.
+                    entry.push_back(static_cast<char>(block[j] & 0xFF));
+                }
+                out.push_back(std::move(entry));
             }
             start = i + 1;
         }
@@ -94,24 +105,24 @@ TEST_SUITE("SubprocessCapturePure::QuoteArgvPosix") {
 TEST_SUITE("SubprocessCapturePure::BuildEnvBlockWindows") {
 
     TEST_CASE("empty env produces double-null terminator only") {
-        const std::string block = SubprocessCapturePure::BuildEnvBlockWindows({});
+        const std::wstring block = SubprocessCapturePure::BuildEnvBlockWindows({});
         CHECK(block.size() == 2);
-        CHECK(block[0] == '\0');
-        CHECK(block[1] == '\0');
+        CHECK(block[0] == L'\0');
+        CHECK(block[1] == L'\0');
     }
 
     TEST_CASE("single var produces KEY=VALUE\\0\\0") {
         std::vector<std::pair<std::string, std::string>> env;
         env.push_back(std::make_pair("FOO", "bar"));
-        const std::string block = SubprocessCapturePure::BuildEnvBlockWindows(env);
+        const std::wstring block = SubprocessCapturePure::BuildEnvBlockWindows(env);
         const auto entries = SplitEnvBlock(block);
         REQUIRE(entries.size() == 1);
         CHECK(entries[0] == "FOO=bar");
-        // Final byte must be the second null of the double-null
+        // Final wide-char must be the second null of the double-null
         // terminator.
         REQUIRE(block.size() >= 2);
-        CHECK(block[block.size() - 1] == '\0');
-        CHECK(block[block.size() - 2] == '\0');
+        CHECK(block[block.size() - 1] == L'\0');
+        CHECK(block[block.size() - 2] == L'\0');
     }
 
     TEST_CASE("multiple vars preserve insertion order") {
@@ -119,12 +130,42 @@ TEST_SUITE("SubprocessCapturePure::BuildEnvBlockWindows") {
         env.push_back(std::make_pair("PATH", "/usr/bin"));
         env.push_back(std::make_pair("LANG", "en_US.UTF-8"));
         env.push_back(std::make_pair("EMPTY", ""));
-        const std::string block = SubprocessCapturePure::BuildEnvBlockWindows(env);
+        const std::wstring block = SubprocessCapturePure::BuildEnvBlockWindows(env);
         const auto entries = SplitEnvBlock(block);
         REQUIRE(entries.size() == 3);
         CHECK(entries[0] == "PATH=/usr/bin");
         CHECK(entries[1] == "LANG=en_US.UTF-8");
         CHECK(entries[2] == "EMPTY=");
+    }
+
+    TEST_CASE("UTF-8 value round-trips to UTF-16 (CR Bundle A1)") {
+        // The CodeRabbit critical was: BuildEnvBlockWindows returned 8-bit
+        // bytes and CreateProcessW (without CREATE_UNICODE_ENVIRONMENT)
+        // interpreted them as ANSI, corrupting non-ASCII bytes. The fix
+        // returns UTF-16; this case asserts the conversion is byte-perfect
+        // for a non-ASCII value containing the å (U+00E5) and ö (U+00F6)
+        // code points that ANSI cp1252 would have round-tripped but cp437
+        // / shift-jis hosts would have corrupted.
+        std::vector<std::pair<std::string, std::string>> env;
+        // "KEY=Ångström" — UTF-8: K E Y = 0xC3 0x85 n g s t r 0xC3 0xB6 m
+        env.push_back(std::make_pair("KEY", "\xC3\x85ngstr\xC3\xB6m"));
+        const std::wstring block = SubprocessCapturePure::BuildEnvBlockWindows(env);
+        // Expected wide form: 'K','E','Y','=', U+00C5, 'n','g','s','t','r', U+00F6, 'm'
+        REQUIRE(block.size() >= 14);
+        CHECK(block[0] == L'K');
+        CHECK(block[1] == L'E');
+        CHECK(block[2] == L'Y');
+        CHECK(block[3] == L'=');
+        CHECK(block[4] == static_cast<wchar_t>(0x00C5));
+        CHECK(block[5] == L'n');
+        CHECK(block[6] == L'g');
+        CHECK(block[7] == L's');
+        CHECK(block[8] == L't');
+        CHECK(block[9] == L'r');
+        CHECK(block[10] == static_cast<wchar_t>(0x00F6));
+        CHECK(block[11] == L'm');
+        CHECK(block[12] == L'\0'); // entry terminator
+        CHECK(block[13] == L'\0'); // block terminator
     }
 }
 

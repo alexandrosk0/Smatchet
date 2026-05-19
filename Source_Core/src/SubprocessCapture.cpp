@@ -167,7 +167,12 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     // replaceParentEnv=false → merge supplied entries on top of the parent's
     // env (mimic POSIX additive `setenv` semantic so the H1 contract holds
     // cross-platform for P4Blame-style overrides).
-    std::string envBlock;
+    // UTF-16 env block — CREATE_UNICODE_ENVIRONMENT below tells CreateProcessW
+    // to read this as wide characters. The pure helper handles UTF-8 → UTF-16
+    // conversion so non-ASCII values (Unicode paths, locale-translated user
+    // dirs) round-trip cleanly. Without UTF-16, ANSI interpretation corrupts
+    // any byte > 0x7F.
+    std::wstring envBlock;
     LPVOID envPtr = nullptr;
     if (!opts.env.empty()) {
         std::vector<std::pair<std::string, std::string>> effectiveEnv = opts.env;
@@ -232,8 +237,13 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     PROCESS_INFORMATION pi{};
     std::vector<wchar_t> mutableCmd(cmdLine.begin(), cmdLine.end());
     mutableCmd.push_back(L'\0');
-    const BOOL ok = CreateProcessW(appName.c_str(), mutableCmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, envPtr,
-                                   cwdPtr, &si, &pi);
+    // CREATE_UNICODE_ENVIRONMENT — pairs with the UTF-16 env block built
+    // above (envPtr points at a wchar_t buffer). Without this flag,
+    // CreateProcessW interprets the buffer as ANSI and corrupts every
+    // non-ASCII byte in keys or values (Unicode paths, locale-translated
+    // user-dirs, GH_TOKEN containing high-bit bytes, etc).
+    const BOOL ok = CreateProcessW(appName.c_str(), mutableCmd.data(), nullptr, nullptr, TRUE,
+                                   CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, envPtr, cwdPtr, &si, &pi);
     CloseHandle(wrOut);
     CloseHandle(wrErr);
     if (!ok) {
@@ -362,25 +372,42 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
 #else // !_WIN32
 
 bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outError) {
-    int pipeFds[2] = {-1, -1};
-    if (pipe(pipeFds) != 0) {
-        outError = std::string("pipe() failed: ") + std::strerror(errno);
-        LOG_ERROR("SubprocessCapture: pipe() failed errno=%d %s", errno, std::strerror(errno));
+    // Two separate pipes so stdout and stderr stay distinct on POSIX —
+    // mirrors the Windows path. Collapsing both onto one pipe (the prior
+    // shape) left out.stderrText permanently empty and made it impossible
+    // for callers to distinguish error output from data output (matters
+    // for `gh pr create`-style stderr-on-failure flows).
+    int pipeOutFds[2] = {-1, -1};
+    int pipeErrFds[2] = {-1, -1};
+    if (pipe(pipeOutFds) != 0) {
+        outError = std::string("pipe(stdout) failed: ") + std::strerror(errno);
+        LOG_ERROR("SubprocessCapture: pipe(stdout) failed errno=%d %s", errno, std::strerror(errno));
+        return false;
+    }
+    if (pipe(pipeErrFds) != 0) {
+        outError = std::string("pipe(stderr) failed: ") + std::strerror(errno);
+        LOG_ERROR("SubprocessCapture: pipe(stderr) failed errno=%d %s", errno, std::strerror(errno));
+        close(pipeOutFds[0]);
+        close(pipeOutFds[1]);
         return false;
     }
     const pid_t child = fork();
     if (child < 0) {
         outError = std::string("fork() failed: ") + std::strerror(errno);
         LOG_ERROR("SubprocessCapture: fork() failed errno=%d %s", errno, std::strerror(errno));
-        close(pipeFds[0]);
-        close(pipeFds[1]);
+        close(pipeOutFds[0]);
+        close(pipeOutFds[1]);
+        close(pipeErrFds[0]);
+        close(pipeErrFds[1]);
         return false;
     }
     if (child == 0) {
-        dup2(pipeFds[1], STDOUT_FILENO);
-        dup2(pipeFds[1], STDERR_FILENO);
-        close(pipeFds[0]);
-        close(pipeFds[1]);
+        dup2(pipeOutFds[1], STDOUT_FILENO);
+        dup2(pipeErrFds[1], STDERR_FILENO);
+        close(pipeOutFds[0]);
+        close(pipeOutFds[1]);
+        close(pipeErrFds[0]);
+        close(pipeErrFds[1]);
         if (!opts.cwd.empty()) {
             if (chdir(opts.cwd.c_str()) != 0) {
                 _exit(126);
@@ -426,21 +453,41 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
         _exit(127);
     }
 
-    close(pipeFds[1]);
-    const int oldFlags = fcntl(pipeFds[0], F_GETFL, 0);
-    if (oldFlags >= 0) {
-        fcntl(pipeFds[0], F_SETFL, oldFlags | O_NONBLOCK);
+    close(pipeOutFds[1]);
+    close(pipeErrFds[1]);
+    {
+        const int oldOut = fcntl(pipeOutFds[0], F_GETFL, 0);
+        if (oldOut >= 0) {
+            fcntl(pipeOutFds[0], F_SETFL, oldOut | O_NONBLOCK);
+        }
+        const int oldErr = fcntl(pipeErrFds[0], F_GETFL, 0);
+        if (oldErr >= 0) {
+            fcntl(pipeErrFds[0], F_SETFL, oldErr | O_NONBLOCK);
+        }
     }
 
     const auto startTp = std::chrono::steady_clock::now();
     bool timedOut = false;
     bool cancelled = false;
     char buf[4096];
-    // Line-dispatcher accumulator for opts.onStdoutLine (POSIX merges stdout
-    // + stderr into one pipe; ClaudeCodeLocalRunner runs Windows-first today
-    // but the line semantics stay identical so cross-platform consumers see
-    // one shape).
+    // Line-dispatcher accumulator for opts.onStdoutLine — only stdout
+    // dispatches lines; stderr stays buffered. Mirrors the Windows path
+    // contract: cross-platform consumers see one shape.
     std::string stdoutLinePending;
+    auto drainFd = [&buf, &out, &opts, &stdoutLinePending](int fd, std::string& dst, size_t cap, bool& capped,
+                                                           bool isStdout) {
+        for (;;) {
+            const ssize_t n = read(fd, buf, sizeof(buf));
+            if (n <= 0) {
+                // EAGAIN / EWOULDBLOCK / EOF — caller decides loop continuation.
+                return;
+            }
+            AppendCapped(dst, buf, static_cast<size_t>(n), cap, capped);
+            if (isStdout) {
+                DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
+            }
+        }
+    };
     for (;;) {
         int childStatus = 0;
         const pid_t waitRes = waitpid(child, &childStatus, WNOHANG);
@@ -457,16 +504,19 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
 
         fd_set readSet;
         FD_ZERO(&readSet);
-        FD_SET(pipeFds[0], &readSet);
+        FD_SET(pipeOutFds[0], &readSet);
+        FD_SET(pipeErrFds[0], &readSet);
+        const int nfds = (pipeOutFds[0] > pipeErrFds[0] ? pipeOutFds[0] : pipeErrFds[0]) + 1;
         timeval timeout{};
         timeout.tv_sec = 0;
         timeout.tv_usec = 200000;
-        const int sel = select(pipeFds[0] + 1, &readSet, nullptr, nullptr, &timeout);
-        if (sel > 0 && FD_ISSET(pipeFds[0], &readSet)) {
-            const ssize_t n = read(pipeFds[0], buf, sizeof(buf));
-            if (n > 0) {
-                AppendCapped(out.stdoutText, buf, static_cast<size_t>(n), opts.stdoutByteCap, out.stdoutCapped);
-                DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
+        const int sel = select(nfds, &readSet, nullptr, nullptr, &timeout);
+        if (sel > 0) {
+            if (FD_ISSET(pipeOutFds[0], &readSet)) {
+                drainFd(pipeOutFds[0], out.stdoutText, opts.stdoutByteCap, out.stdoutCapped, true);
+            }
+            if (FD_ISSET(pipeErrFds[0], &readSet)) {
+                drainFd(pipeErrFds[0], out.stderrText, opts.stderrByteCap, out.stderrCapped, false);
             }
         }
 
@@ -499,17 +549,15 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
         }
     }
 
-    for (;;) {
-        const ssize_t n = read(pipeFds[0], buf, sizeof(buf));
-        if (n <= 0) {
-            break;
-        }
-        AppendCapped(out.stdoutText, buf, static_cast<size_t>(n), opts.stdoutByteCap, out.stdoutCapped);
-        DispatchLines(buf, static_cast<size_t>(n), stdoutLinePending, opts.onStdoutLine);
-    }
+    // Post-exit drain — read any bytes the child wrote between the last
+    // select wake and termination. Both pipes are non-blocking so each
+    // call returns once drained.
+    drainFd(pipeOutFds[0], out.stdoutText, opts.stdoutByteCap, out.stdoutCapped, true);
+    drainFd(pipeErrFds[0], out.stderrText, opts.stderrByteCap, out.stderrCapped, false);
     FlushLinesEof(stdoutLinePending, opts.onStdoutLine);
 
-    close(pipeFds[0]);
+    close(pipeOutFds[0]);
+    close(pipeErrFds[0]);
     out.timedOut = timedOut;
     out.cancelled = cancelled;
     const auto endTp = std::chrono::steady_clock::now();

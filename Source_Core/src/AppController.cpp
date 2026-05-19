@@ -1611,6 +1611,27 @@ AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
 }
 
 #if defined(SMATCHET_WITH_AGENTIC)
+GitHubClient* AppController::EnsureAgenticGithubClient() {
+    // Lazy + once-flagged construction shared between the triage and handoff
+    // paths. Without this, a handoff-only session (PAT configured but triage
+    // poll disabled) never constructed the client and the H5 / H7 lambdas
+    // silently returned "configure PAT" errors even when the PAT was set.
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.GitHubPat.empty()) {
+        // Degraded — caller surfaces a "configure GitHub PAT" message.
+        return nullptr;
+    }
+    try {
+        std::call_once(agenticGithubClientOnce_, [this, &cfg]() {
+            agenticGithubClient_ = std::make_unique<GitHubClient>(std::string(), cfg.GitHubPat);
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::EnsureAgenticGithubClient: lazy init failed: %s", ex.what());
+        return nullptr;
+    }
+    return agenticGithubClient_.get();
+}
+
 void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
     // Worker-thread entry: opens the SQLite store, runs migrations, then publishes
     // the unique_ptr under the mutex and flips the ready atom. The unique_ptr is
@@ -1633,6 +1654,64 @@ void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
     }
     agentProposalStoreReady_.store(true, std::memory_order_release);
     LOG_INFO("AppController: AgentProposalStore init complete (path=%s)", dbPath.c_str());
+
+    // (CR Bundle A4) Wire the H9 OnProposalApproved auto-start callback NOW —
+    // at store-construction time — rather than inside the lazy
+    // GetAgenticHandoffController() block. The auto-start path must fire even
+    // if the user never opens the handoff panel or runs a handoff CLI before
+    // approving an ImplementIssue proposal; previously the wiring lived
+    // inside the lazy getter so HandoffAutoStartOnApprove was effectively a
+    // no-op for cold-start sessions. The callback re-reads cfg on every
+    // invocation so a Preferences flip takes effect without restart.
+    agentProposalStore_->SetOnProposalApproved(
+        [this](std::int64_t proposalId, AgenticInferenceClientPure::ProposedAction action) {
+            if (action != AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
+                // Other actions don't auto-handoff — the H4 controller
+                // only governs ImplementIssue runs. Pure triage writes
+                // (CommentAdd / LabelAdd / etc) stay in the store.
+                return;
+            }
+            const TrackerConfig callbackCfg = ConfigManager::Load();
+            if (!callbackCfg.HandoffAutoStartOnApprove) {
+                LOG_INFO("AppController: OnProposalApproved auto-start skipped (cfg disabled) "
+                         "proposalId=%lld",
+                         static_cast<long long>(proposalId));
+                return;
+            }
+            LOG_INFO("AppController: OnProposalApproved auto-starting handoff proposalId=%lld",
+                     static_cast<long long>(proposalId));
+            // Emit the auto-start audit entry BEFORE the dispatch so the row
+            // is in BackendAuditTrail even if Start() fails synchronously.
+            // Carries trigger=approval-callback so future audit-trail
+            // queries can distinguish auto- vs button-driven starts.
+            BackendAuditTrail::AuditEvent autoEv;
+            autoEv.Action = "HandoffAutoStarted";
+            autoEv.Source = "agentic";
+            autoEv.IssueKey = "";
+            autoEv.OperationId = BackendAuditTrail::MakeOperationId("handoff");
+            autoEv.Success = true;
+            autoEv.Phase = "begin";
+            autoEv.Data = nlohmann::json::object();
+            autoEv.Data["proposalId"] = static_cast<long long>(proposalId);
+            autoEv.Data["trigger"] = "approval-callback";
+            BackendAuditTrail::AppendEvent(autoEv);
+            this->LaunchBackgroundTask([this, proposalId]() {
+                auto* ctrl = this->GetAgenticHandoffController();
+                if (ctrl == nullptr) {
+                    LOG_WARN("AppController: OnProposalApproved auto-start "
+                             "could not resolve handoff controller proposalId=%lld",
+                             static_cast<long long>(proposalId));
+                    return;
+                }
+                smatchet::agentic::AgenticHandoffController::ActiveHandoff out;
+                std::string err;
+                if (!ctrl->Start(proposalId, out, err)) {
+                    LOG_WARN("AppController: OnProposalApproved auto-start failed "
+                             "proposalId=%lld: %s",
+                             static_cast<long long>(proposalId), err.c_str());
+                }
+            });
+        });
 }
 #endif
 
@@ -1696,13 +1775,14 @@ smatchet::agentic::AgenticTriageController* AppController::GetAgenticTriageContr
         // Degraded mode — caller surfaces a "configure GitHub PAT" message.
         return nullptr;
     }
+    // (CR Bundle A5) Ensure the GitHub client is constructed via the shared
+    // once-flagged path so a later handoff-only path observes the same client
+    // instance.
+    if (EnsureAgenticGithubClient() == nullptr) {
+        return nullptr;
+    }
     try {
-        std::call_once(agenticTriageControllerOnce_, [this, &cfg]() {
-            // GitHub base URL is hard-defaulted by GitHubClient when the
-            // argument is empty; the validator inside the ctor falls back to
-            // the canonical host if a future GitHub Enterprise base URL fails
-            // its sanity check (no separate cfg.GitHubBaseUrl today).
-            agenticGithubClient_ = std::make_unique<GitHubClient>(std::string(), cfg.GitHubPat);
+        std::call_once(agenticTriageControllerOnce_, [this]() {
             agenticInferenceClient_ = std::make_unique<AgenticInferenceClient>();
             agenticGithubReadAdapter_ =
                 std::unique_ptr<smatchet::agentic::IGitHubReadClient>(new GitHubReadAdapter(*agenticGithubClient_));
@@ -1785,21 +1865,27 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // restart.
             smatchet::agentic::GitHubCommentPoster poster = [this](const std::string& issueKey, const std::string& body,
                                                                    std::string& outError) -> bool {
-                if (!agenticGithubClient_) {
+                // (CR Bundle A5) EnsureAgenticGithubClient is once-flagged so a
+                // handoff-only session — where GetAgenticTriageController is
+                // never invoked — still constructs the client on the first
+                // lambda call once the operator configures the PAT.
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
                     outError = "GitHubClient not constructed (configure PAT)";
                     return false;
                 }
-                return agenticGithubClient_->CommentAdd(issueKey, body, outError);
+                return client->CommentAdd(issueKey, body, outError);
             };
             smatchet::agentic::GitHubCommentFetcher fetcher =
                 [this](const std::string& issueKey, std::vector<smatchet::agentic::PostedComment>& outComments,
                        std::string& outError) -> bool {
-                if (!agenticGithubClient_) {
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
                     outError = "GitHubClient not constructed (configure PAT)";
                     return false;
                 }
                 std::vector<TrackerIssueComment> raw;
-                if (!agenticGithubClient_->FetchIssueComments(issueKey, raw, outError)) {
+                if (!client->FetchIssueComments(issueKey, raw, outError)) {
                     return false;
                 }
                 outComments.clear();
@@ -1831,8 +1917,7 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // the handoff controller; tick is invoked from the scheduled-poll
             // worker (`AgenticPollWorkerLoop`) after PollClarificationAnswers.
             agenticPrCommentWatcher_ = std::unique_ptr<smatchet::agentic::PrCommentWatcher>(
-                new smatchet::agentic::PrCommentWatcher(agenticHandoffController_.get(),
-                                                        cfg.HandoffPrIterationBudget));
+                new smatchet::agentic::PrCommentWatcher(agenticHandoffController_.get(), cfg.HandoffPrIterationBudget));
             // Fetcher binds to `GitHubClient::FetchPrComments` (delegates to
             // FetchIssueComments since PRs share the issue-comments endpoint).
             // Mirrors the H5 clarification-fetcher shape — capture `this`
@@ -1841,12 +1926,13 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             smatchet::agentic::PrCommentFetcher prFetcher =
                 [this](const std::string& prKey, std::vector<smatchet::agentic::PostedComment>& outComments,
                        std::string& outError) -> bool {
-                if (!agenticGithubClient_) {
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
                     outError = "GitHubClient not constructed (configure PAT)";
                     return false;
                 }
                 std::vector<TrackerIssueComment> raw;
-                if (!agenticGithubClient_->FetchPrComments(prKey, raw, outError)) {
+                if (!client->FetchPrComments(prKey, raw, outError)) {
                     return false;
                 }
                 outComments.clear();
@@ -1865,11 +1951,12 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // poster — PRs are issues from GitHub's REST API perspective).
             smatchet::agentic::PrCommentPoster prPoster = [this](const std::string& prKey, const std::string& body,
                                                                  std::string& outError) -> bool {
-                if (!agenticGithubClient_) {
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
                     outError = "GitHubClient not constructed (configure PAT)";
                     return false;
                 }
-                return agenticGithubClient_->CommentAdd(prKey, body, outError);
+                return client->CommentAdd(prKey, body, outError);
             };
             // Respawn dispatcher — H7 captures the comment body but does
             // not yet drive a full re-run of `Start`. The full respawn
@@ -1898,76 +1985,13 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             agenticPrCommentWatcher_->SetPrCommentPoster(std::move(prPoster));
             agenticPrCommentWatcher_->SetRespawnDispatcher(std::move(prDispatcher));
 
-            // (H9) Cross-flow wiring: when the proposals panel approves an
-            // ImplementIssue row, the store fires OnProposalApproved. This
-            // callback filters to ImplementIssue (defense in depth — the
-            // [Start handoff] button also filters), checks the
-            // `HandoffAutoStartOnApprove` cfg, and dispatches Start() via the
-            // worker pool. Manual mode (cfg false, the shipped default per
-            // plan-locked decision #5) returns early and lets the user click
-            // [Start handoff] from the panel instead.
-            //
-            // The cfg is re-read INSIDE the callback (not captured) so a
-            // Preferences flip takes effect on the next approval without
-            // restart. Capturing `this` keeps the dispatch tied to AppController
-            // lifetime; the store is owned by AppController so it cannot
-            // outlive the callback.
-            agentProposalStore_->SetOnProposalApproved(
-                [this](std::int64_t proposalId,
-                       AgenticInferenceClientPure::ProposedAction action) {
-                    if (action != AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
-                        // Other actions don't auto-handoff — the H4 controller
-                        // only governs ImplementIssue runs. Pure triage writes
-                        // (CommentAdd / LabelAdd / etc) stay in the store.
-                        return;
-                    }
-                    const TrackerConfig callbackCfg = ConfigManager::Load();
-                    if (!callbackCfg.HandoffAutoStartOnApprove) {
-                        // Manual mode — user clicks [Start handoff] from the
-                        // proposals panel instead. The panel's path emits a
-                        // distinct audit entry (HandoffStarted with
-                        // trigger=user-button) so future debug can tell the
-                        // two paths apart.
-                        LOG_INFO("AppController: OnProposalApproved auto-start skipped (cfg disabled) "
-                                 "proposalId=%lld",
-                                 static_cast<long long>(proposalId));
-                        return;
-                    }
-                    LOG_INFO("AppController: OnProposalApproved auto-starting handoff proposalId=%lld",
-                             static_cast<long long>(proposalId));
-                    // Emit the auto-start audit entry BEFORE the dispatch so
-                    // the row is in BackendAuditTrail even if Start() fails
-                    // synchronously. Carries trigger=approval-callback so
-                    // future audit-trail queries can distinguish auto- vs
-                    // button-driven starts.
-                    BackendAuditTrail::AuditEvent autoEv;
-                    autoEv.Action = "HandoffAutoStarted";
-                    autoEv.Source = "agentic";
-                    autoEv.IssueKey = "";
-                    autoEv.OperationId = BackendAuditTrail::MakeOperationId("handoff");
-                    autoEv.Success = true;
-                    autoEv.Phase = "begin";
-                    autoEv.Data = nlohmann::json::object();
-                    autoEv.Data["proposalId"] = static_cast<long long>(proposalId);
-                    autoEv.Data["trigger"] = "approval-callback";
-                    BackendAuditTrail::AppendEvent(autoEv);
-                    this->LaunchBackgroundTask([this, proposalId]() {
-                        auto* ctrl = this->GetAgenticHandoffController();
-                        if (ctrl == nullptr) {
-                            LOG_WARN("AppController: OnProposalApproved auto-start "
-                                     "could not resolve handoff controller proposalId=%lld",
-                                     static_cast<long long>(proposalId));
-                            return;
-                        }
-                        smatchet::agentic::AgenticHandoffController::ActiveHandoff out;
-                        std::string err;
-                        if (!ctrl->Start(proposalId, out, err)) {
-                            LOG_WARN("AppController: OnProposalApproved auto-start failed "
-                                     "proposalId=%lld: %s",
-                                     static_cast<long long>(proposalId), err.c_str());
-                        }
-                    });
-                });
+            // (CR Bundle A4) The H9 OnProposalApproved auto-start callback is
+            // now wired in `InitAgentProposalStoreOnWorker` — at store-
+            // construction time, not inside this lazy getter — so the auto-
+            // start path fires for cold-start sessions where the user
+            // approves an ImplementIssue without first opening the handoff
+            // panel / CLI. See InitAgentProposalStoreOnWorker for the
+            // callback body.
         });
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::GetAgenticHandoffController: lazy init failed: %s", ex.what());
