@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -145,6 +146,88 @@ void SetEnvPortable(const char* name, const char* value) {
 #endif
 }
 
+// Capture prior env value before overwrite. `outExists` is set to true when
+// the variable had any value (including the empty string) prior to the call;
+// otherwise false (meaning "unset"). The two states are distinguished so the
+// dtor can restore "unset" rather than collapsing to "" — which mattered for
+// the SMATCHET_SECRET assertion (a literal empty-string SMATCHET_SECRET= still
+// substring-matches the snapshot check).
+bool GetEnvPortable(const char* name, std::string& out) {
+#if defined(_WIN32)
+    char buf[32 * 1024];
+    DWORD got = GetEnvironmentVariableA(name, buf, static_cast<DWORD>(sizeof(buf)));
+    if (got == 0) {
+        // ERROR_ENVVAR_NOT_FOUND when the variable doesn't exist; treat any
+        // zero-return as "absent" — a truly-empty variable on Windows is
+        // indistinguishable from absent via the Win32 API.
+        out.clear();
+        return false;
+    }
+    out.assign(buf, got);
+    return true;
+#else
+    const char* v = std::getenv(name);
+    if (!v) { out.clear(); return false; }
+    out.assign(v);
+    return true;
+#endif
+}
+
+void UnsetEnvPortable(const char* name) {
+#if defined(_WIN32)
+    SetEnvironmentVariableA(name, nullptr);
+    std::string kv = std::string(name) + "=";
+    _putenv(kv.c_str());
+#else
+    unsetenv(name);
+#endif
+}
+
+// RAII helper: set an env var for the duration of a scope, restore the prior
+// value (or absence) on destruction. Replaces hand-rolled set/clear pairs in
+// each TEST_CASE — DOCTEST's REQUIRE-abort skips the cleanup line, leaving
+// the test process polluted for the next case otherwise.
+class ScopedEnvOverride {
+public:
+    ScopedEnvOverride(const char* name, const char* value)
+        : name_(name) {
+        priorExisted_ = GetEnvPortable(name, priorValue_);
+        SetEnvPortable(name, value ? value : "");
+    }
+    ~ScopedEnvOverride() {
+        if (priorExisted_) {
+            SetEnvPortable(name_.c_str(), priorValue_.c_str());
+        } else {
+            UnsetEnvPortable(name_.c_str());
+        }
+    }
+    ScopedEnvOverride(const ScopedEnvOverride&) = delete;
+    ScopedEnvOverride& operator=(const ScopedEnvOverride&) = delete;
+private:
+    std::string name_;
+    std::string priorValue_;
+    bool priorExisted_ = false;
+};
+
+// Thread-safe sink for state-callback strings. The runner invokes onState
+// from its poll/runner threads, but the test thread reads the collected
+// vector during REQUIRE/CHECK. Without synchronisation that read/write pair
+// is a data race that a TSan build flags immediately.
+class StateSink {
+public:
+    void Append(const std::string& s) {
+        std::lock_guard<std::mutex> g(mu_);
+        states_.push_back(s);
+    }
+    std::vector<std::string> Snapshot() const {
+        std::lock_guard<std::mutex> g(mu_);
+        return states_;
+    }
+private:
+    mutable std::mutex mu_;
+    std::vector<std::string> states_;
+};
+
 CodingHarness::Seed MakeFixtureSeed(const std::string& worktreeDir) {
     CodingHarness::Seed s;
     s.proposalId = 42;
@@ -193,7 +276,7 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         const std::string dir = MakeTempDir("happy");
         REQUIRE_FALSE(dir.empty());
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "happy");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "happy");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -206,8 +289,8 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         auto onDelta = [&deltaCount](const CodingHarness::StreamEvent&) {
             deltaCount.fetch_add(1);
         };
-        std::vector<std::string> states;
-        auto onState = [&states](const std::string& s) { states.push_back(s); };
+        StateSink stateSink;
+        auto onState = [&stateSink](const std::string& s) { stateSink.Append(s); };
         auto cancel = std::make_shared<std::atomic<bool>>(false);
 
         CodingHarness::RunResult out;
@@ -224,14 +307,13 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         REQUIRE(ReadFileText(dir + "/SEED.json", seedJsonBody));
         CHECK(seedJsonBody.find("\"proposalId\"") != std::string::npos);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("Spawn error path surfaces ok=false") {
         const std::string dir = MakeTempDir("err");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "error");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "error");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -247,14 +329,13 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(ok);
         CHECK_FALSE(out.ok);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("Spawn clarification path fires AwaitingUser + Resume completes") {
         const std::string dir = MakeTempDir("clar");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "clarification");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "clarification");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -283,14 +364,13 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK(sawAwaiting.load());
         CHECK(out.ok);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("Spawn cancel mid-run returns cancelled") {
         const std::string dir = MakeTempDir("cancel");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "sleep");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "sleep");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -313,7 +393,6 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(out.ok);
         CHECK(out.errorMessage.find("cancel") != std::string::npos);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);
     }
 
@@ -328,10 +407,10 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
     TEST_CASE("H6 fallback path: gh pr create succeeds + prUrl carries through") {
         const std::string dir = MakeTempDir("h6ok");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
-        SetEnvPortable("STUB_GIT_MODE", "default");
-        SetEnvPortable("STUB_GH_MODE", "default");
-        SetEnvPortable("STUB_GH_URL", "https://github.com/owner/repo/pull/123");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "no-pr");
+        ScopedEnvOverride stubGit("STUB_GIT_MODE", "default");
+        ScopedEnvOverride stubGh("STUB_GH_MODE", "default");
+        ScopedEnvOverride stubGhUrl("STUB_GH_URL", "https://github.com/owner/repo/pull/123");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -344,8 +423,8 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CodingHarness::ClaudeCodeLocalRunner r(opts);
 
         const auto seed = MakeFixtureSeed(dir);
-        std::vector<std::string> states;
-        auto onState = [&states](const std::string& s) { states.push_back(s); };
+        StateSink stateSink;
+        auto onState = [&stateSink](const std::string& s) { stateSink.Append(s); };
         auto cancel = std::make_shared<std::atomic<bool>>(false);
         CodingHarness::RunResult out;
         std::string err;
@@ -363,6 +442,7 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         // State callback should have emitted "PrOpen" before "Complete".
         bool sawPrOpen = false;
         bool sawCompleteAfterPrOpen = false;
+        const std::vector<std::string> states = stateSink.Snapshot();
         for (const auto& s : states) {
             if (s == "PrOpen") sawPrOpen = true;
             if (s == "Complete" && sawPrOpen) sawCompleteAfterPrOpen = true;
@@ -370,19 +450,15 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK(sawPrOpen);
         CHECK(sawCompleteAfterPrOpen);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
-        SetEnvPortable("STUB_GIT_MODE", "");
-        SetEnvPortable("STUB_GH_MODE", "");
-        SetEnvPortable("STUB_GH_URL", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("H6 fallback path: gh pr create failure surfaces ok=false") {
         const std::string dir = MakeTempDir("h6gherr");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
-        SetEnvPortable("STUB_GIT_MODE", "default");
-        SetEnvPortable("STUB_GH_MODE", "create-fail");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "no-pr");
+        ScopedEnvOverride stubGit("STUB_GIT_MODE", "default");
+        ScopedEnvOverride stubGh("STUB_GH_MODE", "create-fail");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -402,18 +478,15 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(out.ok);
         CHECK(out.errorMessage.find("gh pr create") != std::string::npos);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
-        SetEnvPortable("STUB_GIT_MODE", "");
-        SetEnvPortable("STUB_GH_MODE", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("H6 fallback path: git push failure surfaces ok=false") {
         const std::string dir = MakeTempDir("h6pusherr");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
-        SetEnvPortable("STUB_GIT_MODE", "push-fail");
-        SetEnvPortable("STUB_GH_MODE", "default");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "no-pr");
+        ScopedEnvOverride stubGit("STUB_GIT_MODE", "push-fail");
+        ScopedEnvOverride stubGh("STUB_GH_MODE", "default");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -433,18 +506,15 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(out.ok);
         CHECK(out.errorMessage.find("git push") != std::string::npos);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
-        SetEnvPortable("STUB_GIT_MODE", "");
-        SetEnvPortable("STUB_GH_MODE", "");
         RmTreeBestEffort(dir);
     }
 
     TEST_CASE("H6 fallback path: bad-URL output rejected") {
         const std::string dir = MakeTempDir("h6badurl");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
-        SetEnvPortable("STUB_GIT_MODE", "default");
-        SetEnvPortable("STUB_GH_MODE", "bad-url");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "no-pr");
+        ScopedEnvOverride stubGit("STUB_GIT_MODE", "default");
+        ScopedEnvOverride stubGh("STUB_GH_MODE", "bad-url");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -464,9 +534,6 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK_FALSE(out.ok);
         CHECK(out.errorMessage.find("non-PR URL") != std::string::npos);
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
-        SetEnvPortable("STUB_GIT_MODE", "");
-        SetEnvPortable("STUB_GH_MODE", "");
         RmTreeBestEffort(dir);
     }
 
@@ -476,7 +543,7 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         // outcome (the operator opted out of implicit PR creation).
         const std::string dir = MakeTempDir("h6off");
         REQUIRE_FALSE(dir.empty());
-        SetEnvPortable("STUB_CLAUDE_MODE", "no-pr");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "no-pr");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -498,7 +565,6 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK(out.ok);
         CHECK(out.prUrl.empty());
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
         RmTreeBestEffort(dir);
     }
 
@@ -511,9 +577,9 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         const std::string dir = MakeTempDir("envchk");
         REQUIRE_FALSE(dir.empty());
 
-        SetEnvPortable("STUB_CLAUDE_MODE", "happy");
-        SetEnvPortable("SMATCHET_SECRET", "leak-me-not");
-        SetEnvPortable("GH_TOKEN", "test-gh-token-allowed");
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "happy");
+        ScopedEnvOverride secret("SMATCHET_SECRET", "leak-me-not");
+        ScopedEnvOverride ghTok("GH_TOKEN", "test-gh-token-allowed");
 
         CodingHarness::ClaudeCodeLocalRunner::Options opts;
         opts.binPath = StubClaudePath();
@@ -542,10 +608,6 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         // (so tests can select stub modes) — sanity-check it arrived.
         CHECK(snap.find("STUB_CLAUDE_MODE=happy") != std::string::npos);
 
-        // Cleanup
-        SetEnvPortable("STUB_CLAUDE_MODE", "");
-        SetEnvPortable("SMATCHET_SECRET", "");
-        SetEnvPortable("GH_TOKEN", "");
         RmTreeBestEffort(dir);
     }
 }

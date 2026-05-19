@@ -46,45 +46,99 @@ fi
 
 LIST_OUT=$("$EXE" cmd commands.list --spawn 2>&1 || true)
 
+# Decide once whether jq is available; the grep fallbacks are whitespace-
+# tolerant so they survive `--pretty` JSON output (newlines/indent between
+# the key and the value).
+HAVE_JQ=0
+if command -v jq >/dev/null 2>&1; then
+    HAVE_JQ=1
+fi
+
+# Whitespace-tolerant match for `"name":"<cmd>"`. Used when jq is absent.
+contains_command_name() {
+    local payload="$1"
+    local name="$2"
+    # Match: "name"[whitespace]:[whitespace]"<name>" — JSON literal escapes
+    # for the name itself, but command names like agent.triage.run are
+    # ASCII-only so no further escaping is needed.
+    local pat='"name"[[:space:]]*:[[:space:]]*"'"$name"'"'
+    echo "$payload" | grep -qE "$pat"
+}
+
 # AGENTIC=OFF gates every handoff.* command to a stub that always fails.
-if ! echo "$LIST_OUT" | grep -q '"name":"agent\.triage\.run"' ; then
-    echo "[agentic-handoff-clarification] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF)"
-    exit 0
+if [ "$HAVE_JQ" -eq 1 ]; then
+    if ! echo "$LIST_OUT" | jq -e 'any(.data.commands[]?; .name == "agent.triage.run")' >/dev/null 2>&1; then
+        echo "[agentic-handoff-clarification] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF)"
+        exit 0
+    fi
+else
+    if ! contains_command_name "$LIST_OUT" 'agent.triage.run'; then
+        echo "[agentic-handoff-clarification] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF)"
+        exit 0
+    fi
 fi
 
 # H5 invariant — handoff.clarify must be present.
-if ! echo "$LIST_OUT" | grep -q '"name":"handoff\.clarify"' ; then
-    echo "[agentic-handoff-clarification] FAIL — handoff.clarify not registered"
-    echo "$LIST_OUT" | head -3
-    exit 1
+if [ "$HAVE_JQ" -eq 1 ]; then
+    if ! echo "$LIST_OUT" | jq -e 'any(.data.commands[]?; .name == "handoff.clarify")' >/dev/null 2>&1; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify not registered"
+        echo "$LIST_OUT" | head -3
+        exit 1
+    fi
+else
+    if ! contains_command_name "$LIST_OUT" 'handoff.clarify'; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify not registered"
+        echo "$LIST_OUT" | head -3
+        exit 1
+    fi
 fi
 
 # Verify handoff.clarify surfaces a friendly error path. The proposal id 99999
 # does not exist in the store, so the command must fail with a NON-empty error
 # text — but must NOT crash or return a malformed envelope.
 CLAR_OUT=$("$EXE" cmd handoff.clarify --proposal_id=99999 --answer=test_answer --spawn 2>&1 || true)
-if ! echo "$CLAR_OUT" | grep -q '"command":"handoff\.clarify"' ; then
-    echo "[agentic-handoff-clarification] FAIL — handoff.clarify envelope missing"
-    echo "$CLAR_OUT" | head -5
-    exit 1
-fi
-# The proposal doesn't exist → controller returns false with "no handoff for
-# proposalId" (or "AgenticHandoffController not available" when PAT not set).
-# Either error path is acceptable for the smoke — what matters is that the
-# CLI returned ok=false cleanly.
-if echo "$CLAR_OUT" | grep -q '"ok":true' ; then
-    echo "[agentic-handoff-clarification] FAIL — handoff.clarify should not have succeeded against a non-existent proposal"
-    echo "$CLAR_OUT" | head -5
-    exit 1
+if [ "$HAVE_JQ" -eq 1 ]; then
+    if ! echo "$CLAR_OUT" | jq -e '.command == "handoff.clarify"' >/dev/null 2>&1; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify envelope missing"
+        echo "$CLAR_OUT" | head -5
+        exit 1
+    fi
+    if echo "$CLAR_OUT" | jq -e '.ok == true' >/dev/null 2>&1; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify should not have succeeded against a non-existent proposal"
+        echo "$CLAR_OUT" | head -5
+        exit 1
+    fi
+else
+    if ! echo "$CLAR_OUT" | grep -qE '"command"[[:space:]]*:[[:space:]]*"handoff\.clarify"'; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify envelope missing"
+        echo "$CLAR_OUT" | head -5
+        exit 1
+    fi
+    # The proposal doesn't exist → controller returns false with "no handoff
+    # for proposalId" (or "AgenticHandoffController not available" when PAT
+    # not set). Either error path is acceptable — what matters is ok != true.
+    if echo "$CLAR_OUT" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true'; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.clarify should not have succeeded against a non-existent proposal"
+        echo "$CLAR_OUT" | head -5
+        exit 1
+    fi
 fi
 
 # Ping the dry-run path as a sanity check that the H5 extension didn't
 # regress the H3/H4 wiring.
 DRY_OUT=$("$EXE" cmd handoff.dry-run --proposal_id=99999 --use_stub_claude=true --spawn 2>&1 || true)
-if ! echo "$DRY_OUT" | grep -q '"ok":true' ; then
-    echo "[agentic-handoff-clarification] FAIL — handoff.dry-run regression"
-    echo "$DRY_OUT" | head -5
-    exit 1
+if [ "$HAVE_JQ" -eq 1 ]; then
+    if ! echo "$DRY_OUT" | jq -e '.ok == true' >/dev/null 2>&1; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.dry-run regression"
+        echo "$DRY_OUT" | head -5
+        exit 1
+    fi
+else
+    if ! echo "$DRY_OUT" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true'; then
+        echo "[agentic-handoff-clarification] FAIL — handoff.dry-run regression"
+        echo "$DRY_OUT" | head -5
+        exit 1
+    fi
 fi
 
 echo "[agentic-handoff-clarification] PASS — handoff.clarify registered + dry-run sanity ok"
