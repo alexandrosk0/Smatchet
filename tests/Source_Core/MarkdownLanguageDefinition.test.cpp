@@ -169,6 +169,37 @@ TEST_CASE("MarkdownChat LD prepends role-line regex before blockquote") {
     CHECK_FALSE(std::regex_search(std::string("> a normal quote"), firstRe));
 }
 
+TEST_CASE("Markdown LD same-token fence SetText round-trip smoke") {
+    // The fence open/close regression (closing ``` mis-detected as a new
+    // opener, leaving trailing content stuck inside the comment span) is
+    // a colorizer-state bug — ColorizeInternal runs only from Render(),
+    // which needs an ImGui context. The bucket-A surface we CAN cover here
+    // is SetText round-trip on the canonical 4-line "opener / body /
+    // closer / trailing prose" input that triggered the regression.
+    // Catching a colorizer-induced corruption of the source buffer (or a
+    // hang during SetText's mCheckComments scan) here is enough to flag
+    // bigger breakages; the visual fence-stuck-open symptom itself is
+    // validated under bucket E (ImGui Test Engine, deferred) or bucket B
+    // (manual smoke). See plan § Verification.
+    TextEditor ed;
+    ed.SetLanguageDefinition(LD::Markdown());
+    ed.SetColorizerEnable(true);
+    const std::string md = "```markdown\n"
+                           "# heading inside fence\n"
+                           "```\n"
+                           "trailing prose outside fence";
+    ed.SetText(md);
+    REQUIRE(ed.GetTotalLines() >= 4);
+    const std::string roundTripped = ed.GetText();
+    // TextEditor::GetText appends a trailing '\n' so compare on the prefix.
+    REQUIRE(roundTripped.size() >= md.size());
+    CHECK(roundTripped.compare(0, md.size(), md) == 0);
+    // Re-SetText with a fence-free document must succeed (proxy for
+    // "comment-span state machine is not corrupted").
+    ed.SetText("plain prose no fence");
+    CHECK(ed.GetTotalLines() == 1);
+}
+
 TEST_CASE("MarkdownChat LD inherits base Markdown regex set") {
     const LD& chat = LD::MarkdownChat();
     // The chat LD must include all base Markdown regexes (heading, list,

@@ -2035,12 +2035,31 @@ void TextEditor::ColorizeInternal() {
                         auto& startStr = mLanguageDefinition.mCommentStart;
                         auto& singleStartStr = mLanguageDefinition.mSingleLineComment;
 
+                        // Smatchet — added for markdown LD: compute "currently in
+                        // multi-line comment" BEFORE the start-token scan so the
+                        // same-token-delimiter guard below can read it. For all
+                        // built-in LDs (start != end) this is a pure no-op — the
+                        // gate `_smatchetSameTokenDelim` short-circuits to false.
+                        const bool _smatchetInCommentNow =
+                            (commentStartLine < currentLine ||
+                             (commentStartLine == currentLine && commentStartIndex <= currentIndex));
+                        const bool _smatchetSameTokenDelimStart =
+                            (!mLanguageDefinition.mCommentStart.empty() &&
+                             mLanguageDefinition.mCommentStart == mLanguageDefinition.mCommentEnd);
+                        // Smatchet — end
                         if (singleStartStr.size() > 0 && currentIndex + singleStartStr.size() <= line.size() &&
                             equals(singleStartStr.begin(), singleStartStr.end(), from, from + singleStartStr.size(),
                                    pred)) {
                             withinSingleLineComment = true;
                         } else if (!withinSingleLineComment && currentIndex + startStr.size() <= line.size() &&
-                                   equals(startStr.begin(), startStr.end(), from, from + startStr.size(), pred)) {
+                                   equals(startStr.begin(), startStr.end(), from, from + startStr.size(), pred) &&
+                                   // Smatchet — added for markdown LD: for same-token
+                                   // delimiters (open == close, e.g. ``` markdown
+                                   // fences), do NOT treat a match as a new opener
+                                   // while we're already inside a comment span — the
+                                   // bytes are the close fence. The end-string scan
+                                   // below handles the actual close.
+                                   !(_smatchetSameTokenDelimStart && _smatchetInCommentNow)) {
                             commentStartLine = currentLine;
                             commentStartIndex = currentIndex;
                         }
