@@ -102,6 +102,34 @@ class DictationInsertionRouter : public IDictationHost {
     /// callback was registered (e.g. AI panel never opened this session).
     void TriggerAiAssistantSend();
 
+    /// Reflects whether a transcription worker is currently in flight (i.e.
+    /// the user has released the hotkey, audio is queued, but text has not
+    /// yet been spliced). UI uses this to draw a "Transcribing..." indicator
+    /// next to the existing "REC" red text — closes the visual gap between
+    /// recording stop and text insertion (multiple seconds for local-model
+    /// inference). Backed by `std::atomic<bool>` so workers can flip it
+    /// without taking the entries mutex.
+    bool IsTranscribing() const;
+
+    /// Set/clear the transcription-in-flight flag. Producer is the
+    /// WhisperPlugin release worker (sets true on dispatch, false on
+    /// post-back); consumer is the UI thread polling for the indicator.
+    void SetTranscribing(bool active);
+
+    /// Test-and-clear an ImGui item id that needs its `ImGuiInputTextState`
+    /// reloaded from `buf` on the next frame. Set by
+    /// `InsertIntoFocusedInputText` whenever a splice lands while the target
+    /// widget is currently the active ImGui item — ImGui caches the buffer
+    /// contents in `state->TextA` and ignores the external `buf` unless
+    /// `state->WantReloadUserBuf` is true (see imgui_widgets.cpp:4821), so a
+    /// splice into a focused InputText would otherwise be silently overwritten
+    /// when InputText runs later in the same frame. The AI Assistant draw
+    /// (and any other caller hosting a focused InputText splice target) drains
+    /// this on every frame and, when non-zero, calls
+    /// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()` BEFORE the
+    /// InputText call. Returns 0 when no reload is pending.
+    unsigned int ConsumePendingReloadItemId();
+
   private:
     struct Entry {
         char* Buf = nullptr;
@@ -117,6 +145,20 @@ class DictationInsertionRouter : public IDictationHost {
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
 
+    // "Sticky shadow" of the most-recently-focused widget. The wrapper hook
+    // in SmatchetLocalizedImGui calls UnregisterInputText every frame the
+    // widget is blurred — that's correct for the per-frame entries_ vector
+    // but causes silent text-drop when a multi-second transcription pipeline
+    // finishes AFTER the wrapper has already blurred the widget. The shadow
+    // mirrors the last register so InsertIntoFocusedInputText can fall back
+    // to it when entries_ is empty / activeId no longer matches. Cleared
+    // only when the shadow's buf is the one being explicitly unregistered
+    // (panel-close paths) so dangling-pointer aliasing is impossible.
+    char* shadowBuf_ = nullptr;
+    std::size_t shadowCap_ = 0;
+    int* shadowCursor_ = nullptr;
+    unsigned int shadowItemId_ = 0;
+
     // Phase F — AI Assistant identification + auto-send hook. The router stores
     // the AI Assistant's char-buffer pointer separately from the generic
     // entries list; equality on the buf pointer is the cheap "is the focused
@@ -126,7 +168,18 @@ class DictationInsertionRouter : public IDictationHost {
 
     // Set/read across threads — no mutex round-trip on the UI poll path.
     std::atomic<bool> recording_{false};
+    std::atomic<bool> transcribing_{false};
     std::atomic<float> lastPeakAmplitude_{0.0f};
+
+    // Set by `InsertIntoFocusedInputText` when a splice lands into a buf whose
+    // owning widget is currently active in ImGui (the typical Whisper-dictation
+    // path — the AI Assistant chat input is focused while the user holds the
+    // hotkey). Drained by `ConsumePendingReloadItemId` on the UI thread the
+    // following frame so the InputText draw can call
+    // `ReloadUserBufAndMoveToEnd()` and pick up the splice. Atomic so the
+    // splice path (which already holds entries mutex_) can set it without an
+    // additional lock; drain is single-reader on the UI thread.
+    std::atomic<unsigned int> pendingReloadItemId_{0u};
 };
 
 /// Process-wide router instance. Defined exactly once — in

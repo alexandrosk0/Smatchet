@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiAssistantController.h"
+#include "AiAssistantInputSeedDecision.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
@@ -16,6 +17,16 @@
 #include "SpreadsheetState.h"
 
 #include "imgui.h"
+// `imgui_internal.h` must be pulled BEFORE the `#define ImGui SmatchetLocalizedImGui`
+// macro below — same ordering as SmatchetUI_MainMenu.cpp. We need it for
+// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()`, which is the
+// only sanctioned way to force ImGui to re-read an externally-modified `buf`
+// on the next InputText call when the widget is currently active. Without
+// this reload, the Whisper dictation router splices text into `s_inputCharBuf`
+// while the chat input is focused, then `ImGui::InputTextMultiline` below
+// overwrites the splice with the stale internal `state->TextA`. See
+// imgui_widgets.cpp:4821 (init_reload_from_user_buf) for the upstream branch.
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -222,9 +233,17 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // Without this check, the char buffer kept the previous session's text
     // and Lua-supplied input on Phase E was silently lost.
     const std::size_t bufLen = std::strlen(s_inputCharBuf.data());
-    const bool divergedFromModel = (d.assistantInputBuf.size() != bufLen) ||
-                                   (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
-    if (!s_inputCharBufSeeded || divergedFromModel) {
+    const bool bytesDiffer = (d.assistantInputBuf.size() != bufLen) ||
+                             (std::memcmp(s_inputCharBuf.data(), d.assistantInputBuf.data(), bufLen) != 0);
+    // Direction-aware re-seed (see AiAssistantInputSeedDecision.h). The
+    // decision is factored into a pure helper so the unit test can pin every
+    // branch — the regression that motivated it was the Whisper dictation
+    // router splicing text directly into `s_inputCharBuf` between frames
+    // followed by the next frame unconditionally re-seeding from the still-
+    // stale model, silently clobbering the splice.
+    const bool willSeed = smatchet::ai::ShouldSeedAssistantInputFromModel(
+        s_inputCharBufSeeded, bufLen, d.assistantInputBuf.size(), bytesDiffer);
+    if (willSeed) {
         s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);
@@ -232,6 +251,33 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     }
 
     const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
+
+    // Splice-reload bridge for Whisper dictation. The router calls
+    // `InsertIntoFocusedInputText` from the MainThreadDispatcher drain at the
+    // top of the frame; when the splice target is the AI Assistant chat input
+    // AND that widget is currently the active ImGui item, ImGui's
+    // `InputTextMultiline` below would silently overwrite the freshly-spliced
+    // `s_inputCharBuf` with its stale internal `state->TextA` (see
+    // imgui_widgets.cpp:4821 — without `WantReloadUserBuf` the active widget
+    // ignores `buf`). The router records the target widget's item id; we
+    // drain it here and ask ImGui to re-read `s_inputCharBuf` on the next
+    // InputText call. `MoveToEnd` matches the post-splice cursor (`*Cursor`
+    // is set to `insertAt + copyLen` by the router) so the caret lands after
+    // the dictated text the user just spoke.
+    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
+    if (pendingReloadId != 0u) {
+        // `ImGui::GetInputTextState` resolves through the
+        // `#define ImGui SmatchetLocalizedImGui` macro + the
+        // `using namespace ::ImGui;` in that namespace, so the underlying
+        // call lands in the real `::ImGui::GetInputTextState`. Returns nullptr
+        // when no input-text widget has been active for `id` (e.g. the panel
+        // was just opened and the AI input has never received focus) — that's
+        // a no-op for us: a never-active widget has no internal state to
+        // overwrite the splice with.
+        if (ImGuiInputTextState* state = ImGui::GetInputTextState(pendingReloadId)) {
+            state->ReloadUserBufAndMoveToEnd();
+        }
+    }
 
     // Pillar 4 (aspirational keyboard-nav): Enter sends, Ctrl+Enter inserts newline.
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
@@ -289,7 +335,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // AI Assistant input AND ends with sentence-final punctuation. Defer the
     // dispatch by one frame (we observe the flag here, AFTER the InputText
     // call this frame, so the buffer mirror in `d.assistantInputBuf` is fresh).
-    if (s_pendingAutoSend.exchange(false, std::memory_order_acq_rel) && !sendDisabled) {
+    const bool pendingObserved = s_pendingAutoSend.exchange(false, std::memory_order_acq_rel);
+    if (pendingObserved && !sendDisabled) {
         dispatchSend();
         ImGui::SetKeyboardFocusHere(-1);
         submittedByKey = true;

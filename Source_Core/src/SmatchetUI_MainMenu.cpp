@@ -488,10 +488,20 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         // indicator must appear < 100 ms after hotkey press; the worker
         // flips the atomic immediately on onPress, and the next UI frame
         // picks it up.
-        if (g_dictationRouter.IsRecording()) {
-            const char* recLabel = SmatchetLocalization::T("whisper.statusBar.recording",
-                                                            "\xE2\x97\x8F REC");
-            const float labelW = ImGui::CalcTextSize(recLabel).x;
+        // REC indicator stays red while audio is being captured; switches to
+        // an amber "Transcribing" indicator once the user releases the hotkey
+        // and the worker is running. Closes the visual gap between mic stop
+        // and text insertion for the multi-second local-model path.
+        const bool isRec = g_dictationRouter.IsRecording();
+        const bool isTx = !isRec && g_dictationRouter.IsTranscribing();
+        if (isRec || isTx) {
+            const char* label = isRec
+                                    ? SmatchetLocalization::T("whisper.statusBar.recording",
+                                                              "\xE2\x97\x8F REC")
+                                    : SmatchetLocalization::T(
+                                          "whisper.statusBar.transcribing",
+                                          "\xE2\x97\x90 Transcribing...");
+            const float labelW = ImGui::CalcTextSize(label).x;
             constexpr float kRightMarginRec = 12.0f;
 #ifdef SMATCHET_EMBEDDED_IN_UNREAL
             constexpr float kReservedForCloseButton = 80.0f;
@@ -502,14 +512,22 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                                               ImGui::GetWindowContentRegionMax().x - labelW -
                                                   kRightMarginRec - kReservedForCloseButton);
             ImGui::SetCursorPosX(xPosRec);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextUnformatted(recLabel);
+            const ImVec4 col = isRec ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)   // red
+                                     : ImVec4(0.95f, 0.78f, 0.20f, 1.0f); // amber
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(label);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", SmatchetLocalization::T(
-                                            "whisper.statusBar.recordingTooltip",
-                                            "Recording for dictation — release hotkey to "
-                                            "transcribe; press Esc to cancel"));
+                const char* tip =
+                    isRec ? SmatchetLocalization::T(
+                                "whisper.statusBar.recordingTooltip",
+                                "Recording for dictation — release hotkey to "
+                                "transcribe; press Esc to cancel")
+                          : SmatchetLocalization::T(
+                                "whisper.statusBar.transcribingTooltip",
+                                "Transcribing captured audio — text will appear in the "
+                                "last-focused input field when done");
+                ImGui::SetTooltip("%s", tip);
             }
         }
 #endif

@@ -37,6 +37,10 @@ void DictationInsertionRouter::SetRecording(bool /*active*/) {
     // need no per-callsite SMATCHET_WITH_WHISPER guards on the setter.
 }
 
+bool DictationInsertionRouter::IsTranscribing() const { return false; }
+
+void DictationInsertionRouter::SetTranscribing(bool /*active*/) {}
+
 void DictationInsertionRouter::SetLastPeakAmplitude(float /*peak0to1*/) {}
 
 float DictationInsertionRouter::GetLastPeakAmplitude() const {
@@ -68,3 +72,8 @@ bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
 void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> /*cb*/) {}
 
 void DictationInsertionRouter::TriggerAiAssistantSend() {}
+
+unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
+    // No-op in stub mode — no live ImGui state to reload.
+    return 0u;
+}

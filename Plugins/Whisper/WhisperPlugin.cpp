@@ -776,6 +776,13 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
         AppController* app = state->app;
         WhisperPlugin::PhaseEState* localState = state;
+        // Mirror the production indicator wire-up — the menu-bar "REC" → amber
+        // "Transcribing..." switchover (SmatchetUI_MainMenu.cpp:492-499) keys
+        // off this flag pair. Without it, the mock seam couldn't exercise cell 4
+        // (Transcribing indicator) at all. Cleared inside the post-back on the
+        // UI thread so the splice and indicator-clear land in the same frame,
+        // matching the production semantics at WhisperPlugin.cpp:874-876.
+        g_dictationRouter.SetTranscribing(true);
         app->LaunchBackgroundTask([app, localState, mock]() {
             // Simulate the wall-clock delay a real round-trip would incur so
             // the scenario observes the same press → asynchronous-post → insert
@@ -791,6 +798,20 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
                 g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
                 LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription",
                           text.size());
+                // Mirror production auto-send-on-punctuation gate
+                // (WhisperPlugin.cpp:867-873) — required for scenario coverage
+                // of the AI Assistant hands-free chat round-trip. Config is
+                // re-read here so the scenario can flip the pref between
+                // press and release without restarting the plugin.
+                const TrackerConfig cfgPost = ConfigManager::Load();
+                const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
+                const bool endsPunct = EndsWithSentencePunctuation(text);
+                if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
+                    LOG_DEBUG("Whisper hotkey (mock): auto-send on punctuation triggered for AI "
+                              "Assistant");
+                    g_dictationRouter.TriggerAiAssistantSend();
+                }
+                g_dictationRouter.SetTranscribing(false);
             });
         });
         return;
@@ -828,6 +849,11 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     AppController* app = state->app;
     WhisperPlugin::PhaseEState* localState = state;
     std::vector<std::int16_t> pcmMove = std::move(pcm);
+    // Tell the UI that a transcription is now in flight — the menu-bar +
+    // overlay indicators flip from "REC" to "Transcribing..." until the
+    // post-back below clears it. Cleared in every exit path (success,
+    // failure, empty-text) so the indicator never gets stuck on.
+    g_dictationRouter.SetTranscribing(true);
     app->LaunchBackgroundTask([app, localState, pcmMove]() {
         std::string text;
         std::string err;
@@ -837,10 +863,12 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         localState->transcribeInFlight.store(false, std::memory_order_release);
         if (!ok) {
             LOG_WARN("Whisper hotkey: transcription failed: %s", err.c_str());
+            g_dictationRouter.SetTranscribing(false);
             return;
         }
         if (text.empty()) {
             LOG_INFO("Whisper hotkey: transcription returned empty string (silence?)");
+            g_dictationRouter.SetTranscribing(false);
             return;
         }
         // UI-thread hand-off — the router splices into the focused InputText.
@@ -858,12 +886,15 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
             LOG_DEBUG("Whisper hotkey: inserted %zu bytes of transcription", text.size());
             const TrackerConfig cfgPost = ConfigManager::Load();
-            if (cfgPost.WhisperAutoSendOnPunctuation &&
-                g_dictationRouter.IsFocusedTargetAiAssistant() &&
-                EndsWithSentencePunctuation(text)) {
+            const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
+            const bool endsPunct = EndsWithSentencePunctuation(text);
+            if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
                 LOG_DEBUG("Whisper hotkey: auto-send on punctuation triggered for AI Assistant");
                 g_dictationRouter.TriggerAiAssistantSend();
             }
+            // Indicator cleared here on the success path so the user sees
+            // the splice land + the indicator vanish in the same frame.
+            g_dictationRouter.SetTranscribing(false);
         });
     });
 }
@@ -1051,6 +1082,11 @@ void WhisperPlugin::OnStop() {
             phaseE_->capture.DrainCapturedPcm(drained);
         }
         g_dictationRouter.SetRecording(false);
+        // Clear the in-flight transcription indicator too. If a release worker
+        // is mid-pipeline when the plugin tears down (shutdown / hot-reload),
+        // its post-back will never run; the menu bar would otherwise stay on
+        // the amber "Transcribing..." label forever.
+        g_dictationRouter.SetTranscribing(false);
         phaseE_->app = nullptr;
     }
     if (g_whisperPluginInstance == this) {

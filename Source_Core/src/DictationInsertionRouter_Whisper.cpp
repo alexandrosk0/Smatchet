@@ -95,6 +95,14 @@ void DictationInsertionRouter::RegisterInputTextWithItemId(char* buf, std::size_
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    // Update the sticky shadow — survives the wrapper's blur-time
+    // unregister so a slow transcription post-back still has a target.
+    shadowBuf_ = buf;
+    shadowCap_ = cap;
+    shadowCursor_ = cursor;
+    if (itemId != 0) {
+        shadowItemId_ = itemId;
+    }
     // Update-in-place when re-registering an already-tracked buffer — common in
     // ImGui frames where the same widget re-asserts its registration each draw.
     for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -131,6 +139,20 @@ void DictationInsertionRouter::UnregisterInputText(char* buf) {
     // auto-send-on-punctuation flow to a non-AI-Assistant input.
     if (aiAssistantBuf_ == buf) {
         aiAssistantBuf_ = nullptr;
+    }
+    // Clear the sticky shadow too when its buf is the one being unregistered.
+    // Without this, closing the AI Assistant panel (which Unregister-s the chat
+    // input buffer) left `shadowBuf_` pointing at the now-detached buffer; a
+    // subsequent transcription with no other focused InputText would fall back
+    // to the shadow and silently splice into the closed panel's hidden buffer.
+    // The user-perceived bug was: "I dictated, the log says inserted N bytes,
+    // but I see nothing anywhere." See DictationInsertionRouter.test.cpp
+    // "shadow cleared when its buf is unregistered" for the regression gate.
+    if (shadowBuf_ == buf) {
+        shadowBuf_ = nullptr;
+        shadowCap_ = 0;
+        shadowCursor_ = nullptr;
+        shadowItemId_ = 0;
     }
     auto it = std::remove_if(entries_.begin(), entries_.end(),
                              [buf](const Entry& e) { return e.Buf == buf; });
@@ -205,6 +227,14 @@ void DictationInsertionRouter::SetRecording(bool active) {
     }
 }
 
+bool DictationInsertionRouter::IsTranscribing() const {
+    return transcribing_.load(std::memory_order_acquire);
+}
+
+void DictationInsertionRouter::SetTranscribing(bool active) {
+    transcribing_.store(active, std::memory_order_release);
+}
+
 void DictationInsertionRouter::SetLastPeakAmplitude(float peak0to1) {
     float clamped = peak0to1;
     if (clamped < 0.0f) clamped = 0.0f;
@@ -234,12 +264,6 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     // when no entry matches (legacy contract — headless test driver, scenario
     // runner, or pre-#246 callers passing activeId=0).
     std::lock_guard<std::mutex> lock(mutex_);
-    if (entries_.empty()) {
-        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target; "
-                  "dropping %zu bytes",
-                  text.size());
-        return;
-    }
     Entry* selected = nullptr;
     if (activeId != 0) {
         for (Entry& candidate : entries_) {
@@ -249,9 +273,40 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
             }
         }
     }
-    if (selected == nullptr) {
+    if (selected == nullptr && !entries_.empty()) {
         selected = &entries_.front();
     }
+    // Sticky-shadow fallback when entries_ is empty (wrapper-hook blur
+    // unregistered the widget between hotkey-release and transcription
+    // completion). Materialise into a local Entry so the splice math
+    // below works unchanged. See header for the dangling-pointer
+    // discussion — risk is bounded because every Smatchet dictation
+    // surface uses caller-static buffers.
+    Entry shadowEntry;
+    if (selected == nullptr && shadowBuf_ != nullptr && shadowCap_ > 0) {
+        shadowEntry.Buf = shadowBuf_;
+        shadowEntry.Cap = shadowCap_;
+        shadowEntry.Cursor = shadowCursor_;
+        shadowEntry.ItemId = shadowItemId_;
+        selected = &shadowEntry;
+        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: entries_ empty, "
+                  "using shadow target (buf=%p)", static_cast<const void*>(shadowEntry.Buf));
+    }
+    if (selected == nullptr) {
+        LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target "
+                  "and no shadow; dropping %zu bytes", text.size());
+        return;
+    }
+    // Boundary log — worker -> UI hand-off + which buffer was actually picked.
+    // This is the single most valuable diagnostic line for "I dictated but
+    // nothing landed in the field I expected": it confirms the splice target,
+    // the path taken (active-id match vs entries.front() vs shadow), and
+    // whether the AI Assistant chat input was the target. Kept permanent at
+    // LOG_DEBUG so verbose logs are opt-in but reachable without rebuilding.
+    LOG_DEBUG("DictationInsertionRouter: splice activeId=%u entries=%zu picked buf=%p itemId=%u "
+              "isAiAssistant=%d (%zu bytes)",
+              activeId, entries_.size(), static_cast<const void*>(selected->Buf),
+              selected->ItemId, selected->Buf == aiAssistantBuf_ ? 1 : 0, text.size());
     Entry& e = *selected;
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
@@ -285,6 +340,28 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     if (e.Cursor != nullptr) {
         *e.Cursor = static_cast<int>(insertAt + copyLen);
     }
+    // Signal the InputText draw site that ImGui's internal state buffer needs
+    // a reload from `e.Buf`. Without this, when the splice target is the
+    // currently-focused widget ImGui ignores `buf` and overwrites it with the
+    // stale internal `state->TextA` later in the same frame, silently erasing
+    // the splice. See header comment on `pendingReloadItemId_`. We prefer
+    // `e.ItemId` (the entries_ id, real ImGui id when the wrapper hook
+    // captured it). `shadowItemId_` is only used as fallback when we actually
+    // selected via the shadow path — otherwise a stale shadow id could trigger
+    // an erroneous reload on a different widget that just happens to share the
+    // entries_.front() slot with ItemId=0 (panel-level idempotent register).
+    // A zero result means no consumer-side reload is needed (test driver or
+    // scenario runner with no live ImGui frame).
+    const bool usedShadowTarget = (selected == &shadowEntry);
+    const unsigned int reloadId =
+        (e.ItemId != 0u) ? e.ItemId : (usedShadowTarget ? shadowItemId_ : 0u);
+    if (reloadId != 0u) {
+        pendingReloadItemId_.store(reloadId, std::memory_order_release);
+    }
+}
+
+unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
+    return pendingReloadItemId_.exchange(0u, std::memory_order_acq_rel);
 }
 
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {
@@ -307,9 +384,22 @@ bool DictationInsertionRouter::IsFocusedTargetAiAssistant() const {
     if (entries_.empty() || aiAssistantBuf_ == nullptr) {
         return false;
     }
-    // `InsertIntoFocusedInputText` uses entries_.front() as the splice target;
-    // mirror that pick here so callers see consistent answers.
-    return entries_.front().Buf == aiAssistantBuf_;
+    const Entry& front = entries_.front();
+    if (front.Buf != aiAssistantBuf_) {
+        return false;
+    }
+    // Require a non-zero ItemId on the front entry. The AI Assistant panel
+    // registers the chat-input buffer once per frame (panel-level call) with
+    // ItemId=0 to keep the sticky shadow up to date; the wrapper-level
+    // InputTextMultiline hook then either re-registers with the real ImGui
+    // item id (when actually focused) or unregisters the buffer (when blurred).
+    // So front.ItemId != 0 is the cheap, race-free way to say "the AI input
+    // was genuinely the focused widget at last-frame end", which is the only
+    // state in which the auto-send-on-punctuation flow should fire. Without
+    // this gate, the panel-level idempotent re-register on a frame where the
+    // wrapper-unregister had not yet run could let auto-send misfire and ship
+    // the dictated text to the model without the user intending a send.
+    return front.ItemId != 0u;
 }
 
 void DictationInsertionRouter::SetAiAssistantSendCallback(std::function<void()> cb) {

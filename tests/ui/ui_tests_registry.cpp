@@ -15,6 +15,9 @@ extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine);
 #endif
+#if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
+extern "C" void SmatchetRegisterWhisperAiAssistantAutosendTests(ImGuiTestEngine* engine);
+#endif
 #if defined(SMATCHET_WITH_AGENTIC)
 extern "C" void SmatchetRegisterAgentProposalsPanelTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAgentHandoffPanelTests(ImGuiTestEngine* engine);
@@ -28,6 +31,9 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
     SmatchetRegisterAiPrefsAutosaveFlowTests(engine);
+#endif
+#if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
+    SmatchetRegisterWhisperAiAssistantAutosendTests(engine);
 #endif
 #if defined(SMATCHET_WITH_AGENTIC)
     SmatchetRegisterAgentProposalsPanelTests(engine);
