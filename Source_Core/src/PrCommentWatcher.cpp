@@ -40,6 +40,38 @@ int ClampBudget(int budget) {
     return budget;
 }
 
+// Compare GitHub comment-id strings as numeric values when possible.
+// GitHub renders comment IDs as monotonically-increasing integers in string
+// form; lexicographic comparison mis-orders varying-length numeric strings
+// ("9" > "100" lexically). Falls back to lex compare when either side is
+// non-numeric (defensive — preserves ordering on synthetic test fixtures).
+bool CommentIdLessOrEqual(const std::string& a, const std::string& b) {
+    auto isAllDigits = [](const std::string& s) {
+        if (s.empty()) {
+            return false;
+        }
+        for (char ch : s) {
+            if (ch < '0' || ch > '9') {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (a.empty()) {
+        return true; // empty baseline → every comment is "newer"
+    }
+    if (b.empty()) {
+        return false;
+    }
+    if (isAllDigits(a) && isAllDigits(b)) {
+        if (a.size() != b.size()) {
+            return a.size() < b.size();
+        }
+        return a <= b; // same-length all-digit strings compare correctly lex
+    }
+    return a <= b;
+}
+
 } // namespace
 
 PrCommentWatcher::PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget, WatchMode mode)
@@ -332,10 +364,12 @@ int PrCommentWatcher::Tick() {
             // baseline id-string. The `agent_open_pr_watch` row carries only
             // the id-cursor today; comparing by id alone is consistent with
             // the registrar's seed (empty initial cursor advances to the
-            // first comment's id on the first poll).
+            // first comment's id on the first poll). Use the numeric-safe
+            // comparator — GitHub comment IDs are numeric strings and
+            // lexicographic comparison mis-orders varying-length values.
             const PostedComment* firstNewComment = nullptr;
             for (const auto& c : comments) {
-                if (c.id <= baselineId) {
+                if (CommentIdLessOrEqual(c.id, baselineId)) {
                     continue;
                 }
                 firstNewComment = &c;

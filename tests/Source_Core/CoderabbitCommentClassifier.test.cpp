@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -358,6 +359,32 @@ TEST_SUITE("CoderabbitCommentClassifier") {
         ClassificationResult r = cls.Classify(MakeComment(Suggestion("find_package(nlohmann_json CONFIG REQUIRED)")));
         CHECK(r.verdict == ClassifierVerdict::Dispatch);
     }
+    TEST_CASE("Rule #15 — mixed body: allowed + new disallowed dep rejected") {
+        // Per-occurrence evaluation — a body that paints an allowed
+        // find_package alongside a disallowed one must NOT short-circuit
+        // to allowed.
+        CoderabbitCommentClassifier cls;
+        ClassificationResult r = cls.Classify(MakeComment(
+            Suggestion("find_package(nlohmann_json CONFIG REQUIRED)\nfind_package(spdlog CONFIG REQUIRED)")));
+        CHECK(r.verdict == ClassifierVerdict::RejectShortCircuit);
+        CHECK(Contains(r.rejectRuleCitation, "override #15"));
+    }
+    TEST_CASE("Rule #8 — NEGATIVE: bare std::mutex declaration no longer false-triggers") {
+        // A `std::mutex` declaration inside an ImGui-frame body must not
+        // trip rule #8 — only lock-acquisition forms (`.lock(`, `lock_guard`,
+        // `unique_lock`) count as the blocking-call signal.
+        CoderabbitCommentClassifier cls;
+        ClassificationResult r = cls.Classify(
+            MakeComment(Suggestion("ImGui::Begin(\"Panel\");\nstd::mutex stateMtx;\nImGui::End();")));
+        CHECK(r.verdict == ClassifierVerdict::Dispatch);
+    }
+    TEST_CASE("Rule #8 — std::lock_guard inside ImGui::Begin frame rejected") {
+        CoderabbitCommentClassifier cls;
+        ClassificationResult r = cls.Classify(MakeComment(
+            Suggestion("ImGui::Begin(\"Panel\");\nstd::lock_guard<std::mutex> g(stateMtx);\nImGui::End();")));
+        CHECK(r.verdict == ClassifierVerdict::RejectShortCircuit);
+        CHECK(Contains(r.rejectRuleCitation, "override #8"));
+    }
 
     TEST_CASE("Rule #16 — drop const& pass by value rejected") {
         CoderabbitCommentClassifier cls;
@@ -552,26 +579,38 @@ TEST_SUITE("CoderabbitCommentClassifier") {
         }
 
         // Compare short-reason column to LookupOverrideShortReason — allow
-        // partial substring match in either direction so minor prose drift
+        // partial substring match in one direction so minor prose drift
         // (added qualifiers, punctuation differences) doesn't break CI.
+        // Strip markdown formatting (backticks) before comparing so the
+        // markdown source can keep `code-style` formatting while the C++
+        // short-reason carries the same prose without the fences.
+        auto stripFormatting = [](const std::string& s) {
+            std::string out;
+            out.reserve(s.size());
+            for (char c : s) {
+                if (c != '`') {
+                    out.push_back(c);
+                }
+            }
+            return out;
+        };
         for (std::size_t i = 0; i < tableRows.size(); ++i) {
             const int n = tableRows[i].first;
-            const std::string mdReason = AsciiLower(tableRows[i].second);
-            const std::string cppReason = AsciiLower(CoderabbitCommentClassifier::LookupOverrideShortReason(n));
+            const std::string mdReason = stripFormatting(AsciiLower(tableRows[i].second));
+            const std::string cppReason =
+                stripFormatting(AsciiLower(CoderabbitCommentClassifier::LookupOverrideShortReason(n)));
             REQUIRE_MESSAGE(!cppReason.empty(), ("C++ table missing rule #" + std::to_string(n)).c_str());
-            // Find a "key fragment" — first 6 words of the shorter string
-            // and check it appears in the longer one. Conservative — the
-            // canonical citation in our C++ short-reason should always
-            // overlap meaningfully with the markdown column.
-            std::string key = cppReason.size() < mdReason.size() ? cppReason : mdReason;
+            // Find a "key fragment" from the shorter string and check it
+            // appears in the OTHER side. The previous code derived the key
+            // from one side and searched the same side, making the check
+            // tautological — every non-empty key would trivially be found
+            // in its source string.
+            const bool cppShorter = cppReason.size() < mdReason.size();
+            const std::string& shorter = cppShorter ? cppReason : mdReason;
+            const std::string& longer = cppShorter ? mdReason : cppReason;
             // Trim to first ~24 chars to keep the fragment short.
-            if (key.size() > 24) {
-                key = key.substr(0, 24);
-            }
-            // Require either direction matches the fragment.
-            const bool mdHasFrag = mdReason.find(key) != std::string::npos;
-            const bool cppHasFrag = cppReason.find(key) != std::string::npos;
-            const bool anyMatch = mdHasFrag || cppHasFrag;
+            const std::string key = shorter.size() > 24 ? shorter.substr(0, 24) : shorter;
+            const bool anyMatch = longer.find(key) != std::string::npos;
             CHECK_MESSAGE(anyMatch, ("Rule #" + std::to_string(n) +
                                      " short-reason drift between markdown table and C++ classifier")
                                         .c_str());

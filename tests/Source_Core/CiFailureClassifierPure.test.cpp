@@ -169,6 +169,10 @@ TEST_SUITE("CiFailureClassifierPure") {
         CHECK_FALSE(MatchesCtestFailure(""));
         CHECK_FALSE(MatchesCtestFailure("100% tests passed"));
         CHECK_FALSE(MatchesCtestFailure("all green"));
+        // Generic Ninja compile-step failure must NOT classify as ctest.
+        CHECK_FALSE(MatchesCtestFailure("FAILED: Source_Core/CMakeFiles/SmatchetCore.dir/src/Foo.cpp.obj"));
+        // Generic Ninja link-step failure must NOT classify as ctest.
+        CHECK_FALSE(MatchesCtestFailure("FAILED: Source_Core/SmatchetCore.dll"));
     }
 
     TEST_CASE("MatchesSanitizerHit: positive cases") {
@@ -187,12 +191,20 @@ TEST_SUITE("CiFailureClassifierPure") {
     }
 
     TEST_CASE("MatchesTransientFlake: positive cases") {
-        CHECK(MatchesTransientFlake("Operation timed out after 60001 milliseconds"));
         CHECK(MatchesTransientFlake("Could not resolve host: mirror.msys2.org"));
         CHECK(MatchesTransientFlake("could not connect to host github.com:443"));
         CHECK(MatchesTransientFlake("Temporary failure resolving 'mirror.msys2.org'"));
         CHECK(MatchesTransientFlake("curl: (28) Operation timed out"));
         CHECK(MatchesTransientFlake("FetchContent: download failed for cpr; will retry"));
+    }
+
+    TEST_CASE("MatchesTransientFlake: bare 'Operation timed out' no longer triggers") {
+        // The phrase alone is emitted by ctest hangs, lock waits, and other
+        // non-network paths — re-running them masks real failures. Only the
+        // network-paired form (with `curl: (28)`) should be classified as
+        // a transient flake.
+        CHECK_FALSE(MatchesTransientFlake("Operation timed out after 60001 milliseconds"));
+        CHECK_FALSE(MatchesTransientFlake("ctest: Operation timed out waiting for test"));
     }
 
     TEST_CASE("MatchesTransientFlake: paired MSYS2 mirror + connection reset") {
