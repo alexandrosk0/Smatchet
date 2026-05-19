@@ -50,12 +50,7 @@ bool CommentIdLessOrEqual(const std::string& a, const std::string& b) {
         if (s.empty()) {
             return false;
         }
-        for (char ch : s) {
-            if (ch < '0' || ch > '9') {
-                return false;
-            }
-        }
-        return true;
+        return std::all_of(s.begin(), s.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
     };
     if (a.empty()) {
         return true; // empty baseline → every comment is "newer"
@@ -271,11 +266,9 @@ bool PrCommentWatcher::ParsePrKeyFromUrl(const std::string& prUrl, std::string& 
         outError = "PR URL number segment is empty.";
         return false;
     }
-    for (char c : nstr) {
-        if (c < '0' || c > '9') {
-            outError = "PR URL number segment is not numeric.";
-            return false;
-        }
+    if (!std::all_of(nstr.begin(), nstr.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        outError = "PR URL number segment is not numeric.";
+        return false;
     }
     outPrKey = segs[0] + "/" + segs[1] + "#" + nstr;
     return true;

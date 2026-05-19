@@ -381,6 +381,8 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `fde53c2` · phase 3: CoderabbitCommentClassifier concrete + 18-rule override table (PR #291)
 - `d2fbdf6` · phase 4: PrCommentWatcher WatchMode + classifier-registration + agent_open_pr_watch iteration (PR #292)
 - `74547b0` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (PR #293)
+- `0ec22fb` · CodeRabbit feedback cleanup on phases 1-5 (PR #294, 8 files / 216 LOC)
+- `<sha-of-this-phase-6-commit>` · phase 6: CiFailureClassifier concrete + PrCheckRunWatcher + AgenticHandoffController wiring + lint cleanup (this PR — orchestrator will sed post-merge)
 
 ## Deviations from plan
 

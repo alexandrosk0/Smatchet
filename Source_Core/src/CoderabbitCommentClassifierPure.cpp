@@ -55,7 +55,10 @@ char AsciiToLower(char c) {
 std::string AsciiLower(const std::string& s) {
     std::string out;
     out.reserve(s.size());
+    // Raw loop kept; std::transform with back_inserter + lambda binding
+    // AsciiToLower is less readable in C++14.
     for (char c : s) {
+        // cppcheck-suppress useStlAlgorithm
         out.push_back(AsciiToLower(c));
     }
     return out;
@@ -116,7 +119,7 @@ SeverityIcon ExtractSeverityIcon(const std::string& body) {
         SeverityIcon icon;
         std::size_t pos;
     };
-    IconFind finds[4] = {
+    const IconFind finds[4] = {
         {SeverityIcon::Actionable, body.find(kIconActionable)},
         {SeverityIcon::Caution, body.find(kIconCaution)},
         {SeverityIcon::Nit, body.find(kIconNit)},
@@ -231,7 +234,10 @@ bool IsBotLoginAllowed(const std::string& login, const std::vector<std::string>&
     // (e.g. `evil-coderabbitai` containing the configured `coderabbitai`).
     const std::string loginLower = AsciiLower(login);
     const std::string loginBase = StripBotSuffix(loginLower);
+    // cppcheck-suppress useStlAlgorithm
     for (const std::string& candidate : allowList) {
+        // Raw loop kept; std::any_of with a lambda doing the AsciiLower +
+        // StripBotSuffix + two-way comparison is less readable than this body.
         if (candidate.empty()) {
             continue;
         }

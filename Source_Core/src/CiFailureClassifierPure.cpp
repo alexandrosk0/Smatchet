@@ -12,6 +12,7 @@
 #include "CiFailureClassifierPure.h"
 
 #include <cstddef>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -69,7 +70,10 @@ CheckRunCategory MapCheckRunNameToCategory(const std::string& checkRunName) {
     if (checkRunName.empty()) {
         return CheckRunCategory::Unknown;
     }
+    // Raw loop kept; std::find_if over the C-array (kCheckRunNameTable)
+    // needs std::begin/end + a lambda, which is less readable than this body.
     for (const CheckRunNameRow& row : kCheckRunNameTable) {
+        // cppcheck-suppress useStlAlgorithm
         if (checkRunName == row.name) {
             return row.category;
         }
@@ -178,10 +182,9 @@ std::string ConcatenateAnnotations(const std::vector<std::string>& annotationMes
         return std::string();
     }
     // Reserve a sensible upper bound to dodge re-allocs in the common path.
-    std::size_t reserve = 0;
-    for (const std::string& msg : annotationMessages) {
-        reserve += msg.size() + 1; // +1 for the joining newline
-    }
+    const std::size_t reserve =
+        std::accumulate(annotationMessages.begin(), annotationMessages.end(), std::size_t{0},
+                        [](std::size_t acc, const std::string& msg) { return acc + msg.size() + 1; });
     std::string out;
     out.reserve(reserve);
     for (std::size_t i = 0; i < annotationMessages.size(); ++i) {
