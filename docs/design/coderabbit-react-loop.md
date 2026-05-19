@@ -1,8 +1,10 @@
 # PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`)
 
+> **Status (2026-05-18): partially folded — HTTP surface only.** The six `GitHubClient` PR / check-run / annotation / actions-log / rerun-workflow methods this plan originally scoped (phase 1 of the draft) shipped via [`agentic-coding-handoff.md`](agentic-coding-handoff.md) **H7** (PR #255, sha `37f4f2e`) per commit `e785b10 docs(plan): fold GitHubClient check-run methods into agentic-coding-handoff H7`. The remaining phases — `PrCheckRunWatcher` sibling watcher, `CiFailureClassifier`, CodeRabbit reply classifier, Preferences toggles, daemon-write-only outside-Smatchet variant — **have not shipped** and remain a draft. Reopen the plan when concrete user demand for auto-fix-on-CI-red lands; until then, the H7 HTTP methods are sufficient infrastructure for any future slice.
+>
 > **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it).
 >
-> **Canonical implementation runbook:** [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) sequences `agentic-triage-flow` phases T0–T9 + `agentic-coding-handoff` phases H0–H10 with copy-paste-ready build / test / commit / push / PR commands. **As of HEAD: T0–T9 merged on `develop` (last commit `321589c feat(agentic): T9 …`); H0–H10 pending.** This plan sits **after H10** — do not start phase 1 until the handoff-half acceptance gate in the unified runbook is met.
+> **Canonical implementation runbook:** [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) sequences `agentic-triage-flow` phases T0–T9 + `agentic-coding-handoff` phases H0–H10 with copy-paste-ready build / test / commit / push / PR commands. **As of HEAD: T0–T9 + H0–H10 merged on `develop`** (last triage commit `321589c feat(agentic): T9 …`; last handoff commit `4b330ce feat(agentic): H10 …` PR #259). This plan's surviving phases sit **after H10**; do not start phase 1 until concrete demand materialises.
 
 ## Context
 
