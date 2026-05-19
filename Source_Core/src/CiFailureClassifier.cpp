@@ -32,15 +32,14 @@ bool IsAllDigits(const std::string& s) {
 
 } // namespace
 
-CiFailureClassifier::CiFailureClassifier()
-    : autoDispatchDebugDetective_(true), autoDispatchTestRig_(true) {}
+CiFailureClassifier::CiFailureClassifier() = default;
 
 CiFailureClassifier::~CiFailureClassifier() = default;
 
-void CiFailureClassifier::SetAutoDispatchDebugDetective(bool enabled) { autoDispatchDebugDetective_ = enabled; }
-bool CiFailureClassifier::GetAutoDispatchDebugDetective() const { return autoDispatchDebugDetective_; }
-void CiFailureClassifier::SetAutoDispatchTestRig(bool enabled) { autoDispatchTestRig_ = enabled; }
-bool CiFailureClassifier::GetAutoDispatchTestRig() const { return autoDispatchTestRig_; }
+void CiFailureClassifier::SetAutoDispatchDebugDetective(bool enabled) { autoDispatchDebugDetective_.store(enabled); }
+bool CiFailureClassifier::GetAutoDispatchDebugDetective() const { return autoDispatchDebugDetective_.load(); }
+void CiFailureClassifier::SetAutoDispatchTestRig(bool enabled) { autoDispatchTestRig_.store(enabled); }
+bool CiFailureClassifier::GetAutoDispatchTestRig() const { return autoDispatchTestRig_.load(); }
 
 std::int64_t CiFailureClassifier::ParseRunIdFromDetailsUrl(const std::string& detailsUrl, std::string& outError) {
     outError.clear();
@@ -73,10 +72,12 @@ std::int64_t CiFailureClassifier::ParseRunIdFromDetailsUrl(const std::string& de
         outError = "details_url runId segment is not numeric";
         return 0;
     }
-    // std::stoll throws on overflow; clamp by length first so 19+ digits
-    // (impossible for a real run-id but a malformed input could carry
-    // them) fail gracefully instead of throwing.
-    if (digits.size() > 18) {
+    // std::stoll throws on overflow; clamp by length first so >19-digit
+    // inputs (impossible for a real run-id but a malformed URL could
+    // carry them) fail gracefully instead of throwing. INT64_MAX is
+    // 9223372036854775807 (19 digits) — accept legitimate 19-digit
+    // values up to that bound; reject 20+ digits or 19 digits > max.
+    if (digits.size() > 19 || (digits.size() == 19 && digits > "9223372036854775807")) {
         outError = "details_url runId segment overflows int64";
         return 0;
     }
@@ -88,10 +89,9 @@ std::int64_t CiFailureClassifier::ParseRunIdFromDetailsUrl(const std::string& de
     }
 }
 
-CheckRunClassification CiFailureClassifier::Classify(
-    const GitHubClient::CheckRun& run,
-    const std::vector<GitHubClient::CheckRunAnnotation>& annotations,
-    const std::string& logTail) const {
+CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRun& run,
+                                                     const std::vector<GitHubClient::CheckRunAnnotation>& annotations,
+                                                     const std::string& logTail) const {
     CheckRunClassification out;
     out.verdict = CheckRunVerdict::Skip;
 

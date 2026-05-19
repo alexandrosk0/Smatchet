@@ -44,6 +44,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -58,10 +59,9 @@ class PrCheckRunClassifier;
 // `GitHubClient::FetchCheckRuns(owner, repo, headSha)`. The watcher derives
 // `(owner, repo)` from the `agent_open_pr_watch.pr_url` field and passes
 // `head_sha` from the row directly.
-using CheckRunFetcher = std::function<bool(const std::string& /*owner*/, const std::string& /*repo*/,
-                                            const std::string& /*headSha*/,
-                                            std::vector<GitHubClient::CheckRun>& /*outRuns*/,
-                                            std::string& /*outError*/)>;
+using CheckRunFetcher =
+    std::function<bool(const std::string& /*owner*/, const std::string& /*repo*/, const std::string& /*headSha*/,
+                       std::vector<GitHubClient::CheckRun>& /*outRuns*/, std::string& /*outError*/)>;
 
 // CheckRun annotation fetcher seam — production binds to
 // `GitHubClient::FetchCheckRunAnnotations(owner, repo, checkRunId)`.
@@ -73,9 +73,9 @@ using CheckRunAnnotationFetcher =
 // classifier sees an empty log tail and works off annotations alone.
 // Production binding (when wired) resolves the Actions job-id from the
 // check-run's details_url and calls `GitHubClient::FetchActionsJobLogs`.
-using LogTailFetcher = std::function<bool(const std::string& /*owner*/, const std::string& /*repo*/,
-                                           const std::string& /*detailsUrl*/, int /*tailLines*/,
-                                           std::string& /*outLogTail*/, std::string& /*outError*/)>;
+using LogTailFetcher =
+    std::function<bool(const std::string& /*owner*/, const std::string& /*repo*/, const std::string& /*detailsUrl*/,
+                       int /*tailLines*/, std::string& /*outLogTail*/, std::string& /*outError*/)>;
 
 // Workflow rerun dispatcher seam — production binds to
 // `GitHubClient::RerunWorkflowRun(owner, repo, runId)`. Returns false +
@@ -83,17 +83,16 @@ using LogTailFetcher = std::function<bool(const std::string& /*owner*/, const st
 // this tick (the cursor still advances so the same check-run is not
 // reprocessed).
 using WorkflowRerunDispatcher = std::function<bool(const std::string& /*owner*/, const std::string& /*repo*/,
-                                                    std::int64_t /*runId*/, std::string& /*outError*/)>;
+                                                   std::int64_t /*runId*/, std::string& /*outError*/)>;
 
 // Open-PR-respawn dispatcher — mirror of PrCommentWatcher's seam of the
 // same name. Phase-7 binds to a worktree-spawning dispatcher; phase-6
 // leaves null on purpose so a real CI failure cannot trigger an unintended
 // spawn before the worktree-management code lands. Returns false +
 // outError on dispatch failure; the watcher LOG_WARNs and skips this run.
-using CheckRunRespawnDispatcher =
-    std::function<bool(const std::string& /*prUrl*/, const std::string& /*dispatchSource*/,
-                       const std::string& /*dispatchTargetAgent*/,
-                       const GitHubClient::CheckRun& /*run*/, std::string& /*outError*/)>;
+using CheckRunRespawnDispatcher = std::function<bool(
+    const std::string& /*prUrl*/, const std::string& /*dispatchSource*/, const std::string& /*dispatchTargetAgent*/,
+    const GitHubClient::CheckRun& /*run*/, std::string& /*outError*/)>;
 
 class PrCheckRunWatcher {
   public:
@@ -149,7 +148,7 @@ class PrCheckRunWatcher {
     /// but returns the two segments separately because the check-run
     /// REST endpoint takes `(owner, repo)` not `(owner/repo#N)`.
     static bool ParseOwnerRepoFromPrUrl(const std::string& prUrl, std::string& outOwner, std::string& outRepo,
-                                         std::string& outError);
+                                        std::string& outError);
 
   private:
     AgentProposalStore* store_;
@@ -168,6 +167,12 @@ class PrCheckRunWatcher {
     // Per-PR rerun counter — in-memory only, lost on restart by design.
     // A persistent transient flake surfaces as a small re-count post-restart,
     // which is louder than silently exceeding the cap forever.
+    //
+    // Guarded by `rerunCountMu_` — `Tick()` claims it briefly to bump the
+    // counter, `GetRerunCount()` for the read. The header advertises Tick()
+    // as safe from any worker thread, so the mutex is the contract.
+    // CodeRabbit #296 finding 2 — `Source_Core/include/PrCheckRunWatcher.h:136-145`.
+    mutable std::mutex rerunCountMu_;
     std::map<std::string, int> rerunCountByPrUrl_;
 };
 

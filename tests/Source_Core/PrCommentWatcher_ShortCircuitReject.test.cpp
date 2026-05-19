@@ -308,7 +308,11 @@ TEST_CASE("OpenPrScan: handoff bot marker bypasses classifier") {
     CHECK(resolver.calls == 0);
 }
 
-TEST_CASE("OpenPrScan: reject + no poster wired logs but does not call resolver") {
+TEST_CASE("OpenPrScan: reject + no poster wired skips the resolver call") {
+    // Per CodeRabbit #299 finding 7: thread resolution is gated on a
+    // successful reject-reply post. When the poster seam is unwired the
+    // reply never lands, so resolving the thread would close a comment
+    // that the operator has not actually been replied to.
     AgentProposalStore store(":memory:");
     NoopRunner runner;
     AgenticHandoffController controller({}, &runner, &store, nullptr);
@@ -333,10 +337,10 @@ TEST_CASE("OpenPrScan: reject + no poster wired logs but does not call resolver"
 
     const int dispatched = watcher.Tick();
     CHECK(dispatched == 0);
-    // The resolver is still invoked — the spec separates the poster from the
-    // resolver: posting may fail / be opted-out independently of the resolve
-    // action. Both run on RejectShortCircuit when their seams are wired.
-    CHECK(resolver.calls == 1);
+    // Resolver must NOT fire when the reject-reply post did not land
+    // (poster_ unwired). The opted-out / failed-post case must leave the
+    // thread open so the operator sees the missing reply.
+    CHECK(resolver.calls == 0);
 }
 
 TEST_CASE("OpenPrScan: reject with empty comment id skips resolver call") {

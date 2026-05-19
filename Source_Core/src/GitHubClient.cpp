@@ -86,8 +86,8 @@ GitHubClient::GitHubClient(std::string baseUrl, std::string personalAccessToken)
         if (GitHubClientHelpers::IsValidGitHubBaseUrl(baseUrl, validationErr)) {
             baseUrl_ = StripTrailingSlash(std::move(baseUrl));
         } else {
-            LOG_WARN("GitHubClient: rejecting base URL ('%s') — falling back to '%s'",
-                     validationErr.c_str(), defaultUrl.c_str());
+            LOG_WARN("GitHubClient: rejecting base URL ('%s') — falling back to '%s'", validationErr.c_str(),
+                     defaultUrl.c_str());
             baseUrl_ = defaultUrl;
         }
     }
@@ -758,8 +758,7 @@ bool GitHubClient::FetchCheckRuns(const std::string& owner, const std::string& r
     return true;
 }
 
-bool GitHubClient::FetchCheckRunAnnotations(const std::string& owner, const std::string& repo,
-                                            std::int64_t checkRunId,
+bool GitHubClient::FetchCheckRunAnnotations(const std::string& owner, const std::string& repo, std::int64_t checkRunId,
                                             std::vector<CheckRunAnnotation>& outAnnotations, std::string& outError) {
     outAnnotations.clear();
     outError.clear();
@@ -1009,8 +1008,10 @@ bool GitHubClient::ResolveReviewThread(const std::string& threadId, std::string&
         return false;
     }
     if (!isResolved) {
-        LOG_WARN("GitHubClient::ResolveReviewThread: mutation returned but isResolved=false for thread %s",
-                 threadId.c_str());
+        outError = "ResolveReviewThread returned isResolved=false.";
+        LOG_WARN("GitHubClient::ResolveReviewThread: %s thread=%s", outError.c_str(), threadId.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
     }
     BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, true, "");
     return true;

@@ -141,6 +141,17 @@ if [[ -z "$EXE" ]]; then
     exit 0
 fi
 
+# Explicit AGENTIC=OFF skip gate. The downstream commands.list probe also
+# catches OFF builds (the `coderabbit-react.poll-now` command is gated on
+# SMATCHET_WITH_AGENTIC), but an early gate keeps test mode deterministic and
+# matches the header documentation at lines 11-12.
+if [[ "${AGENTIC:-ON}" != "ON" ]]; then
+    echo "[coderabbit-react] SKIP CLI section — AGENTIC=${AGENTIC:-unset}"
+    echo
+    echo "Passed: $PASSED  Failed: $FAILED"
+    exit 0
+fi
+
 LIST_OUT=$("$EXE" cmd commands.list --spawn 2>&1 || true)
 
 if ! echo "$LIST_OUT" | grep -q '"name":"coderabbit-react\.poll-now"' ; then
