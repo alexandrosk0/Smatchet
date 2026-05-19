@@ -22,12 +22,6 @@
   Status: open
   Last-reviewed: 2026-05-19
 
-- 2026-05-19 · orchestrator · [tooling] · P2 — Token telemetry does not record Claude Code skill-load overhead
-  Details: Surfaced by V6 in `docs/design/agents-skill-conversion.md` v3. `agents/_shared/token-tracking/agent-token-log.py` is wired via the SubagentStop hook — it captures one JSONL line per subagent call (per `.claude/.agent-tokens.jsonl`). Skills are not subagents; they load inline into the orchestrator context. No SubagentStop fires. The dual-publish migration's central claim — "skill form is lighter than agent form" — is therefore unmeasurable end-to-end today. We can sample-measure by reading session totals before / after, but it's not first-class telemetry.
-  Concrete next action: investigate whether Claude Code emits a UserPromptSubmit-style or PreSkillLoad hook (per its docs). If yes, add a `skill-load-log.py` sibling to `agent-token-log.py` that appends to `.claude/.skill-loads.jsonl` with skill name + load-time token cost. Extend `agents-statusline.py` to surface skill loads alongside subagent calls. If Claude Code lacks the hook, file an upstream issue + park this entry as external-blocker. ~1 h investigation, 2-3 h wiring once the hook exists.
-  Status: open
-  Last-reviewed: 2026-05-19
-
 - 2026-05-19 · orchestrator · [tooling] · P3 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `<phase-9-sha>`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end. Today bucket-E (ImGui Test Engine) isn't wired; until it is, this verification stays manual.
   Concrete next action: when bucket-E lands, add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Estimated cost ~3 h once bucket-E exists; without it, defer.

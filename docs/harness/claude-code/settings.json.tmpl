@@ -44,6 +44,16 @@
             "timeout": 60000
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-log.py\"",
+            "timeout": 3000
+          }
+        ]
       }
     ],
     "SubagentStop": [
