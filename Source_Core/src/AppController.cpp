@@ -2066,9 +2066,10 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // takes a single branch (Phase-8 plan does not extend it to a
             // list — that's a phase 9+ generalisation), so pick first.
             std::string registrarBranch = "develop";
-            if (!cfg.CoderabbitReact.WatchedBaseBranches.empty()) {
+            if (!cfg.CoderabbitReact.WatchedBaseBranches.empty() &&
+                !cfg.CoderabbitReact.WatchedBaseBranches.front().empty()) {
                 registrarBranch = cfg.CoderabbitReact.WatchedBaseBranches.front();
-            } else if (!cfg.CiReact.WatchedBaseBranches.empty()) {
+            } else if (!cfg.CiReact.WatchedBaseBranches.empty() && !cfg.CiReact.WatchedBaseBranches.front().empty()) {
                 registrarBranch = cfg.CiReact.WatchedBaseBranches.front();
             }
             agenticOpenPrRegistrar_ = std::unique_ptr<smatchet::agentic::OpenPrRegistrar>(
@@ -2085,8 +2086,7 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // failed check-runs through the classifier. Budgets come from
             // `cfg.CiReact.*` (phase 8 plumbed the config block; phase 6
             // had inlined 5/2 as placeholders).
-            auto checkRunClassifier =
-                std::unique_ptr<smatchet::agentic::CiFailureClassifier>(new smatchet::agentic::CiFailureClassifier());
+            auto checkRunClassifier = std::make_unique<smatchet::agentic::CiFailureClassifier>();
             agenticPrCheckRunWatcher_ = std::unique_ptr<smatchet::agentic::PrCheckRunWatcher>(
                 new smatchet::agentic::PrCheckRunWatcher(agentProposalStore_.get(),
                                                          /*iterationBudget*/ cfg.CiReact.IterationBudgetPerPr,
@@ -2596,7 +2596,7 @@ bool AppController::RerunAgenticWorkflowRun(const std::string& owner, const std:
                                             std::string& outError) {
     GitHubClient* client = EnsureAgenticGithubClient();
     if (client == nullptr) {
-        outError = "GitHubClient not constructed (configure GitHub PAT in cfg.GitHubPat)";
+        outError = "GitHubClient not constructed (configure PAT)";
         return false;
     }
     return client->RerunWorkflowRun(owner, repo, runId, outError);

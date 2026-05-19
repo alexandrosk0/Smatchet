@@ -1127,31 +1127,32 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.coderabbitReactSection",
-                                                              "CodeRabbit react loop"));
-            if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.coderabbitReactEnable",
-                                                        "Enable CodeRabbit react loop"),
-                                &d.cfg.CoderabbitReact.Enabled)) {
+            ImGui::TextDisabled("%s",
+                                SmatchetLocalization::T("agent.prefs.coderabbitReactSection", "CodeRabbit react loop"));
+            if (ImGui::Checkbox(
+                    SmatchetLocalization::T("agent.prefs.coderabbitReactEnable", "Enable CodeRabbit react loop"),
+                    &d.cfg.CoderabbitReact.Enabled)) {
                 MarkPrefsDirty(d);
                 app.RestartAgenticPollAsync();
             }
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitPollInterval",
-                                                           "Poll interval (sec):"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("agent.prefs.coderabbitPollInterval", "Poll interval (sec):"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderInt("##CoderabbitReactInterval", &d.cfg.CoderabbitReact.PollIntervalSec, 60, 3600)) {
                 MarkPrefsDirty(d);
             }
             // Bot login allow-list — read-only display in phase 8 (edit lands later).
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitBotLogins",
-                                                           "Bot logins (read-only):"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("agent.prefs.coderabbitBotLogins", "Bot logins (read-only):"));
             ImGui::SameLine();
             if (d.cfg.CoderabbitReact.BotLogins.empty()) {
-                ImGui::TextDisabled("(none)");
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.coderabbitBotLogins.none", "(none)"));
             } else {
                 std::string joined;
                 for (std::size_t i = 0; i < d.cfg.CoderabbitReact.BotLogins.size(); ++i) {
-                    if (i > 0) joined += ", ";
+                    if (i > 0)
+                        joined += ", ";
                     joined += d.cfg.CoderabbitReact.BotLogins[i];
                 }
                 ImGui::TextDisabled("%s", joined.c_str());
@@ -1161,8 +1162,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 &d.cfg.CoderabbitReact.ShortCircuitRejectEnabled)) {
                 MarkPrefsDirty(d);
             }
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.coderabbitIterationBudget",
-                                                           "Iteration budget per PR:"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("agent.prefs.coderabbitIterationBudget", "Iteration budget per PR:"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderInt("##CoderabbitReactBudget", &d.cfg.CoderabbitReact.IterationBudgetPerPr, 1, 50)) {
@@ -1179,8 +1180,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 MarkPrefsDirty(d);
                 app.RestartAgenticPollAsync();
             }
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciPollInterval",
-                                                           "Poll interval (sec):"));
+            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciPollInterval", "Poll interval (sec):"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderInt("##CiReactInterval", &d.cfg.CiReact.PollIntervalSec, 60, 3600)) {
@@ -1201,24 +1201,23 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                 &d.cfg.CiReact.AutoDispatchDebugDetective)) {
                 MarkPrefsDirty(d);
             }
-            ImGui::TextDisabled("%s",
-                                SmatchetLocalization::T("agent.prefs.ciAutoDispatchDebugDetectiveHint",
-                                                        "spawn pauses at first investigation round; user "
-                                                        "reviews"));
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("agent.prefs.ciAutoDispatchDebugDetectiveHint",
+                                                              "spawn pauses at first investigation round; user "
+                                                              "reviews"));
             if (ImGui::Checkbox(SmatchetLocalization::T("agent.prefs.ciTransientRerun",
                                                         "Re-run workflow on transient fingerprint match"),
                                 &d.cfg.CiReact.TransientRerunEnabled)) {
                 MarkPrefsDirty(d);
             }
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciTransientRerunCap",
-                                                           "Transient reruns per PR:"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("agent.prefs.ciTransientRerunCap", "Transient reruns per PR:"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderInt("##CiReactRerunCap", &d.cfg.CiReact.TransientRerunMaxPerPr, 0, 10)) {
                 MarkPrefsDirty(d);
             }
-            ImGui::TextUnformatted(SmatchetLocalization::T("agent.prefs.ciIterationBudget",
-                                                           "Iteration budget per PR:"));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("agent.prefs.ciIterationBudget", "Iteration budget per PR:"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderInt("##CiReactBudget", &d.cfg.CiReact.IterationBudgetPerPr, 1, 50)) {

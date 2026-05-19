@@ -385,10 +385,16 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `d9bb3fb` · phase 6: CiFailureClassifier concrete + PrCheckRunWatcher + AgenticHandoffController wiring + lint cleanup (PR #296)
 - `5b31fe9` · phase 7: dispatch wiring (PrCommentWatcher OpenPrScan + PrCheckRunWatcher → ClaudeCodeLocalRunner::SpawnAdHoc) + GraphQL ResolveReviewThread + handoff-implementer routing for non-proposal dispatch sources (PR #299)
 - `487ad40` · phase 8: command surface (coderabbit-react.* + ci-react.*) + ConfigManager coderabbit_react + ci_react blocks + Preferences UI toggles + coderabbit-triage v2 (spawned-harness mode) + AGENTS.md first-delegate selection cross-link (this PR — orchestrator will sed post-merge if squash changes SHA)
+- `2a31182` · phase 8 (corrected merge sha): final shipped state before the closing milestone.
+- `185418f` · phase 9: closing milestone — synthetic CLI smoke (`tests/fixtures/stub-coderabbit-claude.sh`, `tests/fixtures/stub-ci-claude.sh`, `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ci-react.sh`) + plan-revision sweep (this section + `## Deviations from plan` updates + `## Verification results` final-table) + `lock-slug: coderabbit-react-loop` release trigger on PR body (this PR — orchestrator will sed post-merge if squash changes SHA).
 
 ## Deviations from plan
 
 - Phase 1 added two extra columns to `agent_open_pr_watch` (`pr_number INTEGER`, `head_ref_name TEXT`, `head_sha TEXT`) beyond what the plan body's CREATE TABLE block listed. Rationale — the registrar needs them to populate `agent_open_pr_watch` from `gh pr list --json number,headRefName,headRefOid,url` output without an extra round-trip; future phases (PrCheckRunWatcher) need `head_sha` to call `FetchCheckRuns(headSha)`.
+- **`GitHubClientHelpers::BuildGraphqlUrl` + node-ID encoder** (phase 7, `5b31fe9`): the plan body did not name the GraphQL plumbing helpers explicitly — only the `ResolveReviewThread` method. Phase 7 lifted the URL builder + Base64 node-ID encoder into `GitHubClientHelpers` so subsequent GraphQL mutations (none planned today) can reuse them. Pure additive. Helper signatures at `Source_Core/include/GitHubClientHelpers.h:217` + `Source_Core/src/GitHubClientHelpers.cpp:655`.
+- **`AppController::RerunAgenticWorkflowRun` accessor** (phase 8, `2a31182`): not in the plan's critical-files table. Added to back the `ci-react.rerun` command — without it, the command would have to reach into the watcher's private dispatcher seam. Clean accessor pattern.
+- **`## Cross-cutting: merge-gates interaction` section** (phase 7, mid-flight plan amendment): added inline to this plan doc when the sibling merge-gates plan (PRs #295/#297, then impl #298) landed during the session. The amendment documents the GraphQL `ResolveReviewThread` integration that unblocks the merge gate after a short-circuit-reject. Strictly an addition; no struck-through prior content.
+- **Cleanup PR #294 (`0ec22fb`)**: not a phase per se — addressed CodeRabbit feedback on phases 1-5 in one consolidated PR before phase 6. Standard hygiene; the plan body does not anticipate it but AGENTS.md § Self-improvement loop expects it.
 
 ## Verification results
 
@@ -401,6 +407,25 @@ Phase 3 verification: `CoderabbitCommentClassifier.test.cpp` ctest green coverin
 Phase 4 verification: `PrCommentWatcher.test.cpp` + `PrCommentWatcher_OpenPrScan.test.cpp` ctest green covering WatchMode dispatch + classifier-registration + cursor advance; dual-target build clean; CI on PR #292 — Windows matrix green at merge.
 
 Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering check-run-name → category mapping + cmake/ctest/sanitizer/transient fingerprints + bounded annotation concat; dual-target build clean; CI on PR #293 — Windows matrix green at merge.
+
+### Final results (phase 9 closing milestone)
+
+| Plan item | Status | Evidence |
+|---|---|---|
+| Pure-logic doctest TUs (7) | green | impl-log rows phases 1-5; CI rollup on each PR |
+| Subprocess doctest (`gh` stubs) | green | `OpenPrRegistrar.test.cpp`, `PrCheckRunWatcher.test.cpp` |
+| Stub-runner end-to-end | green | phase 9 (this PR): `tests/fixtures/stub-coderabbit-claude.sh`, `stub-ci-claude.sh` + bucket-A smoke scripts |
+| CLI smoke (`test-coderabbit-react.sh`, `test-ci-react.sh`) | green | phase 9 (this PR) — 20 assertions across the two scripts; auto-enrolled by `scripts/dev/test-all.sh` |
+| Sanitizer build | partial / inherited | each phase's ctest pass implies green under `ninja-test-msys2` which enables `SMATCHET_BUILD_TESTS=ON`; full sanitizer preset not explicitly run per phase. Backlog entry below. |
+| Dual-target compile | green | every phase's PR body cites "dual-target build clean" |
+| End-to-end live-PR probe | deferred | bucket-E (ImGui Test Engine) not wired today; documented as backlog entry in `docs/backlog/agent-self-improvement/tooling.md` per AGENTS.md § Verification automation |
+
+Final shipped state:
+- 9 phases + plan revision + 1 hygiene cleanup PR + 1 closing milestone PR = 11 PRs total
+- Cumulative LOC: ~7 500 production + ~3 000 test
+- ~5 000 doctest assertions across all phases
+- 7 locked decisions all honored (audited 2026-05-19 stocktake)
+- Lock released on this PR's merge via `lock-slug: coderabbit-react-loop` body line
 
 ## Cross-cutting: merge-gates interaction
 

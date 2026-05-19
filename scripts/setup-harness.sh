@@ -121,11 +121,26 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
 
   link_dir  ".claude/agents"                                  "agents"
-  link_dir  ".claude/skills/grill-with-docs"                  "agents/_shared/skills/grill-with-docs"
-  link_dir  ".claude/skills/scratchpad-recall"                "agents/_shared/skills/scratchpad-recall"
+
+  # Auto-link every SKILL.md package under agents/_shared/skills/. Future
+  # skills get picked up with no script edit. Existing skills here today:
+  # grill-with-docs, scratchpad-recall. v3 of the perf-skill-aliases plan
+  # adds perf-instrument + perf-measure under this same root.
+  if [[ -d "agents/_shared/skills" ]]; then
+    for skill_dir in agents/_shared/skills/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      skill_name="$(basename "$skill_dir")"
+      link_dir ".claude/skills/$skill_name" "${skill_dir%/}"
+    done
+  fi
+
+  # Special case: token-tracking lives at a non-conforming path
+  # (agents/_shared/token-tracking/, not agents/_shared/skills/token-tracking/).
+  # Until that's normalised, link the single file by hand.
   link_file ".claude/skills/agent-tokens/SKILL.md"            "agents/_shared/token-tracking/SKILL.md"
   link_file ".claude/hooks/agent-token-log.py"                "agents/_shared/token-tracking/agent-token-log.py"
   link_file ".claude/hooks/agents-statusline.py"              "agents/_shared/token-tracking/agents-statusline.py"
+  link_file ".claude/hooks/skill-load-log.py"                 "agents/_shared/token-tracking/skill-load-log.py"
 
   echo "Done. .claude/ ready for Claude Code."
 }

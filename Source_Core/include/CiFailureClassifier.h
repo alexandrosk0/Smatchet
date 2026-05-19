@@ -40,6 +40,7 @@
 
 #include "PrCheckRunClassifier.h"
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -69,10 +70,9 @@ class CiFailureClassifier : public PrCheckRunClassifier {
     /// Classify a failed check-run. See PrCheckRunClassifier.h for verdict
     /// semantics. Stateless — the per-PR rerun cap lives on the watcher
     /// (which owns the in-memory counter keyed by `pr_url`).
-    CheckRunClassification
-    Classify(const GitHubClient::CheckRun& run,
-             const std::vector<GitHubClient::CheckRunAnnotation>& annotations,
-             const std::string& logTail) const override;
+    CheckRunClassification Classify(const GitHubClient::CheckRun& run,
+                                    const std::vector<GitHubClient::CheckRunAnnotation>& annotations,
+                                    const std::string& logTail) const override;
 
     /// Resolve the `runId` (used by `RerunWorkflowRun`) from a check-run's
     /// `details_url`. GitHub's check-run URL shape carries the run-id as a
@@ -83,8 +83,11 @@ class CiFailureClassifier : public PrCheckRunClassifier {
     static std::int64_t ParseRunIdFromDetailsUrl(const std::string& detailsUrl, std::string& outError);
 
   private:
-    bool autoDispatchDebugDetective_;
-    bool autoDispatchTestRig_;
+    // Atomic so reads from `Classify()` (called on the poll worker) race-free
+    // with `Set*` writes from the Preferences UI thread. CodeRabbit #296
+    // finding 1 — `Source_Core/include/CiFailureClassifier.h:62-67`.
+    std::atomic<bool> autoDispatchDebugDetective_{true};
+    std::atomic<bool> autoDispatchTestRig_{true};
 };
 
 } // namespace agentic
