@@ -232,6 +232,15 @@ if(SMATCHET_WITH_AGENTIC)
         "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp"
         Source_Core/PrCheckRunWatcher.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp"
+        # coderabbit-react phase-7 — GraphQL helpers for review-thread resolve
+        # + ShortCircuitReject path test (poster + thread-resolver seam) +
+        # CiDispatch path test (PrCheckRunWatcher → SpawnAdHoc dispatcher
+        # seam). All three TUs reuse the watcher/runner/helpers already
+        # listed above; no new production-source entries required (the
+        # phase-7 production source extends existing TUs in-place).
+        Source_Core/GitHubClient_GraphQL.test.cpp
+        Source_Core/PrCommentWatcher_ShortCircuitReject.test.cpp
+        Source_Core/PrCheckRunWatcher_CiDispatch.test.cpp
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

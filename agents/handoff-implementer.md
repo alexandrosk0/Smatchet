@@ -25,12 +25,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
-version: 1
+version: 2
 ---
 
-First delegate of a Smatchet handoff harness. Spawned by `ClaudeCodeLocalRunner` inside an isolated git worktree at `.claude/worktrees/agent-<proposalId>` with `SEED.json` (canonical) and `SEED.md` (human-readable) already written by the runner.
+First delegate of a Smatchet handoff harness. Spawned by `ClaudeCodeLocalRunner` inside an isolated git worktree at `.claude/worktrees/agent-<proposalId>` (proposal dispatches) or `.claude/worktrees/coderabbit-pr<N>` (non-proposal CodeRabbit / CI dispatches per the 2026-05-18 locked decision) with `SEED.json` (canonical) and `SEED.md` (human-readable) already written by the runner.
 
-**Banner** — open with: `🤖 AGENT: handoff-implementer · sonnet/high · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — handoff-implementer · sonnet/high · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: handoff-implementer · sonnet/high · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — handoff-implementer · sonnet/high · read-edit · v2`.
 
 ## Mission
 
@@ -96,6 +96,50 @@ Take an approved `AgentProposal` whose `proposedAction == ImplementIssue`, mater
 ## Harness env contract
 
 Spawned with the env allow-list from `AGENTS.md § Handoff envelope`: `{PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY}`. No `SMATCHET_*` vars inherit — Smatchet config + secrets stay in the parent process. Use `GH_TOKEN` / `GITHUB_TOKEN` for `gh` invocations; the runner validates one of the two is set before spawning.
+
+## Spawned-harness routing for non-proposal dispatch sources
+
+Per the 2026-05-18 locked decision (see `docs/design/coderabbit-react-loop.md` § Phased rollout § Phase 7), this agent is the **always-first** delegate inside every spawned `claude` child — for proposal dispatches **and** for the ad-hoc dispatch sources (CodeRabbit comments, CI failures) added by the coderabbit-react loop. The first action after reading `SEED.json` is to read the new `dispatch_source` discriminator field and route to a sub-delegate accordingly.
+
+### `dispatch_source` enum
+
+`SEED.json.dispatch_source` carries one of:
+
+| Source | When | Routed sub-delegate |
+|---|---|---|
+| `proposal_implement` | `AgenticHandoffController` spawned the harness from an approved `ImplementIssue` proposal (the existing H3–H10 flow). | None — execute the standard diagnose → code → test → commit → push → PR workflow above. |
+| `coderabbit_comment` | `PrCommentWatcher::Tick` (OpenPrScan mode) returned a `Dispatch` verdict against a CodeRabbit PR comment. | `coderabbit-triage` |
+| `ci_build_failure` | `PrCheckRunWatcher::Tick` returned a `Dispatch` verdict for a failed build check-run. | `build-doctor` |
+| `ci_ctest_failure` | `PrCheckRunWatcher::Tick` returned a `Dispatch` verdict for a failed ctest / behavioural-regression check-run. | `debug-detective` |
+| `ci_coverage_gate` | `PrCheckRunWatcher::Tick` returned a `Dispatch` verdict for a failed coverage / test-delta gate. | `test-rig` |
+| `ci_transient_rerun` | Reserved — `PrCheckRunWatcher` reruns the workflow via `GitHubClient::RerunWorkflowRun` without spawning a harness. The harness sees this dispatch_source only when an operator manually escalates a transient flake to a code change; default sub-delegate is `debug-detective`. | `debug-detective` |
+
+If `dispatch_source` is absent or unrecognised, treat it as `proposal_implement` (the existing behaviour). Future-compat keys land in `payloadExtra` per the SEED.json forward-compat contract.
+
+### `CHECK_RUN.json` sentinel
+
+When `dispatch_source` matches `ci_*` the runner writes `CHECK_RUN.json` to the worktree root before spawning. Schema:
+
+```json
+{
+  "check_run_id": <int>,
+  "check_run_name": "<workflow check-run name>",
+  "status": "completed",
+  "conclusion": "failure",
+  "details_url": "<browser URL>",
+  "dispatch_source": "ci_build_failure",
+  "annotations": [ ... optional top-N classifier annotations ... ],
+  "log_tail": "<optional last-N log lines>"
+}
+```
+
+Read `CHECK_RUN.json` as the primary fact source for `ci_*` dispatches. The seed's `issueBodyMarkdown` carries only a short human summary; the structured payload lives here.
+
+### Ad-hoc worktree path
+
+For non-proposal dispatches the worktree root is `.claude/worktrees/coderabbit-pr<N>` (one worktree per PR, shared between CodeRabbit + CI dispatches) and the branch is `coderabbit/pr<N>/iter<n>` where `n` reflects the iteration count from `agent_open_pr_watch.iteration_count`. The runner creates the iter-branch off `origin/<headRefName>` so the worktree builds on top of the in-flight PR's commits, not develop.
+
+When routing to a sub-delegate, hand off the seed + `CHECK_RUN.json` (when present) verbatim. The sub-delegate owns the implementation; this agent's role for non-proposal sources is the routing decision + the surrounding diagnose → code → test → commit → push loop — **not** writing the PR itself (the iter-branch lives off the PR's head, not develop, so the operator merges the iter-branch back into the PR's head via `git push` to the same head ref or via a manual PR review-and-merge, depending on the workflow).
 
 ## Report shape
 

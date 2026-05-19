@@ -99,9 +99,9 @@ using HarnessRespawnDispatcher =
 // (coderabbit-react phase-4) OpenPrScan-mode dispatcher seam. The OpenPrScan
 // iteration walks `agent_open_pr_watch` rows which do NOT carry a proposal
 // id (the registrar tracks every open PR on the base branch, not just
-// handoff-spawned PRs). Phase-7 will wire this to a worktree-spawning
-// dispatcher; phase-4 leaves it null and the watcher LOG_WARNs once when a
-// Dispatch verdict has nowhere to land.
+// handoff-spawned PRs). Phase-7 wires this to a worktree-spawning dispatcher
+// (binds `ClaudeCodeLocalRunner::SpawnAdHoc`); phase-4 left it null and the
+// watcher LOG_WARNed once when a Dispatch verdict had nowhere to land.
 //
 // Returns false + outError on dispatch failure; the watcher LOG_WARNs and
 // continues to the next row (the cursor has already advanced so the same
@@ -109,6 +109,20 @@ using HarnessRespawnDispatcher =
 using OpenPrRespawnDispatcher =
     std::function<bool(const std::string& /*prUrl*/, const std::string& /*commentBody*/,
                        const std::string& /*dispatchTargetAgent*/, std::string& /*outError*/)>;
+
+// (coderabbit-react phase-7) Review-thread resolver seam. Production binds to
+// a lambda calling `GitHubClient::LookupReviewThreadIdForComment` →
+// `GitHubClient::ResolveReviewThread`. Invoked AFTER the watcher posts a
+// `RejectShortCircuit` reply, so the CodeRabbit thread is marked resolved
+// and the merge-gates plan's unresolved-thread gate unblocks cleanly.
+//
+// `commentId` is the REST id from the original CodeRabbit comment (the one
+// the watcher matched against). Empty `outError` + return true on success;
+// false + outError on transport / API failure. Failure is logged but
+// non-fatal — the reply already landed and the cursor already advanced;
+// a manual resolve is a recoverable follow-up.
+using ReviewThreadResolver =
+    std::function<bool(const std::string& /*commentId*/, std::string& /*outError*/)>;
 
 class PrCommentWatcher {
   public:
@@ -146,11 +160,17 @@ class PrCommentWatcher {
     /// (coderabbit-react phase-4) Wire the OpenPrScan-mode dispatcher.
     /// Optional — when null an OpenPrScan-mode Dispatch verdict logs once
     /// per session and the cursor still advances (so the same comment is
-    /// not re-classified next tick). Phase-7 will bind this to a worktree-
-    /// spawning dispatcher; phase-4 leaves the production path null on
-    /// purpose so a real CodeRabbit comment cannot trigger an unintended
-    /// spawn before the worktree-management code lands.
+    /// not re-classified next tick). Phase-7 binds this to a worktree-
+    /// spawning dispatcher (`ClaudeCodeLocalRunner::SpawnAdHoc`).
     void SetOpenPrRespawnDispatcher(OpenPrRespawnDispatcher dispatcher);
+
+    /// (coderabbit-react phase-7) Wire the review-thread resolver seam.
+    /// Optional — when null `RejectShortCircuit` paths post the reply but
+    /// do NOT mark the GraphQL thread resolved (the merge-gates plan's
+    /// unresolved-thread gate would still block in that case; operators
+    /// must resolve manually). Production binding chains
+    /// `LookupReviewThreadIdForComment` → `ResolveReviewThread`.
+    void SetReviewThreadResolver(ReviewThreadResolver resolver);
 
     /// (coderabbit-react phase-4) Register the PR-comment classifier.
     /// Heap-owned because the classifier is polymorphic
@@ -221,6 +241,7 @@ class PrCommentWatcher {
     PrCommentPoster poster_;
     HarnessRespawnDispatcher dispatcher_;
     OpenPrRespawnDispatcher openPrDispatcher_;
+    ReviewThreadResolver threadResolver_;
     std::atomic<int> iterationBudget_;
     // (H7) Latch so the "fetcher is null" log fires once per session
     // instead of every tick — same shape as the H5 dual-channel.

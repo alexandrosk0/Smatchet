@@ -19,6 +19,8 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -609,6 +611,273 @@ TEST_SUITE("ClaudeCodeLocalRunner") {
         CHECK(snap.find("STUB_CLAUDE_MODE=happy") != std::string::npos);
 
         RmTreeBestEffort(dir);
+    }
+
+    // ===== Phase-7 SpawnAdHoc — ad-hoc worktree path =====
+    //
+    // The ad-hoc path mirrors Spawn() but creates the worktree under
+    // `Options::adHocWorktreeRoot/coderabbit-pr<N>` instead of the
+    // proposal-keyed `.claude/worktrees/agent-<id>` shape. We use
+    // skipWorktreeCreate so the tests don't need a real git remote;
+    // the runner sees the dir already exists at the computed path and
+    // proceeds to the seed-file writes + spawn.
+
+    TEST_CASE("Phase-7 SpawnAdHoc happy path writes SEED.json + SEED.md + spawns harness") {
+        const std::string root = MakeTempDir("phase7-adhoc");
+        REQUIRE_FALSE(root.empty());
+        // Pre-create coderabbit-pr42 under root so skipWorktreeCreate=true
+        // sees the dir already exists.
+        const std::string expected = root + "/coderabbit-pr42";
+#if defined(_WIN32)
+        REQUIRE(CreateDirectoryA(expected.c_str(), nullptr) != 0);
+#else
+        REQUIRE(mkdir(expected.c_str(), 0755) == 0);
+#endif
+
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "happy");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.adHocWorktreeRoot = root;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/42";
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.commentBodyOrFailureBody = "🛠️ Add a missing const reference here.";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+        req.iteration = 3;
+
+        std::string err;
+        const bool ok = r.SpawnAdHoc(req, err);
+        CHECK_MESSAGE(ok, err);
+
+        // SEED.json written at the expected path.
+        std::string seedJson;
+        REQUIRE(ReadFileText(expected + "/SEED.json", seedJson));
+        CHECK(seedJson.find("\"dispatch_source\"") != std::string::npos);
+        CHECK(seedJson.find("\"coderabbit_comment\"") != std::string::npos);
+        CHECK(seedJson.find("\"routed_delegate\"") != std::string::npos);
+        CHECK(seedJson.find("\"coderabbit-triage\"") != std::string::npos);
+        // Branch encoded as coderabbit/pr<N>/iter<n>.
+        CHECK(seedJson.find("coderabbit/pr42/iter3") != std::string::npos);
+
+        // SEED.md opens with the routing headers.
+        std::string seedMd;
+        REQUIRE(ReadFileText(expected + "/SEED.md", seedMd));
+        CHECK(seedMd.find("## First delegate: handoff-implementer") != std::string::npos);
+        CHECK(seedMd.find("## Routed via: coderabbit-triage") != std::string::npos);
+        CHECK(seedMd.find("dispatch_source:** coderabbit_comment") != std::string::npos);
+
+        // CHECK_RUN.json is NOT written for coderabbit_comment dispatches.
+#if defined(_WIN32)
+        const DWORD attr = GetFileAttributesA((expected + "/CHECK_RUN.json").c_str());
+        CHECK(attr == INVALID_FILE_ATTRIBUTES);
+#else
+        struct stat st;
+        CHECK(stat((expected + "/CHECK_RUN.json").c_str(), &st) != 0);
+#endif
+
+        RmTreeBestEffort(root);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc CI dispatch writes CHECK_RUN.json") {
+        const std::string root = MakeTempDir("phase7-ci");
+        REQUIRE_FALSE(root.empty());
+        const std::string expected = root + "/coderabbit-pr77";
+#if defined(_WIN32)
+        REQUIRE(CreateDirectoryA(expected.c_str(), nullptr) != 0);
+#else
+        REQUIRE(mkdir(expected.c_str(), 0755) == 0);
+#endif
+
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "happy");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.adHocWorktreeRoot = root;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/77";
+        req.headRefName = "agent/77/h7";
+        req.dispatchSource = "ci_build_failure";
+        req.commentBodyOrFailureBody = "CI check-run 'build' concluded 'failure'";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "build-doctor";
+        req.iteration = 1;
+        req.checkRunPayload = nlohmann::json::object();
+        req.checkRunPayload["check_run_id"] = 12345;
+        req.checkRunPayload["check_run_name"] = "build";
+        req.checkRunPayload["conclusion"] = "failure";
+
+        std::string err;
+        const bool ok = r.SpawnAdHoc(req, err);
+        CHECK_MESSAGE(ok, err);
+
+        std::string checkRun;
+        REQUIRE(ReadFileText(expected + "/CHECK_RUN.json", checkRun));
+        CHECK(checkRun.find("\"check_run_id\"") != std::string::npos);
+        CHECK(checkRun.find("12345") != std::string::npos);
+        CHECK(checkRun.find("\"check_run_name\"") != std::string::npos);
+        CHECK(checkRun.find("\"build\"") != std::string::npos);
+
+        std::string seedMd;
+        REQUIRE(ReadFileText(expected + "/SEED.md", seedMd));
+        CHECK(seedMd.find("## Routed via: build-doctor") != std::string::npos);
+
+        RmTreeBestEffort(root);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects empty prUrl") {
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK(err.find("prUrl is empty") != std::string::npos);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects malformed prUrl") {
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "not-a-url";
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK_FALSE(err.empty());
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects wrong targetAgent") {
+        // Per the 2026-05-18 locked decision, targetAgent MUST be
+        // "handoff-implementer". Any other value is a coding error.
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/42";
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "coderabbit-triage"; // wrong — should be handoff-implementer
+        req.routedDelegate = "coderabbit-triage";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK(err.find("handoff-implementer") != std::string::npos);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects empty dispatchSource") {
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/42";
+        req.headRefName = "feature/x";
+        // dispatchSource intentionally empty
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK(err.find("dispatchSource") != std::string::npos);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects empty headRefName") {
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/42";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK(err.find("headRefName") != std::string::npos);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc rejects empty routedDelegate") {
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/42";
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "handoff-implementer";
+
+        std::string err;
+        CHECK_FALSE(r.SpawnAdHoc(req, err));
+        CHECK(err.find("routedDelegate") != std::string::npos);
+    }
+
+    TEST_CASE("Phase-7 SpawnAdHoc uses default iteration of 1 when unset") {
+        const std::string root = MakeTempDir("phase7-iter1");
+        REQUIRE_FALSE(root.empty());
+        const std::string expected = root + "/coderabbit-pr5";
+#if defined(_WIN32)
+        REQUIRE(CreateDirectoryA(expected.c_str(), nullptr) != 0);
+#else
+        REQUIRE(mkdir(expected.c_str(), 0755) == 0);
+#endif
+
+        ScopedEnvOverride stubMode("STUB_CLAUDE_MODE", "happy");
+
+        CodingHarness::ClaudeCodeLocalRunner::Options opts;
+        opts.binPath = StubClaudePath();
+        opts.skipWorktreeCreate = true;
+        opts.timeoutMs = 15000;
+        opts.adHocWorktreeRoot = root;
+        CodingHarness::ClaudeCodeLocalRunner r(opts);
+
+        CodingHarness::ClaudeCodeLocalRunner::AdHocSpawnRequest req;
+        req.prUrl = "https://github.com/owner/repo/pull/5";
+        req.headRefName = "feature/x";
+        req.dispatchSource = "coderabbit_comment";
+        req.targetAgent = "handoff-implementer";
+        req.routedDelegate = "coderabbit-triage";
+        // iteration intentionally unset → defaults to 1
+
+        std::string err;
+        const bool ok = r.SpawnAdHoc(req, err);
+        CHECK_MESSAGE(ok, err);
+
+        std::string seedJson;
+        REQUIRE(ReadFileText(expected + "/SEED.json", seedJson));
+        CHECK(seedJson.find("coderabbit/pr5/iter1") != std::string::npos);
+
+        RmTreeBestEffort(root);
     }
 }
 

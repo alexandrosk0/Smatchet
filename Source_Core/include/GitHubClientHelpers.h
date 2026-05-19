@@ -201,6 +201,67 @@ bool ExtractCreatePullRequestHtmlUrl(const std::string& responseBody, std::strin
 /// allocate when the input is already within the bound.
 std::string ClipLogTail(const std::string& body, int tailLines);
 
+// ─── Phase-7 GraphQL helpers ─────────────────────────────────────────────────
+//
+// GitHub's GraphQL surface lives at `/graphql` for `api.github.com` and at
+// `/api/graphql` for GitHub Enterprise (which serves REST at `/api/v3`).
+
+/**
+ * Derive the GraphQL endpoint URL from a GitHub REST baseUrl. Cases:
+ *   - `https://api.github.com`            → `https://api.github.com/graphql`
+ *   - `https://github.acme.com/api/v3`    → `https://github.acme.com/api/graphql`
+ *   - `https://other.example.com`         → `https://other.example.com/graphql`
+ * Trailing slashes on input are tolerated (the caller's StripTrailingSlash
+ * normalises before storing baseUrl_).
+ */
+std::string BuildGraphqlUrl(const std::string& baseUrl);
+
+/**
+ * Encode a GitHub REST review-comment id into the canonical GraphQL node ID
+ * string (Base64 of `012:PullRequestReviewComment<id>`). Pure — does not
+ * call the API. Used by `GitHubClient::LookupReviewThreadIdForComment` to
+ * translate a REST id to a GraphQL node id for the `node(id: ...)` query.
+ */
+std::string BuildPullRequestReviewCommentNodeId(const std::string& restCommentId);
+
+/**
+ * Body for the `resolveReviewThread` GraphQL mutation. The wire format is:
+ *   {
+ *     "query": "<mutation literal>",
+ *     "variables": {"threadId": "<threadId>"}
+ *   }
+ * The mutation literal is locked here as the single source of truth so the
+ * doctest can pin the shape without re-implementing the literal at the call
+ * site.
+ */
+nlohmann::json BuildResolveReviewThreadBody(const std::string& threadId);
+
+/**
+ * Body for the `node(id: ...)` GraphQL lookup that translates a REST review-
+ * comment id to the containing review thread's GraphQL id. Wire format:
+ *   {
+ *     "query": "query($nodeId: ID!) { node(id: $nodeId) { ... on PullRequestReviewComment { pullRequestReview { thread { id } } } } }",
+ *     "variables": {"nodeId": "<base64-node-id>"}
+ *   }
+ */
+nlohmann::json BuildLookupReviewThreadBody(const std::string& nodeId);
+
+/**
+ * Parse the `data.resolveReviewThread.thread.isResolved` boolean out of a
+ * GraphQL response body. Returns true + sets `outIsResolved` on the happy
+ * path (HTTP 2xx + no `errors` array); returns false + populates outError
+ * on transport / GraphQL / shape failures.
+ */
+bool ParseResolveReviewThreadResponse(const std::string& body, bool& outIsResolved, std::string& outError);
+
+/**
+ * Parse the `data.node.pullRequestReview.thread.id` string out of a GraphQL
+ * `node(id: ...)` response body. Returns true + sets `outThreadId` on the
+ * happy path; returns false + populates outError on transport / GraphQL /
+ * shape failures (missing node, deleted comment, no access).
+ */
+bool ParseLookupReviewThreadResponse(const std::string& body, std::string& outThreadId, std::string& outError);
+
 /**
  * State-transition validator. The agentic-flow contract locks state to exactly
  * `"open"` or `"closed"` (per `agentic-flow-implementation.md` § Decisions

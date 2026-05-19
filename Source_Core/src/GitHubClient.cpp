@@ -44,6 +44,10 @@ cpr::Header MakeGitHubAuthHeaders(const std::string& pat) {
     };
 }
 
+// (phase-7) Canonical GraphQL audit action for the resolve mutation. Lives as
+// a named constant so audit consumers can filter on the literal.
+constexpr const char* kAuditResolveReviewThread = "ResolveReviewThread";
+
 // Single-line failure string assembled from the response status + GitHub's
 // structured `{"message": "..."}` (if present) + the redacted body. Keeps the
 // PAT out of every surface — the Authorization header substring would otherwise
@@ -942,5 +946,111 @@ bool GitHubClient::StateTransition(const std::string& issueKey, const std::strin
         return false;
     }
     BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, issueKey, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::ResolveReviewThread(const std::string& threadId, std::string& outError) {
+    outError.clear();
+    const std::string auditAction = kAuditResolveReviewThread;
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("github-resolve-review-thread");
+    // Audit context-key is the thread id itself — the most stable identifier
+    // we can produce without re-fetching the PR. Issue-keyed audit rows
+    // distinguish on the presence of `#`; thread-id rows have neither.
+    nlohmann::json beginData = nlohmann::json::object();
+    beginData["threadId"] = threadId;
+    BackendAuditTrail::AppendBegin(auditAction, kGitHubAuditSource, threadId, auditOp, beginData);
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
+    }
+    if (threadId.empty()) {
+        outError = "ResolveReviewThread: threadId is required.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
+    }
+
+    // Build the GraphQL request body. The mutation shape mirrors the
+    // merge-gates plan's reviewThreads query — same wire-format the gate
+    // poller reads from, so a successful resolve flips the bit the gate
+    // looks at.
+    const nlohmann::json reqBody = GitHubClientHelpers::BuildResolveReviewThreadBody(threadId);
+    const std::string payloadDump = reqBody.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "GitHub ResolveReviewThread: body exceeds outbound size cap.";
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
+    }
+
+    const std::string url = GitHubClientHelpers::BuildGraphqlUrl(baseUrl_);
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", "/graphql", r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::ResolveReviewThread failed: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
+    }
+    // GraphQL returns 200 even on logical errors — defer the parse + shape
+    // checks to the pure helper. A returned-false path is treated as a hard
+    // failure; a returned-true with isResolved=false logs a warn (the
+    // mutation succeeded structurally but the thread wasn't marked resolved,
+    // which only happens if the thread was already resolved or permissions
+    // dropped server-side).
+    bool isResolved = false;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseResolveReviewThreadResponse(r.text, isResolved, parseErr)) {
+        outError = parseErr;
+        LOG_WARN("GitHubClient::ResolveReviewThread parse failure: %s", outError.c_str());
+        BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, false, outError);
+        return false;
+    }
+    if (!isResolved) {
+        LOG_WARN("GitHubClient::ResolveReviewThread: mutation returned but isResolved=false for thread %s",
+                 threadId.c_str());
+    }
+    BackendAuditTrail::AppendResult(auditAction, kGitHubAuditSource, threadId, auditOp, true, "");
+    return true;
+}
+
+bool GitHubClient::LookupReviewThreadIdForComment(const std::string& restCommentId, std::string& outThreadId,
+                                                  std::string& outError) {
+    outThreadId.clear();
+    outError.clear();
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+    if (restCommentId.empty()) {
+        outError = "LookupReviewThreadIdForComment: restCommentId is required.";
+        return false;
+    }
+    // Encode REST id → canonical GraphQL node id via the helper.
+    const std::string nodeId = GitHubClientHelpers::BuildPullRequestReviewCommentNodeId(restCommentId);
+    const nlohmann::json reqBody = GitHubClientHelpers::BuildLookupReviewThreadBody(nodeId);
+    const std::string payloadDump = reqBody.dump();
+    if (GitHubClientHelpers::ShouldRejectAsTooLarge(payloadDump.size())) {
+        outError = "LookupReviewThreadIdForComment: body exceeds outbound size cap.";
+        return false;
+    }
+
+    const std::string url = GitHubClientHelpers::BuildGraphqlUrl(baseUrl_);
+    cpr::Response r = cpr::Post(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::Body{payloadDump},
+                                cpr::Header{{"Content-Type", "application/json"}},
+                                cpr::ConnectTimeout{kGitHubConnectTimeoutMs}, cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code < 200 || r.status_code >= 300) {
+        outError = ComposeHttpErrorString("POST", "/graphql", r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::LookupReviewThreadIdForComment failed: %s", outError.c_str());
+        return false;
+    }
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseLookupReviewThreadResponse(r.text, outThreadId, parseErr)) {
+        outError = parseErr;
+        return false;
+    }
     return true;
 }
