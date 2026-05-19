@@ -223,6 +223,15 @@ if(SMATCHET_WITH_AGENTIC)
         # CiFailureClassifier + PrCheckRunWatcher wire up in phase 6.
         Source_Core/CiFailureClassifierPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp"
+        # coderabbit-react phase-6 — concrete CiFailureClassifier (wires the
+        # phase-5 pure helpers to the verdict logic for build-doctor /
+        # debug-detective / test-rig routing + transient-rerun) and the
+        # PrCheckRunWatcher (Tick()-only, mirrors PrCommentWatcher::OpenPrScan
+        # shape against the agent_open_pr_watch SQLite table).
+        Source_Core/CiFailureClassifier.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp"
+        Source_Core/PrCheckRunWatcher.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

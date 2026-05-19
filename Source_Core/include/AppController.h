@@ -64,6 +64,8 @@ class AgentProposalStore;
 #include "ICodingHarnessRunner.h"
 #include "PrCommentWatcher.h"
 #include "OpenPrRegistrar.h"
+#include "CiFailureClassifier.h"
+#include "PrCheckRunWatcher.h"
 #endif
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
 // so AppController.h consumers can use `AiContextBlock` without macro plumbing — the always-on
@@ -1190,6 +1192,16 @@ class AppController
     // block. The poll worker ticks the registrar BEFORE the comment
     // watcher so newly-discovered PRs are visible in the same iteration.
     std::unique_ptr<smatchet::agentic::OpenPrRegistrar> agenticOpenPrRegistrar_;
+
+    // (coderabbit-react phase-6) Concrete CI-failure classifier + check-run
+    // watcher. Constructed alongside the handoff controller in the same
+    // `std::call_once` block; ticked by the scheduled-poll worker AFTER the
+    // PR-comment watcher so a comment-driven dispatch shows up in logs
+    // before the same tick's check-run scan. Phase-6 wires the production
+    // seams (FetchCheckRuns, FetchCheckRunAnnotations, RerunWorkflowRun);
+    // the OpenPrRespawnDispatcher seam is left null on purpose so phase-7
+    // can land the actual worktree-spawning binding.
+    std::unique_ptr<smatchet::agentic::PrCheckRunWatcher> agenticPrCheckRunWatcher_;
 
     // Scheduled-poll worker (T7). Lifetime: started by `StartAgenticPollIfEnabled`
     // (called from Initialize end-of-init + Preferences-toggle handler), joined by

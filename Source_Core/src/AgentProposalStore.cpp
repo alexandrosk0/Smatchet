@@ -760,6 +760,27 @@ bool AgentProposalStore::SetOpenPrCommentCursor(const std::string& prUrl, const 
     }
 }
 
+bool AgentProposalStore::SetOpenPrCheckRunCursor(const std::string& prUrl, std::int64_t lastSeenCheckRunId,
+                                                  std::string& outError) {
+    outError.clear();
+    try {
+        // Idempotent — UPDATE on a missing row returns 0 rows changed and is
+        // not an error. Mirrors SetOpenPrCommentCursor; bumps the same
+        // `last_polled_at_sec` field so a check-run-only tick is observable
+        // as recent activity.
+        SQLite::Statement stmt(*db_, "UPDATE agent_open_pr_watch SET last_seen_check_run_id=?, "
+                                     "last_polled_at_sec=? WHERE pr_url=?");
+        stmt.bind(1, static_cast<long long>(lastSeenCheckRunId));
+        stmt.bind(2, static_cast<long long>(NowEpochSec()));
+        stmt.bind(3, prUrl);
+        stmt.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("AgentProposalStore::SetOpenPrCheckRunCursor: ") + ex.what();
+        return false;
+    }
+}
+
 bool AgentProposalStore::IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount,
                                                        std::string& outError) {
     outError.clear();

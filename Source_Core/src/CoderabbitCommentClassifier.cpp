@@ -48,7 +48,10 @@ char AsciiToLower(char c) {
 std::string AsciiLower(const std::string& s) {
     std::string out;
     out.reserve(s.size());
+    // Raw loop kept; std::transform with back_inserter + lambda binding
+    // AsciiToLower is less readable in C++14.
     for (char c : s) {
+        // cppcheck-suppress useStlAlgorithm
         out.push_back(AsciiToLower(c));
     }
     return out;
@@ -198,7 +201,10 @@ bool DetectRawNewDelete(const std::string& body) {
     if (blocks.empty()) {
         return false;
     }
+    // cppcheck-suppress useStlAlgorithm
     for (const std::string& b : blocks) {
+        // Raw loop kept; std::any_of with a nested-loop lambda over `find`
+        // positions is harder to read than the explicit double-loop body below.
         // Look for `new <Type>(`. Requires a capital letter or `std::`
         // immediately after the keyword.
         std::size_t pos = 0;
@@ -314,14 +320,12 @@ bool DetectWhatComment(const std::string& body) {
 // internal-caller parameters. Detect the suggestion-block shape that wraps
 // existing code in `try { ... } catch (...)`.
 bool DetectDefensiveTryCatch(const std::string& body) {
-    std::vector<std::string> blocks = coderabbit_pure::ExtractSuggestionBlocks(body);
-    for (const std::string& b : blocks) {
-        if (Contains(b, "try {") && Contains(b, "catch (")) {
-            return true;
-        }
-        if (Contains(b, "try\n") && Contains(b, "catch")) {
-            return true;
-        }
+    const std::vector<std::string> blocks = coderabbit_pure::ExtractSuggestionBlocks(body);
+    const bool blockMatch = std::any_of(blocks.begin(), blocks.end(), [](const std::string& b) {
+        return (Contains(b, "try {") && Contains(b, "catch (")) || (Contains(b, "try\n") && Contains(b, "catch"));
+    });
+    if (blockMatch) {
+        return true;
     }
     // Or the prose form: "add a try/catch", "validate the parameter".
     const std::string lower = AsciiLower(body);
@@ -392,13 +396,10 @@ bool DetectNewThirdpartyDep(const std::string& body) {
         const std::size_t end = lower.find(')', pos);
         const std::string call =
             (end == std::string::npos) ? lower.substr(pos) : lower.substr(pos, end - pos + 1);
-        bool allowed = false;
-        for (const std::string& a : allowedDeps) {
-            if (call.compare(0, a.size(), a) == 0) {
-                allowed = true;
-                break;
-            }
-        }
+        const bool allowed = std::any_of(allowedDeps.begin(), allowedDeps.end(),
+                                          [&call](const std::string& a) {
+                                              return call.compare(0, a.size(), a) == 0;
+                                          });
         if (!allowed) {
             return true;
         }

@@ -248,6 +248,14 @@ class AgentProposalStore {
                                 std::string& outError);
     bool IncrementOpenPrIterationCount(const std::string& prUrl, int& outNewCount, std::string& outError);
 
+    // (coderabbit-react phase-6) Mirror of SetOpenPrCommentCursor for the
+    // check-run side. Sets `last_seen_check_run_id` + bumps
+    // `last_polled_at_sec` together. Idempotent — missing `pr_url` is not
+    // an error (UPDATE returns 0 rows changed). The phase-6 `PrCheckRunWatcher`
+    // calls this after every processed check-run so a stale tick (fetch
+    // succeeded but classifier failed) does not lose the cursor advance.
+    bool SetOpenPrCheckRunCursor(const std::string& prUrl, std::int64_t lastSeenCheckRunId, std::string& outError);
+
     // ─── H10 agent_proposals.handoff_status column ────────────────────────
     //
     // Mirrors `CodingHarness::RunState` as a string so the
