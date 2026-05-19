@@ -21,9 +21,3 @@
   Status: blocked-external
   Last-reviewed: 2026-05-17
 
-- 2026-05-12 · tracker-backend · [external] · BLOCKED — `mcp__vexp__run_pipeline` rejects `max_tokens` as float when JSON wire format is double
-  Owner: vexp tool upstream.
-  Details: Surfaced as "floating point, expected usize" — schema should accept integers-as-floats or improve the error message.
-  Workaround / unblock: file an issue / PR at the vexp project; not actionable in Smatchet. Cast to int literal in callers (`max_tokens: 12000` not `max_tokens: 12000.0`).
-  Status: blocked-external
-  Last-reviewed: 2026-05-17

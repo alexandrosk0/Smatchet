@@ -7,6 +7,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-12 · tracker-backend · [external] · P3 — `mcp__vexp__run_pipeline` rejects `max_tokens` as float when JSON wire format is double
+  Resolution: In-repo audit confirmed zero real float-literal callsites (the only `max_tokens:\s*\d+\.\d+` matches in the repo are inside this entry + the plan doc that quotes it). Pinned the int-literal-only convention in `docs/harness/claude-code/CLAUDE.md.tmpl` § Advanced Parameters by appending **integer literal only** + the exact daemon error text `"floating point, expected usize"` to the existing `max_tokens: 12000` bullet so future agents don't re-trip the bug. The template is the source for `.claude/CLAUDE.md` regen via `scripts/setup-harness.sh claude-code`. Upstream issue against the vexp tool is a user task (draft text in `docs/design/unblock-external-blockers-2-3-4.md` § Slice 3 step 3). Plan: `docs/design/unblock-external-blockers-2-3-4.md` § Slice 3.
+
 - 2026-05-16 · orchestrator · [external] · P2 — Auto-merge disabled on the repo; `gh pr merge --auto` errors
   Resolution: Workaround option (a) chosen — `gh api -X PATCH repos/alexandrosk0/Smatchet -F allow_auto_merge=true -F delete_branch_on_merge=true` flipped both settings in one call (`{"allow_auto_merge":true,"delete_branch_on_merge":true}` verified). Branch protection on `develop` is absent (HTTP 404 on `gh api repos/.../branches/develop/protection`), so `--auto` degrades to instant-merge with no required check — noted but out of scope (separate branch-protection decision). `docs/design/applied/test-suite-expansion-completion.md` § Deviations from plan § Session 2026-05-16 updated with a parenthetical naming the re-enable date + the rationale that the AGENTS.md § Merge gates poller remains the canonical autonomous path because it also covers CodeRabbit + user comments, which `--auto` does not. Plan: `docs/design/unblock-external-blockers-2-3-4.md` § Slice 1.
 
