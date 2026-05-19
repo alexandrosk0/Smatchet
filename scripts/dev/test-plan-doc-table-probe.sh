@@ -111,15 +111,19 @@ EOF
 out=$(run_probe "$TMP/plan-3.md")
 assert_exit "3. valid symbol -> exit 0" 0 "$out"
 
-# Test 4: plan with one missing symbol.
-cat > "$TMP/plan-4.md" <<'EOF'
+# Test 4: plan with one missing symbol. Use a runtime-generated random
+# token so this test script itself doesn't accidentally contain the
+# string the probe greps for (self-reference would make git grep hit
+# this very file).
+BOGUS_4="zz_bogus_${RANDOM}_${RANDOM}_${RANDOM}_x"
+cat > "$TMP/plan-4.md" <<EOF
 # Plan with one missing symbol
 
 ## File-level changes
 
-| Symbol                                    | Role      |
-|-------------------------------------------|-----------|
-| `ThisSymbolDefinitelyDoesNotExistAnywhere9876` | (caller) |
+| Symbol      | Role      |
+|-------------|-----------|
+| \`$BOGUS_4\` | (caller) |
 EOF
 out=$(run_probe "$TMP/plan-4.md")
 assert_exit "4. missing symbol -> exit 1" 1 "$out"
@@ -143,20 +147,22 @@ else
     echo "SKIP: 5. CORE_SOURCES not in CMakeLists.txt (repo changed); skipping"
 fi
 
-# Test 6: mixed plan (1 valid + 1 invalid).
-cat > "$TMP/plan-6.md" <<'EOF'
+# Test 6: mixed plan (1 valid + 1 invalid). Runtime-generated bogus token,
+# distinct from Test 4's.
+BOGUS_6="zz_bogus_${RANDOM}_${RANDOM}_${RANDOM}_y"
+cat > "$TMP/plan-6.md" <<EOF
 # Mixed plan
 
 ## File-level changes
 
-| Symbol                                          | Role      |
-|-------------------------------------------------|-----------|
-| `setup_claude_code`                             | (definer) |
-| `ThisSymbolDefinitelyDoesNotExistAnywhere9876`  | (caller)  |
+| Symbol                | Role      |
+|-----------------------|-----------|
+| \`setup_claude_code\` | (definer) |
+| \`$BOGUS_6\`          | (caller)  |
 EOF
 out=$(run_probe "$TMP/plan-6.md")
 assert_exit "6. mixed valid+invalid -> exit 1" 1 "$out"
-assert_contains "6b. MISS line for invalid symbol" "ThisSymbolDefinitelyDoesNotExistAnywhere9876" "$out"
+assert_contains "6b. MISS line for invalid symbol" "$BOGUS_6" "$out"
 
 echo
 echo "================================================================"
