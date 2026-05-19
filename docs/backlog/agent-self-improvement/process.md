@@ -97,12 +97,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-16 · orchestrator · [process] · P3 · OBSERVATIONAL — `_plan-locks.md` stale-read race when concurrent orchestrators / hooks edit
-  Details: Multiple times this session `Edit` errored with `File has been modified since read, either by the user or by a linter`. Cause: concurrent orchestrator (`claude/coordination-plan-locks` worktree at `jolly-cerf-97840e`) editing the same file, or PostToolUse hook reformatting. Re-Read-on-stale + re-Edit pattern always recovered.
-  Concrete next action: no obvious procedural fix beyond what's already in place. Not actionable today; documented for cross-session continuity awareness.
-  Status: observational
-  Last-reviewed: 2026-05-17
-
 - 2026-05-14 · architect · [process] · P3 · DEFERRED — `TodoWrite` reminder noise during read-only tasks
   Details: System injected three `TodoWrite` reminders into a read-only validation run. Read-only agents (architect, code-review, security-review, perf-measure) rarely benefit from a todo list; the reminder hook could be muted for them based on the agent banner or `tools:` frontmatter (no `Write`/`Edit`).
   Concrete next action: harness-side (Claude Code injects the reminder unconditionally; not configurable via project settings.json). Re-open once a Claude Code release exposes a per-agent toggle, or once a second harness cites the same noise.
