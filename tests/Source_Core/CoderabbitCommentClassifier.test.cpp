@@ -374,8 +374,8 @@ TEST_SUITE("CoderabbitCommentClassifier") {
         // trip rule #8 — only lock-acquisition forms (`.lock(`, `lock_guard`,
         // `unique_lock`) count as the blocking-call signal.
         CoderabbitCommentClassifier cls;
-        ClassificationResult r = cls.Classify(
-            MakeComment(Suggestion("ImGui::Begin(\"Panel\");\nstd::mutex stateMtx;\nImGui::End();")));
+        ClassificationResult r =
+            cls.Classify(MakeComment(Suggestion("ImGui::Begin(\"Panel\");\nstd::mutex stateMtx;\nImGui::End();")));
         CHECK(r.verdict == ClassifierVerdict::Dispatch);
     }
     TEST_CASE("Rule #8 — std::lock_guard inside ImGui::Begin frame rejected") {
@@ -600,6 +600,8 @@ TEST_SUITE("CoderabbitCommentClassifier") {
             const std::string cppReason =
                 stripFormatting(AsciiLower(CoderabbitCommentClassifier::LookupOverrideShortReason(n)));
             REQUIRE_MESSAGE(!cppReason.empty(), ("C++ table missing rule #" + std::to_string(n)).c_str());
+            REQUIRE_MESSAGE(!mdReason.empty(),
+                            ("Markdown table missing reject reason for rule #" + std::to_string(n)).c_str());
             // Find a "key fragment" from the shorter string and check it
             // appears in the OTHER side. The previous code derived the key
             // from one side and searched the same side, making the check
@@ -610,7 +612,13 @@ TEST_SUITE("CoderabbitCommentClassifier") {
             const std::string& longer = cppShorter ? mdReason : cppReason;
             // Trim to first ~24 chars to keep the fragment short.
             const std::string key = shorter.size() > 24 ? shorter.substr(0, 24) : shorter;
-            const bool anyMatch = longer.find(key) != std::string::npos;
+            // Guard against a vacuous pass when the key is empty — if either
+            // side was empty `longer.find("")` would always succeed and let
+            // drift slip through. The empty-mdReason / empty-cppReason cases
+            // are already REQUIRE_MESSAGE-blocked above, but the explicit
+            // !key.empty() check defends against future refactors that drop
+            // those guards.
+            const bool anyMatch = !key.empty() && (longer.find(key) != std::string::npos);
             CHECK_MESSAGE(anyMatch, ("Rule #" + std::to_string(n) +
                                      " short-reason drift between markdown table and C++ classifier")
                                         .c_str());

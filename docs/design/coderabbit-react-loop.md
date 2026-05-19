@@ -386,7 +386,7 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `5b31fe9` · phase 7: dispatch wiring (PrCommentWatcher OpenPrScan + PrCheckRunWatcher → ClaudeCodeLocalRunner::SpawnAdHoc) + GraphQL ResolveReviewThread + handoff-implementer routing for non-proposal dispatch sources (PR #299)
 - `487ad40` · phase 8: command surface (coderabbit-react.* + ci-react.*) + ConfigManager coderabbit_react + ci_react blocks + Preferences UI toggles + coderabbit-triage v2 (spawned-harness mode) + AGENTS.md first-delegate selection cross-link (this PR — orchestrator will sed post-merge if squash changes SHA)
 - `2a31182` · phase 8 (corrected merge sha): final shipped state before the closing milestone.
-- `<phase-9-sha>` · phase 9: closing milestone — synthetic CLI smoke (`tests/fixtures/stub-coderabbit-claude.sh`, `tests/fixtures/stub-ci-claude.sh`, `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ci-react.sh`) + plan-revision sweep (this section + `## Deviations from plan` updates + `## Verification results` final-table) + `lock-slug: coderabbit-react-loop` release trigger on PR body (this PR — orchestrator will sed post-merge if squash changes SHA).
+- `185418f` · phase 9: closing milestone — synthetic CLI smoke (`tests/fixtures/stub-coderabbit-claude.sh`, `tests/fixtures/stub-ci-claude.sh`, `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ci-react.sh`) + plan-revision sweep (this section + `## Deviations from plan` updates + `## Verification results` final-table) + `lock-slug: coderabbit-react-loop` release trigger on PR body (this PR — orchestrator will sed post-merge if squash changes SHA).
 
 ## Deviations from plan
 

@@ -72,6 +72,7 @@ void PrCheckRunWatcher::SetTransientRerunCap(int cap) { transientRerunCap_.store
 int PrCheckRunWatcher::GetTransientRerunCap() const { return transientRerunCap_.load(); }
 
 int PrCheckRunWatcher::GetRerunCount(const std::string& prUrl) const {
+    std::lock_guard<std::mutex> lock(rerunCountMu_);
     auto it = rerunCountByPrUrl_.find(prUrl);
     if (it == rerunCountByPrUrl_.end()) {
         return 0;
@@ -200,9 +201,7 @@ int PrCheckRunWatcher::Tick() {
             failed.push_back(r);
         }
         std::stable_sort(failed.begin(), failed.end(),
-                         [](const GitHubClient::CheckRun& a, const GitHubClient::CheckRun& b) {
-                             return a.id < b.id;
-                         });
+                         [](const GitHubClient::CheckRun& a, const GitHubClient::CheckRun& b) { return a.id < b.id; });
 
         // Per-PR iteration cap pre-flight — if we are already at the cap
         // log + skip; do not advance the cursor (next tick will hit the
@@ -263,16 +262,16 @@ int PrCheckRunWatcher::Tick() {
             // failure does not re-fire the same run on the next tick.
             std::string cursorErr;
             if (!store_->SetOpenPrCheckRunCursor(row.prUrl, run.id, cursorErr)) {
-                LOG_WARN("PrCheckRunWatcher::Tick: SetOpenPrCheckRunCursor failed for prUrl=%s: %s",
-                         row.prUrl.c_str(), cursorErr.c_str());
+                LOG_WARN("PrCheckRunWatcher::Tick: SetOpenPrCheckRunCursor failed for prUrl=%s: %s", row.prUrl.c_str(),
+                         cursorErr.c_str());
                 // Continue — losing the cursor means a duplicate dispatch
                 // on the next tick, which is preferable to silently
                 // skipping the action entirely.
             }
 
             if (cls.verdict == CheckRunVerdict::Skip) {
-                LOG_INFO("PrCheckRunWatcher::Tick: Skip on prUrl=%s checkRunId=%lld (reason=%s)",
-                         row.prUrl.c_str(), static_cast<long long>(run.id), cls.skipReason.c_str());
+                LOG_INFO("PrCheckRunWatcher::Tick: Skip on prUrl=%s checkRunId=%lld (reason=%s)", row.prUrl.c_str(),
+                         static_cast<long long>(run.id), cls.skipReason.c_str());
                 continue;
             }
 
@@ -301,11 +300,13 @@ int PrCheckRunWatcher::Tick() {
                              row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), rerunErr.c_str());
                     continue;
                 }
-                rerunCountByPrUrl_[row.prUrl] = currentReruns + 1;
+                {
+                    std::lock_guard<std::mutex> lock(rerunCountMu_);
+                    rerunCountByPrUrl_[row.prUrl] = currentReruns + 1;
+                }
                 ++actioned;
                 LOG_INFO("PrCheckRunWatcher::Tick: RerunTransient fired for prUrl=%s runId=%lld (rerun %d of %d)",
-                         row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), currentReruns + 1,
-                         rerunCap);
+                         row.prUrl.c_str(), static_cast<long long>(cls.rerunWorkflowId), currentReruns + 1, rerunCap);
                 continue;
             }
 
@@ -315,8 +316,8 @@ int PrCheckRunWatcher::Tick() {
                     LOG_WARN("PrCheckRunWatcher::Tick: open-PR respawn dispatcher not wired yet — Dispatch "
                              "verdict on prUrl=%s checkRunId=%lld (target=%s source=%s) recorded but cannot "
                              "spawn (phase-7 binding)",
-                             row.prUrl.c_str(), static_cast<long long>(run.id),
-                             cls.dispatchTargetAgent.c_str(), cls.dispatchSource.c_str());
+                             row.prUrl.c_str(), static_cast<long long>(run.id), cls.dispatchTargetAgent.c_str(),
+                             cls.dispatchSource.c_str());
                 }
                 continue;
             }

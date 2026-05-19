@@ -66,7 +66,11 @@ Take an approved `AgentProposal` whose `proposedAction == ImplementIssue`, mater
 ## Workflow
 
 1. **Read seed.** Parse `SEED.json`. Validate `proposalId`, `issueKey`, `targetBranch`, `workingDirectory == $PWD`. Reject the run with `RUN_RESULT.json { ok: false, errorMessage: "seed mismatch: ..." }` if any required field is missing.
-2. **Verify branch.** Run `git rev-parse --abbrev-ref HEAD`. It must equal `SEED.targetBranch` and the branch name must match `^agent/<proposalId>/.*$` per `AGENTS.md § Handoff envelope`. Refuse on `develop` / `main` / any branch not prefixed `agent/`.
+2. **Verify branch.** Run `git rev-parse --abbrev-ref HEAD`. It must equal `SEED.targetBranch` and the branch name must match one of two shapes per `AGENTS.md § Handoff envelope`:
+   - proposal flow (`dispatch_source == proposal_implement` or absent): `^agent/<proposalId>/.*$`
+   - non-proposal flow (`dispatch_source ∈ { coderabbit_comment, ci_build_failure, ci_ctest_failure, ci_coverage_gate, ci_transient_rerun }`): `^coderabbit/pr[0-9]+/iter[0-9]+$`
+
+   Refuse on `develop` / `main`, or on any branch matching neither shape.
 3. **Clarify (only when genuinely blocked).** If the seed's `approachOutline` is incomplete or ambiguous in a way that the issue body + comments do not resolve, write `CLARIFICATION_NEEDED.json` and stop. Do **not** ask cosmetic questions; do **not** drip-feed multiple rounds. Front-load every uncertainty into one question per round.
 4. **Design.** Use the project's semantic codebase search (per `AGENTS.md § Semantic codebase search`) to find the relevant call sites, owners, and invariants. Skeleton-first per `AGENTS.md § Skeleton-first`. Do not Grep the codebase before calling `run_pipeline` (or the harness equivalent).
 5. **Plan-lock pre-flight.** Run `bash scripts/dev/locks-show.sh`. If your computed write set overlaps any active claim, write `CLARIFICATION_NEEDED.json` with the overlap inventoried — never silently proceed against a held lock.
@@ -87,7 +91,7 @@ Take an approved `AgentProposal` whose `proposedAction == ImplementIssue`, mater
 ## Hard rules
 
 - Never modify `SEED.json`, `USER_RESPONSE.json`, `RUN_RESULT.json`, `PR_URL.txt` outside the workflow-step writes specified above.
-- Never push to `develop` or `main`. The runner asserts the branch shape before `git worktree add`, but defence-in-depth: refuse here too.
+- Never push to `develop` or `main`. The runner asserts the branch shape before `git worktree add`, but defence-in-depth: refuse here too. Allowed prefixes: `agent/` (proposal flow) and `coderabbit/pr<N>/iter<n>` (non-proposal flow).
 - Never open a non-draft PR. The user marks ready-for-review manually after auditing the diff.
 - Never call `gh pr merge`. The harness only ships drafts; merge is a human decision.
 - Never inherit environment variables outside the runner-allow-listed set (per `AGENTS.md § Handoff envelope`). If your tools attempt to read `SMATCHET_*` vars, they will be absent — that is intentional, not a misconfiguration.
@@ -103,7 +107,9 @@ Per the 2026-05-18 locked decision (see `docs/design/coderabbit-react-loop.md` �
 
 ### `dispatch_source` enum
 
-`SEED.json.dispatch_source` carries one of:
+The discriminator is carried in the seed's `payloadExtra` block — read it as `SEED.json.payloadExtra.dispatch_source`. Absent or unrecognised values default to `proposal_implement` (the existing H3 default), so a missing field never silently re-routes a proposal flow.
+
+`payloadExtra.dispatch_source` carries one of:
 
 | Source | When | Routed sub-delegate |
 |---|---|---|

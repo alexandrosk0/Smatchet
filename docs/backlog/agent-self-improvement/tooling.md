@@ -22,12 +22,6 @@
   Status: open
   Last-reviewed: 2026-05-19
 
-- 2026-05-19 · orchestrator · [tooling] · P3 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
-  Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `<phase-9-sha>`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end. Today bucket-E (ImGui Test Engine) isn't wired; until it is, this verification stays manual.
-  Concrete next action: when bucket-E lands, add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Estimated cost ~3 h once bucket-E exists; without it, defer.
-  Status: open
-  Last-reviewed: 2026-05-19
-
 - 2026-05-18 · debug-detective · [tooling] · P2 — Smatchet Logger has no console output + no default file sink
   Details: Whisper splice-no-show investigation (#258) needed verbose `[temp-debug]` logging across 4 TUs to localise the bug. Running `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp stderr — every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself goes only to the in-memory deque + (unwired in standalone) async file sink. Cost: ~30 min wiring a temp file-sink in `Target_Standalone/main.cpp` mid-investigation, then stripping it. Every future agent debugging a Smatchet runtime issue eats the same tax.
   Concrete next action: in `Target_Standalone/main.cpp` (before `ConfigManager::Load`), default-wire `Logger::Instance().SetFileSinkPath()` to `%LOCALAPPDATA%\Smatchet\session-YYYYMMDD-HHMMSS.log` (or `$TMPDIR/Smatchet-debug-<pid>.log` on non-Windows). Honour `SMATCHET_DEBUG_LOG` env to override. Keep the existing in-memory deque + in-app Log window paths untouched. ~20 min including a doc bump in `docs/design/applied/logging.md` (or wherever logging is documented) noting where logs land for support / triage.
@@ -122,6 +116,12 @@
 > P3 entries with no immediate owner. Reassess when adjacent feature lands or when a P2 promotion is justified.
 
 <!-- Latest first within Parked. -->
+
+- 2026-05-19 · orchestrator · [tooling] · P3 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
+  Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end. Today bucket-E (ImGui Test Engine) isn't wired; until it is, this verification stays manual.
+  Concrete next action: when bucket-E lands, add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Estimated cost ~3 h once bucket-E exists; without it, defer.
+  Status: parked
+  Last-reviewed: 2026-05-19
 
 - 2026-05-19 · handoff-implementer · [tooling] · P3 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
   Details: `docs/design/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip. No automated check today.

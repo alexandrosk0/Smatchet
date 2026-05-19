@@ -1990,8 +1990,8 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // Invoked from the watcher's RejectShortCircuit path so the
             // CodeRabbit thread is marked resolved after the reply lands;
             // unblocks the merge-gates plan's unresolved-thread gate cleanly.
-            smatchet::agentic::ReviewThreadResolver threadResolver =
-                [this](const std::string& commentId, std::string& outError) -> bool {
+            smatchet::agentic::ReviewThreadResolver threadResolver = [this](const std::string& commentId,
+                                                                            std::string& outError) -> bool {
                 GitHubClient* client = EnsureAgenticGithubClient();
                 if (client == nullptr) {
                     outError = "GitHubClient not constructed (configure PAT)";
@@ -2014,8 +2014,8 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // returned that target verbatim, but the spawned-harness routing
             // is the load-bearing part of the dispatch_source contract.
             smatchet::agentic::OpenPrRespawnDispatcher openPrDispatcher =
-                [this](const std::string& prUrl, const std::string& commentBody,
-                       const std::string& dispatchTargetAgent, std::string& outError) -> bool {
+                [this](const std::string& prUrl, const std::string& commentBody, const std::string& dispatchTargetAgent,
+                       std::string& outError) -> bool {
                 CodingHarness::ClaudeCodeLocalRunner* runner =
                     dynamic_cast<CodingHarness::ClaudeCodeLocalRunner*>(agenticHandoffRunner_.get());
                 if (runner == nullptr) {
@@ -2059,18 +2059,19 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // takes a single branch (Phase-8 plan does not extend it to a
             // list — that's a phase 9+ generalisation), so pick first.
             std::string registrarBranch = "develop";
-            if (!cfg.CoderabbitReact.WatchedBaseBranches.empty()) {
+            if (!cfg.CoderabbitReact.WatchedBaseBranches.empty() &&
+                !cfg.CoderabbitReact.WatchedBaseBranches.front().empty()) {
                 registrarBranch = cfg.CoderabbitReact.WatchedBaseBranches.front();
-            } else if (!cfg.CiReact.WatchedBaseBranches.empty()) {
+            } else if (!cfg.CiReact.WatchedBaseBranches.empty() && !cfg.CiReact.WatchedBaseBranches.front().empty()) {
                 registrarBranch = cfg.CiReact.WatchedBaseBranches.front();
             }
             agenticOpenPrRegistrar_ = std::unique_ptr<smatchet::agentic::OpenPrRegistrar>(
                 new smatchet::agentic::OpenPrRegistrar(agentProposalStore_.get(), registrarBranch));
-            agenticOpenPrRegistrar_->SetOpenPrLister(
-                [this](std::vector<smatchet::agentic::OpenPrListing>& out, std::string& err) -> bool {
-                    return smatchet::agentic::OpenPrRegistrar::RunGhPrList(
-                        agenticOpenPrRegistrar_->GetWatchedBaseBranch(), out, err);
-                });
+            agenticOpenPrRegistrar_->SetOpenPrLister([this](std::vector<smatchet::agentic::OpenPrListing>& out,
+                                                            std::string& err) -> bool {
+                return smatchet::agentic::OpenPrRegistrar::RunGhPrList(agenticOpenPrRegistrar_->GetWatchedBaseBranch(),
+                                                                       out, err);
+            });
 
             // (coderabbit-react phase-6, phase-8) Construct + wire the
             // CI-failure classifier and PrCheckRunWatcher. The watcher reads
@@ -2078,8 +2079,8 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // failed check-runs through the classifier. Budgets come from
             // `cfg.CiReact.*` (phase 8 plumbed the config block; phase 6
             // had inlined 5/2 as placeholders).
-            auto checkRunClassifier = std::unique_ptr<smatchet::agentic::CiFailureClassifier>(
-                new smatchet::agentic::CiFailureClassifier());
+            auto checkRunClassifier =
+                std::unique_ptr<smatchet::agentic::CiFailureClassifier>(new smatchet::agentic::CiFailureClassifier());
             agenticPrCheckRunWatcher_ = std::unique_ptr<smatchet::agentic::PrCheckRunWatcher>(
                 new smatchet::agentic::PrCheckRunWatcher(agentProposalStore_.get(),
                                                          /*iterationBudget*/ cfg.CiReact.IterationBudgetPerPr,
@@ -2112,16 +2113,16 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             // job_id from the check-run's details_url is a follow-up
             // (the job_id != check_run_id generally). Phase-7 can wire
             // this once the resolver helper lands.
-            agenticPrCheckRunWatcher_->SetWorkflowRerunDispatcher(
-                [this](const std::string& owner, const std::string& repo, std::int64_t runId,
-                       std::string& outError) -> bool {
-                    GitHubClient* client = EnsureAgenticGithubClient();
-                    if (client == nullptr) {
-                        outError = "GitHubClient not constructed (configure PAT)";
-                        return false;
-                    }
-                    return client->RerunWorkflowRun(owner, repo, runId, outError);
-                });
+            agenticPrCheckRunWatcher_->SetWorkflowRerunDispatcher([this](const std::string& owner,
+                                                                         const std::string& repo, std::int64_t runId,
+                                                                         std::string& outError) -> bool {
+                GitHubClient* client = EnsureAgenticGithubClient();
+                if (client == nullptr) {
+                    outError = "GitHubClient not constructed (configure PAT)";
+                    return false;
+                }
+                return client->RerunWorkflowRun(owner, repo, runId, outError);
+            });
             // (coderabbit-react phase-7) CI-failure respawn dispatcher.
             // Same shape as the CodeRabbit dispatcher above — derives PR
             // metadata from the open_pr_watch row and forwards to
@@ -2589,7 +2590,7 @@ bool AppController::RerunAgenticWorkflowRun(const std::string& owner, const std:
                                             std::string& outError) {
     GitHubClient* client = EnsureAgenticGithubClient();
     if (client == nullptr) {
-        outError = "GitHubClient not constructed (configure GitHub PAT in cfg.GitHubPat)";
+        outError = "GitHubClient not constructed (configure PAT)";
         return false;
     }
     return client->RerunWorkflowRun(owner, repo, runId, outError);

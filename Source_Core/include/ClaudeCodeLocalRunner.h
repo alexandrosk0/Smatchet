@@ -95,15 +95,10 @@ class ClaudeCodeLocalRunner : public IRunner {
 
     // ICodingHarnessRunner.
     bool Probe(std::string& outError) override;
-    bool Spawn(const Seed& seed,
-               const std::string& worktreeDir,
-               DeltaCallback onDelta,
-               StateChangeCallback onStateChange,
-               std::shared_ptr<std::atomic<bool>> cancelToken,
-               RunResult& outResult,
+    bool Spawn(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
+               StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken, RunResult& outResult,
                std::string& outError) override;
-    bool Resume(const ClarificationResponse& response,
-                std::shared_ptr<std::atomic<bool>> cancelToken,
+    bool Resume(const ClarificationResponse& response, std::shared_ptr<std::atomic<bool>> cancelToken,
                 std::string& outError) override;
     std::string Name() const override;
 
@@ -186,12 +181,14 @@ class ClaudeCodeLocalRunner : public IRunner {
     // SpawnAdHoc() (ad-hoc path, worktree + sentinels prepared by the
     // ad-hoc-specific code).
     //
-    // The auto-PR-create fallback runs unconditionally; for ad-hoc dispatches
-    // the harness itself is expected to push to the iter-branch and the
-    // operator merges back into the PR's head ref manually.
+    // The auto-PR-create fallback runs only when `allowPrAutoCreateFallback`
+    // is true; for ad-hoc dispatches (SpawnAdHoc) the harness pushes to the
+    // iter-branch and the operator merges back into the PR's head ref
+    // manually, so the fallback must be suppressed to avoid creating a
+    // duplicate PR from `coderabbit/pr<N>/iter<n>`.
     bool SpawnCore(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
                    StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
-                   RunResult& outResult, std::string& outError);
+                   RunResult& outResult, std::string& outError, bool allowPrAutoCreateFallback = true);
 };
 
 } // namespace CodingHarness

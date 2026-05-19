@@ -356,8 +356,7 @@ bool ExtractPrNumberFromUrl(const std::string& prUrl, int& outNumber, std::strin
         return false;
     }
     const std::string& nstr = segs[3];
-    if (nstr.empty() ||
-        !std::all_of(nstr.begin(), nstr.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+    if (nstr.empty() || !std::all_of(nstr.begin(), nstr.end(), [](char c) { return c >= '0' && c <= '9'; })) {
         outError = "prUrl number segment is empty or non-numeric";
         return false;
     }
@@ -538,9 +537,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
 }
 
 bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
-                                      StateChangeCallback onStateChange,
-                                      std::shared_ptr<std::atomic<bool>> cancelToken, RunResult& outResult,
-                                      std::string& outError) {
+                                      StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
+                                      RunResult& outResult, std::string& outError, bool allowPrAutoCreateFallback) {
     // Caller (Spawn / SpawnAdHoc) is responsible for worktree creation +
     // SEED.json + SEED.md (+ optional CHECK_RUN.json) writes. This helper
     // owns the env-allow-list build, subprocess spawn, line-streaming, poll
@@ -698,7 +696,7 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
     // valid URL. Failure here is a hard stop — we tried, the result
     // surfaces to the audit trail via outResult.errorMessage. Skipped
     // when the run already failed (no PR to open for a broken branch).
-    if (outResult.ok && outResult.prUrl.empty() && m_opts.autoCreatePrIfMissing) {
+    if (allowPrAutoCreateFallback && outResult.ok && outResult.prUrl.empty() && m_opts.autoCreatePrIfMissing) {
         const std::string prUrlSentinel = JoinPath(worktreeDir, kPrUrlName);
         if (FileExists(prUrlSentinel)) {
             // Sentinel showed up between the file check above and this
@@ -915,8 +913,8 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     seed.issueBodyMarkdown = req.commentBodyOrFailureBody;
     {
         std::ostringstream approach;
-        approach << "Ad-hoc dispatch from PR #" << prNumber << " (source=" << req.dispatchSource
-                 << ", routed via " << req.routedDelegate << ").";
+        approach << "Ad-hoc dispatch from PR #" << prNumber << " (source=" << req.dispatchSource << ", routed via "
+                 << req.routedDelegate << ").";
         seed.approachOutline = approach.str();
     }
     seed.complexityHint = "medium";
@@ -970,13 +968,18 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     // file is still written so handoff-implementer's `if exists` probe
     // matches the documented contract.
     const bool isCiDispatch = (req.dispatchSource.compare(0, 3, "ci_") == 0);
+    const std::string checkRunPath = JoinPath(worktreeRoot, kCheckRunName);
     if (isCiDispatch) {
-        const std::string checkRunPath = JoinPath(worktreeRoot, kCheckRunName);
-        const nlohmann::json payload =
-            req.checkRunPayload.is_null() ? nlohmann::json::object() : req.checkRunPayload;
+        const nlohmann::json payload = req.checkRunPayload.is_null() ? nlohmann::json::object() : req.checkRunPayload;
         if (!WriteFileText(checkRunPath, payload.dump(2), outError)) {
             return false;
         }
+    } else if (FileExists(checkRunPath)) {
+        // Re-used per-PR worktrees can leave a CHECK_RUN.json from an
+        // earlier `ci_*` dispatch; clear it before spawning a
+        // `coderabbit_comment` (or other non-CI) child so the
+        // documented `if exists` contract is not violated.
+        std::remove(checkRunPath.c_str());
     }
 
     // Forward to the shared child loop. No delta / state callbacks for
@@ -985,7 +988,12 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     // toast / panel callbacks through.
     RunResult result;
     auto cancel = std::make_shared<std::atomic<bool>>(false);
-    if (!SpawnCore(seed, worktreeRoot, /*onDelta*/ nullptr, /*onStateChange*/ nullptr, cancel, result, outError)) {
+    // SpawnAdHoc disables the shared PR auto-create fallback — the iter-branch
+    // lives off the PR's head ref, not develop, so a fallback `gh pr create`
+    // would mint a duplicate PR. The handoff-implementer is expected to push
+    // the iter-branch and the operator merges back manually.
+    if (!SpawnCore(seed, worktreeRoot, /*onDelta*/ nullptr, /*onStateChange*/ nullptr, cancel, result, outError,
+                   /*allowPrAutoCreateFallback=*/false)) {
         return false;
     }
     return result.ok;

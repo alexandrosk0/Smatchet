@@ -67,6 +67,15 @@ bool CommentIdLessOrEqual(const std::string& a, const std::string& b) {
     return a <= b;
 }
 
+// Strict numeric-aware less. Derived from `CommentIdLessOrEqual` so the sort
+// order is the same relation as the baseline-filter check; previously the sort
+// used raw lex `<` which mis-ordered equal-timestamp comments and let a
+// larger numeric id be processed before a smaller new id (CodeRabbit #294
+// PR-comment finding 1 — `Source_Core/src/PrCommentWatcher.cpp:367-373`).
+bool CommentIdLess(const std::string& a, const std::string& b) {
+    return CommentIdLessOrEqual(a, b) && !CommentIdLessOrEqual(b, a);
+}
+
 } // namespace
 
 PrCommentWatcher::PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget, WatchMode mode)
@@ -82,9 +91,7 @@ void PrCommentWatcher::SetRespawnDispatcher(HarnessRespawnDispatcher dispatcher)
 void PrCommentWatcher::SetOpenPrRespawnDispatcher(OpenPrRespawnDispatcher dispatcher) {
     openPrDispatcher_ = std::move(dispatcher);
 }
-void PrCommentWatcher::SetReviewThreadResolver(ReviewThreadResolver resolver) {
-    threadResolver_ = std::move(resolver);
-}
+void PrCommentWatcher::SetReviewThreadResolver(ReviewThreadResolver resolver) { threadResolver_ = std::move(resolver); }
 void PrCommentWatcher::SetClassifier(std::unique_ptr<PrCommentClassifier> classifier) {
     classifier_ = std::move(classifier);
 }
@@ -314,8 +321,8 @@ int PrCommentWatcher::Tick() {
             std::string prKey;
             std::string keyErr;
             if (!ParsePrKeyFromUrl(row.prUrl, prKey, keyErr)) {
-                LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: malformed PR URL '%s' (%s) — skipping",
-                         row.prUrl.c_str(), keyErr.c_str());
+                LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: malformed PR URL '%s' (%s) — skipping", row.prUrl.c_str(),
+                         keyErr.c_str());
                 continue;
             }
 
@@ -328,7 +335,8 @@ int PrCommentWatcher::Tick() {
                     std::string postErr;
                     if (!poster_(prKey, body, postErr)) {
                         LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: failed to post budget-exhausted marker for "
-                                 "prUrl=%s: %s", row.prUrl.c_str(), postErr.c_str());
+                                 "prUrl=%s: %s",
+                                 row.prUrl.c_str(), postErr.c_str());
                     }
                 }
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: budget exhausted on prUrl=%s (used=%d budget=%d)",
@@ -353,7 +361,7 @@ int PrCommentWatcher::Tick() {
                 if (a.createdAtSec != b.createdAtSec) {
                     return a.createdAtSec < b.createdAtSec;
                 }
-                return a.id < b.id;
+                return CommentIdLess(a.id, b.id);
             });
             const std::string& baselineId = row.lastSeenCommentIdStr;
             // Find the first comment whose id is strictly greater than the
@@ -411,25 +419,28 @@ int PrCommentWatcher::Tick() {
                 continue;
             }
             if (cls.verdict == ClassifierVerdict::Skip) {
-                LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: Skip verdict on prUrl=%s (reason=%s)",
-                         row.prUrl.c_str(), cls.skipReason.c_str());
+                LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: Skip verdict on prUrl=%s (reason=%s)", row.prUrl.c_str(),
+                         cls.skipReason.c_str());
                 continue;
             }
             if (cls.verdict == ClassifierVerdict::RejectShortCircuit) {
+                bool rejectReplyPosted = false;
                 if (poster_) {
                     std::string postErr;
-                    if (!poster_(prKey, cls.rejectReplyBody, postErr)) {
+                    rejectReplyPosted = poster_(prKey, cls.rejectReplyBody, postErr);
+                    if (!rejectReplyPosted) {
                         LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: reject-reply post failed for prUrl=%s: %s",
                                  row.prUrl.c_str(), postErr.c_str());
                     }
                 }
                 // (phase-7) Resolve the CodeRabbit review thread via GraphQL
                 // after posting the reply. Unblocks the merge-gates plan's
-                // unresolved-thread gate cleanly. Failure is non-fatal — the
-                // reply already landed; manual resolve is a recoverable
-                // follow-up. Skipped when the seam is unwired (tests or
-                // operators that opted out).
-                if (threadResolver_ && !firstNewComment->id.empty()) {
+                // unresolved-thread gate cleanly. Gate on a successful
+                // reply post so we never close a thread when the reply did
+                // not land (or when the poster_ seam is unwired). Failure
+                // of the resolve itself is non-fatal — the reply already
+                // landed; manual resolve is a recoverable follow-up.
+                if (rejectReplyPosted && threadResolver_ && !firstNewComment->id.empty()) {
                     std::string resolveErr;
                     if (!threadResolver_(firstNewComment->id, resolveErr)) {
                         LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: review-thread resolve failed for prUrl=%s "
@@ -437,8 +448,8 @@ int PrCommentWatcher::Tick() {
                                  row.prUrl.c_str(), firstNewComment->id.c_str(), resolveErr.c_str());
                     }
                 }
-                LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: RejectShortCircuit on prUrl=%s (%s)",
-                         row.prUrl.c_str(), cls.rejectRuleCitation.c_str());
+                LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: RejectShortCircuit on prUrl=%s (%s)", row.prUrl.c_str(),
+                         cls.rejectRuleCitation.c_str());
                 continue;
             }
             // ClassifierVerdict::Dispatch.
@@ -498,8 +509,9 @@ int PrCommentWatcher::Tick() {
                     const std::string body = BuildBudgetExhaustedCommentBody(h.proposalId, h.iterationCount);
                     std::string postErr;
                     if (!poster_(prKey, body, postErr)) {
-                        LOG_WARN("PrCommentWatcher::Tick: failed to post budget-exhausted marker for proposalId=%lld: %s",
-                                 static_cast<long long>(h.proposalId), postErr.c_str());
+                        LOG_WARN(
+                            "PrCommentWatcher::Tick: failed to post budget-exhausted marker for proposalId=%lld: %s",
+                            static_cast<long long>(h.proposalId), postErr.c_str());
                     }
                 }
                 LOG_WARN("PrCommentWatcher::Tick: budget exhausted on proposalId=%lld (used=%d budget=%d)",
@@ -553,8 +565,8 @@ int PrCommentWatcher::Tick() {
         const std::string& baselineId = h.prCommentCursorIdStr;
         const PostedComment* firstNewComment = nullptr;
         for (const auto& c : comments) {
-            const bool tupleGreater = (c.createdAtSec > baselineSec) ||
-                                      (c.createdAtSec == baselineSec && c.id > baselineId);
+            const bool tupleGreater =
+                (c.createdAtSec > baselineSec) || (c.createdAtSec == baselineSec && c.id > baselineId);
             if (!tupleGreater) {
                 continue;
             }
@@ -603,19 +615,24 @@ int PrCommentWatcher::Tick() {
             continue;
         }
         if (cls.verdict == ClassifierVerdict::RejectShortCircuit) {
+            bool rejectReplyPosted = false;
             if (poster_) {
                 std::string postErr;
-                if (!poster_(prKey, cls.rejectReplyBody, postErr)) {
+                rejectReplyPosted = poster_(prKey, cls.rejectReplyBody, postErr);
+                if (!rejectReplyPosted) {
                     LOG_WARN("PrCommentWatcher::Tick: reject-reply post failed for proposalId=%lld: %s",
                              static_cast<long long>(h.proposalId), postErr.c_str());
                 }
             }
-            // (phase-7) Same review-thread resolve seam as OpenPrScan.
-            if (threadResolver_ && !bodyId.empty()) {
+            // (phase-7) Same review-thread resolve seam as OpenPrScan —
+            // gated on a successful reply post so a thread is never
+            // closed when the reject reply did not land.
+            if (rejectReplyPosted && threadResolver_ && !bodyId.empty()) {
                 std::string resolveErr;
                 if (!threadResolver_(bodyId, resolveErr)) {
-                    LOG_WARN("PrCommentWatcher::Tick: review-thread resolve failed for proposalId=%lld commentId=%s: %s",
-                             static_cast<long long>(h.proposalId), bodyId.c_str(), resolveErr.c_str());
+                    LOG_WARN(
+                        "PrCommentWatcher::Tick: review-thread resolve failed for proposalId=%lld commentId=%s: %s",
+                        static_cast<long long>(h.proposalId), bodyId.c_str(), resolveErr.c_str());
                 }
             }
             LOG_INFO("PrCommentWatcher::Tick: RejectShortCircuit on proposalId=%lld (%s)",
@@ -641,8 +658,7 @@ int PrCommentWatcher::Tick() {
         }
         ++dispatched;
         LOG_INFO("PrCommentWatcher::Tick: dispatched respawn for proposalId=%lld (iteration %d of %d, target=%s)",
-                 static_cast<long long>(h.proposalId), h.iterationCount + 1, budget,
-                 cls.dispatchTargetAgent.c_str());
+                 static_cast<long long>(h.proposalId), h.iterationCount + 1, budget, cls.dispatchTargetAgent.c_str());
     }
     return dispatched;
 }
