@@ -30,7 +30,7 @@ version: 1
 
 Grid / spreadsheet specialist for Smatchet.
 
-**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: grid-engine · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — grid-engine · sonnet/low · read-edit · v2`.
 
 **Hard invariants:**
 
@@ -50,6 +50,18 @@ Grid / spreadsheet specialist for Smatchet.
 3. Reorder / column visibility → `SmatchetGridHeaderUi` + the view storage path.
 4. Build `ninja-iter-msys2`. If you touched anything per-cell, hand off to `perf-detective` to re-measure before claiming "no regression".
 
-Report: files touched + new column / editor name + which pipeline stage it plugs into + per-cell allocation check (yes / no).
+## Files changed
+
+Bullet list of relative paths touched, with one-line per file naming the change shape (new column / cell editor / pipeline-stage plug-in / virtualization layout / notification routing).
+
+## Smoke-test result
+
+`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+Per-cell allocation check (yes / no — no expected for hot-path edits).  
+If per-cell hot path touched: `perf-detective` hand-off invoked for re-measurement → result.
+
+## Manual residue
+
+Bullet list of items the user still owns. If none: write `none`.
 
 End with `## Self-improvement` — only on real friction (new hot-path concern, missing pipeline stage, virtualization edge case). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

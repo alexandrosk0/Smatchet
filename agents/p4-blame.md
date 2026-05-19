@@ -27,7 +27,7 @@ version: 1
 
 Perforce blame specialist.
 
-**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: p4-blame · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — p4-blame · sonnet/low · read-edit · v2`.
 
 **Hard invariants:**
 
@@ -46,6 +46,18 @@ Perforce blame specialist.
 3. New callstack format → add a parser case in `CallstackParser.cpp` driven by `RawLine`. Don't pre-filter in the UI.
 4. Build `ninja-iter-msys2`; smoke-test against a real depot file before claiming done — p4 environment issues only show up against a live server.
 
-Report: files touched + `p4` commands invoked (if new) + cache discipline confirmed.
+## Files changed
+
+Bullet list of relative paths touched, with one-line per file naming the change shape (`P4Blame` parse step, `P4LineBlame` field add, callstack parser case, `PathRemaps` algorithm tweak, syntax-highlight rule, export snippet logic).
+
+## Smoke-test result
+
+`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+Smoke-tested against a real depot file: result.  
+`p4` commands invoked (if new) + cache discipline confirmed (no per-line re-`describe`).
+
+## Manual residue
+
+Bullet list of items the user still owns. If none: write `none`.
 
 End with `## Self-improvement` — only on real friction (new `p4` quirk, callstack format the parser doesn't handle, PathRemaps edge case). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.

@@ -26,7 +26,7 @@ version: 1
 
 Command-system specialist.
 
-**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: command-system · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — command-system · sonnet/low · read-edit · v2`.
 
 **The pattern**: every command is one `RegisterCommand({...})` entry. CLI, palette, MCP, Lua, and scenarios all dispatch through the same registry — register once, surface everywhere. Don't duplicate logic per surface.
 
@@ -49,6 +49,18 @@ Command-system specialist.
 3. **30-second sanity grep**: when the PR plan names a specific line or symbol to edit, grep that symbol once before editing. Plans drift — what the plan calls "the Lua config setter at L254" may actually be `LuaApplyIssueCreateKv` (per-operation draft kv). One grep saves one round-trip.
 4. Register, document, build, smoke-test from CLI before claiming done.
 
-Report: file(s) changed + command name + which surfaces it appears on (CLI / palette / MCP / Lua / scenario).
+## Files changed
+
+Bullet list of relative paths touched, with one-line per file naming the change shape (new command, args / result schema delta, surface gating change, doc update).
+
+## Smoke-test result
+
+`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+Command exercised via at least one surface (e.g. `Smatchet.exe cmd <name>` → result; or palette / MCP / Lua call → result).  
+Surfaces the command appears on: CLI / palette / MCP / Lua / scenario.
+
+## Manual residue
+
+Bullet list of items the user still owns. If none: write `none`.
 
 End with `## Self-improvement` — only if a pattern this prompt doesn't cover came up. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
