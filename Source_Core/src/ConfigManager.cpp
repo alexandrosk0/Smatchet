@@ -263,6 +263,38 @@ void ConfigManager::Save(const TrackerConfig& config) {
     // restart; default is FALSE per plan-locked decision #5 (manual handoff
     // start is the trust baseline). No schema bump — j.value() on Load.
     j["handoff_auto_start_on_approve"] = config.HandoffAutoStartOnApprove;
+    // (coderabbit-react-loop phase 8) CodeRabbit + CI react loop blocks.
+    // Both are additive nested objects; missing keys round-trip to the
+    // construct-time defaults on Load. No schema bump.
+    {
+        nlohmann::json cr = nlohmann::json::object();
+        cr["enabled"] = config.CoderabbitReact.Enabled;
+        cr["poll_interval_sec"] = config.CoderabbitReact.PollIntervalSec;
+        cr["watched_base_branches"] = config.CoderabbitReact.WatchedBaseBranches;
+        cr["bot_logins"] = config.CoderabbitReact.BotLogins;
+        cr["short_circuit_reject_enabled"] = config.CoderabbitReact.ShortCircuitRejectEnabled;
+        cr["auto_dispatch_fixes"] = config.CoderabbitReact.AutoDispatchFixes;
+        cr["iteration_budget_per_pr"] = config.CoderabbitReact.IterationBudgetPerPr;
+        cr["ad_hoc_worktree_root"] = config.CoderabbitReact.AdHocWorktreeRoot;
+        j["coderabbit_react"] = std::move(cr);
+    }
+    {
+        nlohmann::json ci = nlohmann::json::object();
+        ci["enabled"] = config.CiReact.Enabled;
+        ci["poll_interval_sec"] = config.CiReact.PollIntervalSec;
+        ci["watched_base_branches"] = config.CiReact.WatchedBaseBranches;
+        ci["watched_check_names"] = config.CiReact.WatchedCheckNames;
+        ci["ignored_check_names"] = config.CiReact.IgnoredCheckNames;
+        ci["auto_dispatch_build_doctor"] = config.CiReact.AutoDispatchBuildDoctor;
+        ci["auto_dispatch_test_rig"] = config.CiReact.AutoDispatchTestRig;
+        ci["auto_dispatch_debug_detective"] = config.CiReact.AutoDispatchDebugDetective;
+        ci["transient_rerun_enabled"] = config.CiReact.TransientRerunEnabled;
+        ci["transient_rerun_max_per_pr"] = config.CiReact.TransientRerunMaxPerPr;
+        ci["iteration_budget_per_pr"] = config.CiReact.IterationBudgetPerPr;
+        ci["annotation_fetch_count"] = config.CiReact.AnnotationFetchCount;
+        ci["log_tail_lines"] = config.CiReact.LogTailLines;
+        j["ci_react"] = std::move(ci);
+    }
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
@@ -835,6 +867,96 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             // Older configs without the key hydrate to the safe default so
             // upgrading the app never silently enables auto-handoff.
             cfg.HandoffAutoStartOnApprove = j.value("handoff_auto_start_on_approve", cfg.HandoffAutoStartOnApprove);
+
+            // (coderabbit-react-loop phase 8) CodeRabbit react block. Each
+            // field round-trips with j.value() against the in-struct default,
+            // then clamped to a sane range so a hand-edited config can't
+            // hammer GitHub or starve the loop. No schema bump — every key
+            // is additive.
+            if (j.contains("coderabbit_react") && j["coderabbit_react"].is_object()) {
+                const nlohmann::json& cr = j["coderabbit_react"];
+                cfg.CoderabbitReact.Enabled = cr.value("enabled", cfg.CoderabbitReact.Enabled);
+                cfg.CoderabbitReact.PollIntervalSec =
+                    cr.value("poll_interval_sec", cfg.CoderabbitReact.PollIntervalSec);
+                cfg.CoderabbitReact.WatchedBaseBranches =
+                    cr.value("watched_base_branches", cfg.CoderabbitReact.WatchedBaseBranches);
+                cfg.CoderabbitReact.BotLogins = cr.value("bot_logins", cfg.CoderabbitReact.BotLogins);
+                cfg.CoderabbitReact.ShortCircuitRejectEnabled =
+                    cr.value("short_circuit_reject_enabled", cfg.CoderabbitReact.ShortCircuitRejectEnabled);
+                cfg.CoderabbitReact.AutoDispatchFixes =
+                    cr.value("auto_dispatch_fixes", cfg.CoderabbitReact.AutoDispatchFixes);
+                cfg.CoderabbitReact.IterationBudgetPerPr =
+                    cr.value("iteration_budget_per_pr", cfg.CoderabbitReact.IterationBudgetPerPr);
+                cfg.CoderabbitReact.AdHocWorktreeRoot =
+                    cr.value("ad_hoc_worktree_root", cfg.CoderabbitReact.AdHocWorktreeRoot);
+            }
+            // Clamp CodeRabbit react values regardless of whether the
+            // block was present (also protects the construct-time defaults
+            // from accidental future drift).
+            if (cfg.CoderabbitReact.PollIntervalSec < 60) {
+                cfg.CoderabbitReact.PollIntervalSec = 60;
+            } else if (cfg.CoderabbitReact.PollIntervalSec > 3600) {
+                cfg.CoderabbitReact.PollIntervalSec = 3600;
+            }
+            if (cfg.CoderabbitReact.IterationBudgetPerPr < 1) {
+                cfg.CoderabbitReact.IterationBudgetPerPr = 1;
+            } else if (cfg.CoderabbitReact.IterationBudgetPerPr > 50) {
+                cfg.CoderabbitReact.IterationBudgetPerPr = 50;
+            }
+
+            // (coderabbit-react-loop phase 8) CI react block. Same shape +
+            // additive contract.
+            if (j.contains("ci_react") && j["ci_react"].is_object()) {
+                const nlohmann::json& ci = j["ci_react"];
+                cfg.CiReact.Enabled = ci.value("enabled", cfg.CiReact.Enabled);
+                cfg.CiReact.PollIntervalSec = ci.value("poll_interval_sec", cfg.CiReact.PollIntervalSec);
+                cfg.CiReact.WatchedBaseBranches =
+                    ci.value("watched_base_branches", cfg.CiReact.WatchedBaseBranches);
+                cfg.CiReact.WatchedCheckNames =
+                    ci.value("watched_check_names", cfg.CiReact.WatchedCheckNames);
+                cfg.CiReact.IgnoredCheckNames =
+                    ci.value("ignored_check_names", cfg.CiReact.IgnoredCheckNames);
+                cfg.CiReact.AutoDispatchBuildDoctor =
+                    ci.value("auto_dispatch_build_doctor", cfg.CiReact.AutoDispatchBuildDoctor);
+                cfg.CiReact.AutoDispatchTestRig =
+                    ci.value("auto_dispatch_test_rig", cfg.CiReact.AutoDispatchTestRig);
+                cfg.CiReact.AutoDispatchDebugDetective =
+                    ci.value("auto_dispatch_debug_detective", cfg.CiReact.AutoDispatchDebugDetective);
+                cfg.CiReact.TransientRerunEnabled =
+                    ci.value("transient_rerun_enabled", cfg.CiReact.TransientRerunEnabled);
+                cfg.CiReact.TransientRerunMaxPerPr =
+                    ci.value("transient_rerun_max_per_pr", cfg.CiReact.TransientRerunMaxPerPr);
+                cfg.CiReact.IterationBudgetPerPr =
+                    ci.value("iteration_budget_per_pr", cfg.CiReact.IterationBudgetPerPr);
+                cfg.CiReact.AnnotationFetchCount =
+                    ci.value("annotation_fetch_count", cfg.CiReact.AnnotationFetchCount);
+                cfg.CiReact.LogTailLines = ci.value("log_tail_lines", cfg.CiReact.LogTailLines);
+            }
+            if (cfg.CiReact.PollIntervalSec < 60) {
+                cfg.CiReact.PollIntervalSec = 60;
+            } else if (cfg.CiReact.PollIntervalSec > 3600) {
+                cfg.CiReact.PollIntervalSec = 3600;
+            }
+            if (cfg.CiReact.IterationBudgetPerPr < 1) {
+                cfg.CiReact.IterationBudgetPerPr = 1;
+            } else if (cfg.CiReact.IterationBudgetPerPr > 50) {
+                cfg.CiReact.IterationBudgetPerPr = 50;
+            }
+            if (cfg.CiReact.TransientRerunMaxPerPr < 0) {
+                cfg.CiReact.TransientRerunMaxPerPr = 0;
+            } else if (cfg.CiReact.TransientRerunMaxPerPr > 10) {
+                cfg.CiReact.TransientRerunMaxPerPr = 10;
+            }
+            if (cfg.CiReact.AnnotationFetchCount < 1) {
+                cfg.CiReact.AnnotationFetchCount = 1;
+            } else if (cfg.CiReact.AnnotationFetchCount > 100) {
+                cfg.CiReact.AnnotationFetchCount = 100;
+            }
+            if (cfg.CiReact.LogTailLines < 10) {
+                cfg.CiReact.LogTailLines = 10;
+            } else if (cfg.CiReact.LogTailLines > 2000) {
+                cfg.CiReact.LogTailLines = 2000;
+            }
 #endif
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);

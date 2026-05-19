@@ -383,7 +383,8 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `74547b0` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (PR #293)
 - `0ec22fb` · CodeRabbit feedback cleanup on phases 1-5 (PR #294, 8 files / 216 LOC)
 - `d9bb3fb` · phase 6: CiFailureClassifier concrete + PrCheckRunWatcher + AgenticHandoffController wiring + lint cleanup (PR #296)
-- `<sha-of-this-phase-7-commit>` · phase 7: dispatch wiring (PrCommentWatcher OpenPrScan + PrCheckRunWatcher → ClaudeCodeLocalRunner::SpawnAdHoc) + GraphQL ResolveReviewThread + handoff-implementer routing for non-proposal dispatch sources (this PR — orchestrator will sed post-merge)
+- `5b31fe9` · phase 7: dispatch wiring (PrCommentWatcher OpenPrScan + PrCheckRunWatcher → ClaudeCodeLocalRunner::SpawnAdHoc) + GraphQL ResolveReviewThread + handoff-implementer routing for non-proposal dispatch sources (PR #299)
+- `<sha-of-this-phase-8-commit>` · phase 8: command surface (coderabbit-react.* + ci-react.*) + ConfigManager coderabbit_react + ci_react blocks + Preferences UI toggles + coderabbit-triage v2 (spawned-harness mode) + AGENTS.md first-delegate selection cross-link (this PR — orchestrator will sed post-merge)
 
 ## Deviations from plan
 

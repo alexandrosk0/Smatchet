@@ -2049,36 +2049,41 @@ smatchet::agentic::AgenticHandoffController* AppController::GetAgenticHandoffCon
             };
             agenticPrCommentWatcher_->SetOpenPrRespawnDispatcher(std::move(openPrDispatcher));
 
-            // (coderabbit-react phase-1) Construct + wire the open-PR
-            // registrar. Same lifetime as the handoff controller. Phase 1
-            // hardcodes the watched base branch to `develop` — a future
-            // phase 8 surfaces the Preferences toggle that selects which
-            // branch the registrar polls. The lister seam binds to the
-            // production `gh pr list` invocation via SubprocessCapture.
+            // (coderabbit-react phase-1, phase-8) Construct + wire the open-PR
+            // registrar. Same lifetime as the handoff controller. The
+            // watched base branch reads from the union of the two react-loop
+            // configs (CodeRabbit + CI) — both watchers tick rows the
+            // registrar produced, so the registrar needs to cover both. We
+            // pick the CodeRabbit list when CodeRabbit is enabled, else the
+            // CI list, else the safe `develop` default. The registrar today
+            // takes a single branch (Phase-8 plan does not extend it to a
+            // list — that's a phase 9+ generalisation), so pick first.
+            std::string registrarBranch = "develop";
+            if (!cfg.CoderabbitReact.WatchedBaseBranches.empty()) {
+                registrarBranch = cfg.CoderabbitReact.WatchedBaseBranches.front();
+            } else if (!cfg.CiReact.WatchedBaseBranches.empty()) {
+                registrarBranch = cfg.CiReact.WatchedBaseBranches.front();
+            }
             agenticOpenPrRegistrar_ = std::unique_ptr<smatchet::agentic::OpenPrRegistrar>(
-                new smatchet::agentic::OpenPrRegistrar(agentProposalStore_.get(), "develop"));
+                new smatchet::agentic::OpenPrRegistrar(agentProposalStore_.get(), registrarBranch));
             agenticOpenPrRegistrar_->SetOpenPrLister(
                 [this](std::vector<smatchet::agentic::OpenPrListing>& out, std::string& err) -> bool {
                     return smatchet::agentic::OpenPrRegistrar::RunGhPrList(
                         agenticOpenPrRegistrar_->GetWatchedBaseBranch(), out, err);
                 });
 
-            // (coderabbit-react phase-6) Construct + wire the CI-failure
-            // classifier and PrCheckRunWatcher. The watcher reads
+            // (coderabbit-react phase-6, phase-8) Construct + wire the
+            // CI-failure classifier and PrCheckRunWatcher. The watcher reads
             // agent_open_pr_watch rows the registrar upserts and routes
-            // failed check-runs through the classifier. Defaults match the
-            // plan's cfg.ci_react.* block (phase 8 lands the actual config
-            // plumbing — phase 6 inlines sensible defaults):
-            //   - iteration_budget_per_pr = 5
-            //   - transient_rerun_max_per_pr = 2
-            //   - auto_dispatch_debug_detective = true
-            //   - auto_dispatch_test_rig = true
+            // failed check-runs through the classifier. Budgets come from
+            // `cfg.CiReact.*` (phase 8 plumbed the config block; phase 6
+            // had inlined 5/2 as placeholders).
             auto checkRunClassifier = std::unique_ptr<smatchet::agentic::CiFailureClassifier>(
                 new smatchet::agentic::CiFailureClassifier());
             agenticPrCheckRunWatcher_ = std::unique_ptr<smatchet::agentic::PrCheckRunWatcher>(
                 new smatchet::agentic::PrCheckRunWatcher(agentProposalStore_.get(),
-                                                         /*iterationBudget*/ 5,
-                                                         /*transientRerunCap*/ 2));
+                                                         /*iterationBudget*/ cfg.CiReact.IterationBudgetPerPr,
+                                                         /*transientRerunCap*/ cfg.CiReact.TransientRerunMaxPerPr));
             // Fetcher seam binds to GitHubClient::FetchCheckRuns; resolve
             // the client lazily on every call so a PAT configured AFTER
             // controller construction lights up the seam.
@@ -2560,6 +2565,35 @@ bool AppController::RunAgenticTriageOnce(std::string& outError) {
 }
 
 std::int64_t AppController::GetAgenticLastPollAtSec() const noexcept { return agenticPollLastAtSec_.load(); }
+
+// (coderabbit-react-loop phase 8) Read-only watcher accessors for the
+// builtin command surface. The watchers are lazily constructed inside
+// `GetAgenticHandoffController()` — the accessors return whatever the
+// `std::call_once` block has populated so far (nullptr until the first
+// `GetAgenticHandoffController()` call lands). Callers in the command
+// surface invoke `GetAgenticHandoffController()` first to trigger
+// construction, then re-read these accessors.
+smatchet::agentic::PrCommentWatcher* AppController::GetAgenticPrCommentWatcher() noexcept {
+    return agenticPrCommentWatcher_.get();
+}
+
+smatchet::agentic::PrCheckRunWatcher* AppController::GetAgenticPrCheckRunWatcher() noexcept {
+    return agenticPrCheckRunWatcher_.get();
+}
+
+smatchet::agentic::OpenPrRegistrar* AppController::GetAgenticOpenPrRegistrar() noexcept {
+    return agenticOpenPrRegistrar_.get();
+}
+
+bool AppController::RerunAgenticWorkflowRun(const std::string& owner, const std::string& repo, std::int64_t runId,
+                                            std::string& outError) {
+    GitHubClient* client = EnsureAgenticGithubClient();
+    if (client == nullptr) {
+        outError = "GitHubClient not constructed (configure GitHub PAT in cfg.GitHubPat)";
+        return false;
+    }
+    return client->RerunWorkflowRun(owner, repo, runId, outError);
+}
 
 #endif // SMATCHET_WITH_AGENTIC
 

@@ -36,6 +36,10 @@ add_executable(SmatchetTests
     Source_Core/OfflineQueueServiceRuntime.test.cpp
     Source_Core/ConfigManager.test.cpp
     Source_Core/ConfigMigration.test.cpp
+    # (coderabbit-react-loop phase 8) New ConfigManager blocks — gated on
+    # SMATCHET_WITH_AGENTIC inside the TU so the OFF build compiles as a
+    # no-op stub. Same pattern as ConfigMigration.test.cpp.
+    Source_Core/CoderabbitCiReactConfig.test.cpp
     Source_Core/AiSseParser.test.cpp
     Source_Core/AiClientFactory.test.cpp
     Source_Core/AiNdjsonParser.test.cpp
@@ -269,6 +273,9 @@ target_sources(SmatchetTests PRIVATE
     # H7 — pr-iterator agent file frontmatter. Same parser as the H2 entry
     # above; the assertions pin the second-stage delegate's contract.
     Source_Core/PrIteratorAgentFrontmatter.test.cpp
+    # (coderabbit-react-loop phase 8) coderabbit-triage v2 frontmatter +
+    # spawned-harness mode body assertion.
+    Source_Core/CoderabbitTriageAgentFrontmatter.test.cpp
 )
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE

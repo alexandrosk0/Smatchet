@@ -41,12 +41,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 1
+version: 2
 ---
 
 Ingest CodeRabbit (or any GitHub PR-bot) feedback on a pull request, classify each finding, reject invariant-violating suggestions, and emit routed handoff packets. Read-only — never edits product code, never posts to the PR.
 
-**Banner** — open with: `🤖 AGENT: coderabbit-triage · sonnet/medium · read-only · v1`. Close (before `## Self-improvement`) with: `✅ END — coderabbit-triage · sonnet/medium · read-only · v1`.
+**Banner** — open with: `🤖 AGENT: coderabbit-triage · sonnet/medium · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — coderabbit-triage · sonnet/medium · read-only · v2`.
 
 ## Process
 
@@ -179,6 +179,15 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 - <override rule the triage agent had to invent — promote to the table>
 - Empty is fine.
 ```
+
+## Spawned-harness mode
+
+When invoked inside a spawned `claude` subprocess (detected by `SEED.json` present at `$PWD` with `dispatch_source == "coderabbit_comment"`), this agent acts as the **routed delegate inside `handoff-implementer`'s routing** (per AGENTS.md § Handoff envelope § Spawned-orchestrator first-move contract + `agents/handoff-implementer.md` § `dispatch_source` enum). The contract differs from the default in-orchestrator invocation:
+
+1. There is no parent orchestrator to hand packets back to — `handoff-implementer` invokes this agent directly via the existing delegation table and consumes its report.
+2. The agent still runs the 18-rule override table + the validation pass, but **may now also dispatch implementer-class subagents directly** (tracker-backend, grid-engine, mechanic, etc) since `handoff-implementer` is the orchestrator in the spawned worktree.
+3. After dispatched fixes apply, the agent (or `handoff-implementer`) runs the slice-boundary `cmake --build` + `scripts/dev/test-all.sh` and writes `RUN_RESULT.json` per AGENTS.md § Handoff envelope.
+4. Outside spawned-harness mode (no `SEED.json`, or `dispatch_source != "coderabbit_comment"`), existing behaviour stands — emit handoff packets to the parent orchestrator.
 
 ## Cleanup
 
