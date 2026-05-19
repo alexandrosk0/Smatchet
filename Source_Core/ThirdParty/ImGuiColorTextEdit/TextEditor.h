@@ -207,6 +207,12 @@ class TextEditor {
     inline void SetShowWhitespaces(bool aValue) { mShowWhitespaces = aValue; }
     inline bool IsShowingWhitespaces() const { return mShowWhitespaces; }
 
+    // Smatchet — added for AI chat panel: hide the left-gutter line numbers
+    // when this view is used as a prose / chat surface rather than a code
+    // editor. Default = true (matches the original code-editor behaviour).
+    inline void SetShowLineNumbers(bool aValue) { mShowLineNumbers = aValue; }
+    inline bool IsShowingLineNumbers() const { return mShowLineNumbers; }
+
     void SetTabSize(int aValue);
     inline int GetTabSize() const { return mTabSize; }
 
@@ -342,6 +348,7 @@ class TextEditor {
     bool mHandleMouseInputs;
     bool mIgnoreImGuiChild;
     bool mShowWhitespaces;
+    bool mShowLineNumbers = true; // Smatchet — added for AI chat panel.
 
     Palette mPaletteBase;
     Palette mPalette;

@@ -8,9 +8,34 @@
 
 namespace {
 
-// Map AiChatMarkdownTokens::TokenKind onto TextEditor::PaletteIndex per the
-// table in docs/design/ai-chat-textedit-markdown.md. Reuses GetDarkPalette()
-// values so the colour scheme matches the Lua editor look out of the box.
+// Build a chat-specific palette derived from `GetDarkPalette()` with three
+// overrides so the chat view blends with the surrounding Smatchet theme
+// instead of looking like a code editor:
+//   1. `Default` (Plain body text) bumped to a bright off-white so prose is
+//      readable against the panel's dark background — the original dark
+//      palette greys it out to 0x7f7f7f which suited code but not prose.
+//   2. `Background` cleared to transparent so the parent `BeginChild`'s
+//      colour shows through.
+//   3. Two unused-by-the-markdown-mapping slots (CharLiteral,
+//      PreprocIdentifier) repurposed for the chat role overlays:
+//      CharLiteral = user-role marker tint, PreprocIdentifier = user-body
+//      tint. Claude-desktop-style differentiation without needing a new
+//      PaletteIndex slot in the third-party widget.
+TextEditor::Palette BuildChatPalette() {
+    TextEditor::Palette p = TextEditor::GetDarkPalette();
+    using P = TextEditor::PaletteIndex;
+    p[(int)P::Default] = 0xffe0e0e0;           // bright off-white body text
+    p[(int)P::Background] = 0x00000000;        // transparent — parent panel bg shows
+    p[(int)P::CharLiteral] = 0xfff5c97a;       // soft amber for user role lines
+    p[(int)P::PreprocIdentifier] = 0xffd9a76a; // deeper amber for user msg body
+    return p;
+}
+
+// Map AiChatMarkdownTokens::TokenKind onto TextEditor::PaletteIndex. Most
+// kinds reuse the dark palette's existing slots; the three chat-overlay kinds
+// (UserRoleMarker, AssistantRoleMarker, UserMsgBody) hit the slots we
+// repurposed in `BuildChatPalette` so user messages render in amber while
+// assistant messages stay in the default theme color.
 TextEditor::PaletteIndex MapPalette(AiChatMarkdownTokens::TokenKind k) {
     using TK = AiChatMarkdownTokens::TokenKind;
     using P = TextEditor::PaletteIndex;
@@ -30,8 +55,6 @@ TextEditor::PaletteIndex MapPalette(AiChatMarkdownTokens::TokenKind k) {
     case TK::ItalicText:
         return P::Comment;
     case TK::LinkText:
-        // PaletteIndex has no `Function`; KnownIdentifier renders cyan in the
-        // dark palette which matches the intended "links pop" colour.
         return P::KnownIdentifier;
     case TK::LinkUrl:
         return P::Comment;
@@ -41,6 +64,12 @@ TextEditor::PaletteIndex MapPalette(AiChatMarkdownTokens::TokenKind k) {
         return P::Keyword;
     case TK::Strike:
         return P::Preprocessor;
+    case TK::UserRoleMarker:
+        return P::CharLiteral;
+    case TK::AssistantRoleMarker:
+        return P::Keyword;
+    case TK::UserMsgBody:
+        return P::PreprocIdentifier;
     case TK::Plain:
     default:
         return P::Default;
@@ -68,7 +97,9 @@ void AppendTurn(std::string& out, const char* role, const std::string& body) {
 AiChatTextEditorView::AiChatTextEditorView() : editor_(new TextEditor()) {
     editor_->SetReadOnly(true);
     editor_->SetShowWhitespaces(false);
-    editor_->SetPalette(TextEditor::GetDarkPalette());
+    // Hide the line-number gutter — this view is prose, not code.
+    editor_->SetShowLineNumbers(false);
+    editor_->SetPalette(BuildChatPalette());
     // Parent panel already owns the scrolling BeginChild; let TextEditor skip
     // its internal BeginChild so the parent retains scroll authority and the
     // auto-scroll-to-tail logic below remains accurate.

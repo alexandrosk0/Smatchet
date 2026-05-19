@@ -782,8 +782,14 @@ void TextEditor::Render() {
     // Deduce mTextStart by evaluating mLines size (global lineMax) plus two spaces as text width
     char buf[16];
     snprintf(buf, 16, " %d ", globalLineMax);
-    mTextStart =
-        ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+    // Smatchet — added for AI chat panel: when line numbers are hidden, the
+    // gutter shrinks to just `mLeftMargin` so the prose starts flush-left.
+    if (mShowLineNumbers) {
+        mTextStart =
+            ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+    } else {
+        mTextStart = static_cast<float>(mLeftMargin);
+    }
 
     if (!mLines.empty()) {
         float spaceSize =
@@ -851,12 +857,15 @@ void TextEditor::Render() {
             }
 
             // Draw line number (right aligned)
-            snprintf(buf, 16, "%d  ", lineNo + 1);
+            // Smatchet — added for AI chat panel: skip when line numbers are hidden.
+            if (mShowLineNumbers) {
+                snprintf(buf, 16, "%d  ", lineNo + 1);
 
-            auto lineNoWidth =
-                ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x;
-            drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart - lineNoWidth, lineStartScreenPos.y),
-                              mPalette[(int)PaletteIndex::LineNumber], buf);
+                auto lineNoWidth =
+                    ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x;
+                drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart - lineNoWidth, lineStartScreenPos.y),
+                                  mPalette[(int)PaletteIndex::LineNumber], buf);
+            }
 
             if (mState.mCursorPosition.mLine == lineNo) {
                 auto focused = ImGui::IsWindowFocused();

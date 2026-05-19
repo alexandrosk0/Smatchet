@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <regex>
 
 namespace AiChatMarkdownTokens {
@@ -317,6 +318,30 @@ void RunInlinePass(const std::string& line, int absLine, int colOffset, std::vec
 
 } // namespace
 
+// Detect "> You:" / "> Assistant:" / "> Assistant (streaming...):" — the chat
+// view's role-prefix lines. Returns 1 for user, 2 for assistant, 0 otherwise.
+// `line` is the FULL quote line (including the leading "> "); the comparison
+// runs on the bytes after "> ".
+int DetectRoleMarker(const std::string& line) {
+    if (line.size() < 3 || line[0] != '>' || line[1] != ' ') {
+        return 0;
+    }
+    const char* p = line.c_str() + 2;
+    const std::size_t n = line.size() - 2;
+    // "You:" (4 chars). Tolerate any trailing characters because the chat view
+    // emits exactly "> You:" today but we don't want to fail-closed on minor
+    // variants.
+    if (n >= 4 && std::strncmp(p, "You:", 4) == 0) {
+        return 1;
+    }
+    if (n >= 10 && std::strncmp(p, "Assistant", 9) == 0) {
+        // "Assistant:" or "Assistant (streaming...):" both start with the
+        // same 9-byte prefix.
+        return 2;
+    }
+    return 0;
+}
+
 std::vector<TokenSpan> Tokenize(const std::string& md) {
     std::vector<TokenSpan> out;
     if (md.empty()) {
@@ -325,6 +350,7 @@ std::vector<TokenSpan> Tokenize(const std::string& md) {
 
     const std::vector<std::string> lines = SplitLines(md);
     bool inFence = false;
+    bool inUserTurn = false;
     for (int li = 0; li < (int)lines.size(); ++li) {
         const std::string& line = lines[li];
 
@@ -341,9 +367,36 @@ std::vector<TokenSpan> Tokenize(const std::string& md) {
             continue;
         }
 
+        // Quote line. Detect the chat-specific role markers ("> You:" /
+        // "> Assistant:") and flip the user-turn state so subsequent body
+        // lines receive a UserMsgBody overlay span. Non-role quote lines fall
+        // through to the regular QuoteMarker + inline pass.
+        const int quoteLen = QuoteMarkerLen(line);
+        if (quoteLen > 0) {
+            const int role = DetectRoleMarker(line);
+            if (role == 1) {
+                inUserTurn = true;
+                Emit(out, li, 0, (int)line.size(), TokenKind::UserRoleMarker, 0);
+                continue;
+            }
+            if (role == 2) {
+                inUserTurn = false;
+                Emit(out, li, 0, (int)line.size(), TokenKind::AssistantRoleMarker, 0);
+                continue;
+            }
+            Emit(out, li, 0, quoteLen, TokenKind::QuoteMarker, 0);
+            RunInlinePass(line.substr((std::size_t)quoteLen), li, quoteLen, out);
+            continue;
+        }
+
         // Heading? Emit marker + inline pass on the remainder.
         const int headingLen = HeadingMarkerLen(line);
         if (headingLen > 0) {
+            // User-turn overlay first, then heading marker + text so the
+            // accent colours still win on top of the body tint.
+            if (inUserTurn && !line.empty()) {
+                Emit(out, li, 0, (int)line.size(), TokenKind::UserMsgBody, 0);
+            }
             Emit(out, li, 0, headingLen, TokenKind::HeadingMarker, 0);
             const std::string rest = line.substr((std::size_t)headingLen);
             if (!rest.empty()) {
@@ -357,23 +410,24 @@ std::vector<TokenSpan> Tokenize(const std::string& md) {
             continue;
         }
 
-        // Quote? Emit "> " marker then inline pass on the remainder.
-        const int quoteLen = QuoteMarkerLen(line);
-        if (quoteLen > 0) {
-            Emit(out, li, 0, quoteLen, TokenKind::QuoteMarker, 0);
-            RunInlinePass(line.substr((std::size_t)quoteLen), li, quoteLen, out);
-            continue;
-        }
-
         // List? Emit the marker + inline pass on the remainder.
         const int listLen = ListMarkerLen(line);
         if (listLen > 0) {
+            if (inUserTurn && !line.empty()) {
+                Emit(out, li, 0, (int)line.size(), TokenKind::UserMsgBody, 0);
+            }
             Emit(out, li, 0, listLen, TokenKind::ListMarker, 0);
             RunInlinePass(line.substr((std::size_t)listLen), li, listLen, out);
             continue;
         }
 
-        // Plain.
+        // Plain body line. UserMsgBody overlay (whole line) goes FIRST so the
+        // inline pass spans (bold/italic/inline code/link) emitted after it
+        // paint on top — the view's SetTokenColor calls run in vector order
+        // and each call overwrites the prior color for its byte range.
+        if (inUserTurn && !line.empty()) {
+            Emit(out, li, 0, (int)line.size(), TokenKind::UserMsgBody, 0);
+        }
         RunInlinePass(line, li, 0, out);
     }
 

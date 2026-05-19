@@ -179,16 +179,50 @@ TEST_CASE("AiChatMarkdownTokens bold vs italic disambiguation") {
     CHECK(CountKind(bSpans, TokenKind::ItalicMarker) == 0);
 }
 
-TEST_CASE("AiChatMarkdownTokens role-prefix conversation tokenises as quote") {
-    // The view layer concatenates messages with "> Role:" prefixes. Verify the
-    // tokeniser sees those as QuoteMarker spans so role transitions stand out.
+TEST_CASE("AiChatMarkdownTokens role-prefix conversation tokenises as role markers") {
+    // The view layer concatenates messages with "> Role:" prefixes. The
+    // tokeniser detects "> You:" / "> Assistant:" specifically (not generic
+    // QuoteMarker) so the view palette can colour user turns distinctly.
     const std::string md = "> You:\n"
                            "hi\n"
                            "\n"
                            "> Assistant:\n"
                            "hello\n";
     const std::vector<TokenSpan> spans = Tokenize(md);
-    CHECK(CountKind(spans, TokenKind::QuoteMarker) == 2);
+    CHECK(CountKind(spans, TokenKind::UserRoleMarker) == 1);
+    CHECK(CountKind(spans, TokenKind::AssistantRoleMarker) == 1);
+    // The user's body line ("hi") gets a UserMsgBody overlay; the assistant's
+    // body line ("hello") does not.
+    CHECK(CountKind(spans, TokenKind::UserMsgBody) == 1);
+}
+
+TEST_CASE("AiChatMarkdownTokens user msg body overlay does not leak into assistant turn") {
+    // The user-turn state flag must reset on the "> Assistant:" line so the
+    // assistant's body lines DO NOT receive a UserMsgBody overlay.
+    const std::string md = "> You:\n"
+                           "user line\n"
+                           "> Assistant:\n"
+                           "assistant line one\n"
+                           "assistant line two\n"
+                           "> You:\n"
+                           "second user line\n";
+    const std::vector<TokenSpan> spans = Tokenize(md);
+    CHECK(CountKind(spans, TokenKind::UserRoleMarker) == 2);
+    CHECK(CountKind(spans, TokenKind::AssistantRoleMarker) == 1);
+    // Two user body lines ("user line" + "second user line"); no overlay on
+    // assistant body lines.
+    CHECK(CountKind(spans, TokenKind::UserMsgBody) == 2);
+}
+
+TEST_CASE("AiChatMarkdownTokens streaming assistant role marker") {
+    // The view's in-flight stream prefixes with "> Assistant (streaming...):"
+    // which must also be recognised as an assistant role marker.
+    const std::string md = "> You:\n"
+                           "hi\n"
+                           "> Assistant (streaming...):\n"
+                           "partial reply";
+    const std::vector<TokenSpan> spans = Tokenize(md);
+    CHECK(CountKind(spans, TokenKind::AssistantRoleMarker) == 1);
 }
 
 TEST_CASE("AiChatMarkdownTokens backtick pair is non-greedy across newlines") {

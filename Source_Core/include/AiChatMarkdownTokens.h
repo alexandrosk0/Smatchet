@@ -33,6 +33,15 @@ enum class TokenKind : int {
     ListMarker,
     QuoteMarker,
     Strike,
+    // Chat-specific: turn-role overlays. The chat view's serialiser prefixes
+    // each turn with `> You:` or `> Assistant:`; the tokenizer treats the
+    // role line as `UserRoleMarker` / `AssistantRoleMarker` and tags the
+    // body lines of a user turn as `UserMsgBody` so the view palette can
+    // colour user messages distinctly (Claude-desktop-style differentiation).
+    // Assistant body lines stay un-tagged (default Plain / inline tokens).
+    UserRoleMarker,
+    AssistantRoleMarker,
+    UserMsgBody,
 };
 
 struct TokenSpan {
