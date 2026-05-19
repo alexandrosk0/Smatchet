@@ -53,16 +53,15 @@ namespace agentic {
 // the watcher derives it from the `prUrl` field on the handoff record.
 //
 // Tests inject a fake that scripts the comment list per call.
-using PrCommentFetcher = std::function<bool(const std::string& /*prKey*/,
-                                            std::vector<PostedComment>& /*outComments*/,
+using PrCommentFetcher = std::function<bool(const std::string& /*prKey*/, std::vector<PostedComment>& /*outComments*/,
                                             std::string& /*outError*/)>;
 
 // PR-comment poster seam — production binds to `GitHubClient::CommentAdd`
 // (PR comments and issue comments share the same REST endpoint on GitHub).
 // Used by the watcher to post the "budget exhausted" marker comment.
 // Failure is logged + non-fatal — the state transition still happens.
-using PrCommentPoster = std::function<bool(const std::string& /*prKey*/, const std::string& /*body*/,
-                                           std::string& /*outError*/)>;
+using PrCommentPoster =
+    std::function<bool(const std::string& /*prKey*/, const std::string& /*body*/, std::string& /*outError*/)>;
 
 // Handoff-respawn dispatcher seam — invoked when the watcher detects a new
 // non-bot PR comment that the spawned harness should react to. Production
@@ -71,8 +70,8 @@ using PrCommentPoster = std::function<bool(const std::string& /*prKey*/, const s
 // PR_URL.txt sentinel); tests capture (proposalId, commentBody) pairs.
 // Returns false + outError when the respawn cannot proceed (worktree
 // missing, runner unavailable); the watcher LOG_WARNs and continues.
-using HarnessRespawnDispatcher = std::function<bool(std::int64_t /*proposalId*/, const std::string& /*commentBody*/,
-                                                    std::string& /*outError*/)>;
+using HarnessRespawnDispatcher =
+    std::function<bool(std::int64_t /*proposalId*/, const std::string& /*commentBody*/, std::string& /*outError*/)>;
 
 class PrCommentWatcher {
   public:
@@ -81,7 +80,7 @@ class PrCommentWatcher {
     // `iterationBudget` is the per-handoff cap; clamped to [1, 50] in the
     // ctor to match the ConfigManager clamp. Default 10 mirrors
     // `cfg.HandoffPrIterationBudget`.
-    PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget = 10);
+    explicit PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget = 10);
     ~PrCommentWatcher();
 
     PrCommentWatcher(const PrCommentWatcher&) = delete;
