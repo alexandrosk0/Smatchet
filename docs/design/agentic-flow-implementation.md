@@ -33,7 +33,7 @@ All 21 phases shipped (T0 → T9 triage half + H0 → H10 handoff half + audit f
 | H7 | #255 | `37f4f2e` | `PrCommentWatcher` + PR/check-run methods + iteration budget |
 | H8 | #256 | `121b5bb` | `SmatchetAgentHandoffUi` panel + bucket-E test |
 | H9 | #257 | `b082292` | cross-flow wiring + `[Start handoff]` button (ImplementIssue filter) |
-| H10 | #(this PR) | TBD | scenario step + schema v2 (`agent_pr_watch` + handoff_status) + plan closeout |
+| H10 | #259 | `9883c77` | scenario step + schema v2 (`agent_pr_watch` + handoff_status) + plan closeout |
 
 ### Audit fix-ups
 
@@ -514,7 +514,7 @@ All 10 triage-half phases shipped (T0 through T9):
 | T6 | #231 | `f944dd0` | `SmatchetAgentProposalsUi` + bucket-E test |
 | T7 | #232 | `dd2fa99` | scheduled poll + Preferences toggle |
 | T8 | #233 | `04a6d0f` | scenario step + recorded fixtures |
-| T9 | #(this PR) | TBD | schema-version bump + plan revision |
+| T9 | #234 | `b4a05fd` | schema-version bump + plan revision |
 
 Triage-half acceptance gate (per plan § "Triage-half acceptance gate"):
 - [x] All T0–T9 PRs merged into `develop` (T9 merge pending).

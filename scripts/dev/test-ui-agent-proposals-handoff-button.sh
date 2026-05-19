@@ -30,7 +30,36 @@ RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
 
 echo "$RAW_OUTPUT" | tail -40
 
-JSON_LINE="$(echo "$RAW_OUTPUT" | grep -oE '\{.*\}' | tail -1 || true)"
+# Greedy `grep -oE '\{.*\}'` is brittle when stdout interleaves log lines and
+# the JSON envelope — it can capture a log fragment that happens to contain
+# braces, or split a pretty-printed object across lines. Prefer parsing line
+# by line and keeping the last line that parses cleanly as JSON.
+JSON_LINE=""
+if command -v "$PY" >/dev/null 2>&1; then
+    JSON_LINE="$(printf '%s\n' "$RAW_OUTPUT" | "$PY" -c "
+import json, sys
+last = None
+for line in sys.stdin:
+    s = line.strip()
+    if not s or s[0] != '{':
+        continue
+    try:
+        json.loads(s)
+        last = s
+    except json.JSONDecodeError:
+        continue
+if last is not None:
+    sys.stdout.write(last)
+" 2>/dev/null || true)"
+fi
+
+# Fallback for environments without Python on PATH: grep for the last line
+# that both starts with `{` and ends with `}`. Brittler than the Python pass
+# but tolerates a single-line envelope which is what Smatchet emits today.
+if [ -z "$JSON_LINE" ]; then
+    JSON_LINE="$(echo "$RAW_OUTPUT" | grep -E '^\s*\{.*\}\s*$' | tail -1 || true)"
+fi
+
 if [ -z "$JSON_LINE" ]; then
     echo "FAIL: could not extract JSON envelope from ui_test.run output" >&2
     echo "Passed: 0  Failed: 1"

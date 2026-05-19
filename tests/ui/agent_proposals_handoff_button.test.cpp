@@ -83,7 +83,7 @@ struct PanelReplicaState {
 PanelReplicaState g_state;
 
 void ResetPanelState() {
-    g_state.store.reset(new AgentProposalStore(":memory:"));
+    g_state.store = std::make_unique<AgentProposalStore>(":memory:");
     g_state.cache.clear();
     g_state.controller = StubHandoffController();
     g_state.controllerLive = true;

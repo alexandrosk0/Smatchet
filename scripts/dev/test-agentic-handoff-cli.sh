@@ -39,19 +39,29 @@ if [[ -z "$EXE" ]]; then
     exit 0
 fi
 
-LIST_OUT=$("$EXE" cmd commands.list --spawn 2>&1 || true)
+# `commands.list` itself must succeed. Masking its exit code with `|| true`
+# silently collapsed "binary is broken" and "AGENTIC=OFF, agent.* not listed"
+# into the same SKIP path, hiding real regressions. Capture stdout+stderr +
+# the exit code separately so we can FAIL on a genuinely broken exe.
+if ! LIST_OUT=$("$EXE" cmd commands.list --spawn 2>&1); then
+    echo "[agentic-handoff-cli] FAIL — commands.list exited non-zero"
+    echo "$LIST_OUT" | head -10
+    exit 1
+fi
 
 # AGENTIC=OFF gates every handoff.* command to a stub that always fails. The
 # command names still register so commands.list lists them, but exercising
 # them returns errors not worth distinguishing in this smoke — skip cleanly.
-if ! echo "$LIST_OUT" | grep -q '"name":"agent\.triage\.run"' ; then
+# Whitespace-tolerant match survives `--pretty`-style JSON output.
+if ! echo "$LIST_OUT" | grep -qE '"name"[[:space:]]*:[[:space:]]*"agent\.triage\.run"' ; then
     echo "[agentic-handoff-cli] SKIP — no agentic commands registered (SMATCHET_WITH_AGENTIC=OFF)"
     exit 0
 fi
 
-# H4 invariant — every handoff.* command name must be present.
+# H4 invariant — every handoff.* command name must be present. Whitespace-
+# tolerant: `"name"\s*:\s*"<name>"` so the test survives `--pretty` output.
 for NAME in handoff.start handoff.cancel handoff.list handoff.clarify handoff.dry-run; do
-    if ! echo "$LIST_OUT" | grep -q "\"name\":\"${NAME//./\\.}\"" ; then
+    if ! echo "$LIST_OUT" | grep -qE "\"name\"[[:space:]]*:[[:space:]]*\"${NAME//./\\.}\"" ; then
         echo "[agentic-handoff-cli] FAIL — handoff command not registered: $NAME"
         echo "$LIST_OUT" | head -3
         exit 1
@@ -62,22 +72,22 @@ done
 # no runner spawned. The reply must report the canonical branch + worktree.
 # The CLI accepts `--name=value` for typed params (see cmd commands.help).
 START_OUT=$("$EXE" cmd handoff.start --proposal_id=99999 --dry_run=true --spawn 2>&1 || true)
-if ! echo "$START_OUT" | grep -q '"command":"handoff\.start"' ; then
+if ! echo "$START_OUT" | grep -qE '"command"[[:space:]]*:[[:space:]]*"handoff\.start"' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.start envelope missing"
     echo "$START_OUT" | head -5
     exit 1
 fi
-if ! echo "$START_OUT" | grep -q '"ok":true' ; then
+if ! echo "$START_OUT" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.start dry-run did not return ok=true"
     echo "$START_OUT" | head -5
     exit 1
 fi
-if ! echo "$START_OUT" | grep -q '"worktree":".claude/worktrees/agent-99999"' ; then
+if ! echo "$START_OUT" | grep -qE '"worktree"[[:space:]]*:[[:space:]]*"\.claude/worktrees/agent-99999"' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.start dry-run worktree shape unexpected"
     echo "$START_OUT" | head -5
     exit 1
 fi
-if ! echo "$START_OUT" | grep -q '"branch":"agent/99999/' ; then
+if ! echo "$START_OUT" | grep -qE '"branch"[[:space:]]*:[[:space:]]*"agent/99999/' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.start dry-run branch shape unexpected"
     echo "$START_OUT" | head -5
     exit 1
@@ -85,17 +95,17 @@ fi
 
 # Drive handoff.dry-run as a sanity check on the dedicated stub-claude entry.
 DRY_OUT=$("$EXE" cmd handoff.dry-run --proposal_id=99999 --use_stub_claude=true --spawn 2>&1 || true)
-if ! echo "$DRY_OUT" | grep -q '"command":"handoff\.dry-run"' ; then
+if ! echo "$DRY_OUT" | grep -qE '"command"[[:space:]]*:[[:space:]]*"handoff\.dry-run"' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.dry-run envelope missing"
     echo "$DRY_OUT" | head -5
     exit 1
 fi
-if ! echo "$DRY_OUT" | grep -q '"ok":true' ; then
+if ! echo "$DRY_OUT" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.dry-run did not return ok=true"
     echo "$DRY_OUT" | head -5
     exit 1
 fi
-if ! echo "$DRY_OUT" | grep -q '"use_stub_claude":true' ; then
+if ! echo "$DRY_OUT" | grep -qE '"use_stub_claude"[[:space:]]*:[[:space:]]*true' ; then
     echo "[agentic-handoff-cli] FAIL — handoff.dry-run did not echo use_stub_claude"
     echo "$DRY_OUT" | head -5
     exit 1
