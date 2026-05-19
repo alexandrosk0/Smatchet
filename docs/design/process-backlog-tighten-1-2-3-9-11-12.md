@@ -29,12 +29,20 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 1. Edit `AGENTS.md` § Autonomous ship-loop default § Exceptions. Add a 5th exception **after** the existing 4:
    ```markdown
-   5. **Visual-validation exception** — when the user is the only acceptance check ("does this look right"). Applies to UI palette tuning, dock layout, ImGui widget arrangement, font / colour choices, theme retunes, any change where no scenario / screenshot-diff / sanitizer / doctest covers the acceptance criterion. The loop pauses after **build** with the launched exe. Orchestrator presents:
+   5. **Visual-validation exception** — fires when **both** conditions hold:
+      1. Diff touches at least one of: `Source_Core/src/SmatchetTheme.cpp`, `Source_Core/src/Smatchet*Ui*.cpp`, `Source_Core/include/SmatchetTheme.h`, `Locales/*.json`, ImGui style constants (`ImVec4` / `ImGuiStyle` literals), dock-layout init paths.
+      2. AND no bucket-C screenshot diff or bucket-E ImGui-Test-Engine scenario covers the changed widget.
+
+      When both fire, the loop pauses after **build** with the launched exe. Orchestrator presents:
       - the `build/<preset>/Smatchet.exe` path + a one-line run command,
       - the `bash` background-task id of the launched exe (or "launched manually"),
       - the specific visual change the user is asked to evaluate (one sentence).
 
-      Wait for the user's verdict before commit+push. On "looks good" → resume the loop and commit. On "no" → `git stash push -m "<reason>" -- <changed-files>` to preserve the working tree for iteration analysis, then iterate. Never commit+push an unvalidated visual change.
+      Wait for the user's verdict before commit+push. On "looks good" → resume the loop and commit. On "no" → leave the working tree dirty; iterate in-place. The orchestrator does `git diff` between attempts to see what was tried. Clean-slate reset (`git checkout -- <files>`) only when the user explicitly asks for one. Never commit+push an unvalidated visual change.
+
+      Out-of-scope (NOT a visual-validation pause):
+      - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
+      - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per AGENTS.md.
    ```
 
 2. Add a pillar anchor — AGENTS.md § UX Pillars § 4. Accessibility gets a new sub-bullet under **Locked in-scope**:
@@ -173,11 +181,10 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
    exit 1
    ```
 
-2. Wire as a pre-push hook. Two options:
-   - **A — repo-local `.git/hooks/pre-push` symlink** to the script. Pro: just-works after one-time setup. Con: not tracked, must re-install per clone.
-   - **B — extend `scripts/setup-harness.sh`** to install the hook (`git config core.hooksPath` to a tracked directory, e.g. `scripts/git-hooks/`, with the guard script wired). Pro: tracked, propagates via `bash scripts/setup-harness.sh`. Con: changing `core.hooksPath` affects all hooks, not just pre-push.
-
-   **Pick B**, but minimal scope: create `scripts/git-hooks/pre-push` that sources the guard script, and add a `bash scripts/setup-harness.sh` step that runs `git config --local core.hooksPath scripts/git-hooks` only if it isn't already set.
+2. Wiring — tracked + setup-harness path (option B from grill-with-docs interview Q3=A):
+   - Single executable file at `scripts/git-hooks/pre-push` (the guard logic is inline; no `scripts/dev/` sidecar — YAGNI per grill Q2=A).
+   - Extend `scripts/setup-harness.sh` so the Claude Code setup branch runs `git config --local core.hooksPath scripts/git-hooks` **only if** the current `core.hooksPath` is unset or already equal to that path. If a different custom path is set, log a warning + skip (don't trample user's hook setup).
+   - The single-file hook script is the deliverable; no dotted-file sidecars.
 
 3. Add an opt-out env var (`SMATCHET_ALLOW_MERGED_PR_PUSH=1`) for the rare legitimate case (e.g. retroactive doc edit on a merge-commit branch that won't ship).
 
@@ -200,11 +207,11 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 **Current state**: plan-doc § File-level changes tables ship with `git grep`-falsifiable claims. PR `ai-assistant-side-panel` Phase A listed `FieldCatalogCache.cpp` as a `NetworkUsageTracker::Instance().Record(...)` caller — grep returns zero hits. Also listed a `CORE_SOURCES` list-edit that doesn't exist (it's a `file(GLOB_RECURSE …)`). Each error costs ~10 min of downstream-agent confusion.
 
-**Target state**: at packet-seal time, the orchestrator runs a 2-command probe — `git grep <symbol-list>` + `grep -n <cmake-variable> CMakeLists.txt` — for every symbol / CMake variable named in the file-level table. Rule lives in AGENTS.md § Orchestrator delegation packet.
+**Target state**: at packet-seal time, the orchestrator runs a 2-command probe — `git grep <symbol-list>` + `grep -n <cmake-variable> CMakeLists.txt` — for every symbol / CMake variable named in the file-level table. **Rule lives in `docs/agent-rules/DELEGATION.md` § Orchestrator delegation packet** (codebase probe during grill-with-docs Q3 found that the body of that section lives in DELEGATION.md, not AGENTS.md — AGENTS.md carries only a one-line index pointer at line 264). Helper script `scripts/dev/plan-doc-table-probe.sh` ships in v1.
 
 **Steps**:
 
-1. Edit `AGENTS.md` § Orchestrator delegation packet (subsection currently named § Plan-lock pre-flight or § Shared inventory — verify with `grep -n "Orchestrator delegation packet" AGENTS.md`). Add a new sub-section **§ File-level table re-verify**:
+1. Edit `docs/agent-rules/DELEGATION.md` § Orchestrator delegation packet. Add a new sub-section **§ File-level table re-verify (before sealing)** alongside the existing § Plan-lock pre-flight / § Shared inventory bullets:
    ```markdown
    #### File-level table re-verify (before sealing)
 
@@ -222,18 +229,31 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
       ```
       If the variable is populated via `file(GLOB_RECURSE …)`, no list-edit is needed — drop the row.
 
-   Cost: ≤ 5 min per packet. Skips the most common class of plan-table drift (symbols that don't exist + redundant CMake edits).
+   Mechanical shortcut: `bash scripts/dev/plan-doc-table-probe.sh <plan-doc-path>` parses the plan's § File-level changes table and runs both probes for every named symbol / CMake variable, reporting hits / misses.
+
+   Cost: ≤ 5 min per packet (manual) or seconds (script). Skips the most common class of plan-table drift (symbols that don't exist + redundant CMake edits).
    ```
 
-2. Cross-link from the `architect`, `tracker-backend`, `grid-engine`, and `command-system` agent docs (which write the densest plan-doc tables) — one-line pointer to the new sub-section.
+2. Cross-link from `architect`, `tracker-backend`, `grid-engine`, and `command-system` agent docs (densest plan-doc-table authors) — one-line pointer to the new sub-section.
 
-3. Optional sweetener: write `scripts/dev/plan-doc-table-probe.sh <plan-doc-path>` that parses the plan's § File-level changes table and runs the two greps for every named symbol / CMake variable, reporting hits / misses. Defer to a follow-up if the parser is non-trivial.
+3. **Ship `scripts/dev/plan-doc-table-probe.sh` in v1** (per grill Q3=B). Parser shape:
+   - Argument: path to a `docs/design/*.md` plan doc.
+   - Locate the first `## File-level changes` (or `### File-level changes`) heading. Read until next heading at same-or-lesser level.
+   - Within that range, parse markdown tables (lines starting with `|`); extract cells under columns matching `Symbol` / `Function` / `Caller` / `Definer` / `CMake variable` / `CMake target` (case-insensitive header match).
+   - For each extracted symbol: run `git grep -nF -- "<symbol>"` (literal, not regex; symbols often contain `::`, `(`, `)`). Hit count + first file line printed.
+   - For each extracted CMake variable: run `grep -nE "(set|file\s*\(\s*GLOB).*<var>" CMakeLists.txt tests/CMakeLists.txt`. Hit count + line printed.
+   - Output format: TSV `<plan-doc>:<table-row>\t<symbol-or-var>\t<hit-count>\t<first-hit>` or `<plan-doc>:<table-row>\t<symbol-or-var>\tMISS`.
+   - Exit code: 0 if every row resolves; 1 if any MISS.
+
+4. Bucket-A self-test `scripts/dev/test-plan-doc-table-probe.sh` (auto-enrolled by `scripts/dev/test-all.sh`): synthetic fixture plan with one valid symbol + one invalid symbol + one GLOB-populated CMake variable. Assert exit 1 + miss line reports the invalid symbol.
 
 **Verification**:
-- Read AGENTS.md diff; the sub-section is present under § Orchestrator delegation packet.
-- Manual scenario walk: re-open `docs/design/ai-assistant-side-panel.md` § File-level changes for Phase A, run the two greps on the listed symbols, confirm the re-verify catches the two known errors documented in the backlog entry.
+- Read DELEGATION.md diff; the sub-section is present under § Orchestrator delegation packet.
+- `bash scripts/dev/plan-doc-table-probe.sh docs/design/ai-assistant-side-panel.md` reports a MISS on `FieldCatalogCache.cpp` (re-validating the original backlog entry).
+- `bash scripts/dev/test-plan-doc-table-probe.sh` exits 0 (self-test passes).
+- `bash scripts/dev/test-all.sh` picks up the new self-test.
 
-**Risk**: low — doc only. Risk is the rule being skipped (probe is voluntary). Mitigation: name the cost (≤ 5 min) and the failure mode (downstream agent wastes 10 min hunting for a non-existent symbol).
+**Risk**: medium. Parser fragility — plan-doc table column shapes vary. Mitigation: case-insensitive header match for known column names; if no recognised column present, script exits 0 with a `no-tables-found` log line (not a failure — some plans have no file-level table).
 
 ---
 
@@ -276,17 +296,19 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
       gh pr create --draft --title "..." --body "..."
       ```
 
-   5. **Mark the agent's report as recovered** in the orchestrator's `## Self-improvement` section so the next packet to that agent surfaces the API-500 history.
+   5. **Mark recovery in backlog** — add an entry to `docs/backlog/agent-self-improvement/process.md` with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
 
-   If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers — `--force-with-lease` is safe here because the branch is the agent's own `agent/<id>` worktree.
+   If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers — `--force-with-lease` is safe here because the branch is the agent's own `agent/<id>` or `claude/<id>` worktree (carve-out per § Git safety protocol — see also `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`).
    ```
 
 2. Cross-link from `agents/handoff-implementer.md` § Stop conditions (line 84) — one-line pointer.
 
-3. The "force-with-lease on agent/* branches is safe" claim is a partial relaxation of AGENTS.md § Git safety protocol's force-push ban. Add a one-line carve-out in § Git safety protocol explicitly naming this case:
+3. The "force-with-lease on spawned-agent branches is safe" claim is a partial relaxation of AGENTS.md § Git safety protocol's force-push ban. Add a one-line carve-out in § Git safety protocol explicitly naming this case (carve-out scope per grill Q4=A — both spawned-agent branch prefixes):
    ```markdown
-   - **Force-push carve-out**: `git push --force-with-lease origin agent/<id>` is permitted during API-500 recovery only, when the orchestrator is amending an unpushed-since-API-500 commit on the agent's own worktree branch. See § Delegation § API-500 recovery.
+   - **Force-push carve-out**: `git push --force-with-lease origin agent/<id>` or `git push --force-with-lease origin claude/<id>` is permitted during API-500 recovery only, when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch. See § Delegation § API-500 recovery + `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`. Excludes `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*` and any branch with non-self commits in the ahead-range.
    ```
+
+4. Write `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md` (per grill Q9=A). Follows the existing `docs/adr/0001..0004` format. Sections: Title · Status · Context · Decision · Consequences · Alternatives considered (always-new-commit, full force-push ban with manual-PR rescue). ~30 lines.
 
 **Verification**:
 - Read AGENTS.md diff; both new sub-sections (§ Delegation § API-500 recovery + § Git safety protocol force-push carve-out) are present.
@@ -353,7 +375,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 - **One PR, six commits**: easier review (each commit maps 1:1 to a backlog item) + easier rollback if one slice regresses. Branch name: `chore/process-rules-tighten-1-2-3-9-11-12`.
 - **Backlog hygiene**: every slice ends by moving its entry from `process.md` to `applied.md` with a resolution stanza linking back to this plan + the commit sha. Net: `process.md` shrinks by 6 entries; `applied.md` grows by 6.
-- **`grill-with-docs`**: per AGENTS.md § Plan stress-test, invoke the `grill-with-docs` skill before finalising this plan to sharpen terminology against `docs/CONTEXT.md` + check whether any new ADR is warranted. Skipping in v1 to keep the loop fast; revisit if a reviewer flags a glossary drift.
+- **`grill-with-docs`**: run on 2026-05-19. 9 decisions captured (Q1–Q9). Material changes — Slice 1 trigger tightened to two-part (visual-path touch AND no bucket-C/E coverage); Slice 1 "no" handling = leave-dirty in-place iteration (not stash); Slice 3 single-file hook (no sidecar split); Slice 4 target file = `docs/agent-rules/DELEGATION.md` (not AGENTS.md — codebase probe revealed § Orchestrator delegation packet body lives there); Slice 4 ships `plan-doc-table-probe.sh` + bucket-A self-test in v1 (not deferred); Slice 5 carve-out covers both `agent/*` AND `claude/*` (not `agent/*` only); Slice 5 step 5 = backlog entry to `process.md` (concrete artifact); ADR 0005 added for the force-push carve-out (passes hard-to-reverse + surprising + real-trade-off). No new glossary terms; CONTEXT.md unchanged.
 - **Slice 3 wiring decision**: §Steps 2 names option A vs option B for hook installation. Slice 3 is the only piece with a real design choice; flagged for orchestrator decision before implementation.
 - **Trivial-visual-only envelope** does **not** apply (this is docs + 1 small script, not visual). Slice 3 is the only piece that needs a build / test pass; Slices 1, 2, 4, 5, 6 are pure-docs and qualify for the Slice-2-introduced pure-docs sub-exception (chicken-and-egg: ship Slice 2 first to make the pure-docs path real, OR rely on the existing FF-clean test-all.sh gate for this PR).
 
