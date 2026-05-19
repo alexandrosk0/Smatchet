@@ -43,11 +43,14 @@ add_executable(SmatchetTests
     Source_Core/AiContextBuilder.test.cpp
     Source_Core/AiErrorRedact.test.cpp
     Source_Core/AiModelCatalog.test.cpp
+    Source_Core/AiModelSignature.test.cpp
     Source_Core/AiPrefsValidator.test.cpp
     Source_Core/AiEndpointSanitize.test.cpp
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
+    Source_Core/AiChatMarkdownTokens.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatMarkdownTokens.cpp"
     Source_Core/SubprocessCapturePure.test.cpp
     Source_Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
@@ -100,6 +103,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelSignature.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
     "${CMAKE_SOURCE_DIR}/Target_Standalone/CliArgCoercion.cpp"
 )

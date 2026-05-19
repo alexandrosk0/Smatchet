@@ -4,6 +4,7 @@
 
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
+#include "AiChatTextEditorRender.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
@@ -116,44 +117,24 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // so streaming tokens auto-scroll without fighting a manual scroll-up.
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
+    // One read-only ImGuiColorTextEdit instance for the whole conversation.
+    // Holds drag-select + Ctrl+C/A across messages. Markdown is coloured in
+    // place by the hand-rolled AiChatMarkdownTokens scanner. There is exactly
+    // one AI panel in the app at any time so a function-local static is
+    // adequate; if we ever ship a second panel, plumb the view onto
+    // UiDrawSession instead.
+    static AiChatTextEditorView s_chatView;
+    s_chatView.RebuildBuffer(d.assistantHistory, d.assistantStreamBuf, d.assistantInFlight, wasAtTail);
+
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    // Per-message rendering: role label + a SmallButton "Copy" that pushes the
-    // full message text to the system clipboard via ImGui::SetClipboardText,
-    // followed by a plain ImGui::TextWrapped of the content. Plain wrapped
-    // text reflows with the panel width and never steals keyboard focus; the
-    // Copy button is the single explicit copy mechanism (full-message,
-    // exact byte copy regardless of soft-wrap).
-    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
-        const AiMessage& m = d.assistantHistory[i];
-        const char* role = (m.Role == "user") ? "You" : "Assistant";
-        ImGui::TextDisabled("%s", role);
-        ImGui::SameLine();
-        char btnId[48];
-        std::snprintf(btnId, sizeof(btnId), "Copy##ai_msg_%zu", i);
-        if (ImGui::SmallButton(btnId)) {
-            ImGui::SetClipboardText(m.Content.c_str());
-        }
-        ImGui::SetItemTooltip("Copy message text to clipboard.");
-        ImGui::TextWrapped("%s", m.Content.c_str());
-        ImGui::Separator();
-    }
-    if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
-        ImGui::TextDisabled("Assistant (streaming...)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Copy##ai_stream")) {
-            ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
-        }
-        ImGui::SetItemTooltip("Copy the in-flight partial response to clipboard.");
-        ImGui::TextWrapped("%s", d.assistantStreamBuf.c_str());
-    }
+    const float innerW = ImGui::GetContentRegionAvail().x;
+    const float innerH = ImGui::GetContentRegionAvail().y;
+    s_chatView.Draw(innerW, innerH);
 
     // Tail tracking: update for next frame based on user's current scroll.
     const float scrollY = ImGui::GetScrollY();
     const float scrollMax = ImGui::GetScrollMaxY();
     d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
-    if (wasAtTail) {
-        ImGui::SetScrollHereY(1.0f);
-    }
     ImGui::EndChild();
 }
 
@@ -241,8 +222,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // router splicing text directly into `s_inputCharBuf` between frames
     // followed by the next frame unconditionally re-seeding from the still-
     // stale model, silently clobbering the splice.
-    const bool willSeed = smatchet::ai::ShouldSeedAssistantInputFromModel(
-        s_inputCharBufSeeded, bufLen, d.assistantInputBuf.size(), bytesDiffer);
+    const bool willSeed = smatchet::ai::ShouldSeedAssistantInputFromModel(s_inputCharBufSeeded, bufLen,
+                                                                          d.assistantInputBuf.size(), bytesDiffer);
     if (willSeed) {
         s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
@@ -390,8 +371,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     // (idempotent flag); it simply flips a static atomic that the next panel
     // draw observes — keeps the work on the UI thread without re-entering
     // ImGui state from the dispatcher drain context.
-    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(),
-                                                   nullptr);
+    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
     if (!s_autoSendCallbackRegistered) {
         s_autoSendCallbackRegistered = true;
         g_dictationRouter.SetAiAssistantSendCallback(

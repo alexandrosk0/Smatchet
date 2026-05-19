@@ -6,6 +6,7 @@
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiEndpointSanitize.h"
+#include "AiModelSignature.h"
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
@@ -42,6 +43,8 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
         return AiProvider::OllamaOpenAiCompat;
     case 3:
         return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
     default:
         return AiProvider::OpenAi;
     }
@@ -89,6 +92,16 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
         out.BaseUrl =
             SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl, "ollama-openai-compat");
         break;
+    case AiProvider::DeepSeek:
+        out.ApiKey = SanitizeHeaderValue(cfg.AiDeepSeekApiKey);
+        // DeepSeek default endpoint when the user leaves the URL blank. Pass
+        // the literal default through the sanitiser too — never bypass the
+        // SanitizeAiEndpointUrl gate so a future redirect-block / scheme-pin
+        // rule applies uniformly.
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com")
+                                                                         : cfg.AiDeepSeekBaseUrl,
+                                           "deepseek");
+        break;
     case AiProvider::OpenAi:
     default:
         out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
@@ -111,6 +124,10 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
 AiAssistantController::AiAssistantController(AppController& app) : app_(app) {
     const TrackerConfig cfg = ConfigManager::Load();
     const AiProvider provider = ProviderFromConfig(cfg);
+    // Worker thread is not yet spawned, so the lock here is only for
+    // memory-ordering hygiene; no contention is possible.
+    std::lock_guard<std::mutex> lk(providerStateMutex_);
+    cachedProvider_ = provider;
     client_ = AiClientFactory::MakeAiClient(provider);
     if (client_) {
         cachedProviderName_ = client_->GetProviderName();
@@ -122,6 +139,11 @@ AiAssistantController::AiAssistantController(AppController& app) : app_(app) {
         cachedProviderName_.clear();
     }
     worker_ = std::thread(&AiAssistantController::WorkerLoop, this);
+}
+
+std::string AiAssistantController::GetActiveProviderName() const {
+    std::lock_guard<std::mutex> lk(providerStateMutex_);
+    return cachedProviderName_;
 }
 
 AiAssistantController::~AiAssistantController() {
@@ -140,16 +162,26 @@ AiAssistantController::~AiAssistantController() {
 
 void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
                                    std::string modelOverride, std::string effortOverride) {
-    if (!client_) {
+    // Snapshot cached state under lock — the worker thread may rewrite both pointer
+    // and string concurrently when a new turn lands after the user switched provider
+    // in Preferences. Reading `client_` raw or `cachedProviderName_` raw here is UB.
+    std::string snapshotProviderName;
+    bool haveClient = false;
+    {
+        std::lock_guard<std::mutex> lk(providerStateMutex_);
+        haveClient = static_cast<bool>(client_);
+        snapshotProviderName = cachedProviderName_;
+    }
+    if (!haveClient) {
         LOG_WARN("AiAssistantController::Submit dropped — no active client for provider '%s'.",
-                 cachedProviderName_.c_str());
+                 snapshotProviderName.c_str());
         // The UI guarantees a visible error strip via assistantLastError; the
         // caller's Send-button path sets that on the same UI tick when needed.
         return;
     }
     LOG_INFO("AiAssistantController::Submit turnGen=%llu provider='%s' modelOverride='%s' effortOverride='%s' "
              "promptLen=%zu contextBlocks=%zu",
-             static_cast<unsigned long long>(turnGen), cachedProviderName_.c_str(),
+             static_cast<unsigned long long>(turnGen), snapshotProviderName.c_str(),
              modelOverride.empty() ? "<cfg>" : modelOverride.c_str(),
              effortOverride.empty() ? "<cfg>" : effortOverride.c_str(), prompt.size(), context.size());
     Request req;
@@ -205,6 +237,32 @@ void AiAssistantController::WorkerLoop() {
 }
 
 void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& cancel) {
+    // Worker-thread provider refresh. The user may have switched provider (and/or
+    // its API key / base URL / model id) in Preferences between turns. Rebuild
+    // `client_` only when the provider enum changed (avoids per-turn churn for
+    // the common URL/key/model edit), but always rebuild `clientConfig_` so a
+    // fresh key or URL takes effect on the very next turn.
+    {
+        const TrackerConfig refreshCfg = ConfigManager::Load();
+        const AiProvider refreshProvider = ProviderFromConfig(refreshCfg);
+        std::lock_guard<std::mutex> lk(providerStateMutex_);
+        if (refreshProvider != cachedProvider_ || !client_) {
+            std::unique_ptr<IAiClient> rebuilt = AiClientFactory::MakeAiClient(refreshProvider);
+            if (rebuilt) {
+                LOG_INFO("AiAssistantController: provider switched %d -> %d (client '%s' -> '%s')",
+                         static_cast<int>(cachedProvider_), static_cast<int>(refreshProvider),
+                         cachedProviderName_.c_str(), rebuilt->GetProviderName().c_str());
+                client_ = std::move(rebuilt);
+                cachedProvider_ = refreshProvider;
+                cachedProviderName_ = client_->GetProviderName();
+            } else {
+                LOG_ERROR("AiAssistantController: MakeAiClient returned null for provider %d — "
+                          "turn aborted, retaining prior client.",
+                          static_cast<int>(refreshProvider));
+            }
+        }
+        clientConfig_ = BuildClientConfig(refreshCfg, cachedProvider_);
+    }
     if (!client_) {
         state_.store(State::Errored, std::memory_order_release);
         return;
@@ -230,6 +288,9 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
             case AiProvider::OllamaOpenAiCompat:
                 chatReq.Model = cfg.AiModelOllama;
                 break;
+            case AiProvider::DeepSeek:
+                chatReq.Model = cfg.AiModelDeepSeek;
+                break;
             case AiProvider::OpenAi:
             default:
                 chatReq.Model = cfg.AiModelOpenAi;
@@ -237,10 +298,36 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
             }
         }
         chatReq.ReasoningEffort = req.EffortOverride.empty() ? cfg.AiReasoningEffort : req.EffortOverride;
+        // Use the canonical provider enum string for both the log and the F2 signature.
+        // The client-side `GetProviderName()` returns the BACKING client identity
+        // (`OpenAiClient` serves OpenAi, OllamaOpenAiCompat, and DeepSeek — all three
+        // print as "openai") which would mask provider transitions for the auto-clear.
+        const std::string providerLabel = AiClientFactory::ProviderToString(provider);
         LOG_INFO("AiAssistantController::RunRequest turnGen=%llu provider='%s' model='%s' effort='%s' "
                  "systemPromptCap=64KB",
-                 static_cast<unsigned long long>(req.TurnGen), cachedProviderName_.c_str(), chatReq.Model.c_str(),
+                 static_cast<unsigned long long>(req.TurnGen), providerLabel.c_str(), chatReq.Model.c_str(),
                  chatReq.ReasoningEffort.c_str());
+
+        // F2 — model-change auto-clear. Compose "<provider>|<effective-model>" and
+        // compare against the previous turn's signature. The per-turn model override
+        // (chat-window Combo) composes naturally because chatReq.Model already
+        // reflects override-wins-cfg above. ReasoningEffort deliberately omitted —
+        // effort-only changes must NOT discard chat history (decision Q in plan).
+        const smatchet::ai::ModelSignatureChangeResult sigResult =
+            smatchet::ai::DetectModelChange(lastModelSignature_, providerLabel, chatReq.Model);
+        if (sigResult.ShouldClear) {
+            LOG_INFO("AiAssistantController: model signature changed ('%s' -> '%s') — posting chat clear",
+                     lastModelSignature_.c_str(), sigResult.NewSignature.c_str());
+            // Capture by value: the task may run arbitrarily later on the UI thread
+            // and must remain safe even if the controller (or worker locals) go away
+            // between post and drain. No references to worker-thread state.
+            app_.mainThreadDispatcher.PostToMainThread([]() {
+                g_ui.assistantHistory.clear();
+                g_ui.assistantStreamBuf.clear();
+                g_ui.assistantLastError = "[model changed - chat cleared]";
+            });
+        }
+        lastModelSignature_ = sigResult.NewSignature;
     }
 
     // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header

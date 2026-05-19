@@ -24,6 +24,11 @@ std::unique_ptr<IAiClient> MakeAiClient(AiProvider provider) {
     switch (provider) {
     case AiProvider::OpenAi:
     case AiProvider::OllamaOpenAiCompat:
+    case AiProvider::DeepSeek:
+        // DeepSeek's wire is OpenAI-protocol-compatible (`/v1/chat/completions`
+        // with the same streaming SSE shape + body fields). Reuse OpenAiClient;
+        // the base URL + model ID select between OpenAI / DeepSeek at request
+        // time.
         return std::unique_ptr<IAiClient>(new OpenAiClient());
     case AiProvider::Anthropic:
         return std::unique_ptr<IAiClient>(new AnthropicClient());
@@ -44,6 +49,8 @@ std::string ProviderToString(AiProvider provider) {
         return "ollama-openai";
     case AiProvider::OllamaNative:
         return "ollama-native";
+    case AiProvider::DeepSeek:
+        return "deepseek";
     }
     return "openai";
 }
@@ -65,6 +72,10 @@ bool ProviderFromString(const std::string& s, AiProvider& out) {
         out = AiProvider::OllamaNative;
         return true;
     }
+    if (s == "deepseek") {
+        out = AiProvider::DeepSeek;
+        return true;
+    }
     return false;
 }
 
@@ -78,6 +89,7 @@ std::vector<ProviderEntry> EnumeratedProviders() {
     v.push_back({AiProvider::OllamaOpenAiCompat, "ollama-openai",
                  "OpenAI-compatible local (LM Studio / Ollama / LocalAI / vLLM)"});
     v.push_back({AiProvider::OllamaNative, "ollama-native", "Ollama (native /api/chat)"});
+    v.push_back({AiProvider::DeepSeek, "deepseek", "DeepSeek"});
     return v;
 }
 

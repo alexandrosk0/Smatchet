@@ -580,6 +580,20 @@ endif()
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHost.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp")
+# ImGuiColorTextEdit — vendored third-party TU promoted from Plugins/LuaConsole/ThirdParty
+# so Source_Core (AI chat panel) can consume it. The glob above only matches
+# Source_Core/src/*.cpp; the ThirdParty TU needs an explicit append. Both Standalone and
+# DX12 targets inherit it via CORE_SOURCES.
+set(_SMATCHET_IMGUI_TEXTEDIT_CPP
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+list(APPEND CORE_SOURCES "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+# Vendored third-party — suppress strict warnings so the smatchet_apply_strict_warnings
+# flags on Core / Standalone / DX12 targets don't flag upstream TextEditor.cpp.
+if(MSVC)
+    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
+endif()
 # GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
 set(_SMATCHET_CPP_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CppSyntaxHighlight.cpp")
 if(EXISTS "${_SMATCHET_CPP_SYNTAX}")
@@ -691,6 +705,7 @@ endif()
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
+        Source_Core/ThirdParty/ImGuiColorTextEdit
         ${sqlitecpp_SOURCE_DIR}/include
 )
 if(SMATCHET_WITH_LUA_AUTOMATION)
@@ -860,7 +875,9 @@ if(SMATCHET_WITH_MCP)
 endif()
 
 if(SMATCHET_WITH_LUA_AUTOMATION)
-    set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+    # TextEditor source lives under Source_Core/ThirdParty/ImGuiColorTextEdit (promoted from
+    # Plugins/LuaConsole/ThirdParty so Source_Core can consume it for the AI chat panel).
+    # SmatchetCore now compiles + links the TU; LuaConsole inherits it via SmatchetCoreInterface.
     # LuaConsolePlugin.cpp instantiates sol2 templates and trips the same COFF
     # relocation overflow as AppController_LuaBindings.cpp under BFD ld. Skip
     # the flag when lld is the active linker — lld uses 64-bit relocations by
@@ -870,10 +887,9 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
             "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/LuaConsolePlugin.cpp"
             PROPERTIES COMPILE_OPTIONS "-mcmodel=large")
     endif()
-    add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+    add_library(SmatchetPlugin_LuaConsole STATIC Plugins/LuaConsole/LuaConsolePlugin.cpp)
     target_include_directories(SmatchetPlugin_LuaConsole PUBLIC
-            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit")
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
     target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreInterface ImGuiLib)
     if(SMATCHET_WITH_MCP)
         target_link_libraries(SmatchetPlugin_LuaConsole PUBLIC SmatchetCoreMcpShim)
@@ -889,11 +905,6 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     endif()
     smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole)
     smatchet_assert_plugin_shim_links(SmatchetPlugin_LuaConsole)
-    if(MSVC)
-        set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
-    endif()
 endif()
 
 # Whisper dictation plugin — entire subtree is CMake-conditional (gating layer 6).
@@ -911,22 +922,17 @@ if(WIN32)
         smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
-        set(_SMATCHET_IMGUI_TEXTEDIT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
+        # TextEditor TU is built into SmatchetCore_DX12 directly (added to CORE_SOURCES below);
+        # the plugin lib drops its own copy and consumes the symbol via SmatchetCore_DX12.
         # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
-        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC EXCLUDE_FROM_ALL Plugins/LuaConsole/LuaConsolePlugin.cpp "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+        add_library(SmatchetPlugin_LuaConsole_DX12 STATIC EXCLUDE_FROM_ALL Plugins/LuaConsole/LuaConsolePlugin.cpp)
         target_include_directories(SmatchetPlugin_LuaConsole_DX12 PUBLIC
-                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole"
-                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole/ThirdParty/ImGuiColorTextEdit")
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
         target_link_libraries(SmatchetPlugin_LuaConsole_DX12 PUBLIC SmatchetCore_DX12 ImGuiLib_DX12)
         if(MSVC)
             target_compile_definitions(SmatchetPlugin_LuaConsole_DX12 PRIVATE _CRT_SECURE_NO_WARNINGS)
         endif()
         smatchet_apply_strict_warnings(SmatchetPlugin_LuaConsole_DX12)
-        if(MSVC)
-            set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
-        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-            set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
-        endif()
     endif()
 
     # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.

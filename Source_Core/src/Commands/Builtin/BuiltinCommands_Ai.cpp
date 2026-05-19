@@ -69,6 +69,8 @@ const char* AiProviderDisplayName(AiProvider p) {
         return "ollama-openai";
     case AiProvider::OllamaNative:
         return "ollama-native";
+    case AiProvider::DeepSeek:
+        return "deepseek";
     }
     return "unknown";
 }
@@ -88,6 +90,10 @@ AiClientConfig BuildClientConfigForProvider(const TrackerConfig& cfg, AiProvider
         out.ApiKey = cfg.AiApiKey;
         out.BaseUrl = cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
         break;
+    case AiProvider::DeepSeek:
+        out.ApiKey = cfg.AiDeepSeekApiKey;
+        out.BaseUrl = cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com") : cfg.AiDeepSeekBaseUrl;
+        break;
     case AiProvider::OpenAi:
     default:
         out.ApiKey = cfg.AiApiKey;
@@ -104,6 +110,8 @@ std::string ResolveModelId(const TrackerConfig& cfg, AiProvider provider) {
     case AiProvider::OllamaNative:
     case AiProvider::OllamaOpenAiCompat:
         return cfg.AiModelOllama;
+    case AiProvider::DeepSeek:
+        return cfg.AiModelDeepSeek;
     case AiProvider::OpenAi:
     default:
         return cfg.AiModelOpenAi;
@@ -248,9 +256,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["count"] = static_cast<int>(models.size());
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native");
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek");
         providerParam.Default = "openai";
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {std::move(providerParam)};
         c.Idempotent = true;
         reg.Register(std::move(c));
@@ -316,8 +324,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["model"] = model;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {
             std::move(providerParam),
             PString("prompt", "User prompt text.", true),
@@ -358,8 +366,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["error"] = err;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {std::move(providerParam)};
         c.AsyncSafe = false;
         c.Idempotent = true;
@@ -493,8 +501,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["response_body_excerpt"] = responseBodyExcerpt;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         ParamSpec timeoutParam = PInt("timeout-ms", "Total HTTP envelope timeout (ms). Default 30000.", 30000);
         c.Params = {
             std::move(providerParam),

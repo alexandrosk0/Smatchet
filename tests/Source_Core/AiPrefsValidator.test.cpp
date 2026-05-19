@@ -16,12 +16,8 @@
 namespace {
 
 bool ContainsSubstring(const std::vector<std::string>& msgs, const std::string& needle) {
-    for (std::size_t i = 0; i < msgs.size(); ++i) {
-        if (msgs[i].find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(msgs.begin(), msgs.end(),
+                       [&needle](const std::string& m) { return m.find(needle) != std::string::npos; });
 }
 
 TrackerConfig DefaultCfg() {
@@ -36,8 +32,8 @@ TrackerConfig DefaultCfg() {
 
 TEST_CASE("AiPrefsValidator: empty OpenAI config errors on missing key only") {
     TrackerConfig cfg = DefaultCfg();
-    cfg.AiProviderKind = 0;     // OpenAi
-    cfg.AiApiKey.clear();        // missing
+    cfg.AiProviderKind = 0; // OpenAi
+    cfg.AiApiKey.clear();   // missing
     cfg.AiAnthropicApiKey.clear();
     // Anthropic key MISSING - but we are not the Anthropic provider, so no error.
     const auto v = smatchet::ai::ValidateAiPrefs(cfg);
@@ -185,8 +181,8 @@ TEST_CASE("AiPrefsValidator: OllamaNative bad base URL errors") {
 
 TEST_CASE("AiPrefsValidator: out-of-range AiProviderKind clamps to OpenAI") {
     TrackerConfig cfg = DefaultCfg();
-    cfg.AiProviderKind = 99;     // out of enum
-    cfg.AiApiKey.clear();         // missing -> OpenAI error
+    cfg.AiProviderKind = 99; // out of enum
+    cfg.AiApiKey.clear();    // missing -> OpenAI error
     const auto v = smatchet::ai::ValidateAiPrefs(cfg);
     CHECK_FALSE(v.IsOk());
     CHECK(ContainsSubstring(v.Errors, "OpenAI"));
@@ -197,8 +193,8 @@ TEST_CASE("AiPrefsValidator: out-of-range AiProviderKind clamps to OpenAI") {
 // API key is OPTIONAL for these servers - empty key must NOT block save.
 TEST_CASE("AiPrefsValidator: OllamaOpenAiCompat with EMPTY key passes (LM Studio etc are local)") {
     TrackerConfig cfg = DefaultCfg();
-    cfg.AiProviderKind = 2;          // OllamaOpenAiCompat
-    cfg.AiApiKey.clear();              // empty - must not error for local servers
+    cfg.AiProviderKind = 2; // OllamaOpenAiCompat
+    cfg.AiApiKey.clear();   // empty - must not error for local servers
     cfg.AiModelOpenAi = "any-local-model";
     const auto v = smatchet::ai::ValidateAiPrefs(cfg);
     CHECK(v.IsOk());
@@ -220,7 +216,7 @@ TEST_CASE("AiPrefsValidator: OllamaOpenAiCompat with non-sk- key produces no war
 // OllamaNative has always been keyless; reaffirm here so the pattern is uniform.
 TEST_CASE("AiPrefsValidator: OllamaNative with EMPTY key passes (no key required)") {
     TrackerConfig cfg = DefaultCfg();
-    cfg.AiProviderKind = 3;          // OllamaNative
+    cfg.AiProviderKind = 3; // OllamaNative
     cfg.AiApiKey.clear();
     cfg.AiAnthropicApiKey.clear();
     const auto v = smatchet::ai::ValidateAiPrefs(cfg);
@@ -264,6 +260,117 @@ TEST_CASE("AiPrefsValidator: malformed key warning carries FieldKey + Warning se
         }
     }
     CHECK(sawKeyWarn);
+}
+
+// --- DeepSeek (provider 4) ---
+//
+// DeepSeek is a hosted OpenAI-compatible provider. Behaviour mirrors Anthropic:
+//   * key required when slot empty
+//   * known catalog entries pass without warning
+//   * unknown model warns
+//   * key format sniff: 'sk-' prefix (same shape as OpenAI keys per DeepSeek docs)
+
+TEST_CASE("AiPrefsValidator: empty DeepSeek config errors on missing DeepSeek key") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4; // DeepSeek
+    cfg.AiDeepSeekApiKey.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "DeepSeek"));
+    CHECK(ContainsSubstring(v.Errors, "API key required"));
+}
+
+TEST_CASE("AiPrefsValidator: DeepSeek with valid key + known model passes (no warnings)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "sk-deepseek-fake";
+    cfg.AiModelDeepSeek = "deepseek-chat";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Warnings.empty());
+}
+
+TEST_CASE("AiPrefsValidator: DeepSeek reasoner model recognised in catalog") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "sk-fake";
+    cfg.AiModelDeepSeek = "deepseek-reasoner";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(ContainsSubstring(v.Warnings, "deepseek-reasoner"));
+}
+
+TEST_CASE("AiPrefsValidator: invented DeepSeek model warns") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "sk-fake";
+    cfg.AiModelDeepSeek = "deepseek-fictional-99";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "deepseek-fictional-99"));
+    CHECK(ContainsSubstring(v.Warnings, "not in known catalog"));
+}
+
+TEST_CASE("AiPrefsValidator: DeepSeek key without 'sk-' prefix warns") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "nope-no-prefix";
+    cfg.AiModelDeepSeek = "deepseek-chat";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "DeepSeek"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-"));
+}
+
+TEST_CASE("AiPrefsValidator: DeepSeek with Anthropic-shape 'sk-ant-' key warns cross-paste") {
+    // Regression for PR #289 follow-up: an Anthropic key pasted into the DeepSeek slot
+    // satisfies the loose `sk-` prefix check, slips through validate, and then yields a
+    // server-side HTTP 401 with no Smatchet-side clue what went wrong. Tight check on
+    // the Anthropic-exclusive `sk-ant-` prefix surfaces the mistake before the network.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "sk-ant-api03-anthropic-key-pasted-into-deepseek-slot";
+    cfg.AiModelDeepSeek = "deepseek-chat";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "DeepSeek"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-ant-"));
+    CHECK(ContainsSubstring(v.Warnings, "Anthropic"));
+}
+
+TEST_CASE("AiPrefsValidator: OpenAI with Anthropic-shape 'sk-ant-' key warns cross-paste") {
+    // Symmetric guard: same mistake against the OpenAI slot. OpenAI keys begin `sk-` but
+    // never `sk-ant-`, so the prefix is a reliable signal of a wrong-slot paste.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-ant-api03-anthropic-key-pasted-into-openai-slot";
+    cfg.AiModelOpenAi = "gpt-4o";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "OpenAI"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-ant-"));
+    CHECK(ContainsSubstring(v.Warnings, "Anthropic"));
+}
+
+TEST_CASE("AiPrefsValidator: DeepSeek missing-key issue carries FieldKey kAiDeepSeekApiKey") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    REQUIRE_FALSE(v.Issues.empty());
+    bool sawKeyIssue = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiDeepSeekApiKey) {
+            CHECK(iss.Severity == smatchet::ai::PrefsSeverity::Error);
+            CHECK(iss.Message.find("DeepSeek") != std::string::npos);
+            sawKeyIssue = true;
+        }
+    }
+    CHECK(sawKeyIssue);
 }
 
 TEST_CASE("AiPrefsValidator: bad AiBaseUrl issue carries FieldKey kAiBaseUrl") {
