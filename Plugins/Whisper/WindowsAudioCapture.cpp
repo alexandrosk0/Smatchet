@@ -181,7 +181,10 @@ bool ResolveFormat(const WAVEFORMATEX& fmt, WORD& outTag, WORD& outBits) noexcep
 // float32, and WAVE_FORMAT_EXTENSIBLE wrapping either (the WASAPI mix
 // engine ships float32 inside EXTENSIBLE on most Windows 10/11 mics —
 // tag=65534=0xFFFE in the logs). Anything else falls back to mid-channel
-// silence (logged once per Start by the caller).
+// silence; the start-time format probe in CaptureThreadMain emits a
+// LOG_WARN when ResolveFormat fails or the resolved (tag, bits) pair
+// isn't one of the two supported shapes, so the silent-fallback path is
+// always paired with a one-shot operator-visible warning.
 std::int16_t MixToMonoInt16(const BYTE* framePtr, const WAVEFORMATEX& fmt) {
     const int channels = static_cast<int>(fmt.nChannels);
     if (channels < 1) {
@@ -454,6 +457,22 @@ void WindowsAudioCapture::CaptureThreadMain() {
                  resolved ? 1 : 0,
                  static_cast<unsigned>(effTag),
                  static_cast<unsigned>(effBits));
+        // Operator-visible "audio will be silent" warning when the resolved
+        // pair isn't one of the two MixToMonoInt16 handles. Catches both the
+        // EXTENSIBLE-with-unknown-SubFormat case AND the non-EXTENSIBLE tag
+        // that isn't WAVE_FORMAT_PCM int16 / WAVE_FORMAT_IEEE_FLOAT float32.
+        const bool supportedShape =
+            resolved && ((effTag == WAVE_FORMAT_PCM && effBits == 16) ||
+                         (effTag == WAVE_FORMAT_IEEE_FLOAT && effBits == 32));
+        if (!supportedShape) {
+            LOG_WARN("WindowsAudioCapture: unsupported mix format (tag=%u bits=%u resolved=%d "
+                     "effTag=%u effBits=%u) — capture will be silent",
+                     static_cast<unsigned>(negotiated.wFormatTag),
+                     static_cast<unsigned>(negotiated.wBitsPerSample),
+                     resolved ? 1 : 0,
+                     static_cast<unsigned>(effTag),
+                     static_cast<unsigned>(effBits));
+        }
         if (!resolved && negotiated.wFormatTag == WAVE_FORMAT_EXTENSIBLE && negotiated.cbSize >= 22) {
             // mixFormat is the canonical full-size buffer the WASAPI service
             // returned; `negotiated` is a value-copy of just the WAVEFORMATEX

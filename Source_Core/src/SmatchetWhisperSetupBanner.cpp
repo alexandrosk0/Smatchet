@@ -189,11 +189,16 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     if (downloading) {
         s.sawActiveDownloadThisSession = true;
     }
-    float bannerHeight = 64.0f;
+    // Scale all the hardcoded pixel sizes by the user's font zoom so the
+    // banner doesn't clip copy/buttons at higher zoom levels (per the
+    // project's font-zoom guideline). Clamped to >=1.0 so a user with
+    // FontGlobalScale<1.0 doesn't get an unreadable squashed banner.
+    const float uiScale = (std::max)(1.0f, ::ImGui::GetIO().FontGlobalScale);
+    float bannerHeight = 64.0f * uiScale;
     if (downloading) {
-        bannerHeight = 84.0f;
+        bannerHeight = 84.0f * uiScale;
     } else if (s.pickerExpanded) {
-        bannerHeight = 140.0f;
+        bannerHeight = 140.0f * uiScale;
     }
 
     ::ImGui::SetNextWindowPos(workPos);
@@ -207,18 +212,23 @@ bool Render(AppController& app, TrackerConfig& cfg) {
     // reads as a notification strip rather than blending into the chrome.
     // The colors are picked to remain legible on both light and dark ImGui
     // themes (high-saturation blue background, white text, contrasting border).
+    // TextDisabled is overridden too so the (size) labels in the model picker
+    // stay readable against the saturated background (the theme default goes
+    // low-contrast against blue).
     const ImVec4 bgColor(0.10f, 0.42f, 0.78f, 1.00f);        // saturated blue
     const ImVec4 borderColor(0.95f, 0.78f, 0.20f, 1.00f);    // amber attention bar
     const ImVec4 textColor(1.00f, 1.00f, 1.00f, 1.00f);
+    const ImVec4 textDisabledColor(0.84f, 0.90f, 1.00f, 1.00f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
     ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
     ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, textDisabledColor);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * uiScale, 8.0f * uiScale));
     if (!::ImGui::Begin("##WhisperSetupBanner", nullptr, flags)) {
         ::ImGui::End();
         ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(4);
         return false;
     }
 
@@ -324,7 +334,7 @@ bool Render(AppController& app, TrackerConfig& cfg) {
 
     ::ImGui::End();
     ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleColor(4);
     return cfgChanged;
 #endif
 }
