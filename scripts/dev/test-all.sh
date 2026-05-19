@@ -61,9 +61,15 @@ for script in "${TESTS[@]}"; do
     echo "# $script"
     echo "##################################################"
 
+    # Reset RC before every iteration. Without this, the `|| RC=$?` on the
+    # OUT capture line only sets RC on FAILURE — once any script fails, RC
+    # stays at its last failing value and `RC="${RC:-0}"` is a no-op
+    # (parameter expansion default only fires on UNSET, not on a stale
+    # nonzero value). The result was every script after the first failure
+    # being misreported as failed in the final summary.
+    RC=0
     # Capture output but stream to terminal too.
     OUT=$(bash "$script" 2>&1) || RC=$?
-    RC="${RC:-0}"
     echo "$OUT"
 
     if [ "$RC" -eq 2 ]; then
