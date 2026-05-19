@@ -189,7 +189,9 @@ std::string DisplayLabel(const fs::path& repoRoot, const std::string& absPath) {
     const std::string root = repoRoot.generic_string();
     if (!root.empty() && absPath.size() > root.size() && absPath.compare(0, root.size(), root) == 0) {
         std::size_t off = root.size();
-        if (off < absPath.size() && absPath[off] == '/') {
+        // `off < absPath.size()` is implicit from the `absPath.size() > root.size()`
+        // guard above (off == root.size()); only the separator check matters here.
+        if (absPath[off] == '/') {
             ++off;
         }
         // Strip the "docs/" prefix so the combo shows "design/foo.md" /
