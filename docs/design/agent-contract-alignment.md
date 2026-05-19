@@ -93,8 +93,22 @@ Bucket E (ImGui Test Engine) not needed — no UI surface touched. Bucket D (san
 
 ## Implementation log
 
-(Populated as slices ship.)
+- **bf0bd167** · `chore(agents): split debug-detective into new Diagnostic class + architect emit-only` — AGENTS.md output-contract table extended from 4 → 5 classes. New **Diagnostic read-edit** row with `debug-detective` as sole member; required headings `## Hypotheses` → `## Evidence` → `## Cause` → `## Files changed (temp-debug)` → `## Cleanup verified` → `## Handoff`. `agents/architect.md` L45 rewritten to "emit-only" — orchestrator persists + commits the plan body; agent stays `read-only:true`. architect bumped v1 → v2.
+- **e36c35c5** · `chore(agents): land output-contract required headings (Implementer + Maintenance classes)` — 14 files: 9 implementer prompts (`tracker-backend`, `grid-engine`, `command-system`, `offline-sync`, `lua-binder`, `mcp-toolsmith`, `p4-blame`, `unreal-bridge`, `mechanic`) replaced one-line `Report:` directive with the 3 Implementer headings; build-doctor + test-author appended `## Final report — Maintenance class` sections with the 4 Maintenance headings; git-janitor added the 2 missing Maintenance headings (`## Mutations applied` + `## Residue requiring user action`) and renamed `## Regression gate (final, mandatory)` → `## Regression gate` to match spec; code-review banner `sonnet/medium` → `sonnet/high` (frontmatter `effort:high` is truth-source); perf-measure manual-fallback rewritten to halted-with-handoff (no more "open the Perf panel + paste back"). Every touched agent's version + banner bumped.
+- **2c79c3bf** · `chore(agents): mandate ## Outcome: line per AGENTS.md output contract` — 16 files: every prompt missing the `## Outcome:` mandate text gets it appended before the existing `## Self-improvement` directive. Post-condition: 24/24 agent prompts contain the mandate. perf-detective, perf-instrument, security-review, spike-hunter received their first version bump in this PR.
+- **<sha-tbd>** · `chore(telemetry): tighten _infer_outcome + ship contract-alignment audit script` — `agents/_shared/token-tracking/agent-token-log.py:_infer_outcome` rule 3 removed (`## Self-improvement` → `applied` mapping); default tightened to `partial` when no explicit tag and no halt keyword. Hook copy at `.claude/hooks/agent-token-log.py` mirrored (Windows-side independent copy per `setup-harness.sh` `link_file()` short-circuit when destination exists). `scripts/dev/test-agent-contract.sh` ships as the bucket-A audit rig (8 sub-checks: required headings × 3 classes, Outcome mandate coverage, banner↔frontmatter match, architect emit-only, AGENTS.md 5-class table, `_infer_outcome` unit cases). `agents/_shared/token-tracking/tests/test_infer_outcome.py` ships 9 unit cases covering the new + existing behaviour. `scripts/agent-tokens-report.py` comment updated to reflect the new historic-row default. debug-detective bumped v3 → v4 (renamed `## Instrumentation (now stripped)` → `## Files changed (temp-debug)` + `## Proposed Fix For Handoff` → `## Handoff (proposed fix)`).
+
+**Verification** (run 2026-05-19):
+
+- ✅ `bash scripts/dev/test-agent-contract.sh` exits 0 — 18/18 sub-checks pass
+- ✅ `python agents/_shared/token-tracking/tests/test_infer_outcome.py` — 9/9 cases pass
+- ✅ 24/24 agent prompts contain `## Outcome:` mandate (was 6/24)
+- ✅ `_infer_outcome` returns `partial` for `## Self-improvement` only (was `applied`)
+- ✅ AGENTS.md § Agent output contract has 5 class rows (was 4)
+- ✅ Hook copy at `.claude/hooks/agent-token-log.py` byte-identical to canonical
 
 ## Deviations from plan
 
-(Populated as deviations arise.)
+- **debug-detective heading rename instead of additions** — plan said "no body edits needed". Audit run found 2 of the 6 Diagnostic-class headings didn't match AGENTS.md spec (debug-detective had `## Instrumentation (now stripped)` and `## Proposed Fix For Handoff`). Resolved via 2 surgical renames + v3 → v4 bump rather than adding new headings (would have duplicated existing content). Same outcome for downstream consumers; minimum diff.
+- **Audit class-row regex fix** — first audit run failed AGENTS.md 5-row check because the regex `^\| \*\*(Investigator|Diagnostic|Implementer|Helper|Maintenance)\*\*` couldn't match `**Diagnostic read-edit**` (whitespace between `Diagnostic` and the closing `**`). Relaxed to `\b` word-boundary. Plan didn't anticipate the per-row trailing-text variance.
+- **Hook copy mirror via `cp -f` not setup-harness** — plan listed both options (`cp` mirror OR `rm + setup-harness.sh` refresh). Chose `cp -f` for determinism; setup-harness L77-79 short-circuits when destination exists, so a refresh would have been a no-op without the prior `rm`. Audit script + unit test rig both read the canonical path; `.claude/hooks/` copy is only consumed by the live Claude Code SubagentStop hook.
