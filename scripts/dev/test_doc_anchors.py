@@ -186,7 +186,7 @@ def main() -> int:
             failed.append((name, file_path, line_no))
 
     total = len(by_name)
-    print("test-doc-anchors — AGENTS.md § cross-link rot check")
+    print("test-doc-anchors — cross-link audit for AGENTS.md sections")
     print(f"  Anchor source: AGENTS.md + {len(ANCHOR_FILES) - 1} file(s) under docs/agent-rules/")
     print(f"  Distinct anchors:       {len(anchors)}")
     print(f"  Distinct references:    {total}")
@@ -195,7 +195,7 @@ def main() -> int:
 
     if failed:
         print()
-        print(f"ADVISORY — {len(failed)} reference(s) name a section that doesn't")
+        print(f"FAILED — {len(failed)} reference(s) name a section that doesn't")
         print("match any anchor in AGENTS.md or docs/agent-rules/*.md:")
         for name, file_path, line_no in failed:
             print(f"  - {name!r}")
@@ -205,12 +205,7 @@ def main() -> int:
         print("  1. Add the section to AGENTS.md or docs/agent-rules/<X>.md.")
         print("  2. Rename the reference to match an existing section name.")
         print("  3. Update AGENTS.md redirect stub to mention the moved name.")
-        print()
-        print("Audit is in **advisory mode** — exit 0 to unblock CI during the")
-        print("soak period (per Phase 9 coverage-gate pattern). Flips to")
-        print("blocking once the known set is fixed and a clean run is")
-        print("recorded. Track in docs/backlog/agent-self-improvement/tooling.md.")
-        return 0
+        return 1
 
     print()
     print("PASS — every AGENTS.md § <section> reference resolves.")
