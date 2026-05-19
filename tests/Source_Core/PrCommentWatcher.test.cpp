@@ -22,14 +22,27 @@
 #include "CodingHarnessTypes.h"
 #include "HarnessRunState.h"
 #include "ICodingHarnessRunner.h"
+#include "PrCommentClassifier.h"
 
 #include <doctest/doctest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cerrno>
+#endif
 
 using ::AgenticInferenceClientPure::ProposedAction;
 using ::CodingHarness::RunState;
@@ -354,6 +367,208 @@ TEST_CASE("H10: LoadCursorsFromStore hydrates cursor + iteration count from agen
     // the API surface returns 0 cleanly on a Spawning handoff.
     const int loaded = watcher.LoadCursorsFromStore();
     CHECK(loaded == 0); // no PrOpen handoffs → nothing to hydrate
+}
+
+// ─── coderabbit-react phase-4: OriginTracking classifier hook ──────────────
+//
+// The phase-4 watcher invokes a registered classifier BEFORE the default
+// dispatcher in BOTH modes. This one case covers the OriginTracking-side
+// classifier injection — the new TU `PrCommentWatcher_OpenPrScan.test.cpp`
+// covers the OpenPrScan-mode permutations.
+
+namespace {
+
+// Mkdir helper (Windows + POSIX). Mirrors AgenticHandoffController.test.cpp
+// — the worktree path the controller builds is `.claude/worktrees/agent-<id>`
+// relative to cwd; we have to create it before PrOpen fires so the
+// controller's PR_URL.txt resolver populates `prUrl` on the in-memory record.
+inline bool MkdirRecursivePhase4(const std::string& path) {
+#if defined(_WIN32)
+    std::string acc;
+    for (std::size_t i = 0; i <= path.size(); ++i) {
+        if (i == path.size() || path[i] == '/' || path[i] == '\\') {
+            if (!acc.empty()) {
+                if (CreateDirectoryA(acc.c_str(), nullptr) == 0) {
+                    if (GetLastError() != ERROR_ALREADY_EXISTS) {
+                        return false;
+                    }
+                }
+            }
+            if (i < path.size()) {
+                acc.push_back(path[i]);
+            }
+        } else {
+            acc.push_back(path[i]);
+        }
+    }
+    return true;
+#else
+    std::string acc;
+    for (std::size_t i = 0; i <= path.size(); ++i) {
+        if (i == path.size() || path[i] == '/') {
+            if (!acc.empty()) {
+                if (mkdir(acc.c_str(), 0700) != 0 && errno != EEXIST) {
+                    return false;
+                }
+            }
+            if (i < path.size()) {
+                acc.push_back(path[i]);
+            }
+        } else {
+            acc.push_back(path[i]);
+        }
+    }
+    return true;
+#endif
+}
+
+inline bool WriteTextPhase4(const std::string& path, const std::string& body) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) return false;
+    f.write(body.data(), static_cast<std::streamsize>(body.size()));
+    return f.good();
+}
+
+// FakeRunner that fires Running -> PrOpen via the state callback and then
+// BLOCKS until `release_` is flipped. The controller's PrOpen handler reads
+// PR_URL.txt from the worktree dir; the test pre-writes it so SnapshotPrOpen
+// returns the record. The block holds the FSM in PrOpen for the duration of
+// the test thread's `Tick()` call; once released, the runner returns
+// ok=true and the controller flips the record to Complete (out of scope).
+class PrOpenHoldRunner : public ::CodingHarness::IRunner {
+  public:
+    std::string Name() const override { return "pr-open-hold-runner"; }
+    bool Probe(std::string&) override { return true; }
+    bool Spawn(const ::CodingHarness::Seed& /*seed*/, const std::string& worktreeDir,
+               DeltaCallback /*onDelta*/, StateChangeCallback onStateChange,
+               std::shared_ptr<std::atomic<bool>> /*cancelToken*/, ::CodingHarness::RunResult& outResult,
+               std::string& outError) override {
+        if (onStateChange) onStateChange("Running");
+        // The test pre-writes PR_URL.txt to `worktreeDir`; nothing for the
+        // runner to do here. Emit PrOpen and wait for release.
+        (void)worktreeDir;
+        if (onStateChange) onStateChange("PrOpen");
+        for (int i = 0; i < 500 && !release_.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        outResult.ok = true;
+        outResult.prUrl = "https://github.com/smatchet/example/pull/77";
+        outError.clear();
+        return true;
+    }
+    bool Resume(const ::CodingHarness::ClarificationResponse&, std::shared_ptr<std::atomic<bool>>,
+                std::string& outError) override {
+        outError = "noop";
+        return false;
+    }
+    void Release() { release_.store(true); }
+  private:
+    std::atomic<bool> release_{false};
+};
+
+// FakeClassifier — returns a scripted verdict from a queue so the test can
+// thread a sequence of Skip / Reject / Dispatch outcomes.
+class FakeClassifier : public ::smatchet::agentic::PrCommentClassifier {
+  public:
+    ::smatchet::agentic::ClassificationResult Classify(const PostedComment& c) const override {
+        ++calls;
+        seen.push_back(c.body);
+        if (queue.empty()) {
+            ::smatchet::agentic::ClassificationResult r;
+            r.verdict = ::smatchet::agentic::ClassifierVerdict::Dispatch;
+            r.dispatchTargetAgent = "coderabbit-triage";
+            return r;
+        }
+        auto r = queue.front();
+        queue.erase(queue.begin());
+        return r;
+    }
+    mutable int calls = 0;
+    mutable std::vector<std::string> seen;
+    mutable std::vector<::smatchet::agentic::ClassificationResult> queue;
+};
+
+} // namespace
+
+TEST_CASE("phase-4: OriginTracking classifier RejectShortCircuit short-circuits dispatch") {
+    AgentProposalStore store(":memory:");
+    PrOpenHoldRunner runner;
+    AgenticHandoffController controller(/*dispatcher*/ {}, &runner, &store, nullptr);
+
+    AgentProposal p;
+    p.issueKey = "smatchet/example#phase4-origin";
+    p.sourceTracker = "github";
+    p.action = ProposedAction::ImplementIssue;
+    p.state = AgentProposalState::Approved;
+    std::string err;
+    REQUIRE(store.Insert(p, err));
+    const std::int64_t pid = p.id;
+    AgenticHandoffController::ActiveHandoff h;
+    REQUIRE(controller.Start(pid, h, err));
+
+    // Pre-write PR_URL.txt to the worktree dir so the controller's PrOpen
+    // handler resolves a non-empty prUrl (SnapshotPrOpen requires it).
+    const std::string wt = AgenticHandoffController::BuildWorktreeDir(pid);
+    REQUIRE(MkdirRecursivePhase4(wt));
+    REQUIRE(WriteTextPhase4(wt + "/PR_URL.txt", "https://github.com/smatchet/example/pull/77\n"));
+
+    // Drive the runner on a side thread so we can Tick() while Spawn is
+    // blocked in the PrOpen-hold loop.
+    std::atomic<bool> spawnReturned{false};
+    std::thread spawnThread([&] {
+        std::string werr;
+        controller.RunSpawnSynchronouslyForTests(pid, werr);
+        spawnReturned.store(true);
+    });
+
+    // Wait for the runner's PrOpen callback to land. SnapshotPrOpen returns
+    // empty until the FSM transition fires + prUrl is set.
+    for (int i = 0; i < 200; ++i) {
+        if (!controller.SnapshotPrOpen().empty()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(controller.SnapshotPrOpen().size() == 1);
+
+    PrCommentWatcher watcher(&controller, /*budget*/ 5);
+
+    ScriptedFetcher fetcher;
+    PostedComment c;
+    c.id = "100";
+    c.body = "please fix this nitpick";
+    c.author = "coderabbitai[bot]";
+    c.createdAtSec = 1700000500;
+    fetcher.nextComments.push_back(c);
+    watcher.SetPrCommentFetcher([&](const std::string& k, std::vector<PostedComment>& cs, std::string& e) {
+        return fetcher(k, cs, e);
+    });
+    ScriptedPoster poster;
+    watcher.SetPrCommentPoster([&](const std::string& k, const std::string& b, std::string& e) {
+        return poster(k, b, e);
+    });
+    ScriptedDispatcher dispatcher;
+    watcher.SetRespawnDispatcher([&](std::int64_t pidArg, const std::string& body, std::string& e) {
+        return dispatcher(pidArg, body, e);
+    });
+
+    auto classifier = std::unique_ptr<FakeClassifier>(new FakeClassifier());
+    FakeClassifier* classifierPtr = classifier.get();
+    ::smatchet::agentic::ClassificationResult reject;
+    reject.verdict = ::smatchet::agentic::ClassifierVerdict::RejectShortCircuit;
+    reject.rejectReplyBody = "smatchet rejects: rule 1 -- C++14 hard";
+    reject.rejectRuleCitation = "override #1 -- C++14 hard";
+    classifierPtr->queue.push_back(reject);
+    watcher.SetClassifier(std::move(classifier));
+
+    const int dispatched = watcher.Tick();
+    CHECK(dispatched == 0); // Reject does not count toward dispatch tally.
+    CHECK(classifierPtr->calls == 1);
+    REQUIRE(poster.posts.size() == 1);
+    CHECK(poster.posts[0].body.find("rule 1") != std::string::npos);
+    CHECK(dispatcher.dispatched.empty());
+
+    // Release the runner so the spawn thread can return + cleanup.
+    runner.Release();
+    if (spawnThread.joinable()) spawnThread.join();
 }
 
 TEST_CASE("H10: agent_pr_watch persistence round-trip via direct API") {

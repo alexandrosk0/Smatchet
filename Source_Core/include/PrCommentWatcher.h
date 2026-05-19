@@ -38,6 +38,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,28 @@ class AgentProposalStore;
 
 namespace smatchet {
 namespace agentic {
+
+class PrCommentClassifier;
+
+// (coderabbit-react phase-4) Watcher operating mode.
+//
+//   OriginTracking — the H7 default. Iterates handoff-origin PrOpen records
+//                    (handoffs the AgenticHandoffController spawned). Per-tick
+//                    cursor + iteration-budget bookkeeping lives on the
+//                    in-memory `ActiveHandoff` record; persistence is
+//                    `agent_pr_watch` (H10).
+//   OpenPrScan     — coderabbit-react phase-4. Iterates rows the
+//                    `OpenPrRegistrar` (phase 1) wrote to `agent_open_pr_watch`.
+//                    This watcher no longer runs `gh pr list` itself — the
+//                    registrar owns that. Per-tick cursor + iteration count
+//                    persists on the `agent_open_pr_watch` row directly.
+//
+// Both modes share the same fetcher / poster seams; only the dispatcher
+// shape differs (OpenPrScan rows don't carry a proposalId).
+enum class WatchMode {
+    OriginTracking,
+    OpenPrScan,
+};
 
 // PR-comment fetcher seam — production binds to a lambda calling
 // `GitHubClient::FetchPrComments`. Returns false + outError on transport
@@ -73,6 +96,20 @@ using PrCommentPoster =
 using HarnessRespawnDispatcher =
     std::function<bool(std::int64_t /*proposalId*/, const std::string& /*commentBody*/, std::string& /*outError*/)>;
 
+// (coderabbit-react phase-4) OpenPrScan-mode dispatcher seam. The OpenPrScan
+// iteration walks `agent_open_pr_watch` rows which do NOT carry a proposal
+// id (the registrar tracks every open PR on the base branch, not just
+// handoff-spawned PRs). Phase-7 will wire this to a worktree-spawning
+// dispatcher; phase-4 leaves it null and the watcher LOG_WARNs once when a
+// Dispatch verdict has nowhere to land.
+//
+// Returns false + outError on dispatch failure; the watcher LOG_WARNs and
+// continues to the next row (the cursor has already advanced so the same
+// comment is not re-dispatched).
+using OpenPrRespawnDispatcher =
+    std::function<bool(const std::string& /*prUrl*/, const std::string& /*commentBody*/,
+                       const std::string& /*dispatchTargetAgent*/, std::string& /*outError*/)>;
+
 class PrCommentWatcher {
   public:
     // `controller` is non-owning — production passes the AppController's
@@ -80,7 +117,12 @@ class PrCommentWatcher {
     // `iterationBudget` is the per-handoff cap; clamped to [1, 50] in the
     // ctor to match the ConfigManager clamp. Default 10 mirrors
     // `cfg.HandoffPrIterationBudget`.
-    explicit PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget = 10);
+    // `mode` defaults to OriginTracking so existing call sites (H7
+    // AppController + the test rig's pre-phase-4 cases) keep working
+    // unchanged. OpenPrScan callers (the future coderabbit-react worker)
+    // pass `WatchMode::OpenPrScan` explicitly.
+    explicit PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget = 10,
+                              WatchMode mode = WatchMode::OriginTracking);
     ~PrCommentWatcher();
 
     PrCommentWatcher(const PrCommentWatcher&) = delete;
@@ -100,6 +142,29 @@ class PrCommentWatcher {
     /// LOG_WARNs once per detected comment and skips the dispatch (the
     /// handoff stays in PrOpen, the operator must respawn manually).
     void SetRespawnDispatcher(HarnessRespawnDispatcher dispatcher);
+
+    /// (coderabbit-react phase-4) Wire the OpenPrScan-mode dispatcher.
+    /// Optional — when null an OpenPrScan-mode Dispatch verdict logs once
+    /// per session and the cursor still advances (so the same comment is
+    /// not re-classified next tick). Phase-7 will bind this to a worktree-
+    /// spawning dispatcher; phase-4 leaves the production path null on
+    /// purpose so a real CodeRabbit comment cannot trigger an unintended
+    /// spawn before the worktree-management code lands.
+    void SetOpenPrRespawnDispatcher(OpenPrRespawnDispatcher dispatcher);
+
+    /// (coderabbit-react phase-4) Register the PR-comment classifier.
+    /// Heap-owned because the classifier is polymorphic
+    /// (PrCommentClassifier is pure-virtual). Passing nullptr resets the
+    /// watcher to "no classifier" — Tick() falls through to the default
+    /// dispatcher in both modes (the pre-phase-4 behaviour for
+    /// OriginTracking; an open-PR-scan default for OpenPrScan).
+    /// Setter is not thread-safe relative to in-flight ticks; wire at
+    /// AppController init before the scheduled-poll worker spawns.
+    void SetClassifier(std::unique_ptr<PrCommentClassifier> classifier);
+
+    /// (coderabbit-react phase-4) Read-only mode accessor. Exposed for
+    /// tests + Preferences UI.
+    WatchMode GetMode() const;
 
     /// Per-handoff iteration cap. Setter clamps to [1, 50].
     void SetIterationBudget(int budget);
@@ -155,14 +220,21 @@ class PrCommentWatcher {
     PrCommentFetcher fetcher_;
     PrCommentPoster poster_;
     HarnessRespawnDispatcher dispatcher_;
+    OpenPrRespawnDispatcher openPrDispatcher_;
     std::atomic<int> iterationBudget_;
     // (H7) Latch so the "fetcher is null" log fires once per session
     // instead of every tick — same shape as the H5 dual-channel.
     std::atomic<bool> fetcherWarnLatched_{false};
     std::atomic<bool> dispatcherWarnLatched_{false};
+    // (coderabbit-react phase-4) Same latch shape for the OpenPrScan
+    // dispatcher null-warn path.
+    std::atomic<bool> openPrDispatcherWarnLatched_{false};
     // (H10) SQLite cursor-persistence seam. Optional — null falls back to
     // H7 in-memory-only behaviour. Lifetime owned by AppController.
     AgentProposalStore* store_ = nullptr;
+    // (coderabbit-react phase-4) Operating mode + classifier hook.
+    WatchMode mode_;
+    std::unique_ptr<PrCommentClassifier> classifier_;
 };
 
 } // namespace agentic

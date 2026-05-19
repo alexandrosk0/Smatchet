@@ -205,6 +205,13 @@ if(SMATCHET_WITH_AGENTIC)
         # short-reason column match the C++ descriptor table).
         Source_Core/CoderabbitCommentClassifier.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp"
+        # coderabbit-react phase-4 — PrCommentWatcher OpenPrScan-mode tests.
+        # Separate TU from PrCommentWatcher.test.cpp so the two modes'
+        # failure footprints stay independent. Covers basic iteration,
+        # classifier verdicts, no-classifier fallback, Smatchet-own-marker
+        # skip, budget exhaustion, cursor idempotency. The watcher TU
+        # itself is already linked above (under H7's entry).
+        Source_Core/PrCommentWatcher_OpenPrScan.test.cpp
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()
