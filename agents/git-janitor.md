@@ -210,6 +210,14 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
                    *) exit 1 ;;
                esac
                ;;
+           *)
+               # Defensive catch-all. poll_merge_gates returns 0-5 today; any
+               # unexpected rc (future-added codes, internal bug, propagated
+               # gh_pr_ready_idempotent code 6) must HALT — never silently
+               # fall through to auto-merge.
+               echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2
+               exit 1
+               ;;
        esac
    fi
    ```

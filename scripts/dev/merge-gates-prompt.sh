@@ -41,7 +41,13 @@ ask_user_question() {
         return 0
     fi
 
-    # Interactive fallback.
+    # Interactive fallback — refuse when stdin is not a TTY, otherwise `read`
+    # blocks automation indefinitely (CI, bats without canned answer, headless
+    # orchestrator). Tests set MERGE_GATES_TEST_ANSWER for canned answers.
+    if [ ! -t 0 ]; then
+        echo "ask_user_question: stdin is not a TTY; set MERGE_GATES_TEST_ANSWER for non-interactive runs" >&2
+        return 1
+    fi
     printf '%s\n' "$label" >&2
     local i=1
     for opt in "${options[@]}"; do

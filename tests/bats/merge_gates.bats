@@ -381,3 +381,23 @@ set_fixture() {
     run ask_user_question "Pick:"
     [ "$status" -eq 1 ]
 }
+
+@test "ask_user_question non-TTY without canned answer returns 1" {
+    # bats runs scripts without a TTY by default — `read` would hang here
+    # without the TTY guard. With the guard, this must return 1 fast.
+    unset MERGE_GATES_TEST_ANSWER
+    run ask_user_question "Pick:" "A" "B"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"stdin is not a TTY"* ]]
+}
+
+@test "gh-fail path enforces wall-clock timeout (returns 2 before 3 fails)" {
+    # Intermittent fails that never hit 3-in-a-row would otherwise run forever.
+    # Force TIMEOUT_SECONDS=0 so the very first failed poll triggers timeout.
+    export MERGE_GATES_TIMEOUT_SECONDS=0
+    export MERGE_GATES_MAX_POLLS=10
+    export MERGE_GATES_STUB_GH_FAIL="transient error"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"GATES_TIMEOUT"* ]]
+}

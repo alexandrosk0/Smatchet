@@ -45,7 +45,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
         nodes {
           isResolved
           isOutdated
-          comments(first: 20) {
+          comments(first: 100) {
             pageInfo { hasNextPage }
             nodes { author { login __typename } }
           }

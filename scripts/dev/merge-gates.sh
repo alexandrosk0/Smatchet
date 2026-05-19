@@ -93,6 +93,13 @@ poll_merge_gates() {
                 echo "GH_API_DOWN"
                 return 3
             fi
+            # Wall-clock check on failure path — intermittent failures that
+            # never hit 3-in-a-row must not exceed MERGE_GATES_TIMEOUT_SECONDS.
+            local elapsed_fail=$(( $(date +%s) - start ))
+            if [ "$elapsed_fail" -ge "$TIMEOUT_SECONDS" ]; then
+                echo "GATES_TIMEOUT"
+                return 2
+            fi
             if [ "$p" -lt $((MAX_POLLS-1)) ]; then
                 sleep "$POLL_INTERVAL"
             fi
