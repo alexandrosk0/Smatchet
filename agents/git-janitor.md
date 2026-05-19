@@ -239,7 +239,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    ```
 
 6. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
-   ```
+   ```text
    - <sha-short> · <PR-title>
    ```
    Commit as `docs(plan): log <slug> #<N>` on a fresh small branch + its own PR (or batch with subsequent cleanup PRs to avoid PR-spam).

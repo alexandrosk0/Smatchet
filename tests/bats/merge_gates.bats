@@ -4,10 +4,10 @@
 # Bats tests for scripts/dev/merge-gates.sh — poll_merge_gates + helpers.
 #
 # Stubs `gh` on PATH; reads fixtures from tests/fixtures/merge_gates_*.json;
-# mutates fixtures in-flight via node (no jq dependency in test code itself,
-# only in the poller-under-test).
+# mutates fixtures in-flight via jq (`fixture_override` helper) — same
+# dependency as the poller-under-test.
 #
-# Requires: bash, jq (on PATH), node (for fixture overlays), bats.
+# Requires: bash, jq (on PATH), bats.
 # ----------------------------------------------------------------------------
 
 setup() {
