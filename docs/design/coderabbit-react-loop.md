@@ -372,3 +372,17 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 5. **Reply posting identity.** Replies + transient-rerun invocations use the `gh auth status` user — same as the rest of `agentic-coding-handoff`. The auto-reject reply + the "transient failure detected, re-running" comment appear as the human user, not as a bot. Probably fine (the user owns the rejection decision via Smatchet's config-toggle) but worth noting in phase 7 + phase 6 docs.
 6. **Pillar-4 a11y for the new Preferences toggles.** Two new toggles + interval inputs land in phase 8. Same keyboard-nav contract as existing toggles (Tab cycles, Space toggles, Enter on focused input). Confirm at phase 8 against the pillar-4 in-scope list (keyboard nav / font scaling / WCAG AA contrast).
 7. **Coverage advisory cutoff.** `coverage.yml` is advisory until 2026-05-30 per the workflow YAML. Today's date is 2026-05-18. After 2026-05-30 the workflow becomes blocking — should `ci_react.ignored_check_names` drop `"Coverage (windows-2022 + OpenCppCoverage)"` automatically? Recommend hardcoded list at phase 5, manual config flip at the cutoff; the user is in the loop for that decision because it changes blast radius. Document the date in `ConfigManager`'s comments.
+
+## Implementation log
+
+- `1625bf9` · plan revision: H7 reality-check + 2026-05-18 locked decisions (PR #285)
+- `70e7be7` · phase 1: OpenPrRegistrar + agent_open_pr_watch sibling table (PR #286, 901 LOC, 11 doctest cases)
+- `<sha-of-this-phase-2-commit>` · phase 2: PrCommentClassifier interface + CoderabbitCommentClassifierPure (this PR — sha will be filled in by the orchestrator post-merge if you can't know it pre-push)
+
+## Deviations from plan
+
+- Phase 1 added two extra columns to `agent_open_pr_watch` (`pr_number INTEGER`, `head_ref_name TEXT`, `head_sha TEXT`) beyond what the plan body's CREATE TABLE block listed. Rationale — the registrar needs them to populate `agent_open_pr_watch` from `gh pr list --json number,headRefName,headRefOid,url` output without an extra round-trip; future phases (PrCheckRunWatcher) need `head_sha` to call `FetchCheckRuns(headSha)`.
+
+## Verification
+
+Phase 1 verification: full `ctest --output-on-failure` green (smatchet_tests passed, 15.4 s); dual-target build clean (SmatchetStandalone + SmatchetCore_DX12 under `#if defined(SMATCHET_WITH_AGENTIC)`); CI on PR #286 — 5/5 Windows matrix checks green (full + WHISPER=OFF + AGENTIC=OFF + Coverage + Test-delta gate).
