@@ -1,11 +1,18 @@
-// Plan-doc viewer — read-only TextEditor over docs/design/*.md and
-// docs/adr/*.md. See SmatchetPlanDocViewerUi.h for the surface contract.
+// Plan-doc viewer — see SmatchetPlanDocViewerUi.h for the surface contract.
+//
+// Slice 4/5 follow-up: this viewer now uses the rich MarkdownPreviewRender
+// path (md4c → ImGui draw calls with heading scaling, BoldItalic font,
+// fenced-code BeginChild with CppSyntaxHighlight, clickable links) wrapped in
+// a SelectableText region for drag-select + Ctrl+A + Ctrl+C + right-click
+// Copy. The original TextEditor + Markdown LD implementation (slice 2) was
+// retired here so the viewer's visual style matches the AI chat + ticket
+// description preview surfaces.
 
 #include "SmatchetPlanDocViewerUi.h"
 
 #include "Logger.h"
+#include "MarkdownPreviewRender.h"
 #include "SmatchetUiSession.h"
-#include "TextEditor.h"
 
 #include "imgui.h"
 
@@ -14,8 +21,6 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
-#include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -57,8 +62,7 @@ fs::path FindRepoRoot(const fs::path& start, std::size_t maxDepth = 8) {
 }
 
 // Enumerate `*.md` files directly under `dir` (no recursion). Returns
-// generic-form paths sorted alphabetically (case-insensitive on Windows-ish
-// content but plain `<` here suffices — docs are lowercased kebab-case).
+// generic-form paths sorted alphabetically.
 std::vector<std::string> ListMarkdownFiles(const fs::path& dir) {
     std::vector<std::string> out;
     std::error_code ec;
@@ -108,36 +112,18 @@ std::string ReadCapped(const std::string& path, std::size_t cap, bool& oversize)
     return out;
 }
 
-// File-scope viewer state. One panel exists in the app at any time so a
-// function-local static is adequate (see SmatchetAiAssistantUi.cpp for the same
-// pattern). The viewer is dirt-cheap when its window is closed — early-return
-// before any state touches.
 struct ViewerState {
-    bool initialized = false;
     bool indexed = false; // file list scanned at least once
     fs::path repoRoot;
     std::vector<std::string> files; // absolute generic paths, sorted
     int selectedIdx = -1;
-    std::string loadedPath; // path matching the current editor buffer
-    std::unique_ptr<TextEditor> editor;
+    std::string loadedPath; // path matching the cached body
+    std::string body;       // cached markdown source for the active doc
 };
 
 ViewerState& State() {
     static ViewerState s;
     return s;
-}
-
-void EnsureInitialized(ViewerState& s) {
-    if (s.initialized) {
-        return;
-    }
-    s.initialized = true;
-    s.editor.reset(new TextEditor());
-    s.editor->SetReadOnly(true);
-    s.editor->SetShowWhitespaces(false);
-    s.editor->SetShowLineNumbers(false);
-    s.editor->SetLanguageDefinition(TextEditor::LanguageDefinition::Markdown());
-    s.editor->SetColorizerEnable(true);
 }
 
 void RescanIndex(ViewerState& s) {
@@ -178,7 +164,7 @@ void LoadSelected(ViewerState& s) {
         body.append("\n\n---\n[truncated at 1 MiB — open the file directly to view the full content]\n");
         LOG_WARN("plan-doc viewer: truncated oversized file %s", path.c_str());
     }
-    s.editor->SetText(body);
+    s.body = std::move(body);
     s.loadedPath = path;
 }
 
@@ -189,13 +175,9 @@ std::string DisplayLabel(const fs::path& repoRoot, const std::string& absPath) {
     const std::string root = repoRoot.generic_string();
     if (!root.empty() && absPath.size() > root.size() && absPath.compare(0, root.size(), root) == 0) {
         std::size_t off = root.size();
-        // `off < absPath.size()` is implicit from the `absPath.size() > root.size()`
-        // guard above (off == root.size()); only the separator check matters here.
         if (absPath[off] == '/') {
             ++off;
         }
-        // Strip the "docs/" prefix so the combo shows "design/foo.md" /
-        // "adr/0001-bar.md" — concise without losing the discriminator.
         const std::string rel = absPath.substr(off);
         const std::string docsPrefix = "docs/";
         if (rel.compare(0, docsPrefix.size(), docsPrefix) == 0) {
@@ -214,7 +196,6 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     }
 
     ViewerState& s = State();
-    EnsureInitialized(s);
     if (!s.indexed) {
         RescanIndex(s);
         s.indexed = true;
@@ -232,18 +213,18 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         return;
     }
 
-    // Header row: file picker + refresh button.
     if (s.files.empty()) {
         ImGui::TextDisabled("No plan docs found under docs/design or docs/adr.");
         if (ImGui::Button("Rescan")) {
             s.indexed = false;
             s.selectedIdx = -1;
             s.loadedPath.clear();
+            s.body.clear();
         }
     } else {
         const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < static_cast<int>(s.files.size())) ? s.selectedIdx : 0;
         const std::string curLabel = DisplayLabel(s.repoRoot, s.files[static_cast<std::size_t>(curIdx)]);
-        ImGui::SetNextItemWidth(-110.0f); // leave room for the refresh button
+        ImGui::SetNextItemWidth(-110.0f);
         if (ImGui::BeginCombo("##plan_doc_picker", curLabel.c_str())) {
             for (std::size_t i = 0; i < s.files.size(); ++i) {
                 const std::string label = DisplayLabel(s.repoRoot, s.files[i]);
@@ -262,15 +243,25 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         if (ImGui::Button("Rescan")) {
             s.indexed = false;
             s.loadedPath.clear();
+            s.body.clear();
         }
     }
     ImGui::Separator();
 
-    // Body — read-only TextEditor.
-    if (s.editor) {
-        const ImVec2 avail = ImGui::GetContentRegionAvail();
-        s.editor->Render("##plan_doc_editor", avail, false);
+    // Rich render + selection overlay. Scrolling lives on the inner BeginChild
+    // so the body can be longer than the window; HorizontalScrollbar handles
+    // wide fenced-code blocks. selectableId opens a fresh SelectableText
+    // Context per frame inside the render — the doc is one logical surface so
+    // one Context per render is right.
+    ImGui::BeginChild("##plan_doc_body", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
+    if (!s.body.empty()) {
+        MarkdownPreviewRender::Options opts;
+        opts.mode = MarkdownPreviewRender::Mode::Full;
+        opts.clickableLinks = true;
+        opts.selectableId = "##PlanDocViewerSel";
+        MarkdownPreviewRender::Render(s.body, opts);
     }
+    ImGui::EndChild();
 
     ImGui::End();
     d.showPlanDocViewer = open;

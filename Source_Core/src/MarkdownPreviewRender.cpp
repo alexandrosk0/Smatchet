@@ -91,6 +91,10 @@ struct PreviewState {
     bool tableInHeader = false;
     int tableColCount = 0;
     int tableNextId = 0;
+    /// Monotonic counter for code-block child windows so each block gets a
+    /// unique ImGui ID (the literal "##mdpreview_code" would collide across
+    /// multiple blocks in the same render and share scroll state).
+    int codeBlockNextId = 0;
     std::vector<TableRowData> tableRows;
     std::vector<StyledRun> tableCellRuns;
     int imgSpanDepth = 0;
@@ -613,6 +617,21 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
             if (fonts.Mono)
                 ImGui::PopFont();
         } else {
+            // Unique per-block id so multiple code blocks in the same render
+            // don't share BeginChild scroll state.
+            ImGui::PushID(s.codeBlockNextId++);
+
+            // Copy-to-clipboard button at the top-right of the code block.
+            // This compensates for the SelectableTextRun gap on code-block
+            // contents (deferred — see plan § Slice 4 deviations) while
+            // giving the user the common case (copy the whole snippet).
+            const float availW = ImGui::GetContentRegionAvail().x;
+            const float btnW = 60.0f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + availW - btnW);
+            if (ImGui::SmallButton("Copy##codeblock")) {
+                ImGui::SetClipboardText(s.codeBuffer.c_str());
+            }
+
             // Render the accumulated code-block text in a child with monospace styling.
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
             const float h = ImGui::GetTextLineHeightWithSpacing() *
@@ -632,6 +651,7 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
                 ImGui::PopFont();
             ImGui::EndChild();
             ImGui::PopStyleColor();
+            ImGui::PopID();
         }
         s.codeBuffer.clear();
         s.codeLang.clear();

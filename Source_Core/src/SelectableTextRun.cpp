@@ -137,12 +137,67 @@ void RegisterSegment(Context& ctx, const char* begin, const char* end, ImVec2 sc
 }
 
 void End(Context& ctx) {
+    if (ctx.segments.empty()) {
+        return;
+    }
+
+    // Compute the bounding box across all registered segments. The hit-test
+    // ItemAdd below uses this rectangle to claim the area so the parent
+    // window's drag-to-move doesn't fire when the user clicks inside the
+    // selectable text. Width covers the widest line; height spans first
+    // segment's top to last segment's bottom.
+    ImVec2 bbMin = ctx.segments[0].pos;
+    ImVec2 bbMax(bbMin.x + ctx.segments[0].totalWidth, bbMin.y + ctx.segments[0].lineH);
+    for (std::size_t i = 1; i < ctx.segments.size(); ++i) {
+        const Segment& s = ctx.segments[i];
+        if (s.pos.x < bbMin.x) {
+            bbMin.x = s.pos.x;
+        }
+        if (s.pos.y < bbMin.y) {
+            bbMin.y = s.pos.y;
+        }
+        const float rx = s.pos.x + s.totalWidth;
+        const float ry = s.pos.y + s.lineH;
+        if (rx > bbMax.x) {
+            bbMax.x = rx;
+        }
+        if (ry > bbMax.y) {
+            bbMax.y = ry;
+        }
+    }
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (!window) {
+        return;
+    }
+
+    // Stable per-window ID so ImGui's active-widget machinery routes input to
+    // us. The string-id constant keeps the ID stable across frames inside the
+    // same window; if the caller embeds multiple SelectableText regions in
+    // one ImGui window they share input — acceptable for MVP (cross-region
+    // selection isn't supported anyway).
+    const ImGuiID hitId = window->GetID("##selectable_text_hitbox");
+    const ImRect hitBb(bbMin, bbMax);
+
+    // ItemAdd registers the hit-test rect on the window's draw list. Without
+    // this, ImGui treats clicks inside the segments as "empty space" on the
+    // parent window, which then drags the popup / modal. AllowOverlap lets
+    // sibling widgets (links inside the text) still get hover events; we set
+    // ButtonBehavior below to actually claim input on press.
+    ImGui::ItemAdd(hitBb, hitId, NULL, ImGuiItemFlags_AllowOverlap);
+    bool hovered = false;
+    bool held = false;
+    ImGui::ButtonBehavior(hitBb, hitId, &hovered, &held,
+                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                              ImGuiButtonFlags_PressedOnClick | ImGuiButtonFlags_AllowOverlap);
+
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
     const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const bool mouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 
-    // Hit-test the mouse against registered segments.
+    // Hit-test the mouse against registered segments — needed for the char
+    // offset within the segment under the cursor. Tracks hover for the
+    // GetHoveredHref accessor too.
     ctx.hoveredSeg = -1;
     ctx.hoveredChar = 0;
     for (int i = 0; i < static_cast<int>(ctx.segments.size()); ++i) {
@@ -155,10 +210,15 @@ void End(Context& ctx) {
             break;
         }
     }
+    if (hovered && ctx.hoveredSeg >= 0) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
+    }
 
-    // Mouse selection. Only initiate when the click lands on a segment so we
-    // don't clear an existing selection on every background click.
-    if (mouseClicked && ctx.hoveredSeg >= 0) {
+    // Selection initiation: ButtonBehavior with PressedOnClick + LeftMouseButton
+    // sets `held` true on the same frame the press lands. `ImGui::IsItemActive()`
+    // returns true while the press is held — used for the drag-extend loop.
+    const bool justPressed = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ctx.hoveredSeg >= 0;
+    if (justPressed) {
         ctx.dragging = true;
         ctx.hasSelection = true;
         ctx.selStartSeg = ctx.hoveredSeg;
@@ -172,6 +232,9 @@ void End(Context& ctx) {
     if (!mouseDown) {
         ctx.dragging = false;
     }
+    // Held flag is used implicitly via ButtonBehavior — also signal to ImGui
+    // that we own the active state during a drag so window-drag stays off.
+    (void)held;
 
     // Draw selection overlay. Selection invalidated if either endpoint refers
     // to a segment that no longer exists (e.g. content shrank between frames).
@@ -213,13 +276,48 @@ void End(Context& ctx) {
         ctx.selEndSeg = -1;
     }
 
-    // Ctrl+C → copy selection.
+    // Keyboard shortcuts — gated on the hit area being hovered so they don't
+    // collide with global Ctrl+A / Ctrl+C bindings outside the SelectableText
+    // region.
     const bool ctrl = io.KeyCtrl;
+    if (hovered && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && segCount > 0) {
+        // Select all — span from start of first segment to end of last.
+        ctx.hasSelection = true;
+        ctx.selStartSeg = 0;
+        ctx.selStartChar = 0;
+        ctx.selEndSeg = segCount - 1;
+        ctx.selEndChar = static_cast<int>(ctx.segments[segCount - 1].textOwned.size());
+        ctx.dragging = false;
+    }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && HasSelection(ctx)) {
         const std::string sel = GetSelectedText(ctx);
         if (!sel.empty()) {
             ImGui::SetClipboardText(sel.c_str());
         }
+    }
+
+    // Right-click context menu. ButtonBehavior above set up the hitId; opening
+    // the popup with that same ID makes BeginPopupContextItem(NULL, RightButton)
+    // pick it up. Inside the popup we offer Copy + Select All.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("##selectable_text_menu");
+    }
+    if (ImGui::BeginPopup("##selectable_text_menu")) {
+        const bool canCopy = HasSelection(ctx);
+        if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) {
+            const std::string sel = GetSelectedText(ctx);
+            if (!sel.empty()) {
+                ImGui::SetClipboardText(sel.c_str());
+            }
+        }
+        if (ImGui::MenuItem("Select all", "Ctrl+A", false, segCount > 0)) {
+            ctx.hasSelection = true;
+            ctx.selStartSeg = 0;
+            ctx.selStartChar = 0;
+            ctx.selEndSeg = segCount - 1;
+            ctx.selEndChar = static_cast<int>(ctx.segments[segCount - 1].textOwned.size());
+        }
+        ImGui::EndPopup();
     }
 }
 
