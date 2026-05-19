@@ -7,8 +7,26 @@ name: Build and test
 on:
   push:
     branches: [develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'agents/**'
+      - '.gitignore'
+      - '.gitattributes'
+      - '.coderabbit.yaml'
+      - '.github/CODEOWNERS'
+      - '.github/pull_request_template.md'
   pull_request:
     branches: [develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'agents/**'
+      - '.gitignore'
+      - '.gitattributes'
+      - '.coderabbit.yaml'
+      - '.github/CODEOWNERS'
+      - '.github/pull_request_template.md'
 
 # Cancel in-flight runs for the same branch on a new push.
 concurrency:
