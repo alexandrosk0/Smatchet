@@ -129,17 +129,34 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
     // --- Key format sniff (warnings) ---
     // Only nag for the hosted-provider key formats. Local-server keys (rare; sometimes used
     // as a literal "sk-no-key-required" placeholder) don't follow a stable prefix.
-    if (provider == AiProvider::OpenAi && !cfg.AiApiKey.empty() && !StartsWith(cfg.AiApiKey, "sk-")) {
-        EmitWarning(v, PrefsFieldKey::kAiApiKey, "OpenAI: API key doesn't start with 'sk-' - likely malformed");
+    //
+    // Cross-provider paste detection: `sk-ant-` is Anthropic-exclusive. If it shows up in
+    // the OpenAI or DeepSeek key field the user almost certainly pasted the wrong key into
+    // the wrong slot — that path used to produce a confusing HTTP 401 from the provider
+    // ("Authentication Fails, Your api key: ****GwAA is invalid") with no Smatchet-side
+    // signal that the key shape was wrong. Catch it at validate-time so the user gets a
+    // clear warning before any network round-trip.
+    if (provider == AiProvider::OpenAi && !cfg.AiApiKey.empty()) {
+        if (StartsWith(cfg.AiApiKey, "sk-ant-")) {
+            EmitWarning(v, PrefsFieldKey::kAiApiKey,
+                        "OpenAI: API key starts with 'sk-ant-' (Anthropic format) - did you paste the wrong key?");
+        } else if (!StartsWith(cfg.AiApiKey, "sk-")) {
+            EmitWarning(v, PrefsFieldKey::kAiApiKey, "OpenAI: API key doesn't start with 'sk-' - likely malformed");
+        }
     }
     if (provider == AiProvider::Anthropic && !cfg.AiAnthropicApiKey.empty() &&
         !StartsWith(cfg.AiAnthropicApiKey, "sk-ant-")) {
         EmitWarning(v, PrefsFieldKey::kAiAnthropicApiKey,
                     "Anthropic: API key doesn't start with 'sk-ant-' - likely malformed");
     }
-    if (provider == AiProvider::DeepSeek && !cfg.AiDeepSeekApiKey.empty() && !StartsWith(cfg.AiDeepSeekApiKey, "sk-")) {
-        EmitWarning(v, PrefsFieldKey::kAiDeepSeekApiKey,
-                    "DeepSeek: API key doesn't start with 'sk-' - likely malformed");
+    if (provider == AiProvider::DeepSeek && !cfg.AiDeepSeekApiKey.empty()) {
+        if (StartsWith(cfg.AiDeepSeekApiKey, "sk-ant-")) {
+            EmitWarning(v, PrefsFieldKey::kAiDeepSeekApiKey,
+                        "DeepSeek: API key starts with 'sk-ant-' (Anthropic format) - did you paste the wrong key?");
+        } else if (!StartsWith(cfg.AiDeepSeekApiKey, "sk-")) {
+            EmitWarning(v, PrefsFieldKey::kAiDeepSeekApiKey,
+                        "DeepSeek: API key doesn't start with 'sk-' - likely malformed");
+        }
     }
 
     // --- Unknown model warning (only when catalog non-empty) ---

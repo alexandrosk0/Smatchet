@@ -324,6 +324,38 @@ TEST_CASE("AiPrefsValidator: DeepSeek key without 'sk-' prefix warns") {
     CHECK(ContainsSubstring(v.Warnings, "sk-"));
 }
 
+TEST_CASE("AiPrefsValidator: DeepSeek with Anthropic-shape 'sk-ant-' key warns cross-paste") {
+    // Regression for PR #289 follow-up: an Anthropic key pasted into the DeepSeek slot
+    // satisfies the loose `sk-` prefix check, slips through validate, and then yields a
+    // server-side HTTP 401 with no Smatchet-side clue what went wrong. Tight check on
+    // the Anthropic-exclusive `sk-ant-` prefix surfaces the mistake before the network.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4;
+    cfg.AiDeepSeekApiKey = "sk-ant-api03-anthropic-key-pasted-into-deepseek-slot";
+    cfg.AiModelDeepSeek = "deepseek-chat";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "DeepSeek"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-ant-"));
+    CHECK(ContainsSubstring(v.Warnings, "Anthropic"));
+}
+
+TEST_CASE("AiPrefsValidator: OpenAI with Anthropic-shape 'sk-ant-' key warns cross-paste") {
+    // Symmetric guard: same mistake against the OpenAI slot. OpenAI keys begin `sk-` but
+    // never `sk-ant-`, so the prefix is a reliable signal of a wrong-slot paste.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-ant-api03-anthropic-key-pasted-into-openai-slot";
+    cfg.AiModelOpenAi = "gpt-4o";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(v.Warnings.empty());
+    CHECK(ContainsSubstring(v.Warnings, "OpenAI"));
+    CHECK(ContainsSubstring(v.Warnings, "sk-ant-"));
+    CHECK(ContainsSubstring(v.Warnings, "Anthropic"));
+}
+
 TEST_CASE("AiPrefsValidator: DeepSeek missing-key issue carries FieldKey kAiDeepSeekApiKey") {
     TrackerConfig cfg = DefaultCfg();
     cfg.AiProviderKind = 4;

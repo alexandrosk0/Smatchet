@@ -256,9 +256,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["count"] = static_cast<int>(models.size());
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native");
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek");
         providerParam.Default = "openai";
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {std::move(providerParam)};
         c.Idempotent = true;
         reg.Register(std::move(c));
@@ -324,8 +324,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["model"] = model;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {
             std::move(providerParam),
             PString("prompt", "User prompt text.", true),
@@ -366,8 +366,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["error"] = err;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {std::move(providerParam)};
         c.AsyncSafe = false;
         c.Idempotent = true;
@@ -501,8 +501,8 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
                 out["response_body_excerpt"] = responseBodyExcerpt;
                 return CommandResult::Success(std::move(out));
             });
-        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native", true);
-        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native"};
+        ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
+        providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         ParamSpec timeoutParam = PInt("timeout-ms", "Total HTTP envelope timeout (ms). Default 30000.", 30000);
         c.Params = {
             std::move(providerParam),

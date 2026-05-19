@@ -126,8 +126,17 @@ std::string OpenAiClient::ProbeReachability(const AiClientConfig& cfg) {
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
-    if (r.status_code < 200 || r.status_code >= 300)
+    if (r.status_code < 200 || r.status_code >= 300) {
+        // Error-path visibility: parallels the LOG_ERROR in SendStreaming(). When the
+        // probe fails the bare "HTTP 401" return string told us nothing about *which*
+        // key the provider rejected — and Test connection's only feedback is "Failed:
+        // HTTP 401". Logging the redacted server body here closes that gap (the body
+        // typically carries a key-shape hint like "your api key: ****XYZ is invalid").
+        const std::string redactedBody = smatchet::ai::pure::RedactProviderErrorBody(r.text);
+        LOG_ERROR("OpenAiClient::ProbeReachability: HTTP %ld at %s - body: %s", static_cast<long>(r.status_code),
+                  url.c_str(), redactedBody.c_str());
         return std::string("HTTP ") + std::to_string(r.status_code);
+    }
     return std::string();
 }
 
