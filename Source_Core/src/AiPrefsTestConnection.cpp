@@ -160,7 +160,7 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
             if (errMsg.empty()) {
                 LOG_INFO("AiPrefsTestConnection: VERIFIED providerKind=%d defaultedBaseUrl='%s'",
                          static_cast<int>(provider), defaultedBaseUrl.c_str());
-                g_ui.assistantPrefsTestResult = "Verified.";
+                g_ui.assistantPrefsTestResult = "Verified";
                 g_ui.assistantPrefsTestResultType = 1;
                 if (!defaultedBaseUrl.empty()) {
                     if (provider == AiProvider::OllamaOpenAiCompat) {

@@ -82,8 +82,10 @@ class AiAssistantController {
     State CurrentState() const { return state_.load(std::memory_order_acquire); }
 
     /// Provider name from the cached client; empty if no provider is wired yet.
-    /// UI-thread only. Snapshot — caller must not store the reference across frames.
-    const std::string& GetActiveProviderName() const { return cachedProviderName_; }
+    /// UI-thread safe — returns a snapshot copy under `providerStateMutex_` because the
+    /// worker thread rewrites `cachedProviderName_` whenever the user picks a different
+    /// provider in Preferences between turns.
+    std::string GetActiveProviderName() const;
 
     // --- Stable signature stubs for Phase E Lua glue. Always present so
     // AppController_LuaBindings.cpp can call them unconditionally regardless
@@ -123,10 +125,14 @@ class AiAssistantController {
 
     AppController& app_;
 
-    // Constructed once at AppController-init time off a config snapshot. Currently
-    // unused beyond the provider-name cache; Phase C+ will refresh on Preferences
-    // changes once that pipe lands.
+    // Provider state. Constructed at controller init and rebuilt by the worker thread
+    // at the top of every `RunRequest` when `ProviderFromConfig(cfg)` returns a value
+    // different from `cachedProvider_`, OR unconditionally when only the URL / key
+    // changed. The mutex guards reads from the UI thread (`GetActiveProviderName`,
+    // `Submit`'s log line) against writes from the worker (`RunRequest`'s swap).
+    mutable std::mutex providerStateMutex_;
     std::unique_ptr<IAiClient> client_;
+    AiProvider cachedProvider_ = AiProvider::OpenAi;
     std::string cachedProviderName_;
     AiClientConfig clientConfig_;
 

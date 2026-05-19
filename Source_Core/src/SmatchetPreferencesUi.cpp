@@ -689,7 +689,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                         if (errMsg.empty()) {
                             LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
                                      static_cast<int>(provider), defaultedBaseUrl.c_str());
-                            g_ui.assistantPrefsTestResult = "Verified.";
+                            g_ui.assistantPrefsTestResult = "Verified";
                             g_ui.assistantPrefsTestResultType = 1;
                             // On success with a defaulted URL, persist the default into
                             // cfg + force a buffer reseed so the field shows the value
