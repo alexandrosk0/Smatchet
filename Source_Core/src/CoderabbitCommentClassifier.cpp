@@ -254,9 +254,14 @@ bool DetectCprBypass(const std::string& body) {
 // (`ImGui::Begin`, `ImGui::Render`, `Draw()`, `Frame()`) in the same body.
 bool DetectSyncOnUiFrame(const std::string& body) {
     const std::string scan = CollectBodyForScan(body);
+    // Detect lock-acquisition forms specifically — a bare `std::mutex`
+    // mention covers declarations and comments and produces false
+    // positives. The pillar-2 critical condition is the act of acquiring
+    // the lock, not the type's existence.
     const bool hasBlocking = Contains(scan, "cpr::") || Contains(scan, "SQLite::Database") ||
                              Contains(scan, "SQLite::Statement") || Contains(scan, "std::ifstream") ||
-                             Contains(scan, "std::mutex") || Contains(scan, "p4 ");
+                             Contains(scan, ".lock(") || Contains(scan, "std::lock_guard") ||
+                             Contains(scan, "std::unique_lock") || Contains(scan, "p4 ");
     const bool hasUiFrame = Contains(scan, "ImGui::Begin") || Contains(scan, "ImGui::Render") ||
                             Contains(scan, "ImGui::SameLine") || Contains(scan, "RenderFrame(") ||
                             Contains(scan, "DrawFrame(");
@@ -370,18 +375,36 @@ bool DetectNewThirdpartyDep(const std::string& body) {
     if (!Contains(scan, "find_package(")) {
         return false;
     }
-    // Allowed dep names — case-insensitive.
+    // Allowed dep names — case-insensitive. Each entry is a `find_package(`
+    // prefix; an occurrence matches when its lowercased text begins with one
+    // of these strings.
     const std::string lower = AsciiLower(scan);
     const std::vector<std::string> allowedDeps = {
         "find_package(nlohmann", "find_package(cpr",   "find_package(sqlitecpp", "find_package(httplib",
         "find_package(md4c",     "find_package(imgui", "find_package(glfw",      "find_package(lua",
         "find_package(sol2",     "find_package(ghc"};
-    for (const std::string& a : allowedDeps) {
-        if (Contains(lower, a)) {
-            return false;
+    // Walk every `find_package(...)` occurrence and reject when any single
+    // one is non-allowlisted. A short-circuit on the first allowed match
+    // would let a mixed body (allowed + disallowed) slip through.
+    const std::string opener = "find_package(";
+    std::size_t pos = 0;
+    while ((pos = lower.find(opener, pos)) != std::string::npos) {
+        const std::size_t end = lower.find(')', pos);
+        const std::string call =
+            (end == std::string::npos) ? lower.substr(pos) : lower.substr(pos, end - pos + 1);
+        bool allowed = false;
+        for (const std::string& a : allowedDeps) {
+            if (call.compare(0, a.size(), a) == 0) {
+                allowed = true;
+                break;
+            }
         }
+        if (!allowed) {
+            return true;
+        }
+        pos = (end == std::string::npos) ? (pos + opener.size()) : (end + 1);
     }
-    return true;
+    return false;
 }
 
 // Rule 16 — "drop const&, pass by value". The classic suggestion shape

@@ -380,12 +380,20 @@ Manual residue from steps 3-4 → `test-author` handoff to wire ImGui-Test-Engin
 - `43d8635` · phase 2: PrCommentClassifier interface + CoderabbitCommentClassifierPure (PR #288)
 - `fde53c2` · phase 3: CoderabbitCommentClassifier concrete + 18-rule override table (PR #291)
 - `d2fbdf6` · phase 4: PrCommentWatcher WatchMode + classifier-registration + agent_open_pr_watch iteration (PR #292)
-- `<sha-of-this-phase-5-commit>` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (this PR — orchestrator will sed post-merge)
+- `74547b0` · phase 5: PrCheckRunClassifier interface + CiFailureClassifierPure helpers (PR #293)
 
 ## Deviations from plan
 
 - Phase 1 added two extra columns to `agent_open_pr_watch` (`pr_number INTEGER`, `head_ref_name TEXT`, `head_sha TEXT`) beyond what the plan body's CREATE TABLE block listed. Rationale — the registrar needs them to populate `agent_open_pr_watch` from `gh pr list --json number,headRefName,headRefOid,url` output without an extra round-trip; future phases (PrCheckRunWatcher) need `head_sha` to call `FetchCheckRuns(headSha)`.
 
-## Verification
+## Verification results
 
 Phase 1 verification: full `ctest --output-on-failure` green (smatchet_tests passed, 15.4 s); dual-target build clean (SmatchetStandalone + SmatchetCore_DX12 under `#if defined(SMATCHET_WITH_AGENTIC)`); CI on PR #286 — 5/5 Windows matrix checks green (full + WHISPER=OFF + AGENTIC=OFF + Coverage + Test-delta gate).
+
+Phase 2 verification: `CoderabbitCommentClassifierPure.test.cpp` ctest green (26 test cases, 82 assertions); dual-target build clean (SmatchetStandalone + SmatchetCore_DX12); CI on PR #288 — Windows matrix green at merge.
+
+Phase 3 verification: `CoderabbitCommentClassifier.test.cpp` ctest green covering all 18 override rules + markdown ↔ C++ drift guard; dual-target build clean; CI on PR #291 — Windows matrix green at merge.
+
+Phase 4 verification: `PrCommentWatcher.test.cpp` + `PrCommentWatcher_OpenPrScan.test.cpp` ctest green covering WatchMode dispatch + classifier-registration + cursor advance; dual-target build clean; CI on PR #292 — Windows matrix green at merge.
+
+Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering check-run-name → category mapping + cmake/ctest/sanitizer/transient fingerprints + bounded annotation concat; dual-target build clean; CI on PR #293 — Windows matrix green at merge.

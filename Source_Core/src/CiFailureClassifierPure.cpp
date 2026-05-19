@@ -96,12 +96,15 @@ bool MatchesLinkError(const std::string& text) {
 }
 
 bool MatchesCtestFailure(const std::string& text) {
+    // The bare `FAILED:` token is Ninja's compile/link error prefix as well —
+    // matching it indiscriminately misroutes generic build failures to the
+    // CTest bucket. Use only signals that uniquely identify a ctest fault.
     static const char* const kNeedles[] = {
-        "FAILED:",
         "The following tests FAILED:",
         "Errors while running CTest",
         "doctest::String",
         "FAILED:  smatchet",
+        "FAILED: smatchet_tests",
     };
     return ContainsAny(text, kNeedles, sizeof(kNeedles) / sizeof(kNeedles[0]));
 }
@@ -116,9 +119,10 @@ bool MatchesSanitizerHit(const std::string& text) {
 
 bool MatchesTransientFlake(const std::string& text) {
     // Single-substring fingerprints — any of these alone is sufficient
-    // evidence to treat as transient.
+    // evidence to treat as transient. `Operation timed out` is intentionally
+    // NOT in this list: it is emitted by ctest hangs, lock waits, and other
+    // non-network paths that we MUST NOT re-run blindly.
     static const char* const kNeedles[] = {
-        "Operation timed out",
         "Could not resolve host: mirror",
         "could not connect to host",
         "Temporary failure resolving",
@@ -126,6 +130,12 @@ bool MatchesTransientFlake(const std::string& text) {
         "FetchContent: download failed",
     };
     if (ContainsAny(text, kNeedles, sizeof(kNeedles) / sizeof(kNeedles[0]))) {
+        return true;
+    }
+    // Paired fingerprint: timeout phrase WITH explicit network context.
+    // `curl: (28)` is curl's timeout exit code; requiring both pins this to
+    // a network-fetch timeout, not a generic process hang.
+    if (ContainsSubstring(text, "Operation timed out") && ContainsSubstring(text, "curl: (28)")) {
         return true;
     }
     // Paired fingerprint: a connection-reset error against an MSYS2 mirror

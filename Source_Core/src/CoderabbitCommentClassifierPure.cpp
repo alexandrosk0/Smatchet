@@ -76,16 +76,29 @@ int ParseUintRun(const std::string& body, std::size_t start, std::size_t& outEnd
     long value = 0;
     std::size_t i = start;
     while (i < body.size() && body[i] >= '0' && body[i] <= '9') {
-        value = value * 10 + (body[i] - '0');
-        ++i;
-        if (value > 1000000) {
-            // Defensive cap — CodeRabbit posted counts are tiny; a huge run
-            // means we mis-parsed and should bail out.
+        const long digit = body[i] - '0';
+        // Pre-check guards signed-overflow UB before the multiply/add — the
+        // defensive cap is 1,000,000, so the next iteration value would be
+        // `value * 10 + digit`; reject when that would exceed the cap.
+        if (value > (1000000L - digit) / 10L) {
             return -1;
         }
+        value = value * 10L + digit;
+        ++i;
     }
     outEnd = i;
     return static_cast<int>(value);
+}
+
+// Strip a single trailing `[bot]` suffix from a lowercased login, leaving the
+// base name. Returns the input unchanged when the suffix is absent.
+std::string StripBotSuffix(const std::string& lowered) {
+    const std::string suffix = "[bot]";
+    if (lowered.size() >= suffix.size() &&
+        lowered.compare(lowered.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return lowered.substr(0, lowered.size() - suffix.size());
+    }
+    return lowered;
 }
 
 } // namespace
@@ -213,22 +226,25 @@ bool IsBotLoginAllowed(const std::string& login, const std::vector<std::string>&
     if (login.empty() || allowList.empty()) {
         return false;
     }
-    const std::string needle = AsciiLower(login);
+    // Exact-match-only with optional single `[bot]` suffix normalization on
+    // both sides — substring matches accept spoofed logins
+    // (e.g. `evil-coderabbitai` containing the configured `coderabbitai`).
+    const std::string loginLower = AsciiLower(login);
+    const std::string loginBase = StripBotSuffix(loginLower);
     for (const std::string& candidate : allowList) {
         if (candidate.empty()) {
             continue;
         }
-        const std::string haystack = AsciiLower(candidate);
-        if (haystack == needle) {
+        const std::string candidateLower = AsciiLower(candidate);
+        if (candidateLower == loginLower) {
             return true;
         }
-        // Substring match — the configured entry might be a base login
-        // (e.g. "coderabbitai") and the observed comment author the bracketed
-        // form "coderabbitai[bot]"; both directions should match.
-        if (haystack.find(needle) != std::string::npos) {
-            return true;
-        }
-        if (needle.find(haystack) != std::string::npos) {
+        // Allow the configured entry to be the base login (e.g.
+        // `coderabbitai`) and the observed author the bracketed form
+        // (`coderabbitai[bot]`), or vice versa. Compare base-against-base
+        // after stripping at most one `[bot]` suffix from each side.
+        const std::string candidateBase = StripBotSuffix(candidateLower);
+        if (candidateBase == loginBase) {
             return true;
         }
     }

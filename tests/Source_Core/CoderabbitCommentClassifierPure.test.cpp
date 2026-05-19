@@ -17,6 +17,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -63,7 +64,12 @@ SeverityIcon IconFromName(const std::string& name) {
         return SeverityIcon::Nit;
     if (name == "chore")
         return SeverityIcon::Chore;
-    return SeverityIcon::None;
+    if (name == "none")
+        return SeverityIcon::None;
+    // Fail fast on fixture typos — silently coercing unknown values to
+    // `SeverityIcon::None` masks drift between the fixture file and the
+    // pure-helper enum.
+    throw std::invalid_argument("Unknown expected_icon: " + name);
 }
 
 } // namespace
@@ -186,10 +192,28 @@ TEST_SUITE("CoderabbitCommentClassifierPure") {
         CHECK_FALSE(IsBotLoginAllowed("alex", allow));
     }
 
-    TEST_CASE("IsBotLoginAllowed: substring match handles base-name vs bracketed") {
-        // Configured base login matches the observed bracketed-bot login.
+    TEST_CASE("IsBotLoginAllowed: bot-suffix normalization handles base-name vs bracketed") {
+        // Configured base login matches the observed bracketed-bot login —
+        // exact-match after stripping a single trailing `[bot]`.
         std::vector<std::string> allow = {"coderabbitai"};
         CHECK(IsBotLoginAllowed("coderabbitai[bot]", allow));
+        // Same in the reverse direction (configured bracketed, observed base).
+        std::vector<std::string> allowBracketed = {"coderabbitai[bot]"};
+        CHECK(IsBotLoginAllowed("coderabbitai", allowBracketed));
+    }
+
+    TEST_CASE("IsBotLoginAllowed: prefix/suffix spoofs are rejected") {
+        // Substring matches would allow these; exact normalized comparison
+        // must reject. Guards against an attacker registering a similarly
+        // named bot account to bypass the allow-list.
+        std::vector<std::string> allow = {"coderabbitai"};
+        CHECK_FALSE(IsBotLoginAllowed("evil-coderabbitai", allow));
+        CHECK_FALSE(IsBotLoginAllowed("evil-coderabbitai[bot]", allow));
+        CHECK_FALSE(IsBotLoginAllowed("coderabbitai-evil", allow));
+        CHECK_FALSE(IsBotLoginAllowed("coderabbitai-evil[bot]", allow));
+        // Substring-of-allow-entry is also rejected.
+        std::vector<std::string> allowLong = {"coderabbitai-official"};
+        CHECK_FALSE(IsBotLoginAllowed("coderabbitai", allowLong));
     }
 
     TEST_CASE("HasSmatchetHandoffMarker: positive + negative") {
@@ -203,7 +227,9 @@ TEST_SUITE("CoderabbitCommentClassifierPure") {
     TEST_CASE("Fixture round-trip: every row's parsed icon matches expected_icon") {
         const nlohmann::json fixture = LoadFixture();
         REQUIRE(fixture.is_array());
-        REQUIRE(fixture.size() >= 5);
+        // Lock the documented 8-row fixture exactly — a row drop should
+        // surface here, not after the loop silently iterates fewer cases.
+        REQUIRE(fixture.size() == 8);
 
         for (const auto& row : fixture) {
             const std::string id = row.at("id").get<std::string>();
