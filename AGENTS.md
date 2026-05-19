@@ -74,8 +74,10 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 **Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
 
 ```
-diagnose → fix → build → commit → push → open PR → squash-merge → git-janitor cleanup → backlog entry
+diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
+
+`[gate-check]` is the merge-gates poller (see § Merge gates) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Wait for gates and merge" or in-session "merge when green"). Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
 
 All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
 
@@ -94,14 +96,76 @@ After the loop reaches PR-opened (or the equivalent terminal state for the task)
 
 1. **Manual verify** — user wants to drive the change manually before merge.
 2. **Review PR** — user wants to read the diff / comment on GitHub.
-3. **Squash-merge** — user is satisfied; orchestrator merges + cleans up.
+3. **Wait for gates and merge** — orchestrator runs the merge-gates poller (see § Merge gates), then auto-`gh pr ready` + REST-squash-merge on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.
 4. **Done** — no further action; PR stays draft for later.
 
 Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
 
-**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and hand off to `git-janitor` directly.
+**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and enter option 3 directly (`git-janitor` invokes the merge-gates poller before merging).
 
-Cross-link: ship-loop reference in § Delegation; pause-loop override in § Delegation § Debug-mode pause-loop.
+Cross-link: ship-loop reference in § Delegation; pause-loop override in § Delegation § Debug-mode pause-loop; gate semantics + halt prompts in § Merge gates.
+
+## Merge gates
+
+Before the orchestrator (or `git-janitor` running in the user's main session) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
+
+1. **CI** — every required check (`isRequired(pullRequestNumber: $pr) == true`) on `pullRequest.commits(last:1).commit.statusCheckRollup.contexts` must reach a passing terminal state.
+   - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.
+   - **StatusContext**: default rule — any required context with `state != "SUCCESS"` blocks. `FAILURE` / `ERROR` fail; `PENDING` / `EXPECTED` pending.
+   - Non-required checks ignored.
+2. **CodeRabbit** — identity match is `author.login in {"coderabbitai", "coderabbitai[bot]"}` (REST returns the `[bot]` suffix; GraphQL may strip it). State is computed in three buckets:
+   - `NONE` — no review ever submitted → **pass** (works for repos without CodeRabbit installed).
+   - `STALE` — reviews exist but none on current `headRefOid` → **block** (force-push invalidates old approval).
+   - latest review's `state` on current `headRefOid` ∈ {`APPROVED`, `COMMENTED`} → pass; ∈ {`CHANGES_REQUESTED`, `DISMISSED`} → block.
+   - Additionally: zero unresolved non-outdated review threads contain a CodeRabbit comment (under the same login match).
+3. **User comments** — zero unresolved non-outdated review threads with any non-bot non-self comment, AND zero conversation-tab comments from a non-bot non-self author. Bot detection uses GraphQL `author.__typename == "Bot"` (covers all integrations). Self matched via `$ORCH_USER`, lower-cased on both sides.
+
+Additional pass conditions:
+- `pullRequest.state == "OPEN"` (early-exit on closed/merged-externally).
+- `pullRequest.reviewDecision in {"APPROVED", null}` (blocks on `REVIEW_REQUIRED` / `CHANGES_REQUESTED`).
+- **Pagination ceiling**: GitHub GraphQL caps connections at 100. The query also fetches `pageInfo.hasNextPage` for every connection (checks, reviews, reviewThreads, per-thread comments, conversation comments). Any `hasNextPage == true` → block with `PAGINATION_OVERFLOW`. Hard block, not silent truncation.
+
+`$ORCH_USER` resolved at session init via `gh api user --jq .login`.
+
+**Override**: `SKIP_MERGE_GATES=true` at session init bypasses all gates. No per-merge skip. Subagent propagation: orchestrator must explicitly add `SKIP_MERGE_GATES` to any delegated `git-janitor` invocation's env (it does not auto-inherit through the subagent boundary).
+
+**Status line per poll**:
+```
+Poll 3/60 — CI: 5/8 pass (1 fail, 2 pending) | CodeRabbit: CHANGES_REQUESTED (2 open) | User: 1 | reviewDecision: APPROVED
+```
+
+**Halt prompts (per return code)**:
+
+| Code | Meaning | `AskUserQuestion` options |
+|---|---|---|
+| 1 | Gates still blocked at MAX_POLLS | "Skip gates and merge anyway" / "Keep waiting (extend poll)" / "Abandon" |
+| 2 | Wall-clock timeout (≥`MERGE_GATES_TIMEOUT_SECONDS`) | "Skip gates and merge anyway" / "Keep waiting" / "Abandon" |
+| 3 | `gh` API failed 3 consecutive polls | "Retry now" / "Skip gates and merge anyway" / "Abandon" |
+| 4 | PR `CLOSED` or `MERGED` externally | "Abandon (PR no longer mergeable)" — no skip option |
+| 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
+| 6 | `gh pr ready` unknown failure | surface error to user; do not auto-merge |
+
+Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
+
+**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3, or in-session "merge when green"). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/git-janitor.md` § Hard refusals:
+
+```bash
+gh api -X PUT "repos/$owner/$repo/pulls/$prNumber/merge" -f merge_method=squash
+gh api -X DELETE "repos/$owner/$repo/git/refs/heads/$branch"
+```
+
+Conflicts, missing required checks, and branch-protection rules are enforced by GitHub on the REST merge call. We do not duplicate.
+
+**Env knobs**:
+- `MERGE_GATES_POLL_INTERVAL` — seconds between polls (default 60).
+- `MERGE_GATES_MAX_POLLS` — max poll count (default 60).
+- `MERGE_GATES_TIMEOUT_SECONDS` — wall-clock budget (default 3600).
+- `MERGE_GATES_QUERY_FILE` — override GraphQL document path (default `scripts/dev/merge-gates.graphql`).
+- `MERGE_GATES_TEST_ANSWER` — bats-only canned `ask_user_question` answer.
+
+**Scope boundary**: the auto-`gh pr ready` + auto-merge path applies **only** to the orchestrator + `git-janitor` in the user's main session. Spawned-child agents (`handoff-implementer`, `pr-iterator`) keep their existing draft-only contract — see § Handoff envelope § Spawned-child PR draft requirement.
+
+Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/merge-gates-prompt.sh` (`ask_user_question` shim), `scripts/dev/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.
 
 ## Project rules
 
@@ -258,9 +322,11 @@ Worktree branches follow `agent/<proposalId>/<short-slug>` where `<short-slug>` 
 
 Worktree root: `.claude/worktrees/agent-<proposalId>` (already gitignored via the existing `.claude/worktrees/` rule). One worktree per proposal; cleanup is a separate concern (`handoff.gc --older-than-days <n>` command, H4 onward).
 
-### PR draft requirement
+### Spawned-child PR draft requirement
 
-Every PR opened by the harness is `--draft`. The user marks ready-for-review only after auditing the diff. The harness never calls `gh pr merge`, never closes / reopens PRs, and never pushes to a non-`agent/*` branch.
+Every PR opened by a **spawned `claude` child** (`handoff-implementer`, `pr-iterator`) is `--draft`. The user marks ready-for-review only after auditing the diff. The spawned child never calls `gh pr ready`, `gh pr merge`, `gh api …/merge`, never closes / reopens PRs, and never pushes to a non-`agent/*` branch.
+
+The **orchestrator** running in the user's main session may auto-`gh pr ready` + REST-squash-merge under § Merge gates when the user has explicitly authorised this PR for merge (post-ship option 3, or in-session "merge when green"). That scope boundary is what makes the merge-gates path compatible with the spawned-child draft-only contract.
 
 ### Spawned-orchestrator first-move contract
 
