@@ -12,6 +12,7 @@
 #include "ConfigManager.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -118,14 +119,20 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
 
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
     // Per-message rendering: role label + a SmallButton "Copy" that pushes the
-    // full message text to the system clipboard via ImGui::SetClipboardText,
-    // followed by a plain ImGui::TextWrapped of the content. Plain wrapped
-    // text reflows with the panel width and never steals keyboard focus; the
-    // Copy button is the single explicit copy mechanism (full-message,
-    // exact byte copy regardless of soft-wrap).
+    // raw message text (markdown source) to the system clipboard via
+    // ImGui::SetClipboardText, followed by a rich-rendered body. Assistant
+    // replies + the in-flight stream go through MarkdownPreviewRender so
+    // headings / code fences / lists / inline code render with formatting;
+    // the Copy button still yields the raw markdown so paste targets that
+    // understand markdown (or want the literal) get the source back.
+    // User-typed messages stay as plain TextWrapped — what they typed is what
+    // they see; surprising markdown rendering on their own input is avoided.
+    MarkdownPreviewRender::Options mdOpts;
+    mdOpts.mode = MarkdownPreviewRender::Mode::Full;
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
         const AiMessage& m = d.assistantHistory[i];
-        const char* role = (m.Role == "user") ? "You" : "Assistant";
+        const bool isUser = (m.Role == "user");
+        const char* role = isUser ? "You" : "Assistant";
         ImGui::TextDisabled("%s", role);
         ImGui::SameLine();
         char btnId[48];
@@ -133,8 +140,12 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         if (ImGui::SmallButton(btnId)) {
             ImGui::SetClipboardText(m.Content.c_str());
         }
-        ImGui::SetItemTooltip("Copy message text to clipboard.");
-        ImGui::TextWrapped("%s", m.Content.c_str());
+        ImGui::SetItemTooltip("Copy raw message text (markdown source) to clipboard.");
+        if (isUser) {
+            ImGui::TextWrapped("%s", m.Content.c_str());
+        } else {
+            MarkdownPreviewRender::Render(m.Content, mdOpts);
+        }
         ImGui::Separator();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
@@ -143,8 +154,8 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         if (ImGui::SmallButton("Copy##ai_stream")) {
             ImGui::SetClipboardText(d.assistantStreamBuf.c_str());
         }
-        ImGui::SetItemTooltip("Copy the in-flight partial response to clipboard.");
-        ImGui::TextWrapped("%s", d.assistantStreamBuf.c_str());
+        ImGui::SetItemTooltip("Copy the in-flight partial response (markdown source) to clipboard.");
+        MarkdownPreviewRender::Render(d.assistantStreamBuf, mdOpts);
     }
 
     // Tail tracking: update for next frame based on user's current scroll.
@@ -241,8 +252,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // router splicing text directly into `s_inputCharBuf` between frames
     // followed by the next frame unconditionally re-seeding from the still-
     // stale model, silently clobbering the splice.
-    const bool willSeed = smatchet::ai::ShouldSeedAssistantInputFromModel(
-        s_inputCharBufSeeded, bufLen, d.assistantInputBuf.size(), bytesDiffer);
+    const bool willSeed = smatchet::ai::ShouldSeedAssistantInputFromModel(s_inputCharBufSeeded, bufLen,
+                                                                          d.assistantInputBuf.size(), bytesDiffer);
     if (willSeed) {
         s_inputCharBufSeeded = true;
         const size_t copy = (std::min)(d.assistantInputBuf.size(), s_inputCharBuf.size() - 1);
@@ -390,8 +401,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     // (idempotent flag); it simply flips a static atomic that the next panel
     // draw observes — keeps the work on the UI thread without re-entering
     // ImGui state from the dispatcher drain context.
-    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(),
-                                                   nullptr);
+    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
     if (!s_autoSendCallbackRegistered) {
         s_autoSendCallbackRegistered = true;
         g_dictationRouter.SetAiAssistantSendCallback(
