@@ -188,6 +188,14 @@ if(SMATCHET_WITH_AGENTIC)
         # fail-safety. No real `gh` subprocess.
         Source_Core/OpenPrRegistrar.test.cpp
         "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp"
+        # coderabbit-react phase-2 — pure UTF-8 / substring helpers for the
+        # CodeRabbit comment classifier (icon parser, suggestion-block
+        # extractor, actionable + nitpick header parsers, bot-login allow-list,
+        # smatchet-handoff-marker detector). Loads
+        # tests/fixtures/coderabbit_comments_sample.json via
+        # SMATCHET_TESTS_REPO_ROOT and asserts each row's expected parse.
+        Source_Core/CoderabbitCommentClassifierPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp"
     )
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
 endif()

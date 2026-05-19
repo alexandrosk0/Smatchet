@@ -1,0 +1,78 @@
+[
+    {
+        "id": "1001",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "🛠️ **Refactor suggestion**\n\nReplace the raw loop with std::transform.\n\n```suggestion\nstd::transform(begin, end, dest, fn);\n```",
+        "created_at": "2026-05-18T10:00:00Z",
+        "expected_icon": "actionable",
+        "expected_suggestion_blocks": 1,
+        "expected_marker": false
+    },
+    {
+        "id": "1002",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "💡 Consider using a `const&` here to avoid the copy.",
+        "created_at": "2026-05-18T10:01:00Z",
+        "expected_icon": "nit",
+        "expected_suggestion_blocks": 0,
+        "expected_marker": false
+    },
+    {
+        "id": "1003",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "⚠️ **Potential null deref**\n\nThe pointer returned from `lookup()` may be null when the key is absent.",
+        "created_at": "2026-05-18T10:02:00Z",
+        "expected_icon": "caution",
+        "expected_suggestion_blocks": 0,
+        "expected_marker": false
+    },
+    {
+        "id": "1004",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "🧹 Tidy: trailing whitespace on this line.",
+        "created_at": "2026-05-18T10:03:00Z",
+        "expected_icon": "chore",
+        "expected_suggestion_blocks": 0,
+        "expected_marker": false
+    },
+    {
+        "id": "1005",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "_Actionable comments posted: 3_\n\n_Nitpick comments (2)_\n\nSummary of the review for this PR.",
+        "created_at": "2026-05-18T10:04:00Z",
+        "expected_icon": "none",
+        "expected_actionable_count": 3,
+        "expected_nitpick_count": 2,
+        "expected_suggestion_blocks": 0,
+        "expected_marker": false
+    },
+    {
+        "id": "1006",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "Thanks for the patch! This looks fine to merge once the test failure clears.",
+        "created_at": "2026-05-18T10:05:00Z",
+        "expected_icon": "none",
+        "expected_actionable_count": -1,
+        "expected_nitpick_count": -1,
+        "expected_suggestion_blocks": 0,
+        "expected_marker": false
+    },
+    {
+        "id": "1007",
+        "user": {"login": "smatchet-bot"},
+        "body": "<!-- smatchet-handoff -->\n\n**Iteration budget exhausted (5/5).** Stopping auto-react for this PR.",
+        "created_at": "2026-05-18T10:06:00Z",
+        "expected_icon": "none",
+        "expected_suggestion_blocks": 0,
+        "expected_marker": true
+    },
+    {
+        "id": "1008",
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "🛠️ **Refactor suggestion (multi)**\n\nFirst block:\n\n```suggestion\nfoo();\n```\n\nSecond block:\n\n```suggestion\nbar();\nbaz();\n```",
+        "created_at": "2026-05-18T10:07:00Z",
+        "expected_icon": "actionable",
+        "expected_suggestion_blocks": 2,
+        "expected_marker": false
+    }
+]
