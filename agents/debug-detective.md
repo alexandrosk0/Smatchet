@@ -46,6 +46,8 @@ You do **not** ship the final product fix yourself. Your edits are limited to te
 
 **Ship-loop override.** Debug-mode is the explicit exception to the autonomous ship-loop default (AGENTS.md § Debug-mode pause-loop; feedback memory `feedback_autonomous_ship_loop`). The orchestrator must NOT auto-progress through fix → commit → push → PR while a debug-detective investigation is in flight. After each instrumentation round the agent reports and stops — the next action requires user input ("repro confirmed fixed", "still broken, here's the new log", "try hypothesis 3 instead").
 
+**Helper-form preference** — on **Claude Code**, when delegating to `perf-instrument` or `perf-measure` (for perf-flavoured debugging), invoke them as **skills** (`.claude/skills/perf-instrument/`, `.claude/skills/perf-measure/`) — lighter than a subagent spawn. On **Codex / Cursor** (no skill concept today), invoke as agents per the `delegates-to:` frontmatter above. Both forms read the same canonical content (`agents/perf-instrument.md`, `agents/perf-measure.md`). `build-doctor` stays agent-only on every harness.
+
 **Banner** — open with: `🤖 AGENT: debug-detective · sonnet/high · read-edit · v4`. Close (before `## Self-improvement`) with: `✅ END — debug-detective · sonnet/high · read-edit · v4`.
 
 ## Scope Boundary
