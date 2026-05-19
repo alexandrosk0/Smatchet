@@ -4,6 +4,7 @@
 
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
+#include "AiChatTextEditorRender.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
@@ -13,7 +14,6 @@
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
-#include "SmatchetImGuiFonts.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 
@@ -117,50 +117,24 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // so streaming tokens auto-scroll without fighting a manual scroll-up.
     const bool wasAtTail = d.assistantAutoScrollAtTail;
 
+    // One read-only ImGuiColorTextEdit instance for the whole conversation.
+    // Holds drag-select + Ctrl+C/A across messages. Markdown is coloured in
+    // place by the hand-rolled AiChatMarkdownTokens scanner. There is exactly
+    // one AI panel in the app at any time so a function-local static is
+    // adequate; if we ever ship a second panel, plumb the view onto
+    // UiDrawSession instead.
+    static AiChatTextEditorView s_chatView;
+    s_chatView.RebuildBuffer(d.assistantHistory, d.assistantStreamBuf, d.assistantInFlight, wasAtTail);
+
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    // Simple per-message render: role label, then one ReadOnly
-    // ImGui::InputTextMultiline showing the raw message content with the
-    // monospace font (Consolas) pushed — matches the Lua editor's look.
-    // The multiline widget gives native drag-select + Ctrl+C, so no Copy
-    // button is needed. Height is the content's line count × the active
-    // line height + small frame slack.
-    ImFont* const monoFont = SmatchetGetPreviewFonts().Mono;
-    auto renderMsgBody = [monoFont](const char* widgetId, const std::string& content) {
-        if (monoFont) {
-            ImGui::PushFont(monoFont);
-        }
-        const std::size_t lines = static_cast<std::size_t>(std::count(content.begin(), content.end(), '\n')) + 1u;
-        const float lineH = ImGui::GetTextLineHeightWithSpacing();
-        const float h = static_cast<float>(lines) * lineH + ImGui::GetStyle().FramePadding.y * 2.0f + 4.0f;
-        ImGui::InputTextMultiline(widgetId, const_cast<char*>(content.c_str()),
-                                  static_cast<std::size_t>(content.size()) + 1u, ImVec2(-1.0f, h),
-                                  ImGuiInputTextFlags_ReadOnly);
-        if (monoFont) {
-            ImGui::PopFont();
-        }
-    };
-    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
-        const AiMessage& m = d.assistantHistory[i];
-        const bool isUser = (m.Role == "user");
-        const char* role = isUser ? "You" : "Assistant";
-        ImGui::TextDisabled("%s", role);
-        char widgetId[48];
-        std::snprintf(widgetId, sizeof(widgetId), "##ai_msg_%zu", i);
-        renderMsgBody(widgetId, m.Content);
-        ImGui::Separator();
-    }
-    if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
-        ImGui::TextDisabled("Assistant (streaming...)");
-        renderMsgBody("##ai_stream", d.assistantStreamBuf);
-    }
+    const float innerW = ImGui::GetContentRegionAvail().x;
+    const float innerH = ImGui::GetContentRegionAvail().y;
+    s_chatView.Draw(innerW, innerH);
 
     // Tail tracking: update for next frame based on user's current scroll.
     const float scrollY = ImGui::GetScrollY();
     const float scrollMax = ImGui::GetScrollMaxY();
     d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
-    if (wasAtTail) {
-        ImGui::SetScrollHereY(1.0f);
-    }
     ImGui::EndChild();
 }
 

@@ -49,6 +49,8 @@ add_executable(SmatchetTests
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
+    Source_Core/AiChatMarkdownTokens.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatMarkdownTokens.cpp"
     Source_Core/SubprocessCapturePure.test.cpp
     Source_Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
