@@ -8,24 +8,7 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/design/_plan-locks.generated.md`.
 
-## In-flight locks (1 active)
+## No active plan-locks
 
-### `agentic-flow-cr-bundle-prod`
-
-- **Owner**: `handoff-implementer`
-- **Branch**: `fix/cr-handoff-bundle-prod`
-- **Originating plan**: [`docs/design/agentic-coding-handoff.md`](../../docs/design/agentic-coding-handoff.md)
-- **Started**: 2026-05-19T00:55:21Z
-- **Write set** (11 paths):
-  - `Source_Core/include/AppController.h`
-  - `Source_Core/include/SubprocessCapturePure.h`
-  - `Source_Core/include/AgenticHandoffController.h`
-  - `Source_Core/src/AppController.cpp`
-  - `Source_Core/src/AgenticHandoffController.cpp`
-  - `Source_Core/src/ClaudeCodeLocalRunner.cpp`
-  - `Source_Core/src/CodingHarnessSeedBuilder.cpp`
-  - `Source_Core/src/PrCommentWatcher.cpp`
-  - `Source_Core/src/SmatchetAgentHandoffUi.cpp`
-  - `Source_Core/src/SubprocessCapture.cpp`
-  - `Source_Core/src/SubprocessCapturePure.cpp`
-
+_Empty — no slices currently claim a write set. New claims arrive via
+`bash scripts/dev/lock-claim.sh <slug> <write-set-file>`._
