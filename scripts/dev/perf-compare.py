@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+# scripts/dev/perf-compare.py — diff a fresh perf snapshot against a baseline.
+#
+# Companion to scripts/dev/perf-run.sh. Reads a baseline JSON (per
+# scripts/dev/perf-baseline-schema.json) and a fresh scenario.run snapshot;
+# emits a markdown delta table to stdout; exits non-zero on regression
+# beyond docs/perf/regression-policy.json thresholds.
+#
+# Harness-agnostic — pure Python 3 stdlib, no third-party deps. Required CLI
+# tool per docs/backlog/agent-self-improvement/tooling.md (2026-05-20 entry).
+#
+# Usage:
+#   python scripts/dev/perf-compare.py <baseline.json> <fresh.json>
+#                                      [--policy <path>] [--markdown-only]
+#                                      [--scenario-id <id>]
+#
+# Exit codes:
+#   0 — no regression beyond policy thresholds.
+#   1 — at least one threshold violated.
+#   2 — usage / IO error / malformed input.
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+# Force UTF-8 on stdout — the markdown report uses the Greek delta (U+0394) and
+# Windows' default cp1252 console encoding chokes on it. Wrap stdout once at
+# module import so every `print(...)` downstream is safe.
+if isinstance(sys.stdout, io.TextIOWrapper):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        # Python < 3.7 or non-stdio wrappers — replace with a fresh writer.
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+        )
+
+
+# ----------------------------------------------------------------------------
+# Defaults — mirror docs/perf/regression-policy.json if --policy not supplied.
+# ----------------------------------------------------------------------------
+# `consecutive_run_required` removed (CodeRabbit PR #321 #4): the knob
+# was declared but never enforced by `evaluate()` — a single-run gate is
+# what actually ships in perf-pr-fast.yml. Multi-run streak tracking
+# requires the driver to retain per-row state across compare invocations,
+# which is a follow-up plan. The dead knob is removed from the default
+# AND from docs/perf/regression-policy.json so the schema doesn't lie
+# about what the gate enforces.
+DEFAULT_POLICY: Dict[str, Any] = {
+    "mean_delta_pct": 10.0,
+    "p99_abs_ceiling_ms": 16.67,
+    "max_abs_ceiling_ms": 50.0,
+    "min_baseline_calls": 10,
+}
+
+
+def load_json(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        sys.exit(2)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: malformed JSON in {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def load_policy(path: Optional[str], scenario_id: Optional[str]) -> Dict[str, Any]:
+    if path is None:
+        return dict(DEFAULT_POLICY)
+    raw = load_json(path)
+    policy = dict(DEFAULT_POLICY)
+    if isinstance(raw.get("default"), dict):
+        policy.update(raw["default"])
+    per_scenario = raw.get("perScenario", {}) or {}
+    if scenario_id and isinstance(per_scenario.get(scenario_id), dict):
+        policy.update(per_scenario[scenario_id])
+    return policy
+
+
+def extract_rows(blob: Dict[str, Any], source_label: str = "<unknown>") -> List[Dict[str, Any]]:
+    """Pull the per-scope rows out of either a baseline file or a fresh snapshot.
+
+    Baseline files: rows live at top-level ``.rows``.
+    scenario.run / perf.snapshot JSON envelope: rows live at ``.data.rows``.
+
+    Raises ValueError if no `rows` list can be located. The previous
+    fall-open behaviour (return []) let malformed inputs sneak past the
+    gate as "no regressions found" (CodeRabbit PR #321 #5).
+    """
+    if isinstance(blob, dict):
+        if isinstance(blob.get("rows"), list):
+            return list(blob["rows"])
+        data = blob.get("data")
+        if isinstance(data, dict) and isinstance(data.get("rows"), list):
+            return list(data["rows"])
+    raise ValueError(f"missing or invalid 'rows' in {source_label}")
+
+
+def _to_float(value: Any, label: str) -> Optional[float]:
+    """Coerce a JSON value to float; ValueError out for the caller to catch.
+    Returns None when the value is missing (None / absent), so the
+    per-row metric merging logic still works when a row only carries a
+    subset of fields. (CodeRabbit PR #322 #5.)
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid numeric field: {label}={value!r}")
+
+
+def _to_int(value: Any, label: str) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid integer field: {label}={value!r}")
+
+
+def index_by_name(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {row.get("name", ""): row for row in rows if isinstance(row, dict)}
+
+
+def pct_delta(base: float, fresh: float) -> Optional[float]:
+    if base <= 0.0:
+        return None
+    return ((fresh - base) / base) * 100.0
+
+
+def format_delta(base: Optional[float], fresh: Optional[float]) -> str:
+    if base is None and fresh is None:
+        return "—"
+    if base is None:
+        return f"+{fresh:.3f} (new)"
+    if fresh is None:
+        return f"{base:.3f} → — (gone)"
+    d = pct_delta(base, fresh)
+    if d is None:
+        return f"{base:.3f} → {fresh:.3f}"
+    sign = "+" if d >= 0 else ""
+    return f"{base:.3f} → {fresh:.3f} ({sign}{d:.1f} %)"
+
+
+def evaluate(
+    baseline_rows: List[Dict[str, Any]],
+    fresh_rows: List[Dict[str, Any]],
+    policy: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Returns (per-row delta records, list of regression messages)."""
+    base_idx = index_by_name(baseline_rows)
+    fresh_idx = index_by_name(fresh_rows)
+    all_names = sorted(set(base_idx.keys()) | set(fresh_idx.keys()))
+
+    rows: List[Dict[str, Any]] = []
+    regressions: List[str] = []
+    # All numeric policy + per-row casts go through _to_float / _to_int so
+    # malformed input (string-where-number, None where number) raises
+    # ValueError cleanly, which main() catches → exit 2. Previously raw
+    # float()/int() casts crashed with KeyError or TypeError and bypassed
+    # the documented exit-2 input-error path. (CodeRabbit PR #322 #5.)
+    min_calls = _to_int(policy.get("min_baseline_calls", 10), "policy.min_baseline_calls")
+    mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
+    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
+    max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
+
+    for name in all_names:
+        b = base_idx.get(name)
+        f = fresh_idx.get(name)
+        b_total = _to_float(b.get("lastTotalMs"), f"baseline.{name}.lastTotalMs") if b else None
+        f_total = _to_float(f.get("lastTotalMs"), f"fresh.{name}.lastTotalMs") if f else None
+        b_p99 = _to_float(b.get("p99Ms"), f"baseline.{name}.p99Ms") if b else None
+        f_p99 = _to_float(f.get("p99Ms"), f"fresh.{name}.p99Ms") if f else None
+        b_max = _to_float(b.get("maxMs"), f"baseline.{name}.maxMs") if b else None
+        f_max = _to_float(f.get("maxMs"), f"fresh.{name}.maxMs") if f else None
+        b_calls = _to_int(b.get("calls"), f"baseline.{name}.calls") if b else 0
+
+        rows.append(
+            {
+                "name": name,
+                "lastTotalMs": format_delta(b_total, f_total),
+                "p99Ms": format_delta(b_p99, f_p99),
+                "maxMs": format_delta(b_max, f_max),
+                "baselineCalls": b_calls,
+            }
+        )
+
+        # Regression checks only fire for rows that exist in BOTH and meet min
+        # call-count — single-call rows are too noisy to gate on.
+        if b is None or f is None or b_calls < min_calls:
+            continue
+
+        if b_total is not None and f_total is not None:
+            d = pct_delta(b_total, f_total)
+            if d is not None and d > mean_pct:
+                regressions.append(
+                    f"{name}: lastTotalMs regressed {d:+.1f}% "
+                    f"(baseline {b_total:.3f} → fresh {f_total:.3f}, policy {mean_pct:+.1f}%)"
+                )
+
+        if f_p99 is not None and f_p99 > p99_cap:
+            regressions.append(
+                f"{name}: p99Ms {f_p99:.3f} exceeds Pillar 1 ceiling {p99_cap:.3f}"
+            )
+
+        if f_max is not None and f_max > max_cap:
+            regressions.append(
+                f"{name}: maxMs {f_max:.3f} exceeds policy ceiling {max_cap:.3f}"
+            )
+
+    return rows, regressions
+
+
+def emit_markdown(
+    scenario_id: str,
+    baseline: Dict[str, Any],
+    fresh: Dict[str, Any],
+    rows: List[Dict[str, Any]],
+    regressions: List[str],
+    policy: Dict[str, Any],
+) -> str:
+    lines: List[str] = []
+    lines.append(f"### Perf delta — `{scenario_id}`")
+    lines.append("")
+    base_commit = baseline.get("captureCommit", "?")[:7]
+    base_host = baseline.get("captureHost", "?")
+    base_date = baseline.get("captureDate", "?")
+    lines.append(
+        f"- baseline: `{base_commit}` ({base_host}, captured {base_date})"
+    )
+    lines.append(
+        f"- policy: mean Δ ≤ {policy['mean_delta_pct']:.1f} % · p99 ≤ "
+        f"{policy['p99_abs_ceiling_ms']:.2f} ms · max ≤ "
+        f"{policy['max_abs_ceiling_ms']:.2f} ms"
+    )
+    lines.append("")
+
+    if rows:
+        lines.append("| scope | lastTotalMs | p99Ms | maxMs | baseline calls |")
+        lines.append("|---|---|---|---|---:|")
+        for r in rows:
+            lines.append(
+                f"| `{r['name']}` | {r['lastTotalMs']} | {r['p99Ms']} | {r['maxMs']} | "
+                f"{r['baselineCalls']} |"
+            )
+    else:
+        lines.append("(no rows in either baseline or fresh snapshot)")
+
+    lines.append("")
+    if regressions:
+        lines.append(f"**Regressions: {len(regressions)}**")
+        lines.append("")
+        for r in regressions:
+            lines.append(f"- {r}")
+    else:
+        lines.append("**No regressions.**")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(description="Compare a fresh perf snapshot against a baseline.")
+    parser.add_argument("baseline", help="Path to the baseline JSON.")
+    parser.add_argument("fresh", help="Path to the fresh scenario.run snapshot JSON.")
+    parser.add_argument(
+        "--policy",
+        default=os.path.join("docs", "perf", "regression-policy.json"),
+        help="Regression policy JSON. Default: docs/perf/regression-policy.json.",
+    )
+    parser.add_argument(
+        "--markdown-only",
+        action="store_true",
+        help="Print only the markdown report; do not change exit code on regression.",
+    )
+    parser.add_argument(
+        "--scenario-id",
+        default=None,
+        help="Scenario id (used to look up per-scenario overrides). Default: parse from baseline.",
+    )
+    args = parser.parse_args(argv)
+
+    baseline = load_json(args.baseline)
+    fresh = load_json(args.fresh)
+    scenario_id = args.scenario_id or baseline.get("scenarioId") or "<unknown>"
+
+    if not os.path.exists(args.policy):
+        # Treat absent policy as "fall back to defaults" — useful for the first
+        # run before the file lands.
+        policy = dict(DEFAULT_POLICY)
+    else:
+        policy = load_policy(args.policy, scenario_id)
+
+    # Per-scenario override on the baseline file itself takes precedence.
+    override = baseline.get("perScenarioPolicyOverride")
+    if isinstance(override, dict):
+        policy.update(override)
+
+    # extract_rows + the _to_float / _to_int casts in evaluate() raise
+    # ValueError on malformed input. We catch here and exit 2 — the
+    # canonical "input error" exit code (1 = regression detected, 2 =
+    # malformed input, 0 = clean). (CodeRabbit PR #321 #5 + PR #322 #5.)
+    try:
+        baseline_rows = extract_rows(baseline, args.baseline)
+        fresh_rows = extract_rows(fresh, args.fresh)
+        rows, regressions = evaluate(baseline_rows, fresh_rows, policy)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print(emit_markdown(scenario_id, baseline, fresh, rows, regressions, policy))
+
+    if args.markdown_only:
+        return 0
+    return 1 if regressions else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

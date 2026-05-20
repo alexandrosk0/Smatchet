@@ -7,7 +7,10 @@
 
 <!-- Latest first. Append on archival. -->
 
-- 2026-05-16 · orchestrator · [process] · P3 · OBSERVATIONAL — `_plan-locks.md` stale-read race when concurrent orchestrators / hooks edit
+- 2026-05-20 · orchestrator · [process] · P2 — New-feature plans must include a `## Perf` section with before/after measurement + temp markers
+  Resolution: Slice 1 of `docs/design/pillar-1-2-perf-review-system.md` ships the substrate (baseline registry at `docs/perf/baselines/<scenario>.<host>.json`, regression policy at `docs/perf/regression-policy.json`, driver scripts `scripts/dev/perf-{run,baseline,compare}.{sh,py}`). `docs/PERF_WORKFLOW.md` § Step 7 documents the gate-check loop. `AGENTS.md` § UX Pillars § Pillar 1 cross-links the new substrate. The `## Perf section mandate` itself (the original entry's deliverable) is left for Slice 3 (PR-fast CI gate) of the same plan — that's where the gate becomes merge-blocking and the AGENTS.md § Project rules mandate lands. The substrate must exist first; mandating a `## Perf` section that has no tools to satisfy it would have been an empty rule. Closing this entry as the upstream design (the plan) is now on develop + the foundation is shipping in the same window.
+
+
   Resolution (status: observational -> applied): The underlying race itself is upstream — no single-mechanism in-repo fix. But the canonical recovery pattern is now documented in AGENTS.md § Project rules § Stale-read recovery on Edit (per grill Q5=A — top-level Project-rules visibility, auto-loaded for every agent every session). Documents the 3 causes (concurrent orchestrator in sibling worktree, PostToolUse hook reformat, user-side edit) + the 3-step recovery (re-Read at same offset/limit → diff intended change against new content → re-Edit with refreshed old_string). Names 3 hot files where the race rate is highest (`_plan-locks.generated.md`, AGENTS.md, `docs/backlog/agent-self-improvement/*.md`). Explicit "do NOT use replace_all: true as a force-write" callout because that widens the rewrite surface and amplifies collision risk. Plan: `docs/design/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 6.
 
 - 2026-05-16 · orchestrator · [process] · P3 — Plan-doc file-level tables drift from grep ground truth; re-verify before sealing

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/design/pillar-1-2-perf-review-system.md § D2 for rationale.",
+  "default": {
+    "mean_delta_pct": 10.0,
+    "p99_abs_ceiling_ms": 16.67,
+    "max_abs_ceiling_ms": 50.0,
+    "min_baseline_calls": 10
+  },
+  "perScenario": {
+    "comment": "Override the default for a specific scenarioId. Empty means inherit default. Tune ONLY when a real-world signal (CI false-positives, scenario noise) justifies it; document the rationale in the override entry."
+  }
+}

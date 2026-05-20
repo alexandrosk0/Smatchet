@@ -232,6 +232,39 @@ build/ninja-iter-msys2/Smatchet.exe cmd perf.reset
 
 ---
 
+### 7. Gate-check vs baseline
+
+After cleanup, gate the change against the checked-in baseline registry. This is the merge-blocking step for feature PRs touching `Source_Core/`. See `docs/design/pillar-1-2-perf-review-system.md` § C1 + § Slice 1 for the full design.
+
+```bash
+# Run a fresh snapshot through the canonical driver (harness-agnostic).
+# Capture the result-path on stdout's last line so the diff command can
+# reference it without a literal <timestamp> placeholder.
+FRESH_JSON="$(bash scripts/dev/perf-run.sh <scenario-id> | tail -n1)"
+
+# Diff against the checked-in baseline.
+python scripts/dev/perf-compare.py \
+    docs/perf/baselines/<scenario-id>.dev.json \
+    "$FRESH_JSON"
+# → exits 0 if within docs/perf/regression-policy.json thresholds;
+#   1 on regression; 2 on malformed input.
+```
+
+For CI: the PR-fast workflow (Slice 3 of the same plan) runs the same comparison automatically and posts a markdown delta table as a PR comment. For local-only iteration: invoke the two commands above before opening the PR.
+
+Baselines are PER-HOST (developer machine vs CI runner) — local development uses `<scenario>.dev.json`; CI uses `<scenario>.ci-windows-latest.json`. Don't share or commit the wrong host's baseline.
+
+To update a baseline after an INTENTIONAL change (e.g. a perf improvement that legitimately lowers the numbers):
+
+```bash
+bash scripts/dev/perf-baseline.sh bump <scenario-id>
+# → re-captures + overwrites docs/perf/baselines/<scenario-id>.dev.json
+```
+
+The bump path requires explicit confirmation by default (or `--yes` for CI / scripted use). Always include the new baseline file in the same PR that lowered the numbers.
+
+---
+
 ## Skip clause
 
 Fixes whose cost is obvious from the code (e.g. removing a confirmed per-frame disk read) can skip instrumentation — but **prefer at least one measurement round before declaring victory**. The cheapest mistake is a "fix" that didn't move the number.

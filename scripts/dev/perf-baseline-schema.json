@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://smatchet.local/schemas/perf-baseline-v1.json",
+  "title": "Smatchet perf baseline (one scenario × one host)",
+  "description": "Captured by `scripts/dev/perf-run.sh` + checked-in via `scripts/dev/perf-baseline.sh init|bump`. One file per (scenario, host) pair at `docs/perf/baselines/<scenarioId>.<host>.json`. Compared against fresh runs by `scripts/dev/perf-compare.py` per `docs/perf/regression-policy.json`. See `docs/design/pillar-1-2-perf-review-system.md` § C1 + § D1 for full design.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "scenarioId",
+    "captureCommit",
+    "captureDate",
+    "captureHost",
+    "captureRunnerOs",
+    "rows"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "scenarioId": {
+      "type": "string",
+      "description": "Matches the scenario name registered via ScenarioRunner::RegisterFactory (see Source_Core/src/Commands/BuiltinCommands.cpp). Example: 'idle', 'priority-grid-scroll'."
+    },
+    "captureCommit": {
+      "type": "string",
+      "description": "40-char git SHA the baseline was captured against. Required so a future run can recompute the same input."
+    },
+    "captureDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of the capture."
+    },
+    "captureHost": {
+      "type": "string",
+      "description": "Host tag the baseline applies to. One of 'dev' (developer machine, advisory) or 'ci-windows-latest' (GitHub Actions runner, gating). Per § D1 baselines are NOT shared across hosts."
+    },
+    "captureRunnerOs": {
+      "type": "string",
+      "description": "Smatchet target OS string. Currently always 'windows-msys2-ucrt64'. Reserved for future Linux/Mac if cross-OS perf comparisons get prioritised (out of scope today)."
+    },
+    "target": {
+      "type": "object",
+      "description": "Aggregate frame-time targets for THIS scenario. Pillar 1 floor (6.94 ms mean) + 60 Hz floor (16.67 ms p99) apply by default unless overridden here.",
+      "additionalProperties": false,
+      "properties": {
+        "meanMs": { "type": "number" },
+        "p99Ms": { "type": "number" },
+        "maxMs": { "type": "number" }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "description": "Per-scope perf-monitor rows captured at scenario end (mirrors the perf.snapshot JSON shape from BuiltinCommands_Perf.cpp).",
+      "items": {
+        "type": "object",
+        "required": ["name", "lastTotalMs", "calls"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "lastTotalMs": { "type": "number" },
+          "avgPerCallMs": { "type": "number" },
+          "maxMs": { "type": "number" },
+          "p99Ms": { "type": "number" },
+          "calls": { "type": "integer" },
+          "lifetimeHits": { "type": "integer" },
+          "emaAvgMs": { "type": "number" }
+        }
+      }
+    },
+    "hardwareNote": {
+      "type": "string",
+      "description": "Free-form note about the capture hardware (CPU, GPU, RAM). Useful when comparing dev baselines across team members."
+    },
+    "perScenarioPolicyOverride": {
+      "type": ["object", "null"],
+      "description": "Optional override of the default thresholds from regression-policy.json. Same shape as `default` there.",
+      "additionalProperties": false,
+      "properties": {
+        "mean_delta_pct": { "type": "number" },
+        "p99_abs_ceiling_ms": { "type": "number" },
+        "max_abs_ceiling_ms": { "type": "number" },
+        "consecutive_run_required": { "type": "integer" },
+        "min_baseline_calls": { "type": "integer" }
+      }
+    }
+  }
+}
