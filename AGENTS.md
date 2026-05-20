@@ -289,7 +289,7 @@ The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude
 
 **Pink-clear UI gap detection**: for "is the background ever visible behind panels?" / "are dock gaps still leaking?" questions, set the clear color to magenta (`glClearColor(1.0f, 0.0f, 1.0f, 1.0f)` on Standalone, equivalent `ClearRenderTargetView` color on DX12). Any visible pink is a guaranteed dock gap or transparent region. Pair with a screenshot + per-pixel pink scan for objective regression tests.
 
-**Exe staleness check**: after every rebuild, `ls -la` both the patched output and the most-likely-stale exe paths side-by-side, compare mtimes, and name the **exact** path the user should run. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, worktree builds) make wrong-exe testing a common time-sink — orchestrator + perf / build agents all enforce this.
+**Exe staleness check**: after every rebuild, `ls -la` both the patched output and the most-likely-stale exe paths side-by-side, compare mtimes, and name the **exact** path the user should run. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-debug-msys2/`, `build/ninja-publish-msys2/`, worktree builds) make wrong-exe testing a common time-sink — orchestrator + perf / build agents all enforce this.
 
 ## Semantic codebase search — use it first
 
