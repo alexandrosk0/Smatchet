@@ -1,0 +1,212 @@
+name: Perf full-suite
+
+# Slice 4 of docs/design/pillar-1-2-perf-review-system.md. Scheduled weekday-
+# morning run of all 14 production scenarios against ci-windows-latest
+# baselines. On regression: opens an issue tagged `perf-regression` with the
+# delta table. On improvement: opens a PR via `perf-baseline.sh bump --yes`
+# against the affected baseline files; a human reviews + merges.
+#
+# Also exposes `workflow_dispatch` so a developer can invoke the full sweep
+# on-demand against a specific branch.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1-5'  # weekday mornings UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  perf-full:
+    name: Perf full-suite (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msys2
+        run: cmake --preset ninja-iter-msys2
+
+      - name: Build SmatchetStandalone
+        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+      - name: Discover scenarios from scenario.list
+        id: scenarios
+        run: |
+          set -e
+          # The full suite is whatever scenario.list reports — keeps the
+          # workflow in sync with new IScenario registrations automatically.
+          # --quiet returns one name per line; jq pulls them out.
+          mapfile -t scen_list < <(
+            ./build/ninja-iter-msys2/Smatchet.exe cmd scenario.list --spawn --yes --quiet 2>/dev/null \
+              | grep -v '^$' || true
+          )
+          if [ "${#scen_list[@]}" -eq 0 ]; then
+            echo "FAIL: scenario.list returned no scenarios."
+            exit 1
+          fi
+          printf '%s\n' "${scen_list[@]}" > /tmp/scenarios.txt
+          echo "count=${#scen_list[@]}" >> "$GITHUB_OUTPUT"
+          echo "Discovered scenarios:"
+          cat /tmp/scenarios.txt
+
+      - name: Run full suite + compare against baselines
+        id: perf
+        run: |
+          set +e
+          mkdir -p build/perf-runs
+          : > /tmp/perf-report.md
+          echo "## Perf full-suite — ci-windows-latest" >> /tmp/perf-report.md
+          echo "" >> /tmp/perf-report.md
+          regression_count=0
+          improvement_count=0
+          declare -a improved=()
+          while IFS= read -r scen; do
+            [ -z "$scen" ] && continue
+            echo "::group::Scenario $scen"
+            result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+            if [ ! -f "$result" ]; then
+              echo "FAIL: $scen scenario.run did not produce $result" >&2
+              echo "::endgroup::"
+              continue
+            fi
+            baseline="docs/perf/baselines/${scen}.ci-windows-latest.json"
+            if [ ! -f "$baseline" ]; then
+              # Same bootstrap path as PR-fast — capture + flag.
+              echo "::warning::No baseline at $baseline — bootstrap capture."
+              python - "$result" "$baseline" "$scen" <<'PY'
+import json, sys, os, datetime
+src, dst, scen = sys.argv[1:4]
+with open(src, "r", encoding="utf-8") as f:
+    raw = json.load(f)
+rows = []
+data = raw.get("data") if isinstance(raw, dict) else None
+if isinstance(data, dict) and isinstance(data.get("rows"), list):
+    rows = data["rows"]
+elif isinstance(raw.get("rows"), list):
+    rows = raw["rows"]
+baseline = {
+    "schemaVersion": 1, "scenarioId": scen,
+    "captureCommit": os.environ.get("GITHUB_SHA", "?"),
+    "captureDate": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "captureHost": "ci-windows-latest",
+    "captureRunnerOs": "windows-msys2-ucrt64",
+    "rows": rows, "hardwareNote": "GitHub Actions windows-2022",
+    "perScenarioPolicyOverride": None,
+}
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(baseline, f, indent=2)
+    f.write("\n")
+PY
+              echo "### $scen — bootstrap baseline captured" >> /tmp/perf-report.md
+            else
+              python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
+              python scripts/dev/perf-compare.py "$baseline" "$result" > /dev/null 2>&1
+              rc=$?
+              if [ "$rc" -ne 0 ]; then
+                regression_count=$((regression_count + 1))
+              fi
+              # Improvement detection — any row's lastTotalMs improved by >= 15 % is a candidate for baseline bump.
+              if python - "$baseline" "$result" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1])); f = json.load(open(sys.argv[2]))
+def rows(blob):
+    if "rows" in blob: return blob["rows"]
+    d = blob.get("data", {})
+    return d.get("rows", []) if isinstance(d, dict) else []
+brows = {r["name"]: r.get("lastTotalMs", 0) for r in rows(b)}
+frows = {r["name"]: r.get("lastTotalMs", 0) for r in rows(f)}
+for n, bv in brows.items():
+    if bv <= 0: continue
+    fv = frows.get(n, bv)
+    if fv > 0 and (bv - fv) / bv >= 0.15:
+        sys.exit(0)
+sys.exit(1)
+PY
+              then
+                improved+=("$scen")
+                improvement_count=$((improvement_count + 1))
+              fi
+            fi
+            echo "::endgroup::"
+          done < /tmp/scenarios.txt
+          echo "regression_count=$regression_count" >> "$GITHUB_OUTPUT"
+          echo "improvement_count=$improvement_count" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${improved[@]}" > /tmp/improved.txt
+          set -e
+          cat /tmp/perf-report.md
+
+      - name: Upload full-suite snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-full-snapshots
+          path: |
+            build/perf-runs/*.json
+            docs/perf/baselines/*.ci-windows-latest.json
+
+      - name: Open regression issue
+        if: steps.perf.outputs.regression_count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "perf-regression: full-suite run ${{ github.run_id }}" \
+            --label "perf-regression" \
+            --body-file /tmp/perf-report.md
+
+      - name: Open baseline-bump PR for improvements
+        if: steps.perf.outputs.improvement_count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="bot/perf-baseline-bump-${{ github.run_id }}"
+          git checkout -b "$branch"
+          while IFS= read -r scen; do
+            [ -z "$scen" ] && continue
+            bash scripts/dev/perf-baseline.sh bump "$scen" --host=ci-windows-latest --yes
+          done < /tmp/improved.txt
+          git config user.email "smatchet-perf-bot@noreply.local"
+          git config user.name  "smatchet-perf-bot"
+          git add docs/perf/baselines/
+          git commit -m "chore(perf): bump ci-windows-latest baselines after improvement"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "chore(perf): bump baselines after improvement" \
+            --base develop \
+            --body "Auto-generated by .github/workflows/perf-full.yml run ${{ github.run_id }}. Reviews the improvement deltas + merges to lock in the new floor." \
+            --draft
