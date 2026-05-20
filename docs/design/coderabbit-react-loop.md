@@ -418,7 +418,7 @@ Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering ch
 | CLI smoke (`test-coderabbit-react.sh`, `test-ci-react.sh`) | green | phase 9 (this PR) — 20 assertions across the two scripts; auto-enrolled by `scripts/dev/test-all.sh` |
 | Sanitizer build | partial / inherited | each phase's ctest pass implies green under `ninja-test-msys2` which enables `SMATCHET_BUILD_TESTS=ON`; full sanitizer preset not explicitly run per phase. Backlog entry below. |
 | Dual-target compile | green | every phase's PR body cites "dual-target build clean" |
-| End-to-end live-PR probe | deferred | bucket-E (ImGui Test Engine) not wired today; documented as backlog entry in `docs/backlog/agent-self-improvement/tooling.md` per AGENTS.md § Verification automation |
+| End-to-end live-PR probe | pending | bucket-E (ImGui Test Engine) is wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`); promoted to live P2 in `docs/backlog/agent-self-improvement/tooling.md` (2026-05-20 — coderabbit-react-loop probe) per AGENTS.md § Verification automation |
 
 Final shipped state:
 - 9 phases + plan revision + 1 hygiene cleanup PR + 1 closing milestone PR = 11 PRs total

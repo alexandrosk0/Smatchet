@@ -16,6 +16,27 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
+  Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
+  Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
+  Concrete next action: add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Register via `IM_REGISTER_TEST` in a new `tests/ui/coderabbit_react_loop.test.cpp` + bash driver `scripts/dev/test-ui-coderabbit-react-loop.sh`. ~3 h.
+  Status: open
+  Last-reviewed: 2026-05-20
+
+- 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
+  Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
+  Details: `docs/design/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
+  Concrete next action: add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. Register via `IM_REGISTER_TEST` + bash driver `scripts/dev/test-ui-ai-assistant-model-change.sh`. ~2 h.
+  Status: open
+  Last-reviewed: 2026-05-20
+
+- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
+  Promoted from parked: 2026-05-18 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
+  Details: T7 ships the scheduled-poll worker + Preferences "Agentic" tab (`SmatchetPreferencesUi.cpp` master toggle / interval / source / query / GitHub PAT / Run-now button). The worker thread itself is unit-test-hostile (std::thread + condition variable + 60..3600 s sleeps); we lean on `scripts/dev/test-agentic-triage-cli.sh` for the synchronous triage path the worker calls. The Preferences UI variants (toggle flip → RestartAgenticPoll, Run-now → LaunchBackgroundTask, last-poll/next-poll readout updates) are not exercised by any bucket — manual click verification today.
+  Concrete next action: add `tests/ui/agentic_prefs_tab.test.cpp` (bucket-E) parallel to `tests/ui/agent_proposals_panel.test.cpp` covering: toggle-on-without-PAT (no thread spawned), toggle-on-with-PAT (thread spawned + joined on Stop), Run-now button (dispatches a background task), last-poll readout transition from "never" → time-ago string. Runner: `scripts/dev/test-ui-agentic-prefs.sh`. ~2 h.
+  Status: open
+  Last-reviewed: 2026-05-20
+
 - 2026-05-20 · orchestrator · [tooling] · P2 — Running Smatchet.exe holds the file lock; rebuild link fails until the user kills the window
   Details: Every iteration loop that runs (a) launch Smatchet for manual validation, (b) get user feedback, (c) edit + rebuild hits the same wall: the running `Smatchet.exe` holds an exclusive write lock on the file, and the next `cmake --build` link step fails with `ld.lld: error: failed to write output 'Smatchet.exe': Permission denied`. Recovery requires asking the user to close the window (or, with explicit authorisation, `taskkill /F /PID <NNN>`). Hit 4-5 times this session across PRs #311 / #313 manual-validation rounds; cost ~30-60 s per occurrence + a user round-trip. Some of those round-trips were avoidable — if a `git push` + CI run is in flight, the local rebuild isn't strictly required (GitHub's runner builds from scratch from a clean tree). But for in-session manual-validation iterations (the dominant case here) the rebuild IS required.
   Concrete next action: add `scripts/dev/relaunch-smatchet.sh` that wraps the iter-loop: (1) check `tasklist | grep -i smatchet.exe` → kill if running (with `-f` flag to skip the kill on shared environments), (2) `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`, (3) launch the rebuilt exe in the background. Standardise the "kill-before-build" pattern in `agents/_shared/skills/SMATCHET-NOTES.md` (or wherever agent-facing scripts live) so orchestrator/build-doctor/debug-detective all use the same wrapper instead of re-discovering the lock dance. Stretch: build the exe to a versioned filename (e.g. `Smatchet-<timestamp>.exe`) so concurrent runs don't conflict — but this complicates `tasklist` + path-of-most-recent lookups, so the kill-then-build wrapper is the simpler win. ~30 min for the wrapper + ~15 min for the agent doc note. Payoff: zero user round-trips on the validation iteration loop; agent reasons about build success without the exe-lock variable.
@@ -135,27 +156,9 @@
 
 <!-- Latest first within Parked. -->
 
-- 2026-05-19 · orchestrator · [tooling] · P3 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
-  Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end. Today bucket-E (ImGui Test Engine) isn't wired; until it is, this verification stays manual.
-  Concrete next action: when bucket-E lands, add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Estimated cost ~3 h once bucket-E exists; without it, defer.
-  Status: parked
-  Last-reviewed: 2026-05-19
-
-- 2026-05-19 · handoff-implementer · [tooling] · P3 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
-  Details: `docs/design/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip. No automated check today.
-  Concrete next action: once the ImGui Test Engine bucket-E rig has a "Send with provider-switch in between" scenario seam (no first-party bucket-E tests touch `AiAssistantController` today; see `agents/test-author.md` § "Bucket E (ImGui Test Engine) hasn't been wired yet"), add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. ~2 h once bucket-E exists.
-  Status: parked
-  Last-reviewed: 2026-05-19
-
 - 2026-05-18 · orchestrator · [tooling] · P3 — `git worktree remove --force` leaves the directory on disk on Windows
   Details: End-of-session cleanup removed 35 agent worktrees via `git worktree unlock` + `git worktree remove --force` against each path. Git's metadata was correctly cleared (subsequent `git worktree list` showed only the main checkout), but every directory under `.claude/worktrees/agent-*` persisted on disk — 38 stale dirs requiring a manual `rm -rf agent-*` sweep. Likely cause: open file handles (lint hook caches, MSYS2 stat handles, antivirus scanning) prevent `RemoveDirectoryW` even with `--force`; git unregisters the worktree but logs no error when on-disk removal fails. Net effect: `worktree list` looks clean while disk usage remains, which is easy to miss for weeks.
   Concrete next action: wrap the `worktree remove` step in `agents/git-janitor.md`'s end-of-session checklist with a follow-up `for d in .claude/worktrees/agent-*; do [ -d "$d" ] && rm -rf "$d"; done` sweep — and emit a clear log line per directory deleted so the post-cleanup output reflects on-disk reality, not just git metadata. ~10 min doc + tiny script tweak.
-  Status: parked
-  Last-reviewed: 2026-05-18
-
-- 2026-05-18 · orchestrator · [tooling] · P3 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
-  Details: T7 (PR pending) ships the scheduled-poll worker + Preferences "Agentic" tab (`SmatchetPreferencesUi.cpp` master toggle / interval / source / query / GitHub PAT / Run-now button). The worker thread itself is unit-test-hostile (std::thread + condition variable + 60..3600 s sleeps); we lean on `scripts/dev/test-agentic-triage-cli.sh` for the synchronous triage path the worker calls. The Preferences UI variants (toggle flip → RestartAgenticPoll, Run-now → LaunchBackgroundTask, last-poll/next-poll readout updates) are not exercised by any bucket — manual click verification today.
-  Concrete next action: add `tests/ui/agentic_prefs_tab.test.cpp` (bucket-E) parallel to `tests/ui/agent_proposals_panel.test.cpp` covering: toggle-on-without-PAT (no thread spawned), toggle-on-with-PAT (thread spawned + joined on Stop), Run-now button (dispatches a background task), last-poll readout transition from "never" → time-ago string. Runner: `scripts/dev/test-ui-agentic-prefs.sh`. ~2 h.
   Status: parked
   Last-reviewed: 2026-05-18
 
