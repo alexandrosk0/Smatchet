@@ -70,10 +70,29 @@ poll_merge_gates() {
     local MAX_POLLS="${MERGE_GATES_MAX_POLLS:-60}"
     local TIMEOUT_SECONDS="${MERGE_GATES_TIMEOUT_SECONDS:-3600}"
     local QUERY_FILE="${MERGE_GATES_QUERY_FILE:-$DEFAULT_QUERY_FILE}"
+    # Number of consecutive polls the gate will wait for CodeRabbit when the repo has
+    # `.coderabbit.yaml` checked in (= CR is installed for this repo). After this many
+    # polls without a review or a `CodeRabbit` SUCCESS StatusContext, NONE falls back
+    # to pass with a logged warning so the loop is never wedged by a stuck integration.
+    local CR_GRACE_POLLS="${MERGE_GATES_CR_GRACE_POLLS:-10}"
 
     if [ ! -f "$QUERY_FILE" ]; then
         echo "poll_merge_gates: query file not found: $QUERY_FILE" >&2
         return 3
+    fi
+
+    # Detect whether CodeRabbit is installed for this repo by probing for a checked-in
+    # `.coderabbit.yaml` (or `.coderabbit.yml`). The `auto_review.drafts: false` default
+    # plus CR's eventual-consistency means a freshly-opened PR can race the poller —
+    # NONE on Poll 1 is a race, not "CR not installed". Override via env if needed.
+    local cr_installed
+    if [ -n "${MERGE_GATES_CR_INSTALLED:-}" ]; then
+        cr_installed="$MERGE_GATES_CR_INSTALLED"
+    elif gh api "repos/$owner/$repo/contents/.coderabbit.yaml" --silent >/dev/null 2>&1 \
+         || gh api "repos/$owner/$repo/contents/.coderabbit.yml" --silent >/dev/null 2>&1; then
+        cr_installed=true
+    else
+        cr_installed=false
     fi
 
     # Read GraphQL document into a variable. `gh api graphql -f query=@file`
@@ -172,6 +191,15 @@ poll_merge_gates() {
                      and any(.comments.nodes[];
                              .author.login=="coderabbitai" or .author.login=="coderabbitai[bot]"))] | length' <<<"$pr")
 
+        # CR StatusContext on the head commit's rollup — some CR configs emit only a
+        # status (no review) when a PR is clean. Treat SUCCESS as a positive signal so
+        # the grace-window fallback doesn't fire for repos that opt into status-only.
+        local cr_status_state
+        cr_status_state=$(jq -r '
+            [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+             | select(.__typename=="StatusContext" and .context=="CodeRabbit")
+             | .state] | (.[0] // "ABSENT")' <<<"$pr")
+
         # User comments — typename bot filter, login case-insensitive
         local user
         user=$(jq --arg self "$ORCH_USER" '
@@ -194,13 +222,32 @@ poll_merge_gates() {
         esac
 
         local cr_pass=false
+        local cr_state_print="$cr_state"
         case "$cr_state" in
-            APPROVED|COMMENTED|NONE) cr_pass=true ;;
+            APPROVED|COMMENTED) cr_pass=true ;;
+            NONE)
+                if [ "$cr_installed" != true ]; then
+                    # Repo doesn't have CodeRabbit installed — NONE is the steady state.
+                    cr_pass=true
+                elif [ "$cr_status_state" = "SUCCESS" ]; then
+                    # Status-only CR config explicitly reported success on this commit.
+                    cr_pass=true
+                    cr_state_print="NONE+status-SUCCESS"
+                elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
+                    # Grace window elapsed; CR never started. Log + fall through to pass
+                    # so the loop is never wedged by a stuck integration.
+                    echo "WARN: CodeRabbit grace window ($CR_GRACE_POLLS polls) expired without a review or SUCCESS status; treating NONE as pass." >&2
+                    cr_pass=true
+                    cr_state_print="NONE+grace-expired"
+                else
+                    cr_state_print="NONE+pending (poll $((p+1))/$CR_GRACE_POLLS)"
+                fi
+                ;;
         esac
 
         printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
             $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend)) "$ci_total" "$ci_fail" "$ci_pend" \
-            "$cr_state" "$cr_open" "$user" "$review_decision"
+            "$cr_state_print" "$cr_open" "$user" "$review_decision"
 
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
            [ "$cr_pass" = true ] && [ "$cr_open" -eq 0 ] && \

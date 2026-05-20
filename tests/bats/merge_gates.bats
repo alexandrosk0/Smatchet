@@ -189,6 +189,48 @@ set_fixture() {
     [[ "$output" == *"CodeRabbit: NONE"* ]]
 }
 
+@test "CR installed + NONE + no SUCCESS status → block until grace expires" {
+    # CR installed (no auto-probe required — env override). Default MAX_POLLS=1 +
+    # GRACE_POLLS=10 means poll 0 < 10 → cr_state_print="NONE+pending"; gates block.
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR installed + NONE + grace expired (GRACE_POLLS=0) → pass with warn" {
+    # GRACE_POLLS=0 → poll index 0 ≥ 0 immediately → fall through to pass.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+grace-expired"* ]]
+    [[ "$output" == *"CodeRabbit grace window"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR installed + NONE + StatusContext CodeRabbit=SUCCESS → pass" {
+    # Mutate the pass fixture to add a CodeRabbit StatusContext with state=SUCCESS.
+    # Tests the status-only CR config path (some workflows skip writing a review
+    # and only emit a status when the diff is clean).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+status-SUCCESS"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 # ---------- PR state early-exit ----------
 
 @test "PR state=CLOSED → return 4" {
