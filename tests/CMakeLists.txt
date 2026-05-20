@@ -20,6 +20,9 @@ add_executable(SmatchetTests
     Source_Core/TrackerFieldValueUtils.test.cpp
     Source_Core/OfflineQueueReplayPolicy.test.cpp
     Source_Core/SmatchetThemeSyntaxColors.test.cpp
+    # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
+    # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
+    Source_Core/SmatchetThemeAiColors.test.cpp
     Source_Core/MarkdownPreviewLangTag.test.cpp
     Source_Core/MarkdownConvertAdf.test.cpp
     Source_Core/IssueDraft.test.cpp

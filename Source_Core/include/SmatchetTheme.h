@@ -12,12 +12,45 @@ struct SmatchetThemeSyntaxColors {
     float Preprocessor[4];
 };
 
+/** Per-theme palette for the AI chat panel (Phase 5 of ai-chat-claude-desktop-parity).
+ *
+ *  Six tokens consumed by Phase 6 (hover action row + user bubble + pin strip render
+ *  rewrite). Phase 5 only populates them per-theme via `ApplyStyle`; consumers land
+ *  in the next slice. Stored as `float[4]` (RGBA) to mirror `SmatchetThemeSyntaxColors`
+ *  — same shape, same access pattern, same easy doctest pinning.
+ *
+ *  - `AiUserBubbleBg` — soft tint behind user messages so they're visually distinct
+ *    from assistant turns on every theme. Alpha typically ~0.18 so the underlying
+ *    text colour wins WCAG AA contrast against the window bg.
+ *  - `AiUserRoleLabel` / `AiAssistantRoleLabel` — "You:" / "Assistant:" role-label
+ *    colour. Picked per theme to contrast against bubble bg + window bg.
+ *  - `AiActionRowIcon` / `AiActionRowIconHover` — Copy / Pin / Bookmark-close glyph
+ *    colours (and text-label fallback when `SmatchetAreFaIconsLoaded() == false`).
+ *    Idle = muted, hover = full-strength.
+ *  - `AiPinStripBg` — background of the pinned-bookmarks strip above the history
+ *    scroll child. Slightly more opaque than `AiUserBubbleBg` so the strip reads
+ *    as a distinct surface, not a decorated message.
+ */
+struct SmatchetThemeAiColors {
+    float AiUserBubbleBg[4];
+    float AiUserRoleLabel[4];
+    float AiAssistantRoleLabel[4];
+    float AiActionRowIcon[4];
+    float AiActionRowIconHover[4];
+    float AiPinStripBg[4];
+};
+
 namespace SmatchetTheme {
 /** Apply the named style palette to the current ImGui context. */
 void ApplyStyle(ThemeId theme);
 
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
+
+/** Active theme's AI chat-panel palette. Updated by ApplyStyle. Phase 5 of
+ *  ai-chat-claude-desktop-parity — Phase 6 consumers (action row, bubble bg,
+ *  pin strip) read through this accessor. */
+const SmatchetThemeAiColors& GetActiveAiColors();
 
 /** Predefined colors for status and priorities. */
 namespace Colors {

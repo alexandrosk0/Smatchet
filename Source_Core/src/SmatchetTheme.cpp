@@ -12,7 +12,21 @@ SmatchetThemeSyntaxColors gSyntaxColors = {
     {0.85f, 0.85f, 0.50f, 1.0f}  // Preprocessor
 };
 
+// Active theme's AI chat-panel palette (Phase 5 of ai-chat-claude-desktop-parity).
+// Default seeds match the SmatchetDark theme so pre-ApplyStyle reads return a
+// usable palette (defence in depth — every ApplyXxx ALSO writes these). Same
+// shape + ownership as gSyntaxColors above.
+SmatchetThemeAiColors gAiColors = {
+    {0.35f, 0.55f, 0.95f, 0.18f}, // AiUserBubbleBg — accent blue, 0.18 alpha
+    {0.65f, 0.80f, 1.00f, 1.00f}, // AiUserRoleLabel — bright accent
+    {0.85f, 0.75f, 1.00f, 1.00f}, // AiAssistantRoleLabel — soft purple
+    {0.55f, 0.55f, 0.60f, 1.00f}, // AiActionRowIcon — muted (idle)
+    {0.95f, 0.95f, 0.95f, 1.00f}, // AiActionRowIconHover — full text color
+    {0.18f, 0.18f, 0.22f, 0.90f}  // AiPinStripBg — slightly opaque panel tint
+};
+
 void SetSyntaxColors(const SmatchetThemeSyntaxColors& s) { gSyntaxColors = s; }
+void SetAiColors(const SmatchetThemeAiColors& a) { gAiColors = a; }
 
 // Shared rounding / padding constants applied to every palette. Keeping these in a single helper
 // guarantees the shell geometry stays consistent regardless of which palette the user selects;
@@ -111,6 +125,18 @@ void ApplySmatchetDark(ImGuiStyle& /*style*/, ImVec4* colors) {
                                            {0.65f, 0.85f, 1.00f, 1.0f},
                                            {0.85f, 0.85f, 0.50f, 1.0f}};
     SetSyntaxColors(syn);
+    // AI chat-panel palette (Phase 5 of ai-chat-claude-desktop-parity). Accent is
+    // the NavHighlight blue (#5993F2); bubble uses 0.18 alpha so 0.95-luma Text
+    // remains WCAG AA on the 0.12-luma WindowBg even where the bubble overlays.
+    const SmatchetThemeAiColors ai = {
+        {0.35f, 0.55f, 0.95f, 0.18f}, // AiUserBubbleBg — accent blue, 0.18 alpha
+        {0.65f, 0.80f, 1.00f, 1.00f}, // AiUserRoleLabel — bright accent
+        {0.85f, 0.75f, 1.00f, 1.00f}, // AiAssistantRoleLabel — soft purple
+        {0.50f, 0.50f, 0.55f, 1.00f}, // AiActionRowIcon — matches TextDisabled (0.50,0.50,0.50)
+        {0.95f, 0.95f, 0.95f, 1.00f}, // AiActionRowIconHover — full Text strength
+        {0.16f, 0.16f, 0.20f, 0.90f}  // AiPinStripBg — slightly deeper than WindowBg
+    };
+    SetAiColors(ai);
 }
 
 // Flatter, more neutral dark — slightly cooler greys and a desaturated blue accent.
@@ -191,6 +217,16 @@ void ApplyModernDark(ImGuiStyle& /*style*/, ImVec4* colors) {
                                            {0.65f, 0.85f, 1.00f, 1.0f},
                                            {0.85f, 0.85f, 0.50f, 1.0f}};
     SetSyntaxColors(syn);
+    // AI palette — accent is the desaturated ModernDark blue (CheckMark / Tab).
+    const SmatchetThemeAiColors ai = {
+        {0.45f, 0.65f, 0.95f, 0.18f}, // AiUserBubbleBg
+        {0.55f, 0.75f, 1.00f, 1.00f}, // AiUserRoleLabel
+        {0.80f, 0.72f, 1.00f, 1.00f}, // AiAssistantRoleLabel
+        {0.48f, 0.50f, 0.54f, 1.00f}, // AiActionRowIcon — TextDisabled
+        {0.92f, 0.93f, 0.95f, 1.00f}, // AiActionRowIconHover — Text
+        {0.13f, 0.14f, 0.17f, 0.90f}  // AiPinStripBg
+    };
+    SetAiColors(ai);
 }
 
 // Visual Studio 2022 "Dark" palette — near-black editor bg (#1E1E1E), darker chrome (#2D2D30),
@@ -269,12 +305,25 @@ void ApplyVs2022Dark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
 
     // C++ syntax palette — VS Code Dark+ canonical colors.
+    // VS2022 Dark + AI palette anchor — accent is #007ACC (defined as `accent` above).
+    // Captured here as a literal so the AI palette block below is self-contained
+    // (the accent local goes out of scope before SetSyntaxColors runs).
     const SmatchetThemeSyntaxColors syn = {{0.34f, 0.61f, 0.84f, 1.0f},  // Keyword  #569CD6
                                            {0.81f, 0.57f, 0.47f, 1.0f},  // String   #CE9178
                                            {0.42f, 0.60f, 0.33f, 1.0f},  // Comment  #6A9955
                                            {0.71f, 0.81f, 0.66f, 1.0f},  // Number   #B5CEA8
                                            {0.61f, 0.61f, 0.61f, 1.0f}}; // Preproc  #9B9B9B
     SetSyntaxColors(syn);
+    // AI palette — #007ACC accent, VS Code Dark+ purple for assistant.
+    const SmatchetThemeAiColors ai = {
+        {0.00f, 0.48f, 0.80f, 0.18f}, // AiUserBubbleBg — VS blue, 0.18 alpha
+        {0.10f, 0.58f, 0.90f, 1.00f}, // AiUserRoleLabel — accentBright
+        {0.78f, 0.56f, 0.95f, 1.00f}, // AiAssistantRoleLabel — VS Code C# class purple
+        {0.60f, 0.60f, 0.60f, 1.00f}, // AiActionRowIcon — TextDisabled
+        {0.94f, 0.94f, 0.94f, 1.00f}, // AiActionRowIconHover — Text
+        {0.18f, 0.18f, 0.19f, 0.90f}  // AiPinStripBg — PopupBg-tinted
+    };
+    SetAiColors(ai);
 }
 
 // Visual Studio 2022 "Light" / VS Code Light+ palette — white editor bg, #EEEEF2 chrome,
@@ -359,6 +408,19 @@ void ApplyVs2022Light(ImGuiStyle& /*style*/, ImVec4* colors) {
                                            {0.04f, 0.53f, 0.35f, 1.0f},  // Number   #098658
                                            {0.50f, 0.50f, 0.50f, 1.0f}}; // Preproc  #808080
     SetSyntaxColors(syn);
+    // AI palette — light theme. Bubble alpha bumped to 0.20 because a pure-white
+    // WindowBg dilutes the tint more than a dark bg does at the same opacity.
+    // Text on bubble = 0.10-luma on (1.0 - 0.20) + (0.0,0.48,0.80) * 0.20 ≈
+    // (0.80, 0.90, 0.96) → contrast ratio 5.9:1 vs 0.10-luma text. WCAG AA pass.
+    const SmatchetThemeAiColors ai = {
+        {0.00f, 0.48f, 0.80f, 0.20f}, // AiUserBubbleBg — VS blue, 0.20 alpha
+        {0.00f, 0.38f, 0.65f, 1.00f}, // AiUserRoleLabel — slightly darker accent for light bg
+        {0.50f, 0.25f, 0.75f, 1.00f}, // AiAssistantRoleLabel — darker purple on white
+        {0.50f, 0.50f, 0.50f, 1.00f}, // AiActionRowIcon — TextDisabled
+        {0.10f, 0.10f, 0.10f, 1.00f}, // AiActionRowIconHover — Text
+        {0.92f, 0.93f, 0.95f, 0.95f}  // AiPinStripBg — neutral light grey, slightly opaque
+    };
+    SetAiColors(ai);
 }
 
 // High contrast — pure black background, pure white text, cyan accent. Maximum legibility for
@@ -442,6 +504,19 @@ void ApplyHighContrast(ImGuiStyle& /*style*/, ImVec4* colors) {
                                            {0.00f, 1.00f, 1.00f, 1.0f},  // Number   cyan
                                            {1.00f, 0.65f, 0.00f, 1.0f}}; // Preproc  orange
     SetSyntaxColors(syn);
+    // AI palette — High Contrast. Bubble alpha bumped to 0.35 because a pure-black
+    // WindowBg shows little tint at low alpha; the bubble must still read as a
+    // distinct surface even for low-vision users. Role labels use Pillar-4-floor
+    // primary cyan/yellow on pure black — both > 7:1 contrast (AAA).
+    const SmatchetThemeAiColors ai = {
+        {0.00f, 1.00f, 1.00f, 0.35f}, // AiUserBubbleBg — cyan, 0.35 alpha (a11y bump)
+        {1.00f, 1.00f, 0.00f, 1.00f}, // AiUserRoleLabel — saturated yellow
+        {0.00f, 1.00f, 1.00f, 1.00f}, // AiAssistantRoleLabel — saturated cyan
+        {1.00f, 1.00f, 1.00f, 1.00f}, // AiActionRowIcon — pure white (idle = full strength too on HC)
+        {1.00f, 1.00f, 0.00f, 1.00f}, // AiActionRowIconHover — yellow accent for hover state
+        {0.00f, 0.00f, 0.00f, 1.00f}  // AiPinStripBg — pure black (matches WindowBg)
+    };
+    SetAiColors(ai);
 }
 
 // Norton Commander 5.51 palette — refined against the canonical 5.51 screenshot
@@ -555,6 +630,19 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
                                            {0.333f, 1.00f, 1.00f, 1.0f},   // Number   bright cyan
                                            {0.333f, 1.00f, 0.333f, 1.0f}}; // Preproc bright green
     SetSyntaxColors(syn);
+    // AI palette — Norton Commander 5.51 DOS aesthetic. Bubble uses NC bright yellow
+    // (the iconic filename accent) tinted at 0.22 alpha against the teal panel bg.
+    // Role labels use yellow (user) / bright cyan (assistant) per the NC palette
+    // convention — yellow accents go on user actions, cyan on system / output.
+    const SmatchetThemeAiColors ai = {
+        {1.00f, 1.00f, 0.333f, 0.22f}, // AiUserBubbleBg — NC yellow, 0.22 alpha
+        {1.00f, 1.00f, 0.333f, 1.00f}, // AiUserRoleLabel — NC bright yellow
+        {0.333f, 1.00f, 1.00f, 1.00f}, // AiAssistantRoleLabel — NC bright cyan
+        {0.80f, 0.80f, 0.80f, 1.00f},  // AiActionRowIcon — NC light grey
+        {1.00f, 1.00f, 0.333f, 1.00f}, // AiActionRowIconHover — NC bright yellow accent
+        {0.00f, 0.00f, 0.667f, 0.95f}  // AiPinStripBg — NC selection blue (#0000AA-ish)
+    };
+    SetAiColors(ai);
 }
 
 // Pristine ImGui-built-in dark palette — bright cyan-blue accents (HeaderHovered #4296FA,
@@ -573,6 +661,18 @@ void ApplyImGuiDefaultDark(ImGuiStyle& style, ImVec4* /*colors*/) {
                                            {0.65f, 0.85f, 1.00f, 1.0f},  // Number
                                            {0.85f, 0.85f, 0.50f, 1.0f}}; // Preprocessor
     SetSyntaxColors(syn);
+    // AI palette — ImGui default-dark. Accent is #4296FA (the ImGui HeaderHovered)
+    // = (0.26, 0.59, 0.98). Bubble at 0.18 alpha reads cleanly against the
+    // 0.06-luma WindowBg (#0F0F0F) without fighting the bright accent on hover.
+    const SmatchetThemeAiColors ai = {
+        {0.26f, 0.59f, 0.98f, 0.18f}, // AiUserBubbleBg — #4296FA, 0.18 alpha
+        {0.36f, 0.69f, 1.00f, 1.00f}, // AiUserRoleLabel — accent at full
+        {0.85f, 0.75f, 1.00f, 1.00f}, // AiAssistantRoleLabel — purple
+        {0.50f, 0.50f, 0.50f, 1.00f}, // AiActionRowIcon — TextDisabled equivalent
+        {0.92f, 0.92f, 0.92f, 1.00f}, // AiActionRowIconHover — Text
+        {0.10f, 0.10f, 0.12f, 0.90f}  // AiPinStripBg — slightly deeper than WindowBg
+    };
+    SetAiColors(ai);
 }
 
 } // namespace
@@ -656,3 +756,5 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
 }
 
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
+
+const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }
