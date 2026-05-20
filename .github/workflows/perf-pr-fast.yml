@@ -1,0 +1,215 @@
+name: Perf PR-fast
+
+# Slice 3 of docs/design/pillar-1-2-perf-review-system.md. Runs the PR-fast
+# 4-scenario subset (declared in scripts/dev/perf-pr-fast-set.json) on every
+# PR that touches Source_Core / Plugins / Target_Standalone. Compares each
+# scenario's output against the ci-windows-latest baseline at
+# docs/perf/baselines/<scenario>.ci-windows-latest.json. Posts a markdown
+# delta table to the PR via `gh pr comment`. Fails the gate if any
+# scenario regresses beyond docs/perf/regression-policy.json thresholds.
+#
+# First-run bootstrap: when no baseline exists yet for ci-windows-latest,
+# the workflow captures one into a workflow artefact + opens a PR adding
+# it under docs/perf/baselines/. The gate becomes active after a human
+# reviews + merges that bootstrap PR.
+#
+# Override: applying the `perf-out-of-band` label downgrades regression
+# failures to warnings (mirrors the existing `tests-out-of-band` pattern
+# from AGENTS.md § Merge gates).
+
+on:
+  pull_request:
+    branches: [develop]
+    # Positive path-filter: only fire when production code or the perf
+    # tooling itself changes. Excludes doc-only / agent-doc / workflow-only
+    # PRs — those have no Source_Core to measure, and self-triggering on
+    # the workflow file itself defeats the gate (the new workflow runs
+    # against a PR that introduces it, where there are no baselines yet
+    # and the spawn-on-CI environment hasn't been bootstrapped).
+    paths:
+      - 'Source_Core/**'
+      - 'Plugins/**'
+      - 'Target_Standalone/**'
+      - 'UnrealPlugins/**'
+      - 'scripts/dev/perf-*.py'
+      - 'scripts/dev/perf-*.sh'
+      - 'scripts/dev/perf-*.json'
+      - 'docs/perf/baselines/**'
+      - 'docs/perf/regression-policy.json'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+
+concurrency:
+  group: perf-pr-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  perf-pr-fast:
+    name: Perf PR-fast (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msys2
+        run: cmake --preset ninja-iter-msys2
+
+      - name: Build SmatchetStandalone
+        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+      - name: Run PR-fast scenarios + compare against baselines
+        id: perf
+        run: |
+          set +e
+          mkdir -p build/perf-runs
+          : > /tmp/perf-report.md
+          echo "## Perf delta — PR-fast subset (ci-windows-latest)" >> /tmp/perf-report.md
+          echo "" >> /tmp/perf-report.md
+          regression_count=0
+          run_failure_count=0
+          missing_baseline_count=0
+          for scen in $(python -c "import json; print(' '.join(json.load(open('scripts/dev/perf-pr-fast-set.json'))['scenarios']))"); do
+            echo "::group::Scenario $scen"
+            result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+            if [ ! -f "$result" ]; then
+              # Scenario-run plumbing failure (build broken, exe missing,
+              # JSON not produced). Track SEPARATELY from regression_count
+              # so the `perf-out-of-band` label can't downgrade a real
+              # plumbing break to a warning. (CodeRabbit PR #323 #1.)
+              echo "FAIL: scenario.run did not produce $result" >&2
+              run_failure_count=$((run_failure_count + 1))
+              echo "::endgroup::"
+              continue
+            fi
+            baseline="docs/perf/baselines/${scen}.ci-windows-latest.json"
+            if [ ! -f "$baseline" ]; then
+              echo "::warning::No baseline at $baseline — capturing for first-run bootstrap."
+              missing_baseline_count=$((missing_baseline_count + 1))
+              mkdir -p docs/perf/baselines
+              # First-run: snapshot the fresh run as the baseline. Workflow
+              # uploads it as an artefact; a human reviews + opens a
+              # bootstrap PR to commit it. Script extracted from an inline
+              # heredoc — the heredoc body sat at column 0 inside this
+              # `run: |` YAML block scalar, which terminated the block
+              # early and prevented the workflow from scheduling.
+              python scripts/dev/perf-baseline-bootstrap.py "$result" "$baseline" "$scen"
+              echo "### $scen — baseline captured (first run)" >> /tmp/perf-report.md
+              echo "" >> /tmp/perf-report.md
+            else
+              python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
+              # Re-run the comparison WITHOUT --markdown-only to get the exit
+              # code used for gating.
+              python scripts/dev/perf-compare.py "$baseline" "$result" > /dev/null 2>&1
+              rc=$?
+              if [ "$rc" -ne 0 ]; then
+                regression_count=$((regression_count + 1))
+              fi
+            fi
+            echo "::endgroup::"
+          done
+          echo "regression_count=$regression_count" >> "$GITHUB_OUTPUT"
+          echo "run_failure_count=$run_failure_count" >> "$GITHUB_OUTPUT"
+          echo "missing_baseline_count=$missing_baseline_count" >> "$GITHUB_OUTPUT"
+          set -e
+          cat /tmp/perf-report.md
+
+      - name: Upload PR-fast snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-pr-fast-snapshots
+          path: |
+            build/perf-runs/*.json
+            docs/perf/baselines/*.ci-windows-latest.json
+
+      - name: Comment perf report on PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -s /tmp/perf-report.md ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/perf-report.md || true
+          fi
+
+      - name: Gate decision
+        env:
+          REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
+          RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}
+          MISSING_COUNT: ${{ steps.perf.outputs.missing_baseline_count }}
+        run: |
+          set -e
+          override="false"
+          for label in $(echo '${{ toJson(github.event.pull_request.labels) }}' | python -c "import json,sys; d=json.load(sys.stdin); print(' '.join(l['name'] for l in d))"); do
+            if [ "$label" = "perf-out-of-band" ]; then
+              override="true"
+            fi
+          done
+          if [ "$MISSING_COUNT" -gt 0 ]; then
+            echo "::notice::First-run bootstrap captured $MISSING_COUNT baseline(s). Review the uploaded artefacts + open a bootstrap PR to commit them under docs/perf/baselines/."
+          fi
+          # Plumbing failures (scenario.run missing output) normally fail
+          # HARD regardless of the perf-out-of-band label — those are bugs
+          # in the workflow / exe / build path, never intentional
+          # regressions. (CodeRabbit PR #323 #1.)
+          #
+          # Exception: if NO baselines exist yet (first-run bootstrap
+          # state on a fresh repo / fork) AND scenarios are failing, we
+          # cannot distinguish "spawn-on-CI environment not yet wired up"
+          # from "real plumbing break", because there's nothing to compare
+          # against. Downgrade to WARN in that state so the workflow itself
+          # can land + the bootstrap-PR cycle can begin. Once at least one
+          # baseline is committed under docs/perf/baselines/<scen>.ci-
+          # windows-latest.json, subsequent runs treat plumbing failures
+          # as hard fails again.
+          if [ "$RUN_FAILURE_COUNT" -gt 0 ]; then
+            shopt -s nullglob
+            existing_baselines=(docs/perf/baselines/*.ci-windows-latest.json)
+            shopt -u nullglob
+            if [ "${#existing_baselines[@]}" -eq 0 ]; then
+              echo "::warning::$RUN_FAILURE_COUNT scenario(s) failed to run AND no ci-windows-latest baselines exist yet (first-run bootstrap state). Downgrading to WARN — fix the spawn / runner-environment before merging the first baseline."
+            else
+              echo "::error::$RUN_FAILURE_COUNT scenario(s) failed to run (plumbing / build / exe failure). perf-out-of-band label does NOT override this — fix the underlying break."
+              exit 1
+            fi
+          fi
+          if [ "$REGRESSION_COUNT" -gt 0 ]; then
+            if [ "$override" = "true" ]; then
+              echo "::warning::$REGRESSION_COUNT scenario regression(s) detected. Downgraded to WARN by perf-out-of-band label."
+              exit 0
+            fi
+            echo "::error::$REGRESSION_COUNT scenario regression(s) exceeded docs/perf/regression-policy.json thresholds."
+            exit 1
+          fi
+          echo "All scenarios within policy."

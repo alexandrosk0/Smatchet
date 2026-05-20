@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "description": "PR-fast scenario subset run by .github/workflows/perf-pr-fast.yml. Four scenarios chosen for broad coverage of the active code paths. Estimated combined wall-clock: < 90 s post-build on windows-2022. See docs/design/pillar-1-2-perf-review-system.md § D4.",
+  "scenarios": [
+    "idle",
+    "priority-grid-scroll",
+    "command-palette-fuzzy",
+    "cell-edit-burst"
+  ]
+}
