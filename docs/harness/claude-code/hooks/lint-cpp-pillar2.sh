@@ -25,5 +25,5 @@ if [[ ${#candidates[@]} -eq 0 ]]; then
     exit 0
 fi
 
-cd "$PROJ_DIR"
+cd "$PROJ_DIR" || { echo "ERROR: cd to $PROJ_DIR failed" >&2; exit 2; }
 bash scripts/dev/pillar2-scan.sh "${candidates[@]}"
