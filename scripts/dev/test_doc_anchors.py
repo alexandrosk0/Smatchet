@@ -60,8 +60,8 @@ ANCHOR_FILES = [REPO_ROOT / "AGENTS.md"] + sorted(
 REFERENCE_RE = re.compile(r"AGENTS\.md\s*§\s*(.+)")
 
 # Terminators that end a section-name reference: opening + closing punctuation,
-# quotes, brackets. Section names never contain these characters.
-TERMINATOR_CHARS = re.compile(r"[\[\].,;:()+\"`<>]")
+# quotes, brackets, markdown-table pipes. Section names never contain these.
+TERMINATOR_CHARS = re.compile(r"[\[\].,;:()+\"`<>|]")
 
 # Connective words that often appear right after a section name in prose —
 # trim them off so "X gains Y" becomes "X" alone.
