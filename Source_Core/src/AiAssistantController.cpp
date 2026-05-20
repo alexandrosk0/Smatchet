@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AgentsMdLoader.h"
+#include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiEndpointSanitize.h"
@@ -458,6 +459,7 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
                 AiMessage assistantMsg;
                 assistantMsg.Role = "assistant";
                 assistantMsg.Content = g_ui.assistantStreamBuf;
+                assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
                 g_ui.assistantHistory.push_back(std::move(assistantMsg));
                 g_ui.assistantStreamBuf.clear();
                 g_ui.assistantInFlight = false;
@@ -488,6 +490,7 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
                     AiMessage assistantMsg;
                     assistantMsg.Role = "assistant";
                     assistantMsg.Content = g_ui.assistantStreamBuf + "\n[cancelled]";
+                    assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
                     g_ui.assistantHistory.push_back(std::move(assistantMsg));
                 }
                 g_ui.assistantStreamBuf.clear();

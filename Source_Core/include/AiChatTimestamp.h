@@ -17,6 +17,16 @@ namespace ai {
  */
 
 /**
+ * Wall-clock "now" in unix-epoch milliseconds.
+ *
+ * Wraps `std::chrono::system_clock::now()` so the three chat message-creation
+ * sites (UI dispatchSend, controller's normal finalisation, controller's
+ * cancel-with-partial path) all share one source of truth for what "created
+ * at" means.
+ */
+std::int64_t NowUnixMs();
+
+/**
  * Coarse relative-time bucket for a past instant.
  *
  * Buckets (boundary inclusive on the lower edge):

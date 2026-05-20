@@ -2,6 +2,7 @@
 #define SMATCHET_AI_TYPES_H
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,6 +18,16 @@ enum class AiProvider : int {
 struct AiMessage {
     std::string Role;
     std::string Content;
+    /// Wall-clock unix-epoch milliseconds the message was created locally.
+    /// Stamped at dispatch on the UI thread (user) or at assistant-finalisation
+    /// on the MainThreadDispatcher (assistant). Wire serializers in
+    /// OpenAiClient / AnthropicClient / OllamaClient build the provider JSON
+    /// per-field (`role` + `content` only) so these new members never leak
+    /// to the upstream LLM API.
+    std::int64_t CreatedAtUnixMs = 0;
+    /// True when the user has pinned this message via the hover action row.
+    /// Survives across runs via the SQLite chat-history persistence layer.
+    bool Pinned = false;
 };
 
 struct AiStreamDelta {

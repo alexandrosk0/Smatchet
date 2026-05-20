@@ -4,6 +4,7 @@
 
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
+#include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "MarkdownPreviewRender.h"
 #include "SelectableTextRun.h"
@@ -407,6 +408,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         AiMessage userMsg;
         userMsg.Role = "user";
         userMsg.Content = d.assistantInputBuf;
+        userMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
         d.assistantHistory.push_back(std::move(userMsg));
         std::string snapshot = d.assistantInputBuf;
         d.assistantInputBuf.clear();
