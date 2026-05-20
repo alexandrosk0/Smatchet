@@ -106,33 +106,11 @@ jobs:
               mkdir -p docs/perf/baselines
               # First-run: snapshot the fresh run as the baseline. Workflow
               # uploads it as an artefact; a human reviews + opens a
-              # bootstrap PR to commit it.
-              python - "$result" "$baseline" "$scen" <<'PY'
-import json, sys, os, datetime
-src, dst, scen = sys.argv[1:4]
-with open(src, "r", encoding="utf-8") as f:
-    raw = json.load(f)
-rows = []
-data = raw.get("data") if isinstance(raw, dict) else None
-if isinstance(data, dict) and isinstance(data.get("rows"), list):
-    rows = data["rows"]
-elif isinstance(raw.get("rows"), list):
-    rows = raw["rows"]
-baseline = {
-    "schemaVersion": 1,
-    "scenarioId": scen,
-    "captureCommit": os.environ.get("GITHUB_SHA", "?"),
-    "captureDate": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "captureHost": "ci-windows-latest",
-    "captureRunnerOs": "windows-msys2-ucrt64",
-    "rows": rows,
-    "hardwareNote": "GitHub Actions windows-2022 shared runner",
-    "perScenarioPolicyOverride": None,
-}
-with open(dst, "w", encoding="utf-8") as f:
-    json.dump(baseline, f, indent=2)
-    f.write("\n")
-PY
+              # bootstrap PR to commit it. Script extracted from an inline
+              # heredoc — the heredoc body sat at column 0 inside this
+              # `run: |` YAML block scalar, which terminated the block
+              # early and prevented the workflow from scheduling.
+              python scripts/dev/perf-baseline-bootstrap.py "$result" "$baseline" "$scen"
               echo "### $scen — baseline captured (first run)" >> /tmp/perf-report.md
               echo "" >> /tmp/perf-report.md
             else
