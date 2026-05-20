@@ -8,6 +8,13 @@ if(NOT SMATCHET_BUILD_UI_TESTS)
     return()
 endif()
 
+# Slice 5 of docs/design/pillar-1-2-perf-review-system.md — opt-in flag that
+# compiles the synthetic stall hook in tests/ui/sync_stall_visible_cue.test.cpp.
+# Off by default even under SMATCHET_BUILD_UI_TESTS=ON so the file becomes a
+# no-op shell when the harness isn't wanted; on under the ninja-ui-test-msys2
+# preset where the bucket-E driver expects it.
+option(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS "Compile the synthetic visible-cue stall hook in bucket-E tests" OFF)
+
 set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ui_tests_registry.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
@@ -19,6 +26,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_handoff_panel.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_handoff_button.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12
@@ -31,4 +39,17 @@ target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
 if(TARGET SmatchetCore_DX12 AND TARGET SmatchetImGuiTestEngine_DX12)
     target_sources(SmatchetCore_DX12 PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
     target_link_libraries(SmatchetCore_DX12 PRIVATE SmatchetImGuiTestEngine_DX12)
+endif()
+
+if(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS)
+    # Target-wide PRIVATE define. Only sync_stall_visible_cue.test.cpp reads
+    # the macro (inside a `#ifdef` guard), so other TUs are unaffected. We
+    # use target_compile_definitions rather than set_source_files_properties
+    # because the source-file property doesn't propagate across the subdir
+    # → root-CMakeLists target boundary (the targets are declared in the
+    # root CMakeLists, modified from this subdir).
+    target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1)
+    if(TARGET SmatchetCore_DX12)
+        target_compile_definitions(SmatchetCore_DX12 PRIVATE SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1)
+    endif()
 endif()
