@@ -706,8 +706,22 @@ add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
         Source_Core/ThirdParty/ImGuiColorTextEdit
+        # Vendored Font Awesome 6 icon-name header (zlib licence) from
+        # github.com/juliettef/IconFontCppHeaders. Header-only — defines
+        # ICON_FA_* string macros (UTF-8 PUA codepoints) for every FA6
+        # icon. Phase 4 of ai-chat-claude-desktop-parity. The companion
+        # TTF (fa-solid-900.ttf) ships separately at assets/fonts/ and
+        # is wired through the SmatchetStandalone POST_BUILD copy below.
+        Source_Core/ThirdParty/IconsFontAwesome6
         ${sqlitecpp_SOURCE_DIR}/include
 )
+# Source-tree fallback path for asset lookups (Phase 4 of
+# ai-chat-claude-desktop-parity). SmatchetApplyImGuiFont resolves the FA TTF
+# in exe-dir first (POST_BUILD-copied at install) then falls back here for
+# dev-tree runs / tests / out-of-build invocations. Define is INTERFACE on
+# SmatchetCoreInterface so Standalone + DX12 both pick it up.
+target_compile_definitions(SmatchetCoreInterface INTERFACE
+        "SMATCHET_ASSETS_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/assets\"")
 if(SMATCHET_WITH_LUA_AUTOMATION)
     target_include_directories(SmatchetCoreInterface INTERFACE
             ${LUA_SRC_DIR}/src
@@ -1174,6 +1188,28 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
                 COMMENT "Copy Scripts (Lua + bundled art) next to SmatchetStandalone"
                 VERBATIM)
     endif()
+endif()
+
+# Font Awesome 6 Solid TTF — Phase 4 of ai-chat-claude-desktop-parity.
+# The TTF is NOT committed to git (430 KB binary, SIL OFL 1.1 — see
+# assets/fonts/README.md for drop-in instructions). Configure-time gate:
+# when the file exists, copy it next to the exe so the shipped Standalone
+# build finds it via the exe-dir resolver. When absent, log a STATUS
+# message — the runtime gracefully falls back to text labels via the
+# g_FaIconsLoaded flag in SmatchetImGuiFonts.cpp, so a missing TTF does
+# NOT fail the build, just degrades the UI to text-mode icons.
+set(_SMATCHET_FA_TTF_SRC "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/fa-solid-900.ttf")
+if(EXISTS "${_SMATCHET_FA_TTF_SRC}")
+    add_custom_command(TARGET SmatchetStandalone POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_SMATCHET_FA_TTF_SRC}"
+                    "$<TARGET_FILE_DIR:SmatchetStandalone>/fa-solid-900.ttf"
+            COMMENT "Copy fa-solid-900.ttf next to SmatchetStandalone"
+            VERBATIM)
+else()
+    message(STATUS "FA Solid TTF not found at ${_SMATCHET_FA_TTF_SRC}; "
+                   "AI chat hover row will fall back to text labels at runtime. "
+                   "See assets/fonts/README.md for drop-in instructions.")
 endif()
 
 # Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket.

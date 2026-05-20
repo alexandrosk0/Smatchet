@@ -32,8 +32,10 @@ struct SmatchetPreviewFonts {
 // are invalidated after every SmatchetApplyImGuiFont call (i.e. font hot-reload).
 const SmatchetPreviewFonts& SmatchetGetPreviewFonts();
 
-
-
-
-
-
+// True iff the Font Awesome 6 Solid TTF was successfully merged into the active
+// atlas on the most-recent `SmatchetApplyImGuiFont` call. False when the TTF
+// could not be located (missing from exe-dir + SMATCHET_ASSETS_SOURCE_DIR
+// fallback) — UI consumers (AI chat hover row, pin strip, header buttons)
+// check this flag and fall back to short text labels (`Copy`, `Pin`, `×`)
+// instead of icon glyphs. Phase 4 of ai-chat-claude-desktop-parity.
+bool SmatchetAreFaIconsLoaded();
