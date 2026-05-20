@@ -111,6 +111,21 @@ for abs in "${CHUNK[@]}"; do
     [[ -n "$dual_out" ]] && ISSUES+="$dual_out"$'\n'
 done
 
+# --- Pillar 2 static gate (slice 2 of docs/design/pillar-1-2-perf-review-system.md) ----
+# Runs the canonical harness-agnostic scanner at scripts/dev/pillar2-scan.sh
+# against every file in the chunk. Emits CRITICAL per sync-I/O reaching the
+# UI thread without /* PILLAR2_WORKER_ONLY */ + est-latency annotation.
+if [[ ${#CHUNK[@]} -gt 0 ]]; then
+    declare -a P2_RELS=()
+    for abs in "${CHUNK[@]}"; do
+        P2_RELS+=("$(lint_normalize_path "$abs")")
+    done
+    pillar2_out="$(bash "$PROJ_DIR/scripts/dev/pillar2-scan.sh" "${P2_RELS[@]}" 2>&1 || true)"
+    if echo "$pillar2_out" | grep -q "^CRITICAL:"; then
+        ISSUES+="$pillar2_out"$'\n'
+    fi
+fi
+
 # --- Surface findings ------------------------------------------------------
 if [[ -n "$ISSUES" ]]; then
     {

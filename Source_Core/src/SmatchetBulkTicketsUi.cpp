@@ -54,6 +54,7 @@ int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
 }
 
 bool ReadEntireFile(const std::string& path, std::string& outText, std::string& outError) {
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~50ms — sole caller (line 172) inside app.LaunchBackgroundTask lambda.
     std::ifstream f(path, std::ios::binary);
     if (!f.good()) {
         outError = "Failed to open file: " + path;
@@ -80,9 +81,7 @@ static const CachedTicket* BulkImportFindTicketInSnapshot(const std::string& iss
     if (!tickets || issueKey.empty()) {
         return nullptr;
     }
-    auto it = std::find_if(tickets->begin(), tickets->end(), [&](const auto& t) {
-        return t.id == issueKey;
-    });
+    auto it = std::find_if(tickets->begin(), tickets->end(), [&](const auto& t) { return t.id == issueKey; });
     if (it != tickets->end()) {
         return &(*it);
     }
@@ -236,17 +235,16 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     }
     if (ImGui::BeginPopupModal("##BulkImportProjectModal", &d.bulkImportProjectModalOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(SmatchetLocalization::T("bulkImport.chooseProject.title",
-                                                       "Choose target project for bulk import"));
+        ImGui::TextUnformatted(
+            SmatchetLocalization::T("bulkImport.chooseProject.title", "Choose target project for bulk import"));
         ImGui::Separator();
         const std::string backendKind = (d.cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
         const std::string endpoint = (d.cfg.TrackerType == "Plane")
                                          ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
                                          : d.cfg.Domain;
         ImGui::SetNextItemWidth(360.0f);
-        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState,
-                                    app.GetTrackerBackendMutable(), backendKind, endpoint,
-                                    d.bulkImportProjectModalChosenKey);
+        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app.GetTrackerBackendMutable(),
+                                    backendKind, endpoint, d.bulkImportProjectModalChosenKey);
         ImGui::Separator();
         if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel"))) {
             d.bulkImportProjectModalOpen = false;
@@ -391,13 +389,15 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                 }
                 if (!r.MissingFieldIds.empty()) {
                     msg += " [missing: ";
-                    std::vector<std::string> names = IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
+                    std::vector<std::string> names =
+                        IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
                     msg += JoinStrings(names, ", ");
                     msg += "]";
                 }
                 d.bulkImportStatus[i] = msg;
                 const auto& bulkRow = d.bulkImportPreview.Rows[i];
-                SmatchetToastManager::Instance().Push("Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
+                SmatchetToastManager::Instance().Push(
+                    "Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
             }
             ++d.bulkImportCompleted;
         }
@@ -595,18 +595,17 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         app.LaunchBackgroundTask([&app, &d, capturedPath, text = std::move(text), byteCount, cancel]() mutable {
             std::string err;
             const bool ok = WriteEntireFile(capturedPath, text, err);
-            app.mainThreadDispatcher.PostToMainThread(
-                [&d, ok, byteCount, err = std::move(err), cancel]() mutable {
-                    d.bulkExportSaveInFlight = false;
-                    if (cancel && cancel->load()) {
-                        return;
-                    }
-                    if (ok) {
-                        d.bulkExportFeedback = "Wrote " + std::to_string(byteCount) + " bytes.";
-                    } else {
-                        d.bulkExportFeedback = err;
-                    }
-                });
+            app.mainThreadDispatcher.PostToMainThread([&d, ok, byteCount, err = std::move(err), cancel]() mutable {
+                d.bulkExportSaveInFlight = false;
+                if (cancel && cancel->load()) {
+                    return;
+                }
+                if (ok) {
+                    d.bulkExportFeedback = "Wrote " + std::to_string(byteCount) + " bytes.";
+                } else {
+                    d.bulkExportFeedback = err;
+                }
+            });
         });
     }
     ImGui::SameLine();
@@ -622,8 +621,3 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
 
     ImGui::End();
 }
-
-
-
-
-
