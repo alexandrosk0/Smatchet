@@ -20,7 +20,7 @@ Scenario-aware PR-time perf gatekeeper (Claude Code skill alias of `agents/perf-
 
 1. **Identify touched files** — `gh pr diff <pr-number> --name-only` (PR mode) or `git diff --name-only develop...HEAD` (local mode).
 2. **Classify into scenarios** via the curated map in `agents/perf-gatekeeper.md`.
-3. **Build + run + compare** for each affected scenario:
+3. **Build + run + compare** for each affected scenario. Baseline host suffix depends on context — local uses `<scenario>.dev.json`; CI uses `<scenario>.ci-windows-latest.json`. Swap the host suffix when invoking from CI.
    ```bash
    bash scripts/dev/perf-run.sh <scenario>
    python scripts/dev/perf-compare.py \

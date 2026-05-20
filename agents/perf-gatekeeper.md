@@ -37,11 +37,11 @@ Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/design/pillar-1-2-perf-
    git diff --name-only develop...HEAD     # local mode
    ```
 2. **Classify into scenarios** via the curated map below. Multiple files can map to one scenario; the same scenario only runs once.
-3. **Build + run + compare** for each affected scenario:
+3. **Build + run + compare** for each affected scenario. The baseline file's host suffix depends on context — local invocations use `<scenario>.dev.json`; CI / PR-comment mode uses `<scenario>.ci-windows-latest.json`. The block below uses the local form; swap the host suffix when invoking from CI.
    ```bash
    bash scripts/dev/perf-run.sh <scenario>           # → fresh JSON path on last line
    python scripts/dev/perf-compare.py \
-       docs/perf/baselines/<scenario>.dev.json \     # or ci-windows-latest in CI mode
+       docs/perf/baselines/<scenario>.dev.json \
        build/perf-runs/<scenario>-<ts>.json \
        --markdown-only
    ```

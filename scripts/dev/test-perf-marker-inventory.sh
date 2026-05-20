@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# test-perf-marker-inventory.sh — advisory check that the checked-in
-# docs/perf/MARKER_INVENTORY.md matches the live tree's set of
-# SMATCHET_UI_PERF_SCOPE markers. Slice 4 of
+# test-perf-marker-inventory.sh — Slice 4 of
 # docs/design/pillar-1-2-perf-review-system.md.
 #
-# This test ALWAYS exits 0 — it's a hygiene reminder, not a gating signal.
-# A drift WARN points an agent at `bash scripts/dev/perf-marker-inventory.sh`
-# to regenerate the doc.
+# Behaviour (two-tier):
+#   1. ADVISORY drift check — if docs/perf/MARKER_INVENTORY.md is stale
+#      vs the regenerated content, emit a WARN line pointing at
+#      `bash scripts/dev/perf-marker-inventory.sh`. Does NOT fail.
+#   2. GATING perf_temp:* leak check — if the regenerated inventory
+#      lists any in-flight `perf_temp:*` markers, FAIL with exit 1.
+#      Temp markers must be stripped before merging (perf-instrument
+#      / perf-detective / spike-hunter sessions are responsible for
+#      cleaning their own markers at end-of-session).
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT"
+# Hard-fail on cd: the perf-marker-inventory.sh subcall does relative
+# `grep -rnE` walks; a failed cd would silently scan the wrong tree and
+# the test would falsely pass.
+cd "$REPO_ROOT" || { echo "ERROR: cd to $REPO_ROOT failed" >&2; exit 1; }
 
 OUTPUT="$(bash scripts/dev/perf-marker-inventory.sh --check 2>&1)"
 echo "$OUTPUT"
