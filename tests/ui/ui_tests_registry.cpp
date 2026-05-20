@@ -10,6 +10,7 @@
 
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
@@ -27,6 +28,7 @@ extern "C" void SmatchetRegisterAgentProposalsHandoffButtonTests(ImGuiTestEngine
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
+    SmatchetRegisterSyncStallVisibleCueTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
