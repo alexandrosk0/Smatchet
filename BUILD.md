@@ -30,7 +30,6 @@ pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
 - `ninja-iter-unreal-msys2`: fast Unreal plugin iteration (`RelWithDebInfo`)
 - `ninja-debug-unreal-msys2`: full Unreal-specific debug (`Debug`)
 - `ninja-publish-msys2`: LTO publish build for standalone plus Unreal packaging (`Release`)
-- `ninja-release`: supported legacy standalone release preset using `gcc`/`g++` from the current `PATH`
 
 ## Common Workflows
 
@@ -88,7 +87,8 @@ in seconds.
 
 ```powershell
 # 1. Toolchain pre-flight (instant). Prints [PASS] / [FAIL] / [WARN] per check.
-.\scripts\dev\doctor.ps1
+#    Run from Git Bash / MSYS2 / WSL; from PowerShell use `bash scripts/dev/doctor.sh`.
+bash scripts/dev/doctor.sh
 
 # 2. Configure + build the test rig.
 cmake --preset ninja-test-msys2
@@ -106,8 +106,7 @@ python .\scripts\dev\run_cppcheck.py
 
 If step 1 prints `Doctor: RED`, fix the listed prerequisites before
 continuing -- CMake errors on a missing MSYS2 / lld / Python install are
-much harder to debug than the doctor's install hints. On MSYS2 / Linux,
-`bash scripts/dev/doctor.sh` is the equivalent.
+much harder to debug than the doctor's install hints.
 
 ## Local Overrides
 

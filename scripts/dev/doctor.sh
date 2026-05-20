@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# doctor.sh -- Smatchet toolchain pre-flight check (bash port of doctor.ps1).
+# doctor.sh -- Smatchet toolchain pre-flight check.
 #
-# Same check list, same exit codes as doctor.ps1:
+# Exit codes:
 #   0 -- all required + warn checks pass (Doctor: GREEN)
 #   1 -- one or more required checks failed (Doctor: RED)
 #   2 -- only warn-only checks failed (Doctor: YELLOW)
@@ -35,8 +35,10 @@
 #     CI runners install it themselves; only enable this check if you're
 #     working on coverage gates / threshold tuning locally.
 #
-# Companion: scripts/dev/doctor.ps1 (PowerShell version on Windows).
 # Verification: scripts/dev/test-doctor.sh.
+# Windows callers (PowerShell): invoke via `bash scripts/dev/doctor.sh`
+# from Git Bash, MSYS2, or `wsl bash scripts/dev/doctor.sh`. The
+# `bootstrap-msys2.ps1` cold-start script wires this up automatically.
 
 set -uo pipefail
 

@@ -86,7 +86,6 @@ The supported shared presets are:
 - `ninja-iter-unreal-msys2`: fast Unreal plugin iteration (`RelWithDebInfo`)
 - `ninja-debug-unreal-msys2`: full Unreal-specific debug (`Debug`)
 - `ninja-publish-msys2`: LTO publish build for standalone plus Unreal packaging (`Release`)
-- `ninja-release`: supported legacy standalone release preset using `gcc`/`g++` from the current `PATH`
 
 ### Build Workflows
 

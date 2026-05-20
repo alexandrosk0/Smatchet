@@ -168,22 +168,6 @@
             }
         },
         {
-            "name": "ninja-release",
-            "inherits": [
-                "_smatchet-native-features"
-            ],
-            "displayName": "Ninja Release",
-            "description": "Legacy release preset that uses gcc/g++ from the current PATH and writes to build/ninja-release.",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/ninja-release",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CMAKE_C_COMPILER": "gcc",
-                "CMAKE_CXX_COMPILER": "g++"
-            }
-        },
-        {
             "name": "ninja-iter-unreal-msys2",
             "inherits": [
                 "_smatchet-msys2-base"
@@ -298,14 +282,6 @@
             "targets": [
                 "SmatchetTests",
                 "SmatchetLuaTests"
-            ]
-        },
-        {
-            "name": "ninja-release",
-            "configurePreset": "ninja-release",
-            "inheritConfigureEnvironment": true,
-            "targets": [
-                "SmatchetStandalone"
             ]
         },
         {

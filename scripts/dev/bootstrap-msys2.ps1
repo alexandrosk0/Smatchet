@@ -3,8 +3,8 @@
 
     Installs MSYS2 (via winget), the UCRT64 GCC toolchain + lld + ninja + cmake
     (via pacman), injects MSYS2 paths into the current PowerShell session, then
-    runs doctor.ps1. Idempotent -- safe to re-run; already-installed packages
-    are skipped.
+    runs doctor.sh via the freshly-installed MSYS2 bash. Idempotent -- safe to
+    re-run; already-installed packages are skipped.
 
     Examples:
       .\scripts\dev\bootstrap-msys2.ps1
@@ -157,23 +157,26 @@ foreach ($exe in @('gcc.exe','g++.exe','cmake.exe','ninja.exe','ld.lld.exe')) {
 }
 
 if ($SkipDoctor) {
-    Write-Step "Skipping doctor.ps1 (-SkipDoctor)"
+    Write-Step "Skipping doctor.sh (-SkipDoctor)"
 } else {
-    $doctor = Join-Path $PSScriptRoot "doctor.ps1"
-    if (Test-Path -LiteralPath $doctor) {
-        Write-Step "Running doctor.ps1"
-        & $doctor
-        # doctor.ps1 exit codes: 0=GREEN, 1=RED (required failure), 2=YELLOW (warn-only).
+    $doctor = Join-Path $PSScriptRoot "doctor.sh"
+    $bash = Join-Path $msys2Root "usr\bin\bash.exe"
+    if (-not (Test-Path -LiteralPath $doctor)) {
+        Write-Warn2 "doctor.sh not found at $doctor -- skipped."
+    } elseif (-not (Test-Path -LiteralPath $bash)) {
+        Write-Warn2 "bash.exe not found at $bash -- doctor.sh skipped."
+    } else {
+        Write-Step "Running doctor.sh"
+        & $bash -lc "'$($doctor -replace '\\','/')'"
+        # doctor.sh exit codes: 0=GREEN, 1=RED (required failure), 2=YELLOW (warn-only).
         # GREEN and YELLOW are both build-ready; RED means a required tool is missing
         # or wrong version and the build will fail.
         switch ($LASTEXITCODE) {
             0 { }   # GREEN -- nothing to do
             2 { }   # YELLOW -- optional lint tools missing; build still works
-            1 { throw "doctor.ps1 reported RED (required check failed). See output above for the [FAIL] lines and their install hints." }
-            default { throw "doctor.ps1 returned unexpected exit code $LASTEXITCODE." }
+            1 { throw "doctor.sh reported RED (required check failed). See output above for the [FAIL] lines and their install hints." }
+            default { throw "doctor.sh returned unexpected exit code $LASTEXITCODE." }
         }
-    } else {
-        Write-Warn2 "doctor.ps1 not found at $doctor -- skipped."
     }
 }
 
@@ -186,6 +189,6 @@ Write-Host "For new shells you'll need MSYS2 on PATH. Either:"
 Write-Host "  - re-run this script (instant -- it's idempotent), or"
 Write-Host "  - prepend `$msys2Root\ucrt64\bin and `$msys2Root\usr\bin to PATH yourself."
 
-# doctor.ps1 returns 2 on YELLOW (optional tools missing). We treat that as success
+# doctor.sh returns 2 on YELLOW (optional tools missing). We treat that as success
 # for bootstrap purposes; override the inherited exit code so callers see 0.
 exit 0

@@ -39,7 +39,7 @@ Build-system specialist for Smatchet.
 - MSYS2 UCRT64: gcc / g++ — **lld for iter presets**, **BFD for publish**
 - FetchContent for every third-party dep (ImGui, SQLiteCpp, cpr, nlohmann/json, sol2, cpp-httplib, md4c, GLFW, Lua, ghc::filesystem)
 - DX12 lib packaging: `SmatchetPackageUnrealLibs_DX12` → `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet`
-- Presets: `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-test-msys2`, `ninja-iter-unreal-msys2`, `ninja-debug-unreal-msys2`, `ninja-publish-msys2`, `ninja-release`, `vs-unreal-msvc`
+- Presets: `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-test-msys2`, `ninja-iter-unreal-msys2`, `ninja-debug-unreal-msys2`, `ninja-publish-msys2`, `vs-unreal-msvc`
 - Test rig: `SMATCHET_BUILD_TESTS` option (OFF default; ON on `ninja-test-msys2` + `ninja-debug-msys2` + `ninja-publish-msys2`) gates the doctest target `SmatchetTests` under `tests/`. ctest run from `build/<preset>/` (no CTest preset wired). Owned by `test-rig`.
 - Sanitizer presets (debug-detective uses): `ninja-debug-msys2-asan` (GCC; ASan+UBSan), `ninja-debug-msys2-tsan` (GCC; MinGW support partial), `ninja-debug-msys2-msan` (Clang-only; selects `clang`/`clang++` off PATH). Plumbing: `cmake/Sanitizers.cmake` reads `SMATCHET_SANITIZER` and adds flags PRIVATE to `SmatchetStandalone` / `SmatchetCore_DX12`.
 - `SMATCHET_ENABLE_STRICT_WARNINGS` default ON
@@ -74,7 +74,7 @@ Build-system specialist for Smatchet.
 
 **Never** disable warnings as a fix. Never lower `SMATCHET_ENABLE_STRICT_WARNINGS`. If `-Wall -Wextra` flags real code, escalate to the orchestrator for a code fix.
 
-**Always name the exact exe path after each rebuild.** Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-release/`, `build/ninja-publish-msys2/`, worktree builds) make wrong-exe testing a common time sink. After every build that completes successfully: `ls -la` both the patched output and the most-likely-stale path side-by-side, print mtimes, and tell the user the absolute path to run. Apply the same rule when handing back to perf / spike agents for re-measurement.
+**Always name the exact exe path after each rebuild.** Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-debug-msys2/`, `build/ninja-publish-msys2/`, worktree builds) make wrong-exe testing a common time sink. After every build that completes successfully: `ls -la` both the patched output and the most-likely-stale path side-by-side, print mtimes, and tell the user the absolute path to run. Apply the same rule when handing back to perf / spike agents for re-measurement.
 
 ## Final report — Maintenance class
 

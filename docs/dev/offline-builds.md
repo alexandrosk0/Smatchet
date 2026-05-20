@@ -123,5 +123,5 @@ You want this doc when:
 ## Related
 
 - [BUILD.md](../../BUILD.md) — top-level build recipes + first-time verification.
-- [scripts/dev/doctor.ps1](../../scripts/dev/doctor.ps1) / [doctor.sh](../../scripts/dev/doctor.sh) — toolchain pre-flight checks (Slices 2/3).
+- [scripts/dev/doctor.sh](../../scripts/dev/doctor.sh) — toolchain pre-flight checks (Slices 2/3).
 - [docs/design/git-to-perforce-migration.md](../design/git-to-perforce-migration.md) — if you're reading this because you're on the Perforce-migration path, that plan eventually vendors every FetchContent dep into `//smatchet/main/third_party/`, killing the network-dependency entirely. Phase 1 of that plan supersedes this doc.
