@@ -64,6 +64,11 @@ add_executable(SmatchetTests
     # ImGui context is required.
     Source_Core/SelectableTextRun.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SelectableTextRun.cpp"
+    # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
+    # Pure-logic only (the ImGui-side render is bucket E). Links the same
+    # MarkdownPreviewRender.cpp the production targets compile.
+    Source_Core/MarkdownPreviewPlan.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/MarkdownPreviewRender.cpp"
     Source_Core/SubprocessCapturePure.test.cpp
     Source_Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
