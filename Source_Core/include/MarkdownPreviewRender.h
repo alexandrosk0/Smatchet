@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace SelectableText {
 struct Context;
@@ -18,13 +19,78 @@ namespace MarkdownPreviewRender {
 
 enum class Mode { Full, Tooltip };
 
-/// Opaque per-render plan — captures the md4c parse output (one entry per
-/// block) so subsequent renders of the same content can skip the parser hot
-/// path. Built by `BuildPlan`; replayed by `RenderPlan` or implicitly by
-/// `Render` (single-shot wrapper). Plan does NOT carry per-Render runtime
-/// state (mode, wrapWidth, selCtx) — those stay on Options at render time
-/// so the same plan can be reused across modes and surfaces. Pillar 1 opt #1.
-struct PreviewPlan;
+// Inline mark bits — combined per-run via OR. Public so unit tests can
+// inspect PreviewPlan::Block::runs without reverse-engineering the bitfield.
+constexpr std::uint8_t kMarkBold = 1u << 0;
+constexpr std::uint8_t kMarkItalic = 1u << 1;
+constexpr std::uint8_t kMarkCode = 1u << 2;
+constexpr std::uint8_t kMarkStrike = 1u << 3;
+constexpr std::uint8_t kMarkLink = 1u << 4;
+
+struct StyledRun {
+    std::string text;
+    std::uint8_t marks = 0;
+    std::string href;
+};
+
+// Per-word atom emitted by the wrap loop. Opt B — pre-decomposed once per
+// PreviewPlan::Block (lazy, on first RenderPlan walk) + cached. Eliminates
+// per-frame `ImGui::CalcTextSize` + `PushFont/TextUnformatted/PopFont` work.
+struct PlanWord {
+    std::string text; // empty when forceBreak == true
+    std::uint8_t marks = 0;
+    std::string href;
+    bool forceBreak = false; // '\n' inside the source — forces a hard wrap
+    float widthPx = 0.0f;    // ImGui::CalcTextSize().x with the marks-resolved font
+};
+
+struct TableCellData {
+    std::vector<StyledRun> runs;
+};
+
+struct TableRowData {
+    std::vector<TableCellData> cells;
+    bool isHeader = false;
+};
+
+/// Per-render plan — captures the md4c parse output (one entry per block) so
+/// subsequent renders of the same content can skip the parser hot path.
+/// Built by `BuildPlan`; replayed by `RenderPlan` or implicitly by `Render`
+/// (single-shot wrapper). Plan does NOT carry per-Render runtime state
+/// (mode, wrapWidth, selCtx) — those stay on Options at render time so the
+/// same plan can be reused across modes and surfaces. Pillar 1 opt #1.
+struct PreviewPlan {
+    struct Block {
+        enum Kind {
+            kPara,          // styled prose runs flushed as a paragraph
+            kHeading,       // styled prose runs flushed as an H1..H6
+            kHr,            // horizontal rule
+            kListItemBegin, // depth + pre-resolved marker text (counter baked in)
+            kListItemEnd,   // matching unindent
+            kQuoteBegin,    // indent + push green tint
+            kQuoteEnd,      // pop tint + unindent
+            kCode,          // codeBuffer + codeLang
+            kTable,         // tableRows + tableColCount
+        };
+        Kind kind = kPara;
+        // Sparse per-kind data. Empty vectors / strings cost only sizeof
+        // overhead — no allocations until populated.
+        std::vector<StyledRun> runs;         // kPara, kHeading
+        int headingLevel = 0;                // kHeading
+        std::string codeBuffer;              // kCode
+        std::string codeLang;                // kCode
+        std::vector<TableRowData> tableRows; // kTable
+        int tableColCount = 0;               // kTable
+        std::string listMarker;              // kListItemBegin (UTF-8, pre-counter-resolved)
+        int listDepth = 0;                   // kListItemBegin
+        // Opt B — pre-decomposed words + cached widths. mutable so RenderPlan
+        // (const PreviewPlan&) can populate on first walk. Single-thread-UI
+        // invariant makes the laundered const-correctness safe in practice.
+        mutable std::vector<PlanWord> words; // kPara, kHeading
+        mutable bool wordsBuilt = false;
+    };
+    std::vector<Block> blocks;
+};
 
 /// Custom deleter so callers can hold `unique_ptr<PreviewPlan>` without
 /// needing the full struct definition (definition lives in the .cpp).

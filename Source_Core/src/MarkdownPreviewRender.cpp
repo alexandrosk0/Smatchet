@@ -34,74 +34,18 @@ extern "C" {
 
 namespace {
 
-// Inline mark bits — combined per-run via OR. Bold + Italic together select the
-// BoldItalic font; Code overrides body font with Mono. Link/Strike are visual
-// overlays drawn after the text.
-constexpr uint8_t MARK_BOLD = 1 << 0;
-constexpr uint8_t MARK_ITALIC = 1 << 1;
-constexpr uint8_t MARK_CODE = 1 << 2;
-constexpr uint8_t MARK_STRIKE = 1 << 3;
-constexpr uint8_t MARK_LINK = 1 << 4;
-
-struct StyledRun {
-    std::string text;
-    uint8_t marks = 0;
-    std::string href;
-};
-
-struct TableCellData {
-    std::vector<StyledRun> runs;
-};
-
-struct TableRowData {
-    std::vector<TableCellData> cells;
-    bool isHeader = false;
-};
-
-} // namespace
-namespace MarkdownPreviewRender {
-
-// Pillar 1 opt #1 — cached parse plan. One per `BuildPlan` call. `RenderPlan`
-// walks `blocks` in order and emits ImGui calls without re-running md4c.
-//
-// Per-block runtime cost saved by caching the plan: the md4c parse pass +
-// inline-span StyledRun accumulation + per-block-type structural decisioning
-// (heading vs paragraph vs list-item vs table). Wrap-loop + per-word
-// `ImGui::CalcTextSize` + ImGui draw calls remain per-frame (they depend on
-// runtime cursor / scroll / wrap width which can't be cached).
-struct PreviewPlan {
-    struct Block {
-        enum Kind {
-            kPara,          // styled prose runs flushed as a paragraph
-            kHeading,       // styled prose runs flushed as an H1..H6
-            kHr,            // horizontal rule
-            kListItemBegin, // depth + pre-resolved marker text (counter baked in)
-            kListItemEnd,   // matching unindent
-            kQuoteBegin,    // indent + push green tint
-            kQuoteEnd,      // pop tint + unindent
-            kCode,          // codeBuffer + codeLang
-            kTable,         // tableRows + tableColCount
-        };
-        Kind kind = kPara;
-        // Sparse per-kind data. Empty vectors / strings cost only sizeof
-        // overhead — no allocations until populated. Keeps the struct simple
-        // for C++14 (no std::variant).
-        std::vector<StyledRun> runs;         // kPara, kHeading
-        int headingLevel = 0;                // kHeading
-        std::string codeBuffer;              // kCode
-        std::string codeLang;                // kCode
-        std::vector<TableRowData> tableRows; // kTable
-        int tableColCount = 0;               // kTable
-        std::string listMarker;              // kListItemBegin (UTF-8, pre-counter-resolved)
-        int listDepth = 0;                   // kListItemBegin
-    };
-    std::vector<Block> blocks;
-};
-
-} // namespace MarkdownPreviewRender
-namespace {
-
+// Bring the public type aliases into the anonymous namespace so existing
+// internal code can keep using `StyledRun`, `MARK_BOLD`, etc. unchanged.
+using MarkdownPreviewRender::PlanWord;
 using MarkdownPreviewRender::PreviewPlan;
+using MarkdownPreviewRender::StyledRun;
+using MarkdownPreviewRender::TableCellData;
+using MarkdownPreviewRender::TableRowData;
+constexpr std::uint8_t MARK_BOLD = MarkdownPreviewRender::kMarkBold;
+constexpr std::uint8_t MARK_ITALIC = MarkdownPreviewRender::kMarkItalic;
+constexpr std::uint8_t MARK_CODE = MarkdownPreviewRender::kMarkCode;
+constexpr std::uint8_t MARK_STRIKE = MarkdownPreviewRender::kMarkStrike;
+constexpr std::uint8_t MARK_LINK = MarkdownPreviewRender::kMarkLink;
 
 struct PreviewState {
     /// Inline runs accumulated for the current block. Flushed by PreviewFlushBlock.
@@ -220,7 +164,6 @@ static void PreviewAppendRunString(PreviewState& s, const std::string& text) {
 // PreviewPickFont / ResolveFonts (parse-side variants) retired with Opt 1
 // refactor — parse no longer measures glyphs. PickFontRS / ResolveFontsRS
 // in the RenderState-side handle the same role for the render pass.
-
 
 // Parse-side flush — appends an accumulated paragraph/heading block to the
 // active plan. No ImGui calls. The actual draw happens in `RenderPlan`.
@@ -649,27 +592,23 @@ static void ResolveFontsRS(RenderState& r) {
 // Render a paragraph or heading from cached StyledRuns. Mirrors the legacy
 // PreviewRenderRuns but reads from RenderState (runtime) rather than the
 // parse-time PreviewState.
-static void RenderRunsRS(const std::vector<StyledRun>& runs, const RenderState& r) {
-    if (runs.empty()) {
-        return;
-    }
-    struct InlineWord {
-        std::string text;
-        uint8_t marks = 0;
-        std::string href;
-        bool forceBreak = false;
-    };
-    std::vector<InlineWord> words;
-    words.reserve(runs.size() * 4);
+// Pure decomposition — splits runs into PlanWords + measures widths. Pushes
+// fonts as needed for `ImGui::CalcTextSize` but emits no glyphs / draws.
+// Used by both the cached block path (b.words populated once) and the
+// per-cell table path (local stack vector). Opt B.
+static void DecomposeAndMeasure(const std::vector<StyledRun>& runs, const RenderState& r,
+                                std::vector<PlanWord>& outWords) {
+    outWords.clear();
+    outWords.reserve(runs.size() * 4);
     for (const StyledRun& run : runs) {
         size_t i = 0;
         const std::string& t = run.text;
         while (i < t.size()) {
             unsigned char c = static_cast<unsigned char>(t[i]);
             if (c == '\n') {
-                InlineWord w;
+                PlanWord w;
                 w.forceBreak = true;
-                words.push_back(std::move(w));
+                outWords.push_back(std::move(w));
                 ++i;
             } else if (c == ' ' || c == '\t' || c == '\r') {
                 ++i;
@@ -681,79 +620,92 @@ static void RenderRunsRS(const std::vector<StyledRun>& runs, const RenderState& 
                         break;
                     ++j;
                 }
-                InlineWord w;
+                PlanWord w;
                 w.text.assign(t.data() + i, j - i);
                 w.marks = run.marks;
                 w.href = run.href;
-                words.push_back(std::move(w));
+                ImFont* f = PickFontRS(r, w.marks);
+                ImGui::PushFont(f);
+                w.widthPx = ImGui::CalcTextSize(w.text.data(), w.text.data() + w.text.size()).x;
+                ImGui::PopFont();
+                outWords.push_back(std::move(w));
                 i = j;
             }
         }
     }
+}
 
+// Direct-AddText emit. Bypasses per-word ImGui::PushFont / TextUnformatted /
+// PopFont / SameLine — all glyphs land via one `ImDrawList::AddText` call per
+// word. Manual cursor (curX, curY) walks the wrap layout in screen-space.
+// Layout space is claimed at the end via a single `ImGui::Dummy` so siblings
+// flow correctly. Link hover/click uses our own `IsMouseHoveringRect` instead
+// of `IsItemHovered` (no ItemAdd anywhere). Opt B.
+static void EmitWordsRS(const std::vector<PlanWord>& words, const RenderState& r) {
+    if (words.empty()) {
+        return;
+    }
     const float wrapWidth = (r.fixedWrapWidth > 0.0f) ? r.fixedWrapWidth : ImGui::GetContentRegionAvail().x;
+    const float effectiveWrap = (wrapWidth > 0.0f) ? wrapWidth : 1.0f;
+
+    // Space width with the regular font — close enough for inter-word spacing
+    // regardless of the surrounding word's font variant.
     ImGui::PushFont(PickFontRS(r, 0));
     const float spaceW = ImGui::CalcTextSize(" ").x;
+    const float lineH = ImGui::GetTextLineHeight();
+    ImFont* spaceFont = ImGui::GetFont();
     ImGui::PopFont();
 
+    const float fontSize = ImGui::GetFontSize();
+
+    const ImVec2 startScreen = ImGui::GetCursorScreenPos();
+    float curX = startScreen.x;
+    float curY = startScreen.y;
     bool firstOnLine = true;
-    float curX = 0.0f;
     bool prevWasCode = false;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 codeBgCol = IM_COL32(48, 48, 60, 200);
     const float codeBgRound = 3.0f;
     const float codeBgPadX = 2.0f;
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    const ImU32 linkCol = ImGui::GetColorU32(ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
 
     for (size_t wi = 0; wi < words.size(); ++wi) {
-        const InlineWord& w = words[wi];
+        const PlanWord& w = words[wi];
         if (w.forceBreak) {
-            if (firstOnLine) {
-                ImGui::TextUnformatted("");
-            }
+            curY += lineH;
+            curX = startScreen.x;
             firstOnLine = true;
-            curX = 0.0f;
             prevWasCode = false;
             continue;
         }
-        ImFont* font = PickFontRS(r, w.marks);
-        ImGui::PushFont(font);
-        const float wordW = ImGui::CalcTextSize(w.text.c_str(), w.text.c_str() + w.text.size()).x;
-        ImGui::PopFont();
-
+        const float wordW = w.widthPx;
         const float leadingW = firstOnLine ? 0.0f : spaceW;
-        if (!firstOnLine && curX + leadingW + wordW > wrapWidth) {
+        if (!firstOnLine && (curX - startScreen.x) + leadingW + wordW > effectiveWrap) {
+            curY += lineH;
+            curX = startScreen.x;
             firstOnLine = true;
-            curX = 0.0f;
             prevWasCode = false;
         }
         const bool isCode = (w.marks & MARK_CODE) != 0;
+        const bool isLink = (w.marks & MARK_LINK) != 0;
 
         if (!firstOnLine) {
-            ImGui::SameLine(0.0f, 0.0f);
-            const ImVec2 interWordPos = ImGui::GetCursorScreenPos();
-            const float interWordLineH = ImGui::GetTextLineHeight();
+            const ImVec2 spacePos(curX, curY);
             if (prevWasCode && isCode) {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(ImVec2(interWordPos.x, interWordPos.y),
-                                  ImVec2(interWordPos.x + spaceW, interWordPos.y + interWordLineH), codeBgCol, 0.0f);
+                dl->AddRectFilled(spacePos, ImVec2(curX + spaceW, curY + lineH), codeBgCol, 0.0f);
             }
-            ImGui::TextUnformatted(" ");
-            ImGui::SameLine(0.0f, 0.0f);
-            curX += spaceW;
             if (r.selCtx) {
                 const char* spaceLit = " ";
-                SelectableText::RegisterSegment(*r.selCtx, spaceLit, spaceLit + 1, interWordPos, interWordLineH,
-                                                ImGui::GetFont(), spaceW, nullptr);
+                SelectableText::RegisterSegment(*r.selCtx, spaceLit, spaceLit + 1, spacePos, lineH, spaceFont, spaceW,
+                                                nullptr);
             }
+            curX += spaceW;
         }
 
-        ImGui::PushFont(font);
-        const bool isLink = (w.marks & MARK_LINK) != 0;
-        if (isLink) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
-        }
-        const ImVec2 wordPos = ImGui::GetCursorScreenPos();
-        const float lineH = ImGui::GetTextLineHeight();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wordPos(curX, curY);
+        ImFont* font = PickFontRS(r, w.marks);
+
         if (isCode) {
             const bool nextIsCode =
                 (wi + 1 < words.size()) && !words[wi + 1].forceBreak && (words[wi + 1].marks & MARK_CODE) != 0;
@@ -765,38 +717,70 @@ static void RenderRunsRS(const std::vector<StyledRun>& runs, const RenderState& 
                                       (rr > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
             dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
         }
-        ImGui::TextUnformatted(w.text.c_str(), w.text.c_str() + w.text.size());
+
+        // Single ImDrawList::AddText — no ImGui::PushFont/TextUnformatted/PopFont/SameLine.
+        const ImU32 glyphCol = isLink ? linkCol : textCol;
+        dl->AddText(font, fontSize, wordPos, glyphCol, w.text.data(), w.text.data() + w.text.size());
+
         if (r.selCtx) {
             SelectableText::RegisterSegment(
                 *r.selCtx, w.text.data(), w.text.data() + w.text.size(), wordPos, lineH, font, wordW,
                 isLink && !w.href.empty() ? const_cast<void*>(static_cast<const void*>(w.href.c_str())) : nullptr);
         }
+
         if (isLink) {
-            const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
             dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
-                        ImVec2(wordPos.x + wordW, wordPos.y + lineH - 1.0f), col);
-            ImGui::PopStyleColor();
-            if (r.clickableLinks && ImGui::IsItemHovered()) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (!w.href.empty())
-                    ImGui::SetTooltip("%s", w.href.c_str());
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
+                        ImVec2(wordPos.x + wordW, wordPos.y + lineH - 1.0f), textCol);
+            if (r.clickableLinks) {
+                const ImVec2 wMin(wordPos.x, wordPos.y);
+                const ImVec2 wMax(wordPos.x + wordW, wordPos.y + lineH);
+                if (ImGui::IsMouseHoveringRect(wMin, wMax)) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (!w.href.empty()) {
+                        ImGui::SetTooltip("%s", w.href.c_str());
+                    }
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
 #if defined(_WIN32)
-                    ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                        ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 #endif
+                    }
                 }
             }
         }
         if (w.marks & MARK_STRIKE) {
             const float midY = wordPos.y + lineH * 0.5f;
-            dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY), ImGui::GetColorU32(ImGuiCol_Text));
+            dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY), textCol);
         }
-        ImGui::PopFont();
 
         curX += wordW;
         firstOnLine = false;
         prevWasCode = isCode;
     }
+
+    // Claim the layout footprint with a single Dummy. Width = wrap width so
+    // subsequent widgets don't try to fit on the same line; height = (lines)
+    // * lineH from the start cursor.
+    const float totalHeight = (curY + lineH) - startScreen.y;
+    ImGui::Dummy(ImVec2(effectiveWrap, totalHeight));
+}
+
+// Cached path for kPara / kHeading — decompose once, emit many.
+static void RenderBlockRuns(const PreviewPlan::Block& b, const RenderState& r) {
+    if (!b.wordsBuilt) {
+        DecomposeAndMeasure(b.runs, r, b.words);
+        b.wordsBuilt = true;
+    }
+    EmitWordsRS(b.words, r);
+}
+
+// Uncached path for table cells — each cell's runs are separate; no shared cache.
+static void RenderUncachedRuns(const std::vector<StyledRun>& runs, const RenderState& r) {
+    if (runs.empty()) {
+        return;
+    }
+    std::vector<PlanWord> tmpWords;
+    DecomposeAndMeasure(runs, r, tmpWords);
+    EmitWordsRS(tmpWords, r);
 }
 
 // Emit a single plan block as ImGui draw calls.
@@ -804,7 +788,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
     using BK = PreviewPlan::Block;
     switch (b.kind) {
     case BK::kPara:
-        RenderRunsRS(b.runs, r);
+        RenderBlockRuns(b, r);
         if (r.selCtx) {
             SelectableText::EndBlock(*r.selCtx);
         }
@@ -824,7 +808,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             ImGui::SetWindowFontScale(scale);
         if (tinted)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
-        RenderRunsRS(b.runs, r);
+        RenderBlockRuns(b, r);
         if (tinted)
             ImGui::PopStyleColor();
         if (!isTooltip && scale != 1.0f)
@@ -920,7 +904,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
                     for (size_t ci = 0; ci < cellMax; ++ci) {
                         ImGui::TableNextColumn();
                         const TableCellData& cell = row.cells[ci];
-                        RenderRunsRS(cell.runs, r);
+                        RenderUncachedRuns(cell.runs, r);
                         if (r.selCtx) {
                             SelectableText::EndBlock(*r.selCtx);
                         }
