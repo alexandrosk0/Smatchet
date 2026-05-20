@@ -266,3 +266,26 @@ After all 5 slices land:
 - **User-side telemetry / opt-in profiling** — out of scope (privacy + design surface).
 - **Refactoring existing scenarios** — Slice 1 captures whatever the existing scenarios emit. Unstable / non-representative scenarios are a separate concern.
 - **Hardware variance investigation** — the 10 % mean tolerance + 2-consecutive-run requirement is a starting point; if CI false-positive rate is high after Slice 3 ships, tune the thresholds rather than redesign.
+
+## Implementation log
+
+- Slice 1 (PR #321) · baseline registry + driver scripts; `docs/perf/regression-policy.json` + per-host baseline schema; `scripts/dev/perf-{run,compare,baseline}.{sh,py}`.
+- Slice 2 (PR #322) · Pillar 2 static gate (`scripts/dev/pillar2-scan.sh`) + dispatcher.drain marker + `LastDrainTaskCount()` accessor + 7-site PILLAR2_WORKER_ONLY annotation migration + 3 TODO(pillar2): tracked sites.
+- Slice 3 (PR #323) · `.github/workflows/perf-pr-fast.yml` + PR-fast 4-scenario subset + `perf-out-of-band` override label + first-run baseline bootstrap.
+- Slice 4 (PR #324) · `.github/workflows/perf-full.yml` (cron + workflow_dispatch) + `agents/perf-gatekeeper.md` (+ Claude Code skill alias) + `scripts/dev/perf-marker-inventory.sh` regenerating `docs/perf/MARKER_INVENTORY.md`.
+- Slice 5 (PR #325) · `tests/ui/sync_stall_visible_cue.test.cpp` (bucket-E IM_REGISTER_TEST GoodOrder + BadOrder variants) + `scripts/dev/test-ui-sync-stall-visible-cue.sh` + `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` cache var on `ninja-ui-test-msys2` preset + optional final-stage step in `.github/workflows/perf-full.yml`.
+
+## Deviations from plan
+
+- **Slice 5 stall hook lives in the test source, not in `SmatchetFieldIconRender.cpp`** — the icon-fetch HTTP / file paths already run on a worker thread (both call sites are inside `app.LaunchBackgroundTask(...)` lambdas at `Source_Core/src/SmatchetFieldIconRender.cpp:309` and `:344`). Injecting `std::this_thread::sleep_for(...)` there would stall the worker, not the UI thread, and would not test the visible-cue invariant. The stall hook moved into `tests/ui/sync_stall_visible_cue.test.cpp` itself, which mirrors the production cue-before-block call-site shape in a test-engine-owned window (same pattern as `views_columns_reorder.test.cpp` / `callstack_tooltip_hover.test.cpp`). The bucket-E test still validates the architectural invariant — submission order of cue vs block — without touching production code.
+- **Order-of-submission assertion, not wall-clock measurement** — the original plan asked for `IM_CHECK(cueAppearedWithinMs <= 100)`. ImGui Test Engine drives frames in stepped mode, so wall-clock measurements are unreliable. Replaced with an atomic ordering sentinel (`g_cueOrder` ∈ {kUnobserved, kCueBeforeStall, kStallBeforeCue}) — same architectural invariant, deterministic in stepped frames. The Good variant asserts kCueBeforeStall; the Bad variant asserts kStallBeforeCue (documents what the regression looks like; protects against future inversion of cue/block order).
+- **Stall duration 50 ms, not 250 ms** — sleep duration trimmed to keep the bucket-E run quick. The invariant under test is ordering, not duration; 50 ms is enough to be humanly observable in real UI under the same pattern.
+- **Compile-definition wired via `set_source_files_properties`** — the `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` flag is scoped to `sync_stall_visible_cue.test.cpp` only (via `set_source_files_properties` in `tests/ui/CMakeLists.txt`), gated on a `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` CMake option that the `ninja-ui-test-msys2` preset turns ON. Production / iter / publish builds never compile the synthetic sleep.
+
+## Verification
+
+- Slice 1 — `bash scripts/dev/perf-run.sh idle` writes a JSON snapshot; `perf-compare.py` against the dev baseline exits 0. Synthetic regression injection round-trip verified end-to-end. **passed**.
+- Slice 2 — `bash scripts/dev/pillar2-scan.sh` returns zero CRITICAL after the 7-site annotation migration. `dispatcher.drain` row appears in `perf.snapshot` output. Synthetic CRITICAL injection (`cpr::Get` in a `*Ui*.cpp`) caught by the scanner. **passed**.
+- Slice 3 — `.github/workflows/perf-pr-fast.yml` validated by YAML lint + workflow syntax checks; live behaviour verifies on the merge of PR #323 itself. **pending CI**.
+- Slice 4 — `bash scripts/dev/perf-marker-inventory.sh` regenerates `docs/perf/MARKER_INVENTORY.md` cleanly (52 committed, 0 perf_temp:*). `agents/perf-gatekeeper.md` reviewed; skill alias mirrors content. Full-suite workflow validated by YAML + script-shape inspection; full live run pending first scheduled cron tick. **pending CI**.
+- Slice 5 — `tests/ui/sync_stall_visible_cue.test.cpp` compiles under `ninja-ui-test-msys2` preset; bash driver exits 0 against the GoodOrder + BadOrder variants. Synthetic break (invert cue/block order in the Good variant) caught by the IM_CHECK. **pending CI build**.
