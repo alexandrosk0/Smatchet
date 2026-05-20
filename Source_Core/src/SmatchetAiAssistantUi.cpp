@@ -4,8 +4,9 @@
 
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
-#include "AiChatTextEditorRender.h"
 #include "AiClientFactory.h"
+#include "MarkdownPreviewRender.h"
+#include "SelectableTextRun.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
 #include "AiTypes.h"
@@ -113,28 +114,65 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const float errorStripH = d.assistantLastError.empty() ? 0.0f : ImGui::GetTextLineHeightWithSpacing() * 1.5f;
     const float bodyH = (std::max)(80.0f, availY - headerH - inputH - errorStripH);
 
-    // Track whether the user is pinned to the tail BEFORE we render new content,
-    // so streaming tokens auto-scroll without fighting a manual scroll-up.
-    const bool wasAtTail = d.assistantAutoScrollAtTail;
-
-    // One read-only ImGuiColorTextEdit instance for the whole conversation.
-    // Holds drag-select + Ctrl+C/A across messages. Markdown is coloured in
-    // place by the hand-rolled AiChatMarkdownTokens scanner. There is exactly
-    // one AI panel in the app at any time so a function-local static is
-    // adequate; if we ever ship a second panel, plumb the view onto
-    // UiDrawSession instead.
-    static AiChatTextEditorView s_chatView;
-    s_chatView.RebuildBuffer(d.assistantHistory, d.assistantStreamBuf, d.assistantInFlight, wasAtTail);
-
+    // Slice 5: rich-rendered selectable AI chat. Each message goes through
+    // MarkdownPreviewRender::Render (md4c-driven, same rich path used by the
+    // ticket description preview). The whole history is bracketed by a single
+    // SelectableText::Begin/End so drag-select crosses message boundaries.
+    // Role prefix is emitted by a styled ImGui::TextColored above each
+    // message rather than as a `> Role:` quote line baked into the source.
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
-    const float innerW = ImGui::GetContentRegionAvail().x;
-    const float innerH = ImGui::GetContentRegionAvail().y;
-    s_chatView.Draw(innerW, innerH);
+
+    auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
+
+    MarkdownPreviewRender::Options renderOpts;
+    renderOpts.mode = MarkdownPreviewRender::Mode::Full;
+    renderOpts.clickableLinks = true;
+    // Share the outer Context across all per-message Render() calls so
+    // drag-select crosses message boundaries. existingSelCtx wins over
+    // selectableId — see MarkdownPreviewRender::Options.
+    renderOpts.existingSelCtx = &selCtx;
+
+    // Render one chat turn (role label + body). Role label registers as its
+    // own Segment so it participates in selection; the body's markdown render
+    // contributes one Segment per emitted word.
+    auto renderTurn = [&](const char* roleLabel, const ImVec4& roleColor, const std::string& body) {
+        const ImVec2 labelPos = ImGui::GetCursorScreenPos();
+        const float labelLineH = ImGui::GetTextLineHeight();
+        ImGui::PushStyleColor(ImGuiCol_Text, roleColor);
+        ImGui::TextUnformatted(roleLabel);
+        ImGui::PopStyleColor();
+        ImFont* labelFont = ImGui::GetFont();
+        const float labelWidth = ImGui::CalcTextSize(roleLabel).x;
+        SelectableText::RegisterSegment(selCtx, roleLabel, roleLabel + std::strlen(roleLabel), labelPos, labelLineH,
+                                        labelFont, labelWidth, nullptr);
+        SelectableText::EndBlock(selCtx);
+        MarkdownPreviewRender::Render(body, renderOpts);
+        SelectableText::EndBlock(selCtx);
+    };
+
+    const ImVec4 userColor(0.78f, 0.86f, 1.0f, 1.0f); // soft blue
+    const ImVec4 asstColor(0.85f, 0.75f, 1.0f, 1.0f); // soft purple
+    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
+        const AiMessage& m = d.assistantHistory[i];
+        const bool isUser = (m.Role == "user");
+        renderTurn(isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, m.Content);
+        ImGui::Spacing();
+    }
+    if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
+        renderTurn("Assistant (streaming...):", asstColor, d.assistantStreamBuf);
+    }
+
+    SelectableText::End(selCtx);
 
     // Tail tracking: update for next frame based on user's current scroll.
+    // Auto-scroll-to-tail re-pins when the user is already at the bottom.
     const float scrollY = ImGui::GetScrollY();
     const float scrollMax = ImGui::GetScrollMaxY();
+    const bool wasAtTail = d.assistantAutoScrollAtTail;
     d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
+    if (wasAtTail && scrollMax > 0.0f) {
+        ImGui::SetScrollY(scrollMax);
+    }
     ImGui::EndChild();
 }
 

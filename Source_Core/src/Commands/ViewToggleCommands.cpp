@@ -92,6 +92,7 @@ void RegisterViewToggleCommands(CommandRegistry& reg, AppController& app) {
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,
                    &OnOpenAuditTrail);
     RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr);
+    RegisterToggle(reg, app, "view.toggle.plan_doc_viewer", "Plan Docs", &UiDrawSession::showPlanDocViewer, nullptr);
     RegisterToggle(reg, app, "view.toggle.bulk_import", "Bulk Import", &UiDrawSession::showBulkImport, nullptr);
     RegisterToggle(reg, app, "view.toggle.bulk_export", "Bulk Export", &UiDrawSession::showBulkExport, nullptr);
     RegisterToggle(reg, app, "view.toggle.preferences", "Preferences", &UiDrawSession::showPreferences, nullptr);

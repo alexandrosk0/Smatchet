@@ -20,6 +20,7 @@
 #include "TicketGridModel.h"
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
+#include "SmatchetPlanDocViewerUi.h"
 #include "SmatchetUiSession.h"
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
@@ -683,6 +684,10 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawBulkExportWindow");
         drawBulkExportWindow(app, d);
+    }
+    {
+        SMATCHET_UI_PERF_SCOPE("DrawPlanDocViewer");
+        smatchet::DrawPlanDocViewer(d);
     }
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");

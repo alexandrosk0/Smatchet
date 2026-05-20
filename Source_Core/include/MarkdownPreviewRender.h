@@ -3,6 +3,10 @@
 #include <cctype>
 #include <string>
 
+namespace SelectableText {
+struct Context;
+} // namespace SelectableText
+
 /// Shared Markdown preview renderer. Walks a Markdown string with md4c and emits
 /// ImGui draw calls. Used by the long-text editor modal (Full mode) and the
 /// description tooltip path (Tooltip mode — drops heading scaling, code BeginChild,
@@ -17,6 +21,16 @@ struct Options {
     float wrapWidth = 0.0f;
     /// Off in Tooltip mode — tooltip dismisses on mouse-up so the click never lands.
     bool clickableLinks = true;
+    /// When non-empty AND `existingSelCtx == nullptr`, wraps the render in
+    /// SelectableText::Begin(selectableId) / End() so prose is drag-selectable
+    /// + Ctrl+C-copyable. Code blocks + tables remain non-selectable in MVP.
+    /// See docs/design/markdown-language-definition-for-textedit.md § Slice 4.
+    const char* selectableId = nullptr;
+    /// When non-null, prose runs register Segments into THIS Context instead
+    /// of opening a fresh one. Used by the AI chat surface where one outer
+    /// Context spans many sequential Render() calls (one per message) so
+    /// drag-select crosses message boundaries. Overrides `selectableId`.
+    SelectableText::Context* existingSelCtx = nullptr;
 };
 
 void Render(const std::string& md, const Options& opts = Options());

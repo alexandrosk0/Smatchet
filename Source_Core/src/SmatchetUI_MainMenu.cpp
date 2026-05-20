@@ -313,6 +313,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.showPerformance = !d.showPerformance;
                 recentViews_.Touch("view.toggle.performance");
             }
+            if (ImGui::MenuItem("Plan docs", nullptr, d.showPlanDocViewer)) {
+                d.showPlanDocViewer = !d.showPlanDocViewer;
+                recentViews_.Touch("view.toggle.plan_doc_viewer");
+            }
             if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
                 d.showBulkImport = !d.showBulkImport;
                 recentViews_.Touch("view.toggle.bulk-import");

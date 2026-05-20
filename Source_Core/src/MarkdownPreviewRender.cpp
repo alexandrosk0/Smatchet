@@ -2,6 +2,7 @@
 
 #include "CppSyntaxHighlight.h"
 #include "MarkdownConvert.h"
+#include "SelectableTextRun.h"
 #include "SmatchetImGuiFonts.h"
 #include "Logger.h"
 
@@ -90,6 +91,10 @@ struct PreviewState {
     bool tableInHeader = false;
     int tableColCount = 0;
     int tableNextId = 0;
+    /// Monotonic counter for code-block child windows so each block gets a
+    /// unique ImGui ID (the literal "##mdpreview_code" would collide across
+    /// multiple blocks in the same render and share scroll state).
+    int codeBlockNextId = 0;
     std::vector<TableRowData> tableRows;
     std::vector<StyledRun> tableCellRuns;
     int imgSpanDepth = 0;
@@ -107,6 +112,11 @@ struct PreviewState {
     /// <=0 falls back to ImGui::GetContentRegionAvail().x. Lets callers pin a wrap
     /// width independent of the surrounding window (tooltip option).
     float fixedWrapWidth = 0.0f;
+    /// Active SelectableText context. Non-null → prose `ImGui::TextUnformatted`
+    /// calls inside `PreviewRenderRuns` route through `SelectableText::TextRun`
+    /// so glyphs are drag-selectable + Ctrl+C-copyable. Code blocks + tables
+    /// remain non-selectable in MVP (handled by a follow-up).
+    SelectableText::Context* selCtx = nullptr;
 };
 
 /// Append `text` of length `size` as either an extension of the trailing run
@@ -243,19 +253,29 @@ static void PreviewRenderRuns(const std::vector<StyledRun>& runs, const PreviewS
 
         if (!firstOnLine) {
             ImGui::SameLine(0.0f, 0.0f);
+            const ImVec2 interWordPos = ImGui::GetCursorScreenPos();
+            const float interWordLineH = ImGui::GetTextLineHeight();
             // When both the previous and current word are inline-code, the gap
             // between them is part of the same `code` span — paint the bg under
             // the space too so the highlighting reads as continuous.
             if (prevWasCode && isCode) {
-                const ImVec2 spacePos = ImGui::GetCursorScreenPos();
-                const float lineH = ImGui::GetTextLineHeight();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(ImVec2(spacePos.x, spacePos.y), ImVec2(spacePos.x + spaceW, spacePos.y + lineH),
-                                  codeBgCol, 0.0f);
+                dl->AddRectFilled(ImVec2(interWordPos.x, interWordPos.y),
+                                  ImVec2(interWordPos.x + spaceW, interWordPos.y + interWordLineH), codeBgCol, 0.0f);
             }
             ImGui::TextUnformatted(" ");
             ImGui::SameLine(0.0f, 0.0f);
             curX += spaceW;
+            // Register the inter-word space as a Segment so Ctrl+C / right-
+            // click Copy preserves whitespace between words. Without this the
+            // selection text comes out as a single run-on token. ImGui::GetFont
+            // returns the currently bound font (the per-word PushFont below
+            // hasn't run yet — default font is active here).
+            if (s.selCtx) {
+                const char* spaceLit = " ";
+                SelectableText::RegisterSegment(*s.selCtx, spaceLit, spaceLit + 1, interWordPos, interWordLineH,
+                                                ImGui::GetFont(), spaceW, nullptr);
+            }
         }
 
         ImGui::PushFont(font);
@@ -281,6 +301,17 @@ static void PreviewRenderRuns(const std::vector<StyledRun>& runs, const PreviewS
             dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
         }
         ImGui::TextUnformatted(w.text.c_str(), w.text.c_str() + w.text.size());
+        if (s.selCtx) {
+            // Record the just-rendered word so SelectableText::End() can hit-test
+            // the mouse against it + paint the selection overlay + service
+            // Ctrl+C. href is threaded through as opaque void* — the caller's
+            // existing link-click handler (ShellExecute below) stays
+            // authoritative; the registered href is only used by
+            // GetHoveredHref for future routing.
+            SelectableText::RegisterSegment(
+                *s.selCtx, w.text.data(), w.text.data() + w.text.size(), wordPos, lineH, font, wordW,
+                isLink && !w.href.empty() ? const_cast<void*>(static_cast<const void*>(w.href.c_str())) : nullptr);
+        }
         if (isLink) {
             const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
             dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
@@ -350,6 +381,11 @@ static void PreviewFlushBlock(PreviewState& s) {
     }
     s.runs.clear();
     s.headingLevel = 0;
+    // Selectable text — bump the block-boundary counter so Ctrl+C inserts `\n`
+    // between selected segments that span block boundaries.
+    if (s.selCtx) {
+        SelectableText::EndBlock(*s.selCtx);
+    }
 }
 
 static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
@@ -517,6 +553,12 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
                                 r.marks |= MARK_BOLD;
                         }
                         PreviewRenderRuns(cell.runs, s);
+                        // Mark a block boundary at each cell end so cross-cell
+                        // selection inserts a newline (otherwise the cells
+                        // glue together into one run-on token on copy).
+                        if (s.selCtx) {
+                            SelectableText::EndBlock(*s.selCtx);
+                        }
                     }
                 }
                 ImGui::EndTable();
@@ -591,6 +633,21 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
             if (fonts.Mono)
                 ImGui::PopFont();
         } else {
+            // Unique per-block id so multiple code blocks in the same render
+            // don't share BeginChild scroll state.
+            ImGui::PushID(s.codeBlockNextId++);
+
+            // Copy-to-clipboard button at the top-right of the code block.
+            // This compensates for the SelectableTextRun gap on code-block
+            // contents (deferred — see plan § Slice 4 deviations) while
+            // giving the user the common case (copy the whole snippet).
+            const float availW = ImGui::GetContentRegionAvail().x;
+            const float btnW = 60.0f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + availW - btnW);
+            if (ImGui::SmallButton("Copy##codeblock")) {
+                ImGui::SetClipboardText(s.codeBuffer.c_str());
+            }
+
             // Render the accumulated code-block text in a child with monospace styling.
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
             const float h = ImGui::GetTextLineHeightWithSpacing() *
@@ -610,6 +667,7 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
                 ImGui::PopFont();
             ImGui::EndChild();
             ImGui::PopStyleColor();
+            ImGui::PopID();
         }
         s.codeBuffer.clear();
         s.codeLang.clear();
@@ -754,6 +812,26 @@ void Render(const std::string& md, const Options& opts) {
     state.mode = opts.mode;
     state.clickableLinks = opts.clickableLinks;
     state.fixedWrapWidth = opts.wrapWidth;
+    // Selectable text overlay — three modes:
+    //   (a) `existingSelCtx` non-null: register segments into the caller's
+    //       Context, don't open/close one here. Used by the AI chat surface
+    //       where one outer Begin/End spans many sequential Render() calls.
+    //   (b) `selectableId` non-empty: open + close our own Context inline.
+    //       Used by the description preview (one Render = one selection
+    //       region).
+    //   (c) Neither set: legacy non-selectable path.
+    // Code blocks + tables remain non-selectable in this MVP (deferred per
+    // the slice-4 plan).
+    SelectableText::Context* selCtx = nullptr;
+    bool ownsSelCtx = false;
+    if (opts.existingSelCtx != nullptr) {
+        selCtx = opts.existingSelCtx;
+        state.selCtx = selCtx;
+    } else if (opts.selectableId != nullptr && opts.selectableId[0] != '\0') {
+        selCtx = &SelectableText::Begin(opts.selectableId);
+        state.selCtx = selCtx;
+        ownsSelCtx = true;
+    }
     MD_PARSER parser{};
     parser.abi_version = 0;
     parser.flags = MarkdownConvert::Md4cParserFlags();
@@ -764,6 +842,9 @@ void Render(const std::string& md, const Options& opts) {
     parser.text = PreviewText;
     md_parse(md.data(), static_cast<MD_SIZE>(md.size()), &parser, &state);
     PreviewFlushBlock(state);
+    if (ownsSelCtx) {
+        SelectableText::End(*selCtx);
+    }
 }
 
 } // namespace MarkdownPreviewRender

@@ -251,9 +251,9 @@ void TextEditor::AddUndo(UndoRecord& aValue) {
     // printf("AddUndo: (@%d.%d) +\'%s' [%d.%d .. %d.%d], -\'%s', [%d.%d .. %d.%d] (@%d.%d)\n",
     //	aValue.mBefore.mCursorPosition.mLine, aValue.mBefore.mCursorPosition.mColumn,
     //	aValue.mAdded.c_str(), aValue.mAddedStart.mLine, aValue.mAddedStart.mColumn, aValue.mAddedEnd.mLine,
-    //aValue.mAddedEnd.mColumn, 	aValue.mRemoved.c_str(), aValue.mRemovedStart.mLine, aValue.mRemovedStart.mColumn,
-    //aValue.mRemovedEnd.mLine, aValue.mRemovedEnd.mColumn, 	aValue.mAfter.mCursorPosition.mLine,
-    //aValue.mAfter.mCursorPosition.mColumn
+    // aValue.mAddedEnd.mColumn, 	aValue.mRemoved.c_str(), aValue.mRemovedStart.mLine, aValue.mRemovedStart.mColumn,
+    // aValue.mRemovedEnd.mLine, aValue.mRemovedEnd.mColumn, 	aValue.mAfter.mCursorPosition.mLine,
+    // aValue.mAfter.mCursorPosition.mColumn
     //	);
 
     mUndoBuffer.resize((size_t)(mUndoIndex + 1));
@@ -785,8 +785,8 @@ void TextEditor::Render() {
     // Smatchet — added for AI chat panel: when line numbers are hidden, the
     // gutter shrinks to just `mLeftMargin` so the prose starts flush-left.
     if (mShowLineNumbers) {
-        mTextStart =
-            ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+        mTextStart = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x +
+                     mLeftMargin;
     } else {
         mTextStart = static_cast<float>(mLeftMargin);
     }
@@ -1863,19 +1863,6 @@ void TextEditor::Colorize(int aFromLine, int aLines) {
     mCheckComments = true;
 }
 
-// Smatchet — added for AI chat panel
-void TextEditor::SetTokenColor(int aLine, int aColStart, int aColEnd, PaletteIndex aIdx) {
-    if (aLine < 0 || aLine >= (int)mLines.size())
-        return;
-    Line& line = mLines[aLine];
-    const int lo = std::max(0, aColStart);
-    const int hi = std::min((int)line.size(), aColEnd);
-    for (int c = lo; c < hi; ++c) {
-        line[c].mColorIndex = aIdx;
-    }
-}
-// Smatchet — end
-
 void TextEditor::ColorizeRange(int aFromLine, int aToLine) {
     if (mLines.empty() || aFromLine >= aToLine)
         return;
@@ -2035,12 +2022,31 @@ void TextEditor::ColorizeInternal() {
                         auto& startStr = mLanguageDefinition.mCommentStart;
                         auto& singleStartStr = mLanguageDefinition.mSingleLineComment;
 
+                        // Smatchet — added for markdown LD: compute "currently in
+                        // multi-line comment" BEFORE the start-token scan so the
+                        // same-token-delimiter guard below can read it. For all
+                        // built-in LDs (start != end) this is a pure no-op — the
+                        // gate `_smatchetSameTokenDelim` short-circuits to false.
+                        const bool _smatchetInCommentNow =
+                            (commentStartLine < currentLine ||
+                             (commentStartLine == currentLine && commentStartIndex <= currentIndex));
+                        const bool _smatchetSameTokenDelimStart =
+                            (!mLanguageDefinition.mCommentStart.empty() &&
+                             mLanguageDefinition.mCommentStart == mLanguageDefinition.mCommentEnd);
+                        // Smatchet — end
                         if (singleStartStr.size() > 0 && currentIndex + singleStartStr.size() <= line.size() &&
                             equals(singleStartStr.begin(), singleStartStr.end(), from, from + singleStartStr.size(),
                                    pred)) {
                             withinSingleLineComment = true;
                         } else if (!withinSingleLineComment && currentIndex + startStr.size() <= line.size() &&
-                                   equals(startStr.begin(), startStr.end(), from, from + startStr.size(), pred)) {
+                                   equals(startStr.begin(), startStr.end(), from, from + startStr.size(), pred) &&
+                                   // Smatchet — added for markdown LD: for same-token
+                                   // delimiters (open == close, e.g. ``` markdown
+                                   // fences), do NOT treat a match as a new opener
+                                   // while we're already inside a comment span — the
+                                   // bytes are the close fence. The end-string scan
+                                   // below handles the actual close.
+                                   !(_smatchetSameTokenDelimStart && _smatchetInCommentNow)) {
                             commentStartLine = currentLine;
                             commentStartIndex = currentIndex;
                         }
@@ -2052,11 +2058,28 @@ void TextEditor::ColorizeInternal() {
                         line[currentIndex].mComment = withinSingleLineComment;
 
                         auto& endStr = mLanguageDefinition.mCommentEnd;
-                        if (currentIndex + 1 >= (int)endStr.size() &&
-                            equals(endStr.begin(), endStr.end(), from + 1 - endStr.size(), from + 1, pred)) {
-                            commentStartIndex = endIndex;
-                            commentStartLine = endLine;
+                        // Smatchet — added for markdown LD: skip the end-string
+                        // check when start==end and the cursor is still inside
+                        // the opening token. Without this guard, same-token
+                        // block-comment delimiters (e.g. markdown ``` fences)
+                        // self-close on the same bytes that opened them. All
+                        // built-in LDs use distinct start/end strings so this
+                        // is a pure no-op for them.
+                        const bool _smatchetSameTokenDelim =
+                            (!mLanguageDefinition.mCommentStart.empty() &&
+                             mLanguageDefinition.mCommentStart == mLanguageDefinition.mCommentEnd);
+                        const bool _smatchetInsideOpener = (commentStartLine == currentLine &&
+                                                            currentIndex < commentStartIndex + (int)startStr.size());
+                        if (!(_smatchetSameTokenDelim && _smatchetInsideOpener)) {
+                            // Smatchet — end
+                            if (currentIndex + 1 >= (int)endStr.size() &&
+                                equals(endStr.begin(), endStr.end(), from + 1 - endStr.size(), from + 1, pred)) {
+                                commentStartIndex = endIndex;
+                                commentStartLine = endLine;
+                            }
+                            // Smatchet — added for markdown LD: close the guard.
                         }
+                        // Smatchet — end
                     }
                 }
                 line[currentIndex].mPreprocessor = withinPreproc;
@@ -3594,3 +3617,63 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::Lua() {
     }
     return langDef;
 }
+
+// Smatchet — added for markdown LD.
+//
+// Markdown(): native LanguageDefinition for the ImGuiColorTextEdit colorizer.
+// Fenced code blocks use the multi-line comment span (mCommentStart=mCommentEnd
+// = "```") in conjunction with the same-token-delimiter guard patched into
+// ColorizeInternal() above. The alternative wiring (issue #155 on
+// BalazsJako/ImGuiColorTextEdit) uses "<!--" / "-->" so the comment span
+// covers HTML comments instead of fences — we pick fences because the
+// Smatchet corpus has near-zero HTML comments and lots of fenced code.
+const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::Markdown() {
+    static bool inited = false;
+    static LanguageDefinition langDef;
+    if (!inited) {
+        using P = PaletteIndex;
+        // Regex insertion order = match precedence. Block-level patterns are
+        // line-anchored; inline patterns run after them.
+        // ATX heading — `# ` through `###### `.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("^#{1,6}[ \\t].*$", P::Keyword));
+        // Horizontal rule — three or more `-`, `*`, or `_` on a line.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("^(-{3,}|\\*{3,}|_{3,})$", P::Punctuation));
+        // Blockquote — `> ` line. Tagged Comment so it visually recedes.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("^>[ \\t].*$", P::Comment));
+        // List marker (un/ordered) at line start, captures the marker only.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("^[ \\t]*([-*+]|\\d+\\.)[ \\t]", P::Punctuation));
+        // Link / image — `[text](url)` / `![alt](url)` whole token.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("!?\\[[^\\]]+\\]\\([^)]+\\)", P::KnownIdentifier));
+        // Bold — `**text**`. Must come before italic so `**…**` wins.
+        langDef.mTokenRegexStrings.push_back(
+            std::make_pair<std::string, PaletteIndex>("\\*\\*[^\\*]+\\*\\*", P::Identifier));
+        // Strikethrough — `~~text~~`.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("~~[^~]+~~", P::Preprocessor));
+        // Italic — `*text*`. Body class excludes `*` so unmatched markers
+        // don't span and bold remains the leftmost match.
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("\\*[^\\*\\n]+\\*", P::String));
+        // Inline code — `` `text` `` (single backtick pair).
+        langDef.mTokenRegexStrings.push_back(std::make_pair<std::string, PaletteIndex>("`[^`\\n]+`", P::Number));
+
+        // Same-token fence as block comment. ColorizeInternal()'s guard patch
+        // (added above) prevents the opener from immediately re-closing.
+        langDef.mCommentStart = "```";
+        langDef.mCommentEnd = "```";
+        langDef.mSingleLineComment = ""; // markdown has none
+
+        langDef.mCaseSensitive = true;
+        langDef.mAutoIndentation = false;
+        langDef.mPreprocChar = 0; // unused — no line starts with this in markdown
+        langDef.mTokenize = nullptr;
+
+        langDef.mName = "Markdown";
+
+        inited = true;
+    }
+    return langDef;
+}
+
+// Smatchet — end

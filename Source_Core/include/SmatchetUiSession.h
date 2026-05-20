@@ -141,6 +141,10 @@ struct UiDrawSession {
     bool showBulkImport = false;
     bool showBulkExport = false;
     bool showAuditTrail = false;
+    /// Plan-doc viewer window. Toggled from View → Plan docs and via
+    /// `view.toggle.plan_doc_viewer`. Read-only TextEditor backed by
+    /// SmatchetPlanDocViewerUi over docs/design/*.md + docs/adr/*.md.
+    bool showPlanDocViewer = false;
     bool requestAuditTrailFocus = false;
     /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
     bool showLogWindow = true;

@@ -152,6 +152,12 @@ class TextEditor {
         static const LanguageDefinition& SQL();
         static const LanguageDefinition& AngelScript();
         static const LanguageDefinition& Lua();
+        // Smatchet — added for markdown LD. Slice 5 retired MarkdownChat()
+        // when AI chat moved off TextEditor onto MarkdownPreviewRender +
+        // SelectableTextRun. Markdown() stays — still used by the plan-doc
+        // viewer (slice 2) + the ticket description editor (slice 3).
+        static const LanguageDefinition& Markdown();
+        // Smatchet — end
     };
 
     TextEditor();
@@ -184,10 +190,6 @@ class TextEditor {
     bool IsTextChanged() const { return mTextChanged; }
     bool IsCursorPositionChanged() const { return mCursorPositionChanged; }
 
-    // Smatchet — added for AI chat panel
-    void SetTokenColor(int aLine, int aColStart, int aColEnd, PaletteIndex aIdx);
-    void DisableColorizerPasses() { mColorizerEnabled = false; }
-    // Smatchet — end
 
     bool IsColorizerEnabled() const { return mColorizerEnabled; }
     void SetColorizerEnable(bool aValue);
