@@ -41,7 +41,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || { echo "ERROR: cd to $REPO_ROOT failed" >&2; exit 2; }
 
 # --- patterns ---------------------------------------------------------------
 # Sync I/O reaching the UI thread is a Pillar 2 CRITICAL. Patterns mirror the
@@ -125,11 +125,14 @@ for arg in "$@"; do
 
         # Skip false-positives where the regex matched inside a comment. A
         # comment cannot execute I/O — strip leading whitespace and check the
-        # first two characters for // (line comment) or * (continuation of a
-        # block comment).
+        # first one or two characters: // (line comment), /* (block-comment
+        # opener), or * (continuation of a block comment). The /\** branch
+        # is needed because `/*` followed by content (e.g. `/* std::ifstream
+        # foo(p) */ // commented out`) does NOT match `//*` (needs second
+        # `/`) nor `\**` (needs literal `*` at column 0).
         stripped="${line_text#"${line_text%%[![:space:]]*}"}"
         case "$stripped" in
-            //*|\**) continue ;;
+            //*|/\**|\**) continue ;;
         esac
 
         # Check the 3 preceding lines for the BOTH-OK pattern.
