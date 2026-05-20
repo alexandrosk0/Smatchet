@@ -111,6 +111,18 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_field_edits_dead_archived_at "
             "ON pending_field_edits_dead(archived_at DESC)");
+#if defined(SMATCHET_WITH_AI)
+    // AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity). Additive
+    // table — old DBs auto-upgrade on first open. `pinned` flag is part of the
+    // row schema so pinned-exempt trim can be expressed in a single DELETE.
+    db.exec("CREATE TABLE IF NOT EXISTS ai_chat_messages ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "created_at INTEGER NOT NULL, "
+            "role TEXT NOT NULL, "
+            "content TEXT NOT NULL, "
+            "pinned INTEGER NOT NULL DEFAULT 0)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_id_desc ON ai_chat_messages(id DESC)");
+#endif
     LOG_INFO("LocalCacheManager: schema ready");
 }
 
@@ -807,3 +819,96 @@ void LocalCacheManager::DeleteDeadPendingFieldEdit(const std::int64_t deadId) {
         throw;
     }
 }
+
+#if defined(SMATCHET_WITH_AI)
+
+std::int64_t LocalCacheManager::AppendChatMessage(const AiMessage& msg) {
+    try {
+        SQLite::Statement ins(db, "INSERT INTO ai_chat_messages (created_at, role, content, pinned) "
+                                  "VALUES (?, ?, ?, ?)");
+        ins.bind(1, static_cast<long long>(msg.CreatedAtUnixMs));
+        ins.bind(2, msg.Role);
+        ins.bind(3, msg.Content);
+        ins.bind(4, msg.Pinned ? 1 : 0);
+        ins.exec();
+        return db.getLastInsertRowid();
+    } catch (const std::exception& ex) {
+        // Pillar 3 graceful degradation — the UI keeps the in-memory copy; persistence
+        // failures do not surface a modal. Same shape as ConfigManager::Save errors.
+        LOG_WARN("LocalCacheManager::AppendChatMessage failed err=%s", ex.what());
+        return -1;
+    }
+}
+
+void LocalCacheManager::UpdateChatMessagePin(std::int64_t id, bool pinned) {
+    try {
+        SQLite::Statement upd(db, "UPDATE ai_chat_messages SET pinned = ? WHERE id = ?");
+        upd.bind(1, pinned ? 1 : 0);
+        upd.bind(2, static_cast<long long>(id));
+        upd.exec();
+        if (db.getChanges() == 0) {
+            LOG_WARN("LocalCacheManager::UpdateChatMessagePin: no row id=%lld", static_cast<long long>(id));
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("LocalCacheManager::UpdateChatMessagePin failed id=%lld err=%s", static_cast<long long>(id),
+                 ex.what());
+    }
+}
+
+void LocalCacheManager::LoadChatMessages(std::size_t cap, std::vector<AiMessage>& outMessages,
+                                         std::vector<std::int64_t>& outIds) {
+    outMessages.clear();
+    outIds.clear();
+    if (cap == 0) {
+        return;
+    }
+    try {
+        // Subquery selects the most-recent `cap` by id-desc; outer query re-sorts
+        // ascending so the UI displays oldest→newest in chronological order.
+        SQLite::Statement q(db, "SELECT id, created_at, role, content, pinned FROM ("
+                                "  SELECT id, created_at, role, content, pinned FROM ai_chat_messages "
+                                "  ORDER BY id DESC LIMIT ?) "
+                                "ORDER BY id ASC");
+        q.bind(1, static_cast<long long>(cap));
+        while (q.executeStep()) {
+            AiMessage m;
+            const std::int64_t id = q.getColumn(0).getInt64();
+            m.CreatedAtUnixMs = q.getColumn(1).getInt64();
+            m.Role = q.getColumn(2).isNull() ? std::string() : std::string(q.getColumn(2).getText());
+            m.Content = q.getColumn(3).isNull() ? std::string() : std::string(q.getColumn(3).getText());
+            m.Pinned = q.getColumn(4).getInt() != 0;
+            outMessages.push_back(std::move(m));
+            outIds.push_back(id);
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("LocalCacheManager::LoadChatMessages failed err=%s", ex.what());
+        outMessages.clear();
+        outIds.clear();
+    }
+}
+
+void LocalCacheManager::ClearChatMessages() {
+    try {
+        db.exec("DELETE FROM ai_chat_messages");
+    } catch (const std::exception& ex) {
+        LOG_WARN("LocalCacheManager::ClearChatMessages failed err=%s", ex.what());
+    }
+}
+
+void LocalCacheManager::TrimChatMessages(std::size_t maxRows) {
+    try {
+        // Pinned rows always survive trim; only non-pinned rows beyond the most-recent
+        // `maxRows` are deleted. When `maxRows == 0` the inner subquery still matches no
+        // rows, and the outer DELETE removes every non-pinned row — which is the
+        // intended degenerate behaviour for cap=0.
+        SQLite::Statement del(db, "DELETE FROM ai_chat_messages WHERE pinned = 0 AND id NOT IN ("
+                                  "  SELECT id FROM ai_chat_messages WHERE pinned = 0 "
+                                  "  ORDER BY id DESC LIMIT ?)");
+        del.bind(1, static_cast<long long>(maxRows));
+        del.exec();
+    } catch (const std::exception& ex) {
+        LOG_WARN("LocalCacheManager::TrimChatMessages failed maxRows=%zu err=%s", maxRows, ex.what());
+    }
+}
+
+#endif // SMATCHET_WITH_AI

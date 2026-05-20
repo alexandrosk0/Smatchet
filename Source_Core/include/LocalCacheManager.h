@@ -1,12 +1,18 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "CachedTicketTypes.h"
 #include "OfflineQueueReplayPolicy.h"
+
+#if defined(SMATCHET_WITH_AI)
+#include "AiTypes.h"
+#endif
 
 /** Max replay attempts for offline `pending_creates` before archive or drop.
  *  Aliases `OfflineQueueReplayPolicy::kMaxReplayAttempts` so the SQLite-free
@@ -76,6 +82,29 @@ class LocalCacheManager {
     void ArchivePendingFieldEdit(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
     std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits();
     void DeleteDeadPendingFieldEdit(std::int64_t deadId);
+
+#if defined(SMATCHET_WITH_AI)
+    // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------
+    //
+    // All writes routed through `smatchet::ai::chat_persist` worker so the UI thread
+    // never blocks on SQLite. Schema is additive (`CREATE TABLE IF NOT EXISTS`); old
+    // DBs auto-upgrade without a schema-version probe. Failures degrade to in-memory-
+    // only — every call wraps in try/catch and logs `LOG_WARN` on failure. Pinned rows
+    // are exempt from `TrimChatMessages` so user-bookmarked context survives growth.
+    //
+    /// @return newly-inserted row id, or -1 on failure.
+    std::int64_t AppendChatMessage(const AiMessage& msg);
+    /// Flips the `pinned` column for `id`. No-op + WARN if `id` is absent.
+    void UpdateChatMessagePin(std::int64_t id, bool pinned);
+    /// Loads up to `cap` most-recent rows (sorted ascending by id so the UI displays
+    /// in chronological order). `outMessages[i]` and `outIds[i]` are parallel — the
+    /// row id at the same index identifies the SQLite row for that message.
+    void LoadChatMessages(std::size_t cap, std::vector<AiMessage>& outMessages, std::vector<std::int64_t>& outIds);
+    /// Removes every row from the chat table (user-driven Clear Chat).
+    void ClearChatMessages();
+    /// Keeps the most-recent `maxRows` non-pinned rows + every pinned row. Idempotent.
+    void TrimChatMessages(std::size_t maxRows);
+#endif
 
   private:
     SQLite::Database db;

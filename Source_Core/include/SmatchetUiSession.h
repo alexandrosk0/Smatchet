@@ -188,6 +188,28 @@ struct UiDrawSession {
     bool requestAssistantFocus = false;
     bool assistantPendingSideSwap = false;
     std::vector<AiMessage> assistantHistory;
+    /// Parallel to `assistantHistory`: `assistantHistoryRowIds[i]` is the SQLite row
+    /// id assigned to `assistantHistory[i]` by `LocalCacheManager::AppendChatMessage`.
+    /// Sentinel `-1` means "append in flight; worker hasn't reported the row id back
+    /// yet". Pin-toggle posts no-op on `-1` (the row isn't durable yet); on the next
+    /// hydrate the message reloads with its post-restart row id. Kept parallel by
+    /// every `assistantHistory.push_back(...)` site — see Phase 3.6.
+    std::vector<std::int64_t> assistantHistoryRowIds;
+    /// False until `HydrateFromConfigOnce` (or its async tail) finishes loading
+    /// persisted history from the SQLite cache. `dispatchSend` + pin-toggle no-op
+    /// when false so a Send during the hydrate window doesn't interleave a new
+    /// message into the about-to-be-replaced vector.
+    bool assistantHistoryHydrated = false;
+    /// Pinned-bookmark scroll-to-message latch. `-1` = no pending jump; otherwise an
+    /// index into `assistantHistory`. `DrawHistoryArea` reads + clears on consumption.
+    /// (Phase 6 of ai-chat-claude-desktop-parity; Phase 3 only seeds the field so the
+    /// dispatch_send + hydrate paths can compile against the post-Phase-6 shape.)
+    int assistantScrollToMessageIndex = -1;
+    /// `now < assistantCopyToastUntilMs` → render the 1-line copy-confirmation strip.
+    /// Set by the Copy SmallButton; auto-dismisses on time-out. (Phase 7 surface;
+    /// seeded here so the hydrate field cluster lives in one place.)
+    std::int64_t assistantCopyToastUntilMs = 0;
+    std::string assistantCopyToastLabel;
     std::string assistantInputBuf;
     std::string assistantStreamBuf;
     bool assistantInFlight = false;

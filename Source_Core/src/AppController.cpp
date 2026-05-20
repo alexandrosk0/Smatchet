@@ -98,6 +98,8 @@
 #include "AiTypes.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
+#include "SmatchetChatPersistWorker.h"
+#include "SmatchetUiSession.h"
 #endif
 
 #if defined(_WIN32)
@@ -386,6 +388,12 @@ AppController::~AppController() {
     // hand off through `mainThreadDispatcher.PostToMainThread` (still accepting posts
     // at this instant) and the controller's join blocks until those callbacks return.
     aiAssistant_.reset();
+    // Phase 3 of ai-chat-claude-desktop-parity. Stop the chat-persist worker after
+    // the AI assistant finishes (no more new Enqueue calls from a streaming callback)
+    // but BEFORE `mainThreadDispatcher.BeginShutdown()` and before LCM destructs at
+    // member-destruction time. Stop drains pending ops within 250 ms then joins the
+    // worker thread. Pillar 3 — no detached thread may outlive `Cache`.
+    smatchet::ai::chat_persist::Stop();
 #endif
 
     mainThreadDispatcher.BeginShutdown();
@@ -1088,6 +1096,23 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     localCacheDbPath_ = dbPath;
 
     Cache = std::make_unique<LocalCacheManager>(dbPath);
+
+#if defined(SMATCHET_WITH_AI)
+    // Phase 3 of ai-chat-claude-desktop-parity. Start the single coalescing
+    // chat-persist worker now that the LCM is live; Stop() runs in ~AppController
+    // BEFORE any member destructs so the worker thread is joined while LCM, the
+    // dispatcher, and `g_ui` are still valid. The on-append callback runs on the
+    // UI thread via `mainThreadDispatcher.PostToMainThread`; it backfills the
+    // parallel `assistantHistoryRowIds` so subsequent pin-toggle ops have a row
+    // id to flip. Guard against shrink/clear races by re-checking the index
+    // against the current vector size — clear-chat may have run between the
+    // worker's INSERT and the dispatcher drain.
+    smatchet::ai::chat_persist::Start(*Cache, mainThreadDispatcher, [](std::size_t idx, std::int64_t rowId) {
+        if (idx < g_ui.assistantHistoryRowIds.size()) {
+            g_ui.assistantHistoryRowIds[idx] = rowId;
+        }
+    });
+#endif
 
 #if defined(SMATCHET_WITH_AGENTIC)
     // Agentic proposal store — sibling SQLite file next to the local cache. Resolves to
@@ -2878,6 +2903,18 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
 
     return true;
 }
+
+#if defined(SMATCHET_WITH_AI)
+void AppController::LoadAiChatMessages(std::size_t cap, std::vector<AiMessage>& outMessages,
+                                       std::vector<std::int64_t>& outIds) const {
+    outMessages.clear();
+    outIds.clear();
+    if (!Cache) {
+        return;
+    }
+    Cache->LoadChatMessages(cap, outMessages, outIds);
+}
+#endif
 
 std::string AppController::GetResolvedLocalCacheDbPath() const {
     if (localCacheDbPath_.empty()) {

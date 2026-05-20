@@ -15,6 +15,7 @@
 #include "ConfigManager.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "SmatchetChatPersistWorker.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -90,7 +91,17 @@ void ScheduleConfigSaveDetached(const TrackerConfig& cfg) {
     }).detach();
 }
 
-void HydrateFromConfigOnce(UiDrawSession& d) {
+// Inline-vs-async hydration split. Caps ≤ this threshold load synchronously on
+// first frame; SQLite reads of ~200 rows are well under 5 ms on warm disk so a
+// brief one-frame stall is preferable to the cost of an extra background-thread
+// + MainThreadDispatcher round-trip. Above the threshold the load goes to a
+// detached worker that posts the result back via the dispatcher. The exact value
+// is documented in `docs/design/ai-chat-claude-desktop-parity.md` § Phase 3 step
+// 7; the measured latency for the inline path is recorded next to the call site
+// via the Pillar-2 annotation below (see comment block).
+constexpr std::size_t kHydrateInlineRowThreshold = 200;
+
+void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
     static bool s_hydrated = false;
     if (s_hydrated) {
         return;
@@ -100,6 +111,52 @@ void HydrateFromConfigOnce(UiDrawSession& d) {
     if (d.assistantInputBuf.capacity() < static_cast<size_t>(kInputBufCap)) {
         d.assistantInputBuf.reserve(kInputBufCap);
     }
+
+    // Phase 3 of ai-chat-claude-desktop-parity. Load persisted chat history through
+    // the AppController wrapper (which forwards to LocalCacheManager). Until the
+    // load completes, `assistantHistoryHydrated = false` gates dispatchSend +
+    // pin-toggle so a Send during the hydrate window doesn't insert a duplicate.
+    //
+    // Pillar 2 — UI thread budget 6.94 ms. The inline-vs-async split below honours
+    // the contract: ≤200-row read is a single SQLite SELECT against the indexed
+    // `idx_ai_chat_messages_id_desc`. Phase 3.10 measured 160.6 µs / load average
+    // for 200 rows on dev box (in-memory SQLite, 20-iter benchmark in
+    // `tests/Source_Core/LocalCacheManagerChat.test.cpp` "hydration latency
+    // microbench") — 2.3% of frame budget, comfortably under threshold. On-disk
+    // WAL is typically 2-5x slower; even 800 µs leaves > 6 ms of headroom. Above
+    // 200 rows the read goes to a one-shot worker thread + MainThreadDispatcher
+    // post so the UI thread never blocks on the SELECT.
+    const std::size_t cap =
+        static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
+    if (cap <= kHydrateInlineRowThreshold) {
+        app.LoadAiChatMessages(cap, d.assistantHistory, d.assistantHistoryRowIds);
+        d.assistantHistoryHydrated = true;
+        return;
+    }
+    // Async hydration. Snapshot the cap by value (the worker thread cannot read
+    // d.cfg safely). Pillar 3 — the worker captures `app` by reference; AppController
+    // outlives any panel frame because `~AppController` joins `chat_persist::Stop()`
+    // before the LCM destructs, and the SmatchetUI `g_ui` is process-static. The
+    // dispatched callback may run after the panel was closed and reopened — that's
+    // fine because it only writes `d.assistantHistory` / `d.assistantHistoryRowIds`
+    // / `d.assistantHistoryHydrated`, all of which live on the same `UiDrawSession`.
+    AppController* appPtr = &app;
+    std::thread([appPtr, cap]() {
+        try {
+            std::vector<AiMessage> loaded;
+            std::vector<std::int64_t> ids;
+            appPtr->LoadAiChatMessages(cap, loaded, ids);
+            appPtr->mainThreadDispatcher.PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
+                g_ui.assistantHistory = std::move(loaded);
+                g_ui.assistantHistoryRowIds = std::move(ids);
+                g_ui.assistantHistoryHydrated = true;
+            });
+        } catch (...) {
+            // Graceful degradation — leave hydrated false so further dispatches no-op
+            // until the next session retries. The LCM already logged the LOG_WARN.
+            appPtr->mainThreadDispatcher.PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
+        }
+    }).detach();
 }
 
 void PersistOpenStateImmediate(UiDrawSession& d) {
@@ -409,7 +466,30 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         userMsg.Role = "user";
         userMsg.Content = d.assistantInputBuf;
         userMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
+        // Phase 3 of ai-chat-claude-desktop-parity. Take an Append snapshot BEFORE
+        // moving the message into the history vector — the worker copy survives
+        // independently of the UI state. Grow `assistantHistoryRowIds` in lock-step
+        // with `assistantHistory`; the worker's on-append callback backfills the
+        // sentinel `-1` slot with the SQLite row id when the INSERT completes.
+        AiMessage persistCopy = userMsg;
+        const std::size_t newIdx = d.assistantHistory.size();
         d.assistantHistory.push_back(std::move(userMsg));
+        d.assistantHistoryRowIds.push_back(-1);
+        if (d.assistantHistoryHydrated) {
+            smatchet::ai::chat_persist::Op appendOp;
+            appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
+            appendOp.message = std::move(persistCopy);
+            appendOp.messageIndex = newIdx;
+            smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
+            // Coalescing Trim — successive Appends collapse into a single Trim in the
+            // worker queue (see chat_persist::Enqueue Trim-collapse path), so the cost
+            // here is one O(N) erase on the worker side, not a SQLite DELETE per send.
+            smatchet::ai::chat_persist::Op trimOp;
+            trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
+            trimOp.trimCap =
+                static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
+            smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+        }
         std::string snapshot = d.assistantInputBuf;
         d.assistantInputBuf.clear();
         std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
@@ -477,7 +557,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
 } // namespace
 
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
-    HydrateFromConfigOnce(d);
+    HydrateFromConfigOnce(app, d);
     if (!d.assistantPanelOpen) {
         // Drop the chat-input registration with the dictation router so the
         // panel-closed state never receives transcribed text. The wrapper-level

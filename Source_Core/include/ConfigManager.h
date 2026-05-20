@@ -496,6 +496,14 @@ struct TrackerConfig {
     // opt-in explicitly via the Preferences > Assistant > Context tab. First-send consent modal
     // (per docs/backlog/agent-self-improvement/security.md 2026-05-17 P1) tracked separately.
     bool AssistantContextBlockAuditTrail = false;
+    /// Hard cap on persisted chat-history rows (excluding pinned messages, which are
+    /// exempt from trim). Drives `LocalCacheManager::TrimChatMessages` after every
+    /// successful append + caps the initial hydration window on first frame. Default
+    /// 500 keeps the SQLite file small while preserving multi-day conversation depth.
+    /// Per AGENTS.md "hold the schema-version bump until verified end-to-end" — the
+    /// shipped config-schema bump for this feature happens when Phase 7 lands, not on
+    /// every intermediate edit. (Phase 3 of ai-chat-claude-desktop-parity.)
+    int AssistantHistoryMaxRows = 500;
     // When true, the Preferences "Save changes" button runs a live ProbeReachability
     // probe before committing the Assistant tab buffers. Static validation
     // (`AiPrefsValidator`) must still pass first; the probe is the live network /
