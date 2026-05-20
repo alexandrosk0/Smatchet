@@ -106,32 +106,15 @@ jobs:
             fi
             baseline="docs/perf/baselines/${scen}.ci-windows-latest.json"
             if [ ! -f "$baseline" ]; then
-              # Same bootstrap path as PR-fast — capture + flag.
+              # Same bootstrap path as PR-fast — capture + flag. Inline
+              # heredoc replaced by scripts/dev/perf-baseline-bootstrap.py
+              # (Slice 3 fix); the column-0 heredoc body inside a YAML
+              # `run: |` block scalar terminated the block early and
+              # caused workflow parse failure on GitHub Actions.
               echo "::warning::No baseline at $baseline — bootstrap capture."
-              python - "$result" "$baseline" "$scen" <<'PY'
-import json, sys, os, datetime
-src, dst, scen = sys.argv[1:4]
-with open(src, "r", encoding="utf-8") as f:
-    raw = json.load(f)
-rows = []
-data = raw.get("data") if isinstance(raw, dict) else None
-if isinstance(data, dict) and isinstance(data.get("rows"), list):
-    rows = data["rows"]
-elif isinstance(raw.get("rows"), list):
-    rows = raw["rows"]
-baseline = {
-    "schemaVersion": 1, "scenarioId": scen,
-    "captureCommit": os.environ.get("GITHUB_SHA", "?"),
-    "captureDate": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "captureHost": "ci-windows-latest",
-    "captureRunnerOs": "windows-msys2-ucrt64",
-    "rows": rows, "hardwareNote": "GitHub Actions windows-2022",
-    "perScenarioPolicyOverride": None,
-}
-with open(dst, "w", encoding="utf-8") as f:
-    json.dump(baseline, f, indent=2)
-    f.write("\n")
-PY
+              python scripts/dev/perf-baseline-bootstrap.py \
+                  "$result" "$baseline" "$scen" \
+                  --hardware-note "GitHub Actions windows-2022"
               echo "### $scen — bootstrap baseline captured" >> /tmp/perf-report.md
             else
               python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
