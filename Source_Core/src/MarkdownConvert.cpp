@@ -36,25 +36,60 @@ std::string MdAttrToString(const MD_ATTRIBUTE& attr) {
     return std::string(attr.text, attr.size);
 }
 
-/// If `arr` has top-level text/hardBreak nodes, wrap the whole list in a single paragraph (Jira
-/// expects block children in list items and table cells).
+/// Wrap contiguous runs of inline nodes (text / hardBreak / mention / emoji / mediaInline /
+/// inlineCard) into paragraph blocks, leaving block nodes (lists, code, tables, ...) as siblings
+/// in `arr`. Jira ADF requires list-item and table-cell content to be `block*` — and `paragraph`'s
+/// own content is strictly `inline*`, so we cannot just wrap the whole array in one paragraph
+/// when block siblings exist (that would put a bulletList inside paragraph and HTTP-400 the PUT).
 void AdfWrapTopLevelInlineInParagraph(json* arr) {
     if (!arr || !arr->is_array() || arr->empty())
         return;
-    bool hasDirectInline = false;
+    auto isInline = [](const json& n) {
+        if (!n.is_object())
+            return false;
+        const std::string t = n.value("type", std::string());
+        return t == "text" || t == "hardBreak" || t == "mention" || t == "emoji" || t == "mediaInline" ||
+               t == "inlineCard";
+    };
+    bool needsSplit = false;
+    bool sawInline = false;
+    bool sawBlock = false;
     for (const auto& child : *arr) {
-        if (child.is_object()) {
-            const std::string ct = child.value("type", std::string());
-            if (ct == "text" || ct == "hardBreak") {
-                hasDirectInline = true;
-                break;
-            }
+        if (isInline(child))
+            sawInline = true;
+        else
+            sawBlock = true;
+        if (sawInline && sawBlock) {
+            needsSplit = true;
+            break;
         }
     }
-    if (hasDirectInline) {
+    if (!sawInline)
+        return;
+    if (!needsSplit) {
+        // All-inline → single paragraph wrap (the original fast path).
         json para = {{"type", "paragraph"}, {"content", *arr}};
         *arr = json::array({std::move(para)});
+        return;
     }
+    json result = json::array();
+    json currentPara = json::array();
+    auto flush = [&]() {
+        if (!currentPara.empty()) {
+            result.push_back(json{{"type", "paragraph"}, {"content", std::move(currentPara)}});
+            currentPara = json::array();
+        }
+    };
+    for (auto& child : *arr) {
+        if (isInline(child)) {
+            currentPara.push_back(child);
+        } else {
+            flush();
+            result.push_back(child);
+        }
+    }
+    flush();
+    *arr = std::move(result);
 }
 
 // ============================================================================
@@ -70,6 +105,10 @@ struct AdfBuilder {
     std::vector<json> markStack;
     int codeBlockDepth = 0;
     int imgSpanDepth = 0;
+    /// Blockquote nesting depth. Jira ADF blockquote content allows only paragraph / bulletList /
+    /// orderedList — nested blockquote is a schema violation. Flatten nested quotes into the outer
+    /// blockquote by suppressing inner wrappers; depth tracks pairing so leave-block pops correctly.
+    int blockquoteDepth = 0;
     std::string imgAltAccum;
     std::vector<std::string> imgSrcStack;
 #ifndef NDEBUG
@@ -120,6 +159,13 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     case MD_BLOCK_DOC:
         return 0;
     case MD_BLOCK_QUOTE:
+        // Suppress nested blockquote wrappers — Jira ADF rejects blockquote-inside-blockquote.
+        // Inner content (paragraphs, lists) lands directly in the outer blockquote.
+        if (b.blockquoteDepth > 0) {
+            ++b.blockquoteDepth;
+            return 0;
+        }
+        ++b.blockquoteDepth;
         node = {{"type", "blockquote"}, {"content", json::array()}};
         break;
     case MD_BLOCK_UL:
@@ -246,6 +292,15 @@ int AdfLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* userdata) {
         if (b.contentStack.size() > 1)
             b.contentStack.pop_back();
         return 0;
+    case MD_BLOCK_QUOTE:
+        // Pair with the enter-block depth bookkeeping; only pop the content stack for the
+        // outermost blockquote (inner wrappers were suppressed and never pushed).
+        if (b.blockquoteDepth > 0) {
+            --b.blockquoteDepth;
+            if (b.blockquoteDepth == 0 && b.contentStack.size() > 1)
+                b.contentStack.pop_back();
+        }
+        return 0;
     case MD_BLOCK_LI: {
         if (b.contentStack.size() > 1) {
             AdfWrapTopLevelInlineInParagraph(b.contentStack.back());
@@ -310,18 +365,23 @@ int AdfLeaveSpan(MD_SPANTYPE type, void* /*detail*/, void* userdata) {
             std::string src = std::move(b.imgSrcStack.back());
             b.imgSrcStack.pop_back();
             static const std::string kAttachmentPrefix = "attachment:";
-            json attrs = json::object();
             if (src.compare(0, kAttachmentPrefix.size(), kAttachmentPrefix) == 0) {
+                json attrs = json::object();
                 attrs["type"] = "file";
                 attrs["id"] = src.substr(kAttachmentPrefix.size());
+                if (!b.imgAltAccum.empty()) {
+                    attrs["alt"] = b.imgAltAccum;
+                }
+                b.topContent()->push_back(json{{"type", "mediaInline"}, {"attrs", std::move(attrs)}});
             } else {
-                attrs["type"] = "external";
-                attrs["url"] = std::move(src);
+                // External image URLs are not valid in Jira ADF `mediaInline` (which requires a
+                // file-store `id`). Fall back to a text link so the URL is preserved and the
+                // payload validates. The image-as-image is lost; the image-as-link is kept.
+                const std::string display = b.imgAltAccum.empty() ? src : b.imgAltAccum;
+                json mark = {{"type", "link"}, {"attrs", {{"href", src}}}};
+                json textNode = {{"type", "text"}, {"text", display}, {"marks", json::array({std::move(mark)})}};
+                b.topContent()->push_back(std::move(textNode));
             }
-            if (!b.imgAltAccum.empty()) {
-                attrs["alt"] = b.imgAltAccum;
-            }
-            b.topContent()->push_back(json{{"type", "mediaInline"}, {"attrs", std::move(attrs)}});
             b.imgAltAccum.clear();
         }
         if (b.imgSpanDepth > 0)

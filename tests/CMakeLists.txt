@@ -20,6 +20,7 @@ add_executable(SmatchetTests
     Source_Core/OfflineQueueReplayPolicy.test.cpp
     Source_Core/SmatchetThemeSyntaxColors.test.cpp
     Source_Core/MarkdownPreviewLangTag.test.cpp
+    Source_Core/MarkdownConvertAdf.test.cpp
     Source_Core/IssueDraft.test.cpp
     Source_Core/IssueCreatePipeline.test.cpp
     Source_Core/CallstackParser.test.cpp
