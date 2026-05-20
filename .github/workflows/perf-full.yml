@@ -93,6 +93,7 @@ jobs:
           echo "## Perf full-suite — ci-windows-latest" >> /tmp/perf-report.md
           echo "" >> /tmp/perf-report.md
           regression_count=0
+          run_failure_count=0
           improvement_count=0
           declare -a improved=()
           while IFS= read -r scen; do
@@ -100,7 +101,11 @@ jobs:
             echo "::group::Scenario $scen"
             result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
             if [ ! -f "$result" ]; then
+              # Plumbing failure tracked separately from regressions; gate
+              # blocks hard regardless of any future override label. Mirrors
+              # the Slice 3 fix on perf-pr-fast.yml. (CodeRabbit PR #324 #1.)
               echo "FAIL: $scen scenario.run did not produce $result" >&2
+              run_failure_count=$((run_failure_count + 1))
               echo "::endgroup::"
               continue
             fi
@@ -123,24 +128,11 @@ jobs:
               if [ "$rc" -ne 0 ]; then
                 regression_count=$((regression_count + 1))
               fi
-              # Improvement detection — any row's lastTotalMs improved by >= 15 % is a candidate for baseline bump.
-              if python - "$baseline" "$result" <<'PY'
-import json, sys
-b = json.load(open(sys.argv[1])); f = json.load(open(sys.argv[2]))
-def rows(blob):
-    if "rows" in blob: return blob["rows"]
-    d = blob.get("data", {})
-    return d.get("rows", []) if isinstance(d, dict) else []
-brows = {r["name"]: r.get("lastTotalMs", 0) for r in rows(b)}
-frows = {r["name"]: r.get("lastTotalMs", 0) for r in rows(f)}
-for n, bv in brows.items():
-    if bv <= 0: continue
-    fv = frows.get(n, bv)
-    if fv > 0 and (bv - fv) / bv >= 0.15:
-        sys.exit(0)
-sys.exit(1)
-PY
-              then
+              # Improvement detection — any row's lastTotalMs improved by
+              # >= 15 % is a candidate for baseline bump. Script extracted
+              # from a column-0 YAML heredoc (same defect class as
+              # perf-baseline-bootstrap.py — PR #323 fix).
+              if python scripts/dev/perf-improvement-detect.py "$baseline" "$result"; then
                 improved+=("$scen")
                 improvement_count=$((improvement_count + 1))
               fi
@@ -148,6 +140,7 @@ PY
             echo "::endgroup::"
           done < /tmp/scenarios.txt
           echo "regression_count=$regression_count" >> "$GITHUB_OUTPUT"
+          echo "run_failure_count=$run_failure_count" >> "$GITHUB_OUTPUT"
           echo "improvement_count=$improvement_count" >> "$GITHUB_OUTPUT"
           printf '%s\n' "${improved[@]}" > /tmp/improved.txt
           set -e
@@ -171,6 +164,16 @@ PY
             --title "perf-regression: full-suite run ${{ github.run_id }}" \
             --label "perf-regression" \
             --body-file /tmp/perf-report.md
+
+      - name: Open scenario-run-failure issue
+        if: steps.perf.outputs.run_failure_count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "perf-run-failure: full-suite run ${{ github.run_id }}" \
+            --label "perf-regression" \
+            --body "One or more scenarios in the full-suite run failed to produce output (build / exe / scenario-runner plumbing). See run ${{ github.run_id }} logs."
 
       - name: Open baseline-bump PR for improvements
         if: steps.perf.outputs.improvement_count > 0
