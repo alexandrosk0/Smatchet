@@ -92,6 +92,8 @@ std::vector<std::string> ListMarkdownFiles(const fs::path& dir) {
 // to true if the file was larger than `cap` (extra bytes truncated).
 std::string ReadCapped(const std::string& path, std::size_t cap, bool& oversize) {
     oversize = false;
+    // TODO(pillar2): bug-2026-05-20-ui-sync-reads — UI-thread plan-doc read on combo-change.
+    // 1 MiB cap, local disk, typically sub-ms. Move to worker + dispatcher post-back when bandwidth allows.
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open()) {
         return std::string();
