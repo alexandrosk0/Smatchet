@@ -89,13 +89,18 @@ jobs:
           echo "## Perf delta — PR-fast subset (ci-windows-latest)" >> /tmp/perf-report.md
           echo "" >> /tmp/perf-report.md
           regression_count=0
+          run_failure_count=0
           missing_baseline_count=0
           for scen in $(python -c "import json; print(' '.join(json.load(open('scripts/dev/perf-pr-fast-set.json'))['scenarios']))"); do
             echo "::group::Scenario $scen"
             result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
             if [ ! -f "$result" ]; then
+              # Scenario-run plumbing failure (build broken, exe missing,
+              # JSON not produced). Track SEPARATELY from regression_count
+              # so the `perf-out-of-band` label can't downgrade a real
+              # plumbing break to a warning. (CodeRabbit PR #323 #1.)
               echo "FAIL: scenario.run did not produce $result" >&2
-              regression_count=$((regression_count + 1))
+              run_failure_count=$((run_failure_count + 1))
               echo "::endgroup::"
               continue
             fi
@@ -126,6 +131,7 @@ jobs:
             echo "::endgroup::"
           done
           echo "regression_count=$regression_count" >> "$GITHUB_OUTPUT"
+          echo "run_failure_count=$run_failure_count" >> "$GITHUB_OUTPUT"
           echo "missing_baseline_count=$missing_baseline_count" >> "$GITHUB_OUTPUT"
           set -e
           cat /tmp/perf-report.md
@@ -151,6 +157,7 @@ jobs:
       - name: Gate decision
         env:
           REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
+          RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}
           MISSING_COUNT: ${{ steps.perf.outputs.missing_baseline_count }}
         run: |
           set -e
@@ -162,6 +169,13 @@ jobs:
           done
           if [ "$MISSING_COUNT" -gt 0 ]; then
             echo "::notice::First-run bootstrap captured $MISSING_COUNT baseline(s). Review the uploaded artefacts + open a bootstrap PR to commit them under docs/perf/baselines/."
+          fi
+          # Plumbing failures (scenario.run missing output) fail HARD regardless
+          # of the perf-out-of-band label — those are bugs in the workflow / exe
+          # / build path, never intentional regressions. (CodeRabbit PR #323 #1.)
+          if [ "$RUN_FAILURE_COUNT" -gt 0 ]; then
+            echo "::error::$RUN_FAILURE_COUNT scenario(s) failed to run (plumbing / build / exe failure). perf-out-of-band label does NOT override this — fix the underlying break."
+            exit 1
           fi
           if [ "$REGRESSION_COUNT" -gt 0 ]; then
             if [ "$override" = "true" ]; then

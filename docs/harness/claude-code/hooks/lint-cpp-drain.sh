@@ -120,8 +120,17 @@ if [[ ${#CHUNK[@]} -gt 0 ]]; then
     for abs in "${CHUNK[@]}"; do
         P2_RELS+=("$(lint_normalize_path "$abs")")
     done
-    pillar2_out="$(bash "$PROJ_DIR/scripts/dev/pillar2-scan.sh" "${P2_RELS[@]}" 2>&1 || true)"
-    if echo "$pillar2_out" | grep -q "^CRITICAL:"; then
+    # Capture rc (don't swallow with || true). Scanner contract:
+    #   rc 0  = clean / WARN-only.
+    #   rc 1  = CRITICAL found — surface as a real finding.
+    #   rc >= 2 = scanner-internal failure (bad cwd, missing tools, etc.) —
+    #             surface verbatim so the broken scanner does not silently
+    #             disable Pillar 2 enforcement. (CodeRabbit PR #323 #3.)
+    pillar2_out="$(bash "$PROJ_DIR/scripts/dev/pillar2-scan.sh" "${P2_RELS[@]}" 2>&1)"
+    pillar2_rc=$?
+    if [[ $pillar2_rc -ge 2 ]]; then
+        ISSUES+="pillar2-scan internal failure (rc=$pillar2_rc):"$'\n'"$pillar2_out"$'\n'
+    elif echo "$pillar2_out" | grep -q "^CRITICAL:"; then
         ISSUES+="$pillar2_out"$'\n'
     fi
 fi

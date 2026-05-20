@@ -13,11 +13,19 @@ end-of-turn drain pipeline. The two viable invocation paths are:
 ### 1. Pre-commit hook (recommended)
 
 Wire the scanner into `.git/hooks/pre-commit` so any commit touching first-party
-C++ files runs the scan. One-line installer:
+C++ files runs the scan. Use a multi-line installer (the previous single-line
+form expanded to zero args on commits with no C++ delta, which made
+`pillar2-scan.sh` exit 2 and block every non-C++ commit — CodeRabbit PR #323 #5):
 
 ```bash
-echo 'bash scripts/dev/pillar2-scan.sh $(git diff --cached --name-only --diff-filter=ACM | grep -E "\.(cpp|h|hpp)$")' \
-    > .git/hooks/pre-commit
+cat > .git/hooks/pre-commit <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+mapfile -t p2_files < <(git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '\.(cpp|h|hpp)$' || true)
+[[ ${#p2_files[@]} -eq 0 ]] && exit 0
+bash scripts/dev/pillar2-scan.sh "${p2_files[@]}"
+HOOK
 chmod +x .git/hooks/pre-commit
 ```
 
