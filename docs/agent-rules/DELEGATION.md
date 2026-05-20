@@ -29,6 +29,26 @@ Each packet should include:
 - **Subagent progress markers reminder** (per § Subagent progress markers): every delegation packet must include the literal sentence: *"Emit one-line progress markers to `.progress.log` via `bash scripts/dev/agent-progress.sh "<phase>: <text>"` at each major step (start, lock, design, code, test, gate, commit, push, pr, end) so `tail-agent.sh` shows live progress."*
 - **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source_Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4BlameParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4BlameParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/backlog/agent-self-improvement/infra.md`.
 
+### File-level table re-verify (before sealing)
+
+Every § File-level changes table in a plan-doc names symbols (function names, `NetworkUsageTracker::Instance().Record`) and/or CMake variables (`CORE_SOURCES`, `SMATCHET_TESTS_SOURCES`). Before sealing the table, run a 2-command probe and reconcile any miss:
+
+1. For every symbol named as a caller / definer:
+   ```
+   git grep -nF -- "<symbol>"
+   ```
+   A zero-hit means the symbol does not exist (renamed, removed, never landed) — fix the table or scope.
+
+2. For every CMake variable named as the target of a list-edit:
+   ```
+   grep -nE "(set|file\s*\(\s*GLOB).*<variable>" CMakeLists.txt tests/CMakeLists.txt
+   ```
+   If the variable is populated via `file(GLOB_RECURSE …)`, no list-edit is needed — drop the row.
+
+Mechanical shortcut: `bash scripts/dev/plan-doc-table-probe.sh <plan-doc-path>` parses the plan's § File-level changes table and runs both probes for every named symbol / CMake variable, reporting hits / misses. Exit 0 if every row resolves; exit 1 if any miss. Auto-enrolled into `test-all.sh` via its own self-test at `scripts/dev/test-plan-doc-table-probe.sh`.
+
+Cost: ≤ 5 min per packet (manual) or seconds (script). Skips the most common class of plan-table drift (symbols that don't exist + redundant CMake list-edits).
+
 ## Parallel dispatch
 
 Run two or more subagents in a **single tool-use block** (multiple `Agent` calls in one message) when their contracts are independent. Examples:
@@ -150,6 +170,37 @@ When the user prompt matches the `debug-detective` trigger row above ("fix bug",
 **Why a separate loop.** Bugs are an iterative narrowing problem. The default ship-loop ("diagnose → fix → build → commit → push → PR end-to-end without re-prompt") collapses the diagnose phase, ships the first plausible fix, and discards intermediate evidence. The pause-loop keeps each round's evidence in the user's hands and forbids speculative product edits until a hypothesis is confirmed.
 
 **Pause-loop is not pause-everything.** Within a single round the agent freely edits instrumentation, builds, runs auto-repros, reads logs. The pause is at the **round boundary** — once `Read` + hypothesis-status update is done, the agent reports and stops.
+
+## API-500 mid-run recovery
+
+When a delegated agent errors API-500 mid-run, the worktree state is usually complete — the agent shipped its file edits before the synthesis turn failed. Recovery procedure (orchestrator runs from the agent's worktree path; do not `cd`):
+
+1. **Inspect worktree state**:
+   ```
+   git -C <worktree-path> status --short
+   git -C <worktree-path> diff --stat
+   ```
+   Confirm the expected files are modified / created.
+
+2. **Run local gates** (the agent didn't get to):
+   - `cmake --build --preset ninja-iter-msys2` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
+   - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
+
+3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:
+   ```
+   git -C <worktree-path> add -A
+   git -C <worktree-path> commit -m "<recovery message naming the agent + wave>"
+   ```
+
+4. **Push + open draft PR**:
+   ```
+   git -C <worktree-path> push -u origin <branch>
+   gh pr create --draft --title "..." --body "..."
+   ```
+
+5. **Mark recovery in backlog** — add an entry to `docs/backlog/agent-self-improvement/process.md` with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
+
+If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers. `--force-with-lease` is safe here because the branch is the spawned-agent's own `agent/<id>` or `claude/<id>` worktree — covered by AGENTS.md § Project rules § Git safety protocol § Force-push carve-out (see also `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`).
 
 ## Skeleton-first
 

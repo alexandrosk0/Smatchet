@@ -364,9 +364,12 @@ void ConfigManager::Save(const TrackerConfig& config) {
             return "HighContrast";
         case ThemeId::NortonCommander:
             return "NortonCommander";
+        case ThemeId::ImGuiDefaultDark:
+            return "ImGuiDefaultDark";
         case ThemeId::SmatchetDark:
-        default:
             return "SmatchetDark";
+        default:
+            return "ImGuiDefaultDark";
         }
     };
     j["theme"] = themeToString(config.Theme);
@@ -910,16 +913,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 const nlohmann::json& ci = j["ci_react"];
                 cfg.CiReact.Enabled = ci.value("enabled", cfg.CiReact.Enabled);
                 cfg.CiReact.PollIntervalSec = ci.value("poll_interval_sec", cfg.CiReact.PollIntervalSec);
-                cfg.CiReact.WatchedBaseBranches =
-                    ci.value("watched_base_branches", cfg.CiReact.WatchedBaseBranches);
-                cfg.CiReact.WatchedCheckNames =
-                    ci.value("watched_check_names", cfg.CiReact.WatchedCheckNames);
-                cfg.CiReact.IgnoredCheckNames =
-                    ci.value("ignored_check_names", cfg.CiReact.IgnoredCheckNames);
+                cfg.CiReact.WatchedBaseBranches = ci.value("watched_base_branches", cfg.CiReact.WatchedBaseBranches);
+                cfg.CiReact.WatchedCheckNames = ci.value("watched_check_names", cfg.CiReact.WatchedCheckNames);
+                cfg.CiReact.IgnoredCheckNames = ci.value("ignored_check_names", cfg.CiReact.IgnoredCheckNames);
                 cfg.CiReact.AutoDispatchBuildDoctor =
                     ci.value("auto_dispatch_build_doctor", cfg.CiReact.AutoDispatchBuildDoctor);
-                cfg.CiReact.AutoDispatchTestRig =
-                    ci.value("auto_dispatch_test_rig", cfg.CiReact.AutoDispatchTestRig);
+                cfg.CiReact.AutoDispatchTestRig = ci.value("auto_dispatch_test_rig", cfg.CiReact.AutoDispatchTestRig);
                 cfg.CiReact.AutoDispatchDebugDetective =
                     ci.value("auto_dispatch_debug_detective", cfg.CiReact.AutoDispatchDebugDetective);
                 cfg.CiReact.TransientRerunEnabled =
@@ -928,8 +927,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                     ci.value("transient_rerun_max_per_pr", cfg.CiReact.TransientRerunMaxPerPr);
                 cfg.CiReact.IterationBudgetPerPr =
                     ci.value("iteration_budget_per_pr", cfg.CiReact.IterationBudgetPerPr);
-                cfg.CiReact.AnnotationFetchCount =
-                    ci.value("annotation_fetch_count", cfg.CiReact.AnnotationFetchCount);
+                cfg.CiReact.AnnotationFetchCount = ci.value("annotation_fetch_count", cfg.CiReact.AnnotationFetchCount);
                 cfg.CiReact.LogTailLines = ci.value("log_tail_lines", cfg.CiReact.LogTailLines);
             }
             if (cfg.CiReact.PollIntervalSec < 60) {
@@ -1005,7 +1003,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                                                              : TrackerConfig::PanelPosition::Bottom;
             }
             cfg.PrimarySideBarOnRight = j.value("primary_side_bar_on_right", cfg.PrimarySideBarOnRight);
-            const std::string themeStr = j.value("theme", std::string("SmatchetDark"));
+            // Default-string mirrors the construct-time default in TrackerConfig::Theme — fresh
+            // installs (no `theme` key on disk) land on ImGuiDefaultDark. Existing configs with a
+            // serialized value round-trip back to whatever they persisted (so users on SmatchetDark
+            // keep SmatchetDark across the default change).
+            const std::string themeStr = j.value("theme", std::string("ImGuiDefaultDark"));
             if (themeStr == "ModernDark")
                 cfg.Theme = ThemeId::ModernDark;
             else if (themeStr == "Vs2022Dark")
@@ -1016,8 +1018,12 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.Theme = ThemeId::HighContrast;
             else if (themeStr == "NortonCommander")
                 cfg.Theme = ThemeId::NortonCommander;
-            else
+            else if (themeStr == "SmatchetDark")
                 cfg.Theme = ThemeId::SmatchetDark;
+            else
+                // Covers the literal "ImGuiDefaultDark" string AND any unknown / future value —
+                // unknown serialized themes degrade to the fresh-install default.
+                cfg.Theme = ThemeId::ImGuiDefaultDark;
             cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
             cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
             cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);

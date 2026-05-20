@@ -147,7 +147,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         const char* label;
                     };
                     constexpr ThemeEntry kEntries[] = {
-                        {ThemeId::SmatchetDark, "Smatchet Dark (default)"},
+                        {ThemeId::ImGuiDefaultDark, "ImGui Default Dark (bright)"},
+                        {ThemeId::SmatchetDark, "Smatchet Dark"},
                         {ThemeId::ModernDark, "Modern Dark"},
                         {ThemeId::Vs2022Dark, "VS 2022 Dark"},
                         {ThemeId::Vs2022Light, "VS 2022 Light"},

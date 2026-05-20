@@ -1393,6 +1393,13 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
         return MakeCommandPaletteFuzzyScenario();
     });
+    // theme-switch-roundtrip — bucket-C guard for the user-reported residual-
+    // colour bug on SmatchetDark <-> NortonCommander <-> SmatchetDark. See
+    // Source_Core/include/Commands/Scenarios/ThemeSwitchRoundtripScenario.h.
+    scenarioRunner_->RegisterFactory("theme-switch-roundtrip", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario();
+        return MakeThemeSwitchRoundtripScenario();
+    });
     // perf-tooling-bundle scenarios — 5 perf scenarios surfaced by the
     // perf-detective audit on develop@31e1893. Each verifies a previously-
     // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the

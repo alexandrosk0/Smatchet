@@ -50,6 +50,7 @@ If only one worktree exists, drop the `-C <worktree>` lines from every command i
 - **Destructive ops on shared worktrees require pre-flight.** Per AGENTS.md § "Destructive git ops in shared worktrees", any `reset --hard`, `checkout --`, `clean -f`, or `branch -D` targeting a worktree the agent did not personally check out earlier in this session must run the mandatory 5-step pre-flight (branch verify → status inventory → stash → execute → decide on pop). Parallel agents reassign worktree HEADs between sessions; the worktree path's *name* (e.g. "develop-worktree") is **not** authoritative for what branch it currently has checked out. Run `git -C <path> branch --show-current` first, every time. Past incidents have destroyed uncommitted work that wasn't in reflog.
 - **Force-push to `develop` / `main`** — never, even with `--force-with-lease`. If a merge requires rewriting public history, hand back to the user.
 - **Revert merged PRs** — never. If a regression slipped through, `git-janitor` flags and stops; the user authors the revert.
+- **Squash-merge a PR carrying unvalidated visual commits** — never. Per AGENTS.md § Autonomous ship-loop default § Exceptions § Visual-validation exception, intermediate commits on a draft PR may be unvalidated iterations awaiting user verdict. Before squash-merging, confirm the user has approved the latest visual state (the merge-gates poller's user-comments gate covers this when the user has actually commented; absent a comment, ask).
 - **Push directly to `develop`** — never, except under the narrow FF-clean docs-batch exception below. Every other change lands via PR + squash-merge (use `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` to bypass the local-checkout requirement of `gh pr merge`).
 - **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate, except under the FF-clean docs-batch exception below (which substitutes `scripts/dev/test-all.sh` for the C++ build because no C++ TU is in the diff). Plan-revision sections in `docs/design/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable everywhere else.
 
@@ -95,6 +96,37 @@ git -C "$MAIN_REPO" push origin develop
 **Reporting:** when the exception fires, the agent's `## Mutations applied` table must include a row `FF-clean docs-batch push to origin/develop — N commits, paths within whitelist, blacklist clean`. The `## Outcome:` line is `applied` (not `partial`) because the work is fully published.
 
 **Why narrow.** The exception preserves the original rule's intent — keep behaviour-changing code under PR review — while removing the friction case it never meant to block. A single C++ touch reverts the whole batch to PR-only.
+
+#### Pure-docs sub-exception (precondition 4 relaxation)
+
+When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` gate (precondition 4) is skipped — the test rig has nothing to validate when no executable code, no scripts, no agents, no CMake, and no Lua changed.
+
+**Allow-list (must hold for every file in the ahead-range):**
+
+- `docs/**`
+- `backlog/**`
+- `AGENTS.md`
+- any root-level `*.md` (README, CONTEXT, CLAUDE)
+
+**Deny-list (any hit kicks back to the full FF-clean gate including `test-all.sh`):**
+
+- `agents/**` (changes agent behaviour; `scripts/dev/test-agent-contract.sh` covers this)
+- `scripts/**` (changes tooling / hooks)
+- `tests/**` (changes test surface)
+- `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt` (CI / build)
+- Any C++, Lua, Python, or shell source
+- (Allow-list is exhaustive — anything not allow-listed deny-lists by default.)
+
+`Locales/*.json` stays in AGENTS.md § Trivial-visual-only change envelope (separate gate-relaxation path). Don't conflate.
+
+**Discriminator (one-liner)**:
+```bash
+bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip test-all.sh)" || echo "needs full gate"
+```
+
+Implementation: `scripts/dev/is-pure-docs-diff.sh <base-branch>` — exits 0 if `git diff --name-only origin/<base>...HEAD` is strictly within the allow-list; exit 1 otherwise.
+
+Cross-link: AGENTS.md § Trivial-visual-only change envelope is the precedent for path-prefix-based gate relaxation; this sub-exception is its pure-docs sibling.
 
 ## Pre-flight
 

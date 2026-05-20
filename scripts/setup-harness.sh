@@ -142,7 +142,31 @@ setup_claude_code() {
   link_file ".claude/hooks/agents-statusline.py"              "agents/_shared/token-tracking/agents-statusline.py"
   link_file ".claude/hooks/skill-load-log.py"                 "agents/_shared/token-tracking/skill-load-log.py"
 
+  install_git_hooks
+
   echo "Done. .claude/ ready for Claude Code."
+}
+
+# install_git_hooks: point core.hooksPath at scripts/git-hooks/ so the
+# tracked pre-push merged-PR guard fires on every push. Only acts when the
+# current core.hooksPath is unset or already equal to scripts/git-hooks
+# (don't trample a user-set custom hooks path).
+#
+# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
+install_git_hooks() {
+  local target="scripts/git-hooks"
+  local current
+  current="$(git config --local --get core.hooksPath 2>/dev/null || echo '')"
+
+  if [[ -z "$current" ]]; then
+    git config --local core.hooksPath "$target"
+    echo "  git-hooks  core.hooksPath set to $target"
+  elif [[ "$current" == "$target" ]]; then
+    echo "  git-hooks  core.hooksPath already $target"
+  else
+    echo "  git-hooks  WARNING: core.hooksPath is '$current' (not '$target'). Skipping."
+    echo "             To opt in, run: git config --local core.hooksPath $target"
+  fi
 }
 
 setup_codex() {

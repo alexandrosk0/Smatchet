@@ -412,7 +412,14 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
 
-    // Setup ImGui Style
+    // Setup ImGui Style.
+    //
+    // StyleColorsDark seeds ImGui's default-dark substrate (#FFFFFF text,
+    // #4296FA blue-on-translucent button hover, FramePadding [4,3], rounding
+    // 0). SmatchetTheme::ApplyStyle(SmatchetDark) is what actually paints the
+    // Smatchet look — #F2F2F2 text on #1F1F24 panels, the #383842 button base
+    // with #598CF2 accent, FramePadding [6,4], the 4-6 rounding family.
+    //
     ImGui::StyleColorsDark();
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
