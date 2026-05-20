@@ -133,7 +133,10 @@ Before the orchestrator (or `git-janitor` running in the user's main session) sq
    - **StatusContext**: default rule — any required context with `state != "SUCCESS"` blocks. `FAILURE` / `ERROR` fail; `PENDING` / `EXPECTED` pending.
    - Non-required checks ignored.
 2. **CodeRabbit** — identity match is `author.login in {"coderabbitai", "coderabbitai[bot]"}` (REST returns the `[bot]` suffix; GraphQL may strip it). State is computed in three buckets:
-   - `NONE` — no review ever submitted → **pass** (works for repos without CodeRabbit installed).
+   - `NONE` — no review ever submitted. The poller pre-detects whether CR is installed for this repo by probing for a checked-in `.coderabbit.yaml` / `.coderabbit.yml` (one-shot at gate start; override via `MERGE_GATES_CR_INSTALLED=true|false`). Behaviour splits:
+     - **CR not installed** (no config file) → **pass** immediately (legacy behaviour for repos that never integrated CR).
+     - **CR installed, head commit has a `CodeRabbit` StatusContext on the rollup with `state == "SUCCESS"`** → **pass** (status-only configs that skip writing a full review on clean diffs still count as a positive signal).
+     - **CR installed, no review yet, no SUCCESS status** → **block** until the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires. After the window, the poller logs a `WARN: CodeRabbit grace window ... expired` line and falls through to pass so a stuck integration never wedges the ship-loop indefinitely.
    - `STALE` — reviews exist but none on current `headRefOid` → **block** (force-push invalidates old approval).
    - latest review's `state` on current `headRefOid` ∈ {`APPROVED`, `COMMENTED`} → pass; ∈ {`CHANGES_REQUESTED`, `DISMISSED`} → block.
    - Additionally: zero unresolved non-outdated review threads contain a CodeRabbit comment (under the same login match).
@@ -152,6 +155,8 @@ Additional pass conditions:
 ```
 Poll 3/60 — CI: 5/8 pass (1 fail, 2 pending) | CodeRabbit: CHANGES_REQUESTED (2 open) | User: 1 | reviewDecision: APPROVED
 ```
+
+When CR is installed but a review has not yet posted, the CR cell shows `NONE+pending (poll N/<grace>)` while the grace window is open, `NONE+status-SUCCESS` when the rollup's CR `StatusContext` reached `SUCCESS` without a review, and `NONE+grace-expired` (paired with the `WARN` line on stderr) when the grace window timed out.
 
 **Halt prompts (per return code)**:
 
@@ -180,6 +185,8 @@ Conflicts, missing required checks, and branch-protection rules are enforced by 
 - `MERGE_GATES_MAX_POLLS` — max poll count (default 60).
 - `MERGE_GATES_TIMEOUT_SECONDS` — wall-clock budget (default 3600).
 - `MERGE_GATES_QUERY_FILE` — override GraphQL document path (default `scripts/dev/merge-gates.graphql`).
+- `MERGE_GATES_CR_INSTALLED` — override the auto-detected CodeRabbit-installed flag (`true` / `false`). Auto-detection probes `repos/<owner>/<repo>/contents/.coderabbit.yaml` (and `.yml`); set explicitly when the config lives outside the repo or when running against a fork that has not yet enabled CR.
+- `MERGE_GATES_CR_GRACE_POLLS` — polls to wait for CR to start (a review or `CodeRabbit` SUCCESS status) before falling through `NONE` to pass (default 10). Only consulted when `MERGE_GATES_CR_INSTALLED` is true / auto-detected as installed.
 - `MERGE_GATES_TEST_ANSWER` — bats-only canned `ask_user_question` answer.
 
 **Scope boundary**: the auto-`gh pr ready` + auto-merge path applies **only** to the orchestrator + `git-janitor` in the user's main session. Spawned-child agents (`handoff-implementer`, `pr-iterator`) keep their existing draft-only contract — see § Handoff envelope § Spawned-child PR draft requirement.
