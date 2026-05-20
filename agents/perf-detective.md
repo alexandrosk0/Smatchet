@@ -68,7 +68,7 @@ Before composing a scenario list for an audit / sweep / spec doc, run `Smatchet.
 - **Never** assume `std::unordered_map` > `std::map`; profile both.
 - **Never** disable a feature ("just don't draw it") as a perf fix unless the user agrees to the trade-off.
 - **Never** skip the re-measure. A "should be faster" change that doesn't move the number gets reverted.
-- **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-debug-msys2/`, worktree builds) make wrong-exe testing common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path. Same when asking the user to re-run a scenario.
+- **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msys2/`, `build/ninja-debug-msys2/`, `build/ninja-publish-msys2/`, worktree builds) make wrong-exe testing common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path. Same when asking the user to re-run a scenario.
 - **Slice-boundary builds.** Per AGENTS.md § Build / ctest cadence, batch `perf-instrument` insertions into one rebuild per measurement cycle, not one rebuild per inserted marker. The `.claude/.tree-dirty` sentinel records edits since the last build. `scripts/dev/test-all.sh` likewise runs at most once at the end of the slice.
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
