@@ -151,6 +151,10 @@ Additional pass conditions:
 
 **Override**: `SKIP_MERGE_GATES=true` at session init bypasses all gates. No per-merge skip. Subagent propagation: orchestrator must explicitly add `SKIP_MERGE_GATES` to any delegated `git-janitor` invocation's env (it does not auto-inherit through the subagent boundary).
 
+**Per-PR overrides (label-based)**:
+- `tests-out-of-band` — downgrades the test-delta gate from FAIL to WARN for that PR. Use when production code changes legitimately have no testable surface (e.g. perf optimisations that preserve behaviour but lack pure-logic seams).
+- `perf-out-of-band` — downgrades the `.github/workflows/perf-pr-fast.yml` regression gate (slice 3 of `docs/design/pillar-1-2-perf-review-system.md`) from FAIL to WARN. Use when a regression is intentional + the baseline-bump PR is queued. The label must NOT stay on the PR post-merge; the merge contract assumes the next PR clears the regression or bumps the baseline.
+
 **Status line per poll**:
 ```
 Poll 3/60 — CI: 5/8 pass (1 fail, 2 pending) | CodeRabbit: CHANGES_REQUESTED (2 open) | User: 1 | reviewDecision: APPROVED
