@@ -56,7 +56,7 @@ Each slice ships independently. Slices 1 and 3 are ~15 min each; Slice 2 is ~1 h
 
 **Risk**: low. Repo-settings flip is reversible via the same REST call with `=false`. No code change.
 
-**Confirm-before-act**: this is a shared-state mutation on a remote (GitHub repo settings), so it qualifies for the AGENTS.md § Executing actions with care rule. The orchestrator asks before running the `PATCH`.
+**Confirm-before-act**: this is a shared-state mutation on a remote (GitHub repo settings) — the orchestrator asks before running the `PATCH`.
 
 ---
 

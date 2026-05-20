@@ -1,0 +1,69 @@
+name: Doc validation
+
+# Lightweight bucket-A checks for AGENTS.md / agents/ / docs/agent-rules/ diffs.
+# Catches stale `AGENTS.md § <section>` cross-references and agent-prompt
+# contract drift before merge — the surfaces that build-and-test.yml's
+# paths-ignore deliberately skips and coverage.yml's paths: allow-list excludes.
+#
+# Runs:
+#   - scripts/dev/test-doc-anchors.sh        (every AGENTS.md § <name> resolves)
+#   - scripts/dev/test-agent-contract.sh     (9 sub-checks: headings per agent
+#                                              class, frontmatter parity, Outcome
+#                                              mandate, token-tracking drift)
+#
+# Scoped narrowly via `paths:` so non-doc PRs skip entirely. Runs on Ubuntu
+# (cheap) because the two scripts are pure Python + bash, no MSYS2 / GL needed.
+#
+# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 8
+# (gap closure on top of PR #309 Slice 2 + PR #312 Slice 7).
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'AGENTS.md'
+      - 'agents/**'
+      - 'docs/agent-rules/**'
+      - 'scripts/dev/test-doc-anchors.sh'
+      - 'scripts/dev/test_doc_anchors.py'
+      - 'scripts/dev/test-agent-contract.sh'
+      - 'agents/_shared/token-tracking/**'
+      - '.github/workflows/doc-validation.yml'
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'AGENTS.md'
+      - 'agents/**'
+      - 'docs/agent-rules/**'
+      - 'scripts/dev/test-doc-anchors.sh'
+      - 'scripts/dev/test_doc_anchors.py'
+      - 'scripts/dev/test-agent-contract.sh'
+      - 'agents/_shared/token-tracking/**'
+      - '.github/workflows/doc-validation.yml'
+
+concurrency:
+  group: doc-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  doc-anchors-and-agent-contract:
+    name: Doc anchors + agent contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: test-doc-anchors — every AGENTS.md § <section> resolves
+        run: bash scripts/dev/test-doc-anchors.sh
+
+      - name: test-agent-contract — required headings + frontmatter parity
+        run: bash scripts/dev/test-agent-contract.sh

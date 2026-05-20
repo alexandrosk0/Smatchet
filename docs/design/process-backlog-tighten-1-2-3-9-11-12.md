@@ -197,7 +197,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 **Risk**: medium. A pre-push hook in the path is friction for every push. Mitigation: (a) script exits 0 fast when no `gh` PR exists (cheap query, ~100ms typical), (b) opt-out env var, (c) the hook only blocks the documented bug case.
 
-**Confirm-before-act**: wiring `core.hooksPath` is a per-clone git-config change. AGENTS.md § Git safety protocol bans `git config` mutations without explicit user authorisation. The orchestrator asks before running `git config --local core.hooksPath`.
+**Confirm-before-act**: wiring `core.hooksPath` is a per-clone `git config` mutation; the harness's git-config rule requires explicit user authorisation. The orchestrator asks before running `git config --local core.hooksPath`.
 
 ---
 
@@ -303,7 +303,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 2. Cross-link from `agents/handoff-implementer.md` § Stop conditions (line 84) — one-line pointer.
 
-3. The "force-with-lease on spawned-agent branches is safe" claim is a partial relaxation of AGENTS.md § Git safety protocol's force-push ban. Add a one-line carve-out in § Git safety protocol explicitly naming this case (carve-out scope per grill Q4=A — both spawned-agent branch prefixes):
+3. The "force-with-lease on spawned-agent branches is safe" claim is a partial relaxation of the harness's global force-push ban. Add a one-line carve-out in AGENTS.md § Project rules naming this case (carve-out scope per grill Q4=A — both spawned-agent branch prefixes):
    ```markdown
    - **Force-push carve-out**: `git push --force-with-lease origin agent/<id>` or `git push --force-with-lease origin claude/<id>` is permitted during API-500 recovery only, when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch. See § Delegation § API-500 recovery + `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`. Excludes `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*` and any branch with non-self commits in the ahead-range.
    ```
