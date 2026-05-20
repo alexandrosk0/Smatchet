@@ -42,7 +42,9 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -106,6 +108,46 @@ void PersistOpenStateImmediate(UiDrawSession& d) {
     }
 }
 
+// Per-message md4c plan cache. Pillar 1 opt #1 — finalised (non-streaming)
+// chat messages have immutable content; cache their parsed plan and replay it
+// each frame instead of re-running md_parse. Keyed by 64-bit content hash;
+// `contentLen` retained as a cheap collision detector (same hash + same len
+// is treated as a hit; hash collisions on different lengths fall through to
+// rebuild). FIFO cap at kMaxCachedPlans keeps memory bounded across long
+// chat sessions.
+constexpr std::size_t kMaxCachedPlans = 256;
+struct CachedPlanEntry {
+    std::size_t contentLen = 0;
+    MarkdownPreviewRender::PreviewPlanPtr plan;
+};
+// Process-static — one AI panel exists in the app at a time.
+std::unordered_map<std::uint64_t, CachedPlanEntry> s_planCache;
+std::vector<std::uint64_t> s_planCacheInsertionOrder;
+
+const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content) {
+    const std::uint64_t key = MarkdownPreviewRender::HashContent(content);
+    auto it = s_planCache.find(key);
+    if (it != s_planCache.end() && it->second.contentLen == content.size()) {
+        return *it->second.plan;
+    }
+    // Cache miss (or hash collision on different length) — build a fresh plan.
+    CachedPlanEntry entry;
+    entry.contentLen = content.size();
+    entry.plan = MarkdownPreviewRender::MakePlan();
+    MarkdownPreviewRender::BuildPlan(content, *entry.plan);
+    const auto inserted = s_planCache.emplace(key, std::move(entry));
+    s_planCacheInsertionOrder.push_back(key);
+    // FIFO eviction once we exceed the cap.
+    while (s_planCacheInsertionOrder.size() > kMaxCachedPlans) {
+        const std::uint64_t evictKey = s_planCacheInsertionOrder.front();
+        s_planCacheInsertionOrder.erase(s_planCacheInsertionOrder.begin());
+        if (evictKey != key) {
+            s_planCache.erase(evictKey);
+        }
+    }
+    return *inserted.first->second.plan;
+}
+
 void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     (void)app;
     const float headerH = ImGui::GetTextLineHeightWithSpacing() * 1.4f;
@@ -114,12 +156,10 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const float errorStripH = d.assistantLastError.empty() ? 0.0f : ImGui::GetTextLineHeightWithSpacing() * 1.5f;
     const float bodyH = (std::max)(80.0f, availY - headerH - inputH - errorStripH);
 
-    // Slice 5: rich-rendered selectable AI chat. Each message goes through
-    // MarkdownPreviewRender::Render (md4c-driven, same rich path used by the
-    // ticket description preview). The whole history is bracketed by a single
-    // SelectableText::Begin/End so drag-select crosses message boundaries.
-    // Role prefix is emitted by a styled ImGui::TextColored above each
-    // message rather than as a `> Role:` quote line baked into the source.
+    // Slice 5 + perf Opt 1: rich-rendered selectable AI chat with per-message
+    // BuildPlan / RenderPlan caching. Finalised history messages have
+    // immutable content — their parsed plan is computed once + cached. Only
+    // the streaming tail re-parses every frame.
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
 
     auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
@@ -127,15 +167,43 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     MarkdownPreviewRender::Options renderOpts;
     renderOpts.mode = MarkdownPreviewRender::Mode::Full;
     renderOpts.clickableLinks = true;
-    // Share the outer Context across all per-message Render() calls so
-    // drag-select crosses message boundaries. existingSelCtx wins over
-    // selectableId — see MarkdownPreviewRender::Options.
     renderOpts.existingSelCtx = &selCtx;
 
-    // Render one chat turn (role label + body). Role label registers as its
-    // own Segment so it participates in selection; the body's markdown render
-    // contributes one Segment per emitted word.
-    auto renderTurn = [&](const char* roleLabel, const ImVec4& roleColor, const std::string& body) {
+    // Per-message height cache. Opt #4 — once a finalised message has been
+    // rendered once, its layout height is stable (until font / wrap-width
+    // changes, which we don't detect). On subsequent frames where the
+    // message's expected screen rect is OUTSIDE the visible scroll region,
+    // skip the rich render entirely and emit ImGui::Dummy(height) instead so
+    // the cursor advances correctly without paying the BuildPlan + RenderPlan
+    // cost. Keyed by message-content hash so it shares lifetimes with the
+    // plan cache. Pillar 1 opt #4.
+    static std::unordered_map<std::uint64_t, float> s_messageHeightCache;
+
+    // Render one chat turn — role label registered as its own Segment + body
+    // emitted via cached plan (finalised) or fresh BuildPlan (streaming tail).
+    auto renderTurn = [&](const char* roleLabel, const ImVec4& roleColor, const std::string& body, bool cacheable) {
+        const ImVec2 turnStartScreen = ImGui::GetCursorScreenPos();
+        // Off-screen culling: only for cacheable (finalised) turns with a
+        // known height. Streaming tail + unmeasured turns always render
+        // fully so the height cache populates on first sight.
+        std::uint64_t bodyKey = 0;
+        if (cacheable) {
+            bodyKey = MarkdownPreviewRender::HashContent(body);
+            const auto hit = s_messageHeightCache.find(bodyKey);
+            if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+                const float labelH = ImGui::GetTextLineHeightWithSpacing();
+                const float totalH = labelH + hit->second;
+                // ImGui::IsRectVisible accepts a size in window-local coords;
+                // ImGui clips against the current child's scroll window so
+                // off-screen rects return false. When off-screen we emit
+                // Dummy() to advance the cursor and skip the rich render.
+                if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
+                    ImGui::Dummy(ImVec2(0.0f, totalH));
+                    return;
+                }
+            }
+        }
+
         const ImVec2 labelPos = ImGui::GetCursorScreenPos();
         const float labelLineH = ImGui::GetTextLineHeight();
         ImGui::PushStyleColor(ImGuiCol_Text, roleColor);
@@ -146,8 +214,24 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         SelectableText::RegisterSegment(selCtx, roleLabel, roleLabel + std::strlen(roleLabel), labelPos, labelLineH,
                                         labelFont, labelWidth, nullptr);
         SelectableText::EndBlock(selCtx);
-        MarkdownPreviewRender::Render(body, renderOpts);
+        if (cacheable) {
+            const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
+            MarkdownPreviewRender::RenderPlan(plan, renderOpts);
+        } else {
+            MarkdownPreviewRender::Render(body, renderOpts);
+        }
         SelectableText::EndBlock(selCtx);
+
+        // Capture the realised height for future culling. Only for cacheable
+        // turns (streaming tail's height changes per frame).
+        if (cacheable) {
+            const ImVec2 turnEndScreen = ImGui::GetCursorScreenPos();
+            const float labelH = ImGui::GetTextLineHeightWithSpacing();
+            const float realisedHeight = (turnEndScreen.y - turnStartScreen.y) - labelH;
+            if (realisedHeight > 0.0f) {
+                s_messageHeightCache[bodyKey] = realisedHeight;
+            }
+        }
     };
 
     const ImVec4 userColor(0.78f, 0.86f, 1.0f, 1.0f); // soft blue
@@ -155,11 +239,12 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
         const AiMessage& m = d.assistantHistory[i];
         const bool isUser = (m.Role == "user");
-        renderTurn(isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, m.Content);
+        renderTurn(isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, m.Content, /*cacheable=*/true);
         ImGui::Spacing();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
-        renderTurn("Assistant (streaming...):", asstColor, d.assistantStreamBuf);
+        // Streaming tail mutates per frame — bypass cache.
+        renderTurn("Assistant (streaming...):", asstColor, d.assistantStreamBuf, /*cacheable=*/false);
     }
 
     SelectableText::End(selCtx);
