@@ -82,7 +82,20 @@ echo
 echo "[2/2] doctor with C:\\msys64\\ucrt64\\bin stripped from PATH -- expect exit >= 2 + mentions MSYS2"
 
 # Strip every PATH entry whose tail is .../ucrt64/bin (forward or back slashes).
-NEW_PATH=$(echo "$PATH" | tr ':' '\n' | grep -vEi '(/|\\)ucrt64(/|\\)bin/?$' | paste -sd: -)
+# Preserve host delimiter style (':' on Unix-like shells, ';' on Windows-style PATH).
+if [[ "$PATH" == *';'* ]]; then
+    PATH_SEP=';'
+else
+    PATH_SEP=':'
+fi
+IFS="$PATH_SEP" read -r -a _path_parts <<< "$PATH"
+_filtered_parts=()
+for _p in "${_path_parts[@]}"; do
+    if ! echo "$_p" | grep -qEi '(^|[\\/])ucrt64[\\/]bin[\\/]?$'; then
+        _filtered_parts+=("$_p")
+    fi
+done
+NEW_PATH=$(IFS="$PATH_SEP"; echo "${_filtered_parts[*]}")
 OUT_FAIL=$(PATH="$NEW_PATH" bash "$DOCTOR_SH" 2>&1) || RC_FAIL=$?
 RC_FAIL="${RC_FAIL:-0}"
 echo "$OUT_FAIL" | sed 's/^/    /'
