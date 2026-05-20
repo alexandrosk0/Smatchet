@@ -18,7 +18,7 @@ Two fixes landed back-to-back to address this:
 - **PR #319** (`84f097da`) — patched AGENTS.md § Autonomous ship-loop so the orchestrator opens `gh pr create` **without** `--draft` when the user has authorised auto-merge in the same turn. The intent was to make CR fire so the gates poller would see a real review signal.
 - **PR #320** (`8d27ca06`, +13 min) — patched `scripts/dev/merge-gates.sh` so the poller probes for `.coderabbit.yaml` at gate start and, when CR is installed, blocks `cr_state == NONE` until (a) CR posts a review, (b) the head-commit rollup contains a `CodeRabbit` `StatusContext` with `state == "SUCCESS"`, or (c) the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires.
 
-#320 fixed the root cause in the correct layer (the poller). #319's draft-flip became redundant — and, on inspection, harmful:
+PR #320 fixed the root cause in the correct layer (the poller). PR #319's draft-flip became redundant — and, on inspection, harmful:
 
 - **Wrong layer.** Gate enforcement is the poller's job; the draft flag is a reviewer-UX signal, not a gate primitive.
 - **Loses draft-as-WIP semantics.** A PR opened ready is industry signal for "review me now". The orchestrator's ship-loop opens the PR at the end of a one-turn diagnose → fix → build → commit → push sequence; the user has not yet had a chance to skim the diff. "Ready" overstates the readiness of an autonomous-loop output.
@@ -31,7 +31,7 @@ Revert PR #319. The orchestrator's contract reverts to the spawned-child default
 
 Specifically:
 
-- AGENTS.md § Autonomous ship-loop drops the "Draft-vs-ready at `open PR`" paragraph added by #319.
+- In AGENTS.md, the **Autonomous ship-loop default** section drops the "Draft-vs-ready at `open PR`" paragraph added by PR #319.
 - The orchestrator (user's main session) opens `--draft` identically to spawned-child agents (`handoff-implementer`, `pr-iterator`). Auto-`gh pr ready` + REST squash-merge still happens at the end of the merge-gates pass for orchestrator PRs where the user authorised auto-merge — that scope boundary (§ Handoff envelope § Spawned-child PR draft requirement) is unchanged.
 - The merge-gates poller (`scripts/dev/merge-gates.sh`) remains the authoritative gate. Its CR-installed detection + grace-window behaviour from #320 is the load-bearing piece.
 
