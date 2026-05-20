@@ -1540,6 +1540,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                             std::string okMsg;
                             std::string errMsg;
                             try {
+                                /* PILLAR2_WORKER_ONLY */ // est-latency: ~15000ms — enclosing std::thread (line 1539);
+                                                          // 15s total timeout.
                                 cpr::Response r =
                                     cpr::Get(cpr::Url{"https://api.openai.com/v1/models"},
                                              cpr::Header{{"Authorization", std::string("Bearer ") + resolvedKey}},

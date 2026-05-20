@@ -62,16 +62,14 @@ std::string JoinDomainAndPath(std::string domain, const std::string& path) {
 }
 
 bool SlugIsKnown(const std::string& s) {
-    static const std::unordered_set<std::string> kKnown = {"blocker", "critical",   "high",    "highest", "low",
-                                                             "lowest",  "major",      "medium",  "minor",   "trivial"};
+    static const std::unordered_set<std::string> kKnown = {"blocker", "critical", "high",   "highest", "low",
+                                                           "lowest",  "major",    "medium", "minor",   "trivial"};
     return kKnown.find(s) != kKnown.end();
 }
 
 std::string NormalizeSlugFromLabel(std::string label) {
     label = ToLowerAsciiCopy(TrimCopyAsciiWhitespace(label));
-    std::replace_if(label.begin(), label.end(), [](char c) {
-        return c == ' ' || c == '-' || c == '_';
-    }, ' ');
+    std::replace_if(label.begin(), label.end(), [](char c) { return c == ' ' || c == '-' || c == '_'; }, ' ');
     // collapse spaces -> single space then replace with nothing for "aggregate" style? use first token only
     std::string compact;
     for (size_t i = 0; i < label.size(); ++i) {
@@ -183,6 +181,7 @@ std::string UrlToCacheFileName(const std::string& url) {
 bool HttpGetBinary(const std::string& url, std::vector<unsigned char>& out, std::string& outError) {
     out.clear();
     outError.clear();
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — sole caller (line 348) inside app.LaunchBackgroundTask lambda.
     cpr::Response r = cpr::Get(cpr::Url{url}, cpr::Timeout{3000});
     if (r.error.code != cpr::ErrorCode::OK) {
         outError = r.error.message;
@@ -309,10 +308,10 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         const std::string capturedUrlKey = urlKey;
         app.LaunchBackgroundTask([&app, capturedDiskPath, capturedUrlKey]() {
             std::vector<unsigned char> bytes;
+            /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms — read of cached icon file (typically < 100 KB).
             std::ifstream ifs(capturedDiskPath.c_str(), std::ios::binary);
             if (ifs) {
-                bytes.assign((std::istreambuf_iterator<char>(ifs)),
-                             std::istreambuf_iterator<char>());
+                bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
             }
             app.mainThreadDispatcher.PostToMainThread([capturedUrlKey, bytes]() {
                 ClearIconFileReadInFlight(capturedUrlKey);
@@ -321,8 +320,8 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
                 }
                 SmatchetLoadedIconTexture loaded;
                 std::string err;
-                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
-                    capturedUrlKey, bytes.data(), bytes.size(), loaded, err);
+                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
+                                                                     err);
             });
         });
         outDeferred = true;
@@ -349,8 +348,7 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         if (fetchOk) {
             std::ofstream ofs(capturedDiskPath.c_str(), std::ios::binary | std::ios::trunc);
             if (ofs) {
-                ofs.write(reinterpret_cast<const char*>(bytes.data()),
-                          static_cast<std::streamsize>(bytes.size()));
+                ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
             }
         }
         // Post texture upload + in-flight-set release back to the UI thread. The image-texture
@@ -362,8 +360,8 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
             }
             SmatchetLoadedIconTexture loaded;
             std::string err;
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
-                capturedUrlKey, bytes.data(), bytes.size(), loaded, err);
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
+                                                                 err);
         });
     });
     outDeferred = true;
@@ -401,10 +399,10 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
     const std::string capturedCacheKey = cacheKey;
     app.LaunchBackgroundTask([&app, capturedResolved, capturedCacheKey]() {
         std::vector<unsigned char> bytes;
+        /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms — read of cached icon file (typically < 100 KB).
         std::ifstream ifs(capturedResolved.c_str(), std::ios::binary);
         if (ifs) {
-            bytes.assign((std::istreambuf_iterator<char>(ifs)),
-                         std::istreambuf_iterator<char>());
+            bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
         }
         app.mainThreadDispatcher.PostToMainThread([capturedCacheKey, bytes]() {
             ClearIconFileReadInFlight(capturedCacheKey);
@@ -413,8 +411,8 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
             }
             SmatchetLoadedIconTexture loaded;
             std::string err;
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(
-                capturedCacheKey, bytes.data(), bytes.size(), loaded, err);
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedCacheKey, bytes.data(), bytes.size(), loaded,
+                                                                 err);
         });
     });
     outDeferred = true;
@@ -424,8 +422,8 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
 // Backwards-compat wrapper for the const-AppController call sites that don't need the deferred
 // distinction (e.g. preview-only/non-priority paths). HTTP fetch still defers; caller sees
 // `false` while the fetch is in flight.
-bool LoadTextureForResolvedPath(const AppController& app, const std::string& resolved,
-                                SmatchetLoadedIconTexture& out, std::string& outError) {
+bool LoadTextureForResolvedPath(const AppController& app, const std::string& resolved, SmatchetLoadedIconTexture& out,
+                                std::string& outError) {
     bool deferred = false;
     // `LaunchBackgroundTask` is non-const; cast away const to dispatch. This matches the rest
     // of the AppController API (`mainThreadDispatcher` is a mutable member; the worker pattern
@@ -441,9 +439,9 @@ bool LoadTextureForResolvedPath(const AppController& app, const std::string& res
  */
 constexpr size_t kPriorityResolveMemoCap = 256;
 struct PriorityResolveMemo {
-    std::string CacheKey;       ///< Texture-cache key (empty iff Negative).
-    std::string Label;          ///< Parsed friendly name; preserves tooltip text on the fast path.
-    bool        Negative = false; ///< True when the load failed and we want to suppress future retries.
+    std::string CacheKey;  ///< Texture-cache key (empty iff Negative).
+    std::string Label;     ///< Parsed friendly name; preserves tooltip text on the fast path.
+    bool Negative = false; ///< True when the load failed and we want to suppress future retries.
 };
 std::unordered_map<std::string, PriorityResolveMemo>& PriorityRawValueToCacheKey() {
     static std::unordered_map<std::string, PriorityResolveMemo> m;
@@ -470,7 +468,8 @@ void RememberPriorityResolution(const std::string& rawValue, const std::string& 
 /// this, ParsePriorityJson + LoadPriorityIconWithFallbacks would run on every frame for every
 /// such cell — dominating the FPS budget at typical grid sizes.
 void RememberNegativePriorityResolution(const std::string& rawValue, const std::string& label) {
-    if (rawValue.empty()) return;
+    if (rawValue.empty())
+        return;
     auto& m = PriorityRawValueToCacheKey();
     if (m.size() >= kPriorityResolveMemoCap) {
         m.clear();
@@ -501,9 +500,7 @@ bool LoadPriorityIconWithFallbacks(AppController& app, const std::string& iconUr
         if (s.empty()) {
             return;
         }
-        if (std::any_of(candidates.begin(), candidates.end(), [&](const auto& existing) {
-            return existing == s;
-        })) {
+        if (std::any_of(candidates.begin(), candidates.end(), [&](const auto& existing) { return existing == s; })) {
             return;
         }
         candidates.push_back(s);
@@ -679,8 +676,7 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     std::string pathOrUrl;
     // Icon maps replace the whole cell; never steal focus from editable SingleSelect / other editors.
-    if (!allowCellEdits &&
-        app.TryGetFieldIconMapTarget(fieldId, field, rawValue, pathOrUrl)) {
+    if (!allowCellEdits && app.TryGetFieldIconMapTarget(fieldId, field, rawValue, pathOrUrl)) {
         const std::string resolved = app.ResolveFieldIconAssetPath(pathOrUrl);
         const std::string& loadPath = resolved.empty() ? pathOrUrl : resolved;
         std::string err;
@@ -739,8 +735,3 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 }
 
 } // namespace SmatchetFieldIconRender
-
-
-
-
-

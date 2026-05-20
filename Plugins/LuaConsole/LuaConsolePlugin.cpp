@@ -89,6 +89,8 @@ void RepairLuaWindowLayout() {
 void ReloadSmatchetHooksSetupScript(AppController& app) { app.RunLuaSetupScript("SmatchetHooks.lua"); }
 
 bool ReadFileAll(const std::string& path, std::string& out) {
+    // TODO(pillar2): bug-2026-05-20-ui-sync-reads — UI-thread Lua script load on editor open.
+    // Small scripts (typically < 100 KB), sub-ms typical. Lowest-priority of the three TODO sites.
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         return false;
@@ -315,6 +317,8 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
         if (p.empty()) {
             return false;
         }
+        /* PILLAR2_WORKER_ONLY */ // est-latency: ~1ms — plugin Initialize() runs at startup, not in the render loop; no
+                                  // frame budget applies.
         std::ifstream f(p, std::ios::binary);
         return f.is_open();
     };
