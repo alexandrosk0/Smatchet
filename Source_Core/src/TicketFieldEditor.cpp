@@ -898,10 +898,14 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         if (disabled && display.empty()) {
             display = "-";
         }
-        const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
         const bool isDescriptionField =
             !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
                                         column.FieldId.find("Description") != std::string::npos);
+        // For date-like + description fields, hover should show the raw value (full ISO
+        // timestamp / raw markdown source) rather than the formatted single-line display.
+        // The description path additionally renders the raw markdown through the preview
+        // pipeline (renderMarkdown=true), so the tooltip needs the full markdown source.
+        const std::string* tip = (column.IsDateLike || isDescriptionField) ? &currentValue : nullptr;
         RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, isDescriptionField,
                                &column.FieldId);
     };
