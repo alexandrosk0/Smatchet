@@ -55,6 +55,12 @@ add_executable(SmatchetTests
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
+    # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
+    # formatter for the hover action row. No ImGui dep; production TU is
+    # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
+    # links it into the doctest rig.
+    Source_Core/AiChatTimestamp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
