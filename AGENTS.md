@@ -244,6 +244,14 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 
 **Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
 
+**Pure-docs slice skip**: a slice whose write set is strictly within the pure-docs allow-list (`docs/**`, `backlog/**`, `AGENTS.md`, uppercase root `*.md`) skips **both** `cmake --build` and `scripts/dev/test-all.sh` entirely — there is no executable code to verify. Discriminator (mirrors the end-of-session FF-clean gate at `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception):
+```bash
+bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip build + test-all)" || echo "needs full gate"
+```
+Exit 0 → skip both gates. Exit 1 → falls back to the standard slice-boundary cadence above.
+
+The same allow-list governs both surfaces (in-session orchestrator + end-of-session `git-janitor`) so a slice that qualifies in-session also qualifies for the FF push without re-evaluation. Deny-list paths (`agents/**`, `scripts/**`, `tests/**`, `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt`, any C++/Lua/Python/shell source) keep the full gate — even a single deny-list file in the diff disqualifies the slice. CI ([`.github/workflows/build-and-test.yml`](.github/workflows/build-and-test.yml) `paths-ignore`) and CodeRabbit ([`.coderabbit.yaml`](.coderabbit.yaml) `auto_review.enabled: true`) handle the same diff orthogonally — CI skips on doc-only paths via its own `paths-ignore`; CodeRabbit reviews every PR including doc-only ones.
+
 **Stale-read recovery on `Edit`**: `Edit` may error with `File has been modified since read, either by the user or by a linter` when (a) a concurrent orchestrator in a sibling worktree edited the same file, (b) a `PostToolUse` hook (e.g. `lint-cpp.sh`'s `clang-format -i`) rewrote the file between your `Read` and `Edit`, or (c) the user touched the file in their editor.
 
 Canonical recovery — always works, no manual conflict resolution:
