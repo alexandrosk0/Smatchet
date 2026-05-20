@@ -15,7 +15,10 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT"
+# Hard-fail on cd: this script WRITES docs/perf/MARKER_INVENTORY.md as a
+# repo-relative path. A failed cd would land the write wherever the
+# caller happened to be cwd'd in — bug, not a no-op.
+cd "$REPO_ROOT" || { echo "ERROR: cd to $REPO_ROOT failed" >&2; exit 1; }
 
 CHECK_ONLY=0
 case "${1:-}" in
