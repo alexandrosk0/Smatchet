@@ -238,14 +238,16 @@ After cleanup, gate the change against the checked-in baseline registry. This is
 
 ```bash
 # Run a fresh snapshot through the canonical driver (harness-agnostic).
-bash scripts/dev/perf-run.sh <scenario-id>
-# → prints the result JSON path on the last line
+# Capture the result-path on stdout's last line so the diff command can
+# reference it without a literal <timestamp> placeholder.
+FRESH_JSON="$(bash scripts/dev/perf-run.sh <scenario-id> | tail -n1)"
 
 # Diff against the checked-in baseline.
 python scripts/dev/perf-compare.py \
     docs/perf/baselines/<scenario-id>.dev.json \
-    build/perf-runs/<scenario-id>-<timestamp>.json
-# → exits 0 if within docs/perf/regression-policy.json thresholds; 1 on regression
+    "$FRESH_JSON"
+# → exits 0 if within docs/perf/regression-policy.json thresholds;
+#   1 on regression; 2 on malformed input.
 ```
 
 For CI: the PR-fast workflow (Slice 3 of the same plan) runs the same comparison automatically and posts a markdown delta table as a PR comment. For local-only iteration: invoke the two commands above before opening the PR.

@@ -44,11 +44,17 @@ if isinstance(sys.stdout, io.TextIOWrapper):
 # ----------------------------------------------------------------------------
 # Defaults — mirror docs/perf/regression-policy.json if --policy not supplied.
 # ----------------------------------------------------------------------------
+# `consecutive_run_required` removed (CodeRabbit PR #321 #4): the knob
+# was declared but never enforced by `evaluate()` — a single-run gate is
+# what actually ships in perf-pr-fast.yml. Multi-run streak tracking
+# requires the driver to retain per-row state across compare invocations,
+# which is a follow-up plan. The dead knob is removed from the default
+# AND from docs/perf/regression-policy.json so the schema doesn't lie
+# about what the gate enforces.
 DEFAULT_POLICY: Dict[str, Any] = {
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 16.67,
     "max_abs_ceiling_ms": 50.0,
-    "consecutive_run_required": 2,
     "min_baseline_calls": 10,
 }
 
@@ -78,18 +84,46 @@ def load_policy(path: Optional[str], scenario_id: Optional[str]) -> Dict[str, An
     return policy
 
 
-def extract_rows(blob: Dict[str, Any]) -> List[Dict[str, Any]]:
+def extract_rows(blob: Dict[str, Any], source_label: str = "<unknown>") -> List[Dict[str, Any]]:
     """Pull the per-scope rows out of either a baseline file or a fresh snapshot.
 
     Baseline files: rows live at top-level ``.rows``.
     scenario.run / perf.snapshot JSON envelope: rows live at ``.data.rows``.
+
+    Raises ValueError if no `rows` list can be located. The previous
+    fall-open behaviour (return []) let malformed inputs sneak past the
+    gate as "no regressions found" (CodeRabbit PR #321 #5).
     """
-    if isinstance(blob.get("rows"), list):
-        return list(blob["rows"])
-    data = blob.get("data")
-    if isinstance(data, dict) and isinstance(data.get("rows"), list):
-        return list(data["rows"])
-    return []
+    if isinstance(blob, dict):
+        if isinstance(blob.get("rows"), list):
+            return list(blob["rows"])
+        data = blob.get("data")
+        if isinstance(data, dict) and isinstance(data.get("rows"), list):
+            return list(data["rows"])
+    raise ValueError(f"missing or invalid 'rows' in {source_label}")
+
+
+def _to_float(value: Any, label: str) -> Optional[float]:
+    """Coerce a JSON value to float; ValueError out for the caller to catch.
+    Returns None when the value is missing (None / absent), so the
+    per-row metric merging logic still works when a row only carries a
+    subset of fields. (CodeRabbit PR #322 #5.)
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid numeric field: {label}={value!r}")
+
+
+def _to_int(value: Any, label: str) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid integer field: {label}={value!r}")
 
 
 def index_by_name(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -128,21 +162,26 @@ def evaluate(
 
     rows: List[Dict[str, Any]] = []
     regressions: List[str] = []
-    min_calls = int(policy.get("min_baseline_calls", 10))
-    mean_pct = float(policy.get("mean_delta_pct", 10.0))
-    p99_cap = float(policy.get("p99_abs_ceiling_ms", 16.67))
-    max_cap = float(policy.get("max_abs_ceiling_ms", 50.0))
+    # All numeric policy + per-row casts go through _to_float / _to_int so
+    # malformed input (string-where-number, None where number) raises
+    # ValueError cleanly, which main() catches → exit 2. Previously raw
+    # float()/int() casts crashed with KeyError or TypeError and bypassed
+    # the documented exit-2 input-error path. (CodeRabbit PR #322 #5.)
+    min_calls = _to_int(policy.get("min_baseline_calls", 10), "policy.min_baseline_calls")
+    mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
+    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
+    max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
 
     for name in all_names:
         b = base_idx.get(name)
         f = fresh_idx.get(name)
-        b_total = float(b["lastTotalMs"]) if b and "lastTotalMs" in b else None
-        f_total = float(f["lastTotalMs"]) if f and "lastTotalMs" in f else None
-        b_p99 = float(b["p99Ms"]) if b and "p99Ms" in b else None
-        f_p99 = float(f["p99Ms"]) if f and "p99Ms" in f else None
-        b_max = float(b["maxMs"]) if b and "maxMs" in b else None
-        f_max = float(f["maxMs"]) if f and "maxMs" in f else None
-        b_calls = int(b["calls"]) if b and "calls" in b else 0
+        b_total = _to_float(b.get("lastTotalMs"), f"baseline.{name}.lastTotalMs") if b else None
+        f_total = _to_float(f.get("lastTotalMs"), f"fresh.{name}.lastTotalMs") if f else None
+        b_p99 = _to_float(b.get("p99Ms"), f"baseline.{name}.p99Ms") if b else None
+        f_p99 = _to_float(f.get("p99Ms"), f"fresh.{name}.p99Ms") if f else None
+        b_max = _to_float(b.get("maxMs"), f"baseline.{name}.maxMs") if b else None
+        f_max = _to_float(f.get("maxMs"), f"fresh.{name}.maxMs") if f else None
+        b_calls = _to_int(b.get("calls"), f"baseline.{name}.calls") if b else 0
 
         rows.append(
             {
@@ -264,9 +303,17 @@ def main(argv: List[str]) -> int:
     if isinstance(override, dict):
         policy.update(override)
 
-    baseline_rows = extract_rows(baseline)
-    fresh_rows = extract_rows(fresh)
-    rows, regressions = evaluate(baseline_rows, fresh_rows, policy)
+    # extract_rows + the _to_float / _to_int casts in evaluate() raise
+    # ValueError on malformed input. We catch here and exit 2 — the
+    # canonical "input error" exit code (1 = regression detected, 2 =
+    # malformed input, 0 = clean). (CodeRabbit PR #321 #5 + PR #322 #5.)
+    try:
+        baseline_rows = extract_rows(baseline, args.baseline)
+        fresh_rows = extract_rows(fresh, args.fresh)
+        rows, regressions = evaluate(baseline_rows, fresh_rows, policy)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     print(emit_markdown(scenario_id, baseline, fresh, rows, regressions, policy))
 

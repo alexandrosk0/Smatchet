@@ -58,7 +58,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Allowlist regex for scenario id + host label. Anchors at both ends; rejects
+# `..`, `/`, leading dot, empty string. Path traversal in `scenario` / `host`
+# would otherwise let `--scenario ../../etc/passwd` (etc.) escape the
+# docs/perf/baselines/ directory on write. (CodeRabbit PR #321 #2.)
+_BASELINE_ID_RE='^[a-z0-9][a-z0-9._-]*$'
+
+# validate_baseline_arg <label> <value> — exits 2 on mismatch.
+validate_baseline_arg() {
+    local label="$1"
+    local value="$2"
+    if ! [[ "$value" =~ $_BASELINE_ID_RE ]]; then
+        echo "ERROR: invalid $label='$value' — must match $_BASELINE_ID_RE (lowercase alnum + . _ -, leading alnum)" >&2
+        exit 2
+    fi
+}
+
 baseline_path() {
+    validate_baseline_arg "scenario" "$1"
+    validate_baseline_arg "host" "$2"
     echo "docs/perf/baselines/${1}.${2}.json"
 }
 
@@ -103,6 +121,12 @@ if isinstance(data, dict) and isinstance(data.get("rows"), list):
     rows = data["rows"]
 elif isinstance(raw.get("rows"), list):
     rows = raw["rows"]
+# Empty rows means scenario.run captured no markers — writing an
+# empty baseline would silently let future regressions pass. Bail.
+# (CodeRabbit PR #321 #3.)
+if not rows:
+    print(f"ERROR: no rows[] payload in {src}; refusing to write empty baseline.", file=sys.stderr)
+    sys.exit(2)
 baseline = {
     "schemaVersion": 1,
     "scenarioId": scen,

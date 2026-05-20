@@ -5,7 +5,6 @@
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 16.67,
     "max_abs_ceiling_ms": 50.0,
-    "consecutive_run_required": 2,
     "min_baseline_calls": 10
   },
   "perScenario": {

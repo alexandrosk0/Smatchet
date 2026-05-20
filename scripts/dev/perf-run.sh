@@ -86,8 +86,9 @@ fi
 # Normalise to forward-slash form so the Smatchet CLI (which runs through
 # `cmd.exe` from msys2 in some configurations) sees a path it can open.
 case "$OUT_PATH" in
-    /*)  ABS_OUT="$OUT_PATH" ;;
-    *)   ABS_OUT="$REPO_ROOT/$OUT_PATH" ;;
+    /*)            ABS_OUT="$OUT_PATH" ;;
+    [A-Za-z]:/*)   ABS_OUT="$OUT_PATH" ;;  # Windows drive-letter absolute (e.g. C:/tmp/x.json) — already absolute under MSYS2.
+    *)             ABS_OUT="$REPO_ROOT/$OUT_PATH" ;;
 esac
 
 # -- build (incremental) -----------------------------------------------------
