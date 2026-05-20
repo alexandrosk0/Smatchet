@@ -92,7 +92,7 @@ A single markdown report:
 - K baselines missing
 ```
 
-End with the standard `## Self-improvement` section per AGENTS.md self-improvement loop.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` (only if you hit real friction; empty is fine). Orchestrator appends backlog entries to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
 
 ## Delegates / handoffs
 
