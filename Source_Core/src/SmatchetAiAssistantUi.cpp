@@ -4,6 +4,7 @@
 
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
+#include "AiAssistantSendButton.h"
 #include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "MarkdownPreviewRender.h"
@@ -794,10 +795,62 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
 
     AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
 
-    const bool sendDisabled = d.assistantInFlight || d.assistantInputBuf.empty() || ctrl == nullptr;
+    // Defense-in-depth recovery: if a prior turn left `assistantInFlight = true`
+    // but the controller has since gone away (mid-shutdown, controller torn
+    // down by a panel toggle, or the historical pre-fix bug where Submit
+    // dropped a call without clearing the flag), force-clear here so the
+    // user gets the Send button back on the next frame. The companion fix
+    // in `dispatchSend` below only flips the flag on a successful Submit
+    // ack — this branch handles legacy stuck state + future-proofs against
+    // any unrelated path that leaves the flag dangling.
+    if (d.assistantInFlight && ctrl == nullptr) {
+        LOG_WARN("AiAssistantUi: clearing stuck assistantInFlight (controller is gone).");
+        d.assistantInFlight = false;
+    }
+
+    const bool sendDisabled =
+        smatchet::ai::DecideSendDisabled(d.assistantInFlight, d.assistantInputBuf.empty(), ctrl != nullptr);
 
     auto dispatchSend = [&]() {
+        // NOTE — the previous implementation flipped `assistantInFlight = true`
+        // here unconditionally, BEFORE calling `ctrl->Submit(...)`. When Submit
+        // short-circuited (no live client / queue shuttingDown), the flag
+        // stayed true and the Send button stuck disabled for the rest of the
+        // session — even after the user fixed their LLM setup in Preferences.
+        // The fix: Submit now returns bool; we mutate UI state only after a
+        // successful ack. On failure we surface a recoverable error strip and
+        // leave the input buffer intact so the user can retry.
+        if (ctrl == nullptr) {
+            // Belt-and-braces — the sendDisabled predicate above already
+            // gates this, but a future caller of `dispatchSend` might skip
+            // the gate. Keep the early-out so the lambda is safe in
+            // isolation.
+            d.assistantLastError = "AI assistant unavailable — try again after restarting Smatchet.";
+            return;
+        }
         const uint64_t turnGen = ++d.assistantTurnGen;
+        const std::string snapshotInput = d.assistantInputBuf;
+        std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
+        // Phase C: build the 5-block auto-context snapshot on the UI thread (where
+        // all the source state lives) and pass it through Submit. The controller
+        // then concatenates these + the agents.md prefix on the worker before
+        // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
+        // — the controller skips empty-body entries when emitting tag wrappers.
+        const bool accepted =
+            ctrl->Submit(turnGen, snapshotInput, std::move(context), d.assistantPerTurnModel, d.assistantPerTurnEffort);
+        if (!accepted) {
+            // Submit rejected the turn (no live client or controller shutting
+            // down). Roll back the turn-gen bump so a subsequent successful
+            // Submit lands on a monotonically-fresh value, and surface a
+            // user-facing recovery hint via assistantLastError. The input
+            // buffer is left intact (the input mirror at the top of this
+            // function keeps the typed text alive) so the user can retry
+            // after fixing their provider configuration in Preferences.
+            --d.assistantTurnGen;
+            d.assistantLastError =
+                "No active AI provider — open Preferences and pick a configured provider, then press Send again.";
+            return;
+        }
         d.assistantInFlight = true;
         d.assistantStreamBuf.clear();
         d.assistantLastError.clear();
@@ -829,19 +882,13 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
                 static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
             smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
         }
-        std::string snapshot = d.assistantInputBuf;
         d.assistantInputBuf.clear();
         std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
-        if (ctrl) {
-            // Phase C: build the 5-block auto-context snapshot on the UI thread (where
-            // all the source state lives) and pass it through Submit. The controller
-            // then concatenates these + the agents.md prefix on the worker before
-            // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
-            // — the controller skips empty-body entries when emitting tag wrappers.
-            std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
-            ctrl->Submit(turnGen, std::move(snapshot), std::move(context), d.assistantPerTurnModel,
-                         d.assistantPerTurnEffort);
-        }
+        // NOTE — the `ctrl->Submit(...)` call was hoisted to the top of
+        // `dispatchSend` (above) so the success/failure ack gates the
+        // `assistantInFlight = true` flip + the history Append. Reaching this
+        // point implies Submit returned true; nothing left to do other than
+        // arm autoscroll.
         d.assistantAutoScrollAtTail = true;
     };
 
