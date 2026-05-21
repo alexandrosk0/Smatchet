@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AgentsMdLoader.h"
+#include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
 #include "AiEndpointSanitize.h"
@@ -11,6 +12,7 @@
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetChatPersistWorker.h"
 #include "SmatchetUiSession.h"
 
 #include <algorithm>
@@ -458,7 +460,28 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
                 AiMessage assistantMsg;
                 assistantMsg.Role = "assistant";
                 assistantMsg.Content = g_ui.assistantStreamBuf;
+                assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
+                // Phase 3 of ai-chat-claude-desktop-parity. Persist snapshot taken
+                // before move; row-id slot grows in lock-step so the worker callback
+                // can backfill the SQLite id. Gated on hydrated so a final-flush from
+                // a turn that completed during the hydrate window doesn't write a
+                // duplicate that the hydrate will then re-load.
+                AiMessage persistCopy = assistantMsg;
+                const std::size_t newIdx = g_ui.assistantHistory.size();
                 g_ui.assistantHistory.push_back(std::move(assistantMsg));
+                g_ui.assistantHistoryRowIds.push_back(-1);
+                if (g_ui.assistantHistoryHydrated) {
+                    smatchet::ai::chat_persist::Op appendOp;
+                    appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
+                    appendOp.message = std::move(persistCopy);
+                    appendOp.messageIndex = newIdx;
+                    smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
+                    smatchet::ai::chat_persist::Op trimOp;
+                    trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
+                    trimOp.trimCap = static_cast<std::size_t>(
+                        g_ui.cfg.AssistantHistoryMaxRows > 0 ? g_ui.cfg.AssistantHistoryMaxRows : 500);
+                    smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+                }
                 g_ui.assistantStreamBuf.clear();
                 g_ui.assistantInFlight = false;
             }
@@ -488,7 +511,26 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
                     AiMessage assistantMsg;
                     assistantMsg.Role = "assistant";
                     assistantMsg.Content = g_ui.assistantStreamBuf + "\n[cancelled]";
+                    assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
+                    // Phase 3 of ai-chat-claude-desktop-parity. Same enqueue shape as
+                    // the normal-finalisation site; cancelled-with-partial-text rows
+                    // persist so the next launch shows the user where they stopped.
+                    AiMessage persistCopy = assistantMsg;
+                    const std::size_t newIdx = g_ui.assistantHistory.size();
                     g_ui.assistantHistory.push_back(std::move(assistantMsg));
+                    g_ui.assistantHistoryRowIds.push_back(-1);
+                    if (g_ui.assistantHistoryHydrated) {
+                        smatchet::ai::chat_persist::Op appendOp;
+                        appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
+                        appendOp.message = std::move(persistCopy);
+                        appendOp.messageIndex = newIdx;
+                        smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
+                        smatchet::ai::chat_persist::Op trimOp;
+                        trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
+                        trimOp.trimCap = static_cast<std::size_t>(
+                            g_ui.cfg.AssistantHistoryMaxRows > 0 ? g_ui.cfg.AssistantHistoryMaxRows : 500);
+                        smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+                    }
                 }
                 g_ui.assistantStreamBuf.clear();
                 g_ui.assistantLastError.clear();

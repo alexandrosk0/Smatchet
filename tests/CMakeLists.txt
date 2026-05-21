@@ -20,12 +20,19 @@ add_executable(SmatchetTests
     Source_Core/TrackerFieldValueUtils.test.cpp
     Source_Core/OfflineQueueReplayPolicy.test.cpp
     Source_Core/SmatchetThemeSyntaxColors.test.cpp
+    # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
+    # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
+    Source_Core/SmatchetThemeAiColors.test.cpp
     Source_Core/MarkdownPreviewLangTag.test.cpp
     Source_Core/MarkdownConvertAdf.test.cpp
     Source_Core/IssueDraft.test.cpp
     Source_Core/IssueCreatePipeline.test.cpp
     Source_Core/CallstackParser.test.cpp
     Source_Core/LocalCacheManager.test.cpp
+    # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
+    # against the same LCM SQLite path. Production target globs LCM.cpp, so the
+    # test rig only needs the test TU itself (no separate cpp link).
+    Source_Core/LocalCacheManagerChat.test.cpp
     Source_Core/BackendAuditTrail.test.cpp
     Source_Core/IssueCreatePipelineIntegration.test.cpp
     Source_Core/P4BlameParse.test.cpp
@@ -55,6 +62,12 @@ add_executable(SmatchetTests
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
+    # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
+    # formatter for the hover action row. No ImGui dep; production TU is
+    # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
+    # links it into the doctest rig.
+    Source_Core/AiChatTimestamp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
@@ -296,6 +309,17 @@ target_sources(SmatchetTests PRIVATE
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
+
+# Phase 3 of ai-chat-claude-desktop-parity. `LocalCacheManager`'s AI-chat
+# CRUD surface (`AppendChatMessage` / `LoadChatMessages` / ...) is gated on
+# `SMATCHET_WITH_AI` in `LocalCacheManager.cpp`. The chat doctest TU
+# (`LocalCacheManagerChat.test.cpp`) self-gates with the same guard so the
+# rig keeps building when AI is disabled; mirror the parent option here so
+# both surfaces toggle together. Matches the `SMATCHET_WITH_WHISPER` /
+# `SMATCHET_WITH_AGENTIC` precedent above.
+if(SMATCHET_WITH_AI)
+    target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AI=1)
+endif()
 
 # Whisper Phase B — pure helper test surfaces. WhisperApiKeyResolve + WavWriter
 # have no third-party deps; WhisperApiClient pulls cpr (already linked) +

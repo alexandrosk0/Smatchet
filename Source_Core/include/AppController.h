@@ -194,6 +194,16 @@ class AppController
      */
     bool RecreateLocalCacheDatabase(std::string& outError);
 
+#if defined(SMATCHET_WITH_AI)
+    /// Phase 3 of ai-chat-claude-desktop-parity. Thin pass-through to
+    /// `LocalCacheManager::LoadChatMessages` so the AI panel's UI-side hydration path
+    /// can pull persisted chat without needing direct access to the private `Cache`
+    /// member. Output vectors are parallel — `outIds[i]` is the SQLite row id for
+    /// `outMessages[i]`. No-op (clears both vectors) if `Cache` is unset.
+    void LoadAiChatMessages(std::size_t cap, std::vector<AiMessage>& outMessages,
+                            std::vector<std::int64_t>& outIds) const;
+#endif
+
     /// Worker-to-UI-thread deferred task queue (BACKLOG_CODE_REVIEW.md §6.1). Post lambdas here from any
     /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
     MainThreadDispatcher mainThreadDispatcher;

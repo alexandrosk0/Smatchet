@@ -97,3 +97,10 @@ screenshot_*
 smatchet_config.json.lock
 .progress.log
 *.pyc
+
+# Font Awesome 6 Solid TTF — Phase 4 of ai-chat-claude-desktop-parity. Binary
+# asset (~426 KB, SIL OFL 1.1) deliberately NOT tracked in git per the design
+# contract — devs drop it manually using assets/fonts/README.md, CI fetches on
+# release-tag builds. Scoped to assets/fonts/ so other vendored .ttf elsewhere
+# in the tree (if any future plugin ships one) is unaffected.
+assets/fonts/*.ttf

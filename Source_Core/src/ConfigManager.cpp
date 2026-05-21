@@ -228,6 +228,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["assistant_context_block_active_ticket"] = config.AssistantContextBlockActiveTicket;
     j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
     j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
+    j["assistant_history_max_rows"] = config.AssistantHistoryMaxRows;
     j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
 #if defined(SMATCHET_WITH_AGENTIC)
     // Agentic flow scheduled-poll preferences (T7). Master toggle defaults off — the
@@ -818,6 +819,11 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 j.value("assistant_context_block_active_view", cfg.AssistantContextBlockActiveView);
             cfg.AssistantContextBlockAuditTrail =
                 j.value("assistant_context_block_audit_trail", cfg.AssistantContextBlockAuditTrail);
+            // Clamp on load — negative / zero would silently disable history; a stray
+            // very-large value would let the SQLite file grow without bound. Cap at
+            // 100k which is comfortably above any realistic conversation depth.
+            const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
+            cfg.AssistantHistoryMaxRows = (rawMaxRows < 1) ? 1 : (rawMaxRows > 100000 ? 100000 : rawMaxRows);
             cfg.AiPrefsVerifyOnSave = j.value("ai_prefs_verify_on_save", cfg.AiPrefsVerifyOnSave);
 #if defined(SMATCHET_WITH_AGENTIC)
             // Agentic flow scheduled-poll preferences (T7). Additive — missing keys keep

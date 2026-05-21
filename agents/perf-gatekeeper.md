@@ -54,7 +54,7 @@ Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/design/pillar-1-2-perf-
 |---|---|
 | `Source_Core/src/SmatchetActiveProjectGridUi.cpp` / `SmatchetGrid*.cpp` / `TicketGridModel.cpp` | `priority-grid-scroll`, `cell-edit-burst` |
 | `Source_Core/src/SmatchetCommandPaletteUi.cpp` / `Commands/CommandRegistry.cpp` / `FuzzyMatch.cpp` | `command-palette-fuzzy` |
-| `Source_Core/src/SmatchetAiAssistantUi.cpp` / `AiChatTextEditorRender.cpp` / `MarkdownPreviewRender.cpp` | `idle` (chat panel renders every frame when open) |
+| `Source_Core/src/SmatchetAiAssistantUi.cpp` / `AiAssistantController.cpp` / `SmatchetChatPersistWorker.cpp` / `AiChatTextEditorRender.cpp` / `MarkdownPreviewRender.cpp` | `ai-chat-history-render`, `idle` |
 | `Source_Core/src/SmatchetTheme.cpp` / `SmatchetThemedTextEditorPalette.cpp` | `theme-switch-roundtrip` |
 | `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` | `attachment-preview-open` |
 | `Source_Core/src/TicketFieldEditor.cpp` / `MarkdownPreviewRender.cpp` (long-text path) | `long-text-open-large-adf` |
