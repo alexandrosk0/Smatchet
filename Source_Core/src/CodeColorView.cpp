@@ -426,12 +426,22 @@ std::uint64_t Fnv1a64(const char* data, std::size_t len) {
 struct CacheKey {
     std::uint64_t contentHash;
     CodeLang lang;
-    bool operator==(const CacheKey& o) const { return contentHash == o.contentHash && lang == o.lang; }
+    // Slice 3 of docs/design/code-syntax-coloring-and-tooltips.md.
+    // Snapshot of `SmatchetTheme::GetThemeRevision()` at insert time. Theme
+    // swap bumps the live revision; lookup miss fires when the live value
+    // doesn't equal the snapshot stored in the key, so per-token colour
+    // tables stay current automatically. Same shape as the existing per-
+    // theme palette invalidation in SmatchetThemeSyntaxColors.
+    std::uint64_t themeRevision;
+    bool operator==(const CacheKey& o) const {
+        return contentHash == o.contentHash && lang == o.lang && themeRevision == o.themeRevision;
+    }
 };
 
 struct CacheKeyHasher {
     std::size_t operator()(const CacheKey& k) const noexcept {
-        return static_cast<std::size_t>(k.contentHash) ^ (static_cast<std::size_t>(k.lang) << 1);
+        return static_cast<std::size_t>(k.contentHash) ^ (static_cast<std::size_t>(k.lang) << 1) ^
+               (static_cast<std::size_t>(k.themeRevision) << 17);
     }
 };
 
@@ -448,7 +458,7 @@ std::vector<CacheKey> g_cacheInsertionOrder;
 std::size_t g_cacheRebuildCount = 0;
 
 const std::vector<Token>& TokenizeCached(const char* data, std::size_t len, CodeLang lang) {
-    const CacheKey key{Fnv1a64(data, len), lang};
+    const CacheKey key{Fnv1a64(data, len), lang, SmatchetTheme::GetThemeRevision()};
     std::lock_guard<std::mutex> lk(g_cacheMutex);
     auto it = g_cache.find(key);
     if (it != g_cache.end()) {
@@ -675,6 +685,10 @@ void ResetCacheForTest() {
     g_cache.clear();
     g_cacheInsertionOrder.clear();
     g_cacheRebuildCount = 0;
+}
+
+const std::vector<Token>& TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang) {
+    return TokenizeCached(utf8, len, lang);
 }
 
 } // namespace code_color

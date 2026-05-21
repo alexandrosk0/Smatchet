@@ -46,14 +46,10 @@ add_executable(SmatchetTests
     Source_Core/ConfigManager.test.cpp
     Source_Core/ConfigMigration.test.cpp
     Source_Core/SingleClickEditConfig.test.cpp
-    # (coderabbit-react-loop phase 8) New ConfigManager blocks — gated on
-    # SMATCHET_WITH_AGENTIC inside the TU so the OFF build compiles as a
-    # no-op stub. Same pattern as ConfigMigration.test.cpp.
-    Source_Core/CoderabbitCiReactConfig.test.cpp
     Source_Core/AiSseParser.test.cpp
+    Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiClientFactory.test.cpp
     Source_Core/AiNdjsonParser.test.cpp
-    Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiContextBuilder.test.cpp
     Source_Core/AiErrorRedact.test.cpp
     Source_Core/AiModelCatalog.test.cpp
@@ -170,155 +166,8 @@ else()
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_WHISPER=0)
 endif()
 
-# Agentic flow — pure helper test surfaces (T1). GitHubClientHelpers covers issue-key
-# parse/format/round-trip and ISO-8601 → unix epoch conversion. No HTTP / SQLite / ImGui.
-# (TrackerDateTimePure.cpp is already linked above — GitHubClientHelpers consumes its
-#  TimeGmPortable wrapper.)
-if(SMATCHET_WITH_AGENTIC)
-    target_sources(SmatchetTests PRIVATE
-        Source_Core/GitHubClientHelpers.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
-        Source_Core/AgenticInferenceClientPure.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp"
-        # T4 — AgentProposalStore round-trip + state machine. Uses ":memory:" SQLite so
-        # no fixture file is required. Pulls AgenticInferenceClientPure already linked above.
-        Source_Core/AgentProposalStore.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentProposalStore.cpp"
-        # T5 — AgenticTriageController against mock IGitHubReadClient + IInferenceClient
-        # interfaces. The fakes carry no HTTP / SQLite; AgentProposalStore is :memory:.
-        Source_Core/AgenticTriageController.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticTriageController.cpp"
-        # T6 — pure UTF-8 preview-truncation helper extracted from SmatchetAgentProposalsUi
-        # so the test-delta gate covers the panel's text-formatting rule. UI behaviour
-        # itself stays bucket-E only.
-        Source_Core/SmatchetAgentProposalsUiPure.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp"
-        # Bundle A — pure audit-entry construction lifted from
-        # SmatchetAgentProposalsUi.cpp so the doctest rig covers the
-        # Approve/Reject audit-trail shape that the worker-thread path emits.
-        Source_Core/AgenticProposalAuditPure.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticProposalAuditPure.cpp"
-        # T8 — pure scenario-fixture loaders (GitHub comments array + Ollama proposals
-        # envelope) used by the agent-triage-roundtrip scenario. Doctest covers the
-        # mapping rules + ISO-8601 helper; the scenario itself is bucket-A automated.
-        Source_Core/AgentTriageScenarioFixtures.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentTriageScenarioFixtures.cpp"
-        # H2 — CodingHarnessSeedBuilder pure JSON + Markdown round-trip. The
-        # SEED.json shape produced here is the wire spec between the runner
-        # and the spawned harness's first delegate; the doctest snapshot is
-        # the canonical test for shape drift.
-        Source_Core/CodingHarnessSeedBuilder.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/CodingHarnessSeedBuilder.cpp"
-        # H3 — ClaudeCodeLocalRunner against the stub_claude exe. Exercises
-        # the env-allow-list, stream-json line dispatch, RUN_RESULT.json
-        # parse, and Resume(USER_RESPONSE.json) sentinel path. The runner
-        # is dual-platform; the test runs on every CI matrix.
-        Source_Core/ClaudeCodeLocalRunner.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/ClaudeCodeLocalRunner.cpp"
-        # H4 — AgenticHandoffController + HarnessRunState FSM. Drives a
-        # scripted FakeRunner through the full Pending->Spawning->Running->
-        # {Complete | AwaitingUser->Running->Complete | Failed | Cancelled}
-        # lifecycle and asserts on the captured audit-sink trail.
-        Source_Core/AgenticHandoffController.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/AgenticHandoffController.cpp"
-        # H7 — PR-thread + workflow surface on GitHubClient (the 6 new methods)
-        # exercised at the wire-format + helper level. Live HTTP not tested
-        # (bucket-E / scenario); the recorded-fixture parses pin the
-        # response shapes the live methods consume.
-        Source_Core/GitHubClient_PrSurface.test.cpp
-        # H7 — PrCommentWatcher unit tests against scripted seams + a real
-        # AgenticHandoffController(:memory: store). Asserts cursor
-        # advancement, bot-filter, iteration-budget enforcement, and
-        # empty-poll no-op behaviour.
-        Source_Core/PrCommentWatcher.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp"
-        # coderabbit-react phase-1 — OpenPrRegistrar against scripted lister
-        # seam + :memory: AgentProposalStore. Verifies upsert idempotency,
-        # cursor-field preservation, parser tolerance, and lister-error
-        # fail-safety. No real `gh` subprocess.
-        Source_Core/OpenPrRegistrar.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp"
-        # coderabbit-react phase-2 — pure UTF-8 / substring helpers for the
-        # CodeRabbit comment classifier (icon parser, suggestion-block
-        # extractor, actionable + nitpick header parsers, bot-login allow-list,
-        # smatchet-handoff-marker detector). Loads
-        # tests/fixtures/coderabbit_comments_sample.json via
-        # SMATCHET_TESTS_REPO_ROOT and asserts each row's expected parse.
-        Source_Core/CoderabbitCommentClassifierPure.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp"
-        # coderabbit-react phase-3 — CoderabbitCommentClassifier concrete impl
-        # wired to the 18-rule override table from
-        # agents/coderabbit-triage.md § "Override rules". Covers each of the
-        # 18 rules (positive + negative case) + ≥ 3 survivor dispatches +
-        # a markdown-table guard test (parses agents/coderabbit-triage.md
-        # via SMATCHET_TESTS_REPO_ROOT and asserts the rule-number set +
-        # short-reason column match the C++ descriptor table).
-        Source_Core/CoderabbitCommentClassifier.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp"
-        # coderabbit-react phase-4 — PrCommentWatcher OpenPrScan-mode tests.
-        # Separate TU from PrCommentWatcher.test.cpp so the two modes'
-        # failure footprints stay independent. Covers basic iteration,
-        # classifier verdicts, no-classifier fallback, Smatchet-own-marker
-        # skip, budget exhaustion, cursor idempotency. The watcher TU
-        # itself is already linked above (under H7's entry).
-        Source_Core/PrCommentWatcher_OpenPrScan.test.cpp
-        # coderabbit-react phase-5 — pure C++14 helpers for the CI-failure
-        # classifier (check-run name → category table, cmake/link/ctest/
-        # sanitizer/transient fingerprint matchers, annotation
-        # concatenation with tail-preserving cap). Loads
-        # tests/fixtures/check_runs_failed_sample.json +
-        # check_run_annotations_sample.json via SMATCHET_TESTS_REPO_ROOT
-        # and asserts each row's expected category + kind. The abstract
-        # PrCheckRunClassifier interface lands alongside; concrete
-        # CiFailureClassifier + PrCheckRunWatcher wire up in phase 6.
-        Source_Core/CiFailureClassifierPure.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp"
-        # coderabbit-react phase-6 — concrete CiFailureClassifier (wires the
-        # phase-5 pure helpers to the verdict logic for build-doctor /
-        # debug-detective / test-rig routing + transient-rerun) and the
-        # PrCheckRunWatcher (Tick()-only, mirrors PrCommentWatcher::OpenPrScan
-        # shape against the agent_open_pr_watch SQLite table).
-        Source_Core/CiFailureClassifier.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp"
-        Source_Core/PrCheckRunWatcher.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp"
-        # coderabbit-react phase-7 — GraphQL helpers for review-thread resolve
-        # + ShortCircuitReject path test (poster + thread-resolver seam) +
-        # CiDispatch path test (PrCheckRunWatcher → SpawnAdHoc dispatcher
-        # seam). All three TUs reuse the watcher/runner/helpers already
-        # listed above; no new production-source entries required (the
-        # phase-7 production source extends existing TUs in-place).
-        Source_Core/GitHubClient_GraphQL.test.cpp
-        Source_Core/PrCommentWatcher_ShortCircuitReject.test.cpp
-        Source_Core/PrCheckRunWatcher_CiDispatch.test.cpp
-    )
-    target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AGENTIC=1)
-endif()
 
-# H4 — HarnessRunState FSM doctest. The FSM helpers are pure C++14 + always-
-# compiled in production (under SMATCHET_WITH_AGENTIC, but with no AGENTIC-
-# dependent symbols in the source), so the test runs in both gating states.
-target_sources(SmatchetTests PRIVATE
-    Source_Core/HarnessRunState.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/HarnessRunState.cpp"
-)
 
-# H2 — agent-file frontmatter assertion. The HandoffAgentFrontmatter test
-# itself does NOT depend on SMATCHET_WITH_AGENTIC (the agent file lives in
-# the canonical agents/ tree regardless of build flavour), but it consumes
-# tests/_helpers/agent_frontmatter_parse.{h,cpp} which we always-compile so
-# both this test and H7's PrIteratorAgentFrontmatter.test.cpp share one
-# YAML-subset parser.
-target_sources(SmatchetTests PRIVATE
-    _helpers/agent_frontmatter_parse.cpp
-    Source_Core/HandoffAgentFrontmatter.test.cpp
-    # H7 — pr-iterator agent file frontmatter. Same parser as the H2 entry
-    # above; the assertions pin the second-stage delegate's contract.
-    Source_Core/PrIteratorAgentFrontmatter.test.cpp
-    # (coderabbit-react-loop phase 8) coderabbit-triage v2 frontmatter +
-    # spawned-harness mode body assertion.
-    Source_Core/CoderabbitTriageAgentFrontmatter.test.cpp
-)
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
@@ -430,23 +279,6 @@ add_dependencies(SmatchetTests subproc_helper_exit subproc_helper_sleep subproc_
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TEST_HELPER_DIR=\"$<TARGET_FILE_DIR:subproc_helper_exit>\"")
 
-# H3 — stub_claude masquerades as the Claude Code CLI for
-# ClaudeCodeLocalRunner.test.cpp. Built unconditionally when tests are
-# enabled (the runner test itself is AGENTIC-gated above but building the
-# stub on AGENTIC=OFF keeps the regression matrix uniform).
-add_subdirectory(fixtures/stub-claude)
-add_dependencies(SmatchetTests stub_claude)
-target_compile_definitions(SmatchetTests PRIVATE
-    "SMATCHET_STUB_CLAUDE_DIR=\"$<TARGET_FILE_DIR:stub_claude>\"")
 
-# H6 — stub_git + stub_gh masquerade as `git` and `gh` for the PR-open
-# fallback cases in ClaudeCodeLocalRunner.test.cpp. Built unconditionally
-# (same rationale as stub_claude). The runner test injects their absolute
-# paths via Options::gitBinPath / ghBinPath.
-add_subdirectory(fixtures/stub-git-gh)
-add_dependencies(SmatchetTests stub_git stub_gh)
-target_compile_definitions(SmatchetTests PRIVATE
-    "SMATCHET_STUB_GIT_DIR=\"$<TARGET_FILE_DIR:stub_git>\""
-    "SMATCHET_STUB_GH_DIR=\"$<TARGET_FILE_DIR:stub_gh>\"")
 
 add_test(NAME smatchet_tests COMMAND SmatchetTests)
