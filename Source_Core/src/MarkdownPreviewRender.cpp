@@ -1,5 +1,6 @@
 #include "MarkdownPreviewRender.h"
 
+#include "CodeColorView.h"
 #include "CppSyntaxHighlight.h"
 #include "MarkdownConvert.h"
 #include "SelectableTextRun.h"
@@ -846,17 +847,16 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
         break;
     case BK::kCode: {
         const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
-        const bool isCpp = MarkdownPreviewRender::IsCppLikeLangTag(b.codeLang);
+        // Slice 2 of docs/design/code-syntax-coloring-and-tooltips.md — route
+        // every markdown code block through CodeColorView. C++/C delegates to
+        // the existing DrawColoredCppText (zero behaviour change on Smatchet's
+        // dominant path); Plain falls back to the same flat-orange tint the
+        // old code used; every other language now gets per-language colouring.
+        const smatchet::code_color::CodeLang lang = smatchet::code_color::FromTag(b.codeLang);
         if (r.mode == MarkdownPreviewRender::Mode::Tooltip) {
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
-            if (isCpp) {
-                DrawColoredCppText(b.codeBuffer.c_str());
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-                ImGui::TextUnformatted(b.codeBuffer.c_str());
-                ImGui::PopStyleColor();
-            }
+            smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
             if (fonts.Mono)
                 ImGui::PopFont();
         } else {
@@ -874,13 +874,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
                               ImGuiWindowFlags_HorizontalScrollbar);
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
-            if (isCpp) {
-                DrawColoredCppText(b.codeBuffer.c_str());
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.85f, 0.6f, 1.0f));
-                ImGui::TextUnformatted(b.codeBuffer.c_str());
-                ImGui::PopStyleColor();
-            }
+            smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
             if (fonts.Mono)
                 ImGui::PopFont();
             ImGui::EndChild();
