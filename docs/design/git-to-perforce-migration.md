@@ -17,7 +17,7 @@ One-sentence outcome: after this lands, an orchestrator can spawn parallel subag
 Two physical layouts, one logical project:
 
 1. **Canonical tree at `C:\Dev\Smatchet`** is both a `.git/` workspace (branch `develop`) and a Perforce client root on stream `//smatchet/main`. Both `.gitignore` + `.p4ignore` exclude the other VCS's metadata. The Edit tool writes files; both `git status` and `p4 reconcile -n` can see the change, neither auto-opens. The agent decides which verb to use at submit time.
-2. **Task streams replace git worktrees for parallel agent isolation.** Each spawned subagent gets a child stream `//smatchet/tasks/<agent-id>` mapped to its own physical folder under `.claude/streams/<agent-id>/`. The agent works there using p4 verbs only; on completion, the orchestrator integrates the task stream back to `//smatchet/main`, then runs `git diff` reconciliation at the canonical root, commits to a git branch, pushes, opens a PR — preserving the existing handoff envelope.
+2. **Task streams replace git worktrees for parallel agent isolation.** Each spawned subagent gets a child stream `//smatchet/tasks/<agent-id>` mapped to its own physical folder under `.claude/streams/<agent-id>/`. The agent works there using p4 verbs only; on completion, the orchestrator integrates the task stream back to `//smatchet/main`, then runs `git diff` reconciliation at the canonical root, commits to a git branch, pushes, and opens a draft PR — the same `agent/<id>/<slug>` branch shape the orchestrator already uses for git-worktree-isolated subagents (so AGENTS.md § Force-push carve-out + `smatchet-merge-watcher` registration both apply unchanged).
 
 Trade-off the choice forces: **the two-VCS model adds reconciliation steps at the canonical root** (`p4 reconcile -n` + `git status` should agree). Mitigated by a `pre-push` hook that fails if `p4 reconcile -n` reports unsubmitted p4-side changes that aren't in the git index. The alternative was a sync-bridge (git-p4) topology, rejected for opacity — agents can't reason cleanly about state that's mediated by a daemon.
 
@@ -57,10 +57,10 @@ Numbered list. Per-file rationale.
 ### Out of scope, explicitly **not** touched
 - Existing `.github/` workflows (11 of them) — git/GitHub remains the ship-line, all CI continues to fire on PRs.
 - Merge-gates poller (`scripts/dev/merge-gates.sh`) — operates on GitHub PRs, unchanged.
-- Agentic coding-handoff (`docs/agentic/USAGE.md`, `ClaudeCodeLocalRunner`) — handoff envelope still ends in `gh pr create --draft`, unchanged.
+- `smatchet-merge-watcher` host daemon (`docs/design/smatchet-merge-watcher.md`) — out-of-band CI/CodeRabbit polling, GitHub-PR-shaped, unchanged.
 - FetchContent vendoring — git stays, no need to vendor.
 - Existing `refs/locks/*` plan-locks — keep working; p4 counter is purely additive.
-- AGENTS.md merge-gates, plan-locks, force-push carve-out, spawned-child PR draft contract — all unchanged.
+- AGENTS.md merge-gates, plan-locks, force-push carve-out — all unchanged.
 
 ## Existing utilities reused
 
@@ -113,25 +113,26 @@ Exit: round-trip — edit a file, `git add` + commit, then `p4 reconcile` + subm
 3. `.gitignore` add `.claude/streams/` (sibling of existing `.claude/worktrees/`).
 4. New script `scripts/dev/p4-task-stream-gc.sh --older-than-days N`:
    - `p4 streams //smatchet/tasks/...` → filter by mtime → `p4 stream -d` after confirming no pending CLs.
-5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per the deleted handoff-envelope section) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
+5. Wire into orchestrator worktree allocation: when `SMATCHET_AGENT_VCS=p4` is set, the orchestrator's per-subagent isolation step calls `p4-task-stream.sh` to produce `.claude/streams/<agent-id>/` instead of running `git worktree add .claude/worktrees/<agent-id> ...`. The subagent's working directory is the p4 task-stream root; nothing else about subagent invocation changes.
 
 Exit: spawn a stub child with `SMATCHET_AGENT_VCS=p4`, observe the child receives a populated p4 task stream; on exit the GC purges it.
 
 ### Phase 3 — Submit-to-PR bridge
-The piece that closes the loop. An agent finishes work on a task stream; the orchestrator needs to turn that into a GitHub PR without losing the existing handoff envelope.
+The piece that closes the loop. A subagent finishes work on a task stream; the orchestrator turns that into a GitHub PR.
 
 1. New script `scripts/dev/p4-task-stream-to-pr.sh <agent-id> <pr-title>`:
    - `p4 integrate //smatchet/tasks/<agent-id>/... //smatchet/main/...`
    - `p4 resolve -as` (auto-accept safe) + bail loudly on conflicts (escalate to user).
    - At canonical root: `p4 sync //smatchet/main/...@head`
-   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (this `agent/<id>/<slug>` branch shape originally came from the deleted `ClaudeCodeLocalRunner`; the convention is kept here for the p4-integrated path but no longer matches a current AGENTS.md section)
+   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (the `agent/<id>/<slug>` branch shape carries from the orchestrator's pre-existing subagent-branch convention; preserves AGENTS.md § Force-push carve-out for spawned-agent recovery so emergency recovery flows still match).
    - `git add -A` (the synced p4 changes appear as git-modified files because the canonical tree is dual-tracked)
    - `git commit` using the integrated CL's description as the commit-message body
    - `git push -u origin agent/<agent-id>/<short-slug>`
    - `gh pr create --draft --title "<pr-title>" --body "<...>"`
-2. Bridge writes back to `RUN_RESULT.json` per existing handoff envelope. Downstream merge-gates / CodeRabbit / CI workflows fire as they do today.
+   - Print the PR URL to stdout (caller — orchestrator or `smatchet-merge-watcher` — picks it up; `register <pr>` flows through the watcher per AGENTS.md § Post-ship turn-end protocol).
+2. Downstream merge-gates / CodeRabbit / CI workflows fire as they do today; merge-watcher (if registered) drives the PR to green per its own contract.
 
-This is the only **load-bearing** new script — the rest is opt-in tooling. Test thoroughly with the agentic-handoff stub harness before relying on it.
+This is the only **load-bearing** new script — the rest is opt-in tooling. Test coverage via a new bats rig (`tests/bats/p4_submit_to_pr.bats`) mirroring `tests/bats/merge_gates.bats` — `gh api` calls mocked, `p4` calls run against a throwaway local depot.
 
 ### Phase 4 — p4-counter plan-locks backend
 1. `SMATCHET_LOCK_BACKEND=git-ref|p4-counter`, default `git-ref`.
@@ -157,9 +158,9 @@ Exit: deliberately have two agents try to edit the same `+l`-locked file; one is
 3. `docs/CONTEXT.md` glossary additions under new § Source control section.
 
 ### Phase 7 — Verification + adoption
-1. Round-trip scenario: orchestrator spawns subagent with `SMATCHET_AGENT_VCS=p4`, subagent ships PR via the bridge, PR merges via existing merge-gates, branch + task stream both GC'd.
-2. Round-trip scenario: orchestrator spawns subagent with `SMATCHET_AGENT_VCS=git` (default), behavior is bit-identical to today (regression gate).
-3. Multi-agent scenario: two subagents working in parallel task streams; integrate both; resolve auto-merge; both ship.
+1. Round-trip scenario: orchestrator allocates a subagent task stream with `SMATCHET_AGENT_VCS=p4`, subagent works in `.claude/streams/<id>/`, the orchestrator (or user) invokes `p4-task-stream-to-pr.sh`, PR opens against `develop`, registered with `smatchet-merge-watcher`, PR merges, branch + task stream both GC'd.
+2. Round-trip scenario: same flow with `SMATCHET_AGENT_VCS=git` (default), behavior bit-identical to today (regression gate — no p4 calls at all).
+3. Multi-agent scenario: two subagents in parallel task streams; integrate both back to `//smatchet/main`; auto-resolve where safe; both ship.
 
 ## Risks / non-goals
 
@@ -173,7 +174,7 @@ Exit: deliberately have two agents try to edit the same `+l`-locked file; one is
 - **Non-goal: full git history import to p4.** Out of scope; baseline-only import suffices for the agentic-WIP use case. A history-import plan can come later if there's a reason.
 - **Non-goal: Helix Swarm code review.** Out of scope; PRs on GitHub remain the review surface.
 - **Non-goal: git-fusion / bidirectional sync.** Explicitly rejected — too opaque.
-- **Non-goal: replacing `gh pr create` / CI / merge-gates / coverage-gate / perf-gate / agentic-handoff.** All survive unchanged.
+- **Non-goal: replacing `gh pr create` / CI / merge-gates / coverage-gate / perf-gate / `smatchet-merge-watcher`.** All survive unchanged.
 
 ## Verification
 
@@ -214,3 +215,5 @@ Slug is `git-to-perforce-migration` for historical continuity (this doc was firs
 This doc's original framing (2026-05-15, commit `9d36aab`) was a full git → Perforce migration: archive GitHub, vendor every FetchContent dep, retire all git/gh-touching agents + workflows. The 2026-05-21 drift report against develop tip `95d51a5` surfaced that this would have torched five load-bearing systems (plan-locks, merge-gates, agentic-handoff, perf-CI, coverage-CI) without replacements. Drift report commit: `1a3c9109`.
 
 The user clarified that the actual goal was an opt-in **local agentic-WIP layer** with git/GitHub preserved as the ship-line. This rewrite (2026-05-21) replaces the migration framing with the dual-VCS topology above. Original migration plan body preserved in git history at `9d36aab`; do not rebuild it from this doc.
+
+**Post-merge stale-ref cleanup (2026-05-21 evening)**: PR #361 ("agentic ripout doc cleanup") independently removed the `handoff-implementer` + `pr-iterator` agents, `docs/agentic/USAGE.md`, `ClaudeCodeLocalRunner`, the `SEED.json` / `RUN_RESULT.json` sentinel-envelope, and the `stub-claude` test harness. Phases 2, 3, 7 of this plan referenced those primitives by name; they have been re-anchored to (a) the orchestrator's pre-existing per-subagent worktree allocation (which survives), (b) the `smatchet-merge-watcher` host daemon (the replacement out-of-band poll path per `docs/design/smatchet-merge-watcher.md`), and (c) a bats rig modelled on `tests/bats/merge_gates.bats` for Phase 3 coverage in place of the deleted stub harness.
