@@ -2,7 +2,7 @@
 
 > **Slug**: `smatchet-merge-watcher`
 >
-> **Status**: DRAFT. Lands the P1 backlog entry [`docs/backlog/agent-self-improvement/tooling.md`](../backlog/agent-self-improvement/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21).
+> **Status**: PHASE-1-READY (2026-05-21 evening grill locked all 5 open design decisions). Lands the P1 backlog entry [`docs/backlog/agent-self-improvement/tooling.md`](../backlog/agent-self-improvement/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21). Per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/`; foreground daemon default; 3-attempt triage budget; Smatchet toast + Windows native BurntToast notifications; explicit owner transfer on `register`. See § Open design decisions — LOCKED for the full rationale.
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -31,15 +31,27 @@ Build the watcher as a Python daemon outside Smatchet's C++ surface — it talks
 
 ## Files to modify
 
-**New files (~7)**:
+**New files (~8)**:
 
-1. [`scripts/dev/merge-watcher.py`](../../scripts/dev/) — main daemon loop. ~150 LOC.
+1. [`scripts/dev/merge-watcher.py`](../../scripts/dev/) — main daemon loop. ~180 LOC (was ~150; per-user registry adds `clone_path` handling + multi-clone cascade serialization).
 2. [`scripts/dev/merge-watcher-cli.py`](../../scripts/dev/) — `register` / `unregister` / `status` / `list` subcommands. ~80 LOC.
 3. [`scripts/dev/coderabbit-triage.py`](../../scripts/dev/) — Phase 3 classifier (CR-finding parser + Smatchet-invariant rejection table + delegated subsystem fixer). ~150 LOC.
 4. [`scripts/dev/smatchet-notify.sh`](../../scripts/dev/) — Phase 4 shell bridge to Smatchet's local-only HTTP toast endpoint. ~30 LOC.
-5. [`tests/bats/merge_watcher.bats`](../../tests/bats/) — Phase 5 registry CRUD + state-transition coverage. ~120 LOC.
-6. [`tests/fixtures/watcher_registry_active.json`](../../tests/fixtures/) — Phase 5 sample registry fixture.
-7. [`tests/fixtures/watcher_pr_state_*.json`](../../tests/fixtures/) — Phase 5 per-PR state fixtures (one per state-transition test case).
+5. [`scripts/dev/smatchet-notify-windows.ps1`](../../scripts/dev/) — Phase 4 Windows native toast via BurntToast for "Smatchet not running" fallback. ~25 LOC.
+6. [`tests/bats/merge_watcher.bats`](../../tests/bats/) — Phase 5 registry CRUD + state-transition coverage. ~120 LOC.
+7. [`tests/fixtures/watcher_registry_active.json`](../../tests/fixtures/) — Phase 5 sample registry fixture (carries `clone_path` per entry).
+8. [`tests/fixtures/watcher_pr_state_*.json`](../../tests/fixtures/) — Phase 5 per-PR state fixtures (one per state-transition test case).
+
+**Runtime state (per-user, outside repo)**:
+
+```
+%LOCALAPPDATA%/Smatchet/merge-watch/   # per-user; created on first `register`
+├── active.json                         # registry (list of {pr, clone_path, registered_at, triage_attempts})
+├── active.json.lockfile                # file-lock for multi-daemon serialization
+├── daemon.pid                          # PID + start-time for `status --daemon`
+├── state/<pr>.json                     # per-PR poll state (last-poll, last-CR-review-SHA, fix-attempt counter)
+└── locks/cascade-<branch>.lock         # per-branch lock during cascade-into-stacked-children
+```
 
 **Modified (~3)**:
 
@@ -76,15 +88,15 @@ Per [`docs/design/pillar-1-2-perf-review-system.md`](pillar-1-2-perf-review-syst
 
 **Override**: none anticipated; no perf regression expected from a localhost HTTP POST.
 
-## Open design decisions (grill before phase 1)
+## Open design decisions — LOCKED 2026-05-21 evening grill
 
-Five decisions worth locking via a `grill-with-docs` pass before phase 1 starts. Each affects the file surface above.
+Five decisions locked via `grill-with-docs` pass before Phase 1 starts. Each affects the file surface above + the Phase 1 implementation shape.
 
-1. **Registry location** — `.claude/.merge-watch/active.json` (per-clone, gitignored) OR `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (per-user, Smatchet-side). Per-clone matches Smatchet's worktree pattern; per-user survives clone-deletion. Recommendation: **per-clone** (locality wins over survivability — losing a clone usually means losing the work it was tracking).
-2. **Triage failure budget** — how many fix-attempt rounds before "stop trying, notify user"? Recommendation: **3 attempts** (2 retries + 1 surface). Lower → noisy notifications; higher → wasted API spend on truly stuck PRs.
-3. **Notification channel** — Smatchet toast only, OR also Windows native notification, OR also Slack/Discord webhook? Recommendation: **Smatchet toast + Windows native** (P0); webhooks deferred to P1. Native ensures notification surfaces even when Smatchet isn't running.
-4. **Daemon foreground vs detached default** — `merge-watch daemon` defaults to foreground (visible terminal, user sees logs) OR detached (silent background, must `status` to see). Recommendation: **foreground default** + `--background` opt-in. Surfaces failures early during dogfooding.
-5. **Orchestrator handoff semantics** — once `register`-ed, watcher OWNS the merge. If user wants to abandon, they `unregister` + manually `gh pr close`. Recommendation: **explicit owner transfer** — `register` prints "watcher now owns this PR; use `unregister` to take back control"; orchestrator never auto-merges a registered PR.
+1. **Registry location — `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (per-user)**. Single registry per machine, watches PRs across all Smatchet clones. Implication: each registry entry carries a `clone_path` field so the daemon knows where to `git pull --rebase` during cascade. Survives clone-deletion → orphaned-clone PRs surface in `merge-watch status` for explicit unregister. File-lock (`.lockfile` next to `active.json`) serializes multiple daemon-process accesses — though the foreground-default rule should make multi-daemon a rare misconfiguration anyway.
+2. **Triage failure budget — 3 attempts** (2 retries + 1 surface). Tunable via `MERGE_WATCH_TRIAGE_BUDGET` env var (default 3). After budget exhausted: notify the user with the last attempt's CR-feedback delta + cumulative-attempt log; stop polling that PR until user `unregister`s + re-`register`s OR explicitly invokes `merge-watch retry-triage <pr>` (Phase 3 CLI extension — out of Phase 1 scope).
+3. **Notification channel — Smatchet toast + Windows native (P0); webhooks deferred**. Two-prong: (a) Smatchet toast via existing `SmatchetToastManager` + Phase 4's localhost HTTP endpoint (only fires when Smatchet is running); (b) Windows native via BurntToast PowerShell module (or `New-BurntToastNotification` shell call) so user sees notifications even when Smatchet is closed. Webhook (Slack / Discord / Teams) deferred to a P1 follow-up once user-need surfaces.
+4. **Daemon foreground default + `--background` opt-in**. `merge-watch daemon` runs in foreground (user sees structured stdout per poll cycle); `--background` opt-in detaches via Python `subprocess.Popen` with `creationflags=CREATE_NEW_PROCESS_GROUP` (Windows). State file (`%LOCALAPPDATA%/Smatchet/merge-watch/daemon.pid`) records PID for `merge-watch status --daemon` checks. Foreground catches failures early during dogfooding; opt-in detach matches the production shape once user trusts the loop.
+5. **Explicit owner transfer on register**. `merge-watch register <pr>` prints "watcher now owns this PR; use `unregister` to take back control". Orchestrator NEVER auto-merges a registered PR (checks registry before any merge-gates poll). User can `merge-watch unregister <pr>` to take back; daemon stops polling on next cycle. Clean ownership boundary; no race between orchestrator + watcher + user.
 
 ## Risks / non-goals
 
