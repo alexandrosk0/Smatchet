@@ -344,6 +344,30 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
     }
     j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
+    // Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
+    // Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
+    // j.erase() the agentic-era secrets + settings would persist indefinitely. Per
+    // CodeRabbit review on PR #356 (2026-05-21). Covers the GitHub PAT pair, the agentic-poll
+    // tunables, handoff knobs, coderabbit-react / ci-react nested objects.
+    j.erase("github_pat");
+    j.erase("github_pat_enc");
+    j.erase("agentic_poll_enabled");
+    j.erase("agentic_poll_interval_sec");
+    j.erase("agentic_poll_source");
+    j.erase("agentic_poll_query");
+    j.erase("handoff_harness_bin_path");
+    j.erase("handoff_runner_name");
+    j.erase("handoff_clarification_post_to_github");
+    j.erase("handoff_auto_create_pr_if_missing");
+    j.erase("handoff_pr_base_branch");
+    j.erase("handoff_pr_body_template");
+    j.erase("handoff_git_bin_path");
+    j.erase("handoff_gh_bin_path");
+    j.erase("handoff_pr_iteration_budget");
+    j.erase("handoff_pr_comment_poll_interval_sec");
+    j.erase("handoff_auto_start_on_approve");
+    j.erase("coderabbit_react");
+    j.erase("ci_react");
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
