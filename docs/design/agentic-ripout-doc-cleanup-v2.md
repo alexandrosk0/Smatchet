@@ -87,11 +87,17 @@ Not modified by any `(agentic)`-titled PR but holds rules cross-linked from AGEN
   - `pr-iterator` row — STRIP (agent file deleted).
   - `coderabbit-triage` row — **KEEP** per re-grill agent-files decision (above). Update the trigger pattern to "CodeRabbit posts CHANGES_REQUESTED on a watched PR" (watcher invocation), drop any `dispatch_source` reference.
 
-### `agents/*.md` agent files added by `(agentic)`-titled PRs
+### `agents/*.md` agent files
 
-- **`agents/handoff-implementer.md`** (PR#248; v-bumped by #299) — **DELETE entire file**.
-- **`agents/pr-iterator.md`** (PR#255) — **DELETE entire file**.
-- **`agents/coderabbit-triage.md`** (`ac8aeb85` `docs(agentic)`) — **KEEP** (per 2026-05-21 re-grill). Strip the agent's spawned-harness language: drop `dispatch_source` / `SEED.json` / "first delegate inside spawned harness" references; drop the `## Routed via` header contract. Keep the classification logic + Smatchet-invariant-aware fix-or-reject rules + the routing table to subsystem agents. Future `smatchet-merge-watcher` invokes this agent (e.g. via `claude --headless` or as a direct Python-delegated classifier) when CR posts CHANGES_REQUESTED on a watched PR.
+Four files affected (3 in original v2 + `security-review.md` surfaced by 2026-05-21 evening deep-dive):
+
+- **`agents/handoff-implementer.md`** (PR#248; v-bumped by #299) — **DELETE entire file** (175 lines). First delegate inside the deleted spawned-`claude` orchestration. Without `ClaudeCodeLocalRunner`, no spawn → no first-delegate role.
+- **`agents/pr-iterator.md`** (PR#255) — **DELETE entire file** (132 lines). Second delegate in the spawn lifecycle; same rationale. The "iterate on PR comments" intent migrates to the watcher invoking `coderabbit-triage` directly.
+- **`agents/coderabbit-triage.md`** (`ac8aeb85` `docs(agentic)`) — **KEEP** (203 lines) per 2026-05-21 re-grill. Surgical strip:
+  - Frontmatter (lines 1-43) — keep as-is (`delegates-to:` lists 15 subsystem agents all still alive; `triggers:` keywords keep, optionally append a watcher-invocation trigger).
+  - Body lines 185-190 — DELETE the 6-line spawned-harness contract block (`SEED.json` / `dispatch_source` / "routed delegate inside handoff-implementer's routing" / `RUN_RESULT.json` / "outside spawned-harness mode"). Body lines 1-184 (the 18-rule override table + classification + Smatchet-invariant rejection) stay untouched.
+  - REPLACE the stripped block with a watcher-invocation paragraph: "When invoked by `smatchet-merge-watcher` (CR posted CHANGES_REQUESTED on a watched PR), this agent reads the watcher's prepared payload (`{pr_number, head_sha, cr_review_body, cr_review_threads}`), runs the 18-rule override + validation, applies valid fixes via subsystem delegates, commits + pushes. Watcher re-polls; CR re-reviews on push."
+- **`agents/security-review.md` — NEW IN V2 (surfaced 2026-05-21 evening deep-dive)** — TRIM. Lines 66-72 hold a "Coding-harness handoff surface" attack-surface block that audits the deleted `ClaudeCodeLocalRunner` spawn (env allow-list, sentinel-file write contracts, branch-name discipline, PR draft requirement, GH PAT scope, worktree GC). The runtime it audits is GONE. Strip these 7 lines. Keep the rest of the file (MCP / CLI / Lua / SQLite / HTTP / AI-assistant attack surfaces all still live). The watcher (when it ships) will introduce its own attack surface — `security-review` gets a new block added in the watcher P1's plan + PR, not as part of v2 cleanup.
 
 ### Other docs added by `(agentic)`-titled PRs
 
