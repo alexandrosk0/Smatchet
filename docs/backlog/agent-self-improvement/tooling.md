@@ -16,6 +16,12 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
+  Details: `assets/fonts/README.md` (shipped in PR #334 per `docs/design/ai-chat-claude-desktop-parity.md` § Phase 4) claims "CI fetches it on release-tag builds; dev workstations drop it manually." `assets/fonts/*.ttf` is gitignored (`.gitignore`) so the binary cannot live in-repo. Grep over `.github/` for `fa-solid-900` returns zero hits — no release / build workflow actually fetches the TTF. Shipped exes will start with `LOG_WARN: g_FaIconsLoaded = false` and the AI-chat hover action row + pin strip will render the text fallback (`Copy` / `Pin` / `×`) instead of icons. UX regression vs. plan intent, but **not** a build / runtime failure thanks to the `SmatchetAreFaIconsLoaded()` graceful-degradation path wired in `SmatchetAiAssistantUi.cpp`.
+  Concrete next action: extend the release workflow (likely `.github/workflows/release.yml` and any `package-windows-*` job) to (1) `curl -L https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf -o assets/fonts/fa-solid-900.ttf` before the CMake configure step, (2) let the existing POST_BUILD `copy_if_different` lay the TTF next to the exe, (3) make sure the packaging step picks the file up via the existing asset-bundling rule. Also add a configure-time `STATUS` message that reports whether the TTF was found vs. skipped, mirroring the README's contract. ~1 h.
+  Status: open
+  Last-reviewed: 2026-05-20
+
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
