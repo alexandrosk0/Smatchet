@@ -124,7 +124,7 @@ The piece that closes the loop. An agent finishes work on a task stream; the orc
    - `p4 integrate //smatchet/tasks/<agent-id>/... //smatchet/main/...`
    - `p4 resolve -as` (auto-accept safe) + bail loudly on conflicts (escalate to user).
    - At canonical root: `p4 sync //smatchet/main/...@head`
-   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (per AGENTS.md § Handoff envelope § Branch naming)
+   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (this `agent/<id>/<slug>` branch shape originally came from the deleted `ClaudeCodeLocalRunner`; the convention is kept here for the p4-integrated path but no longer matches a current AGENTS.md section)
    - `git add -A` (the synced p4 changes appear as git-modified files because the canonical tree is dual-tracked)
    - `git commit` using the integrated CL's description as the commit-message body
    - `git push -u origin agent/<agent-id>/<short-slug>`

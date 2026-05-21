@@ -143,7 +143,7 @@ Validated against `docs/design/agentic-coding-handoff.md`, `agentic-flow-impleme
 
 **Also**: update frontmatter `description:` field (L3) to mention "AI assistant + coding-harness handoff" surfaces.
 
-**Post-action**: archive backlog entry to `applied.md`; file a new applied entry for the handoff surface (cross-link to AGENTS.md § Handoff envelope as source).
+**Post-action**: archive backlog entry to `applied.md`; file a new applied entry for the handoff surface (the AGENTS.md handoff-envelope section was the cross-link source — section was deleted by v2 doc-cleanup; the entry's historical context is preserved per the deleted-runtime banner in `applied.md`).
 
 ---
 
