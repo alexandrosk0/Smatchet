@@ -2,7 +2,9 @@
 
 # Status
 
-Accepted (2026-05-19)
+**Withdrawn-as-partial (2026-05-21)** — the `agent/<id>` half of the carve-out is moot (the `ClaudeCodeLocalRunner` that produced that branch base was removed by v1 PR1 of [`docs/design/github-tracker-backend.md`](../design/github-tracker-backend.md), merge sha `b1d241bc`). The `claude/<id>` half — Claude Code SDK-spawned worktrees — remains valid and now stands alone in AGENTS.md § Project rules § Force-push carve-out for Claude Code SDK-spawned recovery (rewritten in this v2 cleanup commit). This ADR is kept for historical context of the original two-branch-shape reasoning; do not treat the `agent/<id>` carve-out below as live policy.
+
+Originally: Accepted (2026-05-19).
 
 # Context
 

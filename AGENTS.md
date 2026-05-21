@@ -78,7 +78,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
 
-`[gate-check]` is the merge-gates poller (see § Merge gates) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Wait for gates and merge" or in-session "merge when green"). Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
+`[gate-check]` is the merge-gates poller (see § Merge gates) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher" or in-session "merge when green"). The `smatchet-merge-watcher` host daemon (per `docs/design/smatchet-merge-watcher.md`) takes over from this point when the user picks post-ship option 3; the orchestrator's in-session role ends at register-time. Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
 
 All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
 
@@ -113,18 +113,18 @@ After the loop reaches PR-opened (or the equivalent terminal state for the task)
 
 1. **Manual verify** — user wants to drive the change manually before merge.
 2. **Review PR** — user wants to read the diff / comment on GitHub.
-3. **Wait for gates and merge** — orchestrator first runs `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the merge-gates poller (see § Merge gates) and REST-squash-merges on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.
+3. **Register with watcher** — orchestrator runs `merge-watch register <pr>` (per [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md)). The `smatchet-merge-watcher` host daemon's first step on register is `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications via `SmatchetToastManager` (watcher Phase 4), not back to this session.
 4. **Done** — no further action; PR stays draft for later.
 
 Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
 
-**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and enter option 3 directly (`git-janitor` invokes the merge-gates poller before merging).
+**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and enter option 3 directly (`git-janitor` invokes `merge-watch register` before walking away).
 
-Cross-link: ship-loop reference in § Delegation; pause-loop override in § Delegation § Debug-mode pause-loop; gate semantics + halt prompts in § Merge gates.
+Cross-link: ship-loop reference in § Delegation; pause-loop override in [`docs/agent-rules/DELEGATION.md`](docs/agent-rules/DELEGATION.md) § Debug-mode pause-loop; gate semantics + halt prompts in § Merge gates; watcher integration in [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md).
 
 ## Merge gates
 
-Before the orchestrator (or `git-janitor` running in the user's main session) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
+Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
 
 1. **CI** — every required check (`isRequired(pullRequestNumber: $pr) == true`) on `pullRequest.commits(last:1).commit.statusCheckRollup.contexts` must reach a passing terminal state.
    - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.
@@ -181,7 +181,7 @@ The CR cell encodes the seven outcomes verbatim — examples: `APPROVED`, `COMME
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 
-**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3, or in-session "merge when green"). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/git-janitor.md` § Hard refusals:
+**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR any PR registered with `smatchet-merge-watcher`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/git-janitor.md` § Hard refusals:
 
 ```bash
 gh api -X PUT "repos/$owner/$repo/pulls/$prNumber/merge" -f merge_method=squash
@@ -199,7 +199,7 @@ Conflicts, missing required checks, and branch-protection rules are enforced by 
 - `MERGE_GATES_CR_GRACE_POLLS` — polls to wait for CR to start (a review or `CodeRabbit` SUCCESS status) before falling through `NONE` to pass (default 10). Only consulted when `MERGE_GATES_CR_INSTALLED` is true / auto-detected as installed.
 - `MERGE_GATES_TEST_ANSWER` — bats-only canned `ask_user_question` answer.
 
-**Scope boundary**: the auto-`gh pr ready` + auto-merge path applies **only** to the orchestrator + `git-janitor` in the user's main session. Spawned-child agents (`handoff-implementer`, `pr-iterator`) keep their existing draft-only contract — see § Handoff envelope § Spawned-child PR draft requirement.
+**Scope boundary**: the auto-`gh pr ready` + auto-merge path applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority. The deleted spawned-child agents (`handoff-implementer`, `pr-iterator`) are gone per v1 of `docs/design/github-tracker-backend.md`; the watcher runs as a host daemon, not a per-PR subprocess, so the spawned-child draft-only carve-out no longer applies.
 
 Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/merge-gates-prompt.sh` (`ask_user_question` shim), `scripts/dev/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.
 
@@ -243,7 +243,7 @@ Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/me
 
 `reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
 
-**Force-push carve-out for spawned-agent recovery**: the global `git push --force` ban (and the harness's banned `--no-verify`/`--no-gpg-sign` flags) gets one narrow carve-out — `git push --force-with-lease origin agent/<id>` and `git push --force-with-lease origin claude/<id>` are permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch. Excludes `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`, and any branch with non-self commits in the ahead-range. Rationale + alternatives: `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`.
+**Force-push carve-out for Claude Code SDK-spawned recovery**: the global `git push --force` ban (and the harness's banned `--no-verify`/`--no-gpg-sign` flags) gets one narrow carve-out — `git push --force-with-lease origin claude/<id>` is permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a Claude Code SDK-spawned worktree branch. The `agent/<id>` case is GONE — that branch shape came from the deleted `ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`). The future `smatchet-merge-watcher` runs as a host daemon (per `docs/design/smatchet-merge-watcher.md`), not a spawned subprocess, so it has no worktree branch that would need this carve-out. Excludes `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`, and any branch with non-self commits in the ahead-range. ADR 0005 (`docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`) is Withdrawn as historical (status flipped in this v2 cleanup); the `claude/<id>` rationale stands on its own here.
 
 **Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
 
@@ -358,79 +358,6 @@ Quick index of moved subsections — full content in `docs/agent-rules/DELEGATIO
 - **Why split** + **Complexity rationale** — design intent.
 
 External references to `AGENTS.md § <subsection>` continue to resolve via this index — agents who read AGENTS.md land here, see the cross-link, and follow it to the canonical text. Don't maintain parallel copies; edit the canonical at `docs/agent-rules/DELEGATION.md`.
-
-
-## Handoff envelope
-
-The agentic coding-handoff flow (see `docs/design/agentic-coding-handoff.md`) spawns a `claude` child process inside an isolated git worktree to implement an approved `AgentProposal` of action `ImplementIssue`. The runner side (`ClaudeCodeLocalRunner` from H3 onward) and the spawned harness's first delegate (`handoff-implementer`) communicate through a fixed set of **sentinel files** living at the worktree root. Vocabulary, write contracts, and env boundaries are pinned here so all agents in the canonical tree share one language.
-
-### Sentinel files
-
-Seven files, one writer + one reader per file. None of them are committed to the git history — the runner writes them before / during the child's lifetime; the child writes its results back; the runner consumes the results on exit.
-
-| File | Writer | Reader | One-line role |
-|---|---|---|---|
-| `SEED.md` | runner | handoff-implementer | Human-readable handoff brief; weave into commit-message + PR-body prose. For non-proposal dispatches (`coderabbit_comment` / `ci_*`) the markdown opens with a `## First delegate: handoff-implementer` + `## Routed via: <sub-delegate>` header naming the routed sub-delegate the implementer hands off to. |
-| `SEED.json` | runner | handoff-implementer | Canonical payload (`CodingHarness::Seed` struct); first thing the child reads on entry. Phase 7 adds the `dispatch_source` discriminator field for non-proposal dispatches — one of `proposal_implement` \| `coderabbit_comment` \| `ci_build_failure` \| `ci_ctest_failure` \| `ci_coverage_gate` \| `ci_transient_rerun`. Absent or unrecognised values fall back to `proposal_implement` (the H3 default). Carried in the seed's `payloadExtra` so the existing `CodingHarness::SeedBuilder` round-trips it without schema-version churn. |
-| `CLARIFICATION_NEEDED.json` | handoff-implementer | runner + Smatchet UI | Written **only** when the child cannot proceed without user input; surfaces a single question, then the child stops. |
-| `USER_RESPONSE.json` | runner | handoff-implementer | Written by the runner (or the Smatchet UI, or the GitHub-comment poller) when the user answers; child reads on resume. |
-| `RUN_RESULT.json` | handoff-implementer | runner | Terminal signal — `{ ok, errorMessage, prUrl, filesChanged, linesAdded, linesRemoved, toolUseSummary }`. Runner watches for this file; its appearance flips the FSM to Complete or Failed. |
-| `PR_URL.txt` | handoff-implementer | runner + Smatchet UI | Single line containing the PR URL. Mirrors `RUN_RESULT.json.prUrl` so the UI has a cheap path before parsing the full result. |
-| `CHECK_RUN.json` | classifier (`PrCheckRunWatcher` dispatcher) | handoff-implementer | CI failure cause payload (check-run name, conclusion, top N annotations, last N log lines) — written before spawn for `ci_*` dispatch sources. The seed's `dispatch_source` matching `ci_*` is the read-trigger; absence on a `ci_*` dispatch is a logged warning, not a fatal error (CodeRabbit-comment + proposal dispatches never produce this file). |
-
-Write-once semantics: every sentinel except `USER_RESPONSE.json` (rewritten per clarification round) is written once per spawn. `RUN_RESULT.json` is the **last** write the child performs before exit — anything else can race, but the runner must observe `RUN_RESULT.json` strictly after `PR_URL.txt`.
-
-### Env allow-list
-
-The child process is spawned with a fresh environment block, NOT an inherited copy of the parent's. Allow-listed variables only:
-
-```text
-PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY
-```
-
-No other variables inherit. In particular, **`SMATCHET_*` never inherits** — Smatchet config and any secrets/PATs stored in `SMATCHET_*` env vars stay in the parent process and are unavailable to the child. The runner asserts that at least one of `GH_TOKEN` / `GITHUB_TOKEN` is set before spawning so the child's `gh pr create --draft` invocation can authenticate.
-
-The env-list discipline is enforced by `ClaudeCodeLocalRunner` (lands in H3); the env-allow-list doctest in H3's test surface spawns the stub child with a poisoned `SMATCHET_SECRET=leak` and asserts the child's recorded env file shows the variable is absent.
-
-### Branch naming
-
-Worktree branches follow `agent/<proposalId>/<short-slug>` where `<short-slug>` is the first 32 characters of `kebab-case(issueTitle)` (truncated at a word boundary when possible). Two hard rules:
-
-- The branch must not equal `develop` or `main`; the runner asserts this before `git worktree add` and the agent re-asserts it before any push.
-- The branch must already exist in the worktree before the child is spawned; the child never runs `git checkout -b` itself.
-
-### Worktree layout
-
-Worktree root: `.claude/worktrees/agent-<proposalId>` (already gitignored via the existing `.claude/worktrees/` rule). One worktree per proposal; cleanup is a separate concern (`handoff.gc --older-than-days <n>` command, H4 onward).
-
-### Spawned-child PR draft requirement
-
-Every PR opened by a **spawned `claude` child** (`handoff-implementer`, `pr-iterator`) is `--draft`. The user marks ready-for-review only after auditing the diff. The spawned child never calls `gh pr ready`, `gh pr merge`, `gh api …/merge`, never closes / reopens PRs, and never pushes to a non-`agent/*` branch.
-
-The **orchestrator** running in the user's main session may auto-`gh pr ready` + REST-squash-merge under § Merge gates when the user has explicitly authorised this PR for merge (post-ship option 3, or in-session "merge when green"). That scope boundary is what makes the merge-gates path compatible with the spawned-child draft-only contract.
-
-### Spawned-orchestrator first-move contract
-
-The spawned `claude` child's first move, if `SEED.json` exists at `$PWD`, is to delegate to `handoff-implementer` with the file as inline context. Do not re-read it; do not improvise routing. The delegate owns the diagnose → code → test → commit → push → PR loop and writes the terminal `RUN_RESULT.json` before exit.
-
-### First-delegate selection
-
-`handoff-implementer` is always the first-delegate inside a spawned harness (2026-05-18 locked decision, per `docs/design/coderabbit-react-loop.md` § Phased rollout § Phase 7). It reads `SEED.json.dispatch_source` and routes internally:
-
-| `dispatch_source` | Routed delegate |
-|---|---|
-| `proposal_implement` | (handoff-implementer continues per H2 default routing) |
-| `coderabbit_comment` | `coderabbit-triage` |
-| `ci_build_failure` | `build-doctor` |
-| `ci_ctest_failure` | `debug-detective` |
-| `ci_coverage_gate` | `test-rig` |
-| `ci_transient_rerun` | (no spawn — runner calls `gh workflow run` instead) |
-
-Canonical routing details + the failure-mode contract live in `agents/handoff-implementer.md` § `dispatch_source` enum (single source of truth). This table is a navigation aid; do not duplicate the contract here.
-
-### Anti-deception note
-
-**Anti-deception note**: `HarnessRunState::IsTransitionAllowed` (`Source_Core/include/HarnessRunState.h`) is the FSM integrity boundary for the agentic handoff lifecycle. `AgenticHandoffController::ControllerTransition` validates every state-name string the runner emits through this predicate before audit-trailing + storing — disallowed transitions log `LOG_WARN` and are dropped. The check exists because the runner emits **untrusted strings** read from the spawned child's stdout; a compromised / buggy harness must not be able to forge `Spawning → Complete` or other skip-states. Loosening the FSM for any reason defeats the load-bearing piece. Keep the predicate strict; if a new legitimate transition emerges, add it explicitly to the allow-list rather than relaxing the check.
 
 ## Self-improvement loop
 

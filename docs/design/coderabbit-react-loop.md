@@ -1,6 +1,12 @@
 # PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`)
 
-> **Status (2026-05-18): partially folded — HTTP surface only.** The six `GitHubClient` PR / check-run / annotation / actions-log / rerun-workflow methods this plan originally scoped (phase 1 of the draft) shipped via [`agentic-coding-handoff.md`](agentic-coding-handoff.md) **H7** (PR #255, sha `37f4f2e`) per commit `e785b10 docs(plan): fold GitHubClient check-run methods into agentic-coding-handoff H7`. The remaining phases — `PrCheckRunWatcher` sibling watcher, `CiFailureClassifier`, CodeRabbit reply classifier, Preferences toggles, daemon-write-only outside-Smatchet variant — **have not shipped** and remain a draft. Reopen the plan when concrete user demand for auto-fix-on-CI-red lands; until then, the H7 HTTP methods are sufficient infrastructure for any future slice.
+> ## Status — HISTORICAL (2026-05-21 v2 cleanup)
+>
+> Describes the C++ CodeRabbit react loop that v1 PR1 of `docs/design/github-tracker-backend.md` (PR #356, merge sha `b1d241bc`) **deleted in full**. The runtime referenced throughout this doc (`PrCommentWatcher`, `PrCheckRunWatcher`, `CoderabbitCommentClassifier`, `CiFailureClassifier`, the `dispatch_source` enum, sentinel-file protocol) no longer exists in the tree.
+>
+> Kept as historical reference because [`docs/design/smatchet-merge-watcher.md`](smatchet-merge-watcher.md) (the daemon-driven revival per the 2026-05-21 P1 backlog entry `644f822`) reuses several conceptual building blocks from this plan — the three-bucket CR-state model, the CR-finding classifier's Smatchet-invariant override table, the cascade-detection approach. Useful input for the watcher's design pass; do NOT treat the body below as a current implementation roadmap.
+>
+> **2026-05-18 partial-folding note (superseded by the 2026-05-21 ripout)**: The six `GitHubClient` PR / check-run / annotation / actions-log / rerun-workflow methods this plan originally scoped (phase 1 of the draft) shipped via [`agentic-coding-handoff.md`](agentic-coding-handoff.md) **H7** (PR #255, sha `37f4f2e`). H7's HTTP methods are also deleted now (per v1 PR1); a new `GitHubClient` exists in v1 PR2 (`cd66e28c`) but is tracker-only (issues + fields + labels), no PR / check-run / GraphQL surface.
 >
 > **Slug:** `coderabbit-react-loop` (file stays at this path; scope has widened beyond CodeRabbit since the doc was first committed — slug retained to avoid churn, file rename deferred unless future scope creep warrants it).
 >
