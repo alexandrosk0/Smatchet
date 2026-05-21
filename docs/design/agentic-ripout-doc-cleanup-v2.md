@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-ripout-doc-cleanup-v2`
 >
-> **Status**: DRAFT-WAITING. v1 PR1 merged 2026-05-21 (`b1d241bc`). v2 stays in DRAFT until **two** dependencies clear: (a) v1 PR2 (#357) merges (clean develop tip; avoids same-file rebase conflicts during v2 cleanup), AND (b) the `smatchet-merge-watcher` P1 (per `docs/backlog/agent-self-improvement/tooling.md`) ships its implementation surface (so v2's preserve/strip list reflects what the watcher actually imports, not the empty-stub assumption). See § Sequencing.
+> **Status**: DRAFT-WAITING. v1 PR1 + PR2 merged 2026-05-21 (`b1d241bc` + `cd66e28c`). Watcher plan-doc landed 2026-05-21 (`docs/design/smatchet-merge-watcher.md` `8677e8b`); v2's "wait for watcher P1" sequencing step retired (see § Sequencing). Single remaining blocker: **3 in-flight PRs (#358 / #359 / #360) must merge first** to avoid AGENTS.md cascade-conflict. Once those clear, v2 is ready to execute per the locked 2026-05-21 evening re-grill (see § Context).
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location.
 
@@ -190,11 +190,13 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 
 ## Sequencing
 
-1. **Wait for v1 PR1 + PR2 to merge.** (PR1 #356 = MERGED `b1d241bc` 2026-05-21; PR2 #357 = in CI flight at the time of this re-grill.)
-2. **Wait for the watcher P1** (`docs/backlog/agent-self-improvement/tooling.md` — "Long-running CI/CR polls block the interactive session"). The watcher's implementation surface defines what v2 must preserve vs. strip — re-running v2's grill against the watcher PR's diff (not against the empty stub) is the only way to get the preserve list right. Risk of starting earlier: re-deleting code the watcher needs, then having to revert in the same week.
-3. **Grill v2 plan** via `grill-with-docs` once concrete decisions need locking (which non-(agentic)-titled sections to strip; how aggressive on workflow deletion; ADR status policy).
+1. **Wait for v1 PR1 + PR2 to merge.** (PR1 #356 = MERGED `b1d241bc` 2026-05-21; PR2 #357 = MERGED `cd66e28c` 2026-05-21.)
+2. **Wait for the 3 in-flight CR-feedback PRs to merge** (PR #358 = `fix/cr-feedback-pr357` for PR2's 5 missed findings; PR #359 = `fix/cr-feedback-351-353` for the code-color slices' missed findings; PR #360 = `feat/merge-gates-cr-strict` for the two P1 process fixes). All three touch `AGENTS.md` regions v2 also edits — starting v2 before they merge creates cascading merge conflicts in the same sections. As of 2026-05-21 evening, all three are ready (not draft) and waiting for real CR review.
+3. **Grill v2 plan** via `grill-with-docs` once concrete decisions need locking (which non-(agentic)-titled sections to strip; how aggressive on workflow deletion; ADR status policy). _Locked 2026-05-21 evening re-grill — see § Context._
 4. **Architect pre-code review** before opening v2 PR.
 5. **One squashed v2 PR** for all doc + agent file + ADR + script deletions. Net negative LOC; reviewable as a single mechanical sweep.
+
+**Removed 2026-05-21 evening**: prior step 2 was "Wait for the watcher P1" — written when the watcher was unspec'd and the plan hedged that its reuse surface might force v2 to preserve more than expected. Now that [`docs/design/smatchet-merge-watcher.md`](smatchet-merge-watcher.md) (`8677e8b`) makes the watcher's reuse surface concrete — it imports exactly `scripts/dev/merge-gates.sh` (kept) + `agents/coderabbit-triage.md` (kept per re-grill decision 1) + nothing else from the strip list — the hedge is empty. V2's strip list is insulated against every watcher IPC choice (Python port, `claude --headless` subprocess, MCP-tool). The watcher's open design decisions (registry location, triage failure budget, etc.) don't change which v2 files get stripped.
 
 ## Risks / non-goals
 
