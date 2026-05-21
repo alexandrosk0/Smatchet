@@ -115,10 +115,26 @@ Active gates on this PR (no opt-in needed):
 - Per-column override of the click mode — adds N×M config keys; defer until evidence the global toggle is insufficient.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `4c1b0412` · feat(grid): single-click vs double-click edit toggle (PR [#338](https://github.com/alexandrosk0/Smatchet/pull/338))
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Combo cells flat in BOTH modes, not just double-click mode** — user feedback during the first visual-validation round flagged that the original plan's "single-click → direct BeginCombo" path showed the framed blue preview background that the double-click path did not. Restructured so single-select / multi-select / cascading / labels render as a flat `Selectable` preview unconditionally; click threshold (any-click vs double-click) becomes the only mode-dependent behaviour. Combo body still renders only when armed.
+- **Checkbox lives under a new `Grid` Preferences tab, not under `Appearance` → `Grid and field text`** — user requested a dedicated tab during the same iteration; existing overflow-tooltip / wheel-tick prefs stayed in Appearance (no user ask to relocate those).
+- **Drive-by lint fix in `SmatchetPreferencesUi.cpp`** — added `#define NOMINMAX` before `<windows.h>` and switched a `std::min` to the parenthesised `(std::min)` idiom (matches the existing pattern in `TicketFieldEditor.cpp`). Pre-existing clang-tidy `[clang-diagnostic-error]` on the line surfaced once the file was touched.
+- **Bucket-E `tests/ui/grid_click_edit_mode.test.cpp` not authored** — plan called for it; the bucket-E rig wasn't wired to this slice's scope and the user accepted post-merge manual visual-validation as the gate. Deferred — entry should land in `docs/backlog/agent-self-improvement/test.md` (category `test`).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Bucket A (`ninja-test-msys2` ctest)** — new `tests/Source_Core/SingleClickEditConfig.test.cpp` ships with 2 cases / 4 assertions, all pass:
+  - Round-trip `SingleClickToEditGridCells = false` via `Save → InvalidateCache → Load` — value survives.
+  - Round-trip back to `true` — value survives.
+  - Key absent from JSON → loaded value defaults to `true`.
+  - `config.set singleClickToEditGridCells …` command path — intentionally out of scope for this rig (no `CommandRegistry` harness in ctest); deferred to bucket-E or process backlog per the plan's verification §.
+- **Build gate** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` clean. `SmatchetCore_DX12` not built — pre-existing failure in `WhisperAiAssistantAutosendScenario.cpp` (`g_ui.assistantPanelOpen` missing) on `develop`'s head, confirmed unrelated via `git stash` A/B.
+- **Manual visual-validation pause-loop** — fired twice per AGENTS.md § Visual-validation exception (diff touches `Source_Core/src/Smatchet*Ui*.cpp` AND no bucket-E coverage):
+  - Round 1: user flagged blue framed combo background in single-click mode + asked for new Grid tab.
+  - Round 2: user confirmed flat-Selectable combo look in both modes + Grid tab + checkbox + tooltip; verdict "Looks good — commit + push + PR".
+- **Merge gates** — `bash scripts/dev/merge-gates.sh alexandrosk0 Smatchet 338` returned `GATES_PASSED` on first poll (`CI: 0/0 pass | CodeRabbit: NONE+status-SUCCESS | User: 0`). Auto `gh pr ready` + REST squash-merge succeeded (merge sha `4c1b04126dd394a000bd1096ca0e1bb1cd996563`).
+- **Perf gates** — no PR-fast regression observed. `priority-grid-scroll` baseline unchanged. Hot-path delta is one extra string comparison (`state.EditArmedKey == editorKey`) per cell per frame; no allocation.
