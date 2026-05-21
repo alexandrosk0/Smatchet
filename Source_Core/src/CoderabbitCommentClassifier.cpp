@@ -394,12 +394,9 @@ bool DetectNewThirdpartyDep(const std::string& body) {
     std::size_t pos = 0;
     while ((pos = lower.find(opener, pos)) != std::string::npos) {
         const std::size_t end = lower.find(')', pos);
-        const std::string call =
-            (end == std::string::npos) ? lower.substr(pos) : lower.substr(pos, end - pos + 1);
+        const std::string call = (end == std::string::npos) ? lower.substr(pos) : lower.substr(pos, end - pos + 1);
         const bool allowed = std::any_of(allowedDeps.begin(), allowedDeps.end(),
-                                          [&call](const std::string& a) {
-                                              return call.compare(0, a.size(), a) == 0;
-                                          });
+                                         [&call](const std::string& a) { return call.compare(0, a.size(), a) == 0; });
         if (!allowed) {
             return true;
         }
@@ -488,26 +485,43 @@ bool HasRejectReplyMarker(const std::string& body) {
 
 } // namespace
 
-CoderabbitCommentClassifier::CoderabbitCommentClassifier() : botLoginAllowList_({"coderabbitai[bot]"}) {}
+CoderabbitCommentClassifier::CoderabbitCommentClassifier() : botLoginAllowList_({"coderabbitai[bot]"}) {
+    LOG_TRACE("CoderabbitCommentClassifier::CoderabbitCommentClassifier enter (default allow-list)");
+}
 
 CoderabbitCommentClassifier::~CoderabbitCommentClassifier() = default;
 
 void CoderabbitCommentClassifier::SetBotLoginAllowList(std::vector<std::string> allowList) {
+    LOG_TRACE("CoderabbitCommentClassifier::SetBotLoginAllowList enter size=%zu", allowList.size());
     botLoginAllowList_ = std::move(allowList);
 }
 
-const std::vector<std::string>& CoderabbitCommentClassifier::GetBotLoginAllowList() const { return botLoginAllowList_; }
+const std::vector<std::string>& CoderabbitCommentClassifier::GetBotLoginAllowList() const {
+    LOG_TRACE("CoderabbitCommentClassifier::GetBotLoginAllowList enter size=%zu", botLoginAllowList_.size());
+    return botLoginAllowList_;
+}
 
-void CoderabbitCommentClassifier::SetShortCircuitRejectEnabled(bool enabled) { shortCircuitRejectEnabled_ = enabled; }
+void CoderabbitCommentClassifier::SetShortCircuitRejectEnabled(bool enabled) {
+    LOG_TRACE("CoderabbitCommentClassifier::SetShortCircuitRejectEnabled enter enabled=%d", static_cast<int>(enabled));
+    shortCircuitRejectEnabled_ = enabled;
+}
 
-bool CoderabbitCommentClassifier::GetShortCircuitRejectEnabled() const { return shortCircuitRejectEnabled_; }
+bool CoderabbitCommentClassifier::GetShortCircuitRejectEnabled() const {
+    LOG_TRACE("CoderabbitCommentClassifier::GetShortCircuitRejectEnabled enter value=%d",
+              static_cast<int>(shortCircuitRejectEnabled_));
+    return shortCircuitRejectEnabled_;
+}
 
 ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& comment) const {
+    LOG_TRACE("CoderabbitCommentClassifier::Classify enter id=%s author=%s body_bytes=%zu", comment.id.c_str(),
+              comment.author.c_str(), comment.body.size());
     ClassificationResult out;
 
     // Step 1 — Smatchet's own markers (handoff or react-reply) skip
     // unconditionally. We never re-classify our own replies.
     if (coderabbit_pure::HasSmatchetHandoffMarker(comment.body) || HasRejectReplyMarker(comment.body)) {
+        LOG_DEBUG("classifier verdict Skip(smatchet-marker) comment=%s comment_bytes=%zu", comment.id.c_str(),
+                  comment.body.size());
         out.verdict = ClassifierVerdict::Skip;
         out.skipReason = "smatchet marker";
         return out;
@@ -517,6 +531,8 @@ ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& 
     // are not in scope for the classifier; the watcher's default path
     // handles them.
     if (!coderabbit_pure::IsBotLoginAllowed(comment.author, botLoginAllowList_)) {
+        LOG_DEBUG("classifier verdict Skip(non-bot-author) comment=%s author=%s", comment.id.c_str(),
+                  comment.author.c_str());
         out.verdict = ClassifierVerdict::Skip;
         out.skipReason = "non-bot author";
         return out;
@@ -525,6 +541,7 @@ ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& 
     // Step 3 — short-circuit-reject debugging knob. With it off, every
     // recognised bot comment dispatches to coderabbit-triage.
     if (!shortCircuitRejectEnabled_) {
+        LOG_DEBUG("classifier verdict Dispatch(short-circuit-disabled) comment=%s", comment.id.c_str());
         out.verdict = ClassifierVerdict::Dispatch;
         out.dispatchTargetAgent = "coderabbit-triage";
         return out;
@@ -535,6 +552,9 @@ ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& 
     for (std::size_t i = 0; i < kOverrideRuleCount; ++i) {
         const OverrideRule& rule = kOverrideRules[i];
         if (rule.detector(comment.body)) {
+            LOG_DEBUG("override rule %d matched: %s", rule.number, rule.shortReason);
+            LOG_DEBUG("classifier verdict RejectShortCircuit comment_bytes=%zu rule=%d comment=%s", comment.body.size(),
+                      rule.number, comment.id.c_str());
             LOG_DEBUG("CoderabbitCommentClassifier: rule #%d fired (%s) on comment %s", rule.number, rule.shortReason,
                       comment.id.c_str());
             out.verdict = ClassifierVerdict::RejectShortCircuit;
@@ -548,6 +568,8 @@ ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& 
 
     // Step 5 — no rule fired. Dispatch to coderabbit-triage for full
     // triage prose review.
+    LOG_DEBUG("classifier verdict Dispatch(no-rule-fired) comment=%s comment_bytes=%zu", comment.id.c_str(),
+              comment.body.size());
     LOG_TRACE("CoderabbitCommentClassifier: no override rule fired on comment %s; dispatching to coderabbit-triage",
               comment.id.c_str());
     out.verdict = ClassifierVerdict::Dispatch;
@@ -556,6 +578,7 @@ ClassificationResult CoderabbitCommentClassifier::Classify(const PostedComment& 
 }
 
 std::string CoderabbitCommentClassifier::BuildRejectReplyBody(int ruleNumber, const std::string& ruleShortReason) {
+    LOG_TRACE("CoderabbitCommentClassifier::BuildRejectReplyBody enter rule=%d", ruleNumber);
     std::ostringstream body;
     body << kRejectReplyMarker << "\n\n";
     body << "Smatchet's CodeRabbit override classifier rejected this suggestion automatically.\n\n";
@@ -566,16 +589,24 @@ std::string CoderabbitCommentClassifier::BuildRejectReplyBody(int ruleNumber, co
     return body.str();
 }
 
-const char* CoderabbitCommentClassifier::RejectReplyMarker() { return kRejectReplyMarker; }
+const char* CoderabbitCommentClassifier::RejectReplyMarker() {
+    LOG_TRACE("CoderabbitCommentClassifier::RejectReplyMarker enter");
+    return kRejectReplyMarker;
+}
 
-std::size_t CoderabbitCommentClassifier::OverrideRuleCount() { return kOverrideRuleCount; }
+std::size_t CoderabbitCommentClassifier::OverrideRuleCount() {
+    LOG_TRACE("CoderabbitCommentClassifier::OverrideRuleCount enter count=%zu", kOverrideRuleCount);
+    return kOverrideRuleCount;
+}
 
 std::string CoderabbitCommentClassifier::LookupOverrideShortReason(int ruleNumber) {
+    LOG_TRACE("CoderabbitCommentClassifier::LookupOverrideShortReason enter rule=%d", ruleNumber);
     for (std::size_t i = 0; i < kOverrideRuleCount; ++i) {
         if (kOverrideRules[i].number == ruleNumber) {
             return std::string(kOverrideRules[i].shortReason);
         }
     }
+    LOG_WARN("CoderabbitCommentClassifier::LookupOverrideShortReason: unknown rule number %d", ruleNumber);
     return std::string();
 }
 

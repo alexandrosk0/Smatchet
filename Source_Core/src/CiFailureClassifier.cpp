@@ -32,16 +32,29 @@ bool IsAllDigits(const std::string& s) {
 
 } // namespace
 
-CiFailureClassifier::CiFailureClassifier() = default;
+CiFailureClassifier::CiFailureClassifier() { LOG_TRACE("CiFailureClassifier::ctor enter"); }
 
 CiFailureClassifier::~CiFailureClassifier() = default;
 
-void CiFailureClassifier::SetAutoDispatchDebugDetective(bool enabled) { autoDispatchDebugDetective_.store(enabled); }
-bool CiFailureClassifier::GetAutoDispatchDebugDetective() const { return autoDispatchDebugDetective_.load(); }
-void CiFailureClassifier::SetAutoDispatchTestRig(bool enabled) { autoDispatchTestRig_.store(enabled); }
-bool CiFailureClassifier::GetAutoDispatchTestRig() const { return autoDispatchTestRig_.load(); }
+void CiFailureClassifier::SetAutoDispatchDebugDetective(bool enabled) {
+    LOG_TRACE("CiFailureClassifier::SetAutoDispatchDebugDetective enter enabled=%d", static_cast<int>(enabled));
+    autoDispatchDebugDetective_.store(enabled);
+}
+bool CiFailureClassifier::GetAutoDispatchDebugDetective() const {
+    LOG_TRACE("CiFailureClassifier::GetAutoDispatchDebugDetective enter");
+    return autoDispatchDebugDetective_.load();
+}
+void CiFailureClassifier::SetAutoDispatchTestRig(bool enabled) {
+    LOG_TRACE("CiFailureClassifier::SetAutoDispatchTestRig enter enabled=%d", static_cast<int>(enabled));
+    autoDispatchTestRig_.store(enabled);
+}
+bool CiFailureClassifier::GetAutoDispatchTestRig() const {
+    LOG_TRACE("CiFailureClassifier::GetAutoDispatchTestRig enter");
+    return autoDispatchTestRig_.load();
+}
 
 std::int64_t CiFailureClassifier::ParseRunIdFromDetailsUrl(const std::string& detailsUrl, std::string& outError) {
+    LOG_TRACE("CiFailureClassifier::ParseRunIdFromDetailsUrl enter detailsUrl=%s", detailsUrl.c_str());
     outError.clear();
     if (detailsUrl.empty()) {
         outError = "details_url is empty";
@@ -92,6 +105,9 @@ std::int64_t CiFailureClassifier::ParseRunIdFromDetailsUrl(const std::string& de
 CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRun& run,
                                                      const std::vector<GitHubClient::CheckRunAnnotation>& annotations,
                                                      const std::string& logTail) const {
+    LOG_TRACE("CiFailureClassifier::Classify enter name=%s id=%lld conclusion=%s annotations=%zu logTailBytes=%zu",
+              run.name.c_str(), static_cast<long long>(run.id), run.conclusion.c_str(), annotations.size(),
+              logTail.size());
     CheckRunClassification out;
     out.verdict = CheckRunVerdict::Skip;
 
@@ -100,19 +116,24 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
     // classifier for any-status doesn't silently dispatch a passing check.
     if (run.conclusion != "failure") {
         out.skipReason = "conclusion != failure";
+        LOG_DEBUG("CiFailureClassifier: skip (conclusion != failure) name=%s conclusion=%s", run.name.c_str(),
+                  run.conclusion.c_str());
         return out;
     }
 
     // Step 2 — category map. Source of truth lives in CiFailureClassifierPure.
     const ci_pure::CheckRunCategory category = ci_pure::MapCheckRunNameToCategory(run.name);
+    LOG_DEBUG("CiFailureClassifier: category-map name=%s -> %d", run.name.c_str(), static_cast<int>(category));
     switch (category) {
     case ci_pure::CheckRunCategory::CoverageAdvisory:
         out.verdict = CheckRunVerdict::Skip;
         out.skipReason = "coverage check is advisory until 2026-05-30 cutoff per locked decision";
+        LOG_DEBUG("fingerprint match CoverageAdvisory -> verdict=Skip");
         return out;
     case ci_pure::CheckRunCategory::Unknown:
         out.verdict = CheckRunVerdict::Skip;
         out.skipReason = "unknown check-run name; add to phase-5 name table";
+        LOG_WARN("unknown check-run skipped name=%s (Self-improvement backlog candidate)", run.name.c_str());
         LOG_WARN("CiFailureClassifier: unknown check-run name '%s' (id=%lld) — skipping. Add to "
                  "CiFailureClassifierPure.cpp::kCheckRunNameTable to actionable.",
                  run.name.c_str(), static_cast<long long>(run.id));
@@ -121,11 +142,13 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
         if (!autoDispatchTestRig_) {
             out.verdict = CheckRunVerdict::Skip;
             out.skipReason = "test-rig auto-dispatch disabled";
+            LOG_DEBUG("fingerprint match CoverageGate -> verdict=Skip (auto-dispatch disabled)");
             return out;
         }
         out.verdict = CheckRunVerdict::Dispatch;
         out.dispatchTargetAgent = "test-rig";
         out.dispatchSource = "ci_coverage_gate";
+        LOG_DEBUG("fingerprint match CoverageGate -> verdict=Dispatch target=test-rig");
         return out;
     case ci_pure::CheckRunCategory::CmakeOrCtest:
         // Falls through to the fingerprint sub-classification below.
@@ -140,9 +163,12 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
                    [](const GitHubClient::CheckRunAnnotation& a) { return a.message; });
     const std::string annotConcat = ci_pure::ConcatenateAnnotations(annotMsgs);
     const ci_pure::CmakeOrCtestKind kind = ci_pure::FingerprintCmakeOrCtest(annotConcat, logTail);
+    LOG_DEBUG("CiFailureClassifier: fingerprint cmake-or-ctest kind=%d annotConcatBytes=%zu logTailBytes=%zu",
+              static_cast<int>(kind), annotConcat.size(), logTail.size());
 
     switch (kind) {
     case ci_pure::CmakeOrCtestKind::TransientFlake: {
+        LOG_DEBUG("fingerprint match TransientFlake -> verdict=RerunTransient");
         std::string parseErr;
         const std::int64_t runId = ParseRunIdFromDetailsUrl(run.detailsUrl, parseErr);
         if (runId == 0) {
@@ -161,9 +187,12 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
     }
     case ci_pure::CmakeOrCtestKind::CtestFailure:
     case ci_pure::CmakeOrCtestKind::SanitizerHit:
+        LOG_DEBUG("fingerprint match %s -> verdict=Dispatch target=debug-detective",
+                  kind == ci_pure::CmakeOrCtestKind::CtestFailure ? "CtestFailure" : "SanitizerHit");
         if (!autoDispatchDebugDetective_) {
             out.verdict = CheckRunVerdict::Skip;
             out.skipReason = "debug-detective auto-dispatch disabled";
+            LOG_DEBUG("CiFailureClassifier: debug-detective auto-dispatch disabled -> verdict=Skip");
             return out;
         }
         out.verdict = CheckRunVerdict::Dispatch;
@@ -172,6 +201,8 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
         return out;
     case ci_pure::CmakeOrCtestKind::CmakeConfigError:
     case ci_pure::CmakeOrCtestKind::LinkError:
+        LOG_DEBUG("fingerprint match %s -> verdict=Dispatch target=build-doctor",
+                  kind == ci_pure::CmakeOrCtestKind::CmakeConfigError ? "CmakeConfigError" : "LinkError");
         out.verdict = CheckRunVerdict::Dispatch;
         out.dispatchTargetAgent = "build-doctor";
         out.dispatchSource = "ci_build_failure";
@@ -181,6 +212,7 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
         // Default to build-doctor (most common cause of an unfingerprinted
         // CmakeOrCtest failure is a build-system regression where the
         // failure line landed outside our needles).
+        LOG_DEBUG("fingerprint match Unknown -> verdict=Dispatch target=build-doctor (default fallback)");
         out.verdict = CheckRunVerdict::Dispatch;
         out.dispatchTargetAgent = "build-doctor";
         out.dispatchSource = "ci_build_failure";
@@ -189,6 +221,7 @@ CheckRunClassification CiFailureClassifier::Classify(const GitHubClient::CheckRu
     // Unreachable — all enumerators handled above.
     out.verdict = CheckRunVerdict::Skip;
     out.skipReason = "unreachable fingerprint switch fallthrough";
+    LOG_WARN("CiFailureClassifier: unreachable switch fallthrough name=%s", run.name.c_str());
     return out;
 }
 
