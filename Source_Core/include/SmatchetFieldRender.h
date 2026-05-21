@@ -16,3 +16,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
 /** Tell the renderer which tracker field id holds C/C++ callstack source so it
  *  can paint the grid cell + overflow tooltip with `DrawColoredCppText`. */
 void SetCallstackFieldIdHint(const std::string& fieldId);
+
+/** True when the supplied tracker field id matches the configured callstack
+ *  field hint (see `SetCallstackFieldIdHint`). Public so other render surfaces
+ *  (TicketFieldEditor's long-text editor + markdown preview path) can branch
+ *  on it to apply slice 7's callstack-aware tokenizer instead of the default
+ *  markdown / prose rendering. Empty `fieldId` always returns false. */
+bool IsCallstackFieldId(const std::string& fieldId);

@@ -1,6 +1,7 @@
 #include "BlameAnalysisUi_Internal.h"
 
 #include "AppController.h"
+#include "CodeColorView.h"
 #include "CppSyntaxHighlight.h"
 #include "CompactDateFormat.h"
 #include "ConfigManager.h"
@@ -314,7 +315,14 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
 
                     ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
                                       ImGuiWindowFlags_HorizontalScrollbar);
-                    DrawColoredCppText(State().callstackBuf);
+                    // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
+                    // semantic callstack tokenizer recognises the canonical
+                    // Module!Class::Method() [Path\File.ext:Line] shape and
+                    // emits per-element colours (class = Identifier,
+                    // method = Keyword, filename = Number, lineno =
+                    // Preprocessor, path = Comment). Falls back to generic
+                    // cpp coloring on non-callstack rows.
+                    DrawColoredCallstackText(State().callstackBuf);
                     ImGui::EndChild();
                 } else {
                     ImGui::InputTextMultiline("##callstackpaste", State().callstackBuf, sizeof(State().callstackBuf),
@@ -686,7 +694,13 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         {
                             const float codeColW = ImGui::GetContentRegionAvail().x;
                             const ImVec2 codeCell0 = ImGui::GetCursorScreenPos();
-                            DrawColoredCppLine(ln.Code.c_str());
+                            // Slice 5 of docs/design/code-syntax-coloring-and-tooltips.md —
+                            // route the annotate line through CodeColorView with
+                            // language inferred from the file being annotated. .lua /
+                            // .py / .glsl files now render with their respective
+                            // LDs instead of C++-only.
+                            smatchet::code_color::DrawColoredCode(
+                                ln.Code.c_str(), smatchet::code_color::LangFromFilePath(row.PathForP4));
                             ImGui::SetCursorScreenPos(codeCell0);
                             ImGui::SelectableRaw("##ann_code_rmb", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2((std::max)(codeColW, 1.f), annRowHitH));
@@ -814,9 +828,9 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 app.LaunchBackgroundTask([&app, capturedIssueKey, capturedRow]() {
                     std::string err;
                     const bool ok = app.AddIssueCommentBlameContext(
-                        capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
-                        capturedRow.PathForP4, capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist,
-                        capturedRow.Blame.Date, capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
+                        capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
+                        capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist, capturedRow.Blame.Date,
+                        capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
                     app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
                         State().assignCommitInFlight = false;
                         if (ok) {
@@ -890,32 +904,31 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                     const std::string capturedAccountId = State().assignAccountId;
                     const TrackerField fieldCopy = *f;
                     const BlameRow capturedRow = State().assignRow;
-                    app.LaunchBackgroundTask(
-                        [&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
-                            std::string err;
-                            const bool assigned =
-                                app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
-                            bool commented = false;
-                            if (assigned) {
-                                commented = app.AddIssueCommentBlameContext(
-                                    capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
-                                    capturedRow.PathForP4, capturedRow.Parsed.LineNumber,
-                                    capturedRow.Blame.Changelist, capturedRow.Blame.Date,
-                                    capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
+                    app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
+                        std::string err;
+                        const bool assigned =
+                            app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
+                        bool commented = false;
+                        if (assigned) {
+                            commented = app.AddIssueCommentBlameContext(
+                                capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
+                                capturedRow.PathForP4, capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist,
+                                capturedRow.Blame.Date, capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet,
+                                err);
+                        }
+                        const bool ok = assigned && commented;
+                        app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                            State().assignCommitInFlight = false;
+                            if (ok) {
+                                LOG_INFO("Blame UI: assigned %s and posted blame context comment.",
+                                         capturedIssueKey.c_str());
+                                State().lastUiStatus = "Assigned and commented.";
+                            } else {
+                                LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
+                                State().lastUiStatus = err;
                             }
-                            const bool ok = assigned && commented;
-                            app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
-                                State().assignCommitInFlight = false;
-                                if (ok) {
-                                    LOG_INFO("Blame UI: assigned %s and posted blame context comment.",
-                                             capturedIssueKey.c_str());
-                                    State().lastUiStatus = "Assigned and commented.";
-                                } else {
-                                    LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
-                                    State().lastUiStatus = err;
-                                }
-                            });
                         });
+                    });
                     ImGui::CloseCurrentPopup();
                 }
             }
