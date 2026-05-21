@@ -154,6 +154,31 @@ Verified via `gh pr view $pr --json files --jq '.files[] | select(.path | starts
 - `scripts/dev/merge-gates.sh` + `.graphql` + `-prompt.sh` — added by PR#298 (`feat(merge-gates)`) — bash poller, no Smatchet C++ deps; runs against any PR via `gh api graphql`. Still useful for manual PR-gate polling.
 - `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json` — test the bash poller; stay.
 
+### `tests/fixtures/` — orphans surfaced by 2026-05-21 repo-wide audit
+
+Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbit-react|ci-react|SEED\.json|CHECK_RUN\.json|handoff-implementer|pr-iterator" tests/ .github/`. The following fixtures drive deleted C++ surface — they're orphaned (no test consumes them post-v1-PR1) but still occupy the tree. Group with v2 deletions:
+
+| Fixture | Role | v2 action |
+|---|---|---|
+| `tests/fixtures/stub-claude/CMakeLists.txt` + `stub_claude.cpp` | Stub-claude exe for the deleted `ClaudeCodeLocalRunner.test.cpp` | **DELETE entire directory** |
+| `tests/fixtures/stub-git-gh/CMakeLists.txt` + `stub_git.cpp` + `stub_gh.cpp` | Stub-`git` + stub-`gh` for the deleted runner's PR-open fallback tests | **DELETE entire directory** |
+| `tests/fixtures/stub-ci-claude.sh` | Drives the deleted ci-react `dispatch_source` path | **DELETE** |
+| `tests/fixtures/check_run_annotations_sample.json` | Fixture for the deleted `CheckRunWatcher` annotation parser | **DELETE** |
+| `tests/fixtures/check_runs_failed_sample.json` | Same | **DELETE** |
+| `tests/fixtures/coderabbit_comments_sample.json` | Fixture for the deleted `CoderabbitCommentClassifier.test.cpp` | **DELETE** |
+| `tests/fixtures/github_check_run_annotations_sample.json` | Same | **DELETE** |
+| `tests/fixtures/github_check_runs_sample.json` | Same | **DELETE** |
+| `tests/fixtures/github_pr_comments_sample.json` | Fixture for the deleted PR-comment classifier | **DELETE** |
+| `tests/fixtures/github_pr_create_response.json` | Fixture for the deleted runner's PR-open fallback | **DELETE** |
+| `tests/fixtures/github_rerun_workflow_response.json` | Fixture for the deleted CI-react workflow-rerun | **DELETE** |
+| `tests/fixtures/github_issues_sample.json` | **KEEP — useful for future v1-PR2 GitHubClient HTTP fixtures** (per `agents/tracker-backend.md` testing patterns); add a `## Usage` README header noting the new ownership |
+
+12 fixture files. Audit also covered `Plugins/`, `Locales/`, `tools/`, `.github/workflows/` — all clean.
+
+### Backlog `applied.md` sweep — orphan archived entries
+
+`docs/backlog/agent-self-improvement/applied.md` contains historical-archived entries that reference deleted C++ surface (`AgenticHandoffController`, `ClaudeCodeLocalRunner`, `coderabbit-react-loop`, `handoff-implementer.md`, `pr-iterator.md`). Per AGENTS.md's "archive-don't-rewrite" convention for applied entries, edit each to add a `[2026-05-21 — runtime referenced has been removed by v1 PR1 of github-tracker-backend.md (b1d241bc); this entry is preserved for historical accuracy of what was tried]` annotation. Don't delete the entries — they're history.
+
 ### Workflows
 
 - `.github/workflows/*` — audit each file. Workflows that dispatch `claude` / `codex` subprocesses or react to CodeRabbit bot patterns: **DELETE**. Generic build / test / perf workflows: **KEEP**.
