@@ -95,6 +95,15 @@ class GitHubClient : public ITrackerClient {
     bool FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError);
 
     /**
+     * GET /repos/{owner}/{repo}/issues/{n} — returns the `title` field from
+     * the same payload FetchIssueBody parses. Implemented as a sibling call
+     * (separate request) so callers that only need title don't pay for body
+     * parsing. Empty title is a valid outcome only when the upstream API
+     * elides the field — never expected on a normal issue.
+     */
+    bool FetchIssueTitle(const std::string& issueKey, std::string& outTitle, std::string& outError);
+
+    /**
      * GET /repos/{owner}/{repo}/issues?state=open&per_page=30 — returns the
      * first page of open issues in `owner/repo`. Each issue is formatted into
      * Smatchet's canonical `owner/repo#N` key shape and appended to `outKeys`.
@@ -111,6 +120,20 @@ class GitHubClient : public ITrackerClient {
      */
     bool ListOpenIssuesForRepo(const std::string& owner, const std::string& repo, std::vector<std::string>& outKeys,
                                std::string& outError, std::int64_t sinceUnixSec = 0);
+
+    /**
+     * GET https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{path} — raw
+     * file content (README.md, CONTRIBUTING.md, AGENTS.md, etc.). 404 returns
+     * false + outError = "not found"; other HTTP failures propagate via the
+     * shared `ComposeHttpErrorString` redactor. Auth uses the same bearer
+     * header as the REST endpoints so private-repo content is accessible.
+     * Used by `AgenticContextDoc::GenerateFromGitHubProject` to assemble the
+     * per-user project-context document.
+     *
+     * Read endpoint — no audit-trail.
+     */
+    bool FetchRawFile(const std::string& owner, const std::string& repo, const std::string& path,
+                      std::string& outContent, std::string& outError);
 
     // ─── Write methods ───────────────────────────────────────────────────────
     //

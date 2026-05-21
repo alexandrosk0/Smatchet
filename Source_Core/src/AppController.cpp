@@ -1619,19 +1619,30 @@ AgentProposalStore* AppController::GetAgentProposalStore() noexcept {
 
 #if defined(SMATCHET_WITH_AGENTIC)
 GitHubClient* AppController::EnsureAgenticGithubClient() {
-    // Lazy + once-flagged construction shared between the triage and handoff
-    // paths. Without this, a handoff-only session (PAT configured but triage
-    // poll disabled) never constructed the client and the H5 / H7 lambdas
-    // silently returned "configure PAT" errors even when the PAT was set.
+    // (PAT hot-reload) Lazy construction PLUS hot-rebuild on PAT change.
+    // Previously this method was once_flag'd, so a Preferences PAT edit
+    // didn't take effect without an app restart. Now we compare the cached
+    // PAT against the current cfg PAT on every call; a mismatch rebuilds the
+    // GitHubClient with the fresh PAT. Lock scope is short — only the
+    // pointer swap is guarded; the GitHubClient ctor runs outside the lock
+    // for a brief window during the swap-in.
     const TrackerConfig cfg = ConfigManager::Load();
     if (cfg.GitHubPat.empty()) {
         // Degraded — caller surfaces a "configure GitHub PAT" message.
         return nullptr;
     }
     try {
-        std::call_once(agenticGithubClientOnce_, [this, &cfg]() {
+        std::lock_guard<std::mutex> lk(agenticGithubClientRebuildMu_);
+        if (!agenticGithubClient_ || agenticGithubClientCachedPat_ != cfg.GitHubPat) {
+            const bool wasRebuild = static_cast<bool>(agenticGithubClient_);
             agenticGithubClient_ = std::make_unique<GitHubClient>(std::string(), cfg.GitHubPat);
-        });
+            agenticGithubClientCachedPat_ = cfg.GitHubPat;
+            // Do not log the PAT itself. Log only that the rebuild fired and
+            // the byte length so an operator can correlate with a Preferences
+            // edit timestamp without the secret leaking into the log file.
+            LOG_INFO("AppController::EnsureAgenticGithubClient: %s GitHubClient (pat_bytes=%zu)",
+                     wasRebuild ? "rebuilt" : "constructed", cfg.GitHubPat.size());
+        }
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::EnsureAgenticGithubClient: lazy init failed: %s", ex.what());
         return nullptr;
@@ -1670,14 +1681,10 @@ void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
     // inside the lazy getter so HandoffAutoStartOnApprove was effectively a
     // no-op for cold-start sessions. The callback re-reads cfg on every
     // invocation so a Preferences flip takes effect without restart.
-    agentProposalStore_->SetOnProposalApproved(
-        [this](std::int64_t proposalId, AgenticInferenceClientPure::ProposedAction action) {
-            if (action != AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
-                // Other actions don't auto-handoff — the H4 controller
-                // only governs ImplementIssue runs. Pure triage writes
-                // (CommentAdd / LabelAdd / etc) stay in the store.
-                return;
-            }
+    agentProposalStore_->SetOnProposalApproved([this](std::int64_t proposalId,
+                                                      AgenticInferenceClientPure::ProposedAction action) {
+        // ImplementIssue path — the H4/H9 handoff auto-start (existing behaviour).
+        if (action == AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
             const TrackerConfig callbackCfg = ConfigManager::Load();
             if (!callbackCfg.HandoffAutoStartOnApprove) {
                 LOG_INFO("AppController: OnProposalApproved auto-start skipped (cfg disabled) "
@@ -1687,10 +1694,6 @@ void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
             }
             LOG_INFO("AppController: OnProposalApproved auto-starting handoff proposalId=%lld",
                      static_cast<long long>(proposalId));
-            // Emit the auto-start audit entry BEFORE the dispatch so the row
-            // is in BackendAuditTrail even if Start() fails synchronously.
-            // Carries trigger=approval-callback so future audit-trail
-            // queries can distinguish auto- vs button-driven starts.
             BackendAuditTrail::AuditEvent autoEv;
             autoEv.Action = "HandoffAutoStarted";
             autoEv.Source = "agentic";
@@ -1718,7 +1721,262 @@ void AppController::InitAgentProposalStoreOnWorker(const std::string& dbPath) {
                              static_cast<long long>(proposalId), err.c_str());
                 }
             });
+            return;
+        }
+
+        // (Approve-apply fix) Non-handoff actions — CommentAdd / LabelAdd /
+        // LabelRemove / AssigneeSet / StateTransition / DerivedTicketCreate.
+        // Previously this callback returned immediately for these actions, so
+        // pressing Approve on a CommentAdd proposal flipped the row to
+        // Approved in SQLite but never fired a GitHub API call. The triage
+        // manual claims the action runs on Approve; this branch wires it up.
+        //
+        // Dispatched via LaunchBackgroundTask so the HTTP round-trip never
+        // re-enters AgentProposalStore::Transition from inside its own
+        // onApproved_ fire site. The worker resolves the proposal via
+        // store->Find, looks up the agentic GitHubClient, calls the matching
+        // GitHubClient method, then transitions the row to Applied / Failed
+        // with the captured error string.
+        LOG_INFO("AppController: OnProposalApproved scheduling action apply proposalId=%lld action=%s",
+                 static_cast<long long>(proposalId), AgenticInferenceClientPure::ActionToString(action));
+        this->LaunchBackgroundTask([this, proposalId, action]() {
+            LOG_TRACE("AppController::ApplyApprovedProposal worker enter (proposalId=%lld)",
+                      static_cast<long long>(proposalId));
+            auto* store = this->GetAgentProposalStore();
+            if (store == nullptr) {
+                LOG_WARN("AppController: ApplyApprovedProposal store unavailable proposalId=%lld",
+                         static_cast<long long>(proposalId));
+                return;
+            }
+            AgentProposal row;
+            std::string findErr;
+            if (!store->Find(proposalId, row, findErr)) {
+                LOG_WARN("AppController: ApplyApprovedProposal Find failed proposalId=%lld: %s",
+                         static_cast<long long>(proposalId), findErr.c_str());
+                return;
+            }
+            LOG_DEBUG("AppController: ApplyApprovedProposal resolved row issueKey=%s action=%s", row.issueKey.c_str(),
+                      AgenticInferenceClientPure::ActionToString(action));
+
+            // Audit-trail Begin row — pairs with the Result row below for
+            // operator-visible "what fired against the backend" history.
+            const std::string opId = BackendAuditTrail::MakeOperationId("agentic-apply");
+            {
+                BackendAuditTrail::AuditEvent ev;
+                ev.Action = "AgenticApplyBegin";
+                ev.Source = "agentic";
+                ev.IssueKey = row.issueKey;
+                ev.OperationId = opId;
+                ev.Success = true;
+                ev.Phase = "begin";
+                ev.Data = nlohmann::json::object();
+                ev.Data["proposalId"] = static_cast<long long>(proposalId);
+                ev.Data["action"] = AgenticInferenceClientPure::ActionToString(action);
+                BackendAuditTrail::AppendEvent(ev);
+            }
+
+            if (row.sourceTracker != "github") {
+                const std::string msg = std::string("apply not supported for sourceTracker=") + row.sourceTracker;
+                LOG_WARN("AppController: ApplyApprovedProposal %s proposalId=%lld", msg.c_str(),
+                         static_cast<long long>(proposalId));
+                std::string transErr;
+                store->Transition(proposalId, AgentProposalState::Failed, msg, transErr);
+                BackendAuditTrail::AuditEvent ev;
+                ev.Action = "AgenticApplyResult";
+                ev.Source = "agentic";
+                ev.IssueKey = row.issueKey;
+                ev.OperationId = opId;
+                ev.Success = false;
+                ev.Phase = "result";
+                ev.Data = nlohmann::json::object();
+                ev.Data["proposalId"] = static_cast<long long>(proposalId);
+                ev.Data["error"] = msg;
+                BackendAuditTrail::AppendEvent(ev);
+                return;
+            }
+
+            GitHubClient* gh = this->EnsureAgenticGithubClient();
+            if (gh == nullptr) {
+                const std::string msg = "agentic GitHub client unavailable (configure PAT in Preferences)";
+                LOG_WARN("AppController: ApplyApprovedProposal %s proposalId=%lld", msg.c_str(),
+                         static_cast<long long>(proposalId));
+                std::string transErr;
+                store->Transition(proposalId, AgentProposalState::Failed, msg, transErr);
+                BackendAuditTrail::AuditEvent ev;
+                ev.Action = "AgenticApplyResult";
+                ev.Source = "agentic";
+                ev.IssueKey = row.issueKey;
+                ev.OperationId = opId;
+                ev.Success = false;
+                ev.Phase = "result";
+                ev.Data = nlohmann::json::object();
+                ev.Data["proposalId"] = static_cast<long long>(proposalId);
+                ev.Data["error"] = msg;
+                BackendAuditTrail::AppendEvent(ev);
+                return;
+            }
+
+            // Dispatch by action. Each branch pulls the canonical field
+            // from row.payload (per docs/design/agentic-triage-flow.md
+            // decision #3 payload shapes) and invokes the matching
+            // GitHubClient method.
+            bool ok = false;
+            std::string applyErr;
+            try {
+                using AAction = AgenticInferenceClientPure::ProposedAction;
+                switch (action) {
+                case AAction::CommentAdd: {
+                    std::string body;
+                    if (row.payload.is_object() && row.payload.contains("body") && row.payload["body"].is_string()) {
+                        body = row.payload["body"].get<std::string>();
+                    }
+                    if (body.empty()) {
+                        applyErr = "CommentAdd payload missing string field 'body'";
+                        break;
+                    }
+                    LOG_INFO("AppController: ApplyApprovedProposal POST CommentAdd issueKey=%s body_bytes=%zu",
+                             row.issueKey.c_str(), body.size());
+                    ok = gh->CommentAdd(row.issueKey, body, applyErr);
+                    break;
+                }
+                case AAction::LabelAdd: {
+                    std::string label;
+                    if (row.payload.is_object() && row.payload.contains("label") && row.payload["label"].is_string()) {
+                        label = row.payload["label"].get<std::string>();
+                    }
+                    if (label.empty()) {
+                        applyErr = "LabelAdd payload missing string field 'label'";
+                        break;
+                    }
+                    LOG_INFO("AppController: ApplyApprovedProposal PATCH LabelAdd issueKey=%s label=%s",
+                             row.issueKey.c_str(), label.c_str());
+                    ok = gh->LabelAdd(row.issueKey, label, applyErr);
+                    break;
+                }
+                case AAction::LabelRemove: {
+                    std::string label;
+                    if (row.payload.is_object() && row.payload.contains("label") && row.payload["label"].is_string()) {
+                        label = row.payload["label"].get<std::string>();
+                    }
+                    if (label.empty()) {
+                        applyErr = "LabelRemove payload missing string field 'label'";
+                        break;
+                    }
+                    LOG_INFO("AppController: ApplyApprovedProposal PATCH LabelRemove issueKey=%s label=%s",
+                             row.issueKey.c_str(), label.c_str());
+                    ok = gh->LabelRemove(row.issueKey, label, applyErr);
+                    break;
+                }
+                case AAction::AssigneeSet: {
+                    std::string assignee;
+                    if (row.payload.is_object() && row.payload.contains("assignee") &&
+                        row.payload["assignee"].is_string()) {
+                        assignee = row.payload["assignee"].get<std::string>();
+                    }
+                    if (assignee.empty()) {
+                        applyErr = "AssigneeSet payload missing string field 'assignee'";
+                        break;
+                    }
+                    LOG_INFO("AppController: ApplyApprovedProposal PATCH AssigneeSet issueKey=%s assignee=%s",
+                             row.issueKey.c_str(), assignee.c_str());
+                    ok = gh->AssigneeSet(row.issueKey, assignee, applyErr);
+                    break;
+                }
+                case AAction::StateTransition: {
+                    std::string state;
+                    if (row.payload.is_object() && row.payload.contains("state") && row.payload["state"].is_string()) {
+                        state = row.payload["state"].get<std::string>();
+                    }
+                    if (state.empty()) {
+                        applyErr = "StateTransition payload missing string field 'state'";
+                        break;
+                    }
+                    LOG_INFO("AppController: ApplyApprovedProposal PATCH StateTransition issueKey=%s state=%s",
+                             row.issueKey.c_str(), state.c_str());
+                    ok = gh->StateTransition(row.issueKey, state, applyErr);
+                    break;
+                }
+                case AAction::DerivedTicketCreate: {
+                    applyErr = "DerivedTicketCreate apply is not implemented yet (cross-tracker)";
+                    LOG_WARN("AppController: ApplyApprovedProposal DerivedTicketCreate not implemented "
+                             "proposalId=%lld",
+                             static_cast<long long>(proposalId));
+                    break;
+                }
+                case AAction::Unknown:
+                case AAction::ImplementIssue:
+                default:
+                    applyErr = std::string("apply not supported for action=") +
+                               AgenticInferenceClientPure::ActionToString(action);
+                    break;
+                }
+            } catch (const std::exception& ex) {
+                applyErr = std::string("payload parse exception: ") + ex.what();
+                LOG_WARN("AppController: ApplyApprovedProposal exception proposalId=%lld: %s",
+                         static_cast<long long>(proposalId), ex.what());
+            }
+
+            // Result transition + audit row. On success → Applied. On
+            // failure → Failed with applyError populated for UI surfacing.
+            std::string transErr;
+            const AgentProposalState targetState = ok ? AgentProposalState::Applied : AgentProposalState::Failed;
+            if (!store->Transition(proposalId, targetState, ok ? std::string() : applyErr, transErr)) {
+                LOG_WARN("AppController: ApplyApprovedProposal terminal Transition failed "
+                         "proposalId=%lld targetState=%s transErr=%s",
+                         static_cast<long long>(proposalId), AgentProposalStateToString(targetState), transErr.c_str());
+            }
+            BackendAuditTrail::AuditEvent ev;
+            ev.Action = "AgenticApplyResult";
+            ev.Source = "agentic";
+            ev.IssueKey = row.issueKey;
+            ev.OperationId = opId;
+            ev.Success = ok;
+            ev.Phase = "result";
+            ev.Data = nlohmann::json::object();
+            ev.Data["proposalId"] = static_cast<long long>(proposalId);
+            ev.Data["action"] = AgenticInferenceClientPure::ActionToString(action);
+            if (!ok) {
+                ev.Data["error"] = applyErr;
+            }
+            BackendAuditTrail::AppendEvent(ev);
+            if (ok) {
+                LOG_INFO("AppController: ApplyApprovedProposal SUCCESS proposalId=%lld action=%s",
+                         static_cast<long long>(proposalId), AgenticInferenceClientPure::ActionToString(action));
+                // (Apply-feedback) Green toast so the user sees the action landed
+                // on the upstream tracker without watching the log stream.
+                {
+                    const std::string actionStr = AgenticInferenceClientPure::ActionToString(action);
+                    const std::string issueKeyCopy = row.issueKey;
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "%s applied to %s", actionStr.c_str(), issueKeyCopy.c_str());
+                    const std::string toastMsg(buf);
+                    this->mainThreadDispatcher.PostToMainThread([toastMsg]() {
+                        SmatchetToastManager::Instance().Push("Agent proposals", toastMsg, ToastType::Success, 4000);
+                    });
+                }
+            } else {
+                LOG_WARN("AppController: ApplyApprovedProposal FAILED proposalId=%lld action=%s err=%s",
+                         static_cast<long long>(proposalId), AgenticInferenceClientPure::ActionToString(action),
+                         applyErr.c_str());
+                // (Apply-feedback) Long-lived red toast (8 s) so the user can read
+                // the error text. The row also lands in Failed state with
+                // applyError populated; the panel renders it inline + offers a
+                // Retry button.
+                {
+                    const std::string actionStr = AgenticInferenceClientPure::ActionToString(action);
+                    const std::string issueKeyCopy = row.issueKey;
+                    char buf[512];
+                    std::snprintf(buf, sizeof(buf), "%s failed on %s: %s", actionStr.c_str(), issueKeyCopy.c_str(),
+                                  applyErr.c_str());
+                    const std::string toastMsg(buf);
+                    this->mainThreadDispatcher.PostToMainThread([toastMsg]() {
+                        SmatchetToastManager::Instance().Push("Agent proposals", toastMsg, ToastType::Error, 8000);
+                    });
+                }
+            }
+            LOG_TRACE("AppController::ApplyApprovedProposal worker exit");
         });
+    });
 }
 #endif
 
@@ -1734,6 +1992,9 @@ class GitHubReadAdapter : public smatchet::agentic::IGitHubReadClient {
     explicit GitHubReadAdapter(GitHubClient& impl) : impl_(impl) {}
     bool FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError) override {
         return impl_.FetchIssueBody(issueKey, outBody, outError);
+    }
+    bool FetchIssueTitle(const std::string& issueKey, std::string& outTitle, std::string& outError) override {
+        return impl_.FetchIssueTitle(issueKey, outTitle, outError);
     }
     bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
                             std::string& outError) override {
@@ -2518,17 +2779,28 @@ void AppController::DetachAgenticPoll() {
 void AppController::RestartAgenticPollAsync() {
     // (Bundle A) UI-thread-safe restart: detaches the current worker (returns
     // immediately) then immediately starts a new one. The detached worker drains
-    // off-band; the new one only blocks behind the lifecycle mutex which is held
-    // exclusively here for the start phase.
+    // off-band.
+    //
+    // (Triage-blocks fix) The lifecycle-mutex acquire + controller-chain reset +
+    // StartAgenticPollIfEnabled used to run on the calling (UI) thread. When a
+    // manual triage was mid-batch the worker held that mutex for minutes,
+    // freezing the UI on the next checkbox toggle. Wrap the entire post-detach
+    // sequence in `LaunchBackgroundTask` so the UI thread returns immediately;
+    // any contention now serialises on the worker pool instead of the UI loop.
+    LOG_TRACE("AppController::RestartAgenticPollAsync enter");
     DetachAgenticPoll();
-    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
-    // Drop the cached triage controller chain — same rationale as RestartAgenticPoll.
-    agenticTriageController_.reset();
-    agenticGithubReadAdapter_.reset();
-    agenticInferenceAdapter_.reset();
-    agenticGithubClient_.reset();
-    agenticInferenceClient_.reset();
-    StartAgenticPollIfEnabled();
+    LaunchBackgroundTask([this]() {
+        std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+        LOG_DEBUG("AppController::RestartAgenticPollAsync: rebuilding controller chain (worker thread)");
+        // Drop the cached triage controller chain — same rationale as RestartAgenticPoll.
+        agenticTriageController_.reset();
+        agenticGithubReadAdapter_.reset();
+        agenticInferenceAdapter_.reset();
+        agenticGithubClient_.reset();
+        agenticInferenceClient_.reset();
+        StartAgenticPollIfEnabled();
+        LOG_TRACE("AppController::RestartAgenticPollAsync exit (worker)");
+    });
 }
 
 void AppController::JoinDetachedAgenticPollIfReady() {
@@ -2538,7 +2810,18 @@ void AppController::JoinDetachedAgenticPollIfReady() {
     if (agenticPollRunning_.load(std::memory_order_acquire)) {
         return;
     }
-    std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
+    // (Triage-blocks fix) try_lock instead of lock_guard — never block the UI
+    // frame on the lifecycle mutex. `RunAgenticTriageOnce` (worker thread) and
+    // `RestartAgenticPollAsync` (worker thread) hold this mutex for the
+    // duration of a multi-minute LLM batch + lazy controller chain rebuild;
+    // a `lock_guard` here would freeze the UI thread every frame until the
+    // batch completes. Per Pillar 2 the UI thread never blocks > 100 ms.
+    // Skipping the join this frame is safe: the per-frame retry catches the
+    // next idle window in milliseconds.
+    std::unique_lock<std::mutex> lifecycleLk(agenticPollLifecycleMutex_, std::try_to_lock);
+    if (!lifecycleLk.owns_lock()) {
+        return;
+    }
     if (agenticPollDetachedThread_.joinable() && !agenticPollRunning_.load(std::memory_order_acquire)) {
         agenticPollDetachedThread_.join();
         LOG_DEBUG("AppController::JoinDetachedAgenticPollIfReady: detached worker joined");
@@ -2547,28 +2830,98 @@ void AppController::JoinDetachedAgenticPollIfReady() {
 
 bool AppController::RunAgenticTriageOnce(std::string& outError) {
     outError.clear();
+
+    // (Triage-feedback) Stamp the in-flight + started atomics before doing
+    // any work; the UI Preferences tab reads these every frame to render the
+    // "Triage running…" indicator. The RAII guard clears the flag + stamps
+    // the finished-at on every exit path (success, early-return, exception).
+    const auto nowSec = []() -> std::int64_t {
+        return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    };
+    manualTriageInFlight_.store(true, std::memory_order_release);
+    manualTriageStartedAtSec_.store(nowSec(), std::memory_order_release);
+    struct InFlightGuard {
+        AppController* self;
+        std::function<std::int64_t()> now;
+        ~InFlightGuard() {
+            self->manualTriageFinishedAtSec_.store(now(), std::memory_order_release);
+            self->manualTriageInFlight_.store(false, std::memory_order_release);
+        }
+    } inFlightGuard{this, nowSec};
+
+    const auto setError = [this](const std::string& msg) {
+        std::lock_guard<std::mutex> lk(manualTriageErrorMu_);
+        manualTriageLastError_ = msg;
+    };
+    const auto clearError = [this]() {
+        std::lock_guard<std::mutex> lk(manualTriageErrorMu_);
+        manualTriageLastError_.clear();
+    };
+
+    LOG_INFO("AppController::RunAgenticTriageOnce: manual trigger begin");
+
     // (Bundle A) Hold the lifecycle lock for the duration of the controller fetch +
     // batch run so a UI checkbox toggle can't tear down the controller chain mid-batch.
     std::lock_guard<std::mutex> lifecycleLk(agenticPollLifecycleMutex_);
     auto* triage = GetAgenticTriageController();
     if (triage == nullptr) {
         outError = "Agentic triage unavailable — configure GitHub PAT in Preferences.";
+        setError(outError);
+        LOG_WARN("AppController::RunAgenticTriageOnce: %s", outError.c_str());
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
     if (cfg.AgenticPollQuery.empty()) {
         outError = "Agentic poll query empty — set OWNER/REPO in Preferences.";
+        setError(outError);
+        LOG_WARN("AppController::RunAgenticTriageOnce: %s", outError.c_str());
         return false;
     }
     smatchet::agentic::AgenticTriageController::BatchResult result;
     std::string batchErr;
     if (!triage->TriageBatch("github", cfg.AgenticPollQuery, result, batchErr)) {
         outError = "TriageBatch failed: " + batchErr;
+        setError(outError);
+        LOG_WARN("AppController::RunAgenticTriageOnce: %s", outError.c_str());
         return false;
     }
+    manualTriageScanned_.store(result.totalIssuesScanned, std::memory_order_release);
+    manualTriageInserted_.store(result.proposalsInserted, std::memory_order_release);
+    manualTriageErrors_.store(static_cast<int>(result.perIssueErrors.size()), std::memory_order_release);
+    clearError();
     LOG_INFO("AppController::RunAgenticTriageOnce: %s scanned=%d inserted=%d failed=%zu", cfg.AgenticPollQuery.c_str(),
              result.totalIssuesScanned, result.proposalsInserted, result.perIssueErrors.size());
     return true;
+}
+
+void AppController::RunAgenticTriageOnceAsync() {
+    LOG_TRACE("AppController::RunAgenticTriageOnceAsync enter");
+    if (manualTriageInFlight_.load(std::memory_order_acquire)) {
+        LOG_INFO("AppController::RunAgenticTriageOnceAsync: already in flight — ignoring duplicate click");
+        return;
+    }
+    LaunchBackgroundTask([this]() {
+        std::string runErr;
+        if (!RunAgenticTriageOnce(runErr)) {
+            LOG_WARN("AppController::RunAgenticTriageOnceAsync: manual triage failed: %s", runErr.c_str());
+        }
+    });
+}
+
+AppController::ManualTriageStatus AppController::GetManualTriageStatus() const {
+    ManualTriageStatus s{};
+    s.inFlight = manualTriageInFlight_.load(std::memory_order_acquire);
+    s.startedAtSec = manualTriageStartedAtSec_.load(std::memory_order_acquire);
+    s.finishedAtSec = manualTriageFinishedAtSec_.load(std::memory_order_acquire);
+    s.scanned = manualTriageScanned_.load(std::memory_order_acquire);
+    s.inserted = manualTriageInserted_.load(std::memory_order_acquire);
+    s.errors = manualTriageErrors_.load(std::memory_order_acquire);
+    {
+        std::lock_guard<std::mutex> lk(manualTriageErrorMu_);
+        s.lastError = manualTriageLastError_;
+    }
+    return s;
 }
 
 std::int64_t AppController::GetAgenticLastPollAtSec() const noexcept { return agenticPollLastAtSec_.load(); }

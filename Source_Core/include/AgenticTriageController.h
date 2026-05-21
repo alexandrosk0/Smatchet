@@ -52,6 +52,15 @@ class IGitHubReadClient {
     // Empty body is a valid outcome (issue created without description).
     virtual bool FetchIssueBody(const std::string& issueKey, std::string& outBody, std::string& outError) = 0;
 
+    // (Schema v3) Companion to FetchIssueBody — returns the `title` field from
+    // the same GET /issues/{n} response. Default impl returns empty title +
+    // success so existing fakes (tests + scenario steps) keep compiling
+    // without an override. Production GitHubReadAdapter overrides.
+    virtual bool FetchIssueTitle(const std::string& /*issueKey*/, std::string& outTitle, std::string& /*outError*/) {
+        outTitle.clear();
+        return true;
+    }
+
     // GET /repos/{owner}/{repo}/issues/{n}/comments — comment thread, oldest first.
     virtual bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
                                     std::string& outError) = 0;

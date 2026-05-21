@@ -97,27 +97,35 @@ std::string JoinPath(const std::string& dir, const char* name) {
 }
 
 bool WriteFileText(const std::string& path, const std::string& content, std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner: WriteFileText enter path=%s bytes=%zu", path.c_str(), content.size());
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f.is_open()) {
         outError = "failed to open for write: " + path;
+        LOG_WARN("ClaudeCodeLocalRunner: WriteFileText open failed path=%s", path.c_str());
         return false;
     }
     f.write(content.data(), static_cast<std::streamsize>(content.size()));
     if (!f.good()) {
         outError = "failed to write: " + path;
+        LOG_WARN("ClaudeCodeLocalRunner: WriteFileText write failed path=%s", path.c_str());
         return false;
     }
+    LOG_DEBUG("ClaudeCodeLocalRunner: WriteFileText ok path=%s bytes=%zu", path.c_str(), content.size());
     return true;
 }
 
 std::string ReadFileText(const std::string& path) {
+    LOG_TRACE("ClaudeCodeLocalRunner: ReadFileText enter path=%s", path.c_str());
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) {
+        LOG_DEBUG("ClaudeCodeLocalRunner: ReadFileText open failed path=%s", path.c_str());
         return std::string();
     }
     std::ostringstream os;
     os << f.rdbuf();
-    return os.str();
+    const std::string body = os.str();
+    LOG_DEBUG("ClaudeCodeLocalRunner: ReadFileText ok path=%s bytes=%zu", path.c_str(), body.size());
+    return body;
 }
 
 // Per-platform helper: pick up `name` from the parent env (if set) and
@@ -158,6 +166,7 @@ bool TryReadParentEnv(const char* name, std::string& outValue) {
 // the parent env permanently.
 std::vector<std::pair<std::string, std::string>>
 BuildAllowListEnv(const std::vector<std::pair<std::string, std::string>>& forced) {
+    LOG_TRACE("ClaudeCodeLocalRunner: BuildAllowListEnv enter forced_count=%zu", forced.size());
     std::vector<std::pair<std::string, std::string>> out;
     out.reserve(16);
     for (size_t i = 0; kAllowedEnvKeys[i] != nullptr; ++i) {
@@ -167,16 +176,29 @@ BuildAllowListEnv(const std::vector<std::pair<std::string, std::string>>& forced
             std::any_of(forced.begin(), forced.end(),
                         [key](const std::pair<std::string, std::string>& kv) { return kv.first == key; });
         if (overridden) {
+            LOG_DEBUG("ClaudeCodeLocalRunner: env keep %s (overridden by forced)", key);
             continue;
         }
         std::string val;
         if (TryReadParentEnv(key, val)) {
+            // Secret-safe: log presence only for token-bearing keys.
+            const bool isSecret = (std::strcmp(key, "ANTHROPIC_API_KEY") == 0 || std::strcmp(key, "GH_TOKEN") == 0 ||
+                                   std::strcmp(key, "GITHUB_TOKEN") == 0);
+            if (isSecret) {
+                LOG_DEBUG("ClaudeCodeLocalRunner: env keep %s (present)", key);
+            } else {
+                LOG_DEBUG("ClaudeCodeLocalRunner: env keep %s (bytes=%zu)", key, val.size());
+            }
             out.emplace_back(std::string(key), std::move(val));
+        } else {
+            LOG_DEBUG("ClaudeCodeLocalRunner: env drop %s (absent in parent env)", key);
         }
     }
     for (size_t j = 0; j < forced.size(); ++j) {
+        LOG_DEBUG("ClaudeCodeLocalRunner: env force %s", forced[j].first.c_str());
         out.push_back(forced[j]);
     }
+    LOG_DEBUG("ClaudeCodeLocalRunner: BuildAllowListEnv exit keys=%zu", out.size());
     return out;
 }
 
@@ -191,15 +213,18 @@ BuildAllowListEnv(const std::vector<std::pair<std::string, std::string>>& forced
 // Production callers do not have these set and the function returns
 // empty for them — no production env leakage.
 std::vector<std::pair<std::string, std::string>> CollectTestModePassthrough() {
+    LOG_TRACE("ClaudeCodeLocalRunner: CollectTestModePassthrough enter");
     std::vector<std::pair<std::string, std::string>> out;
     static const char* const kStubKeys[] = {"STUB_CLAUDE_MODE", "STUB_GIT_MODE", "STUB_GH_MODE", "STUB_GH_URL",
                                             nullptr};
     for (size_t i = 0; kStubKeys[i] != nullptr; ++i) {
         std::string v;
         if (TryReadParentEnv(kStubKeys[i], v)) {
+            LOG_DEBUG("ClaudeCodeLocalRunner: env force (test-mode) %s", kStubKeys[i]);
             out.emplace_back(std::string(kStubKeys[i]), std::move(v));
         }
     }
+    LOG_TRACE("ClaudeCodeLocalRunner: CollectTestModePassthrough exit count=%zu", out.size());
     return out;
 }
 
@@ -222,19 +247,27 @@ void ApplyAllowListEnv(SubprocessCapture::CaptureOptions& opts) {
 // gives the main harness, otherwise the security boundary leaks.
 bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, int timeoutMs, std::string& outStderr,
               std::string& outStdout) {
+    LOG_TRACE("ClaudeCodeLocalRunner: RunQuick enter argv0=%s argc=%zu timeout_ms=%d", argv0.c_str(), args.size(),
+              timeoutMs);
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = argv0;
     opts.args = args;
     opts.timeoutMs = timeoutMs;
     ApplyAllowListEnv(opts);
+    LOG_INFO("ClaudeCodeLocalRunner: spawn helper argv0=%s argc=%zu", argv0.c_str(), args.size());
     SubprocessCapture::CaptureResult res;
     std::string err;
     if (!SubprocessCapture::Run(opts, res, err)) {
         outStderr = err;
+        LOG_WARN("ClaudeCodeLocalRunner: RunQuick spawn failed argv0=%s err=%s", argv0.c_str(), err.c_str());
         return false;
     }
     outStdout = res.stdoutText;
     outStderr = res.stderrText;
+    LOG_DEBUG("ClaudeCodeLocalRunner: RunQuick exit argv0=%s code=%d timedOut=%d cancelled=%d stdout_bytes=%zu "
+              "stderr_bytes=%zu",
+              argv0.c_str(), res.exitCode, (int)res.timedOut, (int)res.cancelled, res.stdoutText.size(),
+              res.stderrText.size());
     return res.exitCode == 0 && !res.timedOut && !res.cancelled;
 }
 
@@ -244,22 +277,31 @@ bool RunQuick(const std::string& argv0, const std::vector<std::string>& args, in
 // env allow-list as RunQuick.
 bool RunQuickInDir(const std::string& argv0, const std::vector<std::string>& args, const std::string& cwd,
                    int timeoutMs, std::string& outStderr, std::string& outStdout, int& outExitCode) {
+    LOG_TRACE("ClaudeCodeLocalRunner: RunQuickInDir enter argv0=%s argc=%zu cwd=%s timeout_ms=%d", argv0.c_str(),
+              args.size(), cwd.c_str(), timeoutMs);
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = argv0;
     opts.args = args;
     opts.cwd = cwd;
     opts.timeoutMs = timeoutMs;
     ApplyAllowListEnv(opts);
+    LOG_INFO("ClaudeCodeLocalRunner: spawn helper argv0=%s argc=%zu cwd=%s", argv0.c_str(), args.size(), cwd.c_str());
     SubprocessCapture::CaptureResult res;
     std::string err;
     outExitCode = -1;
     if (!SubprocessCapture::Run(opts, res, err)) {
         outStderr = err;
+        LOG_WARN("ClaudeCodeLocalRunner: RunQuickInDir spawn failed argv0=%s cwd=%s err=%s", argv0.c_str(), cwd.c_str(),
+                 err.c_str());
         return false;
     }
     outStdout = res.stdoutText;
     outStderr = res.stderrText;
     outExitCode = res.exitCode;
+    LOG_DEBUG("ClaudeCodeLocalRunner: RunQuickInDir exit argv0=%s cwd=%s code=%d timedOut=%d cancelled=%d "
+              "stdout_bytes=%zu stderr_bytes=%zu",
+              argv0.c_str(), cwd.c_str(), res.exitCode, (int)res.timedOut, (int)res.cancelled, res.stdoutText.size(),
+              res.stderrText.size());
     return res.exitCode == 0 && !res.timedOut && !res.cancelled;
 }
 
@@ -319,10 +361,12 @@ std::string TrimSpace(const std::string& s) {
 // `PrCommentWatcher::ParsePrKeyFromUrl` but returns just the integer — the
 // runner needs the bare number to name the worktree dir + branch.
 bool ExtractPrNumberFromUrl(const std::string& prUrl, int& outNumber, std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner: ExtractPrNumberFromUrl enter url=%s", prUrl.c_str());
     outNumber = 0;
     outError.clear();
     if (prUrl.empty()) {
         outError = "prUrl is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner: ExtractPrNumberFromUrl exit reason=empty-url");
         return false;
     }
     std::string rest = prUrl;
@@ -369,13 +413,16 @@ bool ExtractPrNumberFromUrl(const std::string& prUrl, int& outNumber, std::strin
         const long long v = std::stoll(nstr);
         if (v <= 0 || v > 2147483647LL) {
             outError = "prUrl number out of range";
+            LOG_TRACE("ClaudeCodeLocalRunner: ExtractPrNumberFromUrl exit reason=out-of-range");
             return false;
         }
         outNumber = static_cast<int>(v);
     } catch (const std::exception& e) {
         outError = std::string("prUrl number parse failed: ") + e.what();
+        LOG_TRACE("ClaudeCodeLocalRunner: ExtractPrNumberFromUrl exit reason=stoll-throw");
         return false;
     }
+    LOG_DEBUG("ClaudeCodeLocalRunner: ExtractPrNumberFromUrl ok url=%s pr=%d", prUrl.c_str(), outNumber);
     return true;
 }
 
@@ -408,6 +455,7 @@ bool LooksLikeGithubPrUrl(const std::string& url) {
 // rejects an empty `--title`.
 std::string ResolvePrTitle(const std::string& worktreeDir, const std::string& gitBin, const std::string& issueTitle,
                            const std::string& issueKey) {
+    LOG_TRACE("ClaudeCodeLocalRunner: ResolvePrTitle enter worktree=%s", worktreeDir.c_str());
     std::vector<std::string> args;
     args.push_back("log");
     args.push_back("-1");
@@ -417,21 +465,26 @@ std::string ResolvePrTitle(const std::string& worktreeDir, const std::string& gi
     if (RunQuickInDir(gitBin, args, worktreeDir, 10000, err, out, exitCode)) {
         const std::string first = TrimSpace(out);
         if (!first.empty()) {
+            LOG_DEBUG("ClaudeCodeLocalRunner: ResolvePrTitle source=git-log title='%s'", first.c_str());
             return first;
         }
     }
     if (!issueTitle.empty()) {
+        LOG_DEBUG("ClaudeCodeLocalRunner: ResolvePrTitle source=issueTitle title='%s'", issueTitle.c_str());
         return issueTitle;
     }
     if (!issueKey.empty()) {
+        LOG_DEBUG("ClaudeCodeLocalRunner: ResolvePrTitle source=issueKey key=%s", issueKey.c_str());
         return "Agent handoff: " + issueKey;
     }
+    LOG_DEBUG("ClaudeCodeLocalRunner: ResolvePrTitle source=fallback-sentinel");
     return std::string("Agent handoff PR");
 }
 
 // Convert a parsed JSON object into a StreamEvent. Tolerant: unknown shapes
 // map to type="unknown" with the raw JSON in data.
 StreamEvent ParseStreamEvent(const std::string& line) {
+    LOG_TRACE("ClaudeCodeLocalRunner: ParseStreamEvent enter bytes=%zu", line.size());
     StreamEvent ev;
     try {
         nlohmann::json j = nlohmann::json::parse(line);
@@ -451,6 +504,25 @@ StreamEvent ParseStreamEvent(const std::string& line) {
             ev.type = "unknown";
             ev.data = j;
         }
+        LOG_DEBUG("ClaudeCodeLocalRunner: stream-json line bytes=%zu type=%s subtype=%s", line.size(), ev.type.c_str(),
+                  ev.subtype.c_str());
+        // (rule #10) state-name extraction passthrough — handoff-implementer
+        // embeds the FSM state in either the top-level "state" field or the
+        // "data.state" subfield. Surface both for observability.
+        try {
+            nlohmann::json j2 = nlohmann::json::parse(line);
+            if (j2.is_object()) {
+                if (j2.contains("state") && j2["state"].is_string()) {
+                    LOG_DEBUG("ClaudeCodeLocalRunner: stream-json state=%s", j2["state"].get<std::string>().c_str());
+                } else if (j2.contains("data") && j2["data"].is_object() && j2["data"].contains("state") &&
+                           j2["data"]["state"].is_string()) {
+                    LOG_DEBUG("ClaudeCodeLocalRunner: stream-json state=%s",
+                              j2["data"]["state"].get<std::string>().c_str());
+                }
+            }
+        } catch (...) {
+            // Unreachable — we already parsed once above. Defensive.
+        }
     } catch (const std::exception& e) {
         LOG_WARN("ClaudeCodeLocalRunner: malformed stream-json line (len=%zu): %s", line.size(), e.what());
         ev.type = "malformed";
@@ -468,7 +540,9 @@ ClaudeCodeLocalRunner::~ClaudeCodeLocalRunner() = default;
 std::string ClaudeCodeLocalRunner::Name() const { return std::string("claude-code-local"); }
 
 bool ClaudeCodeLocalRunner::Probe(std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner::Probe enter");
     const std::string bin = m_opts.binPath.empty() ? std::string("claude") : m_opts.binPath;
+    LOG_DEBUG("ClaudeCodeLocalRunner::Probe bin=%s", bin.c_str());
     std::vector<std::string> args;
     args.push_back("--version");
     std::string e, o;
@@ -485,13 +559,25 @@ bool ClaudeCodeLocalRunner::Probe(std::string& outError) {
 bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
                                   StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
                                   RunResult& outResult, std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner::Spawn enter (proposalId=%lld worktree=%s branch=%s)", (long long)seed.proposalId,
+              worktreeDir.c_str(), seed.targetBranch.c_str());
     outResult = RunResult();
     outError.clear();
 
     if (worktreeDir.empty()) {
         outError = "worktreeDir is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner::Spawn exit reason=empty-worktree");
         return false;
     }
+
+    // Branch-assert: must not equal develop or main (envelope rule).
+    if (seed.targetBranch == "develop" || seed.targetBranch == "main") {
+        outError = "targetBranch refuses develop/main: " + seed.targetBranch;
+        LOG_ERROR("ClaudeCodeLocalRunner: branch-assert FAIL %s (refuses develop/main)", seed.targetBranch.c_str());
+        LOG_TRACE("ClaudeCodeLocalRunner::Spawn exit reason=branch-assert");
+        return false;
+    }
+    LOG_DEBUG("ClaudeCodeLocalRunner: branch-assert ok %s", seed.targetBranch.c_str());
 
     // 1. Worktree creation (skippable for tests that provide a pre-made dir).
     if (!m_opts.skipWorktreeCreate) {
@@ -501,6 +587,8 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
             // prior run left the worktree behind.
             LOG_INFO("ClaudeCodeLocalRunner: worktree already exists, reusing: %s", worktreeDir.c_str());
         } else {
+            LOG_INFO("ClaudeCodeLocalRunner: git worktree add path=%s branch=%s", worktreeDir.c_str(),
+                     seed.targetBranch.c_str());
             std::vector<std::string> wtArgs;
             wtArgs.push_back("worktree");
             wtArgs.push_back("add");
@@ -511,12 +599,17 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
             if (!RunQuick("git", wtArgs, 30000, e, o)) {
                 outError = "git worktree add failed: " + e;
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::Spawn exit reason=worktree-add-failed");
                 return false;
             }
+            LOG_INFO("ClaudeCodeLocalRunner: git worktree add ok path=%s", worktreeDir.c_str());
         }
     } else if (!DirExists(worktreeDir)) {
         outError = "skipWorktreeCreate set but worktreeDir does not exist: " + worktreeDir;
+        LOG_TRACE("ClaudeCodeLocalRunner::Spawn exit reason=missing-worktree-dir");
         return false;
+    } else {
+        LOG_DEBUG("ClaudeCodeLocalRunner::Spawn skipWorktreeCreate=true; using pre-made dir=%s", worktreeDir.c_str());
     }
 
     // 2. Write SEED.json + SEED.md.
@@ -524,13 +617,18 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
     const std::string seedMdPath = JoinPath(worktreeDir, kSeedMdName);
     {
         const nlohmann::json js = SeedBuilder::FormatSeedJson(seed);
-        if (!WriteFileText(seedJsonPath, js.dump(2), outError)) {
+        const std::string body = js.dump(2);
+        LOG_INFO("ClaudeCodeLocalRunner: write SEED.json path=%s bytes=%zu", seedJsonPath.c_str(), body.size());
+        if (!WriteFileText(seedJsonPath, body, outError)) {
+            LOG_ERROR("ClaudeCodeLocalRunner: SEED.json write failed: %s", outError.c_str());
             return false;
         }
     }
     {
         const std::string md = SeedBuilder::FormatSeedMarkdown(seed);
+        LOG_INFO("ClaudeCodeLocalRunner: write SEED.md path=%s bytes=%zu", seedMdPath.c_str(), md.size());
         if (!WriteFileText(seedMdPath, md, outError)) {
+            LOG_ERROR("ClaudeCodeLocalRunner: SEED.md write failed: %s", outError.c_str());
             return false;
         }
     }
@@ -542,6 +640,9 @@ bool ClaudeCodeLocalRunner::Spawn(const Seed& seed, const std::string& worktreeD
 bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& worktreeDir, DeltaCallback onDelta,
                                       StateChangeCallback onStateChange, std::shared_ptr<std::atomic<bool>> cancelToken,
                                       RunResult& outResult, std::string& outError, bool allowPrAutoCreateFallback) {
+    LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore enter (proposalId=%lld worktree=%s branch=%s allowFallback=%d)",
+              (long long)seed.proposalId, worktreeDir.c_str(), seed.targetBranch.c_str(),
+              (int)allowPrAutoCreateFallback);
     // Caller (Spawn / SpawnAdHoc) is responsible for worktree creation +
     // SEED.json + SEED.md (+ optional CHECK_RUN.json) writes. This helper
     // owns the env-allow-list build, subprocess spawn, line-streaming, poll
@@ -559,12 +660,14 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
     }
 
     if (onStateChange) {
+        LOG_DEBUG("ClaudeCodeLocalRunner: state -> Running (proposalId=%lld)", (long long)seed.proposalId);
         onStateChange("Running");
     }
 
     // 3. Build the env block (allow-list — decision #7).
     std::vector<std::pair<std::string, std::string>> envForced = CollectTestModePassthrough();
     auto envBlock = BuildAllowListEnv(envForced);
+    LOG_DEBUG("ClaudeCodeLocalRunner::SpawnCore env block built keys=%zu", envBlock.size());
 
     // 4. Spawn the child via SubprocessCapture with line-streaming on stdout.
     const std::string bin = m_opts.binPath.empty() ? std::string("claude") : m_opts.binPath;
@@ -591,6 +694,14 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
     opts.stdoutByteCap = 64u * 1024u * 1024u; // 64 MB — stream-json can be chatty.
     opts.stderrByteCap = 2u * 1024u * 1024u;
 
+    // Compute cmdline_bytes for the spawn log (sum of argv0 + all args + separators).
+    size_t cmdlineBytes = bin.size();
+    for (size_t i = 0; i < opts.args.size(); ++i) {
+        cmdlineBytes += opts.args[i].size() + 1u;
+    }
+    LOG_INFO("spawn claude bin=%s argc=%zu cmdline_bytes=%zu cwd=%s timeout_ms=%d", bin.c_str(), opts.args.size(),
+             cmdlineBytes, worktreeDir.c_str(), m_opts.timeoutMs);
+
     // Sentinel-file poll thread. Watches CLARIFICATION_NEEDED.json + PR_URL.txt
     // mtimes on a 1Hz tick and fires onStateChange. The flag flips false when
     // Spawn returns so the thread terminates cleanly.
@@ -601,21 +712,55 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
     {
         const std::string clarPath = JoinPath(worktreeDir, kClarificationName);
         const std::string prPath = JoinPath(worktreeDir, kPrUrlName);
+        const std::string runResultWatchPath = JoinPath(worktreeDir, kRunResultName);
+        const std::string seedJsonWatchPath = JoinPath(worktreeDir, kSeedJsonName);
+        const std::string wtCopy = worktreeDir;
         StateChangeCallback cb = onStateChange;
-        pollThread = std::thread([&stopPoll, clarPath, prPath, cb, &announcedClar, &announcedPr]() {
+        const long long proposalIdCopy = (long long)seed.proposalId;
+        pollThread = std::thread([&stopPoll, clarPath, prPath, runResultWatchPath, seedJsonWatchPath, wtCopy, cb,
+                                  &announcedClar, &announcedPr, proposalIdCopy]() {
+            LOG_TRACE("ClaudeCodeLocalRunner: sentinel poll thread enter worktree=%s", wtCopy.c_str());
+            int tickCounter = 0;
+            bool announcedRunResult = false;
+            bool announcedSeedJson = false;
             while (!stopPoll.load()) {
+                if ((tickCounter % 10) == 0) {
+                    LOG_TRACE("sentinel watch tick worktree=%s tick=%d", wtCopy.c_str(), tickCounter);
+                }
+                ++tickCounter;
+                if (!announcedSeedJson && FileExists(seedJsonWatchPath)) {
+                    announcedSeedJson = true;
+                    LOG_INFO("sentinel %s appeared at %s (handoff=%lld)", kSeedJsonName, seedJsonWatchPath.c_str(),
+                             proposalIdCopy);
+                }
                 if (!announcedClar && FileExists(clarPath)) {
                     announcedClar = true;
-                    if (cb)
+                    const std::string body = ReadFileText(clarPath);
+                    LOG_INFO("sentinel %s appeared (%zu bytes) handoff=%lld", kClarificationName, body.size(),
+                             proposalIdCopy);
+                    if (cb) {
+                        LOG_DEBUG("ClaudeCodeLocalRunner: state -> AwaitingUser (proposalId=%lld)", proposalIdCopy);
                         cb("AwaitingUser");
+                    }
                 }
                 if (!announcedPr && FileExists(prPath)) {
                     announcedPr = true;
-                    if (cb)
+                    const std::string body = ReadFileText(prPath);
+                    LOG_INFO("sentinel %s appeared (%zu bytes) handoff=%lld", kPrUrlName, body.size(), proposalIdCopy);
+                    if (cb) {
+                        LOG_DEBUG("ClaudeCodeLocalRunner: state -> PrOpen (proposalId=%lld)", proposalIdCopy);
                         cb("PrOpen");
+                    }
+                }
+                if (!announcedRunResult && FileExists(runResultWatchPath)) {
+                    announcedRunResult = true;
+                    LOG_INFO("sentinel %s appeared at %s (handoff=%lld)", kRunResultName, runResultWatchPath.c_str(),
+                             proposalIdCopy);
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             }
+            LOG_TRACE("ClaudeCodeLocalRunner: sentinel poll thread exit worktree=%s ticks=%d", wtCopy.c_str(),
+                      tickCounter);
         });
     }
 
@@ -631,9 +776,20 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
         onDelta(ev);
     };
 
+    const auto wallStart = std::chrono::steady_clock::now();
     SubprocessCapture::CaptureResult res;
     std::string subErr;
     const bool ranOk = SubprocessCapture::Run(opts, res, subErr);
+    const auto wallEnd = std::chrono::steady_clock::now();
+    const long long wallSec = (long long)std::chrono::duration_cast<std::chrono::seconds>(wallEnd - wallStart).count();
+
+    if (cancelToken && cancelToken->load()) {
+        LOG_INFO("cancel atom honoured handoff=%lld wallclock_sec=%lld", (long long)seed.proposalId, wallSec);
+    }
+    LOG_INFO("claude exit code=%d handoff=%lld wallclock_sec=%lld cancelled=%d timedOut=%d stdout_bytes=%zu "
+             "stderr_bytes=%zu",
+             res.exitCode, (long long)seed.proposalId, wallSec, (int)res.cancelled, (int)res.timedOut,
+             res.stdoutText.size(), res.stderrText.size());
 
     stopPoll.store(true);
     if (pollThread.joinable()) {
@@ -649,24 +805,35 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
         outError = "subprocess spawn failed: " + subErr;
         outResult.ok = false;
         outResult.errorMessage = outError;
-        if (onStateChange)
+        LOG_ERROR("ClaudeCodeLocalRunner::SpawnCore subprocess spawn failed: %s", subErr.c_str());
+        if (onStateChange) {
+            LOG_DEBUG("ClaudeCodeLocalRunner: state -> Failed (proposalId=%lld reason=spawn-failed)",
+                      (long long)seed.proposalId);
             onStateChange("Failed");
+        }
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=subprocess-spawn-failed");
         return false;
     }
 
     if (res.cancelled) {
         outResult.ok = false;
         outResult.errorMessage = "cancelled";
-        if (onStateChange)
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnCore cancelled handoff=%lld", (long long)seed.proposalId);
+        if (onStateChange) {
+            LOG_DEBUG("ClaudeCodeLocalRunner: state -> Cancelled (proposalId=%lld)", (long long)seed.proposalId);
             onStateChange("Cancelled");
+        }
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=cancelled");
         return false;
     }
 
     // 5. Parse RUN_RESULT.json — written by the spawned harness on exit.
     const std::string runResultPath = JoinPath(worktreeDir, kRunResultName);
     if (FileExists(runResultPath)) {
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnCore parsing RUN_RESULT.json at %s", runResultPath.c_str());
         try {
             const std::string body = ReadFileText(runResultPath);
+            LOG_DEBUG("ClaudeCodeLocalRunner::SpawnCore RUN_RESULT.json body bytes=%zu", body.size());
             nlohmann::json j = nlohmann::json::parse(body);
             outResult.ok = j.value("ok", false);
             outResult.errorMessage = j.value("errorMessage", std::string());
@@ -677,15 +844,26 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
             if (j.contains("toolUseSummary")) {
                 outResult.toolUseSummary = j["toolUseSummary"];
             }
+            LOG_INFO("ClaudeCodeLocalRunner::SpawnCore RUN_RESULT.json parsed ok=%d filesChanged=%d linesAdded=%d "
+                     "linesRemoved=%d prUrl_present=%d",
+                     (int)outResult.ok, outResult.filesChanged, outResult.linesAdded, outResult.linesRemoved,
+                     (int)(!outResult.prUrl.empty()));
         } catch (const std::exception& e) {
             outError = std::string("failed to parse RUN_RESULT.json: ") + e.what();
             outResult.ok = false;
             outResult.errorMessage = outError;
-            if (onStateChange)
+            LOG_ERROR("ClaudeCodeLocalRunner::SpawnCore RUN_RESULT.json parse failed: %s", e.what());
+            if (onStateChange) {
+                LOG_DEBUG("ClaudeCodeLocalRunner: state -> Failed (proposalId=%lld reason=parse-fail)",
+                          (long long)seed.proposalId);
                 onStateChange("Failed");
+            }
+            LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=run-result-parse-fail");
             return false;
         }
     } else {
+        LOG_WARN("ClaudeCodeLocalRunner::SpawnCore RUN_RESULT.json missing at %s (using exit code)",
+                 runResultPath.c_str());
         outResult.ok = (res.exitCode == 0);
         if (!outResult.ok) {
             outResult.errorMessage = "child exited " + std::to_string(res.exitCode) + " without RUN_RESULT.json";
@@ -700,6 +878,8 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
     // surfaces to the audit trail via outResult.errorMessage. Skipped
     // when the run already failed (no PR to open for a broken branch).
     if (allowPrAutoCreateFallback && outResult.ok && outResult.prUrl.empty() && m_opts.autoCreatePrIfMissing) {
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnCore PR-open fallback path engaged (proposalId=%lld branch=%s)",
+                 (long long)seed.proposalId, seed.targetBranch.c_str());
         const std::string prUrlSentinel = JoinPath(worktreeDir, kPrUrlName);
         if (FileExists(prUrlSentinel)) {
             // Sentinel showed up between the file check above and this
@@ -707,13 +887,18 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
             // narrow race covers the case where the poll thread saw the
             // file ~simultaneously with our parse of RUN_RESULT.json.
             outResult.prUrl = TrimSpace(ReadFileText(prUrlSentinel));
+            LOG_INFO("ClaudeCodeLocalRunner: PR-open fallback found late-arriving PR_URL.txt url=%s",
+                     outResult.prUrl.c_str());
         }
         if (outResult.prUrl.empty()) {
             const std::string gitBin = m_opts.gitBinPath.empty() ? std::string("git") : m_opts.gitBinPath;
             const std::string ghBin = m_opts.ghBinPath.empty() ? std::string("gh") : m_opts.ghBinPath;
             const std::string baseBranch = m_opts.prBaseBranch.empty() ? std::string("develop") : m_opts.prBaseBranch;
+            LOG_DEBUG("ClaudeCodeLocalRunner: PR-open fallback gitBin=%s ghBin=%s baseBranch=%s", gitBin.c_str(),
+                      ghBin.c_str(), baseBranch.c_str());
 
             // 1. `git push -u origin <branch>` from the worktree dir.
+            LOG_INFO("git push -u origin %s", seed.targetBranch.c_str());
             std::vector<std::string> pushArgs;
             pushArgs.push_back("push");
             pushArgs.push_back("-u");
@@ -726,11 +911,16 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
                 outError = "PR-open fallback: git push failed (exit=" + std::to_string(pushExit) + "): " + pushErr;
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange)
+                if (onStateChange) {
+                    LOG_DEBUG("ClaudeCodeLocalRunner: state -> Failed (proposalId=%lld reason=push-failed)",
+                              (long long)seed.proposalId);
                     onStateChange("Failed");
+                }
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=push-failed");
                 return false;
             }
+            LOG_INFO("ClaudeCodeLocalRunner: git push succeeded branch=%s", seed.targetBranch.c_str());
 
             // 2. `gh pr create --draft --base <base> --title ... --body ...`.
             const std::string title = ResolvePrTitle(worktreeDir, gitBin, seed.issueTitle, seed.issueKey);
@@ -740,6 +930,8 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
             } else {
                 body = SubstituteTemplate(m_opts.prBodyTemplate, seed.proposalId, seed.issueKey, seed.sourceTracker);
             }
+            LOG_INFO("gh pr create --draft --base %s title='%s' body_bytes=%zu", baseBranch.c_str(), title.c_str(),
+                     body.size());
             std::vector<std::string> ghArgs;
             ghArgs.push_back("pr");
             ghArgs.push_back("create");
@@ -757,21 +949,30 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
                 outError = "PR-open fallback: gh pr create failed (exit=" + std::to_string(ghExit) + "): " + ghErr;
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange)
+                if (onStateChange) {
+                    LOG_DEBUG("ClaudeCodeLocalRunner: state -> Failed (proposalId=%lld reason=gh-pr-create-failed)",
+                              (long long)seed.proposalId);
                     onStateChange("Failed");
+                }
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=gh-pr-create-failed");
                 return false;
             }
 
             // 3. Parse + validate the URL `gh` printed to stdout.
             const std::string urlCandidate = TrimSpace(ghOut);
+            LOG_DEBUG("ClaudeCodeLocalRunner: gh pr create stdout trimmed='%s'", urlCandidate.c_str());
             if (!LooksLikeGithubPrUrl(urlCandidate)) {
                 outError = "PR-open fallback: gh pr create returned non-PR URL: '" + urlCandidate + "'";
                 outResult.ok = false;
                 outResult.errorMessage = outError;
-                if (onStateChange)
+                if (onStateChange) {
+                    LOG_DEBUG("ClaudeCodeLocalRunner: state -> Failed (proposalId=%lld reason=non-pr-url)",
+                              (long long)seed.proposalId);
                     onStateChange("Failed");
+                }
                 LOG_ERROR("ClaudeCodeLocalRunner: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit reason=non-pr-url");
                 return false;
             }
             outResult.prUrl = urlCandidate;
@@ -784,9 +985,16 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
             if (!WriteFileText(prUrlSentinel, urlCandidate + "\n", writeErr)) {
                 LOG_WARN("ClaudeCodeLocalRunner: PR-open fallback succeeded but PR_URL.txt write failed: %s",
                          writeErr.c_str());
+            } else {
+                LOG_INFO("runner wrote PR_URL.txt url=%s", urlCandidate.c_str());
             }
             LOG_INFO("ClaudeCodeLocalRunner: PR-open fallback created PR: %s", urlCandidate.c_str());
         }
+    } else {
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore PR-open fallback skipped (allow=%d ok=%d prUrl_empty=%d "
+                  "autoCreate=%d)",
+                  (int)allowPrAutoCreateFallback, (int)outResult.ok, (int)outResult.prUrl.empty(),
+                  (int)m_opts.autoCreatePrIfMissing);
     }
 
     if (outResult.ok && !outResult.prUrl.empty() && onStateChange) {
@@ -795,15 +1003,23 @@ bool ClaudeCodeLocalRunner::SpawnCore(const Seed& seed, const std::string& workt
         // terminal-direction transition. This call ensures the fallback path
         // surfaces PrOpen even when the poll thread missed it (which it does
         // when we wrote PR_URL.txt above after stopPoll flipped).
+        LOG_DEBUG("ClaudeCodeLocalRunner: state -> PrOpen (belt-and-braces, proposalId=%lld)",
+                  (long long)seed.proposalId);
         onStateChange("PrOpen");
     }
     if (onStateChange) {
-        onStateChange(outResult.ok ? "Complete" : "Failed");
+        const char* finalState = outResult.ok ? "Complete" : "Failed";
+        LOG_DEBUG("ClaudeCodeLocalRunner: state -> %s (proposalId=%lld)", finalState, (long long)seed.proposalId);
+        onStateChange(finalState);
     }
+    LOG_TRACE("ClaudeCodeLocalRunner::SpawnCore exit ok=%d (proposalId=%lld)", (int)outResult.ok,
+              (long long)seed.proposalId);
     return outResult.ok;
 }
 
 bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc enter (dispatchSource=%s routedDelegate=%s prUrl=%s iter=%d)",
+              req.dispatchSource.c_str(), req.routedDelegate.c_str(), req.prUrl.c_str(), req.iteration);
     // (coderabbit-react phase-7) Ad-hoc dispatch — CodeRabbit PR-comment
     // dispatches + CI-failure dispatches. Shared worktree per PR
     // (.claude/worktrees/coderabbit-pr<N>); iter-suffixed branch
@@ -813,14 +1029,17 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
 
     if (req.prUrl.empty()) {
         outError = "AdHocSpawnRequest.prUrl is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=empty-prUrl");
         return false;
     }
     if (req.headRefName.empty()) {
         outError = "AdHocSpawnRequest.headRefName is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=empty-headRefName");
         return false;
     }
     if (req.dispatchSource.empty()) {
         outError = "AdHocSpawnRequest.dispatchSource is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=empty-dispatchSource");
         return false;
     }
     if (req.targetAgent != "handoff-implementer") {
@@ -828,10 +1047,13 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
         // is ALWAYS handoff-implementer. Any deviation is a coding error,
         // not a config knob. Refuse rather than silently route around it.
         outError = "AdHocSpawnRequest.targetAgent must be 'handoff-implementer'";
+        LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc bad targetAgent=%s", req.targetAgent.c_str());
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=bad-targetAgent");
         return false;
     }
     if (req.routedDelegate.empty()) {
         outError = "AdHocSpawnRequest.routedDelegate is empty";
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=empty-routedDelegate");
         return false;
     }
 
@@ -840,10 +1062,13 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
         std::string parseErr;
         if (!ExtractPrNumberFromUrl(req.prUrl, prNumber, parseErr)) {
             outError = "AdHocSpawnRequest.prUrl malformed: " + parseErr;
+            LOG_WARN("ClaudeCodeLocalRunner::SpawnAdHoc prUrl parse failed: %s", parseErr.c_str());
+            LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=bad-prUrl");
             return false;
         }
     }
     const int iterN = (req.iteration > 0) ? req.iteration : 1;
+    LOG_DEBUG("ClaudeCodeLocalRunner::SpawnAdHoc pr=%d iter=%d", prNumber, iterN);
 
     // Worktree path — .claude/worktrees/coderabbit-pr<N>. Per the plan,
     // one worktree per PR shared across CodeRabbit + CI dispatches.
@@ -859,6 +1084,15 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     worktreeRoot += "coderabbit-pr" + std::to_string(prNumber);
     const std::string branchName = "coderabbit/pr" + std::to_string(prNumber) + "/iter" + std::to_string(iterN);
 
+    // Branch-assert: refuse develop/main even if a config bug somehow forms one.
+    if (branchName == "develop" || branchName == "main") {
+        outError = "computed iter-branch refuses develop/main: " + branchName;
+        LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc branch-assert FAIL %s (refuses develop/main)", branchName.c_str());
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=branch-assert");
+        return false;
+    }
+    LOG_DEBUG("ClaudeCodeLocalRunner::SpawnAdHoc branch-assert ok %s", branchName.c_str());
+
     // Worktree create. Reuse the existing dir if present (e.g. a prior
     // iter on the same PR left it). On fresh creation, base off
     // `origin/<headRefName>` so the spawned harness sees the in-flight
@@ -870,6 +1104,8 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
             // `git worktree add` would fail on an existing dir; use the
             // `git -C <dir> checkout -B <branch> origin/<headRefName>`
             // shape so reruns advance to the new iter cleanly.
+            LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc git checkout -B %s origin/%s (in %s)", branchName.c_str(),
+                     req.headRefName.c_str(), worktreeRoot.c_str());
             std::vector<std::string> coArgs;
             coArgs.push_back("-C");
             coArgs.push_back(worktreeRoot);
@@ -882,9 +1118,12 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
             if (!RunQuick(gitBin, coArgs, 30000, ce, co)) {
                 outError = "git checkout -B failed: " + ce;
                 LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=checkout-failed");
                 return false;
             }
         } else {
+            LOG_INFO("git worktree add path=%s branch=%s (ad-hoc base=origin/%s)", worktreeRoot.c_str(),
+                     branchName.c_str(), req.headRefName.c_str());
             std::vector<std::string> wtArgs;
             wtArgs.push_back("worktree");
             wtArgs.push_back("add");
@@ -897,12 +1136,18 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
             if (!RunQuick(gitBin, wtArgs, 30000, we, wo)) {
                 outError = "git worktree add failed: " + we;
                 LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc: %s", outError.c_str());
+                LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=worktree-add-failed");
                 return false;
             }
+            LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc git worktree add ok path=%s", worktreeRoot.c_str());
         }
     } else if (!DirExists(worktreeRoot)) {
         outError = "skipWorktreeCreate set but worktree dir does not exist: " + worktreeRoot;
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=missing-worktree-dir");
         return false;
+    } else {
+        LOG_DEBUG("ClaudeCodeLocalRunner::SpawnAdHoc skipWorktreeCreate=true; using pre-made dir=%s",
+                  worktreeRoot.c_str());
     }
 
     // Build the seed. Payload extras carry the dispatch_source +
@@ -941,7 +1186,11 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     const std::string seedJsonPath = JoinPath(worktreeRoot, kSeedJsonName);
     {
         const nlohmann::json js = SeedBuilder::FormatSeedJson(seed);
-        if (!WriteFileText(seedJsonPath, js.dump(2), outError)) {
+        const std::string body = js.dump(2);
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc write SEED.json path=%s bytes=%zu", seedJsonPath.c_str(),
+                 body.size());
+        if (!WriteFileText(seedJsonPath, body, outError)) {
+            LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc SEED.json write failed: %s", outError.c_str());
             return false;
         }
     }
@@ -960,7 +1209,11 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
            << "- **iter_branch:** " << branchName << "\n"
            << "- **iteration:** " << iterN << "\n\n";
         md << SeedBuilder::FormatSeedMarkdown(seed);
-        if (!WriteFileText(seedMdPath, md.str(), outError)) {
+        const std::string mdBody = md.str();
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc write SEED.md path=%s bytes=%zu", seedMdPath.c_str(),
+                 mdBody.size());
+        if (!WriteFileText(seedMdPath, mdBody, outError)) {
+            LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc SEED.md write failed: %s", outError.c_str());
             return false;
         }
     }
@@ -971,10 +1224,16 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     // file is still written so handoff-implementer's `if exists` probe
     // matches the documented contract.
     const bool isCiDispatch = (req.dispatchSource.compare(0, 3, "ci_") == 0);
+    LOG_DEBUG("ClaudeCodeLocalRunner::SpawnAdHoc isCiDispatch=%d (dispatchSource=%s)", (int)isCiDispatch,
+              req.dispatchSource.c_str());
     const std::string checkRunPath = JoinPath(worktreeRoot, kCheckRunName);
     if (isCiDispatch) {
         const nlohmann::json payload = req.checkRunPayload.is_null() ? nlohmann::json::object() : req.checkRunPayload;
-        if (!WriteFileText(checkRunPath, payload.dump(2), outError)) {
+        const std::string payloadBody = payload.dump(2);
+        LOG_INFO("ClaudeCodeLocalRunner::SpawnAdHoc write CHECK_RUN.json path=%s bytes=%zu", checkRunPath.c_str(),
+                 payloadBody.size());
+        if (!WriteFileText(checkRunPath, payloadBody, outError)) {
+            LOG_ERROR("ClaudeCodeLocalRunner::SpawnAdHoc CHECK_RUN.json write failed: %s", outError.c_str());
             return false;
         }
     } else if (FileExists(checkRunPath)) {
@@ -1001,19 +1260,26 @@ bool ClaudeCodeLocalRunner::SpawnAdHoc(const AdHocSpawnRequest& req, std::string
     // toast / panel callbacks through.
     RunResult result;
     auto cancel = std::make_shared<std::atomic<bool>>(false);
+    LOG_DEBUG("ClaudeCodeLocalRunner::SpawnAdHoc handoff to SpawnCore (worktree=%s branch=%s allowFallback=false)",
+              worktreeRoot.c_str(), branchName.c_str());
     // SpawnAdHoc disables the shared PR auto-create fallback — the iter-branch
     // lives off the PR's head ref, not develop, so a fallback `gh pr create`
     // would mint a duplicate PR. The handoff-implementer is expected to push
     // the iter-branch and the operator merges back manually.
     if (!SpawnCore(seed, worktreeRoot, /*onDelta*/ nullptr, /*onStateChange*/ nullptr, cancel, result, outError,
                    /*allowPrAutoCreateFallback=*/false)) {
+        LOG_WARN("ClaudeCodeLocalRunner::SpawnAdHoc SpawnCore returned false: %s", outError.c_str());
+        LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit reason=spawncore-fail");
         return false;
     }
+    LOG_TRACE("ClaudeCodeLocalRunner::SpawnAdHoc exit ok=%d", (int)result.ok);
     return result.ok;
 }
 
 bool ClaudeCodeLocalRunner::Resume(const ClarificationResponse& response,
                                    std::shared_ptr<std::atomic<bool>> /*cancelToken*/, std::string& outError) {
+    LOG_TRACE("ClaudeCodeLocalRunner::Resume enter (timestampUnixSec=%lld answer_bytes=%zu)",
+              (long long)response.timestampUnixSec, response.answer.size());
     std::string dir;
     {
         std::lock_guard<std::mutex> lk(m_mu);
@@ -1021,13 +1287,18 @@ bool ClaudeCodeLocalRunner::Resume(const ClarificationResponse& response,
     }
     if (dir.empty()) {
         outError = "Resume: no live worktree (Spawn not in flight)";
+        LOG_WARN("ClaudeCodeLocalRunner::Resume %s", outError.c_str());
+        LOG_TRACE("ClaudeCodeLocalRunner::Resume exit reason=no-live-worktree");
         return false;
     }
     const std::string path = JoinPath(dir, kUserResponseName);
     nlohmann::json j = nlohmann::json::object();
     j["answer"] = response.answer;
     j["timestampUnixSec"] = response.timestampUnixSec;
-    return WriteFileText(path, j.dump(2), outError);
+    LOG_INFO("ClaudeCodeLocalRunner::Resume writing USER_RESPONSE.json path=%s", path.c_str());
+    const bool ok = WriteFileText(path, j.dump(2), outError);
+    LOG_TRACE("ClaudeCodeLocalRunner::Resume exit ok=%d", (int)ok);
+    return ok;
 }
 
 } // namespace CodingHarness
