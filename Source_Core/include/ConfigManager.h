@@ -70,6 +70,15 @@ struct TrackerConfig {
     std::string PlaneWorkspaceSlug; // e.g. "my-workspace"
     std::string PlaneApiKey;        // Plane API Key
 
+    // GitHub-as-tracker configuration (PR2 of docs/design/github-tracker-backend.md).
+    // Tracker-role only — independent from the deleted agentic flow's old GitHubPat.
+    // PAT is DPAPI-encrypted on Win32 (same code path as AiApiKey); base URL defaults
+    // to api.github.com; owner/repo carry the active repository the tracker views.
+    std::string GitHubPat;             // Personal Access Token (DPAPI-encrypted on Win32)
+    std::string GitHubBaseUrl;         // e.g. https://api.github.com or https://<enterprise>/api/v3
+    std::string GitHubOwner;           // e.g. "alexandrosk0"
+    std::string GitHubRepo;            // e.g. "Smatchet"
+
     // JQL used when querying Jira; defaults to issues assigned to the current user.
     std::string JqlQuery = "assignee=currentUser()";
     // Jira field keys to extract and cache (e.g. customfield_12345, duedate).
