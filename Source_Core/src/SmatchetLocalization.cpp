@@ -455,6 +455,19 @@ const TranslationEntry kEntries[] = {
     {"agent.prefs.lastPollNever", "never", u8"jamais"},
     {"agent.prefs.nextPoll", "Next poll: ~in {0}", u8"Prochain sondage : ~dans {0}"},
     {"agent.prefs.runNow", "Run triage now", u8"Lancer le tri maintenant"},
+    // Triage-feedback Preferences UI — manual-trigger in-flight indicator + last-run summary.
+    {"agent.prefs.runNowInFlight", "Triage running", u8"Tri en cours"},
+    {"agent.prefs.runNowDone", "Last run:", u8"Dernière exécution :"},
+    {"agent.prefs.runNowFailed", "Last run failed:", u8"Dernière exécution échouée :"},
+    // Context-doc section in the Agentic Preferences tab — Save / Generate buttons + heading.
+    {"agent.prefs.contextDocSection", "Agentic triage context document",
+     u8"Document de contexte pour le tri agentique"},
+    {"agent.prefs.contextDocHint",
+     "Prepended to every triage LLM request. Stored at %LOCALAPPDATA%/Smatchet/agentic-context.md.",
+     u8"Ajouté en préambule à chaque requête LLM de tri. Stocké dans "
+     u8"%LOCALAPPDATA%/Smatchet/agentic-context.md."},
+    {"agent.prefs.contextDocSave", "Save", u8"Enregistrer"},
+    {"agent.prefs.contextDocGenerate", "Generate from current project", u8"Générer à partir du projet actuel"},
     {"whisper.preferences.tabTitle", "Whisper", u8"Whisper"},
     {"whisper.preferences.enableToggle", "Enable voice dictation", u8"Activer la dictée vocale"},
     {"whisper.preferences.modeAuto", "Auto (local if present, cloud fallback)",
@@ -530,12 +543,26 @@ const TranslationEntry kEntries[] = {
     {"agent.proposals.menuToggle", "Agent proposals", u8"Propositions de l'agent"},
     {"agent.proposals.initializing", "Initializing agent proposal store...",
      u8"Initialisation du magasin de propositions de l'agent..."},
-    {"agent.proposals.refreshErrorPrefix", "  (refresh error: %s)",
-     u8"  (erreur d'actualisation : %s)"},
+    {"agent.proposals.refreshErrorPrefix", "  (refresh error: %s)", u8"  (erreur d'actualisation : %s)"},
     {"agent.proposals.rationaleEmpty", "(empty)", u8"(vide)"},
     {"agent.proposals.toastTitle", "Agent proposals", u8"Propositions de l'agent"},
-    {"agent.proposals.toastStoreUnavailable", "Proposal store unavailable.",
-     u8"Magasin de propositions indisponible."},
+    {"agent.proposals.toastStoreUnavailable", "Proposal store unavailable.", u8"Magasin de propositions indisponible."},
+    // Triage UX overhaul — Description / Comments / action editor / Failed-row
+    // surfaces. Strings live alongside the existing agent.proposals.* block
+    // so the AGENTIC=OFF build doesn't need a localization-side gate.
+    {"agent.proposals.openInBrowser", "Open in browser", u8"Ouvrir dans le navigateur"},
+    {"agent.proposals.description", "Description (Markdown):", u8"Description (Markdown) :"},
+    {"agent.proposals.descriptionEmpty", "(no description on upstream issue)",
+     u8"(aucune description sur le ticket amont)"},
+    {"agent.proposals.comments", "Comments", u8"Commentaires"},
+    {"agent.proposals.commentsEmpty", "(no comments on upstream issue)", u8"(aucun commentaire sur le ticket amont)"},
+    {"agent.proposals.commentEditor",
+     "Comment body (edit before Approve):", u8"Corps du commentaire (modifier avant d'approuver) :"},
+    {"agent.proposals.commentEditorHint", "Edits are committed to the proposal when you press Approve.",
+     u8"Les modifications sont validées lorsque vous appuyez sur Approuver."},
+    {"agent.proposals.applyError", "Apply failed:", u8"Échec de l'application :"},
+    {"agent.proposals.retry", "Retry", u8"Réessayer"},
+    {"agent.proposals.dismiss", "Dismiss", u8"Ignorer"},
 
     // H8 agent-handoff panel — localisable copy. Same OFF-build rationale as
     // the T6 proposals block above: strings live in the always-on catalog so
