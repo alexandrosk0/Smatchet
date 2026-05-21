@@ -106,15 +106,20 @@ void DrawColoredCode(const char* utf8, CodeLang lang);
 void DrawColoredCodeBlock(const char* utf8, CodeLang lang, const std::string& langTagOrigin = std::string());
 
 /// Test-only accessor — returns the running count of cache-rebuild events
-/// (first-time tokenize for a (hash, lang) key). Slice 3 will extend this to
-/// also bump on theme_revision change. Doctest uses it to assert the cache
-/// is invalidated under specific lifecycle events. Production callers MUST
-/// NOT depend on this counter; named with `ForTest` suffix per Smatchet
-/// convention (mirrors `AgenticHandoffController::SnapshotAllForTests`,
+/// (first-time tokenize for a (hash, lang, theme_revision) key). Slice-3
+/// doctest drives this through `TokenizeCachedForTest` (below) + a theme
+/// switch + asserts the count increments. Production callers MUST NOT depend
+/// on this counter; named with `ForTest` suffix per Smatchet convention
+/// (mirrors `AgenticHandoffController::SnapshotAllForTests`,
 /// `DictationInsertionRouter::RegisteredCountForTest`).
 std::size_t GetCacheRebuildCountForTest();
 /// Test-only — clear the cache so tests start from a known state.
 void ResetCacheForTest();
+/// Test-only — drives the production `TokenizeCached` path so slice-3 doctest
+/// can exercise the (content_hash, lang, theme_revision) cache key + invalidation
+/// without an ImGui context (DrawColoredCode is the production caller; needs ImGui).
+/// Returns the tokenized span vector for the input; caller may discard.
+const std::vector<Token>& TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang);
 
 } // namespace code_color
 } // namespace smatchet
