@@ -55,12 +55,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-17 · code-review · [test] · P1 — `scripts/dev/test-screenshot-diff.sh:104` `sleep 0.5` race between spawn-mode CLI return and PPM read
-  Details: Hard-coded sleep races against actual capture-write completion. On slow CI runners the PPM may not be flushed when the read attempts.
-  Concrete next action: replace with `for i in {1..40}; do [ -s "$captured" ] && break; sleep 0.05; done` deterministic wait. Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · code-review · [test] · P2 — No automated coverage of `AiSseParser` (split-frame, `[DONE]`, malformed JSON, mid-frame cancel, `\r\n\r\n`)
   Details: Critical for Phase A' of the AI assistant work; deferral is in the originating commit message. The full SSE state machine has zero test surface.
   Concrete next action: verify the doctest TU lands as part of Phase A'. Estimated cost 1 h. Surfaced by retrospective code-review sweep on PR #140.

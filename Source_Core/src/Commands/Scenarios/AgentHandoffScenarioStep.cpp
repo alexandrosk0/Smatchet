@@ -45,12 +45,14 @@
 #include "HarnessRunState.h"
 #include "ICodingHarnessRunner.h"
 #include "Logger.h"
+#include "UiPerfMonitor.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -88,12 +90,11 @@ class ScenarioFakeRunner : public ::CodingHarness::IRunner {
         capturedSeed = seed;
         capturedWorktree = worktreeDir;
         outError.clear();
-        if (onStateChange)
+        if (onStateChange) {
             onStateChange("Running");
-        if (onStateChange)
             onStateChange("PrOpen");
-        if (onStateChange)
             onStateChange("Complete");
+        }
         outResult.ok = true;
         outResult.prUrl = "https://example.invalid/pr/h10-scenario";
         outResult.filesChanged = 1;
@@ -240,8 +241,25 @@ class AgentHandoffScenario : public IScenario {
         }
         out["transitions"] = transitions;
         out["errors"] = errors_;
-        out["passed"] = (errors_.empty() && state_ == State::Done &&
-                         finalState_ == RunState::Complete && !finalPrUrl_.empty());
+        out["passed"] =
+            (errors_.empty() && state_ == State::Done && finalState_ == RunState::Complete && !finalPrUrl_.empty());
+        // Perf-rows emit so `scripts/dev/perf-baseline.sh init agent-handoff-roundtrip`
+        // captures a baseline (per the 8-of-15 retrofit in
+        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // PriorityGridScrollScenario::OnFinish.
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json rowsJson = nlohmann::json::array();
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+            return nlohmann::json{
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
+                {"avgPerCallMs", r.avgPerCallMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
+            };
+        });
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
@@ -256,11 +274,16 @@ class AgentHandoffScenario : public IScenario {
 
     static const char* StateName(State s) {
         switch (s) {
-        case State::Initial:               return "Initial";
-        case State::WaitingForStart:       return "WaitingForStart";
-        case State::WaitingForDriver:      return "WaitingForDriver";
-        case State::WaitingForAssertions:  return "WaitingForAssertions";
-        case State::Done:                  return "Done";
+        case State::Initial:
+            return "Initial";
+        case State::WaitingForStart:
+            return "WaitingForStart";
+        case State::WaitingForDriver:
+            return "WaitingForDriver";
+        case State::WaitingForAssertions:
+            return "WaitingForAssertions";
+        case State::Done:
+            return "Done";
         }
         return "Unknown";
     }
@@ -291,13 +314,10 @@ class AgentHandoffScenario : public IScenario {
 
     void DoAssertFinalState() {
         const auto snap = ctrl_->SnapshotAllForTests();
-        const AgenticHandoffController::ActiveHandoff* found = nullptr;
-        for (const auto& a : snap) {
-            if (a.proposalId == proposalId_) {
-                found = &a;
-                break;
-            }
-        }
+        const auto it = std::find_if(snap.begin(), snap.end(), [&](const AgenticHandoffController::ActiveHandoff& a) {
+            return a.proposalId == proposalId_;
+        });
+        const AgenticHandoffController::ActiveHandoff* found = (it != snap.end()) ? &(*it) : nullptr;
         if (!found) {
             errors_.push_back("post-run: handoff record missing from SnapshotAllForTests");
             return;

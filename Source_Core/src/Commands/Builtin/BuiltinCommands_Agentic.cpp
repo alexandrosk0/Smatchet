@@ -46,6 +46,7 @@ using builtin_detail::PString;
 #if defined(SMATCHET_WITH_AGENTIC)
 
 void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
+    LOG_TRACE("RegisterAgenticCommands enter (SMATCHET_WITH_AGENTIC=ON)");
     Command c = MakeCommand(
         "agent.triage.run",
         "Run agentic triage against a GitHub repo (--query OWNER/REPO) or a single issue "
@@ -57,19 +58,25 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
             const std::string query = args.value("query", std::string());
             const std::string issue = args.value("issue", std::string());
             const int limit = static_cast<int>(args.value("limit", 30));
+            LOG_TRACE("agent.triage.run handler enter (source=%s, query=%s, issue=%s, limit=%d)", source.c_str(),
+                      query.c_str(), issue.c_str(), limit);
 
             if (source.empty()) {
+                LOG_WARN("agent.triage.run validation failed reason=source_empty");
                 return CommandResult::Failure(ErrorCode::ValidationError, "--source is required (use 'github').");
             }
             if (source != "github") {
+                LOG_WARN("agent.triage.run validation failed reason=bad_source (got=%s)", source.c_str());
                 return CommandResult::Failure(ErrorCode::ValidationError,
                                               "--source must be 'github' in this slice (got '" + source + "').");
             }
             if (query.empty() && issue.empty()) {
+                LOG_WARN("agent.triage.run validation failed reason=missing_query_and_issue");
                 return CommandResult::Failure(ErrorCode::ValidationError,
                                               "exactly one of --query OWNER/REPO or --issue OWNER/REPO#N is required.");
             }
             if (!query.empty() && !issue.empty()) {
+                LOG_WARN("agent.triage.run validation failed reason=query_and_issue_mutually_exclusive");
                 return CommandResult::Failure(ErrorCode::ValidationError,
                                               "--query and --issue are mutually exclusive.");
             }
@@ -78,6 +85,7 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
             if (ctrl == nullptr) {
                 // Degraded mode: PAT missing or store init failed. Surface a friendly
                 // message instead of a null-deref. The UI surface (T6) will mirror this.
+                LOG_ERROR("agent.triage.run: AgenticTriageController nullptr (degraded mode)");
                 return CommandResult::Failure(ErrorCode::HandlerError,
                                               "AgenticTriageController not available — configure GitHub PAT "
                                               "(cfg.GitHubPat) or check agent-proposals store init.");
@@ -87,9 +95,11 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
             data["source"] = source;
 
             if (!issue.empty()) {
+                LOG_DEBUG("agent.triage.run: decision: single-issue path (issue=%s)", issue.c_str());
                 int inserted = 0;
                 std::string err;
                 if (!ctrl->TriageIssue(issue, inserted, err)) {
+                    LOG_WARN("agent.triage.run: TriageIssue failed (issue=%s): %s", issue.c_str(), err.c_str());
                     return CommandResult::Failure(ErrorCode::HandlerError, err);
                 }
                 data["issues_scanned"] = 1;
@@ -97,6 +107,7 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
                 data["per_issue_errors"] = nlohmann::json::array();
                 LOG_INFO("agent.triage.run: issue=%s inserted=%d", issue.c_str(), inserted);
             } else {
+                LOG_DEBUG("agent.triage.run: decision: batch path (query=%s limit=%d)", query.c_str(), limit);
                 smatchet::agentic::AgenticTriageController::BatchResult result;
                 std::string err;
                 // Bundle C CR#230:111 — push the --limit cap into TriageBatch
@@ -107,6 +118,7 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
                 // truncates the working keys vector pre-iteration so the CLI
                 // dry-run actually saves work.
                 if (!ctrl->TriageBatch(source, query, result, err, limit)) {
+                    LOG_WARN("agent.triage.run: TriageBatch failed (query=%s): %s", query.c_str(), err.c_str());
                     return CommandResult::Failure(ErrorCode::HandlerError, err);
                 }
                 data["issues_scanned"] = result.totalIssuesScanned;
@@ -144,12 +156,14 @@ void RegisterAgenticCommands(CommandRegistry& reg, AppController& app) {
 #else // !SMATCHET_WITH_AGENTIC
 
 void RegisterAgenticCommands(CommandRegistry& reg, AppController& /*app*/) {
-    Command c =
-        MakeCommand("agent.triage.run", "Agentic triage disabled in this build (SMATCHET_WITH_AGENTIC=OFF).",
-                    [](const nlohmann::json&, const CommandContext&) {
-                        return CommandResult::Failure(ErrorCode::HandlerError,
-                                                      "agent.triage.run: agentic flow not built (SMATCHET_WITH_AGENTIC=OFF)");
-                    });
+    LOG_TRACE("RegisterAgenticCommands enter (SMATCHET_WITH_AGENTIC=OFF stub)");
+    Command c = MakeCommand("agent.triage.run", "Agentic triage disabled in this build (SMATCHET_WITH_AGENTIC=OFF).",
+                            [](const nlohmann::json&, const CommandContext&) {
+                                LOG_WARN("agent.triage.run: agentic flow not built (SMATCHET_WITH_AGENTIC=OFF)");
+                                return CommandResult::Failure(
+                                    ErrorCode::HandlerError,
+                                    "agent.triage.run: agentic flow not built (SMATCHET_WITH_AGENTIC=OFF)");
+                            });
     c.Idempotent = true;
     reg.Register(std::move(c));
 }

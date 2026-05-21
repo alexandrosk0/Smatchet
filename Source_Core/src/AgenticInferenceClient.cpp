@@ -1,5 +1,6 @@
 #include "AgenticInferenceClient.h"
 
+#include "AgenticContextDoc.h"
 #include "AiClientFactory.h"
 #include "AiTypes.h"
 #include "ConfigManager.h"
@@ -146,11 +147,15 @@ bool AgenticInferenceClient::RequestProposals(const std::string& issueBody,
                                               const std::vector<TrackerIssueComment>& comments,
                                               std::vector<AgenticInferenceClientPure::ProposalDraft>& outDrafts,
                                               std::string& outError) {
+    LOG_TRACE("AgenticInferenceClient::RequestProposals enter (issueBody_bytes=%zu commentCount=%zu)", issueBody.size(),
+              comments.size());
     outDrafts.clear();
     outError.clear();
 
     const TrackerConfig cfg = ConfigManager::Load();
     const AiProvider provider = ProviderFromConfig(cfg);
+    LOG_DEBUG("AgenticInferenceClient::RequestProposals resolved provider='%s' (AiProviderKind=%d)",
+              AiClientFactory::ProviderToString(provider).c_str(), cfg.AiProviderKind);
 
     std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
     if (!client) {
@@ -158,6 +163,8 @@ bool AgenticInferenceClient::RequestProposals(const std::string& issueBody,
         LOG_ERROR("AgenticInferenceClient: %s", outError.c_str());
         return false;
     }
+    LOG_TRACE("AgenticInferenceClient::RequestProposals factory produced AI client for provider='%s'",
+              AiClientFactory::ProviderToString(provider).c_str());
 
     AiClientConfig clientCfg;
     clientCfg.ApiKey = ResolveApiKey(cfg, provider);
@@ -170,10 +177,38 @@ bool AgenticInferenceClient::RequestProposals(const std::string& issueBody,
 
     AiChatRequest chatReq;
     chatReq.Model = ResolveModel(cfg, provider);
-    chatReq.SystemPrompt = kAgenticTriageSystemPrompt;
+    // Prepend the per-user agentic-context Markdown doc (cached read; mtime-
+    // invalidated) so the LLM sees project-specific conventions before the
+    // canonical triage system prompt. Empty doc → unchanged baseline prompt.
+    {
+        std::string ctxDoc;
+        std::string ctxErr;
+        if (AgenticContextDoc::ReadCached(ctxDoc, ctxErr) && !ctxDoc.empty()) {
+            chatReq.SystemPrompt = std::string("## Project context\n\n") + ctxDoc + std::string("\n\n---\n\n") +
+                                   kAgenticTriageSystemPrompt;
+            LOG_TRACE("AgenticInferenceClient::RequestProposals prepended context doc (%zu bytes)", ctxDoc.size());
+        } else {
+            chatReq.SystemPrompt = kAgenticTriageSystemPrompt;
+            if (!ctxErr.empty()) {
+                LOG_WARN("AgenticInferenceClient::RequestProposals context doc read failed: %s", ctxErr.c_str());
+            }
+        }
+    }
     AiMessage userMsg;
     userMsg.Role = "user";
     userMsg.Content = BuildUserMessage(issueBody, comments);
+    LOG_DEBUG("AgenticInferenceClient::RequestProposals built user message (bytes=%zu, model=%s, baseUrl=%s)",
+              userMsg.Content.size(), chatReq.Model.c_str(), clientCfg.BaseUrl.c_str());
+
+    // (LLM trace) Full system + user prompt at LOG_TRACE so operators can
+    // diff what the LLM saw against the on-tracker text. Two separate lines
+    // (system vs user) so log parsers can grep by tag without splitting a
+    // multi-kB block on newlines.
+    LOG_TRACE("AgenticInferenceClient::RequestProposals system_prompt (%zu bytes):\n%s", chatReq.SystemPrompt.size(),
+              chatReq.SystemPrompt.c_str());
+    LOG_TRACE("AgenticInferenceClient::RequestProposals user_message (%zu bytes):\n%s", userMsg.Content.size(),
+              userMsg.Content.c_str());
+
     chatReq.History.push_back(std::move(userMsg));
 
     // Accumulate streamed deltas into a single buffer; the parser runs once
@@ -213,7 +248,18 @@ bool AgenticInferenceClient::RequestProposals(const std::string& issueBody,
     LOG_INFO("AgenticInferenceClient: dispatching triage request provider='%s' model='%s' commentCount=%zu",
              AiClientFactory::ProviderToString(provider).c_str(), chatReq.Model.c_str(), comments.size());
 
+    LOG_TRACE("AgenticInferenceClient::RequestProposals SendStreaming begin");
     client->SendStreaming(clientCfg, chatReq, onDelta, onError, cancel);
+    LOG_DEBUG("AgenticInferenceClient::RequestProposals SendStreaming returned (accumulated_bytes=%zu sawError=%d "
+              "capExceeded=%d)",
+              accumulated.size(), sawError ? 1 : 0, capExceeded ? 1 : 0);
+
+    // (LLM trace) Full accumulated response at LOG_TRACE so operators can
+    // see exactly what the LLM returned before parsing. Lives BEFORE the
+    // cap/error/empty short-circuits so a truncated or error-bearing
+    // partial response is still inspectable.
+    LOG_TRACE("AgenticInferenceClient::RequestProposals raw_response (%zu bytes):\n%s", accumulated.size(),
+              accumulated.c_str());
 
     if (capExceeded) {
         outError = "LLM response exceeded 10 MB cap (probable provider error or attack)";

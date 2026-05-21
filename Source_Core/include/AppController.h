@@ -331,6 +331,27 @@ class AppController
     /// returns false and writes a short cause to outError.
     bool RunAgenticTriageOnce(std::string& outError);
 
+    /// (Triage-feedback) Async wrapper around `RunAgenticTriageOnce` — sets the
+    /// in-flight flag, dispatches the work via `LaunchBackgroundTask`, and
+    /// updates the `ManualTriageStatus` snapshot on completion. Returns
+    /// immediately; safe to call from the UI thread. If a manual triage is
+    /// already in flight, this is a no-op (logged at LOG_INFO).
+    void RunAgenticTriageOnceAsync();
+
+    /// (Triage-feedback) Snapshot of the manual-trigger state. The UI reads
+    /// this every frame in the Preferences tab to render the in-flight
+    /// indicator + last-result summary. Safe to call from any thread.
+    struct ManualTriageStatus {
+        bool inFlight;
+        std::int64_t startedAtSec;
+        std::int64_t finishedAtSec;
+        int scanned;
+        int inserted;
+        int errors;
+        std::string lastError; // empty on success
+    };
+    ManualTriageStatus GetManualTriageStatus() const;
+
     /// (T7) UI readout — seconds-since-epoch of the most recent poll iteration's
     /// completion (regardless of success / failure). 0 means "never polled this
     /// session". Atomic; safe to read from any thread.
@@ -1191,6 +1212,12 @@ class AppController
     // reuses it.
     std::once_flag agenticGithubClientOnce_;
     std::unique_ptr<GitHubClient> agenticGithubClient_;
+    // (PAT hot-reload) Cached PAT used to construct the agentic GitHubClient.
+    // EnsureAgenticGithubClient compares cfg.GitHubPat against this on every
+    // call; mismatch triggers a rebuild so a PAT edit in Preferences takes
+    // effect without restarting the app. Guarded by agenticGithubClientRebuildMu_.
+    std::string agenticGithubClientCachedPat_;
+    std::mutex agenticGithubClientRebuildMu_;
     std::unique_ptr<AgenticInferenceClient> agenticInferenceClient_;
     std::unique_ptr<smatchet::agentic::IGitHubReadClient> agenticGithubReadAdapter_;
     std::unique_ptr<smatchet::agentic::IInferenceClient> agenticInferenceAdapter_;
@@ -1258,6 +1285,20 @@ class AppController
     // (`agenticPollRunning_ == false`). Guarded by `agenticPollLifecycleMutex_`.
     std::thread agenticPollDetachedThread_;
 
+    // (Triage-feedback) Manual-trigger status atomics — read every UI frame by
+    // the Preferences tab to render in-flight + last-result feedback. Updated
+    // by `RunAgenticTriageOnce` on the worker thread. The `lastError` string
+    // is the only non-trivial field — it sits behind `manualTriageErrorMu_`
+    // for the rare error-text update; the atomics carry every numeric value.
+    std::atomic<bool> manualTriageInFlight_{false};
+    std::atomic<std::int64_t> manualTriageStartedAtSec_{0};
+    std::atomic<std::int64_t> manualTriageFinishedAtSec_{0};
+    std::atomic<int> manualTriageScanned_{0};
+    std::atomic<int> manualTriageInserted_{0};
+    std::atomic<int> manualTriageErrors_{0};
+    mutable std::mutex manualTriageErrorMu_;
+    std::string manualTriageLastError_;
+
     void StartAgenticPollIfEnabled();
     void StopAgenticPoll();
     // Worker entry point — lives on `agenticPollThread_`.
@@ -1273,7 +1314,14 @@ class AppController
     // callers (handoff lambdas + triage controller construction) share one
     // GitHubClient instance. Returns nullptr when the PAT is empty (the
     // configure-PAT degraded path callers already handle).
+    //
+    // Public so the Preferences-tab agentic-context-doc "Generate" button can
+    // resolve the shared client off the UI thread (via LaunchBackgroundTask)
+    // and pass it into `AgenticContextDoc::GenerateFromGitHubProject`.
+  public:
     GitHubClient* EnsureAgenticGithubClient();
+
+  private:
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)

@@ -31,13 +31,16 @@
 #include "Commands/CommandRegistry.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "UiPerfMonitor.h"
 #include "WhisperPlugin.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace smatchet {
 namespace cmd {
@@ -51,7 +54,7 @@ namespace {
 // any per-frame allocation we care about.
 constexpr std::size_t kTestBufferCap = 256;
 char g_testBuffer[kTestBufferCap] = {0};
-int  g_testCursor = 0;
+int g_testCursor = 0;
 
 // Default mock transcription. Picked so the assertion is unambiguous (no
 // accidental match against an empty buffer or a typical real transcription).
@@ -141,9 +144,7 @@ class WhisperDictationScenario : public IScenario {
         }
     }
 
-    bool IsDone(int frameIndex) const override {
-        return state_ == State::Asserted || frameIndex >= frameLimit_;
-    }
+    bool IsDone(int frameIndex) const override { return state_ == State::Asserted || frameIndex >= frameLimit_; }
 
     void OnCancel(AppController& /*app*/) override { Teardown(); }
 
@@ -159,6 +160,23 @@ class WhisperDictationScenario : public IScenario {
         out["release_frame"] = releaseFrame_;
         out["delay_ms"] = delayMs_;
         out["frame_limit"] = frameLimit_;
+        // Perf-rows emit so `scripts/dev/perf-baseline.sh init whisper-dictation-roundtrip`
+        // captures a baseline (per the 8-of-15 retrofit in
+        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // PriorityGridScrollScenario::OnFinish.
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json rowsJson = nlohmann::json::array();
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+            return nlohmann::json{
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
+                {"avgPerCallMs", r.avgPerCallMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
+            };
+        });
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
@@ -172,10 +190,14 @@ class WhisperDictationScenario : public IScenario {
 
     static const char* StateName(State s) {
         switch (s) {
-        case State::Initial:                return "Initial";
-        case State::WaitingForReleaseFrame: return "WaitingForReleaseFrame";
-        case State::WaitingForInsertion:    return "WaitingForInsertion";
-        case State::Asserted:               return "Asserted";
+        case State::Initial:
+            return "Initial";
+        case State::WaitingForReleaseFrame:
+            return "WaitingForReleaseFrame";
+        case State::WaitingForInsertion:
+            return "WaitingForInsertion";
+        case State::Asserted:
+            return "Asserted";
         }
         return "Unknown";
     }
@@ -191,19 +213,19 @@ class WhisperDictationScenario : public IScenario {
         g_testCursor = 0;
     }
 
-    State       state_         = State::Initial;
+    State state_ = State::Initial;
     std::string expectedText_;
     std::string observedText_;
-    bool        passed_        = false;
-    bool        teardownDone_  = false;
-    int         delayMs_       = 50;
-    int         frameLimit_    = 300;
-    int         pressFrame_    = 1;
-    int         releaseFrame_  = 4;
+    bool passed_ = false;
+    bool teardownDone_ = false;
+    int delayMs_ = 50;
+    int frameLimit_ = 300;
+    int pressFrame_ = 1;
+    int releaseFrame_ = 4;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
 /// Factory function callable from AppController::Initialize. Wrapped in
 /// `#if defined(SMATCHET_WITH_WHISPER)` at the call site so the OFF build

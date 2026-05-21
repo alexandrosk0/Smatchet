@@ -239,7 +239,11 @@ TEST_CASE("AgentProposalStore: Transition on terminal state returns false") {
     CHECK(err.find("invalid transition") != std::string::npos);
     CHECK_FALSE(s.Transition(rejected.id, AgentProposalState::Approved, "", err));
     CHECK(err.find("invalid transition") != std::string::npos);
-    CHECK_FALSE(s.Transition(failed.id, AgentProposalState::Approved, "", err));
+    // Failed → Approved is now LEGAL per the retry-carve-out added to
+    // IsLegalTransition (Source_Core/src/AgentProposalStore.cpp:44-52) so an
+    // operator can re-attempt a failed upstream apply. Use Failed → Pending
+    // (still illegal) to preserve the test's "terminal state" intent.
+    CHECK_FALSE(s.Transition(failed.id, AgentProposalState::Pending, "", err));
     CHECK(err.find("invalid transition") != std::string::npos);
 }
 
@@ -302,7 +306,10 @@ TEST_CASE("AgentProposalStore: schema_version is stamped at kCurrentSchemaVersio
     REQUIRE(s.GetSchemaVersion(v, err));
     CHECK(err.empty());
     CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
-    CHECK(v == 2); // H10 shipped version of the agentic SQLite surface.
+    // Pin against the live constant so silent bumps don't break the test
+    // (per AGENTS.md § Schema-version bumps the deliberate-bump-only contract
+    // is a separate guard test below — "kCurrentSchemaVersion is exactly N").
+    CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
 }
 
 TEST_CASE("AgentProposalStore: schema_version does not double-bump across re-opens of the same db") {
@@ -349,13 +356,14 @@ TEST_CASE("AgentProposalStore: schema_version row count is exactly 1 (singleton 
     CHECK(v2 == AgentProposalStore::kCurrentSchemaVersion);
 }
 
-TEST_CASE("AgentProposalStore: kCurrentSchemaVersion is exactly 2 — guard against silent N>2 increments") {
+TEST_CASE("AgentProposalStore: kCurrentSchemaVersion is exactly 4 — guard against silent N>4 increments") {
     // AGENTS.md § Schema-version bumps: "the shipped version should be exactly
     // one higher than the previous shipped version, not N higher because of
-    // intermediate iterations." T9 shipped v1; H10 ships v2 (adds
-    // agent_pr_watch + handoff_status column). Bump this constant alongside
-    // the production-side constant only when a real migration body lands.
-    CHECK(AgentProposalStore::kCurrentSchemaVersion == 2);
+    // intermediate iterations." Shipped history: T9=v1; H10=v2 (agent_pr_watch
+    // + handoff_status column); phase-1 OpenPrRegistrar=v3; phase-4 PrCommentWatcher
+    // WatchMode (PR #292 / #296) bumped to v4. Bump this constant alongside the
+    // production-side constant only when a real migration body lands.
+    CHECK(AgentProposalStore::kCurrentSchemaVersion == 4);
 }
 
 TEST_CASE("AgentProposalStore: v1 db migrates in place to v2 (agent_pr_watch + handoff_status)") {
@@ -396,20 +404,22 @@ TEST_CASE("AgentProposalStore: v1 db migrates in place to v2 (agent_pr_watch + h
                                     "100, 100, '')");
         ins.exec();
     }
-    // Open through AgentProposalStore — should migrate cleanly.
+    // Open through AgentProposalStore — should migrate cleanly. Pin against
+    // the live constant so the test survives future schema bumps; the
+    // migration ladder downstream of v1 was originally [v1→v2] and is now
+    // [v1→v2→v3→v4], all covered by this single open.
     {
         AgentProposalStore s(path);
         std::string err;
         int v = -1;
         REQUIRE(s.GetSchemaVersion(v, err));
-        CHECK(v == 2);
+        CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
     }
     // Verify the table + column landed via side-channel inspection.
     {
         SQLite::Database side(path, SQLite::OPEN_READONLY);
         // agent_pr_watch table exists.
-        SQLite::Statement tableQ(
-            side, "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_pr_watch'");
+        SQLite::Statement tableQ(side, "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_pr_watch'");
         REQUIRE(tableQ.executeStep());
         CHECK(std::string(tableQ.getColumn(0).getText()) == "agent_pr_watch");
         // handoff_status column on agent_proposals exists + defaults to "".
@@ -417,13 +427,13 @@ TEST_CASE("AgentProposalStore: v1 db migrates in place to v2 (agent_pr_watch + h
         REQUIRE(rowQ.executeStep());
         CHECK(std::string(rowQ.getColumn(0).getText()).empty());
     }
-    // Re-open a v2 db — must be a no-op (idempotent).
+    // Re-open the migrated db — must be a no-op (idempotent at every version).
     {
         AgentProposalStore s(path);
         std::string err;
         int v = -1;
         REQUIRE(s.GetSchemaVersion(v, err));
-        CHECK(v == 2);
+        CHECK(v == AgentProposalStore::kCurrentSchemaVersion);
     }
     std::remove(path.c_str());
 }
