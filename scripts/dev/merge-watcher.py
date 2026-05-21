@@ -383,6 +383,101 @@ def _gh_owner_repo(clone_path: str) -> tuple[str, str] | None:
         return None
 
 
+TRIAGE_SCRIPT = _HERE / "coderabbit-triage.py"
+
+
+def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[str, Any]:
+    """Phase 3 — when merge-gates BLOCKED on CR findings, invoke the triage
+    classifier + post a structured comment on the PR.
+
+    Triggers only when the status line indicates a CR-finding block (matches
+    'actionable' or 'COMMENTED' with > 0 findings). Other BLOCKED reasons
+    (CI fail, user comment, missing review) don't fire triage.
+
+    Increments `triage_attempts` on the registry entry. When attempts >=
+    MERGE_WATCH_TRIAGE_BUDGET (default 3), marks the state as
+    TRIAGE_BUDGET_EXHAUSTED so Phase 4's notification surface picks it up.
+    """
+    extras: dict[str, Any] = {}
+    if not _looks_like_cr_finding_block(status_line):
+        extras["triage_action"] = "skipped: BLOCKED but not CR-finding"
+        return extras
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    or_meta = _gh_owner_repo(clone_path)
+    if not or_meta:
+        extras["triage_action"] = "skipped: gh repo view failed"
+        return extras
+    owner, repo = or_meta
+    budget = int(os.environ.get("MERGE_WATCH_TRIAGE_BUDGET", "3"))
+    attempts_before = int(entry.get("triage_attempts", 0))
+    attempts_after = attempts_before + 1
+    # Bump the registry entry's triage_attempts (registry-locked).
+    _bump_triage_attempts(pr, clone_path, attempts_after)
+    extras["triage_attempts"] = attempts_after
+    extras["triage_budget"] = budget
+    if attempts_after > budget:
+        extras["triage_action"] = "BUDGET_EXHAUSTED"
+        extras["last_state"] = "TRIAGE_BUDGET_EXHAUSTED"  # overrides BLOCKED for notify
+        return extras
+    # Invoke the classifier in post-comment mode.
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TRIAGE_SCRIPT),
+                "post-comment",
+                owner,
+                repo,
+                str(pr),
+                "--attempt",
+                str(attempts_after),
+                "--budget",
+                str(budget),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+        if result.returncode == 0:
+            extras["triage_action"] = f"posted (attempt {attempts_after}/{budget})"
+        else:
+            extras["triage_action"] = (
+                f"classifier failed (exit {result.returncode}): "
+                f"{result.stderr.strip()[:160]}"
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        extras["triage_action"] = f"classifier exec failed: {exc}"
+    return extras
+
+
+def _looks_like_cr_finding_block(status_line: str) -> bool:
+    """Detect whether the merge-gates Poll line indicates a CR-finding block.
+
+    Matches the new STALE_WITH_FINDINGS / COMMENTED (N actionable — block)
+    shapes from the post-#360 poller. Excludes pure CI-fail / user-comment /
+    NONE-grace-expired blocks — those go straight to Phase 4 notification
+    without triage.
+    """
+    s = status_line.lower()
+    return (
+        "actionable" in s
+        and ("block" in s or "stale_with_findings" in s)
+    ) or "changes_requested" in s
+
+
+def _bump_triage_attempts(pr: int, clone_path: str, new_count: int) -> None:
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["triage_attempts"] = new_count
+                break
+        _CLI.write_registry(entries)
+
+
 def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     """PASS-branch handler — squash-merge + cascade to stacked children.
 
@@ -462,6 +557,19 @@ def daemon_loop(poll_interval: int) -> int:
                         else:
                             print(
                                 f"  PR#{state['pr']:<6} PASS but {extras.get('merge_action', '?')}"
+                            )
+                    # Phase 3 — BLOCKED on CR findings → triage classifier + comment.
+                    elif state.get("last_state") == "BLOCKED":
+                        extras = handle_blocked_cr_triage(entry, state.get("last_status_line", ""))
+                        state.update(extras)
+                        if extras.get("triage_action"):
+                            print(
+                                f"  PR#{state['pr']:<6} BLOCKED → triage: {extras.get('triage_action')}"
+                            )
+                        else:
+                            print(
+                                f"  PR#{state['pr']:<6} BLOCKED (no triage) "
+                                f"poll_line={state.get('last_status_line', '')[:100]}"
                             )
                     else:
                         print(
