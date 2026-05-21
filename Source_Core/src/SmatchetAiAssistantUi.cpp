@@ -1000,6 +1000,45 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         ImGui::SetItemTooltip(onRight ? "Move panel to the left primary side bar."
                                       : "Move panel to the right secondary side bar.");
     }
+    ImGui::SameLine();
+    {
+        // Phase 7 of ai-chat-claude-desktop-parity. Clear-chat header button —
+        // FA trash glyph when the icon font is loaded, short text fallback
+        // otherwise. Opens a confirm popup (2-button) so a stray click can't
+        // wipe the conversation. Confirm wipes both the in-memory vectors AND
+        // the persisted SQLite rows via chat_persist::Op{ClearAll}; cancel is
+        // a no-op. The confirm popup is OpenPopup-modal, so it can't race a
+        // concurrent Send (the input row is behind it).
+        const bool faLoaded = SmatchetAreFaIconsLoaded();
+        const char* clearLabel = faLoaded ? ICON_FA_TRASH : "Clear";
+        if (ImGui::SmallButton(clearLabel)) {
+            ImGui::OpenPopup("##ConfirmClearChat");
+        }
+        ImGui::SetItemTooltip("Clear conversation history (asks for confirmation).");
+        if (ImGui::BeginPopupModal("##ConfirmClearChat", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextUnformatted("Clear the entire conversation?");
+            ImGui::TextDisabled("In-memory history + persisted SQLite rows are deleted. This cannot be undone.");
+            ImGui::Spacing();
+            if (ImGui::Button("Clear", ImVec2(120, 0))) {
+                d.assistantHistory.clear();
+                d.assistantHistoryRowIds.clear();
+                d.assistantScrollToMessageIndex = -1;
+                d.assistantStreamBuf.clear();
+                d.assistantLastError.clear();
+                // Worker no-ops if chat_persist isn't running; safe to call.
+                smatchet::ai::chat_persist::Op clearOp;
+                clearOp.kind = smatchet::ai::chat_persist::OpKind::ClearAll;
+                smatchet::ai::chat_persist::Enqueue(std::move(clearOp));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
 
     // --- Per-turn Model + Effort overrides (chat-window header row 2). ---
     //
@@ -1097,12 +1136,38 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     ImGui::Separator();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    // Reserve a row for the per-block context checkboxes drawn just above the input strip.
+    // Reserve a row for the per-block context checkboxes drawn just above the
+    // input strip + a 1-line slot at the bottom of the panel for the Phase 7
+    // copy-toast strip. Slot reserved unconditionally so the toast appearing /
+    // disappearing never shifts the input row's Y position — the design plan's
+    // explicit anti-jitter contract.
     const float checkboxRowH = ImGui::GetFrameHeightWithSpacing();
-    DrawHistoryArea(app, d, avail.y - checkboxRowH);
+    const float toastRowH = ImGui::GetTextLineHeightWithSpacing();
+    DrawHistoryArea(app, d, avail.y - checkboxRowH - toastRowH);
     DrawErrorStrip(d);
     DrawContextBlockCheckboxes(d);
     DrawInputAndButtons(app, d, activeView);
+
+    // Phase 7 of ai-chat-claude-desktop-parity. Copy-toast strip — ghosted
+    // 1-line confirmation set by the per-message Copy button (assigns
+    // d.assistantCopyToastUntilMs = now + 1500). Auto-dismisses on time-out;
+    // when not visible the slot is a plain Dummy of the same height so the
+    // input row above doesn't shift.
+    {
+        const std::int64_t nowMs = smatchet::ai::NowUnixMs();
+        if (nowMs < d.assistantCopyToastUntilMs && !d.assistantCopyToastLabel.empty()) {
+            // Fade out over the last 250 ms so the dismissal is less abrupt.
+            const std::int64_t remainingMs = d.assistantCopyToastUntilMs - nowMs;
+            constexpr std::int64_t kFadeOutMs = 250;
+            const float alpha =
+                (remainingMs >= kFadeOutMs) ? 1.0f : (static_cast<float>(remainingMs) / static_cast<float>(kFadeOutMs));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.75f, 0.65f, alpha));
+            ImGui::TextUnformatted(d.assistantCopyToastLabel.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::Dummy(ImVec2(0.0f, toastRowH));
+        }
+    }
 
     ImGui::End();
 
