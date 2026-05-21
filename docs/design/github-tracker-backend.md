@@ -55,6 +55,8 @@ UpdateField(issueId, "labels", desiredSet):
     audit-trail one "field_update_labels" row spanning the batch (begin/result)
 ```
 
+**Audit-row nesting**: the inner `LabelAdd` / `LabelRemove` primitive calls also emit their own existing audit rows (`action="LabelAdd"` / `"LabelRemove"`, `source="github_client"`). A single tracker-driven `UpdateField("labels", ...)` therefore produces **M+1 audit rows**: one outer `field_update_labels` row + M inner per-label primitive rows. The inner rows are indistinguishable from triage-driven `LabelAdd` / `LabelRemove` except by timestamp clustering against the outer row's `OperationId`. **Decision**: keep the inner audit rows (don't suppress) — consistency with current triage-flow audit shape; the outer row is the discriminator for tracker-driven edits. Audit consumers that want only the "field-edit-level" view filter on `action="field_update_*"`; those that want every primitive write keep their current grep over `LabelAdd` / `LabelRemove`. The trade-off is row-count amplification (M+1) on multi-label edits — acceptable at realistic edit rates (single-digit labels per edit).
+
 **3. Wire the factory + config** — extend `DefaultTrackerBackendFactory::Create` with a `"github"` branch; add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo` to `TrackerConfig` (PAT already there); extend `SmatchetPreferencesUi` with the GitHub profile group.
 
 **4. Single shared `GitHubClient` instance** — promote `AppController::agenticGithubClient_` to `sharedGithubClient_`; both triage and tracker call sites resolve through `AppController::GetGithubClient()`.
