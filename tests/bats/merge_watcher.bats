@@ -200,3 +200,74 @@ print('valid')
     [ "$status" -eq 2 ]
     [[ "$output" == *"malformed JSON"* ]]
 }
+
+# ---------- Phase 2: cascade lock + auto-merge state shape ----------
+
+@test "cascade_lock acquires + releases a per-branch lockfile" {
+    # Direct Python smoke — exercise the cascade_lock helper without gh deps.
+    run python -c "
+import os, sys, pathlib
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+locks_dir = mw.cascade_locks_dir()
+print('locks_dir_before:', locks_dir.exists())
+with mw.cascade_lock('feat/my-child', timeout_seconds=2.0):
+    lock_path = locks_dir / 'cascade-feat__my-child.lock'
+    print('locked:', lock_path.exists())
+print('after:', (locks_dir / 'cascade-feat__my-child.lock').exists())
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"locked: True"* ]]
+    [[ "$output" == *"after: False"* ]]
+}
+
+@test "cascade_lock branch-name sanitization (/ → __)" {
+    run python -c "
+import os
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+with mw.cascade_lock('chore/v2-agentic-ripout-doc-cleanup'):
+    import pathlib
+    lock = mw.cascade_locks_dir() / 'cascade-chore__v2-agentic-ripout-doc-cleanup.lock'
+    print('found:', lock.exists())
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"found: True"* ]]
+}
+
+@test "handle_pass on PR-already-merged (404 from merge API) → merge_failed" {
+    # Stub gh on PATH to return 404 for the merge call. Verifies the error
+    # path doesn't crash the daemon — just records merge_failed in state.
+    STUB_BIN=$(mktemp -d)
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$2 $3" in
+    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
+    "api repos/o/r/pulls/999")          # detect_merged_branch_name
+        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
+    "api -X")                            # merge call
+        echo "HTTP 404" >&2; exit 1 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    PATH="$STUB_BIN:$PATH" run python -c "
+import os, sys
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('merge_action:', extras.get('merge_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped"* ]]
+    rm -rf "$STUB_BIN"
+}
