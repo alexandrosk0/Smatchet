@@ -16,16 +16,9 @@ using QueueDateTimeEditFn =
 
 void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit,
-                               const std::string& dateFormatOption = {}, int thresholdDays = 0);
+                               const std::string& dateFormatOption = {}, int thresholdDays = 0,
+                               bool singleClickToEdit = true);
 
-bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime,
-                             float totalWidth = 340.0f);
+bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime, float totalWidth = 340.0f);
 
 } // namespace TrackerDateTimeFieldEditor
-
-
-
-
-
-
-

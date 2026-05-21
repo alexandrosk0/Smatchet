@@ -479,7 +479,8 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
 
 void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                       const std::string& currentValue, SpreadsheetState& state,
-                      std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, float availWidth) {
+                      std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, float availWidth,
+                      bool singleClickToEdit) {
     // Widget-cell unique ID is provided by the CellIdScope pushed in RenderFieldCell
     // (ticket.id + field.Id on the ImGui ID stack). Literal short labels below stay collision-free.
 
@@ -549,7 +550,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
     if (ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-        if (ImGui::IsMouseDoubleClicked(0)) {
+        if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
             state.StartEditingField(ticket.id, field.Id, currentValue);
         }
     }
@@ -568,7 +569,8 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
 
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, SpreadsheetState& state,
-                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
+                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
+                              bool singleClickToEdit) {
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     SmatchetLoadedIconTexture overlayIcon{};
     std::string overlayLoadErr;
@@ -588,6 +590,64 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
         previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
     }
+    // Combo cells always render as a flat Selectable preview (no BeginCombo's blue framed
+    // background). Click threshold depends on `singleClickToEdit`: single-click mode arms on
+    // any click; double-click mode arms only on double-click. Once armed, the next frame
+    // force-opens the combo popup via OpenPopupEx + IsPopupOpen probe; on dismiss the arm
+    // clears and the cell falls back to the Selectable preview.
+    const std::string editorKey = ticket.id + "::" + field.Id;
+    bool armed = (state.EditArmedKey == editorKey);
+    if (armed) {
+        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##singleselect"));
+        if (state.EditArmedJustOpened) {
+            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
+            state.EditArmedJustOpened = false;
+        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
+            // User dismissed the combo on a prior frame; release arm.
+            state.EditArmedKey.clear();
+            armed = false;
+        }
+    }
+    if (!armed) {
+        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
+        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
+            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
+                state.EditArmedKey = editorKey;
+                state.EditArmedJustOpened = true;
+            }
+        }
+        const ImVec2 selMin = ImGui::GetItemRectMin();
+        const ImVec2 selMax = ImGui::GetItemRectMax();
+        if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
+            const float maxEdge = ImGui::GetFrameHeight();
+            const float iw = static_cast<float>(overlayIcon.Width);
+            const float ih = static_cast<float>(overlayIcon.Height);
+            const float scale = maxEdge / (std::max)(iw, ih);
+            const float dw = iw * scale;
+            const float dh = ih * scale;
+            const float rowH = selMax.y - selMin.y;
+            const ImVec2 overlayP0(selMin.x + 4.0f, selMin.y + ((rowH - dh) * 0.5f));
+            const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
+            ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1,
+                                                 ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            if (haveOverlayIcon && preview.empty()) {
+                preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
+            }
+            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(previewCStr);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        return;
+    }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(cellAvail);
@@ -595,7 +655,6 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        const std::string editorKey = ticket.id + "::" + field.Id;
         const bool justOpened = (state.SingleSelectActiveKey != editorKey);
         if (justOpened) {
             state.SingleSelectActiveKey = editorKey;
@@ -693,15 +752,52 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
 
 void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
-                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled) {
+                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
+                             bool singleClickToEdit) {
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    const float cellAvail = ImGui::GetContentRegionAvail().x;
+    // Arm-then-popup: see RenderSingleSelectEditor. Always Selectable preview; click threshold
+    // gated by singleClickToEdit (any-click vs double-click).
+    const std::string editorKey = ticket.id + "::" + field.Id;
+    bool armed = (state.EditArmedKey == editorKey);
+    if (armed) {
+        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##multiselect"));
+        if (state.EditArmedJustOpened) {
+            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
+            state.EditArmedJustOpened = false;
+        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
+            state.EditArmedKey.clear();
+            armed = false;
+        }
+    }
+    if (!armed) {
+        const char* previewCStr = preview.empty() ? "" : preview.c_str();
+        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
+        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
+            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
+                state.EditArmedKey = editorKey;
+                state.EditArmedJustOpened = true;
+            }
+        }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(previewCStr);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        return;
+    }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        const std::string editorKey = ticket.id + "::" + field.Id;
         if (state.MultiSelectActiveKey != editorKey) {
             state.MultiSelectActiveKey = editorKey;
             state.MultiSelectSearchBuf[0] = '\0';
@@ -779,12 +875,48 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 
 void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                                  const std::string& currentValue, std::vector<PendingFieldEdit>& pendingEdits,
-                                 bool tooltipsEnabled) {
+                                 bool tooltipsEnabled, SpreadsheetState& state, bool singleClickToEdit) {
     std::string parentId;
     std::string childId;
     TryResolveCascadingSelection(field, currentValue, parentId, childId);
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
 
+    const float cellAvail = ImGui::GetContentRegionAvail().x;
+    // Arm-then-popup: see RenderSingleSelectEditor.
+    const std::string editorKey = ticket.id + "::" + field.Id;
+    bool armed = (state.EditArmedKey == editorKey);
+    if (armed) {
+        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##cascadeselect"));
+        if (state.EditArmedJustOpened) {
+            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
+            state.EditArmedJustOpened = false;
+        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
+            state.EditArmedKey.clear();
+            armed = false;
+        }
+    }
+    if (!armed) {
+        const char* previewCStr = preview.empty() ? "" : preview.c_str();
+        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
+        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
+            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
+                state.EditArmedKey = editorKey;
+                state.EditArmedJustOpened = true;
+            }
+        }
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
+            if (previewClipped) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                ImGui::TextUnformatted(previewCStr);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        return;
+    }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -868,7 +1000,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         float availWidth, bool tooltipsEnabled, bool allowEdits,
                                         SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
                                         TrackerGridFieldAsyncState& trackerGridAsync,
-                                        const std::string& dateFormatOption, int thresholdDays) {
+                                        const std::string& dateFormatOption, int thresholdDays,
+                                        bool singleClickToEdit) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
     // Cached recorded-cmd-list dispatch: cache hit replays in ~5 µs / cell; miss invokes
@@ -1000,28 +1133,32 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             app, ticket, *field, currentValue,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
                 QueueEdit(issueId, fld, values, pendingEdits);
-            });
+            },
+            state, singleClickToEdit);
         return;
     case TicketGridColumn::RenderPlan::Cascading:
         if (!allowEdits) {
             renderPlainText(true);
             return;
         }
-        RenderCascadingSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled);
+        RenderCascadingSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled, state,
+                                    singleClickToEdit);
         return;
     case TicketGridColumn::RenderPlan::MultiSelect:
         if (!allowEdits) {
             renderPlainText(true);
             return;
         }
-        RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled);
+        RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
+                                singleClickToEdit);
         return;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {
             renderPlainText(true);
             return;
         }
-        RenderSingleSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled);
+        RenderSingleSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
+                                 singleClickToEdit);
         return;
     case TicketGridColumn::RenderPlan::DateTimeEditor:
         if (!allowEdits) {
@@ -1033,14 +1170,15 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
                 QueueEdit(issueId, fld, values, pendingEdits);
             },
-            dateFormatOption, thresholdDays);
+            dateFormatOption, thresholdDays, singleClickToEdit);
         return;
     case TicketGridColumn::RenderPlan::TextEditor:
         if (!allowEdits) {
             renderPlainText(true);
             return;
         }
-        RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth);
+        RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth,
+                         singleClickToEdit);
         return;
     }
 

@@ -3,6 +3,7 @@
 #include "StringUtil.h"
 #include "TrackerLabelsPure.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 #define ImGui SmatchetLocalizedImGui
 
@@ -47,7 +48,8 @@ namespace TrackerLabelsEditor {
 bool IsLabelsField(const std::string& fieldId) { return ToLowerAsciiCopy(fieldId) == "labels"; }
 
 void RenderLabelsFieldEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
-                             const std::string& currentValue, const QueueLabelEditFn& queueEdit) {
+                             const std::string& currentValue, const QueueLabelEditFn& queueEdit,
+                             SpreadsheetState& state, bool singleClickToEdit) {
     const auto queue = [&queueEdit, &ticket, &field](const std::vector<std::string>& values) {
         queueEdit(ticket.id, field, values);
     };
@@ -64,6 +66,31 @@ void RenderLabelsFieldEditor(const AppController& app, const CachedTicket& ticke
     }
     const std::string comboId = "##LabelsMultiSelect_" + ticket.id + "_" + field.Id;
     const std::string editorKey = ticket.id + "::" + field.Id;
+    const float cellAvail = ImGui::GetContentRegionAvail().x;
+    // Arm-then-popup: see TicketFieldEditor::RenderSingleSelectEditor for the contract.
+    bool armed = (state.EditArmedKey == editorKey);
+    if (armed) {
+        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID(comboId.c_str()));
+        if (state.EditArmedJustOpened) {
+            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
+            state.EditArmedJustOpened = false;
+        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
+            state.EditArmedKey.clear();
+            armed = false;
+        }
+    }
+    if (!armed) {
+        const char* previewCStr = preview.empty() ? "" : preview.c_str();
+        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
+        const std::string selLabel = std::string(previewCStr) + "##LabelsPreview_" + ticket.id + "_" + field.Id;
+        if (ImGui::Selectable(selLabel.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
+            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
+                state.EditArmedKey = editorKey;
+                state.EditArmedJustOpened = true;
+            }
+        }
+        return;
+    }
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo(comboId.c_str(), preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         static std::string activeEditorKey;
