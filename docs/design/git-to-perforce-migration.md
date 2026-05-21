@@ -40,16 +40,19 @@ Numbered list. Per-file rationale.
 10. `agents/p4-janitor.md` — companion to `agents/git-janitor.md` for the p4 side (shelve GC, stream prune, `p4 verify`).
 
 ### Modified files
-11. `CMakeLists.txt` — no change (FetchContent stays; git is canonical).
-12. `.gitignore:62-65` — add `.claude/streams/` alongside existing `.claude/worktrees/`.
-13. `scripts/dev/lock-claim.sh:1` — read `SMATCHET_LOCK_BACKEND` env; dispatch to `lock-claim-p4.sh` when `=p4-counter`.
-14. `scripts/dev/_lock-json.py:1` — same backend switch on the read path.
-15. `scripts/git-hooks/pre-push:1` — extend with `p4 reconcile -n` check when client is configured.
-16. `scripts/setup-harness.sh:1` — detect `p4` on PATH + a configured `P4PORT`; warn (don't fail) if absent and `SMATCHET_AGENT_VCS=p4`.
+11. `scripts/dev/lock-claim.sh:1` — read `SMATCHET_LOCK_BACKEND` env; dispatch to `lock-claim-p4.sh` when `=p4-counter`.
+12. `scripts/dev/lock-claim-update.sh:1` — same backend switch on the renew path.
+13. `scripts/dev/_lock-json.py:1` — same backend switch on the read path.
+14. `scripts/git-hooks/pre-push:1` — extend with `p4 reconcile -n` check when client is configured.
+15. `scripts/setup-harness.sh:1` — detect `p4` on PATH + a configured `P4PORT`; warn (don't fail) if absent and `SMATCHET_AGENT_VCS=p4`.
+16. `docs/harness/claude-code/hooks/` — add optional `pretool-edit-p4-lock-check.sh` template (gets junctioned into `.claude/hooks/` by `setup-harness.sh`). `.claude/` itself is gitignored — never committed.
 17. `AGENTS.md:?` — new short section § Dual-VCS topology (p4 opt-in primitives) cross-linking the new docs. Existing git-centric sections stay verbatim.
 18. `docs/CONTEXT.md:?` — add glossary entries: `task stream`, `shelf`, `pending CL`, `p4 counter` under a new § Source control section.
 19. `docs/dev/offline-builds.md:127` — update cross-reference (this plan no longer "supersedes" the doc).
 20. `agents/git-janitor.md` — add cross-link to `agents/p4-janitor.md` (no behavior change; git path unchanged).
+
+`.gitignore` needs no change — `.claude/streams/` is already covered by the existing wholesale `.claude/` ignore at `.gitignore:63`.
+`CMakeLists.txt` needs no change — FetchContent stays; git is canonical.
 
 ### Out of scope, explicitly **not** touched
 - Existing `.github/` workflows (11 of them) — git/GitHub remains the ship-line, all CI continues to fire on PRs.
@@ -95,9 +98,9 @@ Exit: `p4 info` succeeds; a throwaway test CL submits and re-syncs.
 ### Phase 1 — Dual-VCS canonical tree
 1. Create a stream depot (NOT classic) at `//smatchet`, with mainline `//smatchet/main` rooted at `C:\Dev\Smatchet`. Stream depot is required upfront because Phase 2 needs task streams as children.
 2. Create client `smatchet_main_<user>`. View: `//smatchet/main/... //smatchet_main_<user>/...`. Root: `C:\Dev\Smatchet`.
-3. Author `.p4ignore` at repo root (translation of `.gitignore` — Perforce `!` negation, no `**`, also exclude `.git/` and `.gitignore`).
-4. `p4 reconcile -m //smatchet/main/...` opens the whole tree; submit as a single baseline CL `chore(p4): baseline import from git develop@<SHA>`. **Optional** — most teams will accept a baseline-only import without history. Full `git p4` history import is filed as a follow-up plan (slug TBD); not required for the agentic-WIP use case.
-5. Verify: a clean working tree shows empty `git status` AND empty `p4 opened`. `git status` does not list `.p4ignore` (it's tracked); `p4 reconcile -n` does not list `.gitignore` (excluded via typemap + `.p4ignore`).
+3. Author `.p4ignore` at repo root (translation of `.gitignore` — Perforce `!` negation, no `**`, also exclude `.git/`). Note: `.gitignore` itself is **tracked** in git and gets baseline-imported to p4; do not list it in `.p4ignore` (the ignore file only governs untracked candidates for `p4 add` / `p4 reconcile`).
+4. `p4 reconcile //smatchet/main/...` opens the whole tree (typemap + `.p4ignore` exclude `.git/`, build output, harness adapters); submit as a single baseline CL `chore(p4): baseline import from git develop@<SHA>`. **Optional** — most teams will accept a baseline-only import without history. Full `git p4` history import is filed as a follow-up plan (slug TBD); not required for the agentic-WIP use case.
+5. Verify: a clean working tree shows empty `git status` AND empty `p4 opened`. After the baseline submit, both `.gitignore` and `.p4ignore` are tracked-and-unchanged — `git status` doesn't list them and neither does `p4 reconcile -n` (nothing was modified).
 
 Exit: round-trip — edit a file, `git add` + commit, then `p4 reconcile` + submit; both VCSes see the same file as modified at their respective tips.
 
@@ -110,7 +113,7 @@ Exit: round-trip — edit a file, `git add` + commit, then `p4 reconcile` + subm
 3. `.gitignore` add `.claude/streams/` (sibling of existing `.claude/worktrees/`).
 4. New script `scripts/dev/p4-task-stream-gc.sh --older-than-days N`:
    - `p4 streams //smatchet/tasks/...` → filter by mtime → `p4 stream -d` after confirming no pending CLs.
-5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator uses `p4-task-stream.sh` and writes the task-stream path into `SEED.json.workspaceRoot` instead of the git worktree path.
+5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per AGENTS.md § Handoff envelope) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
 
 Exit: spawn a stub child with `SMATCHET_AGENT_VCS=p4`, observe the child receives a populated p4 task stream; on exit the GC purges it.
 
@@ -143,7 +146,7 @@ Exit: switch backend env, claim + release a lock, observe `_plan-locks.generated
 Optional Phase. Surface only when the user finds two agents touching the same file without coordination.
 
 1. Document the `p4 edit -t +l <file>` pattern in `docs/perforce/AGENT_FLOWS.md`.
-2. Optional `PreToolUse:Edit` hook checks `p4 opened -m1 <file>` and warns if the file is `+l`-locked by another client. Off by default; on under `SMATCHET_AGENT_VCS=p4`.
+2. Optional `PreToolUse:Edit` hook template at `docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` — `setup-harness.sh` junctions it into `.claude/hooks/` (which is itself gitignored). Hook checks `p4 opened -m1 <file>` and warns if the file is `+l`-locked by another client. Off by default; on under `SMATCHET_AGENT_VCS=p4`.
 3. The hook is a warning, not a hard block — agents can ignore for emergency fixes.
 
 Exit: deliberately have two agents try to edit the same `+l`-locked file; one is warned.
