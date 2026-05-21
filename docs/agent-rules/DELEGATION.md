@@ -144,7 +144,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | build, cmake, preset, link, packaging, lld, LTO | `build-doctor` |
 | automate testing, manual verification, headless test | `test-author` |
 | end of session, merge open PRs, tidy up, post-merge cleanup | `git-janitor` |
-| coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments | `coderabbit-triage` |
+| coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments, watcher CR-blocked | `coderabbit-triage` (also invoked by `smatchet-merge-watcher` on CR `COMMENTED + N>0` per `docs/design/smatchet-merge-watcher.md` Phase 3) |
 | stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 
@@ -200,7 +200,7 @@ When a delegated agent errors API-500 mid-run, the worktree state is usually com
 
 5. **Mark recovery in backlog** — add an entry to `docs/backlog/agent-self-improvement/process.md` with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
 
-If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers. `--force-with-lease` is safe here because the branch is the spawned-agent's own `agent/<id>` or `claude/<id>` worktree — covered by AGENTS.md § Project rules § Git safety protocol § Force-push carve-out (see also `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`).
+If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers. `--force-with-lease` is safe here because the branch is the Claude Code SDK-spawned `claude/<id>` worktree — covered by AGENTS.md § Project rules § Force-push carve-out for Claude Code SDK-spawned recovery. The `agent/<id>` shape is GONE (per v1 of `docs/design/github-tracker-backend.md` — that branch base came from the deleted `ClaudeCodeLocalRunner`). ADR 0005 is Withdrawn as historical; the `claude/<id>` rationale stands in AGENTS.md.
 
 ## Skeleton-first
 

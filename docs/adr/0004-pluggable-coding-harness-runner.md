@@ -2,7 +2,11 @@
 
 # Status
 
-Accepted (2026-05-18)
+**Withdrawn (2026-05-21)** — the runtime this ADR governed (`ICodingHarnessRunner` / `ClaudeCodeLocalRunner` / sentinel-file protocol / `agent/<proposalId>` worktree base / spawned-harness lifecycle) was removed by v1 PR1 of [`docs/design/github-tracker-backend.md`](../design/github-tracker-backend.md) (merge sha `b1d241bc`). The future [`smatchet-merge-watcher`](../design/smatchet-merge-watcher.md) revives a small subset of the underlying need (drive PRs to merge without orchestrator babysitting) but as a host daemon, not a spawn — different architecture, different ADR (or no ADR; the watcher plan-doc carries the rationale inline).
+
+This file is kept for historical context. The "two paths" analysis below remains useful as design archaeology if anyone considers re-introducing a pluggable runner.
+
+Originally: Accepted (2026-05-18).
 
 # Context
 
@@ -15,7 +19,7 @@ A separate question is what the security boundary actually is. The phase-1 harne
 
 # Decision
 
-Adopt path (b). `ICodingHarnessRunner` is the abstraction; `ClaudeCodeLocalRunner` is the phase-1 concrete. The interface is shaped around the stream-json + sentinel-file model the phase-1 harness uses (see plan decision #7 + `AGENTS.md § Handoff envelope` once it lands in H2); future runners that don't speak that protocol natively will need an adapter shim per-runner, but the controller surface stays stable.
+Adopt path (b). `ICodingHarnessRunner` is the abstraction; `ClaudeCodeLocalRunner` is the phase-1 concrete. The interface is shaped around the stream-json + sentinel-file model the phase-1 harness uses (see plan decision #7 + the AGENTS.md handoff-envelope section — both removed in v2 doc-cleanup `chore/v2-agentic-ripout-doc-cleanup` per the Withdrawn status above); future runners that don't speak that protocol natively will need an adapter shim per-runner, but the controller surface stays stable.
 
 The env allow-list is part of the interface contract, not a `ClaudeCodeLocalRunner` implementation detail: every `Spawn` implementation must enforce the allow-list at the boundary plus cwd containment to the assigned worktree. That contract is the documented security boundary for the handoff half — `bypassPermissions` is trust, not isolation.
 

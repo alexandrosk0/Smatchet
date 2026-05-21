@@ -113,7 +113,7 @@ Exit: round-trip — edit a file, `git add` + commit, then `p4 reconcile` + subm
 3. `.gitignore` add `.claude/streams/` (sibling of existing `.claude/worktrees/`).
 4. New script `scripts/dev/p4-task-stream-gc.sh --older-than-days N`:
    - `p4 streams //smatchet/tasks/...` → filter by mtime → `p4 stream -d` after confirming no pending CLs.
-5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per AGENTS.md § Handoff envelope) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
+5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per the deleted handoff-envelope section) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
 
 Exit: spawn a stub child with `SMATCHET_AGENT_VCS=p4`, observe the child receives a populated p4 task stream; on exit the GC purges it.
 
@@ -124,7 +124,7 @@ The piece that closes the loop. An agent finishes work on a task stream; the orc
    - `p4 integrate //smatchet/tasks/<agent-id>/... //smatchet/main/...`
    - `p4 resolve -as` (auto-accept safe) + bail loudly on conflicts (escalate to user).
    - At canonical root: `p4 sync //smatchet/main/...@head`
-   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (per AGENTS.md § Handoff envelope § Branch naming)
+   - At canonical root: `git checkout -b agent/<agent-id>/<short-slug>` (this `agent/<id>/<slug>` branch shape originally came from the deleted `ClaudeCodeLocalRunner`; the convention is kept here for the p4-integrated path but no longer matches a current AGENTS.md section)
    - `git add -A` (the synced p4 changes appear as git-modified files because the canonical tree is dual-tracked)
    - `git commit` using the integrated CL's description as the commit-message body
    - `git push -u origin agent/<agent-id>/<short-slug>`

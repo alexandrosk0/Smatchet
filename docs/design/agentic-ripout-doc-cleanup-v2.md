@@ -22,7 +22,7 @@ Both REVIVE pieces of the agentic surface in a new (watcher-driven) shape. V2's 
 | Item | v2 v1 (original) | v2 v2 (post-2026-05-21-grill) |
 |---|---|---|
 | `agents/coderabbit-triage.md` | DELETE | **KEEP** — strip spawned-harness language only |
-| `AGENTS.md § Handoff envelope` | DELETE | **STRIP ENTIRELY** (watcher won't spawn) |
+| `the deleted handoff-envelope section` | DELETE | **STRIP ENTIRELY** (watcher won't spawn) |
 | ADRs 0004 + 0005 | Withdraw status | **WITHDRAW + KEEP as historical** (1-line note → v1 ripout commits) |
 | Timing | "after v1 merges" | **Wait for watcher P1 first** — that work clarifies preserve/strip boundaries |
 

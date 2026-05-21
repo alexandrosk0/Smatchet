@@ -180,14 +180,11 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 - Empty is fine.
 ```
 
-## Spawned-harness mode
+## Watcher-invocation mode
 
-When invoked inside a spawned `claude` subprocess (detected by `SEED.json` present at `$PWD` with `dispatch_source == "coderabbit_comment"`), this agent acts as the **routed delegate inside `handoff-implementer`'s routing** (per AGENTS.md § Handoff envelope § Spawned-orchestrator first-move contract + `agents/handoff-implementer.md` § `dispatch_source` enum). The contract differs from the default in-orchestrator invocation:
+When invoked by `smatchet-merge-watcher` (per `docs/design/smatchet-merge-watcher.md` Phase 3), this agent reads the watcher's prepared payload (`{pr_number, head_sha, cr_review_body, cr_review_threads}`), runs the 18-rule override table + validation pass, applies valid fixes via subsystem delegates (`tracker-backend`, `grid-engine`, `mechanic`, etc.), commits + pushes. The watcher then re-polls; CR re-reviews on push.
 
-1. There is no parent orchestrator to hand packets back to — `handoff-implementer` invokes this agent directly via the existing delegation table and consumes its report.
-2. The agent still runs the 18-rule override table + the validation pass, but **may now also dispatch implementer-class subagents directly** (tracker-backend, grid-engine, mechanic, etc) since `handoff-implementer` is the orchestrator in the spawned worktree.
-3. After dispatched fixes apply, the agent (or `handoff-implementer`) runs the slice-boundary `cmake --build` + `scripts/dev/test-all.sh` and writes `RUN_RESULT.json` per AGENTS.md § Handoff envelope.
-4. Outside spawned-harness mode (no `SEED.json`, or `dispatch_source != "coderabbit_comment"`), existing behaviour stands — emit handoff packets to the parent orchestrator.
+The Phase 3 Python port (`scripts/dev/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/coderabbit-triage.md` file remains the source-of-truth for the 18-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for a shared "rules version" marker and fails if they disagree (per the watcher plan-doc § Risks).
 
 ## Cleanup
 
