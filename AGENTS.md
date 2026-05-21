@@ -255,6 +255,17 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 
 **Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
 
+**Perf slice-boundary auto-run — scenario-aware**: when a slice's write set touches files in the curated diff→scenario map at [`agents/perf-gatekeeper.md`](agents/perf-gatekeeper.md) § "Curated diff → scenario map", the orchestrator runs the affected scenario(s) at slice boundary (right after the build + ctest pass) and surfaces the top-N rows inline. No need for the user to ask "how is the performance" — Pillar 1 evidence shows up automatically next to the regular slice output. Mechanically:
+
+```bash
+bash scripts/dev/perf-run.sh <scenario>  # writes build/perf-runs/<scenario>-<ts>.json
+# When docs/perf/baselines/<scenario>.dev.json exists, also:
+python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.dev.json \
+    build/perf-runs/<scenario>-<ts>.json --markdown-only
+```
+
+When no `dev`-host baseline exists yet (the common case during phase rollouts before bootstrap), the perf-run output is reported on its own as evidence and the orchestrator notes `MISSING_BASELINE` rather than silently passing — same contract as `agents/perf-gatekeeper.md` § Hard rules. The CI gate at `.github/workflows/perf-pr-fast.yml` handles the per-PR enforcement (auto-bootstraps the `ci-windows-latest` baseline on first run, fails subsequent PRs on regression beyond `docs/perf/regression-policy.json`). Local slice-boundary runs are for fast feedback; the CI gate is the merge-block. Skip the local run when the slice ALSO qualifies for the pure-docs skip above — there's no code to measure either way.
+
 **Pure-docs slice skip**: a slice whose write set is strictly within the pure-docs allow-list (`docs/**`, `backlog/**`, `AGENTS.md`, uppercase root `*.md`) skips **both** `cmake --build` and `scripts/dev/test-all.sh` entirely — there is no executable code to verify. Discriminator (mirrors the end-of-session FF-clean gate at `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception):
 ```bash
 bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip build + test-all)" || echo "needs full gate"
