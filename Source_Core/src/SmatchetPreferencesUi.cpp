@@ -1,3 +1,16 @@
+// Define NOMINMAX / WIN32_LEAN_AND_MEAN before any include that transitively
+// pulls in <windows.h> (SQLiteCpp via AppController.h chain) — otherwise the
+// preprocessor defines `min` / `max` as macros and `std::min(...)` later in
+// this TU fails to parse. Mirrors the same dance in AppController.cpp.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "SmatchetUI.h"
 
 #if defined(SMATCHET_WITH_AI)
@@ -40,6 +53,11 @@
 #include "PluginHost.h"
 #endif
 
+#if defined(SMATCHET_WITH_AGENTIC)
+#include "AgenticContextDoc.h"
+#include "GitHubClient.h"
+#endif
+
 #if defined(SMATCHET_WITH_WHISPER)
 #include "HotkeyParse.h"
 #include "MainThreadDispatcher.h"
@@ -77,6 +95,14 @@
 #endif
 
 namespace {
+
+#if defined(SMATCHET_WITH_AGENTIC)
+// (Context doc auto-reload) Flag set by the Generate background worker after
+// a successful write; consumed at the top of the Render context-doc section
+// on the next frame to force a re-Read from disk into the editor buffer.
+// Atomic because the worker thread writes while the UI thread reads.
+std::atomic<bool> g_contextDocReloadRequested{false};
+#endif
 
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 std::string GetCurrentExePath() {
@@ -1090,13 +1116,171 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             // Run-now button — synchronous on the UI thread would freeze for ~5-30 seconds
             // (LLM round-trip per issue). Per AGENTS.md Pillar 2 we wrap in
             // LaunchBackgroundTask; results land in SQLite and the T6 panel picks them up.
+            //
+            // (Triage-feedback) The async wrapper sets an in-flight flag, the snapshot
+            // below reads it every frame to render the spinner + last-result line.
+            // Duplicate clicks while in-flight are no-ops at the controller boundary.
+            const AppController::ManualTriageStatus triageStatus = app.GetManualTriageStatus();
+            const bool triageInFlight = triageStatus.inFlight;
+
+            if (triageInFlight) {
+                ImGui::BeginDisabled();
+            }
             if (ImGui::Button(SmatchetLocalization::T("agent.prefs.runNow", "Run triage now"))) {
-                app.LaunchBackgroundTask([&app]() {
-                    std::string runErr;
-                    if (!app.RunAgenticTriageOnce(runErr)) {
-                        LOG_WARN("Preferences: Run triage now failed: %s", runErr.c_str());
-                    }
-                });
+                app.RunAgenticTriageOnceAsync();
+            }
+            if (triageInFlight) {
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                // Three-dot animated indicator — phase cycles 0..3 at ~2 Hz.
+                const int phase = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+                const char* dots[] = {"", ".", "..", "..."};
+                char buf[128];
+                std::snprintf(buf, sizeof(buf), "%s%s",
+                              SmatchetLocalization::T("agent.prefs.runNowInFlight", "Triage running"), dots[phase]);
+                ImGui::TextUnformatted(buf);
+            } else if (triageStatus.finishedAtSec > 0) {
+                ImGui::SameLine();
+                if (triageStatus.lastError.empty()) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "%s scanned=%d inserted=%d errors=%d",
+                                  SmatchetLocalization::T("agent.prefs.runNowDone", "Last run:"), triageStatus.scanned,
+                                  triageStatus.inserted, triageStatus.errors);
+                    ImGui::TextUnformatted(buf);
+                } else {
+                    char buf[512];
+                    std::snprintf(buf, sizeof(buf), "%s %s",
+                                  SmatchetLocalization::T("agent.prefs.runNowFailed", "Last run failed:"),
+                                  triageStatus.lastError.c_str());
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.6f, 0.3f, 1.0f));
+                    ImGui::TextUnformatted(buf);
+                    ImGui::PopStyleColor();
+                }
+            }
+
+            // (Context doc) Per-user Markdown document prepended to every triage LLM
+            // system prompt. Lets the user inject project-specific context (style guide,
+            // release process, terminology) so the LLM produces proposals consistent
+            // with the codebase conventions.
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled(
+                "%s", SmatchetLocalization::T("agent.prefs.contextDocSection", "Agentic triage context document"));
+            ImGui::TextWrapped("%s", SmatchetLocalization::T("agent.prefs.contextDocHint",
+                                                             "Prepended to every triage LLM request. Stored at "
+                                                             "%LOCALAPPDATA%/Smatchet/agentic-context.md."));
+
+            // TU-static editor buffer. Loaded once on first tab-open and
+            // refreshed automatically when the Generate background worker
+            // signals via g_contextDocReloadRequested (see worker block below).
+            static std::string s_contextDocBuf;
+            static bool s_contextDocLoaded = false;
+            static std::string s_contextDocStatus;
+            if (!s_contextDocLoaded || g_contextDocReloadRequested.exchange(false, std::memory_order_acq_rel)) {
+                std::string readErr;
+                s_contextDocBuf.clear();
+                AgenticContextDoc::Read(s_contextDocBuf, readErr);
+                s_contextDocLoaded = true;
+                if (!readErr.empty()) {
+                    s_contextDocStatus = std::string("Read failed: ") + readErr;
+                } else if (!s_contextDocStatus.empty() && s_contextDocStatus.find("Generating") != std::string::npos) {
+                    // Worker triggered the reload — overwrite the "Generating…"
+                    // status with the completion line.
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf), "Generated + reloaded (%zu bytes).", s_contextDocBuf.size());
+                    s_contextDocStatus = buf;
+                }
+            }
+
+            // Resize buffer for InputTextMultiline — give 64 KB working room. The
+            // buffer's `.capacity()` is what ImGui writes into; after edits we trim
+            // back to the actual null-terminated length so saves don't include the
+            // trailing reserved zeros.
+            s_contextDocBuf.reserve(65536);
+            ImGui::InputTextMultiline("##agenticContextDoc", &s_contextDocBuf[0], s_contextDocBuf.capacity(),
+                                      ImVec2(-1, 200.0f), ImGuiInputTextFlags_AllowTabInput);
+            s_contextDocBuf.resize(std::strlen(s_contextDocBuf.c_str()));
+
+            if (ImGui::Button(SmatchetLocalization::T("agent.prefs.contextDocSave", "Save"))) {
+                std::string writeErr;
+                if (AgenticContextDoc::Write(s_contextDocBuf, writeErr)) {
+                    s_contextDocStatus = "Saved.";
+                    LOG_INFO("SmatchetPreferencesUi: context doc saved (%zu bytes)", s_contextDocBuf.size());
+                } else {
+                    s_contextDocStatus = std::string("Save failed: ") + writeErr;
+                    LOG_WARN("SmatchetPreferencesUi: context doc save failed: %s", writeErr.c_str());
+                }
+            }
+            ImGui::SameLine();
+            const bool haveProject = !d.cfg.AgenticPollQuery.empty();
+            if (!haveProject) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button(
+                    SmatchetLocalization::T("agent.prefs.contextDocGenerate", "Generate from current project"))) {
+                // Parse OWNER/REPO from AgenticPollQuery.
+                const std::string q = d.cfg.AgenticPollQuery;
+                const std::size_t slash = q.find('/');
+                if (slash == std::string::npos || slash + 1 >= q.size()) {
+                    s_contextDocStatus = "AgenticPollQuery is not OWNER/REPO.";
+                } else {
+                    const std::string owner = q.substr(0, slash);
+                    const std::string repo = q.substr(slash + 1);
+                    app.LaunchBackgroundTask([&app, owner, repo]() {
+                        // Resolve the agentic GitHub client; degraded path returns nullptr
+                        // when the PAT is empty.
+                        GitHubClient* gh = app.EnsureAgenticGithubClient();
+                        if (gh == nullptr) {
+                            LOG_WARN(
+                                "SmatchetPreferencesUi: context doc generate failed — no agentic GitHubClient (PAT "
+                                "empty?)");
+                            return;
+                        }
+                        std::string out;
+                        std::string genErr;
+                        // (Context-doc LLM analysis) Fetch raw docs THEN send
+                        // them to the configured LLM with a project-analysis
+                        // prompt. The LLM produces a structured feature map
+                        // (Purpose / Key features / Modules / Conventions /
+                        // Glossary / Entry points). Returns false but still
+                        // populates `out` with the raw concat as a fallback
+                        // when LLM analysis fails (no AI key, stream error,
+                        // etc.) — in that case we still write the fallback so
+                        // the user sees something in the editor.
+                        const bool analyzed =
+                            AgenticContextDoc::GenerateAndAnalyzeFromGitHubProject(owner, repo, *gh, out, genErr);
+                        if (!analyzed && out.empty()) {
+                            LOG_WARN("SmatchetPreferencesUi: context doc generate failed: %s", genErr.c_str());
+                            return;
+                        }
+                        if (!analyzed) {
+                            LOG_WARN("SmatchetPreferencesUi: context doc LLM analysis failed (%s) — writing raw "
+                                     "fallback (%zu bytes)",
+                                     genErr.c_str(), out.size());
+                        }
+                        std::string writeErr;
+                        if (!AgenticContextDoc::Write(out, writeErr)) {
+                            LOG_WARN("SmatchetPreferencesUi: context doc generated but write failed: %s",
+                                     writeErr.c_str());
+                            return;
+                        }
+                        LOG_INFO("SmatchetPreferencesUi: context doc generated + written (%zu bytes)", out.size());
+                        // (Context doc auto-reload) Signal the UI thread to
+                        // re-Read the freshly written file into the editor
+                        // buffer on the next frame. Atomic flip — Render
+                        // consumes via exchange() at the top of the section.
+                        g_contextDocReloadRequested.store(true, std::memory_order_release);
+                    });
+                    s_contextDocStatus = "Generating (background) — editor will reload automatically when ready.";
+                }
+            }
+            if (!haveProject) {
+                ImGui::EndDisabled();
+            }
+
+            if (!s_contextDocStatus.empty()) {
+                ImGui::TextDisabled("%s", s_contextDocStatus.c_str());
             }
 
             ImGui::Spacing();

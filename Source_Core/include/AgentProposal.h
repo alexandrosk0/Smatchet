@@ -42,6 +42,23 @@ struct AgentProposal {
     std::string rationale;
     nlohmann::json payload; // action-specific shape — see decision #3 of the plan.
 
+    // (Schema v3) Upstream-issue context captured at triage time. Populated
+    // by the triage controller from the same `FetchIssueBody` call that
+    // feeds the LLM, so the panel can render title + description without
+    // a second HTTP round-trip. May be empty when the issue body fetch
+    // failed or the upstream tracker doesn't expose a separate title field.
+    // `issueBody` is rendered as Markdown in the UI (md4c via
+    // MarkdownPreviewRender).
+    std::string issueTitle;
+    std::string issueBody;
+
+    // (Schema v4) JSON-serialised comment thread from the upstream tracker,
+    // captured at triage time. Shape mirrors the LLM user-message comments
+    // array: `[{"author": "...", "body": "...", "createdAtSec": N}, ...]`.
+    // Empty string when the issue has no comments. The panel renders this
+    // as Markdown-per-comment under a collapsible block.
+    std::string issueCommentsJson;
+
     // Lifecycle.
     AgentProposalState state = AgentProposalState::Pending;
     int64_t createdAtSec = 0;     // unix epoch, set on first insert.

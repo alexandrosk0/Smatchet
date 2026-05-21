@@ -23,48 +23,68 @@ namespace agentic {
 
 OpenPrRegistrar::OpenPrRegistrar(AgentProposalStore* store, std::string watchedBaseBranch)
     : store_(store), watchedBaseBranch_(std::move(watchedBaseBranch)) {
+    LOG_TRACE("OpenPrRegistrar::ctor enter store=%p watchedBaseBranch=%s", static_cast<void*>(store),
+              watchedBaseBranch_.c_str());
     if (watchedBaseBranch_.empty()) {
         // Defensive: never leave the branch empty — an empty `--base ""` arg
         // would broaden the listing to every open PR on the repo, which is
         // both noisier than intended and unsupported by phase-1's scope.
         watchedBaseBranch_ = "develop";
+        LOG_DEBUG("OpenPrRegistrar: empty branch defaulted to 'develop'");
     }
 }
 
 OpenPrRegistrar::~OpenPrRegistrar() = default;
 
-void OpenPrRegistrar::SetOpenPrLister(OpenPrLister lister) { lister_ = std::move(lister); }
+void OpenPrRegistrar::SetOpenPrLister(OpenPrLister lister) {
+    LOG_TRACE("OpenPrRegistrar::SetOpenPrLister enter wired=%d", static_cast<int>(static_cast<bool>(lister)));
+    lister_ = std::move(lister);
+}
 
 void OpenPrRegistrar::SetWatchedBaseBranch(const std::string& branch) {
+    LOG_TRACE("OpenPrRegistrar::SetWatchedBaseBranch enter branch=%s", branch.c_str());
     if (branch.empty()) {
         LOG_WARN("OpenPrRegistrar::SetWatchedBaseBranch: empty branch rejected, keeping '%s'",
                  watchedBaseBranch_.c_str());
         return;
     }
     watchedBaseBranch_ = branch;
+    LOG_DEBUG("OpenPrRegistrar: watched base branch set to '%s'", watchedBaseBranch_.c_str());
 }
 
-std::string OpenPrRegistrar::GetWatchedBaseBranch() const { return watchedBaseBranch_; }
+std::string OpenPrRegistrar::GetWatchedBaseBranch() const {
+    LOG_TRACE("OpenPrRegistrar::GetWatchedBaseBranch enter");
+    return watchedBaseBranch_;
+}
 
 int OpenPrRegistrar::Tick() {
+    LOG_TRACE("OpenPrRegistrar::Tick enter");
+    LOG_INFO("open-pr registrar tick begin base=%s", watchedBaseBranch_.c_str());
     if (store_ == nullptr) {
         LOG_WARN("OpenPrRegistrar::Tick: store_ is null — registrar disabled this iteration");
+        LOG_INFO("open-pr registrar tick end open_prs=%zu added=%d removed=%d", static_cast<size_t>(0), 0, 0);
         return 0;
     }
     if (!lister_) {
         LOG_DEBUG("OpenPrRegistrar::Tick: lister_ unwired — skipping iteration");
+        LOG_INFO("open-pr registrar tick end open_prs=%zu added=%d removed=%d", static_cast<size_t>(0), 0, 0);
         return 0;
     }
 
     std::vector<OpenPrListing> listings;
     std::string listErr;
+    LOG_DEBUG("gh pr list --base %s --state open", watchedBaseBranch_.c_str());
     if (!lister_(listings, listErr)) {
         LOG_WARN("OpenPrRegistrar::Tick: lister failed (base=%s): %s", watchedBaseBranch_.c_str(), listErr.c_str());
+        LOG_INFO("open-pr registrar tick end open_prs=%zu added=%d removed=%d", static_cast<size_t>(0), 0, 0);
         return 0;
     }
+    LOG_DEBUG("gh pr list returned %zu rows", listings.size());
 
     int upserted = 0;
     for (const auto& l : listings) {
+        LOG_TRACE("OpenPrRegistrar::Tick processing listing prNumber=%d url=%s headRefName=%s headSha=%s", l.number,
+                  l.url.c_str(), l.headRefName.c_str(), l.headSha.c_str());
         // Preserve cursor fields across re-upserts. The store's
         // SetOpenPrWatch uses `ON CONFLICT … DO UPDATE` so the cursor
         // columns are left untouched when the row already exists; we still
@@ -96,21 +116,23 @@ int OpenPrRegistrar::Tick() {
         ++upserted;
     }
 
-    LOG_INFO("OpenPrRegistrar::Tick: discovered %zu open PRs on base=%s, upserted %d rows",
-             listings.size(), watchedBaseBranch_.c_str(), upserted);
+    LOG_INFO("OpenPrRegistrar::Tick: discovered %zu open PRs on base=%s, upserted %d rows", listings.size(),
+             watchedBaseBranch_.c_str(), upserted);
+    LOG_INFO("open-pr registrar tick end open_prs=%zu added=%d removed=%d", listings.size(), upserted, 0);
     return upserted;
 }
 
 bool OpenPrRegistrar::RunGhPrList(const std::string& baseBranch, std::vector<OpenPrListing>& outListings,
                                   std::string& outError) {
+    LOG_TRACE("OpenPrRegistrar::RunGhPrList enter baseBranch=%s", baseBranch.c_str());
     outListings.clear();
     outError.clear();
 
     SubprocessCapture::CaptureOptions opts;
     opts.argv0 = "gh";
-    opts.args = {"pr", "list", "--base", baseBranch, "--state", "open", "--json",
-                 "number,headRefName,headRefOid,url"};
+    opts.args = {"pr", "list", "--base", baseBranch, "--state", "open", "--json", "number,headRefName,headRefOid,url"};
     opts.timeoutMs = 30000;
+    LOG_DEBUG("gh pr list --base %s --state open (timeoutMs=%d)", baseBranch.c_str(), opts.timeoutMs);
     // 4 MiB is well above what `gh pr list` returns even for hundreds of
     // open PRs — guards against a runaway response without truncating
     // legitimate use. stderr cap stays at the SubprocessCapture default.
@@ -136,11 +158,14 @@ bool OpenPrRegistrar::RunGhPrList(const std::string& baseBranch, std::vector<Ope
         return false;
     }
 
-    return ParseGhPrListOutput(result.stdoutText, outListings, outError);
+    const bool parsedOk = ParseGhPrListOutput(result.stdoutText, outListings, outError);
+    LOG_DEBUG("gh pr list returned %zu rows (parsedOk=%d)", outListings.size(), static_cast<int>(parsedOk));
+    return parsedOk;
 }
 
 bool OpenPrRegistrar::ParseGhPrListOutput(const std::string& json, std::vector<OpenPrListing>& outListings,
                                           std::string& outError) {
+    LOG_TRACE("OpenPrRegistrar::ParseGhPrListOutput enter jsonBytes=%zu", json.size());
     outListings.clear();
     outError.clear();
 

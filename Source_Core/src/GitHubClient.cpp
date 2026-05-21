@@ -523,6 +523,55 @@ bool GitHubClient::FetchIssueBody(const std::string& issueKey, std::string& outB
     return true;
 }
 
+bool GitHubClient::FetchIssueTitle(const std::string& issueKey, std::string& outTitle, std::string& outError) {
+    // Mirrors FetchIssueBody structure — separate request to keep the read
+    // surface uniform per (issueKey -> field) call. Could be folded into a
+    // single FetchIssueTitleAndBody if perf becomes a concern; for the
+    // current scheduled-poll cadence (>=60s) the extra round-trip per issue
+    // is negligible compared to the LLM call that follows.
+    outTitle.clear();
+    outError.clear();
+
+    if (pat_.empty()) {
+        outError = "GitHub PAT not configured (set cfg.GitHubPat).";
+        return false;
+    }
+
+    GitHubClientHelpers::ParsedIssueKey parsed;
+    std::string parseErr;
+    if (!GitHubClientHelpers::ParseGitHubIssueKey(issueKey, parsed, parseErr)) {
+        outError = parseErr;
+        return false;
+    }
+
+    const std::string suffix = GitHubClientHelpers::BuildIssueRootSuffix(parsed);
+    const std::string url = baseUrl_ + suffix;
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, MakeGitHubAuthHeaders(pat_), cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
+    if (r.status_code != 200) {
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchIssueTitle failed: %s", outError.c_str());
+        return false;
+    }
+
+    nlohmann::json obj;
+    try {
+        obj = nlohmann::json::parse(r.text);
+    } catch (const nlohmann::json::parse_error& e) {
+        outError = std::string("GitHub /issues/{n} response is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!obj.is_object()) {
+        outError = "GitHub /issues/{n} response is not a JSON object.";
+        return false;
+    }
+    if (obj.contains("title") && obj["title"].is_string()) {
+        outTitle = obj["title"].get<std::string>();
+    }
+    return true;
+}
+
 bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::string& repo,
                                          std::vector<std::string>& outKeys, std::string& outError,
                                          std::int64_t sinceUnixSec) {
@@ -585,6 +634,55 @@ bool GitHubClient::ListOpenIssuesForRepo(const std::string& owner, const std::st
             continue;
         outKeys.push_back(GitHubClientHelpers::FormatGitHubIssueKey(owner, repo, number));
     }
+    return true;
+}
+
+bool GitHubClient::FetchRawFile(const std::string& owner, const std::string& repo, const std::string& path,
+                                std::string& outContent, std::string& outError) {
+    outContent.clear();
+    outError.clear();
+
+    if (owner.empty() || repo.empty() || path.empty()) {
+        outError = "owner, repo, and path are required.";
+        return false;
+    }
+    // PAT may be empty for public repos — the raw endpoint is anonymously
+    // accessible on public-repo files. Keep going; auth header is attached
+    // only when the PAT is set so private repos work too.
+
+    // raw.githubusercontent.com is a separate host from api.github.com; it
+    // does not vary with the configured baseUrl (GitHub Enterprise raw goes
+    // to `<host>/raw/<owner>/<repo>/HEAD/<path>` — out of scope for this
+    // slice; the agentic flow targets public github.com today).
+    const std::string url = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/HEAD/" + path;
+
+    cpr::Header headers{
+        {"Accept", "text/plain, */*"},
+        {"User-Agent", "Smatchet/agentic-flow"},
+    };
+    if (!pat_.empty()) {
+        headers["Authorization"] = std::string("Bearer ") + pat_;
+    }
+
+    cpr::Response r = cpr::Get(cpr::Url{url}, headers, cpr::ConnectTimeout{kGitHubConnectTimeoutMs},
+                               cpr::Timeout{kGitHubOverallTimeoutMs});
+
+    if (r.status_code == 404) {
+        outError = "not found";
+        LOG_DEBUG("GitHubClient::FetchRawFile: %s/%s/HEAD/%s -> 404 not found", owner.c_str(), repo.c_str(),
+                  path.c_str());
+        return false;
+    }
+    if (r.status_code < 200 || r.status_code >= 300) {
+        const std::string suffix = std::string("/") + owner + "/" + repo + "/HEAD/" + path;
+        outError = ComposeHttpErrorString("GET", suffix, r.status_code, r.error.message, r.text);
+        LOG_WARN("GitHubClient::FetchRawFile failed: %s", outError.c_str());
+        return false;
+    }
+
+    outContent = r.text;
+    LOG_DEBUG("GitHubClient::FetchRawFile fetched %zu bytes from %s/%s/HEAD/%s", outContent.size(), owner.c_str(),
+              repo.c_str(), path.c_str());
     return true;
 }
 

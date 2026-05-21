@@ -86,10 +86,12 @@ std::string JoinPathLocal(const std::string& dir, const char* name) {
 // ─── Static helpers ────────────────────────────────────────────────────────
 
 std::string AgenticHandoffController::BuildShortSlug(const std::string& issueKey) {
+    LOG_TRACE("AgenticHandoffController::BuildShortSlug enter (issueKey=%s)", issueKey.c_str());
     // Plan decision #1: short-slug = first 32 chars of kebab-case(issueKey).
     // For H4 we use issueKey directly since `fetch-title-on-demand` is H7.
     std::string slug = KebabCase(issueKey);
     if (slug.size() > 32) {
+        LOG_DEBUG("BuildShortSlug: truncating slug from %zu to 32 chars (issueKey=%s)", slug.size(), issueKey.c_str());
         slug.resize(32);
         // After truncation we may end on a `-` — strip it for tidiness.
         while (!slug.empty() && slug.back() == '-') {
@@ -97,21 +99,31 @@ std::string AgenticHandoffController::BuildShortSlug(const std::string& issueKey
         }
     }
     if (slug.empty()) {
+        LOG_DEBUG("BuildShortSlug: empty slug after kebab-case, falling back to 'issue' (issueKey=%s)",
+                  issueKey.c_str());
         slug = "issue";
     }
+    LOG_TRACE("AgenticHandoffController::BuildShortSlug exit (slug=%s)", slug.c_str());
     return slug;
 }
 
 std::string AgenticHandoffController::BuildBranchName(std::int64_t proposalId, const std::string& issueKey) {
+    LOG_TRACE("AgenticHandoffController::BuildBranchName enter (proposalId=%lld issueKey=%s)",
+              static_cast<long long>(proposalId), issueKey.c_str());
     std::ostringstream os;
     os << "agent/" << proposalId << "/" << BuildShortSlug(issueKey);
-    return os.str();
+    const std::string out = os.str();
+    LOG_TRACE("AgenticHandoffController::BuildBranchName exit (branch=%s)", out.c_str());
+    return out;
 }
 
 std::string AgenticHandoffController::BuildWorktreeDir(std::int64_t proposalId) {
+    LOG_TRACE("AgenticHandoffController::BuildWorktreeDir enter (proposalId=%lld)", static_cast<long long>(proposalId));
     std::ostringstream os;
     os << ".claude/worktrees/agent-" << proposalId;
-    return os.str();
+    const std::string out = os.str();
+    LOG_TRACE("AgenticHandoffController::BuildWorktreeDir exit (dir=%s)", out.c_str());
+    return out;
 }
 
 // ─── H5 bot-filter + comment formatting helpers ─────────────────────────────
@@ -142,6 +154,8 @@ bool AgenticHandoffController::IsHandoffBotComment(const std::string& body) {
 
 std::string AgenticHandoffController::BuildClarificationCommentBody(std::int64_t proposalId,
                                                                     const std::string& question) {
+    LOG_TRACE("AgenticHandoffController::BuildClarificationCommentBody enter (proposalId=%lld questionBytes=%zu)",
+              static_cast<long long>(proposalId), question.size());
     std::ostringstream os;
     os << HandoffBotMarker() << "\n\n"
        << "**Agent question (proposal #" << proposalId << "):**\n\n"
@@ -151,6 +165,8 @@ std::string AgenticHandoffController::BuildClarificationCommentBody(std::int64_t
 }
 
 std::string AgenticHandoffController::BuildAnswerCommentBody(std::int64_t proposalId, const std::string& answer) {
+    LOG_TRACE("AgenticHandoffController::BuildAnswerCommentBody enter (proposalId=%lld answerBytes=%zu)",
+              static_cast<long long>(proposalId), answer.size());
     std::ostringstream os;
     os << HandoffBotMarker() << "\n\n"
        << "**User answered (proposal #" << proposalId << "):**\n\n"
@@ -167,23 +183,36 @@ AgenticHandoffController::AgenticHandoffController(WorkerDispatcher dispatcher, 
 
 AgenticHandoffController::~AgenticHandoffController() = default;
 
-void AgenticHandoffController::SetGitHubCommentPoster(GitHubCommentPoster poster) { githubPoster_ = std::move(poster); }
+void AgenticHandoffController::SetGitHubCommentPoster(GitHubCommentPoster poster) {
+    LOG_DEBUG("AgenticHandoffController::SetGitHubCommentPoster (wired=%d)",
+              static_cast<int>(static_cast<bool>(poster)));
+    githubPoster_ = std::move(poster);
+}
 
 void AgenticHandoffController::SetGitHubCommentFetcher(GitHubCommentFetcher fetcher) {
+    LOG_DEBUG("AgenticHandoffController::SetGitHubCommentFetcher (wired=%d)",
+              static_cast<int>(static_cast<bool>(fetcher)));
     githubFetcher_ = std::move(fetcher);
 }
 
 void AgenticHandoffController::SetGitHubClarificationEnabled(bool enabled) {
+    LOG_DEBUG("AgenticHandoffController::SetGitHubClarificationEnabled enabled=%d", static_cast<int>(enabled));
     githubClarificationEnabled_.store(enabled);
 }
 
-void AgenticHandoffController::SetToastSink(ToastSink sink) { toastSink_ = std::move(sink); }
+void AgenticHandoffController::SetToastSink(ToastSink sink) {
+    LOG_DEBUG("AgenticHandoffController::SetToastSink (wired=%d)", static_cast<int>(static_cast<bool>(sink)));
+    toastSink_ = std::move(sink);
+}
 
 // ─── Audit + transition core ──────────────────────────────────────────────
 
 void AgenticHandoffController::EmitAudit(const std::string& issueKey, CodingHarness::RunState fromState,
                                          CodingHarness::RunState toState, bool success, const std::string& errorMessage,
                                          const std::string& prUrl) {
+    LOG_TRACE("AgenticHandoffController::EmitAudit enter (issueKey=%s %s -> %s success=%d errBytes=%zu prUrlBytes=%zu)",
+              issueKey.c_str(), CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState),
+              static_cast<int>(success), errorMessage.size(), prUrl.size());
     nlohmann::json data = nlohmann::json::object();
     data["fromState"] = CodingHarness::RunStateToString(fromState);
     data["toState"] = CodingHarness::RunStateToString(toState);
@@ -193,21 +222,28 @@ void AgenticHandoffController::EmitAudit(const std::string& issueKey, CodingHarn
     if (!errorMessage.empty()) {
         data["errorMessage"] = errorMessage;
     }
+    LOG_DEBUG("AgenticHandoffController::EmitAudit dispatching audit row HandoffStateTransition (issueKey=%s)",
+              issueKey.c_str());
     auditSink_(std::string("HandoffStateTransition"), std::string("agentic"), issueKey, success, errorMessage, data);
 }
 
 bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, CodingHarness::RunState toState,
                                                     const std::string& errorMessage, const std::string& prUrl) {
+    LOG_TRACE("AgenticHandoffController::ControllerTransition enter (proposalId=%lld toState=%s errBytes=%zu "
+              "prUrlBytes=%zu)",
+              static_cast<long long>(proposalId), CodingHarness::RunStateToString(toState), errorMessage.size(),
+              prUrl.size());
     ActiveHandoff snap;
     bool ok = false;
     std::string issueKey;
-    CodingHarness::RunState fromState = CodingHarness::RunState::Pending;
+    CodingHarness::RunState fromState;
     {
         std::lock_guard<std::mutex> lk(handoffsMu_);
         auto it = handoffs_.find(proposalId);
         if (it == handoffs_.end()) {
             LOG_WARN("AgenticHandoffController::ControllerTransition: unknown proposalId=%lld",
                      static_cast<long long>(proposalId));
+            LOG_TRACE("AgenticHandoffController::ControllerTransition exit reason=unknown-proposalId");
             return false;
         }
         fromState = it->second.state;
@@ -220,13 +256,24 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
             LOG_WARN("AgenticHandoffController::ControllerTransition: disallowed %s -> %s for proposalId=%lld",
                      CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState),
                      static_cast<long long>(proposalId));
+            LOG_WARN("dropped transition %s -> %s (handoff %lld) — FSM integrity",
+                     CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState),
+                     static_cast<long long>(proposalId));
+            LOG_TRACE("AgenticHandoffController::ControllerTransition exit reason=fsm-disallowed");
             return false;
         }
+        LOG_DEBUG("ControllerTransition: applying FSM transition %s -> %s (proposalId=%lld)",
+                  CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState),
+                  static_cast<long long>(proposalId));
         it->second.state = toState;
         if (!errorMessage.empty()) {
+            LOG_DEBUG("ControllerTransition: stamping lastError on handoff (proposalId=%lld bytes=%zu)",
+                      static_cast<long long>(proposalId), errorMessage.size());
             it->second.lastError = errorMessage;
         }
         if (!prUrl.empty()) {
+            LOG_DEBUG("ControllerTransition: stamping prUrl on handoff (proposalId=%lld url=%s)",
+                      static_cast<long long>(proposalId), prUrl.c_str());
             it->second.prUrl = prUrl;
         }
         snap = it->second;
@@ -238,6 +285,12 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
         std::string lookupErr;
         if (proposalStore_->Find(proposalId, row, lookupErr)) {
             issueKey = row.issueKey;
+            LOG_TRACE("ControllerTransition: store lookup ok (proposalId=%lld issueKey=%s)",
+                      static_cast<long long>(proposalId), issueKey.c_str());
+        } else {
+            LOG_DEBUG("ControllerTransition: store lookup failed for proposalId=%lld (%s) — audit emits with empty "
+                      "issueKey",
+                      static_cast<long long>(proposalId), lookupErr.c_str());
         }
     }
 
@@ -249,6 +302,9 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
     // branch is a no-op for that case.
     std::string resolvedPrUrl = prUrl;
     if (toState == CodingHarness::RunState::PrOpen && resolvedPrUrl.empty()) {
+        LOG_DEBUG("ControllerTransition: PrOpen with no caller-supplied URL — resolving via PR_URL.txt "
+                  "(proposalId=%lld)",
+                  static_cast<long long>(proposalId));
         std::string worktree;
         {
             std::lock_guard<std::mutex> lk(handoffsMu_);
@@ -260,13 +316,17 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
         if (!worktree.empty()) {
             const std::string urlPath = JoinPathLocal(worktree, "PR_URL.txt");
             std::string body = ReadFileText(urlPath);
-            while (!body.empty() && (body.back() == '\n' || body.back() == '\r' || body.back() == ' ' ||
-                                      body.back() == '\t')) {
+            LOG_DEBUG("read PR_URL.txt from %s ok=%d bytes=%zu", urlPath.c_str(), static_cast<int>(!body.empty()),
+                      body.size());
+            while (!body.empty() &&
+                   (body.back() == '\n' || body.back() == '\r' || body.back() == ' ' || body.back() == '\t')) {
                 body.pop_back();
             }
             resolvedPrUrl = body;
         }
         if (!resolvedPrUrl.empty()) {
+            LOG_DEBUG("ControllerTransition: backfilling prUrl on in-memory record (proposalId=%lld url=%s)",
+                      static_cast<long long>(proposalId), resolvedPrUrl.c_str());
             // Backfill the in-memory record so the H8 UI panel reads the
             // URL on the next snapshot.
             std::lock_guard<std::mutex> lk(handoffsMu_);
@@ -274,6 +334,9 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
             if (it != handoffs_.end()) {
                 it->second.prUrl = resolvedPrUrl;
             }
+        } else {
+            LOG_DEBUG("ControllerTransition: PrOpen URL still empty after resolve (proposalId=%lld)",
+                      static_cast<long long>(proposalId));
         }
     }
 
@@ -287,6 +350,8 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
     const bool auditSuccess = (toState == CodingHarness::RunState::Complete);
     EmitAudit(issueKey, fromState, toState, auditSuccess, errorMessage, resolvedPrUrl);
 
+    LOG_INFO("handoff %lld state %s -> %s", static_cast<long long>(proposalId),
+             CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState));
     LOG_INFO("AgenticHandoffController: proposalId=%lld %s -> %s", static_cast<long long>(proposalId),
              CodingHarness::RunStateToString(fromState), CodingHarness::RunStateToString(toState));
     (void)snap;
@@ -296,7 +361,12 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
     // fired with no file + no URL) — the audit row still records the
     // transition for downstream queries.
     if (toState == CodingHarness::RunState::PrOpen && toastSink_ && !resolvedPrUrl.empty()) {
+        LOG_INFO("PR opened handoff=%lld url=%s", static_cast<long long>(proposalId), resolvedPrUrl.c_str());
         toastSink_(std::string("Agent PR opened: ") + resolvedPrUrl);
+    } else if (toState == CodingHarness::RunState::PrOpen) {
+        LOG_DEBUG("ControllerTransition: PrOpen toast skipped (proposalId=%lld toastWired=%d urlEmpty=%d)",
+                  static_cast<long long>(proposalId), static_cast<int>(static_cast<bool>(toastSink_)),
+                  static_cast<int>(resolvedPrUrl.empty()));
     }
 
     // (H5) AwaitingUser side-effect — read CLARIFICATION_NEEDED.json from the
@@ -304,6 +374,9 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
     // run AFTER audit so a poster-side failure does not roll back the FSM
     // transition; the worktree-file channel is canonical.
     if (toState == CodingHarness::RunState::AwaitingUser) {
+        LOG_DEBUG("ControllerTransition: AwaitingUser side-effect — stash + maybe-post clarification "
+                  "(proposalId=%lld)",
+                  static_cast<long long>(proposalId));
         ReadAndStashClarificationQuestion(proposalId);
         // Re-read the just-stashed question + issue key under the lock to
         // build the comment.
@@ -318,9 +391,18 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
             }
         }
         if (!question.empty() && !ikForPost.empty()) {
+            LOG_INFO("clarification round (new question) handoff=%lld bytes=%zu", static_cast<long long>(proposalId),
+                     question.size());
             PostClarificationToGitHub(ikForPost, proposalId, question);
+        } else {
+            LOG_DEBUG("ControllerTransition: AwaitingUser without postable question (proposalId=%lld qEmpty=%d "
+                      "issueKeyEmpty=%d)",
+                      static_cast<long long>(proposalId), static_cast<int>(question.empty()),
+                      static_cast<int>(ikForPost.empty()));
         }
     }
+    LOG_TRACE("AgenticHandoffController::ControllerTransition exit (proposalId=%lld ok=%d)",
+              static_cast<long long>(proposalId), static_cast<int>(ok));
     return ok;
 }
 
@@ -329,6 +411,8 @@ bool AgenticHandoffController::ControllerTransition(std::int64_t proposalId, Cod
 // ControllerTransition can use them — see top-of-file.)
 
 void AgenticHandoffController::ReadAndStashClarificationQuestion(std::int64_t proposalId) {
+    LOG_TRACE("AgenticHandoffController::ReadAndStashClarificationQuestion enter (proposalId=%lld)",
+              static_cast<long long>(proposalId));
     // Snapshot the worktree dir under the lock; the file read happens
     // outside so we never hold the mutex through I/O.
     std::string worktree;
@@ -336,15 +420,20 @@ void AgenticHandoffController::ReadAndStashClarificationQuestion(std::int64_t pr
         std::lock_guard<std::mutex> lk(handoffsMu_);
         auto it = handoffs_.find(proposalId);
         if (it == handoffs_.end()) {
+            LOG_TRACE("ReadAndStashClarificationQuestion exit reason=unknown-proposalId");
             return;
         }
         worktree = it->second.worktreeDir;
     }
     if (worktree.empty()) {
+        LOG_TRACE("ReadAndStashClarificationQuestion exit reason=empty-worktree (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
         return;
     }
     const std::string path = JoinPathLocal(worktree, "CLARIFICATION_NEEDED.json");
     const std::string body = ReadFileText(path);
+    LOG_DEBUG("read CLARIFICATION_NEEDED.json from %s ok=%d bytes=%zu", path.c_str(), static_cast<int>(!body.empty()),
+              body.size());
     if (body.empty()) {
         // No file (or unreadable) — runner emitted AwaitingUser without writing
         // the question file, or the file race-condition lost us. Leave the
@@ -373,9 +462,13 @@ void AgenticHandoffController::ReadAndStashClarificationQuestion(std::int64_t pr
         return;
     }
     const std::int64_t resolvedTs = ts != 0 ? ts : NowUnixSec();
+    LOG_DEBUG("ReadAndStashClarificationQuestion: stashing question (proposalId=%lld bytes=%zu ts=%lld)",
+              static_cast<long long>(proposalId), question.size(), static_cast<long long>(resolvedTs));
     std::lock_guard<std::mutex> lk(handoffsMu_);
     auto it = handoffs_.find(proposalId);
     if (it == handoffs_.end()) {
+        LOG_TRACE("ReadAndStashClarificationQuestion exit reason=proposal-vanished-after-IO (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
         return;
     }
     it->second.lastClarificationQuestion = question;
@@ -383,21 +476,29 @@ void AgenticHandoffController::ReadAndStashClarificationQuestion(std::int64_t pr
     // Reset the poll-cursor to "now" so the poll loop ignores any historical
     // comment posted before the runner flagged AwaitingUser.
     it->second.clarificationCommentCursorSec = NowUnixSec();
+    LOG_TRACE("ReadAndStashClarificationQuestion exit ok (proposalId=%lld)", static_cast<long long>(proposalId));
 }
 
 bool AgenticHandoffController::PostClarificationToGitHub(const std::string& issueKey, std::int64_t proposalId,
                                                          const std::string& question) {
+    LOG_TRACE("AgenticHandoffController::PostClarificationToGitHub enter (proposalId=%lld issueKey=%s "
+              "questionBytes=%zu)",
+              static_cast<long long>(proposalId), issueKey.c_str(), question.size());
     if (!githubClarificationEnabled_.load()) {
         LOG_INFO("AgenticHandoffController: GitHub clarification posting disabled (cfg) — proposalId=%lld",
                  static_cast<long long>(proposalId));
+        LOG_TRACE("PostClarificationToGitHub exit reason=disabled-by-cfg");
         return false;
     }
     if (!githubPoster_) {
         LOG_INFO("AgenticHandoffController: GitHub comment poster not wired — proposalId=%lld worktree-only",
                  static_cast<long long>(proposalId));
+        LOG_TRACE("PostClarificationToGitHub exit reason=poster-not-wired");
         return false;
     }
     const std::string body = BuildClarificationCommentBody(proposalId, question);
+    LOG_DEBUG("PostClarificationToGitHub: invoking poster (proposalId=%lld bodyBytes=%zu)",
+              static_cast<long long>(proposalId), body.size());
     std::string err;
     if (!githubPoster_(issueKey, body, err)) {
         LOG_WARN("AgenticHandoffController::PostClarificationToGitHub: %s (proposalId=%lld issue=%s)", err.c_str(),
@@ -411,13 +512,19 @@ bool AgenticHandoffController::PostClarificationToGitHub(const std::string& issu
 
 bool AgenticHandoffController::PostAnswerToGitHub(const std::string& issueKey, std::int64_t proposalId,
                                                   const std::string& answer) {
+    LOG_TRACE("AgenticHandoffController::PostAnswerToGitHub enter (proposalId=%lld issueKey=%s answerBytes=%zu)",
+              static_cast<long long>(proposalId), issueKey.c_str(), answer.size());
     if (!githubClarificationEnabled_.load()) {
+        LOG_TRACE("PostAnswerToGitHub exit reason=disabled-by-cfg");
         return false;
     }
     if (!githubPoster_) {
+        LOG_TRACE("PostAnswerToGitHub exit reason=poster-not-wired");
         return false;
     }
     const std::string body = BuildAnswerCommentBody(proposalId, answer);
+    LOG_DEBUG("PostAnswerToGitHub: invoking poster (proposalId=%lld bodyBytes=%zu)", static_cast<long long>(proposalId),
+              body.size());
     std::string err;
     if (!githubPoster_(issueKey, body, err)) {
         LOG_WARN("AgenticHandoffController::PostAnswerToGitHub: %s (proposalId=%lld issue=%s)", err.c_str(),
@@ -432,15 +539,22 @@ bool AgenticHandoffController::PostAnswerToGitHub(const std::string& issueKey, s
 // ─── Start / worker dispatch ──────────────────────────────────────────────
 
 bool AgenticHandoffController::Start(std::int64_t proposalId, ActiveHandoff& outHandoff, std::string& outError) {
+    LOG_TRACE("AgenticHandoffController::Start enter (proposalId=%lld)", static_cast<long long>(proposalId));
     outHandoff = ActiveHandoff();
     outError.clear();
 
     if (runner_ == nullptr) {
         outError = "no runner configured";
+        LOG_ERROR("AgenticHandoffController::Start: no runner configured (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
+        LOG_TRACE("AgenticHandoffController::Start exit reason=no-runner");
         return false;
     }
     if (proposalStore_ == nullptr) {
         outError = "no proposal store configured";
+        LOG_ERROR("AgenticHandoffController::Start: no proposal store configured (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
+        LOG_TRACE("AgenticHandoffController::Start exit reason=no-store");
         return false;
     }
 
@@ -449,10 +563,18 @@ bool AgenticHandoffController::Start(std::int64_t proposalId, ActiveHandoff& out
     std::string lookupErr;
     if (!proposalStore_->Find(proposalId, row, lookupErr)) {
         outError = "proposal lookup failed: " + lookupErr;
+        LOG_WARN("AgenticHandoffController::Start: proposal lookup failed (%s) for proposalId=%lld", lookupErr.c_str(),
+                 static_cast<long long>(proposalId));
+        LOG_TRACE("AgenticHandoffController::Start exit reason=lookup-failed");
         return false;
     }
+    LOG_DEBUG("Start: proposal lookup ok (proposalId=%lld issueKey=%s sourceTracker=%s)",
+              static_cast<long long>(proposalId), row.issueKey.c_str(), row.sourceTracker.c_str());
     if (row.action != AgenticInferenceClientPure::ProposedAction::ImplementIssue) {
         outError = "proposal action is not ImplementIssue (triage-only)";
+        LOG_WARN("AgenticHandoffController::Start: refusing non-ImplementIssue action (proposalId=%lld)",
+                 static_cast<long long>(proposalId));
+        LOG_TRACE("AgenticHandoffController::Start exit reason=not-implement-issue");
         return false;
     }
 
@@ -462,6 +584,9 @@ bool AgenticHandoffController::Start(std::int64_t proposalId, ActiveHandoff& out
         auto it = handoffs_.find(proposalId);
         if (it != handoffs_.end() && !CodingHarness::IsTerminal(it->second.state)) {
             outError = "handoff already in flight for this proposal";
+            LOG_WARN("AgenticHandoffController::Start: duplicate in-flight start refused (proposalId=%lld state=%s)",
+                     static_cast<long long>(proposalId), CodingHarness::RunStateToString(it->second.state));
+            LOG_TRACE("AgenticHandoffController::Start exit reason=already-in-flight");
             return false;
         }
 
@@ -474,13 +599,21 @@ bool AgenticHandoffController::Start(std::int64_t proposalId, ActiveHandoff& out
         h.state = CodingHarness::RunState::Pending;
         h.startedAtSec = NowUnixSec();
         h.cancelToken = std::make_shared<std::atomic<bool>>(false);
+        LOG_DEBUG("SQL/insert agent_handoffs (in-memory) id=%lld state=%s branch=%s worktree=%s",
+                  static_cast<long long>(proposalId), CodingHarness::RunStateToString(h.state), h.branchName.c_str(),
+                  h.worktreeDir.c_str());
         handoffs_[proposalId] = h;
         outHandoff = h;
     }
 
     // 4. Transition Pending -> Spawning (audit).
+    LOG_DEBUG("Start: invoking initial Pending->Spawning transition (proposalId=%lld)",
+              static_cast<long long>(proposalId));
     if (!ControllerTransition(proposalId, CodingHarness::RunState::Spawning, std::string(), std::string())) {
         outError = "initial Pending->Spawning transition rejected (internal FSM error)";
+        LOG_ERROR("AgenticHandoffController::Start: initial transition rejected (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
+        LOG_TRACE("AgenticHandoffController::Start exit reason=initial-transition-rejected");
         return false;
     }
     {
@@ -494,26 +627,37 @@ bool AgenticHandoffController::Start(std::int64_t proposalId, ActiveHandoff& out
     // 5. Dispatch the worker. Tests pass an empty dispatcher and drive the
     // worker through RunSpawnSynchronouslyForTests instead.
     if (dispatcher_) {
+        LOG_INFO("spawn handoff proposalId=%lld branch=%s worktree=%s", static_cast<long long>(proposalId),
+                 outHandoff.branchName.c_str(), outHandoff.worktreeDir.c_str());
         std::int64_t pid = proposalId;
         dispatcher_([this, pid]() { this->RunHandoffWorker(pid); });
+    } else {
+        LOG_DEBUG("Start: no dispatcher wired — caller expected to drive worker synchronously (proposalId=%lld)",
+                  static_cast<long long>(proposalId));
     }
+    LOG_TRACE("AgenticHandoffController::Start exit ok (proposalId=%lld)", static_cast<long long>(proposalId));
     return true;
 }
 
 bool AgenticHandoffController::RunSpawnSynchronouslyForTests(std::int64_t proposalId, std::string& outError) {
+    LOG_TRACE("AgenticHandoffController::RunSpawnSynchronouslyForTests enter (proposalId=%lld)",
+              static_cast<long long>(proposalId));
     outError.clear();
     {
         std::lock_guard<std::mutex> lk(handoffsMu_);
         if (handoffs_.find(proposalId) == handoffs_.end()) {
             outError = "no handoff for proposalId";
+            LOG_TRACE("RunSpawnSynchronouslyForTests exit reason=no-handoff");
             return false;
         }
     }
     RunHandoffWorker(proposalId);
+    LOG_TRACE("RunSpawnSynchronouslyForTests exit ok (proposalId=%lld)", static_cast<long long>(proposalId));
     return true;
 }
 
 void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
+    LOG_TRACE("AgenticHandoffController::RunHandoffWorker enter (proposalId=%lld)", static_cast<long long>(proposalId));
     // Snapshot what the worker needs so we can drop the mutex before the
     // long-running Spawn() call.
     ActiveHandoff snap;
@@ -523,10 +667,14 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
         if (it == handoffs_.end()) {
             LOG_WARN("AgenticHandoffController::RunHandoffWorker: proposalId=%lld vanished before spawn",
                      static_cast<long long>(proposalId));
+            LOG_TRACE("RunHandoffWorker exit reason=vanished-before-spawn");
             return;
         }
         snap = it->second;
     }
+    LOG_DEBUG("RunHandoffWorker: snapshotted (proposalId=%lld branch=%s worktree=%s state=%s)",
+              static_cast<long long>(proposalId), snap.branchName.c_str(), snap.worktreeDir.c_str(),
+              CodingHarness::RunStateToString(snap.state));
 
     // Look up the originating proposal to populate the seed. If the row
     // vanished after Start succeeded (deletion under us), surface a Failed
@@ -534,8 +682,11 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
     AgentProposal row;
     std::string lookupErr;
     if (proposalStore_ == nullptr || !proposalStore_->Find(proposalId, row, lookupErr)) {
+        LOG_ERROR("RunHandoffWorker: proposal vanished mid-flight (proposalId=%lld err=%s)",
+                  static_cast<long long>(proposalId), lookupErr.c_str());
         ControllerTransition(proposalId, CodingHarness::RunState::Failed, "proposal vanished mid-flight: " + lookupErr,
                              std::string());
+        LOG_TRACE("RunHandoffWorker exit reason=proposal-vanished");
         return;
     }
 
@@ -554,6 +705,9 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
     seed.targetBranch = snap.branchName;
     seed.workingDirectory = snap.worktreeDir;
     seed.timestampUnixSec = NowUnixSec();
+    LOG_DEBUG("RunHandoffWorker: seed assembled (proposalId=%lld issueKey=%s targetBranch=%s wd=%s bodyBytes=%zu)",
+              static_cast<long long>(proposalId), seed.issueKey.c_str(), seed.targetBranch.c_str(),
+              seed.workingDirectory.c_str(), seed.issueBodyMarkdown.size());
 
     // 6. Spawn the runner. State-change callback funnels into the FSM-checked
     // controller transition. The runner emits canonical state strings — any
@@ -572,6 +726,8 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
         (void)ev;
     };
     CodingHarness::IRunner::StateChangeCallback onStateChange = [this, proposalId](const std::string& newState) {
+        LOG_TRACE("AgenticHandoffController::onStateChange (proposalId=%lld newState=%s)",
+                  static_cast<long long>(proposalId), newState.c_str());
         CodingHarness::RunState ts;
         if (!CodingHarness::ParseRunState(newState, ts)) {
             LOG_WARN("AgenticHandoffController: runner emitted unknown state '%s' for proposalId=%lld",
@@ -585,31 +741,49 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
         // belt-and-braces final transition from being rejected as a
         // duplicate.
         if (CodingHarness::IsTerminal(ts)) {
+            LOG_DEBUG("onStateChange: dropping runner-emitted terminal state '%s' — controller owns final transition "
+                      "(proposalId=%lld)",
+                      newState.c_str(), static_cast<long long>(proposalId));
             return;
         }
         this->ControllerTransition(proposalId, ts, std::string(), std::string());
     };
 
+    LOG_INFO("RunHandoffWorker: invoking runner Spawn (proposalId=%lld worktree=%s branch=%s)",
+             static_cast<long long>(proposalId), snap.worktreeDir.c_str(), snap.branchName.c_str());
     CodingHarness::RunResult result;
     std::string spawnErr;
     const bool spawnOk = runner_->Spawn(seed, snap.worktreeDir, std::move(onDelta), std::move(onStateChange),
                                         snap.cancelToken, result, spawnErr);
+    LOG_DEBUG("RunHandoffWorker: runner Spawn returned (proposalId=%lld spawnOk=%d result.ok=%d errBytes=%zu "
+              "prUrlBytes=%zu)",
+              static_cast<long long>(proposalId), static_cast<int>(spawnOk), static_cast<int>(result.ok),
+              result.errorMessage.size(), result.prUrl.size());
 
     // 7. Final FSM transition based on RunResult.
     if (snap.cancelToken && snap.cancelToken->load()) {
         // Cancel atom flipped — record Cancelled even if the runner already
         // self-reported. The FSM rejects no-op transitions on a terminal
         // state so a duplicate Cancelled is silently dropped.
+        LOG_INFO("cancel handoff proposalId=%lld (cancel-token observed after Spawn)",
+                 static_cast<long long>(proposalId));
         ControllerTransition(proposalId, CodingHarness::RunState::Cancelled, "cancelled by operator", result.prUrl);
+        LOG_TRACE("RunHandoffWorker exit reason=cancelled");
         return;
     }
     if (!spawnOk || !result.ok) {
         const std::string err = result.errorMessage.empty() ? spawnErr : result.errorMessage;
+        LOG_ERROR("RunHandoffWorker: spawn failed (proposalId=%lld spawnOk=%d resultOk=%d err=%s)",
+                  static_cast<long long>(proposalId), static_cast<int>(spawnOk), static_cast<int>(result.ok),
+                  err.c_str());
         // The runner may already have emitted Failed via the state callback
         // — if so this is a no-op transition (terminal -> terminal rejected).
         ControllerTransition(proposalId, CodingHarness::RunState::Failed, err, result.prUrl);
+        LOG_TRACE("RunHandoffWorker exit reason=failed");
         return;
     }
+    LOG_DEBUG("RunHandoffWorker: success path — transitioning to Complete (proposalId=%lld prUrl=%s)",
+              static_cast<long long>(proposalId), result.prUrl.c_str());
     // The runner reports PrOpen via its state callback (sentinel-file poll OR
     // the H6 fallback path's explicit emit). The controller-side PrOpen handler
     // resolves the URL from PR_URL.txt for the audit + toast emission, so by
@@ -619,6 +793,7 @@ void AgenticHandoffController::RunHandoffWorker(std::int64_t proposalId) {
     // for the URL-carrying success path or stay in Running for the rare
     // never-emitted-PrOpen case (which surfaces Failed below).
     ControllerTransition(proposalId, CodingHarness::RunState::Complete, std::string(), result.prUrl);
+    LOG_TRACE("RunHandoffWorker exit ok (proposalId=%lld)", static_cast<long long>(proposalId));
 }
 
 // ─── Clarification + cancel ──────────────────────────────────────────────
@@ -820,7 +995,7 @@ std::vector<AgenticHandoffController::ActiveHandoff> AgenticHandoffController::S
 }
 
 bool AgenticHandoffController::MarkHandoffIteration(std::int64_t proposalId, std::int64_t newCursorSec,
-                                                   std::string& outError) {
+                                                    std::string& outError) {
     std::lock_guard<std::mutex> lk(handoffsMu_);
     auto it = handoffs_.find(proposalId);
     if (it == handoffs_.end()) {
@@ -846,8 +1021,7 @@ bool AgenticHandoffController::MarkHandoffIteration(std::int64_t proposalId, std
     }
     const std::int64_t curSec = it->second.prCommentCursorSec;
     const std::string& curId = it->second.prCommentCursorIdStr;
-    const bool advance =
-        (newCursorSec > curSec) || (newCursorSec == curSec && newCursorIdStr > curId);
+    const bool advance = (newCursorSec > curSec) || (newCursorSec == curSec && newCursorIdStr > curId);
     if (advance) {
         it->second.prCommentCursorSec = newCursorSec;
         it->second.prCommentCursorIdStr = newCursorIdStr;
@@ -864,7 +1038,7 @@ bool AgenticHandoffController::MarkHandoffBudgetExhausted(std::int64_t proposalI
     // pre-transition value — we use it to decide whether the FSM call is
     // even legal.
     bool alreadyExhausted = false;
-    CodingHarness::RunState fromState = CodingHarness::RunState::Pending;
+    CodingHarness::RunState fromState;
     {
         std::lock_guard<std::mutex> lk(handoffsMu_);
         auto it = handoffs_.find(proposalId);
@@ -887,8 +1061,7 @@ bool AgenticHandoffController::MarkHandoffBudgetExhausted(std::int64_t proposalI
         return true;
     }
     std::ostringstream oss;
-    oss << "PR-iteration budget exhausted (" << iterationBudget
-        << " respawns). Operator must intervene to continue.";
+    oss << "PR-iteration budget exhausted (" << iterationBudget << " respawns). Operator must intervene to continue.";
     return ControllerTransition(proposalId, CodingHarness::RunState::Failed, oss.str(), std::string());
 }
 
