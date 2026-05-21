@@ -108,4 +108,11 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
     // Unrecognised suffix.
     CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00X", err) == 0);
     CHECK_FALSE(err.empty());
+    // Per CodeRabbit nitpick on PR #358 — out-of-range offsets rejected (max real-world is +14:00).
+    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+53:99", err) == 0);
+    CHECK(err.find("out of range") != std::string::npos);
+    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+15:00", err) == 0);
+    CHECK(err.find("out of range") != std::string::npos);
+    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+14:01", err) == 0);
+    CHECK(err.find("out of range") != std::string::npos);
 }

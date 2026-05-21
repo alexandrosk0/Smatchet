@@ -188,6 +188,12 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
             outError = "unrecognised timezone offset: '" + suffix + "' in " + iso8601;
             return 0;
         }
+        // Bounds-check the parsed offset per CodeRabbit nitpick on PR #358 — `%d:%d` accepts
+        // arbitrary integers (e.g. `+53:99`). Max real-world offset is `+14:00` (Pacific/Kiritimati).
+        if (offH < 0 || offH > 14 || offM < 0 || offM > 59 || (offH == 14 && offM != 0)) {
+            outError = "timezone offset out of range (expected ±00:00 to ±14:00): '" + suffix + "' in " + iso8601;
+            return 0;
+        }
         offsetSec = sign * (static_cast<std::int64_t>(offH) * 3600 + static_cast<std::int64_t>(offM) * 60);
     } else {
         outError = "ISO-8601 timestamp missing timezone suffix (need 'Z' or '\xC2\xB1HH:MM'): " + iso8601;
