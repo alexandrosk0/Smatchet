@@ -7,7 +7,9 @@ Smatchet today renders code (fenced markdown blocks, blame source lines, callsta
 1. **C/C++ only** via `CppSyntaxHighlight.h` (`DrawColoredCppLine` / `DrawColoredCppText`) — a hand-written tokenizer with keyword / string / comment / number / preprocessor coloring driven by `SmatchetTheme::GetSyntaxColors()`.
 2. **Everything else** via `ImGui::TextUnformatted` with a flat orange tint `(0.95, 0.85, 0.6, 1.0)` — Python, Lua, JSON, bash, SQL, HLSL/GLSL all look identical to the user despite the markdown fence tagging them differently.
 
-The vendored `Source_Core/ThirdParty/ImGuiColorTextEdit` library already ships full `LanguageDefinition` tokenizers for **C++ / C / Lua / Python / GLSL / HLSL / SQL / AngelScript** (and a hand-rollable `MarkdownLanguageDefinition` we already wire for the editor surface). It's currently only used for *editing* (ticket field long-text editor); the read-only viewing path leaves all that work on the floor.
+The vendored `Source_Core/ThirdParty/ImGuiColorTextEdit` library ships `LanguageDefinition` factories for **CPlusPlus / C / Lua / GLSL / HLSL / SQL / AngelScript / Markdown** (audit per `Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.h:148-159`). **Python is NOT vendored** — its keywords / operators / string-form list have to be hand-rolled the same way `Markdown` was added (factory at `TextEditor.cpp:3630`). The editor surface uses these LDs today (`TicketFieldEditor.cpp:1495` wires Markdown into the long-text editor); the read-only viewing path leaves the rest on the floor.
+
+The LDs do NOT expose a public `Tokenize()` method — `TextEditor::Colorize` (the internal tokenizer) is `private:` (`TextEditor.h:256/296`). What an LD does expose: `TokenRegexStrings mTokenRegexStrings` (vector of `std::pair<regex_string, PaletteIndex>`), `mIdentifiers` + `mPreprocIdentifiers` (string→Identifier maps), `mCommentStart` / `mCommentEnd` / `mSingleLineComment` (string literals), `mCaseSensitive` (bool). Slice 1's wrapper builds a small tokenizer on top of these tables — walks the input left-to-right, applies single-line + block-comment shortcuts first, then tries each regex against the remaining input, picks the longest match, looks up identifiers in `mIdentifiers` for the `Identifier` palette slot. This is the same shape `TextEditor::Colorize` uses internally — duplicated here because the internal path is editor-coupled (line buffers, cursor state).
 
 User ask, expanded:
 - **Coloring for viewing** — wherever code is *displayed* (not edited), it should be syntax-coloured per its language tag, not just C++.
@@ -19,22 +21,45 @@ This plan is **sliceable** — each slice ships independently + verifies on its 
 
 | File | Change |
 |---|---|
-| [Source_Core/include/CodeColorView.h](../../Source_Core/include/CodeColorView.h) **(new)** | Public API: `enum class CodeLang { Plain, CPlusPlus, C, Python, Lua, Glsl, Hlsl, Sql, Json, Bash, Markdown };` + `CodeLang CodeLangFromTag(const std::string& tag);` + `void DrawColoredCode(const char* utf8, CodeLang lang);` + `void DrawColoredCodeBlock(const char* utf8, CodeLang lang, const std::string& langTagOrigin = "");` (origin string drives the slice-4 tooltip). |
-| [Source_Core/src/CodeColorView.cpp](../../Source_Core/src/CodeColorView.cpp) **(new)** | Implementation. Tag→enum table (case-insensitive, alias-rich per slice 1 below). For `CPlusPlus` / `C` routes to existing `DrawColoredCppText` (zero behaviour change for the cpp path). For every other non-`Plain` lang, calls into a small wrapper over `TextEditor::LanguageDefinition::<X>()` that tokenizes the text + emits `ImGui::Text` per token coloured from `SmatchetTheme::GetSyntaxColors()`. `Plain` falls through to `ImGui::TextUnformatted` with the existing flat-orange tint. |
+| [Source_Core/include/CodeColorView.h](../../Source_Core/include/CodeColorView.h) **(new)** | Public API: `enum class CodeLang { Plain, CPlusPlus, C, Lua, Glsl, Hlsl, Sql, AngelScript, Markdown, Json, Bash, Python };` + `CodeLang CodeLangFromTag(const std::string& tag);` + `void DrawColoredCode(const char* utf8, CodeLang lang);` + `void DrawColoredCodeBlock(const char* utf8, CodeLang lang, const std::string& langTagOrigin = "");` (origin string drives the slice-4 tooltip). Enum order matches the LD-availability tier: vendored-first (CPlusPlus…Markdown), then hand-rolled (Json, Bash, Python) — see § Tokenizer wrapper + hand-rolled LDs below. |
+| [Source_Core/src/CodeColorView.cpp](../../Source_Core/src/CodeColorView.cpp) **(new)** | Implementation. Tag→enum table (case-insensitive, alias-rich per slice 1 below). For `CPlusPlus` / `C` routes to existing `DrawColoredCppText` (zero behaviour change for the cpp path). For every other vendored LD (`Lua`, `Glsl`, `Hlsl`, `Sql`, `AngelScript`, `Markdown`), runs the LD-walking tokenizer (§ Tokenizer wrapper) over the input + emits `ImGui::Text` per token coloured from a `PaletteIndex`→`SmatchetThemeSyntaxColors` field map. For `Json` / `Bash` / `Python` — hand-rolled minimal LDs constructed in `CodeColorView.cpp` (same shape as `TextEditor::LanguageDefinition::Markdown()` at `TextEditor.cpp:3630`). `Plain` falls through to `ImGui::TextUnformatted` with the existing flat-orange tint. |
 | [Source_Core/src/MarkdownPreviewRender.cpp:847-889](../../Source_Core/src/MarkdownPreviewRender.cpp) | Replace the `isCpp ? DrawColoredCppText : flat-orange-TextUnformatted` branch with `CodeColorView::DrawColoredCodeBlock(b.codeBuffer.c_str(), CodeColorView::CodeLangFromTag(b.codeLang), b.codeLang)`. Code-block layout (Copy button, child window, BG color) unchanged. |
 | [Source_Core/include/MarkdownPreviewRender.h:146-155](../../Source_Core/include/MarkdownPreviewRender.h) | `IsCppLikeLangTag` becomes a thin wrapper over `CodeColorView::CodeLangFromTag(lang) == CodeLang::CPlusPlus || == CodeLang::C` so existing test coverage continues to apply. |
 | [Source_Core/src/BlameAnalysisUi_Window.cpp:317,689](../../Source_Core/src/BlameAnalysisUi_Window.cpp) | `DrawColoredCppText` / `DrawColoredCppLine` calls stay (they're explicitly C++-context); but **new** lang-from-file-extension helper used when the blame target isn't `.cpp`/`.h` (e.g. `.lua`, `.py`). Slice 5. |
 | [Source_Core/src/SmatchetFieldRender.cpp:42-56](../../Source_Core/src/SmatchetFieldRender.cpp) | Same — tooltip path swaps from `DrawColoredCppText` to `CodeColorView::DrawColoredCode(tipSource, CodeColorView::CodeLangFromTag(detectedLang))` once the helper supports field-content lang detection. Slice 5. |
 | [Source_Core/include/SmatchetTheme.h:7-13](../../Source_Core/include/SmatchetTheme.h) | `SmatchetThemeSyntaxColors` stays as-is — the 5-token palette (Keyword/String/Comment/Number/Preprocessor) maps cleanly onto every `LanguageDefinition`'s `PaletteIndex` (no new tokens needed for slice 1-3). |
-| [tests/Source_Core/CodeColorViewLang.test.cpp](../../tests/Source_Core/CodeColorViewLang.test.cpp) **(new)** | doctest pinning `CodeLangFromTag` for every alias (cpp/c++/cxx/cc/c/hpp/h → CPlusPlus; py/python → Python; lua → Lua; glsl → Glsl; hlsl → Hlsl; sql → Sql; json → Json; bash/sh/zsh → Bash; md/markdown → Markdown; "" / "txt" / unknown → Plain). Pure-logic; no ImGui dependency required for tag mapping. |
+| [tests/Source_Core/CodeColorViewLang.test.cpp](../../tests/Source_Core/CodeColorViewLang.test.cpp) **(new)** | doctest pinning `CodeLangFromTag` for every alias listed in slice 1 step 2 + one round-trip per hand-rolled LD (Python / Bash / Json) asserting the palette-index histogram. Pure-logic for the alias map; the LD-tokenizer tests pull `TextEditor.cpp`'s LD factories at link time but no ImGui context is needed (the tokenizer outputs Token vectors, ImGui calls live in the render layer). |
 | [tests/CMakeLists.txt](../../tests/CMakeLists.txt) | Register new test TU. |
 
 ## Existing utilities to reuse
 
 - `SmatchetTheme::GetSyntaxColors()` — per-theme palette, already populated for all 7 themes.
 - `DrawColoredCppText` / `DrawColoredCppLine` — unchanged; `CodeColorView` routes through it for the C++ branch so no behaviour change on that path.
-- `TextEditor::LanguageDefinition::CPlusPlus()` / `Lua()` / `Python()` / etc. — vendored static factories with regex-based token classifiers.
+- `TextEditor::LanguageDefinition::{CPlusPlus, C, Lua, Glsl, Hlsl, Sql, AngelScript, Markdown}()` — vendored static factories at `TextEditor.h:148-159`. **`Python()` is NOT vendored** — hand-rolled below.
 - `MarkdownPreviewRender::IsCppLikeLangTag` — kept as a thin delegate so its 8-alias coverage stays asserted by the existing test rig.
+
+## Tokenizer wrapper
+
+`TextEditor::LanguageDefinition` exposes only descriptive tables, not a public `Tokenize()` method. The shape we read off the LD:
+
+- `TokenRegexStrings mTokenRegexStrings` — `vector<pair<regex_string, PaletteIndex>>`.
+- `mIdentifiers`, `mPreprocIdentifiers` — `unordered_map<string, Identifier>` for keyword + preproc lookup.
+- `mCommentStart`, `mCommentEnd`, `mSingleLineComment` — block + line comment delimiters.
+- `mCaseSensitive` — affects identifier lookup.
+
+Slice 1 ships `CodeColorView::TokenizeWithLd(const std::string& src, const TextEditor::LanguageDefinition& ld, std::vector<Token>& outTokens)`. Single-pass left-to-right scan: (a) emit any leading whitespace as a `Whitespace` palette token (no colour, preserves layout); (b) if `mSingleLineComment` matches → consume to end-of-line as `Comment`; (c) if `mCommentStart` matches → consume to `mCommentEnd` as `MultiLineComment`; (d) try each regex in `mTokenRegexStrings`, pick the longest match, emit with its `PaletteIndex`; (e) for `Identifier` palette index, also look up in `mIdentifiers` and re-tag to `KnownIdentifier` if found (matches `TextEditor::Colorize` behaviour). When no regex matches the leading char, advance one char as `Default` (defensive — should not happen on well-formed input). Output is cached per `(content_hash, lang_enum, theme_revision)`; cache shape mirrors the existing `s_messageHeightCache` in `SmatchetAiAssistantUi.cpp`.
+
+The cache key + cap (256 KiB max input, 256-entry FIFO eviction) keep this within Pillar 2 budget. The tokenizer itself is bounded by `mTokenRegexStrings.size()` (~10-20 per LD) and input length (capped). No I/O.
+
+## Hand-rolled LDs (Python / Bash / Json)
+
+These don't ship in `TextEditor.cpp`; slice 1 adds them to `CodeColorView.cpp` as file-local `static const TextEditor::LanguageDefinition&` factory functions, same pattern as the vendored `Markdown()` factory at `TextEditor.cpp:3630`. Scope per language:
+
+- **`Python`** — 35 reserved words (`def`, `class`, `if`, `elif`, `else`, `for`, `while`, `return`, `import`, `from`, `as`, `with`, `try`, `except`, `finally`, `raise`, `yield`, `lambda`, `pass`, `break`, `continue`, `global`, `nonlocal`, `async`, `await`, `True`, `False`, `None`, `and`, `or`, `not`, `is`, `in`, `del`, `assert`); 30 builtins (`print`, `len`, `range`, `list`, `dict`, `set`, `tuple`, `int`, `str`, `float`, `bool`, `type`, `isinstance`, `enumerate`, `zip`, `map`, `filter`, `sorted`, `reversed`, `min`, `max`, `sum`, `any`, `all`, `open`, `super`, `iter`, `next`, `repr`, `hash`); regex for `#`-line-comments, `'''...'''` / `"""..."""` triple-string blocks, `'...'` / `"..."` single-line strings, integer + float literals, identifiers. Decorators (`@foo`) tagged as `Preprocessor`.
+- **`Bash`** — 25 reserved words (`if`, `then`, `else`, `elif`, `fi`, `case`, `esac`, `for`, `while`, `until`, `do`, `done`, `function`, `select`, `return`, `break`, `continue`, `in`, `time`); 20 common builtins (`echo`, `cd`, `pwd`, `export`, `source`, `alias`, `unalias`, `local`, `readonly`, `declare`, `unset`, `read`, `set`, `shift`, `trap`, `exec`, `eval`, `exit`, `wait`, `test`); regex for `#`-line-comments, `'...'` / `"..."` strings, `$VAR` / `${VAR}` variable refs (tag `Preprocessor`), integer literals.
+- **`Json`** — only 3 keywords (`true`, `false`, `null`); regex for `"..."` strings, integer + float literals, structural punctuation (`{` `}` `[` `]` `:` `,`) as `Punctuation` palette. No comments (strict JSON forbids them; JSONC is a separate ask, out of scope).
+
+These three add ~150 LoC total to `CodeColorView.cpp` (50 each, mostly keyword arrays). Slice 1 doctest covers the alias mapping + at least one round-trip per hand-rolled LD ("input → token stream → palette-index histogram").
 
 ## Pillar callouts
 
@@ -92,10 +117,23 @@ Each slice ships as its own PR, independently mergeable. Author one at a time; o
 ### Slice 1 — `CodeColorView` substrate (no consumer changes)
 
 1. `Source_Core/include/CodeColorView.h` + `.cpp` per the file table.
-2. `CodeLangFromTag` covers cpp / c++ / cxx / cc / c / hpp / h / py / python / lua / glsl / hlsl / sql / json / bash / sh / zsh / md / markdown / "" / "txt" / unknown.
-3. `DrawColoredCode` for CPlusPlus / C delegates to the existing `DrawColoredCppText` verbatim. For Plain, calls `ImGui::TextUnformatted` with the existing flat-orange tint. Every other lang routes through `TextEditor::LanguageDefinition::<X>()::Tokenize` once + caches the token vector keyed by `(content_hash, lang)` in a process-static `std::unordered_map`.
-4. `tests/Source_Core/CodeColorViewLang.test.cpp` pins every alias mapping.
-5. Build clean (Standalone + DX12) + ctest green. No UI surface change yet.
+2. `CodeLangFromTag` aliases:
+   - `cpp` / `c++` / `cxx` / `cc` / `hpp` / `h` / `hh` / `hxx` → `CPlusPlus`
+   - `c` → `C` (note: `h` headers go to CPlusPlus because Smatchet's `.h` files are C++ — back-compat with the existing `IsCppLikeLangTag` coverage that treats `.h` as cpp-like)
+   - `lua` → `Lua`
+   - `glsl` / `vert` / `frag` → `Glsl`
+   - `hlsl` → `Hlsl`
+   - `sql` → `Sql`
+   - `as` / `angelscript` → `AngelScript`
+   - `md` / `markdown` → `Markdown`
+   - `json` / `jsonc` → `Json` (hand-rolled; jsonc tag accepted as alias even though strict JSON parser is shipped — caller wants comments-tolerant view)
+   - `bash` / `sh` / `zsh` / `shell` → `Bash` (hand-rolled)
+   - `py` / `python` / `python3` → `Python` (hand-rolled)
+   - "" / `txt` / `text` / `plaintext` / unknown → `Plain`
+3. `DrawColoredCode` for `CPlusPlus` / `C` delegates to the existing `DrawColoredCppText` verbatim (zero behaviour change). For `Plain`, calls `ImGui::TextUnformatted` with the existing flat-orange tint. Every other lang routes through the § Tokenizer wrapper above + caches the token vector keyed by `(content_hash, lang_enum, theme_revision)` in a process-static `std::unordered_map` (256-entry FIFO eviction, 256 KiB input cap).
+4. Hand-rolled LDs for Python / Bash / Json per § Hand-rolled LDs section above.
+5. `tests/Source_Core/CodeColorViewLang.test.cpp` pins every alias mapping + at least one round-trip per hand-rolled LD asserting the palette-index histogram (e.g. Python `def foo(): pass` → ≥2 Keyword, ≥1 Identifier).
+6. Build clean (Standalone + DX12) + ctest green. No UI surface change yet.
 
 ### Slice 2 — wire `MarkdownPreviewRender` code-block path through `CodeColorView`
 
@@ -131,6 +169,8 @@ Each slice ships as its own PR, independently mergeable. Author one at a time; o
 | Regex-based tokenization burns CPU per frame. | `(content_hash, lang, theme_revision)`-keyed cache; first-frame parse, replay thereafter. Cap input at 256 KiB. |
 | Theme switch leaves stale colours in the cache. | Slice 3 explicit theme-revision invalidation. |
 | Per-language palette mismatch — e.g. SQL has no "preprocessor" concept. | `SmatchetThemeSyntaxColors` 5-token palette covers every LD's distinct categories; LD types that don't map (e.g. SQL's `Keyword2`) fall back to `Keyword`. Document the mapping in `CodeColorView.cpp` header comment. |
+| Hand-rolled LDs (Python / Bash / Json) drift behind upstream syntax additions. | Lists are pinned in `CodeColorView.cpp` (`kPythonKeywords[]`, `kBashKeywords[]`, etc.) + asserted by the slice-1 doctest's palette-histogram check. Drift is visible (the doctest fails when a new keyword is added without the array). When upstream `ImGuiColorTextEdit` adds a vendored `Python()` factory, swap to it + delete the hand-rolled tables — one-PR migration. |
+| `TextEditor::LanguageDefinition::Markdown()` already wired into the editor surface (`TicketFieldEditor.cpp:1495`). | This is read-only; uses the same factory in viewing mode. Two independent consumers OK — `LanguageDefinition` is immutable post-construction (static + `const &` return). No race. |
 | Custom `LanguageDefinition`s shipped by future plugins clash. | API exposes only the enum; plugin-defined LDs go through a future `RegisterCodeLang(name, LD)` extension point (out of scope for this plan). |
 | Pillar 4 colour-contrast regression on HighContrast theme. | HighContrast's syntax palette already audited at AAA in PR #341's sweep. New code paths use the same palette → no new audit needed. |
 | Tooltips race with code-block scrolling. | ImGui's tooltip uses `IsItemHovered`; while the user is scrolling, the hovered-item state correctly suppresses tooltip render. Pre-existing pattern; no new risk. |
