@@ -181,6 +181,11 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["tracker_type"] = config.TrackerType;
     j["plane_url"] = config.PlaneUrl;
     j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
+    // GitHub-as-tracker fields (PR2 of docs/design/github-tracker-backend.md).
+    // PAT goes through DPAPI same as plane_api_key — see saveGithubPat block below.
+    j["github_base_url"] = config.GitHubBaseUrl;
+    j["github_owner"] = config.GitHubOwner;
+    j["github_repo"] = config.GitHubRepo;
     j["jql"] = config.JqlQuery;
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["single_click_to_edit_grid_cells"] = config.SingleClickToEditGridCells;
@@ -342,8 +347,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
+    j.erase("github_pat");
     j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
     j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
+    j["github_pat_enc"] = ProtectSecretForConfig(config.GitHubPat);
     const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
     // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
     if (config.McpAuthToken.empty() || !mcpAuthTokenEnc.empty()) {
@@ -377,12 +384,14 @@ void ConfigManager::Save(const TrackerConfig& config) {
 #else
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
+    j.erase("github_pat_enc");
     j.erase("mcp_auth_token_enc");
     j.erase("ai_api_key_enc");
     j.erase("ai_anthropic_api_key_enc");
     j.erase("ai_deepseek_api_key_enc");
     j["token"] = config.ApiToken;
     j["plane_api_key"] = config.PlaneApiKey;
+    j["github_pat"] = config.GitHubPat;
     j["mcp_auth_token"] = config.McpAuthToken;
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
@@ -560,9 +569,18 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             if (cfg.PlaneApiKey.empty()) {
                 cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
             }
+            // PR2 of github-tracker-backend.md — same DPAPI + legacy-plaintext shape as PlaneApiKey.
+            cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
+            if (cfg.GitHubPat.empty()) {
+                cfg.GitHubPat = j.value("github_pat", std::string{});
+            }
 #else
             cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+            cfg.GitHubPat = j.value("github_pat", std::string{});
 #endif
+            cfg.GitHubBaseUrl = j.value("github_base_url", cfg.GitHubBaseUrl);
+            cfg.GitHubOwner = j.value("github_owner", cfg.GitHubOwner);
+            cfg.GitHubRepo = j.value("github_repo", cfg.GitHubRepo);
 
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);

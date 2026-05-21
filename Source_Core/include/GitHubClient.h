@@ -1,0 +1,52 @@
+#ifndef SMATCHET_GITHUB_CLIENT_H
+#define SMATCHET_GITHUB_CLIENT_H
+
+#include "ITrackerClient.h"
+
+#include <string>
+
+// GitHubClient — third `ITrackerClient` backend (PR2 of
+// docs/design/github-tracker-backend.md). Tracker-only — does NOT implement
+// the PR / check-run / GraphQL surface the deleted agentic flow used.
+//
+// Lifecycle: factory-owned `unique_ptr<GitHubClient>` per `Create("github")`
+// call (same shape as JiraClient / PlaneClient). Ctor takes baseUrl + PAT
+// snapshot at construction time; runtime PAT rotation requires a fresh
+// Create call.
+
+class GitHubClient : public ITrackerClient {
+  public:
+    GitHubClient(const std::string& baseUrl, const std::string& pat);
+    ~GitHubClient() override = default;
+
+    // === ITrackerClient overrides ===
+    std::string GetTrackerType() const override;
+    TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
+    std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
+                                          const ViewsStore* viewsOverride, std::string* outFetchError,
+                                          std::string* outWarning) override;
+    bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                            const ViewsStore& views, std::vector<CachedTicket>& outTickets,
+                            std::string& outError) override;
+    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
+                           TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
+    std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
+    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
+    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
+                     std::string& outError) override;
+    bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
+                           nlohmann::json& outPayload, std::string& outError) override;
+    bool BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                            nlohmann::json& outPayload, std::string& outError) override;
+    std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
+                                    const std::string& value) const override;
+    std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;
+    std::string ExtractProjectFromQuery(const std::string& query) const override;
+    std::vector<RemoteProject> ListProjects() override;
+
+  private:
+    std::string baseUrl_; // e.g. "https://api.github.com" or "https://<enterprise>/api/v3"
+    std::string pat_;     // Personal Access Token; empty disables all writes
+};
+
+#endif // SMATCHET_GITHUB_CLIENT_H

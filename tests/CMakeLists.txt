@@ -65,6 +65,11 @@ add_executable(SmatchetTests
     # links it into the doctest rig.
     Source_Core/AiChatTimestamp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
+    # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
+    Source_Core/LabelEditDiffPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/LabelEditDiffPure.cpp"
+    Source_Core/GitHubClientHelpers.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
