@@ -398,3 +398,92 @@ print('all assertions passed')
     [ "$status" -eq 0 ]
     [[ "$output" == *"all assertions passed"* ]]
 }
+
+# ---------- Phase 4a: notify dispatch ----------
+
+@test "smatchet-notify.sh --help prints inputs documentation" {
+    run bash "$SCRIPTS_DIR/smatchet-notify.sh" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR number"* ]]
+    [[ "$output" == *"CI_FAIL"* ]]
+}
+
+@test "smatchet-notify.sh missing --pr → exit 2" {
+    run bash "$SCRIPTS_DIR/smatchet-notify.sh" --state CI_FAIL --message "test"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"required"* ]]
+}
+
+@test "smatchet-notify.sh unknown arg → exit 2" {
+    run bash "$SCRIPTS_DIR/smatchet-notify.sh" --bogus
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown arg"* ]]
+}
+
+@test "smatchet-notify.sh with no Smatchet + no BurntToast → exit 1 + 'ALL channels failed'" {
+    # POSIX bats; no Windows BurntToast available. HTTP POST will fail (no
+    # server bound) + Windows branch may or may not fire depending on $OSTYPE.
+    # Either way, with no toast targets up, the final dispatch fails.
+    SMATCHET_NOTIFY_HOST=127.0.0.1 SMATCHET_NOTIFY_PORT=1 \
+        run bash "$SCRIPTS_DIR/smatchet-notify.sh" --pr 999 --state CI_FAIL --message "bats test"
+    # On non-Windows, exit=1 + ALL channels failed.
+    # On Windows w/o BurntToast, also exit=1.
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ALL channels failed"* ]] || [[ "$output" == *"channels failed"* ]]
+}
+
+@test "NOTIFY_STATES contains the 6 expected terminal states" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED'}
+assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "maybe_notify suppresses repeat-notify for the same state" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # First call — should attempt notify (notify_action key present)
+    # Second call — should suppress
+    run python -c "
+import sys, os, importlib.util, json
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+
+clone = r'$(pwd)'
+entry = {'pr': 999, 'clone_path': clone, 'triage_attempts': 0}
+state1 = {'last_state': 'CI_FAIL', 'last_status_line': 'first hit', 'pr': 999, 'clone_path': clone, 'last_poll_unix': 1, 'gates_return_code': 1}
+extras1 = m.maybe_notify(state1, entry)
+state1.update(extras1)
+m.write_state(state1)
+print('action1:', extras1.get('notify_action', 'NONE'))
+
+# Second cycle with SAME state — suppression should fire.
+state2 = {'last_state': 'CI_FAIL', 'last_status_line': 'second hit', 'pr': 999, 'clone_path': clone, 'last_poll_unix': 2, 'gates_return_code': 1}
+extras2 = m.maybe_notify(state2, entry)
+print('action2:', extras2.get('notify_action', 'NONE'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"action2: suppressed"* ]]
+}
+
+@test "maybe_notify on a non-terminal state returns empty extras (no notify)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)'}
+state = {'last_state': 'GATES_PASSED', 'pr': 999, 'last_poll_unix': 1}
+extras = m.maybe_notify(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
