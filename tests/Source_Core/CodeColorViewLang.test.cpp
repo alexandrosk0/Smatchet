@@ -181,9 +181,99 @@ TEST_CASE("CodeColorView cache — repeated Tokenize on same (hash, lang) does N
     std::vector<Token> first;
     Tokenize(src, std::strlen(src), CodeLang::Python, first);
     // Direct Tokenize() doesn't touch the cache (cache lives behind
-    // TokenizeCached which DrawColoredCode uses). That's intentional — tests
-    // assert the cache via the rebuild counter; the counter starts at 0 and
-    // only bumps when DrawColoredCode is exercised. Slice 3's invalidation
-    // tests will use a render-driving harness.
+    // TokenizeCached which DrawColoredCode uses). Cache invariants tested
+    // via TokenizeCachedForTest in the slice-3 cases below.
     CHECK(GetCacheRebuildCountForTest() == 0u);
+}
+
+// =============================================================================
+// Slice 3 — theme-revision cache invalidation
+// =============================================================================
+
+#include "SmatchetTheme.h"
+#include "SmatchetThemeIds.h"
+
+namespace {
+
+// Slice-3 cases need an ImGui context because SmatchetTheme::ApplyStyle
+// touches ImGui::GetStyle(). Same shape as SmatchetThemeAiColors.test.cpp's
+// ImGuiCtxFixture; local clone so this test TU stays self-contained.
+struct ImGuiCtxFixture {
+    ImGuiCtxFixture() : ctx_(ImGui::CreateContext()) {}
+    ~ImGuiCtxFixture() {
+        if (ctx_ != nullptr) {
+            ImGui::DestroyContext(ctx_);
+        }
+    }
+    ImGuiContext* ctx_;
+};
+
+} // namespace
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture,
+                  "CodeColorView cache — TokenizeCachedForTest on same input bumps rebuild count exactly once") {
+    ResetCacheForTest();
+    const char src[] = "def foo(): pass";
+    // Pin theme so subsequent Apply doesn't perturb the rev unexpectedly.
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const std::size_t before = GetCacheRebuildCountForTest();
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == before + 1u);
+    // Second call against same key — cache hit, no rebuild.
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == before + 1u);
+    // Third call — same input, different lang → different cache key, rebuild.
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Bash);
+    CHECK(GetCacheRebuildCountForTest() == before + 2u);
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "CodeColorView cache — theme switch invalidates the per-key entry") {
+    ResetCacheForTest();
+    const char src[] = "x = 1";
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const std::uint64_t rev0 = SmatchetTheme::GetThemeRevision();
+    const std::size_t before = GetCacheRebuildCountForTest();
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == before + 1u);
+    // Same input + lang against same theme — cache hit.
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == before + 1u);
+    // Theme switch bumps GetThemeRevision; subsequent lookup misses the
+    // stale-rev entry + rebuilds.
+    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
+    CHECK(SmatchetTheme::GetThemeRevision() > rev0);
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == before + 2u);
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "CodeColorView cache — theme bounce returns to a fresh key (no carry-over hit)") {
+    ResetCacheForTest();
+    const char src[] = "y = 2";
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    const std::size_t afterDark1 = GetCacheRebuildCountForTest();
+    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    const std::size_t afterLight = GetCacheRebuildCountForTest();
+    CHECK(afterLight == afterDark1 + 1u);
+    // Bouncing back to SmatchetDark — theme revision is now further-ahead
+    // monotonically, so the original SmatchetDark@rev0 entry is unreachable.
+    // Cache miss → rebuild (the SmatchetDark@rev2 key is new).
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    TokenizeCachedForTest(src, std::strlen(src), CodeLang::Python);
+    CHECK(GetCacheRebuildCountForTest() == afterLight + 1u);
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::GetThemeRevision — monotonic per ApplyStyle call") {
+    const std::uint64_t r0 = SmatchetTheme::GetThemeRevision();
+    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
+    const std::uint64_t r1 = SmatchetTheme::GetThemeRevision();
+    CHECK(r1 > r0);
+    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
+    const std::uint64_t r2 = SmatchetTheme::GetThemeRevision();
+    CHECK(r2 > r1);
+    // Re-apply same theme — still bumps (every ApplyStyle is a write).
+    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
+    const std::uint64_t r3 = SmatchetTheme::GetThemeRevision();
+    CHECK(r3 > r2);
 }
