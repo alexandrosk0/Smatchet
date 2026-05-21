@@ -59,6 +59,7 @@ add_executable(SmatchetTests
     Source_Core/CliArgCoercion.test.cpp
     Source_Core/DictationInsertionRouter.test.cpp
     Source_Core/AiAssistantInputSeedDecision.test.cpp
+    Source_Core/AiAssistantSendButton.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry

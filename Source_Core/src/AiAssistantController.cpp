@@ -162,7 +162,7 @@ AiAssistantController::~AiAssistantController() {
     }
 }
 
-void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
+bool AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
                                    std::string modelOverride, std::string effortOverride) {
     // Snapshot cached state under lock — the worker thread may rewrite both pointer
     // and string concurrently when a new turn lands after the user switched provider
@@ -177,9 +177,12 @@ void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
     if (!haveClient) {
         LOG_WARN("AiAssistantController::Submit dropped — no active client for provider '%s'.",
                  snapshotProviderName.c_str());
-        // The UI guarantees a visible error strip via assistantLastError; the
-        // caller's Send-button path sets that on the same UI tick when needed.
-        return;
+        // Returning false signals the UI's `dispatchSend` to NOT flip
+        // `assistantInFlight = true`. Without this ack the Send button stuck
+        // disabled for the lifetime of the app once Submit dropped a call.
+        // The UI sets `assistantLastError` to a user-facing message on the
+        // same tick so a visible error strip recovers the panel.
+        return false;
     }
     LOG_INFO("AiAssistantController::Submit turnGen=%llu provider='%s' modelOverride='%s' effortOverride='%s' "
              "promptLen=%zu contextBlocks=%zu",
@@ -195,7 +198,9 @@ void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         if (shuttingDown_) {
-            return;
+            LOG_WARN("AiAssistantController::Submit dropped — controller is shutting down (turnGen=%llu).",
+                     static_cast<unsigned long long>(turnGen));
+            return false;
         }
         // Replace cancel atom — each turn owns its own atom so a Cancel of the
         // previous turn cannot flip the next turn's flag (a race the shared_ptr
@@ -205,6 +210,7 @@ void AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
         pending_.push_back(std::move(req));
     }
     queueCv_.notify_one();
+    return true;
 }
 
 void AiAssistantController::Cancel() {

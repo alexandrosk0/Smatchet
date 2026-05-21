@@ -59,17 +59,27 @@ class AiAssistantController {
     AiAssistantController(const AiAssistantController&) = delete;
     AiAssistantController& operator=(const AiAssistantController&) = delete;
 
-    /// UI-thread only. Enqueues a turn for the worker; returns immediately. The caller
-    /// is expected to have already updated `UiDrawSession::assistantTurnGen` to a new
-    /// value and stashed it into the matching session field — the controller treats
-    /// `turnGen` as opaque and forwards it back through every dispatcher callback so
+    /// UI-thread only. Enqueues a turn for the worker; returns true on success
+    /// (the turn was added to the queue), false when the controller rejected
+    /// the request and the caller should NOT flip `assistantInFlight = true`.
+    /// Rejection currently fires when (a) no live `IAiClient` is wired (the
+    /// AI provider enum maps to a build-stripped client or the factory
+    /// returned null), or (b) the controller is shutting down. Both cases
+    /// emit a `LOG_WARN` on the worker side. The UI side surfaces the
+    /// drop via `g_ui.assistantLastError` so the user sees a recoverable
+    /// error strip instead of a permanently-stuck Send button.
+    ///
+    /// The caller is expected to have already updated
+    /// `UiDrawSession::assistantTurnGen` to a new value and stashed it into
+    /// the matching session field — the controller treats `turnGen` as
+    /// opaque and forwards it back through every dispatcher callback so
     /// the UI side can drop stale deltas.
     ///
     /// `modelOverride` / `effortOverride` are per-turn overrides selected by the chat-
     /// window header Combos. Empty strings mean "use the saved Preferences value for
     /// the active provider". `effortOverride` accepts the same enum as
     /// `TrackerConfig::AiReasoningEffort` ("auto" | "low" | "medium" | "high").
-    void Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
+    bool Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
                 std::string modelOverride = std::string(), std::string effortOverride = std::string());
 
     /// UI-thread only. Sets the in-flight turn's cancel atom to `true`. cpr's
