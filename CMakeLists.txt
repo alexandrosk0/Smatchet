@@ -152,12 +152,6 @@ option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lu
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
 option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin (push-to-talk; Phase A shell)" ON)
-# Agentic flow (triage + handoff). T1 introduces the gate; full feature surface lands across
-# T1-T9 (triage) + H0-H10 (handoff) per docs/design/agentic-flow-implementation.md. OFF excludes
-# every agentic-tagged TU from the build (source-list-conditional in section 3 below) and erases
-# the SMATCHET_WITH_AGENTIC compile definition, so any call site referencing the gated symbols
-# must guard its include via `#if defined(SMATCHET_WITH_AGENTIC)`.
-option(SMATCHET_WITH_AGENTIC "Build with agentic flow (triage + handoff coding harness)" ON)
 # Sub-option — flip ON to fetch whisper.cpp v1.7.4 and link it into
 # SmatchetPlugin_Whisper. Default OFF gates the binary-size + MinGW UCRT build
 # risk away from the Phase C release; the WhisperLocal API surface still
@@ -170,9 +164,6 @@ option(SMATCHET_WHISPER_LOCAL_BACKEND
 if(SMATCHET_EMBEDDED_IN_UNREAL)
     set(SMATCHET_WITH_WHISPER OFF)
     set(SMATCHET_WHISPER_LOCAL_BACKEND OFF)
-    # Agentic flow ships only on the Standalone — the DX12 target stays free of GitHub-PAT
-    # persistence, claude subprocess spawning, and the related cpr / subprocess surface.
-    set(SMATCHET_WITH_AGENTIC OFF)
 endif()
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
@@ -648,61 +639,6 @@ else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
 
-# Agentic flow — source-list-conditional. The OFF build never compiles these TUs and never sees
-# the SMATCHET_WITH_AGENTIC compile definition (see PUBLIC define below). Every consumer must
-# `#if defined(SMATCHET_WITH_AGENTIC)`-gate its include of GitHubClient.h / GitHubClientHelpers.h.
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClient.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClient.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgentProposalStore.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticContextDoc.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticTriageController.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUi.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentHandoffUi.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticProposalAuditPure.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgentTriageScenarioFixtures.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AgentHandoffScenarioStep.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CodingHarnessSeedBuilder.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/ClaudeCodeLocalRunner.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticHandoffController.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/HarnessRunState.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp")
-if(SMATCHET_WITH_AGENTIC)
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClient.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClient.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticInferenceClientPure.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgentProposalStore.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticContextDoc.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticTriageController.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUi.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentProposalsUiPure.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAgentHandoffUi.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticProposalAuditPure.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgentTriageScenarioFixtures.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AgentHandoffScenarioStep.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CodingHarnessSeedBuilder.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/ClaudeCodeLocalRunner.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgenticHandoffController.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/HarnessRunState.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/PrCommentWatcher.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/OpenPrRegistrar.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifierPure.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CoderabbitCommentClassifier.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CiFailureClassifierPure.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CiFailureClassifier.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/PrCheckRunWatcher.cpp")
-endif()
 
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
@@ -749,11 +685,6 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
 endif()
 if(SMATCHET_WITH_WHISPER)
     target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_WHISPER=1)
-endif()
-if(SMATCHET_WITH_AGENTIC)
-    # Mirrors the Whisper define shape — PUBLIC on SmatchetCoreInterface so consumers
-    # (Source_Core sources, Plugins, future agentic shims) see the gate uniformly.
-    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_AGENTIC=1)
 endif()
 # MCP define is not on SmatchetCoreInterface: Unreal DX12 libs omit MCP without MSVC D9025 (/D vs /U clash).
 # Targets that compile MCP-gated code link SmatchetCoreMcpShim (PUBLIC) instead.
