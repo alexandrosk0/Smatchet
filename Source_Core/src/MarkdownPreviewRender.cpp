@@ -852,7 +852,17 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
         // the existing DrawColoredCppText (zero behaviour change on Smatchet's
         // dominant path); Plain falls back to the same flat-orange tint the
         // old code used; every other language now gets per-language colouring.
-        const smatchet::code_color::CodeLang lang = smatchet::code_color::FromTag(b.codeLang);
+        // Per CodeRabbit on PR #353 — fenced blocks like ```foo.py``` were classified Plain
+        // by FromTag (which expects bare language tags). Fall back to LangFromFilePath when
+        // FromTag yields Plain but the tag is non-empty, so path-style fence names get the
+        // right tokenizer.
+        smatchet::code_color::CodeLang lang = smatchet::code_color::FromTag(b.codeLang);
+        if (lang == smatchet::code_color::CodeLang::Plain && !b.codeLang.empty()) {
+            const smatchet::code_color::CodeLang fromPath = smatchet::code_color::LangFromFilePath(b.codeLang);
+            if (fromPath != smatchet::code_color::CodeLang::Plain) {
+                lang = fromPath;
+            }
+        }
         if (r.mode == MarkdownPreviewRender::Mode::Tooltip) {
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
@@ -879,8 +889,13 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
                 ImGui::EndTooltip();
             }
             ImGui::SameLine();
+            // Per CodeRabbit on PR #351 — measure the Copy button width instead of hardcoding 60px.
+            // Hardcoded width clipped the language badge when CanonicalName(lang) returned a longer
+            // string (e.g. "TypeScript", "Objective-C"). Use the button's text-size + padding for
+            // an exact reservation.
             const float availW = ImGui::GetContentRegionAvail().x;
-            const float btnW = 60.0f;
+            const float btnW = ImGui::CalcTextSize("Copy##codeblock", nullptr, true).x +
+                               ImGui::GetStyle().FramePadding.x * 2.0f;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + availW - btnW);
             if (ImGui::SmallButton("Copy##codeblock")) {
                 ImGui::SetClipboardText(b.codeBuffer.c_str());
