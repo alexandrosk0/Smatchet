@@ -3,13 +3,23 @@
 #include "SmatchetThemeIds.h"
 #include "imgui.h"
 
-/** Per-theme palette for the C++ syntax tokenizer in CppSyntaxHighlight. */
+/** Per-theme palette for the C++ syntax tokenizer in CppSyntaxHighlight + the
+ *  polymorphic `CodeColorView` (slice 1 of code-syntax-coloring-and-tooltips). */
 struct SmatchetThemeSyntaxColors {
     float Keyword[4];
     float String[4];
     float Comment[4];
     float Number[4];
     float Preprocessor[4];
+    /** Slice 6 of code-syntax-coloring-and-tooltips — identifier token color
+     *  (function names, type names, ordinary identifiers, KnownIdentifier +
+     *  PreprocIdentifier from LanguageDefinition::mIdentifiers /
+     *  mPreprocIdentifiers). Previously identifiers fell through to
+     *  ImGuiCol_Text (same as plain text); the user reported "no coloring"
+     *  on call-stack / annotate views which are mostly identifiers. Pick a
+     *  per-theme tint that's visibly distinct from default text but doesn't
+     *  dominate (identifiers are the most common token). */
+    float Identifier[4];
 };
 
 /** Per-theme palette for the AI chat panel (Phase 5 of ai-chat-claude-desktop-parity).

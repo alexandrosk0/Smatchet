@@ -18,6 +18,10 @@ bool IsCallstackField(const std::string* fieldId) {
 
 void SetCallstackFieldIdHint(const std::string& fieldId) { g_callstackFieldId = fieldId; }
 
+bool IsCallstackFieldId(const std::string& fieldId) {
+    return !fieldId.empty() && !g_callstackFieldId.empty() && fieldId == g_callstackFieldId;
+}
+
 void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool tooltipsEnabled, bool disabled,
                             const std::string* rawForTooltip, bool renderMarkdown, const std::string* fieldId) {
     ImGui::AlignTextToFramePadding();
@@ -43,7 +47,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     // hover would only register on the last token and suppress the tooltip.
     ImGui::BeginGroup();
     if (isCallstack) {
-        DrawColoredCppLine(singleLine.c_str());
+        // Slice 7 — semantic callstack tokenizer (per-element colours for
+        // Module!Class::Method() [Path\File.ext:Line]). Falls back to cpp
+        // syntax on non-canonical rows.
+        DrawColoredCallstackLine(singleLine.c_str());
     } else {
         ImGui::TextUnformatted(singleLine.c_str());
     }
@@ -53,7 +60,8 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         if (isCallstack) {
-            DrawColoredCppText(tipSource.c_str());
+            // Slice 7 — semantic callstack tokenizer.
+            DrawColoredCallstackText(tipSource.c_str());
         } else {
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
             if (renderMarkdown) {

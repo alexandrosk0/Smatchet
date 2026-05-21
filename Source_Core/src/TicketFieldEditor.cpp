@@ -5,8 +5,10 @@
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
+#include "CppSyntaxHighlight.h"
 #include "SmatchetFieldIconRender.h"
 #include "SmatchetFieldRender.h"
+#include "SmatchetThemedTextEditorPalette.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldPayload.h"
@@ -1495,6 +1497,19 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 s_LongTextEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Markdown());
                 s_LongTextEditor.SetColorizerEnable(true);
             }
+            // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
+            // when the active field is the configured callstack field, swap
+            // to the C++ LD so call-stack pastes get cpp tokenisation while
+            // editing. Cheap — SetLanguageDefinition just swaps the table
+            // pointer; reapplied each frame because LongText hosts both
+            // callstack + non-callstack fields in the same editor instance.
+            static bool s_LongTextEditorIsCallstackLd = false;
+            const bool wantCallstackLd = IsCallstackFieldId(s_ActiveLongTextState.Field.Id);
+            if (wantCallstackLd != s_LongTextEditorIsCallstackLd) {
+                s_LongTextEditor.SetLanguageDefinition(wantCallstackLd ? TextEditor::LanguageDefinition::CPlusPlus()
+                                                                       : TextEditor::LanguageDefinition::Markdown());
+                s_LongTextEditorIsCallstackLd = wantCallstackLd;
+            }
             const std::string bufferAsStr(s_ActiveLongTextState.Buffer.data());
             const std::string editorAsStr = s_LongTextEditor.GetText();
             // TextEditor::GetText() appends a trailing '\n'; strip it for
@@ -1509,6 +1524,13 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 // path. Buffer wins.
                 s_LongTextEditor.SetText(bufferAsStr);
             }
+            // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
+            // apply the theme-aware palette per-frame. Without this the
+            // TextEditor uses its built-in dark palette (subtle blues that
+            // blend with Smatchet's bg) so the LD swap looks effectively
+            // colour-less. Same pattern as Lua console + AI chat editor;
+            // see SmatchetThemedTextEditorPalette.h.
+            s_LongTextEditor.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
             s_LongTextEditor.Render("##LongTextEditorBuf", ImVec2(editorW, inputSize.y), false);
             if (s_LongTextEditor.IsTextChanged()) {
                 std::string newText = s_LongTextEditor.GetText();
@@ -1606,11 +1628,21 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
-            MarkdownPreviewRender::Options previewOpts;
-            // Slice 4: enable drag-select + Ctrl+C on the description preview
-            // pane. The id matches the surrounding BeginChild for symmetry.
-            previewOpts.selectableId = "##LongTextPreviewSel";
-            MarkdownPreviewRender::Render(s_ActiveLongTextState.LastRoundTripOutput, previewOpts);
+            // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
+            // when the active field is the configured callstack field, render
+            // the preview through the semantic callstack tokenizer instead of
+            // the markdown-prose pipeline. Markdown would render the buffer
+            // as plain wrapped prose (no syntax), losing the per-element
+            // colours the user expects on call-stack content.
+            if (IsCallstackFieldId(s_ActiveLongTextState.Field.Id)) {
+                DrawColoredCallstackText(s_ActiveLongTextState.LastRoundTripOutput.c_str());
+            } else {
+                MarkdownPreviewRender::Options previewOpts;
+                // Slice 4: enable drag-select + Ctrl+C on the description preview
+                // pane. The id matches the surrounding BeginChild for symmetry.
+                previewOpts.selectableId = "##LongTextPreviewSel";
+                MarkdownPreviewRender::Render(s_ActiveLongTextState.LastRoundTripOutput, previewOpts);
+            }
             const float previewScroll = ImGui::GetScrollY();
             const float previewScrollMax = ImGui::GetScrollMaxY();
             ImGui::EndChild();

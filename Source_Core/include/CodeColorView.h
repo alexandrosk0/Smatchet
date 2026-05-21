@@ -80,6 +80,16 @@ struct Token {
 /// § Slice 1 step 2.
 CodeLang FromTag(const std::string& tag);
 
+/// Infer language from a file path's extension (case-insensitive). Path may
+/// be a depot path (`//depot/foo/bar.cpp`), absolute (`C:/foo/bar.lua`), or
+/// bare basename (`script.py`). Strips everything before the last `/`, `\`,
+/// or `.` separator + delegates the extension to `FromTag`. Unknown
+/// extensions / paths with no extension map to Plain. Used by Slice 5 of
+/// docs/design/code-syntax-coloring-and-tooltips.md — `BlameAnalysisUi`
+/// annotate view + future `SmatchetFieldRender` callstack tooltips that
+/// carry a file-path hint.
+CodeLang LangFromFilePath(const std::string& path);
+
 /// Human-readable name for the language — used by slice 4's hover tooltip.
 /// Returns a static string; never null.
 const char* CanonicalName(CodeLang lang);

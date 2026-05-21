@@ -60,6 +60,14 @@ TextEditor::Palette GetThemedLuaConsolePalette() {
     p[(int)PI::MultiLineComment] = ImU32FromArray4(syn.Comment); // same hue as single-line
     p[(int)PI::Number] = ImU32FromArray4(syn.Number);
     p[(int)PI::Preprocessor] = ImU32FromArray4(syn.Preprocessor);
+    // Slice 6 of docs/design/code-syntax-coloring-and-tooltips.md — identifier
+    // slot now uses the per-theme Identifier color (was: ImGuiCol_Text, which
+    // blended identifiers into plain text). Affects all editor-embedding sites
+    // (Lua console, AI chat editor, ticket-field long-text editor) — desired:
+    // identifier coloring is visibly useful everywhere code is rendered.
+    p[(int)PI::Identifier] = ImU32FromArray4(syn.Identifier);
+    p[(int)PI::KnownIdentifier] = ImU32FromArray4(syn.Identifier);
+    p[(int)PI::PreprocIdentifier] = ImU32FromArray4(syn.Identifier);
 
     // Editor background, line numbers, and cursor follow the active ImGui
     // theme so the editor blends with the surrounding panel. Without these
@@ -67,7 +75,6 @@ TextEditor::Palette GetThemedLuaConsolePalette() {
     // even on Norton-Commander-teal panels.
     p[(int)PI::Background] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
     p[(int)PI::Default] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_Text]);
-    p[(int)PI::Identifier] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_Text]);
     p[(int)PI::Punctuation] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_Text]);
     p[(int)PI::Cursor] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_Text]);
     p[(int)PI::Selection] = ImU32FromVec4(ImGui::GetStyle().Colors[ImGuiCol_TextSelectedBg]);

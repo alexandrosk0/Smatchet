@@ -490,10 +490,14 @@ ImVec4 PaletteToThemeColor(TokenPalette p) {
         return ImVec4(s.Comment[0], s.Comment[1], s.Comment[2], s.Comment[3]);
     case TokenPalette::MultiLineComment:
         return ImVec4(s.Comment[0], s.Comment[1], s.Comment[2], s.Comment[3]);
-    case TokenPalette::Punctuation:
     case TokenPalette::Identifier:
     case TokenPalette::KnownIdentifier:
     case TokenPalette::PreprocIdentifier:
+        // Slice 6 — per-theme Identifier tint (was: ImGuiCol_Text default,
+        // which blended into plain text). Tackles the user-reported "no
+        // coloring" on callstack / annotate views where identifiers dominate.
+        return ImVec4(s.Identifier[0], s.Identifier[1], s.Identifier[2], s.Identifier[3]);
+    case TokenPalette::Punctuation:
     case TokenPalette::Default:
     default:
         return ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -515,6 +519,20 @@ CodeLang FromTag(const std::string& tag) {
     const auto it =
         std::find_if(std::begin(kAliases), std::end(kAliases), [&](const TagAlias& a) { return lower == a.tag; });
     return (it != std::end(kAliases)) ? it->lang : CodeLang::Plain;
+}
+
+CodeLang LangFromFilePath(const std::string& path) {
+    // Strip directories — find the last '/' or '\' separator.
+    const std::size_t lastSep = path.find_last_of("/\\");
+    const std::string basename = (lastSep == std::string::npos) ? path : path.substr(lastSep + 1);
+    // Strip everything before the last '.'. Files with no dot (`Makefile`,
+    // `Dockerfile`) fall through to Plain.
+    const std::size_t lastDot = basename.find_last_of('.');
+    if (lastDot == std::string::npos || lastDot + 1 >= basename.size()) {
+        return CodeLang::Plain;
+    }
+    const std::string ext = basename.substr(lastDot + 1);
+    return FromTag(ext);
 }
 
 const char* CanonicalName(CodeLang lang) {

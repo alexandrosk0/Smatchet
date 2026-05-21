@@ -160,6 +160,33 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ImGuiDefaul
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
+TEST_CASE_FIXTURE(ImGuiCtxFixture,
+                  "SmatchetTheme::ApplyStyle — every theme populates the slice-6 Identifier syntax color") {
+    // Per-theme Identifier color pin (Slice 6 of code-syntax-coloring-and-tooltips.md).
+    // Previously identifiers fell through to ImGuiCol_Text (no visible color
+    // distinct from plain text); the per-theme Identifier field now drives
+    // identifier rendering in CppSyntaxHighlight + CodeColorView. This test
+    // pins the exact per-theme RGBA so silent regressions trip.
+    struct ThemeIdentExpect {
+        ThemeId id;
+        float expected[4];
+    };
+    const ThemeIdentExpect cases[] = {
+        {ThemeId::SmatchetDark, {0.62f, 0.80f, 0.92f, 1.0f}},
+        {ThemeId::ModernDark, {0.62f, 0.80f, 0.92f, 1.0f}},
+        {ThemeId::Vs2022Dark, {0.61f, 0.86f, 0.99f, 1.0f}},
+        {ThemeId::Vs2022Light, {0.00f, 0.06f, 0.50f, 1.0f}},
+        {ThemeId::HighContrast, {1.00f, 1.00f, 1.00f, 1.0f}},
+        {ThemeId::NortonCommander, {1.00f, 1.00f, 1.00f, 1.0f}},
+        {ThemeId::ImGuiDefaultDark, {0.62f, 0.80f, 0.92f, 1.0f}},
+    };
+    for (const ThemeIdentExpect& c : cases) {
+        SmatchetTheme::ApplyStyle(c.id);
+        const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+        CHECK(ApproxEq(s.Identifier, c.expected));
+    }
+}
+
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle ImGuiDefaultDark restores ImGui default WindowBg") {
     // Pin the user-visible promise of ImGuiDefaultDark: WindowBg = ImGui's built-in dark default
     // (#0F0F0F — 0.0588f / 0x0F on each RGB channel). Switching SmatchetDark → ImGuiDefaultDark
