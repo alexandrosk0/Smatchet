@@ -186,7 +186,7 @@ The existing `s_messageHeightCache` keyed by content hash stays — that one IS 
 
 ## Verification
 
-Per AGENTS.md § Verification automation rule, every check below must be either automated (bucket-C screenshot / bucket-E ImGui Test Engine / pure-logic doctest / CLI scenario) or a `docs/backlog/agent-self-improvement/` (category `tooling`) deferred-automation entry. "Manual eye-test" without a backlog entry is a fail.
+Per AGENTS.md § Verification automation — zero manual steps, every check below must be either automated (bucket-C screenshot / bucket-E ImGui Test Engine / pure-logic doctest / CLI scenario) or a `docs/backlog/agent-self-improvement/` (category `tooling`) deferred-automation entry. "Manual eye-test" without a backlog entry is a fail.
 
 **Bucket A — pure-logic doctest** (mandatory):
 - `tests/Source_Core/AiChatTimestamp.test.cpp` pins every relative-time branch boundary (59s = "just now", 60s = "1m ago", 60m = "1h ago", 24h = "1d ago", future-time guard, negative-delta clamp).
