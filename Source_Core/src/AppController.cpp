@@ -1425,6 +1425,15 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario();
         return MakeThemeSwitchRoundtripScenario();
     });
+#if defined(SMATCHET_WITH_AI)
+    // Phase 6.7 of ai-chat-claude-desktop-parity. Seeds N mock messages into
+    // g_ui.assistantHistory, runs N frames so the new DrawHistoryArea /
+    // DrawPinStripIfAny / renderTurn perf scopes accumulate measurable timings.
+    scenarioRunner_->RegisterFactory("ai-chat-history-render", []() {
+        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
+        return MakeAiChatHistoryRenderScenario();
+    });
+#endif
     // perf-tooling-bundle scenarios — 5 perf scenarios surfaced by the
     // perf-detective audit on develop@31e1893. Each verifies a previously-
     // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the

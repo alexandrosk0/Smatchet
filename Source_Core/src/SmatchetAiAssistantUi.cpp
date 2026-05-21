@@ -17,8 +17,15 @@
 #include "Logger.h"
 #include "SmatchetChatPersistWorker.h"
 #include "SmatchetDockNodeIds.h"
+#include "SmatchetImGuiFonts.h"
+#include "SmatchetTheme.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
+#include "UiPerfMonitor.h"
+// Vendored Font Awesome 6 icon-name macros (zlib licence). Pulled in
+// unconditionally — when the FA TTF is missing at runtime the UI falls
+// back to short text labels via SmatchetAreFaIconsLoaded().
+#include "IconsFontAwesome6.h"
 
 #include "imgui.h"
 // `imgui_internal.h` must be pulled BEFORE the `#define ImGui SmatchetLocalizedImGui`
@@ -206,19 +213,191 @@ const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::st
     return *inserted.first->second.plan;
 }
 
+// Helper: collapse newlines + truncate to a single-line preview for the pin strip
+// row label. ~80 chars matches the design doc; tail ellipsis added when truncated.
+std::string MakePinStripPreview(const std::string& body) {
+    constexpr std::size_t kMax = 80;
+    std::string preview;
+    preview.reserve((std::min)(body.size(), kMax + 4));
+    for (char c : body) {
+        if (preview.size() >= kMax) {
+            break;
+        }
+        if (c == '\n' || c == '\r' || c == '\t') {
+            // Collapse runs of whitespace into a single space so the preview
+            // reads as one continuous line.
+            if (!preview.empty() && preview.back() != ' ') {
+                preview.push_back(' ');
+            }
+        } else {
+            preview.push_back(c);
+        }
+    }
+    if (body.size() > preview.size()) {
+        preview.append("...");
+    }
+    return preview;
+}
+
+// Toggle the Pinned flag on a chat message and route the persistence side-effect
+// through the chat_persist worker. No-op (warn) when the row hasn't been
+// persisted yet (rowId == -1 means the worker hasn't reported back the SQLite
+// id for this freshly-appended message). On the next launch, hydrate will pick
+// up the row with its post-restart id and the toggle will work.
+void TogglePinAndPersist(UiDrawSession& d, std::size_t messageIndex, bool newPinnedState) {
+    if (messageIndex >= d.assistantHistory.size()) {
+        return;
+    }
+    d.assistantHistory[messageIndex].Pinned = newPinnedState;
+    if (messageIndex >= d.assistantHistoryRowIds.size()) {
+        return;
+    }
+    const std::int64_t rowId = d.assistantHistoryRowIds[messageIndex];
+    if (rowId <= 0) {
+        // Persist hasn't completed yet for this message; pin survives the
+        // session but not a restart. Log so a tester can correlate the
+        // missing-on-restart pin with this race condition.
+        LOG_TRACE("ai-chat: pin toggle on un-persisted message (idx=%zu); in-memory only", messageIndex);
+        return;
+    }
+    smatchet::ai::chat_persist::Op op;
+    op.kind = smatchet::ai::chat_persist::OpKind::UpdatePin;
+    op.rowId = rowId;
+    op.pinned = newPinnedState;
+    smatchet::ai::chat_persist::Enqueue(std::move(op));
+}
+
+// Render the pinned-bookmarks strip above the history scroll child.
+// Only emits anything when at least one message is pinned; the slot is otherwise
+// zero-height (no layout reservation, no separator). Click on a row scrolls the
+// history to the corresponding message; the trailing X unpins.
+void DrawPinStripIfAny(UiDrawSession& d) {
+    SMATCHET_UI_PERF_SCOPE("ai_chat.history.pin_strip");
+    if (d.assistantHistory.empty()) {
+        return;
+    }
+    // Count once via std::count_if; reused below to size the strip.
+    const auto pinnedCount = std::count_if(d.assistantHistory.begin(), d.assistantHistory.end(),
+                                           [](const AiMessage& m) { return m.Pinned; });
+    if (pinnedCount == 0) {
+        return;
+    }
+
+    const SmatchetThemeAiColors& ai = SmatchetTheme::GetActiveAiColors();
+    const ImVec4 stripBg(ai.AiPinStripBg[0], ai.AiPinStripBg[1], ai.AiPinStripBg[2], ai.AiPinStripBg[3]);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, stripBg);
+    // Auto-height: rows are full-text-line + tiny vertical pad. AlwaysAutoResize-like
+    // behaviour via height=0 only works for vertical layout, so we measure: each row
+    // is one TextLineHeightWithSpacing + IconSpacing. Cap visible rows at 4 so a
+    // user who pins 50 messages doesn't lose the entire history panel.
+    constexpr int kMaxVisiblePinRows = 4;
+    const int visibleRows = (std::min)(static_cast<int>(pinnedCount), kMaxVisiblePinRows);
+    const float rowH = ImGui::GetFrameHeightWithSpacing();
+    const float stripH = rowH * static_cast<float>(visibleRows) + 4.0f;
+    ImGui::BeginChild("##AiAssistantPinStrip", ImVec2(0.0f, stripH), true,
+                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+    const bool faLoaded = SmatchetAreFaIconsLoaded();
+    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
+        AiMessage& m = d.assistantHistory[i];
+        if (!m.Pinned) {
+            continue;
+        }
+        ImGui::PushID(static_cast<int>(i));
+        const std::string preview = MakePinStripPreview(m.Content);
+        const char* roleIcon = faLoaded ? ICON_FA_THUMBTACK : "*";
+        const char* role = (m.Role == "user") ? "You" : "Assistant";
+        // Render full-width Selectable so click anywhere triggers the jump.
+        // The trailing X close button is laid out OVER the Selectable's right
+        // edge via SameLine — same pattern as ImGui's CloseButton on tabs.
+        char rowLabel[256];
+        std::snprintf(rowLabel, sizeof(rowLabel), "%s  %s: %s", roleIcon, role, preview.c_str());
+        const float closeBtnW =
+            ImGui::CalcTextSize(faLoaded ? ICON_FA_XMARK : "X").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float rowAvailW = ImGui::GetContentRegionAvail().x - closeBtnW - ImGui::GetStyle().ItemSpacing.x;
+        if (ImGui::Selectable(rowLabel, false, 0, ImVec2(rowAvailW, 0.0f))) {
+            d.assistantScrollToMessageIndex = static_cast<int>(i);
+        }
+        ImGui::SameLine();
+        const char* closeLabel = faLoaded ? ICON_FA_XMARK : "X";
+        if (ImGui::SmallButton(closeLabel)) {
+            TogglePinAndPersist(d, i, /*newPinnedState=*/false);
+            // If this pinned row was also the active scroll target, reset
+            // the latch — there's nothing to scroll to once it's unpinned
+            // (the message itself still exists in history, but the user's
+            // intent was to jump TO it via the bookmark; bookmark gone).
+            if (d.assistantScrollToMessageIndex == static_cast<int>(i)) {
+                d.assistantScrollToMessageIndex = -1;
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
+    SMATCHET_UI_PERF_SCOPE("ai_chat.history.draw");
     (void)app;
     const float headerH = ImGui::GetTextLineHeightWithSpacing() * 1.4f;
     const float inputH = ImGui::GetFrameHeightWithSpacing() * kInputRowsTall +
                          ImGui::GetFrameHeightWithSpacing() * 1.2f; // input + buttons row
     const float errorStripH = d.assistantLastError.empty() ? 0.0f : ImGui::GetTextLineHeightWithSpacing() * 1.5f;
-    const float bodyH = (std::max)(80.0f, availY - headerH - inputH - errorStripH);
+    // Pin strip is rendered ABOVE the history scroll-child when any msg is
+    // pinned. Reserve its height from the body so the scroll-child shrinks
+    // to fit. Re-compute the same height the strip uses internally to keep
+    // the layouts in sync; this avoids a one-frame mismatch on the frame
+    // a message is first pinned.
+    const auto pinnedCount = std::count_if(d.assistantHistory.begin(), d.assistantHistory.end(),
+                                           [](const AiMessage& m) { return m.Pinned; });
+    constexpr int kMaxVisiblePinRows = 4;
+    const float pinStripH =
+        pinnedCount > 0 ? ImGui::GetFrameHeightWithSpacing() *
+                                  static_cast<float>((std::min)(static_cast<int>(pinnedCount), kMaxVisiblePinRows)) +
+                              4.0f + ImGui::GetStyle().ItemSpacing.y
+                        : 0.0f;
+    const float bodyH = (std::max)(80.0f, availY - headerH - inputH - errorStripH - pinStripH);
+
+    DrawPinStripIfAny(d);
 
     // Slice 5 + perf Opt 1: rich-rendered selectable AI chat with per-message
     // BuildPlan / RenderPlan caching. Finalised history messages have
     // immutable content — their parsed plan is computed once + cached. Only
     // the streaming tail re-parses every frame.
     ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
+
+    // Phase 6 of ai-chat-claude-desktop-parity. Per-message Y-position cache
+    // keyed by `messageIndex` (NOT content hash — review issue #3 fix). Used
+    // by the scroll-to-pinned-bookmark latch below to jump the scroll-child
+    // to the message's last-known window-relative Y. Reset on history size
+    // change (push_back grows; clear-chat / hydrate clears). Static is fine
+    // because exactly one AI chat panel exists in the app at a time.
+    static std::vector<float> s_messageYCache;
+    if (s_messageYCache.size() != d.assistantHistory.size()) {
+        s_messageYCache.assign(d.assistantHistory.size(), -1.0f);
+    }
+
+    // Scroll-to-pinned latch — consumed once a frame at top of DrawHistoryArea.
+    // The latch is set by either (a) a click on a pin-strip row, (b) the future
+    // bookmark / command-palette jump from another path. If the Y-cache slot
+    // is still sentinel `-1.0f` (message has never rendered — e.g. off-screen
+    // above the cull window), leave the latch set; next frames populate the
+    // cache as the message comes into view, and we re-attempt the scroll then.
+    if (d.assistantScrollToMessageIndex >= 0) {
+        const std::size_t targetIdx = static_cast<std::size_t>(d.assistantScrollToMessageIndex);
+        if (targetIdx >= s_messageYCache.size()) {
+            // Stale latch — index points past the current history (clear-chat
+            // raced the click). Discard.
+            d.assistantScrollToMessageIndex = -1;
+        } else if (s_messageYCache[targetIdx] >= 0.0f) {
+            ImGui::SetScrollY(s_messageYCache[targetIdx] - 4.0f);
+            d.assistantScrollToMessageIndex = -1;
+            // Releasing auto-scroll-to-tail pin since the user explicitly
+            // navigated mid-history — pinning back to bottom on the next
+            // frame would fight the bookmark jump.
+            d.assistantAutoScrollAtTail = false;
+        }
+    }
 
     auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 
@@ -237,24 +416,49 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // plan cache. Pillar 1 opt #4.
     static std::unordered_map<std::uint64_t, float> s_messageHeightCache;
 
-    // Render one chat turn — role label registered as its own Segment + body
-    // emitted via cached plan (finalised) or fresh BuildPlan (streaming tail).
-    auto renderTurn = [&](const char* roleLabel, const ImVec4& roleColor, const std::string& body, bool cacheable) {
+    // Per-message "action row was active on previous frame" map keyed by
+    // messageIndex. Used to drive the show-on-hover alpha gate without the
+    // classic ImGui chicken-and-egg (`IsItemHovered` requires the item to be
+    // rendered; rendering only when hovered means IsItemHovered never fires).
+    // 1-frame lag on first hover is imperceptible. Cleared lazily when the
+    // map size diverges from history size.
+    static std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+
+    const SmatchetThemeAiColors& aiPalette = SmatchetTheme::GetActiveAiColors();
+    const bool faLoaded = SmatchetAreFaIconsLoaded();
+    const std::int64_t nowMs = smatchet::ai::NowUnixMs();
+
+    // Render one chat turn. messageIndex is the position in assistantHistory
+    // (or -1 for the in-flight streaming tail, which has no persistence row).
+    // `body` is mutable on persistent rows so the pin-toggle can flip Pinned.
+    auto renderTurn = [&](int messageIndex, const char* roleLabel, const ImVec4& roleColor, AiMessage* msgPtr,
+                          const std::string& body, bool cacheable) {
+        SMATCHET_UI_PERF_SCOPE("ai_chat.history.render_turn");
         const ImVec2 turnStartScreen = ImGui::GetCursorScreenPos();
+        const float turnStartCursorY = ImGui::GetCursorPosY(); // window-relative for Y-cache
+        const bool isUser = msgPtr ? (msgPtr->Role == "user") : false;
+
+        // Capture this turn's window-relative Y for the scroll-to-pinned latch.
+        // Persistent messages only (streaming tail has no stable Y until finalised).
+        if (messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < s_messageYCache.size()) {
+            s_messageYCache[messageIndex] = turnStartCursorY;
+        }
+
         // Off-screen culling: only for cacheable (finalised) turns with a
         // known height. Streaming tail + unmeasured turns always render
         // fully so the height cache populates on first sight.
         std::uint64_t bodyKey = 0;
+        const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
         if (cacheable) {
             bodyKey = MarkdownPreviewRender::HashContent(body);
             const auto hit = s_messageHeightCache.find(bodyKey);
             if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
                 const float labelH = ImGui::GetTextLineHeightWithSpacing();
-                const float totalH = labelH + hit->second;
-                // ImGui::IsRectVisible accepts a size in window-local coords;
-                // ImGui clips against the current child's scroll window so
-                // off-screen rects return false. When off-screen we emit
-                // Dummy() to advance the cursor and skip the rich render.
+                // Include the always-reserved action-row slot so the culling
+                // height matches the realised layout (otherwise a culled turn
+                // skips by labelH+body while a rendered turn advances by
+                // labelH+body+actionRow, drifting the scroll position).
+                const float totalH = labelH + hit->second + actionRowSlotH;
                 if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
                     ImGui::Dummy(ImVec2(0.0f, totalH));
                     return;
@@ -262,6 +466,27 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
             }
         }
 
+        // For user messages: pre-draw the bubble bg via ImDrawList before the
+        // text renders. Uses the message-height cache populated on the FIRST
+        // render — first frame after a fresh user message has cache miss → no
+        // bubble bg that frame (acceptable single-frame visual delay since the
+        // message just appeared).
+        if (cacheable && isUser) {
+            const auto hit = s_messageHeightCache.find(bodyKey);
+            if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+                const float labelH = ImGui::GetTextLineHeightWithSpacing();
+                const float bubbleH = labelH + hit->second;
+                const float bubbleW = ImGui::GetContentRegionAvail().x;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImU32 bubbleColor =
+                    ImGui::ColorConvertFloat4ToU32(ImVec4(aiPalette.AiUserBubbleBg[0], aiPalette.AiUserBubbleBg[1],
+                                                          aiPalette.AiUserBubbleBg[2], aiPalette.AiUserBubbleBg[3]));
+                dl->AddRectFilled(turnStartScreen, ImVec2(turnStartScreen.x + bubbleW, turnStartScreen.y + bubbleH),
+                                  bubbleColor, ImGui::GetStyle().FrameRounding);
+            }
+        }
+
+        ImGui::BeginGroup();
         const ImVec2 labelPos = ImGui::GetCursorScreenPos();
         const float labelLineH = ImGui::GetTextLineHeight();
         ImGui::PushStyleColor(ImGuiCol_Text, roleColor);
@@ -279,6 +504,7 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
             MarkdownPreviewRender::Render(body, renderOpts);
         }
         SelectableText::EndBlock(selCtx);
+        ImGui::EndGroup();
 
         // Capture the realised height for future culling. Only for cacheable
         // turns (streaming tail's height changes per frame).
@@ -290,19 +516,130 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
                 s_messageHeightCache[bodyKey] = realisedHeight;
             }
         }
+
+        // Body hover/focus capture for the action-row alpha gate. Read AFTER
+        // EndGroup so the IsItem* queries test the combined turn-group rect.
+        // `ImGuiHoveredFlags_ChildWindows` is NOT valid for `IsItemHovered`
+        // (it's a `IsWindowHovered` flag) — ImGui asserts "Invalid flags for
+        // IsItemHovered()!" if we pass it. The group itself is the rect we
+        // want to test; no flag needed.
+        const bool bodyHovered = ImGui::IsItemHovered();
+        const bool bodyFocused = ImGui::IsItemFocused();
+
+        // -------- Always-reserved action row --------
+        // Layout-invariant on hover/focus: the slot's height is reserved
+        // unconditionally, so the message below doesn't shift when the row
+        // appears. Alpha-gate (instead of conditional render) keeps the
+        // buttons in tab order so Pillar 4 keyboard nav works regardless of
+        // whether the user is mousing or tabbing.
+        if (msgPtr != nullptr && messageIndex >= 0) {
+            const bool wasActive = s_turnActiveLastFrame.count(static_cast<std::size_t>(messageIndex)) != 0u &&
+                                   s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)];
+            const bool showRow = msgPtr->Pinned || wasActive;
+            const ImVec2 actionRowStart = ImGui::GetCursorScreenPos();
+
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, showRow ? 1.0f : 0.0f);
+
+            // Copy button.
+            const char* copyLabel = faLoaded ? ICON_FA_COPY : "Copy";
+            char copyId[64];
+            std::snprintf(copyId, sizeof(copyId), "%s##AiCopy%d", copyLabel, messageIndex);
+            bool copyHovered = false;
+            bool copyFocused = false;
+            if (ImGui::SmallButton(copyId)) {
+                if (showRow) {
+                    // Guard the click on alpha=0 — invisible buttons still
+                    // receive clicks in ImGui, but actions should only fire
+                    // when the row is visible. Cheap defence vs accidental
+                    // off-screen clipboard writes.
+                    ImGui::SetClipboardText(msgPtr->Content.c_str());
+                    d.assistantCopyToastUntilMs = nowMs + 1500;
+                    d.assistantCopyToastLabel = "Copied";
+                }
+            }
+            copyHovered = ImGui::IsItemHovered();
+            copyFocused = ImGui::IsItemFocused();
+
+            ImGui::SameLine();
+
+            // Pin / Unpin button.
+            const char* pinIcon = msgPtr->Pinned ? (faLoaded ? ICON_FA_THUMBTACK_SLASH : "Unpin")
+                                                 : (faLoaded ? ICON_FA_THUMBTACK : "Pin");
+            char pinId[64];
+            std::snprintf(pinId, sizeof(pinId), "%s##AiPin%d", pinIcon, messageIndex);
+            bool pinHovered = false;
+            bool pinFocused = false;
+            if (ImGui::SmallButton(pinId)) {
+                if (showRow) {
+                    TogglePinAndPersist(d, static_cast<std::size_t>(messageIndex), !msgPtr->Pinned);
+                }
+            }
+            pinHovered = ImGui::IsItemHovered();
+            pinFocused = ImGui::IsItemFocused();
+
+            // Right-aligned relative timestamp + absolute-time tooltip.
+            // Canonical ImGui right-align: SameLine to anchor on the Pin button's
+            // row, then SetCursorPosX to (current + remaining - textW - padding).
+            // `GetCursorPosX() + GetContentRegionAvail().x` always equals the
+            // window content's right-edge X regardless of how the cursor got
+            // there (auto-advanced or via SameLine), so the math survives both
+            // paths. The earlier `SameLine(0.0f, hugeSpacing)` approach
+            // computed availW from the wrong baseline and clipped the timestamp
+            // off-screen to the right.
+            if (msgPtr->CreatedAtUnixMs > 0) {
+                ImGui::SameLine();
+                const std::string rel = smatchet::ai::FormatRelativeTime(nowMs, msgPtr->CreatedAtUnixMs);
+                const float relW = ImGui::CalcTextSize(rel.c_str()).x;
+                const float curX = ImGui::GetCursorPosX();
+                const float availFromHere = ImGui::GetContentRegionAvail().x;
+                const float targetX = curX + availFromHere - relW - ImGui::GetStyle().ItemSpacing.x;
+                if (targetX > curX) {
+                    ImGui::SetCursorPosX(targetX);
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImVec4(aiPalette.AiActionRowIcon[0], aiPalette.AiActionRowIcon[1],
+                                             aiPalette.AiActionRowIcon[2], aiPalette.AiActionRowIcon[3]));
+                ImGui::TextUnformatted(rel.c_str());
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && showRow) {
+                    const std::string abs = smatchet::ai::FormatAbsoluteTime(msgPtr->CreatedAtUnixMs);
+                    ImGui::SetTooltip("%s", abs.c_str());
+                }
+            }
+
+            ImGui::PopStyleVar();
+
+            // Snap cursor to the bottom of the reserved slot so the next turn
+            // starts at a predictable Y (the row's natural cursor advance may
+            // be slightly less than actionRowSlotH because SmallButton is
+            // shorter than a full frame).
+            const float currentY = ImGui::GetCursorScreenPos().y;
+            const float targetY = actionRowStart.y + actionRowSlotH;
+            if (targetY > currentY) {
+                ImGui::Dummy(ImVec2(0.0f, targetY - currentY));
+            }
+
+            s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)] =
+                bodyHovered || bodyFocused || copyHovered || copyFocused || pinHovered || pinFocused;
+        }
     };
 
-    const ImVec4 userColor(0.78f, 0.86f, 1.0f, 1.0f); // soft blue
-    const ImVec4 asstColor(0.85f, 0.75f, 1.0f, 1.0f); // soft purple
+    const ImVec4 userColor(aiPalette.AiUserRoleLabel[0], aiPalette.AiUserRoleLabel[1], aiPalette.AiUserRoleLabel[2],
+                           aiPalette.AiUserRoleLabel[3]);
+    const ImVec4 asstColor(aiPalette.AiAssistantRoleLabel[0], aiPalette.AiAssistantRoleLabel[1],
+                           aiPalette.AiAssistantRoleLabel[2], aiPalette.AiAssistantRoleLabel[3]);
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
-        const AiMessage& m = d.assistantHistory[i];
+        AiMessage& m = d.assistantHistory[i];
         const bool isUser = (m.Role == "user");
-        renderTurn(isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, m.Content, /*cacheable=*/true);
+        renderTurn(static_cast<int>(i), isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, &m, m.Content,
+                   /*cacheable=*/true);
         ImGui::Spacing();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
-        // Streaming tail mutates per frame — bypass cache.
-        renderTurn("Assistant (streaming...):", asstColor, d.assistantStreamBuf, /*cacheable=*/false);
+        // Streaming tail mutates per frame — bypass cache. No messageIndex
+        // (msgPtr nullptr) → no Y-cache write, no action row (the tail isn't
+        // finalised and has no persistence row to pin).
+        renderTurn(-1, "Assistant (streaming...):", asstColor, nullptr, d.assistantStreamBuf, /*cacheable=*/false);
     }
 
     SelectableText::End(selCtx);
@@ -313,7 +650,9 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const float scrollMax = ImGui::GetScrollMaxY();
     const bool wasAtTail = d.assistantAutoScrollAtTail;
     d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
-    if (wasAtTail && scrollMax > 0.0f) {
+    if (wasAtTail && scrollMax > 0.0f && d.assistantScrollToMessageIndex < 0) {
+        // Don't auto-pin to tail when a bookmark jump is queued for next frame
+        // (e.g. Y-cache wasn't populated this frame); the bookmark wins.
         ImGui::SetScrollY(scrollMax);
     }
     ImGui::EndChild();
