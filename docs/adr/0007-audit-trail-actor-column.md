@@ -2,7 +2,9 @@
 
 # Status
 
-Accepted (2026-05-21)
+**Withdrawn (2026-05-21)** — the triage tracker-agnostic refactor that drove this ADR was stripped from the [`github-tracker-backend`](../design/github-tracker-backend.md) plan on the same day. Without the refactor, triage and grid writes continue to land on distinct call paths (concrete `GitHubClient::*` methods vs `ITrackerClient::UpdateField` virtuals), so the `source`+`action`+timestamp heuristic continues to discriminate triggers as it does today. This ADR remains in-tree as a reference: when the deferred refactor lands, re-propose under a new ADR number with status Accepted; reuse the design here verbatim.
+
+Original status: Accepted (2026-05-21) — revoked same day.
 
 # Context
 

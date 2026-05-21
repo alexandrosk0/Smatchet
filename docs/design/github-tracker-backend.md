@@ -1,88 +1,49 @@
-# Plan — GitHub as a third tracker backend (+ triage tracker-agnostic refactor)
+# Plan — GitHub as a third tracker backend
 
 > **Slug**: `github-tracker-backend`
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 >
-> **Stress-test pass**: 2026-05-21 grill-with-docs session locked the eight design decisions in § Decisions locked below. ADRs: [`0003-github-as-itrackerclient`](../adr/0003-github-as-itrackerclient.md), [`0007-audit-trail-actor-column`](../adr/0007-audit-trail-actor-column.md). Glossary additions: [`CONTEXT.md`](../CONTEXT.md) § Source tracker, § Code host, § HandoffClarificationPostToSourceTracker, § `UpdateField` semantics — set-replace, § Audit-trail actor.
+> **Stress-test pass**: 2026-05-21 grill-with-docs + 2 architect passes. **2026-05-21 scope reduction**: agentic-triage tracker-agnostic refactor stripped from this plan; deferred to a future plan. This plan now ships only GitHub-as-grid-tracker; agentic flow stays untouched (GitHub-only, current behaviour).
 
 ## Context
 
 Smatchet today ships two grid-backing tracker backends — Jira and Plane — wired via `ITrackerClient` and `DefaultTrackerBackendFactory`. A third surface, GitHub, already exists in-tree as [`GitHubClient`](../../Source_Core/include/GitHubClient.h) but is currently **triage-only**: it powers the agentic-flow pipeline (CodeRabbit + CI react loop, `handoff-implementer`, `pr-iterator`, the T7 scheduled-poll worker) and stubs out every grid-relevant `ITrackerClient` virtual with the documented "not supported on GitHub backend yet" sentinel.
 
-Triage's own seam — [`IGitHubReadClient`](../../Source_Core/include/AgenticTriageController.h:47) — is **GitHub-shaped**: `ListOpenIssuesForRepo(owner, repo, ...)` takes a GitHub URL fragment. AppController binds triage write lambdas (`CommentAdd` / `LabelAdd` / `AssigneeSet` / `StateTransition`) **directly** to `GitHubClient::*` methods. Two hardcoded gates in [`AgenticTriageController.cpp`](../../Source_Core/src/AgenticTriageController.cpp) cement the GitHub-only assumption: line 79 (`p.sourceTracker = "github"` hardcode despite the parameter being available) and line 104 (`if (sourceTracker != "github") return false`). The schema below the controller is already multi-tracker-ready — `AgentProposal.sourceTracker` ∈ {`github`, `jira`, `plane`} column exists; `agent_poll_cursor(source_tracker, repo_key)` composite-PK exists. **The block is two code-level gates, not a data-model change.**
+User ask: let users pick **GitHub** as the active tracker so issues from a configured `owner/repo` populate the grid, sync into the SQLite cache, and support field-edit + create-issue flows the same way Jira/Plane do today.
 
-User ask, two parts:
+**Out of scope for this plan**: making the agentic-triage pipeline tracker-agnostic (i.e. letting Jira / Plane issues drive triage proposals). The triage seam stays GitHub-only as-is. A future plan will refactor it; this plan does not block on or include that work. See § Out of scope § Agentic triage tracker-agnostic refactor.
 
-1. Let users pick **GitHub** as the active tracker so issues populate the grid, sync into the SQLite cache, and support field-edit + create-issue flows the same way Jira/Plane do.
-2. **Refactor triage to use `ITrackerClient`** so the agentic-flow's discovery + comment + label + state-transition + clarification paths work against Jira and Plane sources too.
+**Anti-duplication constraint**: the existing `GitHubClient` triage primitives — `CommentAdd` / `LabelAdd` / `LabelRemove` / `AssigneeSet` / `StateTransition` / PR-thread / check-run / GraphQL-resolve — must stay the single source of truth for GitHub writes. The tracker role **routes** through those primitives via `UpdateField`; it does not parallel them.
 
-Cross-link: [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md); [`docs/design/agentic-triage-flow.md`](agentic-triage-flow.md); [`docs/design/coderabbit-react-loop.md`](coderabbit-react-loop.md); [`docs/design/agentic-coding-handoff.md`](agentic-coding-handoff.md) (PR-side flows that stay code-host-coupled).
+Cross-link: [ADR 0003](../adr/0003-github-as-itrackerclient.md) (GitHub as ITrackerClient was the originally-decided shape); [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) (the triage-side contract this plan must not regress).
 
 ## Decisions locked
 
-Locked by the 2026-05-21 grill-with-docs session. Diverging from any of these = needs a plan revision, not an implementation choice.
+Locked by the 2026-05-21 grill-with-docs + architect-review sessions. Diverging from any of these = needs a plan revision, not an implementation choice.
 
-1. **Source tracker ≠ code host** — issue lives on any tracker; PR + CodeRabbit + check-runs live on GitHub (today). Asymmetry named in CONTEXT.md § Source tracker / § Code host. `HandoffClarificationPostToGithub` → renamed `HandoffClarificationPostToSourceTracker`.
-2. **`UpdateField` semantics = set-replace at the virtual** — `values` is the intended full set after edit. Jira / Plane native; GitHub impl pre-fetches the current set and diffs internally. CONTEXT.md § `UpdateField` semantics — set-replace.
-3. **Audit-trail `actor` field added** — discriminates trigger (`user` / `triage` / `ci_react` / `coderabbit_react` / `lua` / `mcp`) from `source` (backend client) and `action` (verb). ADR [`0007`](../adr/0007-audit-trail-actor-column.md). JSONL row shape extended; **no schema migration runs** (substrate is append-only JSONL per ADR 0007).
-4. **`ITrackerTriageSource` adapter dropped** — `AgenticTriageController` takes `ITrackerClient*` directly. `IGitHubReadClient` is deleted, not renamed. Test mocks subclass `ITrackerClient` and override the 3 methods the controller calls; the base-class defaults cover the other 27 virtuals.
-5. **Single tracker config — poll source = active grid tracker** — `AgenticPollSource` config field retired (silently ignored on Load for legacy configs). Worker reads `TrackerType` to pick the backend; dispatches `ITrackerClient::ListIssueKeysUpdatedSince(query, sinceUnixSec)`. `AgenticPollQuery` stays as the per-tracker query.
-6. **Single bundled PR** — work-streams A + B land together. No intermediate state where A's triage rebind hits B's still-stubbed GitHub `UpdateField`.
-7. **Verification = Bucket A + new Bucket B scenario** — pure-logic ctests cover routing + diff; new `multi_tracker_triage_smoke` scenario runs the triage controller against three canned `ITrackerClient` mocks. No bucket E this PR; deferred backlog entry for Preferences-UI tracker-switch coverage.
-8. **GitHub `FetchIssueBody` promotes to `ITrackerClient` virtual; new `ListIssueKeysUpdatedSince` virtual added** — Jira + Plane implement both; GitHub already has FetchIssueBody concretely. JQL `updated >= <epoch-ms>` for Jira; `updated_at__gte` for Plane; `since=<iso8601>` for GitHub.
+1. **`UpdateField` semantics = set-replace at the virtual** — `values` is the intended full set after edit. Jira / Plane native; GitHub impl pre-fetches the current set and diffs internally. CONTEXT.md § `UpdateField` semantics — set-replace.
+2. **Factory forwarding-shell shape pinned** — `DefaultTrackerBackendFactory` gains ctor-injected `AppController*`; `Create("github")` returns `unique_ptr<GitHubForwardingClient>` shell holding lazily-resolved non-owning `GitHubClient* impl_`. Single shared `GitHubClient` instance owned by `AppController`; no second PAT-holding client.
+3. **`SMATCHET_WITH_AGENTIC` un-gates `GitHubClient*.cpp`** — runtime PAT-empty short-circuit replaces build-time gating; symbol must exist in tracker-only builds. Header preprocessor audit confirms no `#error` branches remain. Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) is a hard gate before commit.
+4. **GitHub field catalog is static, no API** — six native fields (state, labels, assignees, milestone, title, body). Projects v2 custom fields deferred to a follow-up plan.
+5. **Single bundled PR** — all GitHub fill-in landings ship together. No intermediate state where the factory wires `"github"` but the virtuals are still stubbed.
+6. **Verification = Bucket A pure-logic only** — router dispatch, set-diff helper, static catalog, helper round-trips. No bucket-B / bucket-E in this PR; tracker-switching UI coverage is a backlog entry.
 
 ## Approach
 
-Two parallel work-streams ship in **one squashed PR** (decision 6). Code-level the changes can land in any topological order; the PR ships them together so triage never sees a moment where `UpdateField` is rebound onto a stubbed GitHub impl.
+Single work-stream, single squashed PR. The existing `GitHubClient` keeps its triage-only role exactly as-is; this plan only fills the stubbed `ITrackerClient` virtuals so the grid + sync paths recognise GitHub as a valid backend.
 
-**A. Triage tracker-agnostic refactor**
+**1. De-gate the TU** — drop `#if defined(SMATCHET_WITH_AGENTIC)` around the `GitHubClient` source list and `GitHubPat` config field. Runtime PAT-empty short-circuit means dead-code at zero cost without configuration.
 
-A.1 Promote `FetchIssueBody` to `ITrackerClient` as a new virtual (default sentinel). Jira + Plane fill it in; GitHubClient already has it.
+1.a **Header preprocessor audit** — `GitHubClient.h` lines 10-12 currently document the build-time-gating contract for consumers. Every `#if defined(SMATCHET_WITH_AGENTIC)` inside `GitHubClient.h` / `GitHubClient.cpp` / `GitHubClientHelpers.h` / `GitHubClientHelpers.cpp` either drops or converts to a runtime guard. No `#error` branch may remain.
 
-A.2 Add `ITrackerClient::ListIssueKeysUpdatedSince(const TrackerConfig& cfg, const std::string& query, std::int64_t sinceUnixSec, std::vector<std::string>& outKeys, std::string& outError)` virtual (default sentinel). Backend-specific query shape: `owner/repo` for GitHub, JQL for Jira, project-UUID-filter for Plane. Returns canonical issue keys (`owner/repo#N`, `PROJ-42`, `<plane-uuid>`).
+1.b **`GitHubClientHelpers.cpp` un-gates alongside `GitHubClient.cpp`** — `CMakeLists.txt:654-655` + `:678-680` currently `REMOVE_ITEM` + re-add both files in the same gated block. The un-gate must cover both TUs together.
 
-A.3 **Delete `IGitHubReadClient`** (decision 4). `AgenticTriageController` ctor takes `ITrackerClient*` directly. `GitHubReadAdapter` deleted. Test mocks subclass `ITrackerClient`.
+1.c **Dual-target build is a hard gate** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` MUST pass before commit. DX12 builds with `SMATCHET_WITH_AGENTIC=OFF` (per `CMakeLists.txt:175`); confirm `GitHubClient.cpp`'s PR / GraphQL / check-run methods compile cleanly under that flag.
 
-A.4 Lift the two hardcoded GitHub-only gates in [`AgenticTriageController.cpp`](../../Source_Core/src/AgenticTriageController.cpp):
-- Line 79: `p.sourceTracker = "github"` → `p.sourceTracker = sourceTracker` (use the param).
-- Line 104: `if (sourceTracker != "github") return false` → accept all backends; validate against `ITrackerClient::GetTrackerType()` match instead.
+**2. Implement the stubbed `ITrackerClient` virtuals on `GitHubClient`** — `FetchIssues`, `FetchIssuesForKeys`, `ProbeReachability`, `BuildBrowseUrl`, `ExtractProjectFromQuery`, `ListProjects`, `FetchFieldCatalog` (static catalog, no API), `ResolveDisplayValue`, `UpdateIssueFields`, `UpdateField`, `BuildFieldPayload`, `BuildCreatePayload`, `CreateIssue`.
 
-A.5 Refactor triage write lambdas in [`AppController.cpp`](../../Source_Core/src/AppController.cpp:1894) — bind to `ITrackerClient*`, not `GitHubClient*`:
-- Comment-add → `ITrackerClient::AddIssueCommentPlain(cfg, issueKey, body, outError)`.
-- Label set → `ITrackerClient::UpdateField(issueId, labelsField, intendedFullSet, outError)` (set-replace per decision 2; GitHub impl diffs internally).
-- Assignee set → `ITrackerClient::UpdateField(issueId, assigneeField, [user], outError)`.
-- State transition → `ITrackerClient::UpdateField(issueId, statusField, [state], outError)`.
-
-A.6 Per-backend field-id constants in new header [`TrackerTriageFieldIds.h`](../../Source_Core/include/) — Jira `"status"` / `"labels"` / `"assignee"`; Plane `"state"` / `"labels"` / `"assignees"`; GitHub `"state"` / `"labels"` / `"assignees"`. Triage write lambdas pick by `ITrackerClient::GetTrackerType()`.
-
-A.7 Collapse `AgenticPollSource` (decision 5) — remove from config; scheduled-poll worker reads `TrackerType` to pick backend, dispatches `ITrackerClient::ListIssueKeysUpdatedSince(query, sinceUnixSec)` against it. Legacy `AgenticPollSource` JSON ignored on Load.
-
-A.8 Fill `PlaneClient::AddIssueCommentPlain` (currently the unsupported sentinel). Without this, Plane triage silently drops clarification-mirror comments. Wire shape: `POST /workspaces/{w}/projects/{p}/issues/{i}/comments/`.
-
-A.9 Implement `JiraClient::ListIssueKeysUpdatedSince` (JQL `updated >= <epoch-ms>`) and `PlaneClient::ListIssueKeysUpdatedSince` (Plane `updated_at__gte` filter). GitHub's impl extracts from existing `ListOpenIssuesForRepo` plumbing.
-
-A.10 **PR + check-run + GraphQL surface stays GitHub-only** (decision 1). [`PrCheckRunWatcher`](../../Source_Core/include/PrCheckRunWatcher.h), [`PrCommentWatcher`](../../Source_Core/include/PrCommentWatcher.h), [`CiFailureClassifier`](../../Source_Core/include/CiFailureClassifier.h) keep their `GitHubClient::CheckRun` / `GitHubClient::CheckRunAnnotation` typed dependencies. Jira and Plane have no native PR or check-run concept; the CodeRabbit + CI react loops are code-host-coupled by construction.
-
-A.11 Rename `HandoffClarificationPostToGithub` → `HandoffClarificationPostToSourceTracker` (decision 1). Behavior unchanged for GitHub source; Jira / Plane source paths now route through `ITrackerClient::AddIssueCommentPlain`. **JSON key migration**: rename `handoff_clarification_post_to_github` → `handoff_clarification_post_to_source_tracker` in the persisted config. Loader reads the new key first; falls back to the legacy key on miss; writes only the new key on Save. Same pattern as `AgenticPollSource` legacy-ignore. Affected call sites grep-confirmed: `ConfigManager.h:259`, `ConfigManager.cpp:251 + 843-844`, `AppController.cpp:1946`, `docs/agentic/USAGE.md:419` (doc-only).
-
-A.12 Audit-trail `actor` field (decision 3 + ADR 0007) — `BackendAuditTrail` substrate is **append-only JSONL** at `smatchet_backend_audit.jsonl`, NOT a SQLite table. **No migration runs.** Extend the `AuditEvent` struct + JSONL row shape with an `actor` key (default `"user"`); reader tolerates legacy lines without the key via `value("actor", "user")`-style deserialisation. `BackendAuditTrail::AppendBegin` / `AppendResult` / `AppendEvent` gain a defaulted `actor` parameter at the **end** of the parameter list. Triage / ci-react / coderabbit-react / lua / mcp call sites pass their explicit actor; user-facing UI surfaces accept the default.
-
-**Handoff AuditSink actor channel** — `AuditSink` typedef ([`AgenticHandoffController.h:62`](../../Source_Core/include/AgenticHandoffController.h:62)) is today a fixed 6-param `std::function`; the controller has no `dispatch_source` member reaching the sink. Widening: add a 7th param `const std::string& actor` to the typedef; `AgenticHandoffController` gains an `actor_` member set at construction from the active dispatch context (proposal-implement → `"triage"` for the originating triage write; CodeRabbit react → `"coderabbit_react"`; CI react → `"ci_react"`). Both sink invocation sites ([`AgenticHandoffController.cpp:196`](../../Source_Core/src/AgenticHandoffController.cpp:196) `HandoffStateTransition`, [`:679`](../../Source_Core/src/AgenticHandoffController.cpp:679) `ClarificationProvided`) pass `actor_`. The AppController-side lambda at [lines 1870-1883](../../Source_Core/src/AppController.cpp:1870) forwards `actor` → `ev.Actor` on the constructed `AuditEvent`. For controller instances that serve multiple dispatch flows in their lifetime, `actor_` is settable per-spawn from the `ActiveHandoff` record's dispatch_source rather than a single ctor-time value.
-
-**B. GitHub-as-tracker fill-in**
-
-B.1 De-gate the TU — drop `#if defined(SMATCHET_WITH_AGENTIC)` around the `GitHubClient` source list and `GitHubPat` config field. Runtime PAT-empty short-circuit means dead-code at zero cost.
-
-B.1.a **Header preprocessor audit** — `GitHubClient.h` lines 10-12 currently document the build-time-gating contract for consumers. Every `#if defined(SMATCHET_WITH_AGENTIC)` inside `GitHubClient.h` / `GitHubClient.cpp` / `GitHubClientHelpers.h` / `GitHubClientHelpers.cpp` either drops or converts to a runtime guard. No `#error` branch may remain — DX12 builds will compile the TU with `SMATCHET_WITH_AGENTIC=OFF`.
-
-B.1.b **`GitHubClientHelpers.cpp` un-gates alongside `GitHubClient.cpp`** — `CMakeLists.txt:654-655` + `:678-680` currently `REMOVE_ITEM` + re-add both files in the same gated block. The un-gate must cover both TUs together; partial un-gate (one TU compiled, the other not) breaks linkage.
-
-B.1.c **Dual-target build is a hard gate** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` MUST pass before commit. The DX12 target builds with `SMATCHET_WITH_AGENTIC=OFF` (per `CMakeLists.txt:175`); confirm `GitHubClient.cpp`'s PR / GraphQL / check-run methods compile cleanly under that flag (their deps `BackendAuditTrail`, `nlohmann/json`, `cpr::cpr` are already present in `SmatchetCoreInterface`). DX12 dual-target gate moves from "implicit via `paths-ignore`" to "explicit must-pass on every triage-refactor CI run".
-
-B.2 Implement the stubbed `ITrackerClient` virtuals on `GitHubClient` — `FetchIssues`, `FetchIssuesForKeys`, `ProbeReachability`, `BuildBrowseUrl`, `ExtractProjectFromQuery`, `ListProjects`, `FetchFieldCatalog` (static catalog, no API), `ResolveDisplayValue`, `UpdateIssueFields`, `UpdateField`, `BuildFieldPayload`, `BuildCreatePayload`, `CreateIssue`.
-
-The write virtuals dispatch internally to existing five primitives plus one new shared `PatchIssue` helper for `title` / `body` / `milestone`. `UpdateField` for set fields (labels, assignees) does the internal pre-fetch + diff per decision 2:
+The write virtuals dispatch internally to existing five primitives plus one new shared `PatchIssue` helper for `title` / `body` / `milestone` (the three GitHub fields sharing the `PATCH /repos/{o}/{r}/issues/{n}` endpoint). `UpdateField` for set fields (labels, assignees) does an internal pre-fetch + diff per decision 1:
 
 ```
 UpdateField(issueId, "labels", desiredSet):
@@ -94,105 +55,82 @@ UpdateField(issueId, "labels", desiredSet):
     audit-trail one "field_update_labels" row spanning the batch (begin/result)
 ```
 
-B.3 Wire the factory + config — extend `DefaultTrackerBackendFactory::Create` with a `"github"` branch; add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo` to `TrackerConfig` (PAT already there); extend `SmatchetPreferencesUi` with the GitHub profile group.
+**3. Wire the factory + config** — extend `DefaultTrackerBackendFactory::Create` with a `"github"` branch; add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo` to `TrackerConfig` (PAT already there); extend `SmatchetPreferencesUi` with the GitHub profile group.
 
-B.4 Single shared `GitHubClient` instance — promote `AppController::agenticGithubClient_` to `sharedGithubClient_`; both triage and tracker call sites resolve through `AppController::GetGithubClient()`.
+**4. Single shared `GitHubClient` instance** — promote `AppController::agenticGithubClient_` to `sharedGithubClient_`; both triage and tracker call sites resolve through `AppController::GetGithubClient()`.
 
 **Factory shape**: `DefaultTrackerBackendFactory` gains a non-owning `AppController* appController_` member (ctor-injected; existing call site `AppController.cpp` that instantiates the factory passes `this`). `Create("github")` returns `unique_ptr<GitHubForwardingClient>` where `GitHubForwardingClient` is a new TU-private class inside `DefaultTrackerBackendFactory.cpp` holding a non-owning `GitHubClient* impl_`. Every `ITrackerClient` virtual on the shell **lazily** resolves `impl_ = appController_->GetGithubClient()` on first virtual call (not at shell construction); avoids the ctor-order trap where `sharedGithubClient_` is not yet initialised when the factory is built during `AppController` ctor. The shell's default destructor only deletes the shell — the AppController retains sole ownership of the underlying `GitHubClient`. Rejected alternative: `unique_ptr<ITrackerClient, NoopDeleter>` — breaks the default-deleter contract every `unique_ptr<ITrackerClient>` consumer expects.
 
-Non-obvious trade-off: GitHub Issues has few native fields. Projects v2 custom fields (GraphQL) are a separate effort — § Out of scope flags the follow-up.
+Non-obvious trade-off: GitHub Issues has very few native fields. Projects v2 custom fields (GraphQL) are a separate effort. Phase 1 ships native fields only.
 
 ## Files to modify
 
-Grouped by work-stream; one squashed PR.
+Grouped by subsystem; one squashed PR.
 
-**Work-stream A — triage abstraction + audit-trail bump**
+**GitHubClient surface fill**
 
-1. [`Source_Core/include/ITrackerClient.h`](../../Source_Core/include/ITrackerClient.h:230) — add `FetchIssueBody` + `ListIssueKeysUpdatedSince` virtuals (default sentinel).
-2. [`Source_Core/include/AgenticTriageController.h`](../../Source_Core/include/AgenticTriageController.h:47) — **delete `IGitHubReadClient`**; ctor takes `ITrackerClient*` directly.
-3. [`Source_Core/src/AgenticTriageController.cpp`](../../Source_Core/src/AgenticTriageController.cpp:79) + [`:104`](../../Source_Core/src/AgenticTriageController.cpp:104) — lift two hardcoded GitHub gates; rewire to `ITrackerClient*`.
-4. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp:1766) — delete `GitHubReadAdapter` class (lines 1766-1828); rebind triage write lambdas at [lines 1894-2036](../../Source_Core/src/AppController.cpp:1894) to call `ITrackerClient::*` virtuals; scheduled-poll worker (line 2468 `cfg.AgenticPollSource != "github"` reader — cleanup required) reads `TrackerType` instead of `AgenticPollSource`; handoff AuditSink lambda at [lines 1870-1883](../../Source_Core/src/AppController.cpp:1870) plumbs `ev.Actor` from controller's dispatch_source context (the `actor="user"` default would otherwise miss every handoff-triggered write).
-5. **New file** [`Source_Core/include/TrackerTriageFieldIds.h`](../../Source_Core/include/) — per-backend field-id constants for labels / assignees / status. One header, no .cpp.
-6. [`Source_Core/src/PlaneClient.cpp`](../../Source_Core/src/PlaneClient.cpp) + [`PlaneIssueMutation.cpp`](../../Source_Core/src/PlaneIssueMutation.cpp) — implement `AddIssueCommentPlain`.
-7. [`Source_Core/src/JiraClient.cpp`](../../Source_Core/src/JiraClient.cpp) + [`JiraIssueSearch.cpp`](../../Source_Core/src/JiraIssueSearch.cpp) — implement `ListIssueKeysUpdatedSince` (JQL `updated >= <ms>`).
-8. [`Source_Core/src/PlaneClient.cpp`](../../Source_Core/src/PlaneClient.cpp) + [`PlaneIssueSearch.cpp`](../../Source_Core/src/PlaneIssueSearch.cpp) — implement `ListIssueKeysUpdatedSince` (`updated_at__gte`).
-9. **New pure helper** [`Source_Core/include/LabelEditDiffPure.h`](../../Source_Core/include/) + [`Source_Core/src/LabelEditDiffPure.cpp`](../../Source_Core/src/) — `ComputeLabelEditDiff(currentLabels, intendedLabels) → {toAdd, toRemove}`. Pure, no I/O, bucket-A testable. Used by GitHub `UpdateField` internal diff.
-10. [`Source_Core/include/BackendAuditTrail.h`](../../Source_Core/include/BackendAuditTrail.h) + [`.cpp`](../../Source_Core/src/BackendAuditTrail.cpp) — add `actor` defaulted parameter at end of `AppendBegin` / `AppendResult` / `AppendEvent` signatures; add `std::string Actor = "user";` to `AuditEvent` struct; serialiser writes the key unconditionally; reader uses `value("actor", "user")`-style tolerant deserialisation. **No SQLite migration** — substrate is append-only JSONL.
-11. [`Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp:59-61+`](../../Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp:59) — `ScenarioMockGitHub` subclassed `IGitHubReadClient`; migrate to subclass `ITrackerClient` directly (override `FetchIssueBody` + `FetchIssueComments` + `ListIssueKeysUpdatedSince`; base-class defaults cover the other ~27 virtuals). This is a **production scenario step** compiled into `SmatchetStandalone`, not a test TU — missing it breaks the agentic-triage CLI scenario.
-12. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:222) + [`.cpp`](../../Source_Core/src/ConfigManager.cpp) — un-gate `GitHubPat`; **remove** `AgenticPollSource` from struct; add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo`; rename `HandoffClarificationPostToGithub` → `HandoffClarificationPostToSourceTracker` (struct field + JSON key, legacy key tolerated on Load).
-13. **Audit-trail actor pass-through chokepoint sites** — the actor is stamped at the AppController-shim layer that Lua / MCP / triage / handoff / coderabbit-react / ci-react route through, NOT at upstream plugin TUs. Chokepoints to update:
-    - `AppController.cpp` triage write lambdas (line 1894-2036) → `actor="triage"`.
-    - `AppController.cpp` handoff AuditSink lambda (line 1870-1883) → `actor` from `dispatch_source` (`coderabbit_comment` / `ci_*` → matching `coderabbit_react` / `ci_react`).
-    - `AppController_LuaBindings.cpp` write entry points (`l_update_field`, `l_add_comment`, etc.) → `actor="lua"`.
-    - Any MCP tool handler under `Plugins/Mcp/` that reaches an `AppController::Add*` / `Update*` method via the binding adapter → `actor="mcp"`. Audit `Plugins/Mcp/src/` for write-tool handlers; thread the actor through the `AppController` binding adapter.
-    - `JiraIssueMutation.cpp` / `PlaneIssueMutation.cpp` / `GitHubClient.cpp` audit call sites — these are the **backend impls**, not the trigger sites; they accept `actor` from above via the `UpdateField` / `AddIssueCommentPlain` virtual signatures. **Pinned shape**: extend each virtual with an explicit `const std::string& actor` parameter at the **end** of the signature, **no default**. Forces every call site to make the actor decision consciously; chokepoint shims supply the value, no thread-local fragility across Pillar 2 worker-dispatcher boundaries, no risk of override-defaults drifting between backends.
+1. [`Source_Core/include/GitHubClient.h`](../../Source_Core/include/GitHubClient.h:35) — drop "only `FetchIssueComments` is real this slice" comment; un-stub virtual declarations; add private `PatchIssue` helper.
+2. [`Source_Core/src/GitHubClient.cpp`](../../Source_Core/src/GitHubClient.cpp:107) — replace stub bodies for `ProbeReachability` / `FetchIssues` / `FetchIssuesForKeys` / `UpdateIssueFields` / `UpdateField` / `BuildFieldPayload` / `ResolveDisplayValue`; add `BuildBrowseUrl`, `ExtractProjectFromQuery`, `ListProjects`, `FetchFieldCatalog`, `BuildCreatePayload`, `CreateIssue` overrides; add private `PatchIssue`. `UpdateField` routes by `field.id` → existing primitives + diff-via-`LabelEditDiffPure` for set fields.
+3. **New file** [`Source_Core/src/GitHubIssueSearch.cpp`](../../Source_Core/src/) — paginated `FetchIssues` + `FetchIssuesForKeys` impl. Mirrors `JiraIssueSearch.cpp` / `PlaneIssueSearch.cpp` split.
+4. **New file** [`Source_Core/src/GitHubFieldCatalog.cpp`](../../Source_Core/src/) — static catalog (6 fields) + `ResolveDisplayValue`. Mirrors `PlaneFieldCatalog.cpp`.
+5. [`Source_Core/include/GitHubClientHelpers.h`](../../Source_Core/include/GitHubClientHelpers.h) + [`.cpp`](../../Source_Core/src/GitHubClientHelpers.cpp) — add `BuildIssuePatchSuffix`, `BuildIssuesListSuffix`.
+6. **New pure helper** [`Source_Core/include/LabelEditDiffPure.h`](../../Source_Core/include/) + [`Source_Core/src/LabelEditDiffPure.cpp`](../../Source_Core/src/) — `ComputeLabelEditDiff(currentLabels, intendedLabels) → {toAdd, toRemove}`. Pure, no I/O, bucket-A testable. Used by GitHub `UpdateField` internal diff.
 
-**Work-stream B — GitHub-as-tracker fill-in**
+**Factory + config**
 
-14. [`Source_Core/include/GitHubClient.h`](../../Source_Core/include/GitHubClient.h:35) — un-stub virtual declarations; add private `PatchIssue` helper.
-15. [`Source_Core/src/GitHubClient.cpp`](../../Source_Core/src/GitHubClient.cpp:107) — replace stub bodies; add `BuildBrowseUrl`, `ExtractProjectFromQuery`, `ListProjects`, `FetchFieldCatalog`, `BuildCreatePayload`, `CreateIssue` overrides; add private `PatchIssue`. `UpdateField` routes by `field.id` → existing primitives + diff-via-`LabelEditDiffPure` for set fields.
-16. **New file** [`Source_Core/src/GitHubIssueSearch.cpp`](../../Source_Core/src/) — paginated `FetchIssues` + `FetchIssuesForKeys` + `ListIssueKeysUpdatedSince`. Mirrors `JiraIssueSearch.cpp` split.
-17. **New file** [`Source_Core/src/GitHubFieldCatalog.cpp`](../../Source_Core/src/) — static catalog (6 fields) + `ResolveDisplayValue`. Mirrors `PlaneFieldCatalog.cpp`.
-18. [`Source_Core/include/GitHubClientHelpers.h`](../../Source_Core/include/GitHubClientHelpers.h) + `.cpp` — add `BuildIssuePatchSuffix`, `BuildIssuesListSuffix`.
-19. [`Source_Core/src/DefaultTrackerBackendFactory.cpp`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:7) — `"github"` branch; forwarding-shell delegating to `AppController::GetGithubClient()`.
-20. [`Source_Core/src/SmatchetPreferencesUi.cpp`](../../Source_Core/src/SmatchetPreferencesUi.cpp) — GitHub profile group; remove `AgenticPollSource` widget; rename clarification toggle.
-21. [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:1276) — rename `EnsureAgenticGithubClient` → `GetGithubClient`; rename member.
-22. [`CMakeLists.txt`](../../CMakeLists.txt) — drop `SMATCHET_WITH_AGENTIC` from `GitHubClient*.cpp` source-list; the agentic-flow-only test TUs (`GitHubClient_PrSurface.test.cpp`, `GitHubClient_GraphQL.test.cpp`) stay gated separately.
+7. [`Source_Core/src/DefaultTrackerBackendFactory.cpp`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:7) — `"github"` branch; ctor takes `AppController*`; `GitHubForwardingClient` private class with lazy `impl_` resolution.
+8. [`Source_Core/include/DefaultTrackerBackendFactory.h`](../../Source_Core/include/) — factory ctor signature change.
+9. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:222) — un-gate `GitHubPat` (drop `#if SMATCHET_WITH_AGENTIC`); add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo`.
+10. [`Source_Core/src/ConfigManager.cpp`](../../Source_Core/src/ConfigManager.cpp) — Load / Save the three new fields; legacy-config migration.
+11. [`Source_Core/src/SmatchetPreferencesUi.cpp`](../../Source_Core/src/SmatchetPreferencesUi.cpp) — GitHub profile group under Tracker section.
+12. [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:1276) — rename `EnsureAgenticGithubClient` → `GetGithubClient`; rename member `agenticGithubClient_` → `sharedGithubClient_`. Factory call site updated to pass `this`.
+13. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp:1655) — rename uses; agentic-flow lambdas continue to resolve through `GetGithubClient()` (same instance now); existing triage write lambdas at lines 1894-2036 unchanged in shape.
 
-**Tests**
+**Build glue**
 
-23. [`tests/Source_Core/LabelEditDiffPure.test.cpp`](../../tests/Source_Core/) — pure-set-diff exhaustive cases.
-24. [`tests/Source_Core/TrackerTriageDispatch.test.cpp`](../../tests/Source_Core/) — mock `ITrackerClient` returning canned issue/comments across "github" / "jira" / "plane" types; assert `AgenticTriageController` produces correct `sourceTracker` field on the proposal row.
-25. [`tests/Source_Core/GitHubClient_FieldCatalog.test.cpp`](../../tests/Source_Core/) — static catalog shape.
-26. [`tests/Source_Core/GitHubClient_UpdateField.test.cpp`](../../tests/Source_Core/) — router dispatch + internal labels-diff; **no field-id path makes a raw HTTP call outside the primitive set**; the GET-current-labels pre-fetch is asserted on every set-field update.
-27. [`tests/Source_Core/GitHubFieldCatalog.test.cpp`](../../tests/Source_Core/) — `ResolveDisplayValue` for assignees + labels.
-28. [`tests/Source_Core/GitHubClientHelpers.test.cpp`](../../tests/Source_Core/GitHubClientHelpers.test.cpp) — extend with `BuildIssuePatchSuffix`, `BuildIssuesListSuffix`, `ExtractProjectFromQuery`.
-29. [`tests/Source_Core/PlaneClient_AddComment.test.cpp`](../../tests/Source_Core/) — Plane comment-write happy path + redaction.
-30. [`tests/Source_Core/JiraClient_ListUpdatedSince.test.cpp`](../../tests/Source_Core/) — JQL shape.
-31. [`tests/Source_Core/AuditTrail_Actor.test.cpp`](../../tests/Source_Core/) — `actor` column default + explicit-pass round-trips.
-32. **New bucket-B scenario** [`Source_Core/src/Commands/Scenarios/MultiTrackerTriageSmoke.cpp`](../../Source_Core/src/Commands/Scenarios/) — triage controller runs against canned `ITrackerClient` mocks for "github" / "jira" / "plane" in sequence; asserts on `agent_proposals` row count + `sourceTracker` field per source.
+14. [`CMakeLists.txt`](../../CMakeLists.txt) — drop `SMATCHET_WITH_AGENTIC` from `GitHubClient.cpp` + `GitHubClientHelpers.cpp` source-list condition (lines 654-655 + 678-680). The agentic-flow-only test TUs (`GitHubClient_PrSurface.test.cpp`, `GitHubClient_GraphQL.test.cpp`) stay gated separately.
+
+**Tests (Bucket A — pure-logic ctest)**
+
+15. [`tests/Source_Core/LabelEditDiffPure.test.cpp`](../../tests/Source_Core/) — exhaustive set-diff cases.
+16. [`tests/Source_Core/GitHubClient_FieldCatalog.test.cpp`](../../tests/Source_Core/) — static catalog shape: 6 fields, allowed values, types.
+17. [`tests/Source_Core/GitHubClient_UpdateField.test.cpp`](../../tests/Source_Core/) — field-router dispatch: state → `StateTransition`, labels → diff via `LabelEditDiffPure` → `LabelAdd` / `LabelRemove`, assignee → `AssigneeSet`, title / body / milestone → `PatchIssue`. Mocked HTTP per existing `GitHubClient_GraphQL.test.cpp` pattern. **Critical assertion: the GET-current-labels pre-fetch is asserted on every set-field update; no field-id path makes a raw HTTP call outside the primitive set.**
+18. [`tests/Source_Core/GitHubFieldCatalog.test.cpp`](../../tests/Source_Core/) — `ResolveDisplayValue` for assignees + labels.
+19. [`tests/Source_Core/GitHubClientHelpers.test.cpp`](../../tests/Source_Core/GitHubClientHelpers.test.cpp) — extend with `BuildIssuePatchSuffix`, `BuildIssuesListSuffix`, `ExtractProjectFromQuery`.
+20. [`tests/Source_Core/GitHubForwardingClient.test.cpp`](../../tests/Source_Core/) — factory shell lazy `impl_` resolution: assert first virtual call triggers `GetGithubClient()`, subsequent calls reuse, null AppController returns safe sentinel.
 
 ## Existing utilities reused
 
 Anti-duplication contract.
 
-**Triage refactor (A)**:
-
-- `JiraClient::AddIssueCommentPlain` — [`JiraIssueMutation.cpp:298`](../../Source_Core/src/JiraIssueMutation.cpp:298) — already exists.
-- `ITrackerClient::AddIssueCommentPlain` + `UpdateField` virtuals — [`ITrackerClient.h:215`](../../Source_Core/include/ITrackerClient.h:215) + line 136 — present; no API addition for writes.
-- `AgenticTriageController` core sequence — `FetchIssueBody` → `FetchIssueComments` → `RequestProposals` → `Insert` — unchanged.
-- `AgentProposal.sourceTracker` column + `agent_poll_cursor(source_tracker, repo_key)` composite PK — already exist; reused, no schema change for the multi-tracker data model.
-- `BackendAuditTrail::AppendBegin/AppendResult` — extended with defaulted `actor`; no existing call site needs change for grid surfaces.
-
-**GitHub fill-in (B)**:
-
-- `GitHubClient::CommentAdd` + `LabelAdd` + `LabelRemove` + `AssigneeSet` + `StateTransition` — [GitHubClient.h:134-168](../../Source_Core/include/GitHubClient.h:134) — `UpdateField` is a router; no new HTTP path.
+- `GitHubClient::CommentAdd` + `LabelAdd` + `LabelRemove` + `AssigneeSet` + `StateTransition` — [GitHubClient.h:134-168](../../Source_Core/include/GitHubClient.h:134) — `UpdateField` is a router; no new HTTP path for state/labels/assignees/comments.
 - `GitHubClient::ListOpenIssuesForRepo` `since=` cursor + per_page cap — promoted to `GitHubClientHelpers::BuildIssuesListSuffix` so list + tracker-sync share parameter encoding.
-- `GitHubClient::FetchIssueBody` — moved up to `ITrackerClient` virtual; no signature change.
-- `MakeGitHubAuthHeaders` + `ComposeHttpErrorString` + `RedactForLog` — [GitHubClient.cpp:38-69](../../Source_Core/src/GitHubClient.cpp:38) — every new HTTP call uses these.
-- `GitHubClientHelpers::ParseGitHubIssueKey` + `BuildIssue*Suffix` family.
-- `CachedTicket` + `LocalCacheManager` — shared shape across all backends.
+- `GitHubClient::FetchIssueBody` — already on the agentic seam; left in place. Tracker fetch path does not use it (uses `FetchIssues` instead).
+- `MakeGitHubAuthHeaders` + `ComposeHttpErrorString` + `RedactForLog` — [GitHubClient.cpp:38-69](../../Source_Core/src/GitHubClient.cpp:38) — every new HTTP call uses these. Per [`docs/design/agentic-flow-implementation.md`](agentic-flow-implementation.md) § Decisions locked #2, the inline-bearer pattern stays.
+- `GitHubClientHelpers::ParseGitHubIssueKey` + `BuildIssue*Suffix` family — [GitHubClientHelpers.h](../../Source_Core/include/GitHubClientHelpers.h) — every new write parses keys through the same helper. Key shape stays `owner/repo#N`.
+- `BackendAuditTrail::AppendBegin/AppendResult` with `source="github_client"` — unchanged; triage-flow audit-consumers keep working.
+- `CachedTicket` + `LocalCacheManager` — pure-data shape used by Jira / Plane `FetchIssues`. GitHub `FetchIssues` produces the same struct.
 - `TrackerFieldCatalogResult` + `TrackerField` — [`TrackerFieldSchema.h`](../../Source_Core/include/TrackerFieldSchema.h).
 - `AppController::EnsureAgenticGithubClient` lazy + `std::call_once` ownership — renamed + reused; no second instance.
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: tracker fetch + field edits stay off-UI. Triage refactor changes dispatch type at lambda-bind time, not call-thread. Set-field updates on GitHub add one HTTP pre-fetch per edit — measured against `tracker_label_edit` scenario at slice boundary; expected `< 200 ms` total (network-bound, off-thread).
-- **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: every new HTTP path preserves existing 5s connect / 15s overall timeout. All triage + tracker-sync call sites stay worker-thread. No new UI-thread entry points.
-- **Pillar 3 (never crash)**: standard error-handling discipline; sanitizer build via `ninja-test-msys2`. Interface deletion (`IGitHubReadClient`) is mechanical — type errors at compile time catch any miss. Audit-trail migration is additive with default — no NULL-bomb risk on legacy rows.
-- **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: Preferences UI changes reuse existing widget conventions; one less control after `AgenticPollSource` removal.
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: tracker fetch + field edits stay off-UI per existing `ITrackerClient` contract. GitHub set-field updates add one HTTP pre-fetch per edit (label / assignee changes); measured against `tracker_label_edit` scenario at slice boundary; expected `< 200 ms` total (network-bound, off-thread).
+- **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: every new HTTP path preserves existing 5s connect / 15s overall timeout (`kGitHubConnectTimeoutMs` / `kGitHubOverallTimeoutMs`). All call sites stay worker-thread (`TicketSyncService`, field-edit pipeline). No new UI-thread entry points.
+- **Pillar 3 (never crash)**: standard error-handling discipline — PAT-presence check first, parse-fail returns `false` + `outError`, no raw `new` / `delete`, JSON wrapped in `try` / `catch`. Sanitizer build via `ninja-test-msys2`. Factory lazy `impl_` resolution guards against null-deref via documented sentinel return.
+- **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: no new UI widgets beyond the Preferences profile group; reuses existing `SmatchetPreferencesUi` conventions.
 
 ## Perf-review-system gates
 
 Per [`docs/design/pillar-1-2-perf-review-system.md`](pillar-1-2-perf-review-system.md). Diff touches `Source_Core/` — gates apply.
 
-1. **PR-fast CI** — primary: `tracker_sync` (GitHub backend); secondary: `agentic_triage_poll` (refactored). Add `tracker_label_edit` to track GitHub set-field pre-fetch overhead.
-2. **Pillar 2 static scanner** — no new sync-I/O reachable from `ImGui::*`.
+1. **PR-fast CI** — primary scenario: `tracker_sync` (added GitHub backend path); secondary: `tracker_label_edit` (GitHub set-field pre-fetch overhead). Verify both are in `scripts/dev/perf-pr-fast-set.json`; if not, declare in PR body which scenario covers the change.
+2. **Pillar 2 static scanner** — no new sync-I/O reachable from `ImGui::*`. All HTTP / parse work stays on worker threads.
 3. **Dispatcher drain** — no `MainThreadDispatcher::Drain()` touch.
-4. **Visible-cue bucket-E harness** — no new sync stalls > 100 ms.
-5. **Marker inventory** — no new `SMATCHET_UI_PERF_SCOPE` markers planned.
+4. **Visible-cue bucket-E harness** — no new sync stalls > 100 ms; existing spinner / progress widgets cover the new code paths via shared call sites.
+5. **Marker inventory** — no new `SMATCHET_UI_PERF_SCOPE` markers planned. If implementer adds any for tracker-fetch hot paths, regen `docs/perf/MARKER_INVENTORY.md` in the same PR.
 
-**Pre-push local check**: `bash scripts/dev/perf-run.sh tracker_sync` + `agentic_triage_poll` + `tracker_label_edit`. `MISSING_BASELINE` acceptable on first run.
+**Pre-push local check**: `bash scripts/dev/perf-run.sh tracker_sync` + `tracker_label_edit` + `perf-compare.py` against any existing baseline. `MISSING_BASELINE` acceptable on first run; CI auto-bootstraps.
 
 **Override**: `perf-out-of-band` PR label per [`AGENTS.md`](../../AGENTS.md) § Merge gates — not expected.
 
@@ -200,25 +138,23 @@ Per [`docs/design/pillar-1-2-perf-review-system.md`](pillar-1-2-perf-review-syst
 
 **Risks**:
 
-- **Triage regression on GitHub** — highest risk. Mitigation: bundled PR (decision 6) means GitHub triage never runs against stubbed `UpdateField`; bucket-B scenario asserts pre-refactor behavior preserved.
-- **Audit-trail substrate is JSONL, not SQLite** — confirmed via architect review. No migration to run; reader tolerates legacy lines via `value("actor", "user")`-style deserialisation. Risk reduces to "legacy lines look like user-triggered" — accepted as informational, not a fail mode.
-- **Plane `AddIssueCommentPlain` gap** — closes in A.8.
-- **Jira `ListIssueKeysUpdatedSince` JQL shape divergence** — per-backend implementation in each `*IssueSearch.cpp`; the virtual returns canonical issue-keys + uses backend-native time format internally.
-- **Two `GitHubClient` instances** — naive wire-in creates two PAT-holding clients. Mitigation per B.4 — `AppController::GetGithubClient()` is the single owner; factory returns a forwarding shell.
-- **`SMATCHET_WITH_AGENTIC` un-gating** — drops triage-only code into vanilla builds (~150 LOC). Accepted; runtime PAT-empty short-circuit means dead-code at zero cost.
-- **GitHub PATs vs OAuth** — PAT only. `TrackerConfig::GitHubBaseUrl` accommodates GitHub Enterprise. OAuth deferred.
-- **GitHub Projects v2 custom fields** — phase ships native fields only. § Out of scope.
-- **GitHub rate limits** — 5000/hr PAT-authed; GitHub `UpdateField("labels", ...)` adds one GET pre-fetch per label edit. At realistic triage rates (< 10/hr) the overhead is negligible.
+- **Two `GitHubClient` instances** — naive wire-in (factory builds its own, AppController keeps `agenticGithubClient_` for triage) creates two PAT-holding clients per process. Mitigation per decision 2 — `AppController::GetGithubClient()` is the single owner; factory returns a lazy-resolving forwarding shell.
+- **`SMATCHET_WITH_AGENTIC` un-gating** — dropping the build gate adds the triage code path (PR/check-run/GraphQL) to the standalone binary even when the user doesn't use it. Binary-size impact: ~150 LOC of additional cpr call sites + helpers. Accepted — the runtime PAT-empty short-circuit means dead-code at zero cost without configuration.
+- **DX12 dual-target compile risk** — un-gating un-gates the GitHubClient TU for the DX12 target which builds with `SMATCHET_WITH_AGENTIC=OFF`. Mitigation per decision 3 — dual-target build is hard gate; header preprocessor audit confirms no `#error` branches remain.
+- **GitHub PATs vs OAuth** — current design keeps PAT-only. Mitigation: `TrackerConfig::GitHubBaseUrl` lets users point at GitHub Enterprise. OAuth is a follow-up plan.
+- **GitHub Projects v2 custom fields** — phase 1 ships native fields only. Mitigation: § Out of scope flags the follow-up plan explicitly. Field catalog's static-builder leaves room to merge in a GraphQL-fetched Projects-v2 catalog later.
+- **GitHub rate limits** — 5000/hr PAT-authed. `FetchIssues` paginating at 100/page comfortable; `UpdateField("labels", ...)` adds one GET pre-fetch per label edit. At realistic edit rates (< 10/hr) the overhead is negligible.
+- **Agentic flow regression** — triage path continues calling `GitHubClient::CommentAdd` / `LabelAdd` / etc. directly. Mitigation: this plan does not touch the triage call sites. The shared-instance promotion (decision 2) is a rename, not a behaviour change. Bucket-A test `GitHubForwardingClient.test.cpp` asserts factory's shell uses the same underlying instance.
 
 **Non-goals**:
 
-- **PR + check-run + CodeRabbit GraphQL surface** — stays GitHub-only (decision 1 § Code host).
+- **Agentic triage tracker-agnostic refactor** — deferred. The agentic flow (CodeRabbit react loop, CI react loop, T7 scheduled-poll worker, AgenticTriageController) stays GitHub-only. A future plan will reshape `IGitHubReadClient` → backend-agnostic seam and rebind triage write lambdas; that work is independent of this plan.
+- **PR + check-run + CodeRabbit GraphQL surface generalisation** — stays GitHub-only by construction; no Jira/Plane analog.
 - **Projects v2 custom fields via GraphQL** — separate plan.
 - **GitHub Issues rich-text comment editor on grid** — Jira/Plane-only this phase.
 - **PR-as-issue tracking** — tracker stays issues-only.
 - **GitHub Enterprise OAuth / SSO** — PAT only.
 - **Migration tooling** — no cross-backend issue migration.
-- **Bucket-E coverage for Preferences-UI tracker switch** — deferred. `docs/backlog/agent-self-improvement/test.md` entry (category `test`) created in this PR.
 
 ## Verification
 
@@ -226,26 +162,22 @@ Per [`AGENTS.md`](../../AGENTS.md) § Verification automation — zero manual st
 
 - **Bucket A (pure-logic ctest, `test-rig`)**:
   - `LabelEditDiffPure.test.cpp` — exhaustive set-diff.
-  - `TrackerTriageDispatch.test.cpp` — mock `ITrackerClient` across "github" / "jira" / "plane"; assert dispatch + `sourceTracker` field correctness.
   - `GitHubClient_FieldCatalog.test.cpp` — static catalog shape.
   - `GitHubClient_UpdateField.test.cpp` — router dispatch + **internal pre-fetch + diff** asserted; **no field-id path makes a raw HTTP call outside the primitive set**.
   - `GitHubFieldCatalog.test.cpp` — `ResolveDisplayValue`.
   - `GitHubClientHelpers.test.cpp` (extend) — new helper round-trips.
-  - `PlaneClient_AddComment.test.cpp` — closes A.8 gap.
-  - `JiraClient_ListUpdatedSince.test.cpp` — JQL shape.
-  - `AuditTrail_Actor.test.cpp` — default + explicit-actor round-trip + legacy-line tolerant-read (`value("actor", "user")` on a fixture line missing the key).
-- **Bucket B (scenario runner)**:
-  - `MultiTrackerTriageSmoke.cpp` — triage controller against three canned `ITrackerClient` mocks; asserts `agent_proposals` rows + `sourceTracker` field per source. CI-runnable (no GL context).
+  - `GitHubForwardingClient.test.cpp` — lazy `impl_` resolution; shell delegates to AppController-owned instance.
 - **Bucket E**: deferred. Backlog entry covers Preferences-UI tracker-switch flow.
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target.
+- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target. Must pass with `SMATCHET_WITH_AGENTIC=OFF` (no-agentic build still compiles `GitHubClient`).
 - **Sanitizer gate**: `cmake --build --preset ninja-test-msys2` — ASan/UBSan clean.
-- **Perf gate**: `bash scripts/dev/perf-run.sh tracker_sync agentic_triage_poll tracker_label_edit`.
-- **Manual residue**: live-PAT smoke (one per backend) at first end-to-end run. Same gate Jira/Plane have today.
+- **Perf gate**: `bash scripts/dev/perf-run.sh tracker_sync tracker_label_edit`.
+- **Manual residue**: live-PAT smoke at first end-to-end run. Same gate Jira/Plane have today. Test PATs in CI = security non-starter.
 
 ## Out of scope (flagged, not designed)
 
-- **Projects v2 custom fields** — follow-up `docs/design/github-projects-v2-fields.md`.
-- **Bitbucket / GitLab code-host integrations** — extends the code-host axis (decision 1 § Code host); not generalized at `ITrackerClient`.
+- **Agentic triage tracker-agnostic refactor** — `IGitHubReadClient` → backend-agnostic seam, `AgenticTriageController` gates lift, triage write-lambdas rebind through `ITrackerClient`, Plane `AddIssueCommentPlain` fill, `ListIssueKeysUpdatedSince` virtual addition, `AgenticPollSource` retirement, `HandoffClarificationPostToGithub` rename, audit-trail `actor` field. **Deferred to a future plan**; the design exploration for that refactor is captured in this plan's git history (commits `76c57d6c` / `e9eb0478` / `491f8425` / `7ae7e584`) for the next planner's reference. CONTEXT.md entries for `Source tracker` / `Code host` / `TrackerIssueKey` stay — those concepts hold whether or not the refactor lands.
+- **Projects v2 custom fields** — follow-up `docs/design/github-projects-v2-fields.md`. Drops in by extending `FetchFieldCatalog` to merge a GraphQL `node(id: <project>) { fields { ... } }` result into the static native-field catalog.
+- **Bitbucket / GitLab code-host integrations** — extends the code-host axis (CONTEXT.md § Code host); not generalized at `ITrackerClient`.
 - **GitHub Apps + OAuth** — PATs cover immediate need.
 - **Repo-multi-select on a single tracker profile** — one `owner/repo` per profile.
 - **GitHub-side audit-trail consumer** — existing `BackendAuditTrail` captures all writes.
