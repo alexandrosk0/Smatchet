@@ -3,6 +3,8 @@
 #include "SmatchetThemeIds.h"
 #include "imgui.h"
 
+#include <cstdint>
+
 /** Per-theme palette for the C++ syntax tokenizer in CppSyntaxHighlight. */
 struct SmatchetThemeSyntaxColors {
     float Keyword[4];
@@ -51,6 +53,16 @@ const SmatchetThemeSyntaxColors& GetSyntaxColors();
  *  ai-chat-claude-desktop-parity — Phase 6 consumers (action row, bubble bg,
  *  pin strip) read through this accessor. */
 const SmatchetThemeAiColors& GetActiveAiColors();
+
+/** Monotonic counter bumped every time `ApplyStyle` completes. Consumers that
+ *  cache theme-dependent state (`CodeColorView`'s tokenize cache, future
+ *  per-theme glyph caches) snapshot the counter alongside their key; cache
+ *  miss when their snapshot doesn't equal the live value. Atomic so the
+ *  read-from-render-thread / write-from-ApplyStyle race is well-defined
+ *  (ApplyStyle is always UI-thread, render is always UI-thread today, but
+ *  the atomic future-proofs against any worker-thread theme audit). Slice 3
+ *  of `docs/design/code-syntax-coloring-and-tooltips.md`. */
+std::uint64_t GetThemeRevision();
 
 /** Predefined colors for status and priorities. */
 namespace Colors {

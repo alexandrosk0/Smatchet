@@ -1,6 +1,15 @@
 #include "SmatchetTheme.h"
 
+#include <atomic>
+
 namespace {
+
+// Monotonic theme-revision counter — bumped once per ApplyStyle completion.
+// Consumers (CodeColorView's tokenize cache, future per-theme glyph caches)
+// snapshot this alongside their key + miss when the snapshot lags. Atomic so
+// any future worker-thread read sees a consistent value; today the only
+// writer + readers are UI-thread so the relaxed memory order is fine.
+std::atomic<std::uint64_t> g_themeRevision{0};
 
 // Active theme's C++ syntax-highlight palette. Filled by every ApplyXxx() so CppSyntaxHighlight
 // (and any future code presenter) can recolor in the next ImGui frame after a theme switch.
@@ -753,8 +762,17 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
         ApplySmatchetDark(style, colors);
         break;
     }
+
+    // Bump the theme-revision counter so consumers (CodeColorView's tokenize
+    // cache, future per-theme caches) know to invalidate. Increment AFTER the
+    // per-theme write completes so a parallel reader doesn't see a half-baked
+    // palette tagged with the new revision. Slice 3 of
+    // docs/design/code-syntax-coloring-and-tooltips.md.
+    g_themeRevision.fetch_add(1, std::memory_order_release);
 }
 
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
 
 const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }
+
+std::uint64_t SmatchetTheme::GetThemeRevision() { return g_themeRevision.load(std::memory_order_acquire); }
