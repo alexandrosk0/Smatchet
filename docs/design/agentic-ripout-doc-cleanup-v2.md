@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-ripout-doc-cleanup-v2`
 >
-> **Status**: STUB. Lands after [`github-tracker-backend`](github-tracker-backend.md) PR1 (C++ ripout) merges. Pre-implementation scope sketch only.
+> **Status**: DRAFT-WAITING. v1 PR1 merged 2026-05-21 (`b1d241bc`). v2 stays in DRAFT until **two** dependencies clear: (a) v1 PR2 (#357) merges (clean develop tip; avoids same-file rebase conflicts during v2 cleanup), AND (b) the `smatchet-merge-watcher` P1 (per `docs/backlog/agent-self-improvement/tooling.md`) ships its implementation surface (so v2's preserve/strip list reflects what the watcher actually imports, not the empty-stub assumption). See § Sequencing.
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location.
 
@@ -37,22 +37,55 @@ Verified via `gh pr list --search "agentic in:title"` + `git log -S ... -- AGENT
 - **§ Handoff envelope (entire section, lines ~355-426)** — added by PR#248 (`feat(agentic): H2 ...`); modified by PR#299 + #300 (sentinel files table + First-delegate selection subsection).
   - Subsections inside that came from non-(agentic) PRs but reference deleted symbols (§ Spawned-child PR draft requirement from PR#298 references "spawned `claude` child"; § Anti-deception note from PR#283 references `HarnessRunState::IsTransitionAllowed`) — delete with parent; orphans without it.
 
-### AGENTS.md — also-stale-but-not-(agentic)-added (decide at v2 grill time)
+### AGENTS.md — also-stale-but-not-(agentic)-added (locked 2026-05-21 re-grill)
 
-These describe deleted runtime but weren't added by `(agentic)`-titled PRs. Whether to strip is a v2 grill-with-docs decision; not pre-locked here.
+These describe deleted runtime but weren't added by `(agentic)`-titled PRs. Re-grill outcomes (4 sections):
 
-- **§ Merge gates (lines ~125-197)** — PR#298 (`feat(merge-gates)`). Bash poller `scripts/dev/merge-gates.sh` stays functional; section's gate semantics still describe accurate behaviour. C++ ship-loop auto-invocation goes. Either: (a) strip the C++ auto-invocation language, keep the rest as "useful manual bash poller doc"; (b) strip section entirely.
-- **§ Autonomous ship-loop default (lines ~73-109)** — PR#260 (`chore(agents)`). Most of the section is still valid for non-spawned work; the gate-check + handoff references go.
-- **§ Post-ship turn-end protocol (lines ~110-124)** — option 3 ("Wait for gates and merge") goes stale; options 1 / 2 / 4 stay accurate. Trim option 3.
-- **§ Project rules § Force-push carve-out** — PR#309 (`chore`). `agent/<id>` carve-out moot; `claude/<id>` (orchestrator-spawned) part still applicable. Trim to just the `claude/<id>` case.
+#### § Merge gates (lines ~125-197) — **KEEP wholesale; surgical edits only**
 
-### `docs/agent-rules/DELEGATION.md`
+The gate semantics (CI / CodeRabbit / user-comments / mergeStateStatus / pagination) describe the contract the future `smatchet-merge-watcher` reuses verbatim. The bash poller (`scripts/dev/merge-gates.sh / .graphql / -prompt.sh`) is the watcher's polling engine. Specific edits:
 
-Not modified by any `(agentic)`-titled PR but holds:
+- **Line 127** ("Before the orchestrator (or `git-janitor` running in the user's main session) squash-merges...") → add the watcher as a third caller: "Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` squash-merges...".
+- **Line 137** (CR `NONE` grace-window) → cross-link the P1 backlog entry: "The grace-window logic exists because CR's placeholder StatusContext on draft PRs would otherwise satisfy this branch without a real review — see `docs/backlog/agent-self-improvement/process.md` 'Draft PRs silently bypass CodeRabbit review' for the gap + the proposed `non-empty review on headRefOid` requirement that strengthens this rule once the watcher implements it."
+- **Line 138** (STALE check) — add explicit "applies even when the PR has a CR StatusContext SUCCESS on the rollup" — the STALE rule trumps the placeholder.
+- **Line 176** (Auto-`gh pr ready` + merge authorization) → reword the trigger list: "(post-ship option 3 'Register with watcher', in-session 'merge when green', or any PR registered with the watcher daemon)".
+- **Line 194 — Scope boundary** → DELETE the second sentence entirely ("Spawned-child agents (`handoff-implementer`, `pr-iterator`) keep their existing draft-only contract — see § Handoff envelope § Spawned-child PR draft requirement"). Replaced with: "applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority."
+- **Line 196 — Implementation** → stays identical (paths still valid; watcher will source the same .sh / .graphql).
 
-- **§ Debug-mode pause-loop** — overrides ship-loop for `debug-detective` triggers. The `debug-detective` agent file stays (general-purpose); the spawned-harness debug-trigger surface is gone. Strip pause-loop subsection.
-- **§ API-500 mid-run recovery** — entirely about spawned-agent recovery. Strip subsection.
-- **§ Trigger auto-activation table** rows for `handoff-implementer` / `pr-iterator` / `coderabbit-triage` — agent files deleted; routing rows orphan. Strip rows.
+#### § Autonomous ship-loop default (lines ~73-109) — **KEEP; 3 surgical edits**
+
+The diagnose → fix → build → commit → push → open PR → gate-check → squash-merge → janitor → backlog sequence is general orchestrator behavior, NOT agentic-specific. Specific edits:
+
+- **Line 81** (`[gate-check]` phrasing) → keep the rule; add "the watcher takes over from this point when the user picks post-ship option 3" so the handoff to the daemon is documented.
+- **Line 89** (Exception 1 — Debug-mode pause-loop cross-link) → cross-link breaks once `docs/agent-rules/DELEGATION.md § Debug-mode pause-loop` is stripped (see § DELEGATION.md below). Either (a) **inline the pause-loop rule body into AGENTS.md** under this exception (5-6 lines: debug-detective owns the investigation; pause-loop overrides ship-loop until user signals "ship it"; orchestrator emits `[temp-debug]` instrumentation per `agents/debug-detective.md`); or (b) keep the cross-link if DELEGATION.md § Debug-mode pause-loop is RETAINED (it's not agentic — debug-detective is general). Option (b) is simpler — see § DELEGATION.md decision below.
+- **Line 123** (Cross-link footer) → strip the broken `§ Debug-mode pause-loop` reference if DELEGATION.md drops it; otherwise leave.
+
+#### § Post-ship turn-end protocol § option 3 (line 116, 121) — **KEEP; REWORD, not strip**
+
+Original v2 said "trim option 3". Post-grill: option 3 is the watcher integration point. Reword:
+
+- **Old line 116**: `3. **Wait for gates and merge** — orchestrator runs the merge-gates poller (see § Merge gates), then auto-`gh pr ready` + REST-squash-merge on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.`
+- **New line 116**: `3. **Register with watcher** — orchestrator runs `smatchet-merge-watcher register <pr>` (host daemon — see `docs/backlog/agent-self-improvement/tooling.md` 'Long-running CI/CR polls block the interactive session' for the design). Watcher runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications, not back to this session.`
+- **Old line 121** (Skip-condition): "enter option 3 directly (`git-janitor` invokes the merge-gates poller before merging)" → "enter option 3 directly (`git-janitor` invokes the watcher register before merging)".
+
+#### § Project rules § Force-push carve-out for spawned-agent recovery (line 238) — **REWRITE around `claude/<id>` only**
+
+Original v2 said "trim to just the `claude/<id>` case". Post-grill: same outcome, fuller rewrite needed because the surrounding cross-link to DELEGATION.md § API-500 mid-run recovery references both `agent/<id>` and `claude/<id>`:
+
+- **Old (line 238)**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin agent/<id> and git push --force-with-lease origin claude/<id> are permitted only during API-500 recovery (see docs/agent-rules/DELEGATION.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch.`
+- **New**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin claude/<id> is permitted only during API-500 recovery (see docs/agent-rules/DELEGATION.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a Claude Code SDK-spawned worktree branch. The agent/<id> case is GONE — that branch shape came from the deleted ClaudeCodeLocalRunner (per v1 of github-tracker-backend.md). Smatchet's future smatchet-merge-watcher runs as a host daemon, not a spawned subprocess, so it has no worktree branch that would need this carve-out.`
+- **ADR cross-link**: 0005's `agent/<id>` reference becomes obsolete once 0005 is Withdrawn (per § ADRs above). The carve-out's `claude/<id>` case stays valid + its rationale folds into the new v2-shipped status header on 0005.
+
+### `docs/agent-rules/DELEGATION.md` (locked 2026-05-21 re-grill)
+
+Not modified by any `(agentic)`-titled PR but holds rules cross-linked from AGENTS.md. Edits per the re-grill:
+
+- **§ Debug-mode pause-loop — KEEP** (re-grill correction). Originally said "strip" because the spawned-harness debug-trigger surface is gone, but the `debug-detective` agent is general-purpose + still alive. The pause-loop rule body (debug-detective owns the investigation; ship-loop overrides until "ship it" signal; orchestrator emits `[temp-debug]` instrumentation per `agents/debug-detective.md`) applies whether or not anything spawns a subprocess. KEEP wholesale; only strip any references to spawned-harness or `dispatch_source` if they appear inside the subsection.
+- **§ API-500 mid-run recovery — TRIM** (was "strip subsection"). The 5-step recovery (inspect → run gates → `git add -A` + commit → push + open draft PR → backlog entry) applies to ANY delegated agent that errors API-500, not just spawned ones. Trim the `agent/<id>` worktree-branch references (deleted ClaudeCodeLocalRunner shape); keep the `claude/<id>` references (Claude Code SDK spawn shape, still valid). Concrete edits: at line 203 of DELEGATION.md, change `the spawned-agent's own agent/<id> or claude/<id> worktree` → `the Claude Code SDK-spawned claude/<id> worktree`. Drop the agent/<id> half of every example.
+- **§ Trigger auto-activation table rows — TRIM** (was "strip rows" for all 3):
+  - `handoff-implementer` row — STRIP (agent file deleted).
+  - `pr-iterator` row — STRIP (agent file deleted).
+  - `coderabbit-triage` row — **KEEP** per re-grill agent-files decision (above). Update the trigger pattern to "CodeRabbit posts CHANGES_REQUESTED on a watched PR" (watcher invocation), drop any `dispatch_source` reference.
 
 ### `agents/*.md` agent files added by `(agentic)`-titled PRs
 
@@ -65,7 +98,7 @@ Not modified by any `(agentic)`-titled PR but holds:
 - `docs/design/agentic-coding-handoff.md` — **DELETE** (PR#217/#240/#259 etc.; describes deleted design).
 - `docs/design/agentic-flow-implementation.md` — **DELETE** (PR#217/#225 etc.).
 - `docs/design/agentic-triage-flow.md` — **DELETE** (PR#217).
-- `docs/design/coderabbit-react-loop.md` — **DELETE** (PR#302 et al.).
+- `docs/design/coderabbit-react-loop.md` — **KEEP as historical** (re-grill correction; was DELETE). Add a `## Status` header at the top: `Historical — describes the C++ CodeRabbit react loop that v1 PR1 (#356, b1d241bc) deleted. The watcher revival (per docs/backlog/agent-self-improvement/tooling.md 'Long-running CI/CR polls block the interactive session') reuses the CR-triage classification concepts; this design doc is useful input for the watcher's design pass.` Keep the body verbatim.
 - `docs/agentic/TRIAGE_MANUAL.md` + `USAGE.md` — **DELETE** (`docs(agentic)` PRs).
 - `docs/agentic/` directory itself — **DELETE**.
 
