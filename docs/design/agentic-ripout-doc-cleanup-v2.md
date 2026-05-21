@@ -61,13 +61,28 @@ Not modified by any `(agentic)`-titled PR but holds:
 - **ADR 0003 (github-as-itrackerclient)** — STAYS Accepted; v1 PR2 honors it for the tracker-only role. Optional one-line update noting the original "agentic triage half" rationale is partially obsolete; new tracker stands on the same interface choice.
 - **ADR 0007 (audit-trail-actor-column)** — already Withdrawn from prior session.
 
-### Scripts
+### Scripts added by (agentic)-titled PRs — DELETE all 11
 
-- `scripts/dev/test-agentic-handoff-clarification.sh` + `-cli.sh` + `-iterate.sh` + `-scenario.sh` — **DELETE** (drive deleted C++ surface).
-- `scripts/dev/test-coderabbit-react.sh` — **DELETE**.
-- `scripts/dev/test-ui-agent-handoff.sh` + `test-ui-agent-proposals-handoff-button.sh` — **DELETE**.
-- `scripts/dev/merge-gates.sh` + `.graphql` + `-prompt.sh` — **KEEP** (bash, no Smatchet C++ deps; still useful for manual PR-gate polling).
-- `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json` — **KEEP** (test the bash poller).
+Verified via `gh pr view $pr --json files --jq '.files[] | select(.path | startswith("scripts/"))'` over the 42-PR set. All drive deleted C++ surface; non-functional post-v1-ripout.
+
+| Script | Introduced by | Notes |
+|---|---|---|
+| `scripts/dev/test-agentic-triage-cli.sh` | PR#230 | T5 triage CLI smoke |
+| `scripts/dev/test-ui-agent-proposals.sh` | PR#231 (modified #239) | T6 UI panel smoke |
+| `scripts/dev/test-agentic-approve-reject.sh` | PR#233 | T8 proposal approve/reject smoke |
+| `scripts/dev/test-agentic-handoff-cli.sh` | PR#251 (modified #252, #267) | H3 ClaudeCodeLocalRunner smoke |
+| `scripts/dev/test-agentic-handoff-clarification.sh` | PR#253 (modified #267) | H5 clarification dual-channel smoke |
+| `scripts/dev/test-agentic-handoff-iterate.sh` | PR#255 | H7 PR-iteration smoke |
+| `scripts/dev/test-ui-agent-handoff.sh` | PR#256 | H8 handoff UI panel smoke |
+| `scripts/dev/test-ui-agent-proposals-handoff-button.sh` | PR#257 (modified #267) | H9 Start-handoff button smoke |
+| `scripts/dev/test-agentic-handoff-scenario.sh` | PR#259 | H10 handoff scenario step smoke |
+| `scripts/dev/test-ci-react.sh` | PR#302 | phase-9 CI react loop smoke |
+| `scripts/dev/test-coderabbit-react.sh` | PR#302 (modified #303) | phase-9 CodeRabbit react loop smoke |
+
+### Scripts NOT touched by (agentic)-titled PRs — KEEP per strict reading
+
+- `scripts/dev/merge-gates.sh` + `.graphql` + `-prompt.sh` — added by PR#298 (`feat(merge-gates)`) — bash poller, no Smatchet C++ deps; runs against any PR via `gh api graphql`. Still useful for manual PR-gate polling.
+- `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json` — test the bash poller; stay.
 
 ### Workflows
 
