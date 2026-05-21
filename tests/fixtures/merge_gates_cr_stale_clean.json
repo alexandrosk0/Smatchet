@@ -1,0 +1,41 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "headSHAcleanNew",
+        "headRefName": "feature/cr-stale-clean",
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [
+            {
+              "author": {"login": "coderabbitai[bot]", "__typename": "Bot"},
+              "state": "COMMENTED",
+              "submittedAt": "2026-05-21T10:00:00Z",
+              "commit": {"oid": "headSHAOLD"},
+              "body": "**Actionable comments posted: 0**\n\nNo actionable comments were generated in the recent review."
+            }
+          ]
+        },
+        "reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+        "comments": {"pageInfo": {"hasNextPage": false}, "nodes": []}
+      }
+    }
+  }
+}

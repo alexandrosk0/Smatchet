@@ -113,7 +113,7 @@ After the loop reaches PR-opened (or the equivalent terminal state for the task)
 
 1. **Manual verify** — user wants to drive the change manually before merge.
 2. **Review PR** — user wants to read the diff / comment on GitHub.
-3. **Wait for gates and merge** — orchestrator runs the merge-gates poller (see § Merge gates), then auto-`gh pr ready` + REST-squash-merge on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.
+3. **Wait for gates and merge** — orchestrator first runs `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the merge-gates poller (see § Merge gates) and REST-squash-merges on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.
 4. **Done** — no further action; PR stays draft for later.
 
 Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
@@ -130,13 +130,21 @@ Before the orchestrator (or `git-janitor` running in the user's main session) sq
    - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.
    - **StatusContext**: default rule — any required context with `state != "SUCCESS"` blocks. `FAILURE` / `ERROR` fail; `PENDING` / `EXPECTED` pending.
    - Non-required checks ignored.
-2. **CodeRabbit** — identity match is `author.login in {"coderabbitai", "coderabbitai[bot]"}` (REST returns the `[bot]` suffix; GraphQL may strip it). State is computed in three buckets:
+2. **CodeRabbit** — identity match is `author.login in {"coderabbitai", "coderabbitai[bot]"}` (REST returns the `[bot]` suffix; GraphQL may strip it). State combines the latest CR review's `state`, its `commit.oid` (vs `headRefOid`), and its `body` (CR's `Actionable comments posted: N` first-line header) into one of these outcomes:
    - `NONE` — no review ever submitted. The poller pre-detects whether CR is installed for this repo by probing for a checked-in `.coderabbit.yaml` / `.coderabbit.yml` (one-shot at gate start; override via `MERGE_GATES_CR_INSTALLED=true|false`). Behaviour splits:
      - **CR not installed** (no config file) → **pass** immediately (legacy behaviour for repos that never integrated CR).
      - **CR installed, head commit has a `CodeRabbit` StatusContext on the rollup with `state == "SUCCESS"`** → **pass** (status-only configs that skip writing a full review on clean diffs still count as a positive signal).
      - **CR installed, no review yet, no SUCCESS status** → **block** until the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires. After the window, the poller logs a `WARN: CodeRabbit grace window ... expired` line and falls through to pass so a stuck integration never wedges the ship-loop indefinitely.
-   - `STALE` — reviews exist but none on current `headRefOid` → **block** (force-push invalidates old approval).
-   - latest review's `state` on current `headRefOid` ∈ {`APPROVED`, `COMMENTED`} → pass; ∈ {`CHANGES_REQUESTED`, `DISMISSED`} → block.
+   - **On-head review** (`commit.oid == headRefOid`):
+     - `APPROVED` → **pass** unconditionally (approval trumps body).
+     - `COMMENTED + body has "Actionable comments posted: N" with N > 0` → **block** (CR found real findings the user must address before merge). The previous "COMMENTED == pass" rule shipped 5 unaddressed CR findings to develop on PR #357 — see `docs/backlog/agent-self-improvement/process.md` P1 (2026-05-21) for the post-mortem.
+     - `COMMENTED + N == 0` → **pass** (CR explicitly said no findings).
+     - `COMMENTED + no Actionable header in body` → **pass** (placeholder review / older CR template; conservative).
+     - `CHANGES_REQUESTED` / `DISMISSED` → **block**.
+   - **Stale review** (CR reviewed a prior commit; force-push or post-review commit moved HEAD past the review):
+     - `STALE_WITH_FINDINGS` (prior body had `N > 0`) → **block** + DO NOT fall through to pass on timeout. The timeout-fallthrough path on stale-with-findings is what dropped #357's 5 findings; the prior review body must be surfaced + the user explicitly authorises any force-merge.
+     - `STALE_CLEAN` (prior body had `N == 0`) → **pass** (prior review was clean; on-head changes likely still clean modulo new edits).
+     - `STALE_UNKNOWN` (prior body absent or no `Actionable` header) → **block** as safe default (caller can't distinguish "0 actionable" from "no header", so the safer assumption is "could have findings").
    - Additionally: zero unresolved non-outdated review threads contain a CodeRabbit comment (under the same login match).
 3. **User comments** — zero unresolved non-outdated review threads with any non-bot non-self comment, AND zero conversation-tab comments from a non-bot non-self author. Bot detection uses GraphQL `author.__typename == "Bot"` (covers all integrations). Self matched via `$ORCH_USER`, lower-cased on both sides.
 
@@ -155,10 +163,10 @@ Additional pass conditions:
 
 **Status line per poll**:
 ```
-Poll 3/60 — CI: 5/8 pass (1 fail, 2 pending) | CodeRabbit: CHANGES_REQUESTED (2 open) | User: 1 | reviewDecision: APPROVED
+Poll 3/60 — CI: 5/8 pass (1 fail, 2 pending) | CodeRabbit: COMMENTED (3 actionable — block) (2 open) | User: 1 | reviewDecision: APPROVED
 ```
 
-When CR is installed but a review has not yet posted, the CR cell shows `NONE+pending (poll N/<grace>)` while the grace window is open, `NONE+status-SUCCESS` when the rollup's CR `StatusContext` reached `SUCCESS` without a review, and `NONE+grace-expired` (paired with the `WARN` line on stderr) when the grace window timed out.
+The CR cell encodes the seven outcomes verbatim — examples: `APPROVED`, `COMMENTED (3 actionable — block)`, `COMMENTED (0 actionable)`, `COMMENTED (no Actionable header)`, `STALE_WITH_FINDINGS (5 actionable on prior commit — block + surface review)`, `STALE_CLEAN (0 actionable on prior commit — pass)`, `STALE_UNKNOWN (no Actionable header — treat as block per safe-default policy)`, `CHANGES_REQUESTED`, `DISMISSED`, `NONE+pending (poll N/<grace>)`, `NONE+status-SUCCESS`, `NONE+grace-expired` (paired with `WARN` on stderr).
 
 **Halt prompts (per return code)**:
 

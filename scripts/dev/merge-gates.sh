@@ -174,7 +174,12 @@ poll_merge_gates() {
             (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"PENDING\",\"EXPECTED\")))
         )] | length" <<<"$pr")
 
-        # CodeRabbit — three-bucket (NONE / STALE / latest-on-head)
+        # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.
+        # P1 fix per docs/backlog/agent-self-improvement/process.md "Force-merge on CR
+        # timeout silently discards STALE CR reviews on the prior commit" + "Draft PRs
+        # silently bypass CodeRabbit review". Body's first line carries
+        # "Actionable comments posted: N" — N>0 means CR found real bugs the user
+        # should review explicitly before any force-merge / timeout-pass.
         local cr_state
         cr_state=$(jq -r --arg sha "$head_sha" '
             ([.reviews.nodes[]
@@ -185,6 +190,28 @@ poll_merge_gates() {
                      else ($current | sort_by(.submittedAt) | .[-1].state)
                      end)
               end' <<<"$pr")
+        # Pull the most recent CR review's body — current-head preferred, else most-recent stale.
+        # Body carries the "Actionable comments posted: N" header that drives findings detection.
+        local cr_review_body
+        cr_review_body=$(jq -r --arg sha "$head_sha" '
+            ([.reviews.nodes[]
+              | select(.author.login=="coderabbitai" or .author.login=="coderabbitai[bot]")]) as $all
+            | if ($all | length) == 0 then ""
+              else (([$all[] | select(.commit.oid==$sha)]) as $current
+                   | if ($current | length) > 0
+                     then ($current | sort_by(.submittedAt) | .[-1].body // "")
+                     else ($all | sort_by(.submittedAt) | .[-1].body // "")
+                     end)
+              end' <<<"$pr")
+        # Extract N from "Actionable comments posted: N". -1 = header not found.
+        local cr_actionable=-1
+        if [ -n "$cr_review_body" ]; then
+            local match
+            match=$(printf '%s\n' "$cr_review_body" | grep -oE 'Actionable comments posted:[[:space:]]*[0-9]+' | head -n 1 || true)
+            if [ -n "$match" ]; then
+                cr_actionable=$(printf '%s' "$match" | grep -oE '[0-9]+' | head -n 1)
+            fi
+        fi
         local cr_open
         cr_open=$(jq '[.reviewThreads.nodes[]
             | select(.isResolved==false and .isOutdated==false
@@ -224,7 +251,45 @@ poll_merge_gates() {
         local cr_pass=false
         local cr_state_print="$cr_state"
         case "$cr_state" in
-            APPROVED|COMMENTED) cr_pass=true ;;
+            APPROVED)
+                # Approval on the current head is always a pass, regardless of body shape.
+                cr_pass=true
+                cr_state_print="APPROVED"
+                ;;
+            COMMENTED)
+                # On-head COMMENTED. Block when CR reported actionable findings (N>0);
+                # pass when CR explicitly said 0 actionable; pass when no Actionable
+                # header found (body is empty / non-CR-shape / older CR template).
+                if [ "$cr_actionable" -gt 0 ]; then
+                    cr_pass=false
+                    cr_state_print="COMMENTED (${cr_actionable} actionable — block)"
+                else
+                    cr_pass=true
+                    if [ "$cr_actionable" = "0" ]; then
+                        cr_state_print="COMMENTED (0 actionable)"
+                    else
+                        cr_state_print="COMMENTED (no Actionable header)"
+                    fi
+                fi
+                ;;
+            STALE)
+                # CR reviewed a prior commit. Discriminate via Actionable count from
+                # that stale body. STALE_WITH_FINDINGS NEVER passes on timeout (would
+                # discard real CR feedback the user hasn't seen). STALE_CLEAN passes
+                # on timeout (the prior review was clean; current commit likely still
+                # clean modulo new edits). STALE_UNKNOWN treated as STALE_WITH_FINDINGS
+                # to be safe — caller can't distinguish "0 actionable" from "no header".
+                if [ "$cr_actionable" -gt 0 ]; then
+                    cr_pass=false
+                    cr_state_print="STALE_WITH_FINDINGS (${cr_actionable} actionable on prior commit — block + surface review)"
+                elif [ "$cr_actionable" = "0" ]; then
+                    cr_pass=true
+                    cr_state_print="STALE_CLEAN (0 actionable on prior commit — pass)"
+                else
+                    cr_pass=false
+                    cr_state_print="STALE_UNKNOWN (no Actionable header — treat as block per safe-default policy)"
+                fi
+                ;;
             NONE)
                 if [ "$cr_installed" != true ]; then
                     # Repo doesn't have CodeRabbit installed — NONE is the steady state.
