@@ -113,7 +113,7 @@ Exit: round-trip — edit a file, `git add` + commit, then `p4 reconcile` + subm
 3. `.gitignore` add `.claude/streams/` (sibling of existing `.claude/worktrees/`).
 4. New script `scripts/dev/p4-task-stream-gc.sh --older-than-days N`:
    - `p4 streams //smatchet/tasks/...` → filter by mtime → `p4 stream -d` after confirming no pending CLs.
-5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per AGENTS.md § Handoff envelope) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
+5. Wire into spawned-child flow: when `SMATCHET_AGENT_VCS=p4` is set by the orchestrator, the spawn allocator (`ClaudeCodeLocalRunner` per the deleted handoff-envelope section) sets the child process's working directory to the p4 task-stream folder instead of a `git worktree add` path. Sentinel files (`SEED.json`, `SEED.md`, `RUN_RESULT.json`, etc.) land in that p4 root; the envelope contract is otherwise unchanged.
 
 Exit: spawn a stub child with `SMATCHET_AGENT_VCS=p4`, observe the child receives a populated p4 task stream; on exit the GC purges it.
 

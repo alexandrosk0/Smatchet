@@ -21,7 +21,7 @@ This plan applies **only to the orchestrator + `git-janitor` running in the main
 2. **Handoff envelope "PR draft requirement"** — refers to the spawned-child harness, not the orchestrator. Clarification edit only: rename header to "Spawned-child PR draft requirement" so the boundary is explicit.
 3. **Orchestrator + `git-janitor`** — gain auto-`gh pr ready` + REST-merge under one trigger only: user explicitly picked post-ship option 3 ("Wait for gates and merge") **or** said "merge when green" in-session. This is per-PR authorization, not a blanket policy change.
 
-Cross-link: `AGENTS.md § Handoff envelope` clarification edit listed in Files-changed.
+Cross-link: `the deleted handoff-envelope section` clarification edit listed in Files-changed.
 
 ---
 

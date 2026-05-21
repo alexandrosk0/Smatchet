@@ -96,7 +96,7 @@ Validated against `docs/design/agentic-coding-handoff.md`, `agentic-flow-impleme
 
 **Source**:
 - AI bullet: `docs/backlog/agent-self-improvement/process.md` L34–38 (2026-05-17 security-review P2). 5 AI components pre-enumerated.
-- Handoff bullet: AGENTS.md § Handoff envelope (L451–481) — sentinel files, env allow-list, branch naming, PR draft requirement, spawned-claude subprocess.
+- Handoff bullet: was AGENTS.md handoff-envelope section (sentinel files, env allow-list, branch naming, PR draft requirement, spawned-claude subprocess) — section deleted by v2 doc-cleanup; the deleted-runtime banner in `docs/backlog/agent-self-improvement/applied.md` records the historical scope.
 
 **Rationale for two bullets** (per double-check pass): the agentic-coding-handoff design adds attack surfaces not covered by the AI bullet alone — sentinel files act as a child-process trust boundary, the spawned `claude` subprocess receives an env block (allow-list discipline), and `gh pr create --draft` uses a GH PAT. Both bullets ship together; both pre-enumerated; total cost unchanged.
 
@@ -130,7 +130,7 @@ Validated against `docs/design/agentic-coding-handoff.md`, `agentic-flow-impleme
       no `SMATCHET_*` passthrough — verified by env-allow-list doctest).
   (2) **Sentinel-file write contracts** — single-writer single-reader;
       `RUN_RESULT.json` strictly last; runner asserts each file's writer
-      matches the documented owner in AGENTS.md § Handoff envelope.
+      matches the documented owner in the deleted AGENTS.md handoff-envelope section (removed by v2 doc-cleanup).
   (3) **Branch-name discipline** — `agent/<proposalId>/<short-slug>`;
       runner refuses `develop` / `main`; harness refuses non-`agent/*` push.
   (4) **PR draft requirement** — every harness-opened PR is `--draft`;
